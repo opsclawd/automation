@@ -1,0 +1,182 @@
+# AI SDLC Orchestrator — Design Decisions Report
+
+All questions resolved during the grill-with-docs session.
+
+---
+
+## Q1 — Run identity
+**How is a Run identified and scoped?**
+UUID-identified, `issueNumber` mandatory field. One active Run per issue (domain invariant). Previous Run must be terminal (SUCCESS/FAILED/CANCELLED) before a new one starts.
+
+## Q2 — Phase structure
+**How does review/fix fit into the phase model?**
+Review/fix is a single Phase (`review-fix`) with an internal Loop. Each Loop iteration = one review + one fix. Phase sequence advances monotonically.
+
+## Q3 — Implement phase internals
+**How are implementation tasks modeled?**
+`implement` is one Phase, tasks are Steps within it. Each Step groups related Agent Invocations. Steps can have their own Loops (spec-review + quality-review + fix, max 5 iterations).
+
+## Q4 — Resume granularity
+**Where does a failed Run resume from?**
+Resume from the failed Step by default (trust prior steps' commits). User can choose "retry phase from scratch" as escape hatch.
+
+## Q5 — Step completion signal
+**What determines whether a Step completed?**
+Both DB + filesystem. DB records step status transitions with timestamps (source of truth for state). Filesystem holds artifacts (source of truth for content). On resume, check both — mismatch = corruption flag requiring user decision.
+
+## Q6 — Agent Invocation result
+**What shape does an Agent Invocation's result take?**
+Typed `InvocationResult` with:
+1. Outcome enum: SUCCESS | FAILED | PARTIAL (stored in DB)
+2. Payload: optional structured JSON, schema varies by phase (stored as `result.json` artifact on filesystem)
+
+Extractor agent becomes a fallback/migration path for when agent doesn't produce clean result.json.
+
+## Q7 — PARTIAL outcome scope
+**Where can PARTIAL appear?**
+PARTIAL only valid at Phase level (some Steps done, some not). Steps are binary SUCCESS/FAILED. Aligns with resume-from-failed-Step semantics.
+
+## Q8 — Loop exhaustion
+**What happens when a Loop hits max iterations?**
+Enclosing Step/Phase marked FAILED, Run stops, user must intervene (retry, adjust, or cancel).
+
+## Q9 — Agent Contract validation
+**When and how are agent contracts validated?**
+- 9a: Validate immediately after each invocation (fail-fast)
+- 9b: Contract violation treated as plain FAILED outcome; retry loop handles it
+
+## Q10 — Prompt versioning
+**How are prompts versioned?**
+Prompts in separate files in a known directory, referenced by phase/step name. Git provides version history. Agent Invocation record stores prompt file path.
+
+## Q11 — Concurrency
+**Does the system support concurrent Runs?**
+Domain model supports multiple concurrent Runs (one per issue). MVP serializes execution — constraint in the runner, not the data model.
+
+## Q12 — State persistence
+**How is Run state persisted?**
+Hybrid. Mutable status columns on Run/Phase/Step tables for fast reads. Separate append-only events table logs every transition for history/observability.
+
+## Q13 — Agent execution
+**How does the orchestrator invoke agents?**
+Shell out to `opencode` specifically as the single agent runtime. Orchestrator treats opencode as black box (prompt in → artifacts out). AgentPort maps to "spawn opencode with args, wait for exit, check artifacts."
+
+## Q14 — Git worktree lifecycle
+**How are worktrees managed?**
+Worktree scoped to issue (`.ai-worktrees/issue-<N>`), reused across Runs. On new Run start, orchestrator verifies worktree is clean (reset to latest main). One-active-Run-per-issue invariant prevents contention.
+
+## Q15 — Artifact storage
+**Where do artifacts live?**
+Split. Orchestration metadata (prompts sent, result.json, logs) in `.ai-runs/`. Agent-consumable artifacts (design.md, plan.md) in `.ai/` within the worktree. `.ai/` gitignored.
+
+## Q16 — PR creation
+**Who creates the PR?**
+Orchestrator invokes agent to draft PR description, then orchestrator calls GitHub API via GitHubPort. Separation of creative (agent) from mechanical (API call).
+
+## Q17 — Post-PR review polling
+**Is review polling a separate Run or part of the same one?**
+Same Run extended. After create-pr, Run transitions into pr-review-poll phase. Run isn't completed until PR merged or user cancels. One continuous lifecycle issue-to-merged-PR.
+
+## Q18 — Poll mechanism
+**How does the system check for new reviews?**
+Timer-based polling for MVP, designed so webhook-driven is addable later. The GitHubPort abstraction hides whether "check for reviews" is poll or webhook.
+
+## Q19 — User intervention model
+**How do users interact with the orchestrator?**
+REST API exposes retry/cancel/resume. Both Web UI and CLI are thin clients over the same API. API-first, neither surface privileged.
+
+## Q20 — Branch safety
+**What happens if the agent switches branches?**
+Verify-and-fail. Check HEAD is on expected branch after each Agent Invocation. If drifted, mark invocation FAILED, let retry loop handle it.
+
+## Q21 — UI observability
+**How does the UI show Run progress?**
+MVP: stream structured events from append-only event log via SSE. Enhancement: live agent stdout. Raw agent output written to log file artifact, viewable after the fact.
+
+## Q22 — Validation commands
+**How does the orchestrator know what to validate?**
+Explicit config file (`.ai-orchestrator.json`) at repo root declares validation commands. Deterministic — same commit always produces same pass/fail. Fail fast if config missing.
+
+## Q23 — Cancellation semantics
+**What happens to in-flight work on cancel?**
+Kill with cleanup. SIGTERM the process, then reset the worktree to last known-good commit (the commit before this invocation started). Mark Run CANCELLED with clean state.
+
+## Q24 — Last known-good commit tracking
+**When is the baseline commit recorded?**
+At Agent Invocation start. Before spawning opencode, capture `git rev-parse HEAD` in the worktree and store it on the AgentInvocation record as `startCommitSha`.
+
+## Q25 — Phase sequence
+**Is the phase order fixed or configurable?**
+Fixed default with skip-list. The canonical sequence is hardcoded. Config can declare phases to skip. Can't reorder, can only omit.
+
+## Q26 — `.ai-orchestrator.json` config shape
+**What's the MVP config structure?**
+```json
+{
+  "validation": {
+    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
+    "timeout": 300
+  },
+  "phases": {
+    "skip": ["compound"],
+    "reviewFix": { "maxIterations": 10 },
+    "implement": { "maxIterations": 5 }
+  },
+  "timeouts": {
+    "readyMaxDays": 7,
+    "invocationMaxMinutes": 30
+  }
+}
+```
+
+## Q27 — Agent model/runtime selection
+**Where does model config live?**
+Environment variables only. `AI_MODEL=sonnet`, `AI_RUNTIME=opencode`. Operational concern, varies by developer/machine/budget.
+
+## Q28 — Error classification
+**Are failures classified as transient vs. permanent?**
+No. All failures are equal for MVP. Loop retries up to max iterations regardless. If truly permanent, loop exhausts and user intervenes.
+
+## Q29 — Event schema
+**What's in the append-only events table?**
+Rich with payload: `{ id, runId, timestamp, type, entityId, fromState, toState, metadata: JSON }`. Metadata carries context (outcome, durationMs, commitSha, reason, loopIteration).
+
+## Q30 — Prompt construction
+**How does the orchestrator build prompts?**
+Hybrid: template skeleton + programmatic context injection. Template provides structure/instructions, code handles which artifacts to include and how to format them.
+
+## Q31 — Artifact dependency between phases
+**How does the orchestrator know which artifacts a phase needs?**
+Declared in phase definitions. Phase metadata declares inputs/outputs: `{ inputs: [...], outputs: [...] }`. Orchestrator verifies inputs exist before starting a phase.
+
+## Q32 — Skipped phase artifact dependencies
+**What if a skipped phase was supposed to produce a needed artifact?**
+Inputs are "required" or "optional". Phase declares `{ inputs: { required: ["plan.md"], optional: ["compound.md"] } }`. Optional inputs passed if present, silently omitted if not.
+
+## Q33 — Run completion
+**How does the orchestrator know a Run is done?**
+Three states beyond RUNNING: SUCCESS (PR merged, terminal), READY (all reviews addressed, awaiting merge — not terminal, reactivates on new review activity), CANCELLED (timeout or user-cancelled, terminal). Global timeout applies to READY state.
+
+## Q34 — Global timeout configuration
+**Where are timeouts configured?**
+In `.ai-orchestrator.json` under `"timeouts": { "readyMaxDays": 7, "invocationMaxMinutes": 30 }`. Workflow concern, not operational.
+
+## Q35 — Event stream subscription
+**How does the UI subscribe to events?**
+Subscribe by Run ID. Client opens `GET /runs/:id/events?since=<timestamp>`. Single endpoint, reconnects periodically. Gets all events including reactivation.
+
+## Q36 — SQLite vs Postgres
+**When does the system outgrow SQLite?**
+Don't decide now. The RunRepository port means storage is swappable. Cross that bridge when performance or access patterns demand it.
+
+## Q37 — Structured vs markdown review findings
+**How does the agent report review results?**
+Both, structured is authoritative. `result.json` has pass/fail decision the orchestrator acts on. `review.md` is the human-readable artifact the fix agent consumes as context.
+
+## Q38 — Distributed workers
+**Is distribution in scope?**
+Explicitly out of scope (non-goal). Every concrete decision is inherently local. Distribution would require rethinking half the architecture for a scenario that doesn't exist.
+
+## Q39 — Config shape confirmation
+**Is the `.ai-orchestrator.json` shape complete for MVP?**
+Confirmed. See Q26 for final shape.
