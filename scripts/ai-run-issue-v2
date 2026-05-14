@@ -280,8 +280,17 @@ run_agent_raw() {
 
   if [[ $ec -ne 0 ]]; then
     warn "Phase '$phase' exited with code $ec"
-    if grep -qi "waiting\|blocked\|asking.*question\|need.*input" "$output_log" 2>/dev/null; then
-      orchestrator_fail "Phase '$phase' is blocked (agent waiting for input)"
+    # Blocked detection requires a structured signal, not free-text matching.
+    # The old grep ("waiting|blocked|asking.*question|need.*input", case-
+    # insensitive) hit any agent prose that mentioned those words in passing
+    # (e.g. "I waited for the test to finish") and killed valid runs.
+    #
+    # The contract is now: if the agent wants to block, it writes exactly
+    # `BLOCKED` on its own line (optionally followed by a colon-prefixed
+    # reason). This matches the same convention used by the result-file
+    # mechanism (BLOCKED is one of the allowed result values).
+    if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "$output_log" 2>/dev/null; then
+      orchestrator_fail "Phase '$phase' is blocked (agent emitted BLOCKED)"
     fi
   fi
 }
