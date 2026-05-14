@@ -196,6 +196,41 @@ resolve_result() {
 }
 
 # ── Verification functions ──────────────────────────────────────────────────
+
+# ensure_local_pushed — used by the REPLIED re-verification path (no new
+# comments, replies posted, build was last seen red). Unlike
+# verify_commits_pushed it does not need a pre-agent SHA; it just asks
+# "is local HEAD ahead of origin/${PR_BRANCH}?" If yes (a transient `git
+# push` failure left commits stranded locally), retry the push and
+# re-check. Returns 0 only when origin contains every local commit.
+ensure_local_pushed() {
+  git fetch origin "$PR_BRANCH" 2>/dev/null || {
+    warn "  ensure_local_pushed: failed to fetch origin/${PR_BRANCH}"
+    return 1
+  }
+
+  local ahead
+  ahead=$(git rev-list --count "origin/${PR_BRANCH}..HEAD" 2>/dev/null || echo "0")
+  if [[ "$ahead" -eq 0 ]]; then
+    log "  ensure_local_pushed: HEAD already on origin/${PR_BRANCH}"
+    return 0
+  fi
+
+  log "  ensure_local_pushed: ${ahead} local commit(s) ahead of origin/${PR_BRANCH}; pushing..."
+  if ! git push origin "$PR_BRANCH" 2>&1 | tee -a "${ISSUES_DIR}/poll.log"; then
+    warn "  ensure_local_pushed: push failed"
+    return 1
+  fi
+
+  ahead=$(git rev-list --count "origin/${PR_BRANCH}..HEAD" 2>/dev/null || echo "0")
+  if [[ "$ahead" -eq 0 ]]; then
+    log "  ensure_local_pushed: push succeeded"
+    return 0
+  fi
+  warn "  ensure_local_pushed: still ${ahead} commit(s) ahead after push"
+  return 1
+}
+
 verify_commits_pushed() {
   local pre_sha="$1"
   local branch="$2"
@@ -414,15 +449,21 @@ process_reviews() {
       pending_count=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
     fi
     if [[ $pending_count -gt 0 ]]; then
-      log "No new comments, but ${pending_count} replied ID(s) awaiting verification. Re-checking build."
-      if verify_build_passes; then
-        # Promote everything in REPLIED to PROCESSED and clear REPLIED.
+      log "No new comments, but ${pending_count} replied ID(s) awaiting verification. Re-checking commits + build."
+      # Both checks must pass before promotion. Order matters: a passing
+      # local build with unpushed commits would otherwise mark the PR as
+      # processed while origin still has the broken code — silently
+      # abandoning the review with the fix stranded locally.
+      local reverify_ok=true
+      ensure_local_pushed || reverify_ok=false
+      verify_build_passes || reverify_ok=false
+      if $reverify_ok; then
         cat "$REPLIED_IDS_FILE" >> "$PROCESSED_IDS_FILE"
         : > "$REPLIED_IDS_FILE"
-        log "Build now passing; promoted ${pending_count} ID(s) from REPLIED to PROCESSED."
+        log "All checks passed; promoted ${pending_count} ID(s) from REPLIED to PROCESSED."
         return 0
       else
-        warn "Build still failing; ${pending_count} ID(s) remain in REPLIED for next poll."
+        warn "Verification still failing; ${pending_count} ID(s) remain in REPLIED for next poll."
         return 2
       fi
     fi
