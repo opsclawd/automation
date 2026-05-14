@@ -23,6 +23,12 @@ cd "$REPO_ROOT"
 
 BASE_BRANCH="${BASE_BRANCH:-main}"
 BRANCH="ai/issue-${ISSUE_NUM}"
+# Derived from current repo; override with OWNER_REPO env var for cross-repo runs.
+OWNER_REPO="${OWNER_REPO:-$(cd "$REPO_ROOT" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")}"
+if [[ -z "$OWNER_REPO" ]]; then
+  echo "FATAL: could not determine owner/repo. Set OWNER_REPO=<owner>/<repo> and retry." >&2
+  exit 1
+fi
 PROMPTS_DIR="automation/prompts"
 AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
 AGENT_CLI="${AGENT_CLI:-opencode}"
@@ -77,6 +83,42 @@ check_branch_after_agent() {
   if [[ "$current" != "${BRANCH}" ]]; then
     orchestrator_fail "Agent switched branch from ${BRANCH} to ${current}"
   fi
+}
+
+# Ensure $WORKTREE_DIR exists and is a valid git worktree on $BRANCH. Used by
+# every phase after read_issue so resumes survive `git worktree prune`,
+# archive pre-seeding that skips the read_issue setup path, and accidental
+# rm-rf of .ai-worktrees/. Idempotent: no-op when the worktree is healthy.
+ensure_worktree() {
+  if [[ -e "${WORKTREE_DIR}/.git" ]]; then
+    return 0
+  fi
+
+  # ISSUES_DIR == WORKTREE_DIR (see top of script), so log() can't write to its
+  # usual path while the worktree is missing. Emit the recovery banner straight
+  # to stderr; once recovery succeeds, normal log() resumes.
+  echo "[$(date +%H:%M:%S)] WARN: Worktree missing at ${WORKTREE_DIR}, attempting recovery..." >&2
+
+  cd "${REPO_ROOT}"
+  git worktree prune 2>/dev/null || true
+  git fetch origin "${BASE_BRANCH}" 2>/dev/null || true
+
+  if git rev-parse --verify "${BRANCH}" 2>/dev/null; then
+    # Local branch ref exists — attach a worktree to it.
+    git worktree add "$WORKTREE_DIR" "$BRANCH" 2>&1 \
+      || orchestrator_fail "Failed to attach worktree to local branch ${BRANCH}"
+  elif git fetch origin "${BRANCH}" 2>/dev/null; then
+    # Remote branch exists — recreate the branch from origin.
+    git worktree add "$WORKTREE_DIR" -b "$BRANCH" "origin/${BRANCH}" 2>&1 \
+      || orchestrator_fail "Failed to recreate worktree from origin/${BRANCH}"
+  else
+    orchestrator_fail "Worktree missing and no local or remote branch ${BRANCH} to recover from"
+  fi
+
+  if [[ ! -e "${WORKTREE_DIR}/.git" ]]; then
+    orchestrator_fail "Worktree recovery completed but ${WORKTREE_DIR} is still not a worktree"
+  fi
+  log "Worktree recovered at ${WORKTREE_DIR}"
 }
 
 # ── result resolution helpers ───────────────────────────────────────────────
@@ -238,8 +280,17 @@ run_agent_raw() {
 
   if [[ $ec -ne 0 ]]; then
     warn "Phase '$phase' exited with code $ec"
-    if grep -qi "waiting\|blocked\|asking.*question\|need.*input" "$output_log" 2>/dev/null; then
-      orchestrator_fail "Phase '$phase' is blocked (agent waiting for input)"
+    # Blocked detection requires a structured signal, not free-text matching.
+    # The old grep ("waiting|blocked|asking.*question|need.*input", case-
+    # insensitive) hit any agent prose that mentioned those words in passing
+    # (e.g. "I waited for the test to finish") and killed valid runs.
+    #
+    # The contract is now: if the agent wants to block, it writes exactly
+    # `BLOCKED` on its own line (optionally followed by a colon-prefixed
+    # reason). This matches the same convention used by the result-file
+    # mechanism (BLOCKED is one of the allowed result values).
+    if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "$output_log" 2>/dev/null; then
+      orchestrator_fail "Phase '$phase' is blocked (agent emitted BLOCKED)"
     fi
   fi
 }
@@ -399,7 +450,11 @@ if [[ "$PHASE" == "read_issue" ]]; then
   gh issue view "$ISSUE_NUM" --json body --jq '.body' \
     > "${ISSUE_STAGING_DIR}/issue.md"
 
-  gh issue view "$ISSUE_NUM" --json comments --jq '.comments[].body' \
+  # gh issue view --json comments returns at most 100 comments (GraphQL limit,
+  # no auto-pagination). Use the REST endpoint with --paginate so issues with
+  # hundreds of comments don't silently lose data.
+  gh api --paginate "repos/${OWNER_REPO}/issues/${ISSUE_NUM}/comments" \
+    --jq '.[].body' \
     > "${ISSUE_STAGING_DIR}/issue-comments.md"
 
   ISSUE_TITLE=$(gh issue view "$ISSUE_NUM" --json title --jq '.title')
@@ -427,8 +482,6 @@ if [[ "$PHASE" == "read_issue" ]]; then
   # Create worktree/branch
   info "Creating branch: ${BRANCH}"
   git fetch origin "$BASE_BRANCH" 2>/dev/null || true
-
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
 
   # Delete remote branch if it exists (fresh start)
   if git fetch origin "${BRANCH}" 2>/dev/null; then
@@ -513,7 +566,7 @@ if [[ "$PHASE" == "plan-design" ]]; then
   log "=== Phase: plan-design (brainstorm) ==="
   LAST_PHASE="plan-design"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   BRAINSTORM_PROMPT="You are analyzing a GitHub issue to produce a design document.
 
@@ -559,7 +612,7 @@ if [[ "$PHASE" == "plan-write" ]]; then
   log "=== Phase: plan-write (implementation plan) ==="
   LAST_PHASE="plan-write"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   # design.md lives in the worktree (written by plan-design agent) — no action needed
 
@@ -620,7 +673,7 @@ if [[ "$PHASE" == "implement" ]]; then
   log "=== Phase: implement ==="
   LAST_PHASE="implement"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   if [[ -f "${ISSUES_DIR}/blocked.json" ]]; then
     orchestrator_fail "Orchestrator is blocked from previous phase"
@@ -1100,7 +1153,7 @@ if [[ "$PHASE" == "validate" ]]; then
   log "=== Phase: validate ==="
   LAST_PHASE="validate"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   log "Running pnpm build && pnpm lint && pnpm typecheck && pnpm test..."
   cd "${WORKTREE_DIR}"
@@ -1149,7 +1202,7 @@ if [[ "$PHASE" == "review" ]]; then
   log "=== Phase: review ==="
   LAST_PHASE="review"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   REVIEW_PROMPT="You are reviewing code changes.
 
@@ -1217,7 +1270,7 @@ while [[ "$PHASE" == "fix-review" ]]; do
   log "=== Phase: fix-review (loop $FIX_LOOP_COUNT) ==="
   LAST_PHASE="fix-review"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
     info "No review.md found. Skipping fix loop."
@@ -1341,7 +1394,7 @@ if [[ "$PHASE" == "compound" ]]; then
   log "=== Phase: compound ==="
   LAST_PHASE="compound"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   if [[ ! -f "${WORKTREE_DIR}/implementation-log.md" ]]; then
     info "No implementation-log.md found. Skipping compound."
@@ -1396,20 +1449,7 @@ if [[ "$PHASE" == "create-pr" ]]; then
   log "=== Phase: create-pr ==="
   LAST_PHASE="create-pr"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
-
-  # Recover missing/stale worktree on resume
-  if [[ ! -d "${WORKTREE_DIR}" ]]; then
-    warn "Worktree missing, attempting recovery..."
-    cd "${REPO_ROOT}"
-    git worktree prune 2>/dev/null || true
-    git fetch origin "${BASE_BRANCH}" 2>/dev/null || true
-    if git fetch origin "${BRANCH}" 2>/dev/null; then
-      git worktree add "$WORKTREE_DIR" "$BRANCH"
-    else
-      orchestrator_fail "Worktree missing and no remote branch ${BRANCH} to recover from"
-    fi
-  fi
+  ensure_worktree
 
   cd "${WORKTREE_DIR}"
   ensure_branch
@@ -1472,27 +1512,32 @@ $FIX_LOOP_COUNT
 All logs and artifacts saved to \`ai/issues/${ISSUE_NUM}/\`
 EOF
 
-  # Create PR
+  # Create PR. `gh pr create` does NOT support --json (only `gh pr view/list`
+  # do); it writes the PR URL to stdout on success. Capture that directly.
   PR_BODY=$(cat "${ISSUES_DIR}/pr-summary.md")
-  PR_CREATE_OUT=$(gh pr create \
+  PR_URL=$(gh pr create \
     --base "$BASE_BRANCH" \
     --head "$BRANCH" \
     --title "Issue #${ISSUE_NUM}: automated implementation" \
-    --body "$PR_BODY" --json number,url 2>/dev/null) || {
-    # PR may already exist — look it up
-    PR_CREATE_OUT=$(gh pr list --head "$BRANCH" --state open --json number,url --jq '.[0]' 2>/dev/null || echo "")
-    if [[ -z "$PR_CREATE_OUT" || "$PR_CREATE_OUT" == "null" ]]; then
-      orchestrator_fail "Failed to create PR"
-    fi
-  }
+    --body "$PR_BODY" 2>/dev/null | tail -1) || PR_URL=""
 
-  PR_NUM=$(echo "$PR_CREATE_OUT" | jq -r '.number // empty' 2>/dev/null || echo "")
-  PR_URL=$(echo "$PR_CREATE_OUT" | jq -r '.url // empty' 2>/dev/null || echo "")
-  # Fallback: try to extract from raw URL if jq fails
+  if [[ -z "$PR_URL" ]]; then
+    # Create failed — most commonly because a PR already exists for this branch.
+    # Look it up by head ref and continue (idempotent for resumes).
+    PR_URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty' 2>/dev/null || echo "")
+    if [[ -z "$PR_URL" ]]; then
+      orchestrator_fail "Failed to create PR and no open PR exists for branch ${BRANCH}"
+    fi
+    log "PR already exists for ${BRANCH}, reusing: ${PR_URL}"
+  fi
+
+  # Resolve the PR number via gh pr view, which DOES support --json.
+  PR_NUM=$(gh pr view "$PR_URL" --json number --jq '.number' 2>/dev/null || echo "")
   if [[ -z "$PR_NUM" ]]; then
-    PR_URL=$(echo "$PR_CREATE_OUT" | head -1)
+    # Final fallback: parse the trailing /<number> from the URL.
     PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$' || echo "unknown")
   fi
+
   echo "$PR_URL" > "${ISSUES_DIR}/pr-url.txt"
   echo "$PR_NUM" > "${ISSUES_DIR}/pr-number.txt"
 
