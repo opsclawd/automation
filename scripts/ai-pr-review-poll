@@ -497,18 +497,33 @@ process_reviews() {
   log "Review result: ${review_result}"
 
   # ── Verification chain ──────────────────────────────────────────────────
+  # Two independent flags:
+  #
+  #   replies_ok — replies are observable on GitHub for every comment ID we
+  #                fed the agent. This is the *irreversible* side-effect we
+  #                must not duplicate; once true, the comment IDs are done
+  #                whether or not the build is green.
+  #
+  #   verify_ok  — every verification (replies + commits + build) passed.
+  #                Drives the return code so the outer loop reports failure
+  #                correctly, but does NOT gate processed-ID tracking.
+  #
+  # This split avoids two failure modes:
+  #   (a) agent crashes before replying → replies_ok=false → IDs unmarked
+  #       → next poll retries (the original P0 fix).
+  #   (b) replies posted but build red → replies_ok=true → IDs marked
+  #       → next poll does not re-feed the same comments and the agent
+  #       does not spam duplicate replies. Build still re-runs naturally
+  #       on the next poll once unrelated state changes.
   local verify_ok=true
+  local replies_ok=false
 
   if [[ "$review_result" == "NO_FIXES_NEEDED" ]]; then
     log "Agent reports no fixes needed. Skipping commit/build verification."
-    verify_replies_posted || verify_ok=false
-  elif [[ "$review_result" == "ALL_DONE" ]]; then
+    if verify_replies_posted; then replies_ok=true; else verify_ok=false; fi
+  elif [[ "$review_result" == "ALL_DONE" || "$review_result" == "PARTIAL" ]]; then
     verify_commits_pushed "$pre_sha" "$PR_BRANCH" || verify_ok=false
-    verify_replies_posted || verify_ok=false
-    verify_build_passes || verify_ok=false
-  elif [[ "$review_result" == "PARTIAL" ]]; then
-    verify_commits_pushed "$pre_sha" "$PR_BRANCH" || verify_ok=false
-    verify_replies_posted || verify_ok=false
+    if verify_replies_posted; then replies_ok=true; else verify_ok=false; fi
     verify_build_passes || verify_ok=false
   elif [[ "$review_result" == "BLOCKED" ]]; then
     warn "Agent is blocked. No verification possible."
@@ -516,18 +531,24 @@ process_reviews() {
   else
     warn "Unknown result '${review_result}'. Running full verification."
     verify_commits_pushed "$pre_sha" "$PR_BRANCH" || verify_ok=false
-    verify_replies_posted || verify_ok=false
+    if verify_replies_posted; then replies_ok=true; else verify_ok=false; fi
     verify_build_passes || verify_ok=false
   fi
 
-  if $verify_ok; then
-    # Only now mark these comment IDs as processed. If we crashed or failed
-    # verification, the IDs stay unmarked so the next poll will retry them.
+  # Mark IDs processed as soon as replies are visible on GitHub, regardless
+  # of build outcome. The build will be re-checked on the next poll anyway.
+  if $replies_ok; then
     echo "$comments" | jq -r '.[].id' >> "$PROCESSED_IDS_FILE"
-    log "All verifications passed; marked ${comment_count} comment(s) as processed."
+    log "Replies confirmed on GitHub; marked ${comment_count} comment(s) as processed."
+  else
+    warn "Replies not confirmed; comment IDs NOT marked processed (will retry next poll)."
+  fi
+
+  if $verify_ok; then
+    log "All verifications passed."
     return 0
   else
-    warn "Some verifications failed — comment IDs NOT marked processed (will retry next poll)."
+    warn "Some verifications failed — see logs above."
     return 2
   fi
 }
