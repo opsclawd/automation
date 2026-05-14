@@ -85,6 +85,42 @@ check_branch_after_agent() {
   fi
 }
 
+# Ensure $WORKTREE_DIR exists and is a valid git worktree on $BRANCH. Used by
+# every phase after read_issue so resumes survive `git worktree prune`,
+# archive pre-seeding that skips the read_issue setup path, and accidental
+# rm-rf of .ai-worktrees/. Idempotent: no-op when the worktree is healthy.
+ensure_worktree() {
+  if [[ -e "${WORKTREE_DIR}/.git" ]]; then
+    return 0
+  fi
+
+  # ISSUES_DIR == WORKTREE_DIR (see top of script), so log() can't write to its
+  # usual path while the worktree is missing. Emit the recovery banner straight
+  # to stderr; once recovery succeeds, normal log() resumes.
+  echo "[$(date +%H:%M:%S)] WARN: Worktree missing at ${WORKTREE_DIR}, attempting recovery..." >&2
+
+  cd "${REPO_ROOT}"
+  git worktree prune 2>/dev/null || true
+  git fetch origin "${BASE_BRANCH}" 2>/dev/null || true
+
+  if git rev-parse --verify "${BRANCH}" 2>/dev/null; then
+    # Local branch ref exists — attach a worktree to it.
+    git worktree add "$WORKTREE_DIR" "$BRANCH" 2>&1 \
+      || orchestrator_fail "Failed to attach worktree to local branch ${BRANCH}"
+  elif git fetch origin "${BRANCH}" 2>/dev/null; then
+    # Remote branch exists — recreate the branch from origin.
+    git worktree add "$WORKTREE_DIR" -b "$BRANCH" "origin/${BRANCH}" 2>&1 \
+      || orchestrator_fail "Failed to recreate worktree from origin/${BRANCH}"
+  else
+    orchestrator_fail "Worktree missing and no local or remote branch ${BRANCH} to recover from"
+  fi
+
+  if [[ ! -e "${WORKTREE_DIR}/.git" ]]; then
+    orchestrator_fail "Worktree recovery completed but ${WORKTREE_DIR} is still not a worktree"
+  fi
+  log "Worktree recovered at ${WORKTREE_DIR}"
+}
+
 # ── result resolution helpers ───────────────────────────────────────────────
 #
 # Hybrid result extraction: agent writes .result file (primary), extractor
@@ -438,8 +474,6 @@ if [[ "$PHASE" == "read_issue" ]]; then
   info "Creating branch: ${BRANCH}"
   git fetch origin "$BASE_BRANCH" 2>/dev/null || true
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
-
   # Delete remote branch if it exists (fresh start)
   if git fetch origin "${BRANCH}" 2>/dev/null; then
     warn "Remote branch ${BRANCH} exists — deleting for fresh start"
@@ -523,7 +557,7 @@ if [[ "$PHASE" == "plan-design" ]]; then
   log "=== Phase: plan-design (brainstorm) ==="
   LAST_PHASE="plan-design"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   BRAINSTORM_PROMPT="You are analyzing a GitHub issue to produce a design document.
 
@@ -569,7 +603,7 @@ if [[ "$PHASE" == "plan-write" ]]; then
   log "=== Phase: plan-write (implementation plan) ==="
   LAST_PHASE="plan-write"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   # design.md lives in the worktree (written by plan-design agent) — no action needed
 
@@ -630,7 +664,7 @@ if [[ "$PHASE" == "implement" ]]; then
   log "=== Phase: implement ==="
   LAST_PHASE="implement"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   if [[ -f "${ISSUES_DIR}/blocked.json" ]]; then
     orchestrator_fail "Orchestrator is blocked from previous phase"
@@ -1110,7 +1144,7 @@ if [[ "$PHASE" == "validate" ]]; then
   log "=== Phase: validate ==="
   LAST_PHASE="validate"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   log "Running pnpm build && pnpm lint && pnpm typecheck && pnpm test..."
   cd "${WORKTREE_DIR}"
@@ -1159,7 +1193,7 @@ if [[ "$PHASE" == "review" ]]; then
   log "=== Phase: review ==="
   LAST_PHASE="review"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   REVIEW_PROMPT="You are reviewing code changes.
 
@@ -1227,7 +1261,7 @@ while [[ "$PHASE" == "fix-review" ]]; do
   log "=== Phase: fix-review (loop $FIX_LOOP_COUNT) ==="
   LAST_PHASE="fix-review"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
     info "No review.md found. Skipping fix loop."
@@ -1351,7 +1385,7 @@ if [[ "$PHASE" == "compound" ]]; then
   log "=== Phase: compound ==="
   LAST_PHASE="compound"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
+  ensure_worktree
 
   if [[ ! -f "${WORKTREE_DIR}/implementation-log.md" ]]; then
     info "No implementation-log.md found. Skipping compound."
@@ -1406,20 +1440,7 @@ if [[ "$PHASE" == "create-pr" ]]; then
   log "=== Phase: create-pr ==="
   LAST_PHASE="create-pr"
 
-  WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
-
-  # Recover missing/stale worktree on resume
-  if [[ ! -d "${WORKTREE_DIR}" ]]; then
-    warn "Worktree missing, attempting recovery..."
-    cd "${REPO_ROOT}"
-    git worktree prune 2>/dev/null || true
-    git fetch origin "${BASE_BRANCH}" 2>/dev/null || true
-    if git fetch origin "${BRANCH}" 2>/dev/null; then
-      git worktree add "$WORKTREE_DIR" "$BRANCH"
-    else
-      orchestrator_fail "Worktree missing and no remote branch ${BRANCH} to recover from"
-    fi
-  fi
+  ensure_worktree
 
   cd "${WORKTREE_DIR}"
   ensure_branch
