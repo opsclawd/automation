@@ -23,6 +23,12 @@ cd "$REPO_ROOT"
 
 BASE_BRANCH="${BASE_BRANCH:-main}"
 BRANCH="ai/issue-${ISSUE_NUM}"
+# Derived from current repo; override with OWNER_REPO env var for cross-repo runs.
+OWNER_REPO="${OWNER_REPO:-$(cd "$REPO_ROOT" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")}"
+if [[ -z "$OWNER_REPO" ]]; then
+  echo "FATAL: could not determine owner/repo. Set OWNER_REPO=<owner>/<repo> and retry." >&2
+  exit 1
+fi
 PROMPTS_DIR="automation/prompts"
 AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
 AGENT_CLI="${AGENT_CLI:-opencode}"
@@ -399,7 +405,11 @@ if [[ "$PHASE" == "read_issue" ]]; then
   gh issue view "$ISSUE_NUM" --json body --jq '.body' \
     > "${ISSUE_STAGING_DIR}/issue.md"
 
-  gh issue view "$ISSUE_NUM" --json comments --jq '.comments[].body' \
+  # gh issue view --json comments returns at most 100 comments (GraphQL limit,
+  # no auto-pagination). Use the REST endpoint with --paginate so issues with
+  # hundreds of comments don't silently lose data.
+  gh api --paginate "repos/${OWNER_REPO}/issues/${ISSUE_NUM}/comments" \
+    --jq '.[].body' \
     > "${ISSUE_STAGING_DIR}/issue-comments.md"
 
   ISSUE_TITLE=$(gh issue view "$ISSUE_NUM" --json title --jq '.title')

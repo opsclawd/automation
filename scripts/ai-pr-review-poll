@@ -247,8 +247,13 @@ verify_replies_posted() {
     return 0
   fi
 
+  # --paginate is required: GitHub returns 30 items per page by default and
+  # a long-lived PR will quickly exceed that. Each page emits one JSON value
+  # per --jq invocation; we slurp them back into a single array with `jq -s '. | flatten'`.
   local all_replies
-  all_replies=$(gh api "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" --jq '[.[] | select(.in_reply_to_id != null) | .in_reply_to_id]' 2>/dev/null) || {
+  all_replies=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" \
+    --jq '[.[] | select(.in_reply_to_id != null) | .in_reply_to_id]' 2>/dev/null \
+    | jq -s 'flatten') || {
     warn "  verify_replies: failed to fetch PR comments for verification"
     return 1
   }
@@ -365,12 +370,19 @@ process_reviews() {
 
   log "Fetching PR review comments..."
 
+  # Pagination: each page's --jq output is one JSON array; slurp+flatten yields
+  # a single combined array. Without --paginate, anything past page 1 (>30
+  # items) is silently dropped.
   local reviews all_comments comments
-  reviews=$(gh api "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/reviews" --jq '[.[] | select(.state == "CHANGES_REQUESTED" or .state == "COMMENT")]' 2>/dev/null) || {
+  reviews=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/reviews" \
+    --jq '[.[] | select(.state == "CHANGES_REQUESTED" or .state == "COMMENT")]' 2>/dev/null \
+    | jq -s 'flatten') || {
     warn "Failed to fetch reviews. Skipping this poll."
     return 1
   }
-  all_comments=$(gh api "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" --jq '[.[] | {id, path, body, line, pull_request_review_id, user: .user.login}]' 2>/dev/null) || {
+  all_comments=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" \
+    --jq '[.[] | {id, path, body, line, pull_request_review_id, user: .user.login}]' 2>/dev/null \
+    | jq -s 'flatten') || {
     warn "Failed to fetch comments. Skipping this poll."
     return 1
   }
