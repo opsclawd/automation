@@ -13,7 +13,13 @@ ISSUE_NUM="${2:-}"
 MAX_POLLS="${3:-3}"
 POLL_INTERVAL="${4:-300}"
 AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
-OWNER_REPO="opsclawd/fantasy-golf"
+# OWNER_REPO defaults to the current repo (where this checkout was cloned from).
+# Override with the OWNER_REPO env var when running against a different repo.
+OWNER_REPO="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")}"
+if [[ -z "$OWNER_REPO" ]]; then
+  echo "FATAL: could not determine owner/repo. Set OWNER_REPO=<owner>/<repo> and retry." >&2
+  exit 1
+fi
 
 if [[ -z "$PR_NUMBER" ]]; then
   echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=3] [interval_sec=300]" >&2
@@ -26,7 +32,9 @@ PROCESSED_IDS_FILE="${ISSUES_DIR}/processed-comment-ids.txt"
 touch "$PROCESSED_IDS_FILE"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log"; }
-warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" >&2 | tee -a "${ISSUES_DIR}/poll.log" >&2; }
+# Pipe BEFORE >&2 so tee actually sees the message; the trailing >&2 then
+# routes tee's stdout to stderr for terminal visibility.
+warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log" >&2; }
 
 log "=== PR review poll starting (PR #${PR_NUMBER}, max_polls=${MAX_POLLS}, interval=${POLL_INTERVAL}s) ==="
 log "PID: $$"
@@ -257,25 +265,31 @@ verify_replies_posted() {
 }
 
 verify_build_passes() {
-  log "  verify_build: running lint + build + test..."
+  log "  verify_build: running lint + typecheck + build + test..."
   local build_log="${ISSUES_DIR}/build-verify-p${POLL_COUNT}.log"
 
-  if ! npm run lint > "$build_log" 2>&1; then
+  # Use pnpm to stay consistent with ai-run-issue-v2's validate phase.
+  if ! pnpm lint > "$build_log" 2>&1; then
     warn "  verify_build: lint failed (see ${build_log})"
     return 1
   fi
 
-  if ! npm run build >> "$build_log" 2>&1; then
+  if ! pnpm typecheck >> "$build_log" 2>&1; then
+    warn "  verify_build: typecheck failed (see ${build_log})"
+    return 1
+  fi
+
+  if ! pnpm build >> "$build_log" 2>&1; then
     warn "  verify_build: build failed (see ${build_log})"
     return 1
   fi
 
-  if ! npm test >> "$build_log" 2>&1; then
+  if ! pnpm test >> "$build_log" 2>&1; then
     warn "  verify_build: tests failed (see ${build_log})"
     return 1
   fi
 
-  log "  verify_build: lint + build + test all passed"
+  log "  verify_build: lint + typecheck + build + test all passed"
   return 0
 }
 
@@ -372,8 +386,10 @@ process_reviews() {
 
   log "Found $comment_count new comment(s) (skipping already-processed). Processing..."
 
-  # Record these comment IDs as processed so we don't reply to them again
-  echo "$comments" | jq -r '.[].id' >> "$PROCESSED_IDS_FILE"
+  # NOTE: We intentionally do NOT append IDs to PROCESSED_IDS_FILE here.
+  # If we did, an agent crash or verification failure would silently drop
+  # these comments forever. IDs are only marked processed after the agent
+  # AND verification succeed (see end of this function).
 
   echo "$reviews" > "${ISSUES_DIR}/reviews.json"
   echo "$comments" > "${ISSUES_DIR}/comments.json"
@@ -505,10 +521,13 @@ process_reviews() {
   fi
 
   if $verify_ok; then
-    log "All verifications passed."
+    # Only now mark these comment IDs as processed. If we crashed or failed
+    # verification, the IDs stay unmarked so the next poll will retry them.
+    echo "$comments" | jq -r '.[].id' >> "$PROCESSED_IDS_FILE"
+    log "All verifications passed; marked ${comment_count} comment(s) as processed."
     return 0
   else
-    warn "Some verifications failed — see logs above."
+    warn "Some verifications failed — comment IDs NOT marked processed (will retry next poll)."
     return 2
   fi
 }
