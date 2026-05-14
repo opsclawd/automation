@@ -28,8 +28,18 @@ fi
 
 ISSUES_DIR="${REPO_ROOT}/ai/poll-pr-${PR_NUMBER}"
 mkdir -p "$ISSUES_DIR"
+# Two-tier processed-ID tracking. The agent's reply is the irreversible
+# side-effect we must never duplicate; the build outcome can flip back and
+# forth across polls. Splitting the tracking lets us:
+#   - never re-prompt the agent for an ID it has already replied to;
+#   - keep re-running build verification across polls until it succeeds;
+#   - promote IDs from REPLIED to PROCESSED only when verification is clean.
+#
+# PROCESSED — terminal: replies posted AND verification (commits + build) passed.
+# REPLIED   — interim:  replies posted, verification pending.
 PROCESSED_IDS_FILE="${ISSUES_DIR}/processed-comment-ids.txt"
-touch "$PROCESSED_IDS_FILE"
+REPLIED_IDS_FILE="${ISSUES_DIR}/replied-comment-ids.txt"
+touch "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log"; }
 # Pipe BEFORE >&2 so tee actually sees the message; the trailing >&2 then
@@ -365,12 +375,16 @@ process_reviews() {
     return 1
   }
 
-  # Filter out already-processed comment IDs to avoid duplicate replies
-  local processed_ids
-  processed_ids=$(cat "$PROCESSED_IDS_FILE" 2>/dev/null | tr '\n' ',' | sed 's/,$//')
-  if [[ -n "$processed_ids" ]]; then
-    comments=$(echo "$all_comments" | jq --arg ids "$processed_ids" '
-      [ .[] | .id as $cid | select(($ids | split(",") | map(tonumber? // 0) | index($cid) | not) ) ]
+  # Filter out IDs the agent has already replied to (PROCESSED ∪ REPLIED) so
+  # the agent is never re-prompted for a thread it already answered.
+  local known_ids
+  known_ids=$(cat "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE" 2>/dev/null \
+    | tr '\n' ',' | sed 's/,$//')
+  if [[ -n "$known_ids" ]]; then
+    comments=$(echo "$all_comments" | jq --arg ids "$known_ids" '
+      [ .[] | .id as $cid
+        | select( ($ids | split(",") | map(tonumber? | select(. != null)) | index($cid)) | not )
+      ]
     ' 2>/dev/null || echo "$all_comments")
   else
     comments="$all_comments"
@@ -380,6 +394,26 @@ process_reviews() {
   comment_count=$(echo "$comments" | jq 'length')
 
   if [[ $comment_count -eq 0 ]]; then
+    # No new comments. But if any IDs are in REPLIED (replies posted, build
+    # was last seen red), the previous poll left work undone. Re-run build
+    # verification only — don't re-invoke the agent, replies are already up.
+    local pending_count=0
+    if [[ -s "$REPLIED_IDS_FILE" ]]; then
+      pending_count=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
+    fi
+    if [[ $pending_count -gt 0 ]]; then
+      log "No new comments, but ${pending_count} replied ID(s) awaiting verification. Re-checking build."
+      if verify_build_passes; then
+        # Promote everything in REPLIED to PROCESSED and clear REPLIED.
+        cat "$REPLIED_IDS_FILE" >> "$PROCESSED_IDS_FILE"
+        : > "$REPLIED_IDS_FILE"
+        log "Build now passing; promoted ${pending_count} ID(s) from REPLIED to PROCESSED."
+        return 0
+      else
+        warn "Build still failing; ${pending_count} ID(s) remain in REPLIED for next poll."
+        return 2
+      fi
+    fi
     log "No new review comments found."
     return 1
   fi
@@ -535,13 +569,20 @@ process_reviews() {
     verify_build_passes || verify_ok=false
   fi
 
-  # Mark IDs processed as soon as replies are visible on GitHub, regardless
-  # of build outcome. The build will be re-checked on the next poll anyway.
-  if $replies_ok; then
+  # Two-tier append:
+  #   replies_ok && verify_ok   → PROCESSED (terminal; never re-touch these)
+  #   replies_ok && !verify_ok  → REPLIED   (don't re-prompt the agent, but
+  #                                          keep re-running build verification
+  #                                          on subsequent polls)
+  #   !replies_ok               → nothing   (full retry next poll)
+  if $replies_ok && $verify_ok; then
     echo "$comments" | jq -r '.[].id' >> "$PROCESSED_IDS_FILE"
-    log "Replies confirmed on GitHub; marked ${comment_count} comment(s) as processed."
+    log "Replies + verification confirmed; marked ${comment_count} comment(s) as PROCESSED."
+  elif $replies_ok; then
+    echo "$comments" | jq -r '.[].id' >> "$REPLIED_IDS_FILE"
+    warn "Replies confirmed but verification failed; marked ${comment_count} comment(s) as REPLIED (will re-verify next poll)."
   else
-    warn "Replies not confirmed; comment IDs NOT marked processed (will retry next poll)."
+    warn "Replies not confirmed; comment IDs NOT marked (full retry next poll)."
   fi
 
   if $verify_ok; then
