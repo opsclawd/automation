@@ -1482,27 +1482,32 @@ $FIX_LOOP_COUNT
 All logs and artifacts saved to \`ai/issues/${ISSUE_NUM}/\`
 EOF
 
-  # Create PR
+  # Create PR. `gh pr create` does NOT support --json (only `gh pr view/list`
+  # do); it writes the PR URL to stdout on success. Capture that directly.
   PR_BODY=$(cat "${ISSUES_DIR}/pr-summary.md")
-  PR_CREATE_OUT=$(gh pr create \
+  PR_URL=$(gh pr create \
     --base "$BASE_BRANCH" \
     --head "$BRANCH" \
     --title "Issue #${ISSUE_NUM}: automated implementation" \
-    --body "$PR_BODY" --json number,url 2>/dev/null) || {
-    # PR may already exist — look it up
-    PR_CREATE_OUT=$(gh pr list --head "$BRANCH" --state open --json number,url --jq '.[0]' 2>/dev/null || echo "")
-    if [[ -z "$PR_CREATE_OUT" || "$PR_CREATE_OUT" == "null" ]]; then
-      orchestrator_fail "Failed to create PR"
-    fi
-  }
+    --body "$PR_BODY" 2>/dev/null | tail -1) || PR_URL=""
 
-  PR_NUM=$(echo "$PR_CREATE_OUT" | jq -r '.number // empty' 2>/dev/null || echo "")
-  PR_URL=$(echo "$PR_CREATE_OUT" | jq -r '.url // empty' 2>/dev/null || echo "")
-  # Fallback: try to extract from raw URL if jq fails
+  if [[ -z "$PR_URL" ]]; then
+    # Create failed — most commonly because a PR already exists for this branch.
+    # Look it up by head ref and continue (idempotent for resumes).
+    PR_URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url // empty' 2>/dev/null || echo "")
+    if [[ -z "$PR_URL" ]]; then
+      orchestrator_fail "Failed to create PR and no open PR exists for branch ${BRANCH}"
+    fi
+    log "PR already exists for ${BRANCH}, reusing: ${PR_URL}"
+  fi
+
+  # Resolve the PR number via gh pr view, which DOES support --json.
+  PR_NUM=$(gh pr view "$PR_URL" --json number --jq '.number' 2>/dev/null || echo "")
   if [[ -z "$PR_NUM" ]]; then
-    PR_URL=$(echo "$PR_CREATE_OUT" | head -1)
+    # Final fallback: parse the trailing /<number> from the URL.
     PR_NUM=$(echo "$PR_URL" | grep -oE '[0-9]+$' || echo "unknown")
   fi
+
   echo "$PR_URL" > "${ISSUES_DIR}/pr-url.txt"
   echo "$PR_NUM" > "${ISSUES_DIR}/pr-number.txt"
 
