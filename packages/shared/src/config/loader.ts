@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve } from 'node:path';
 import { ZodError } from 'zod';
 import { ConfigError } from './errors.js';
 import { orchestratorConfigSchema, type OrchestratorConfig } from './schema.js';
@@ -7,12 +7,17 @@ import { orchestratorConfigSchema, type OrchestratorConfig } from './schema.js';
 const CONFIG_FILENAME = '.ai-orchestrator.json';
 
 export function loadConfig(repoRoot: string): OrchestratorConfig {
-  const path = join(repoRoot, CONFIG_FILENAME);
+  const path = resolve(repoRoot, CONFIG_FILENAME);
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
   } catch (err) {
-    throw new ConfigError(`Missing ${CONFIG_FILENAME} at ${path}`, err);
+    const code = (err as NodeJS.ErrnoException).code;
+    const message =
+      code === 'ENOENT'
+        ? `Missing ${CONFIG_FILENAME} at ${path}`
+        : `Failed to read ${CONFIG_FILENAME} at ${path}: ${(err as Error).message}`;
+    throw new ConfigError(message, err);
   }
   let json: unknown;
   try {

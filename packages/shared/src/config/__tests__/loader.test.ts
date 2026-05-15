@@ -39,7 +39,7 @@ describe('loadConfig', () => {
   it('throws ConfigError when JSON is malformed', () => {
     const repo = makeRepo('{ not json');
     expect(() => loadConfig(repo)).toThrow(ConfigError);
-    expect(() => loadConfig(repo)).toThrow(/Invalid JSON/);
+    expect(() => loadConfig(repo)).toThrow(/^Invalid JSON/);
   });
 
   it('throws ConfigError with field path on invalid value', () => {

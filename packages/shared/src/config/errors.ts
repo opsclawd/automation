@@ -1,9 +1,6 @@
 export class ConfigError extends Error {
-  constructor(
-    message: string,
-    public override cause?: unknown,
-  ) {
-    super(message);
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
     this.name = 'ConfigError';
   }
 }
