@@ -46,15 +46,15 @@ export function startPhase(run: Run, phase: string): Run {
 }
 
 export function completePhase(run: Run, phase: string): Run {
-  return {
-    ...run,
-    completedPhases: [...run.completedPhases, phase],
-    currentPhase: undefined,
-  };
+  const { currentPhase: _currentPhase, ...rest } = run;
+  void _currentPhase;
+  return { ...rest, completedPhases: [...run.completedPhases, phase] };
 }
 
 export function passRun(run: Run, at: Date): Run {
-  return { ...run, status: 'passed', completedAt: at, currentPhase: undefined };
+  const { currentPhase: _currentPhase, ...rest } = run;
+  void _currentPhase;
+  return { ...rest, status: 'passed', completedAt: at };
 }
 
 export function failRun(run: Run, reason: string, at: Date = new Date()): Run {
