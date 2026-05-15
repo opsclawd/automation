@@ -21,6 +21,10 @@
   },
   "dependencies": {
     "@ai-sdlc/domain": "workspace:*",
-    "@ai-sdlc/shared": "workspace:*"
+    "@ai-sdlc/shared": "workspace:*",
+    "better-sqlite3": "^11.5.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11"
   }
 }
