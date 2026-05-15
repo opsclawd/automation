@@ -537,6 +537,7 @@ CLAUDE.md
 tsconfig.tsbuildinfo
 spec-review-task-*.md
 quality-review-task-*.md
+review-findings-status.txt
 implement-task-*.md
 fix-review-task-*.md
 fix-review-task-*.log
@@ -1671,7 +1672,7 @@ if [[ "$PHASE" == "done" ]]; then
     implementation-log.md \
     compound.md \
     validation.md validation.result validate.log revalidate-*.log validation-*.md \
-    review.md review-fix-log.md code-review.md \
+    review.md review-fix-log.md code-review.md review-findings-status.txt \
     pr-summary.md pr-url.txt pr-number.txt \
     poll-pr.log \
     install-worktree.log \

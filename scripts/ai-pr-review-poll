@@ -41,7 +41,7 @@ PROCESSED_IDS_FILE="${ISSUES_DIR}/processed-comment-ids.txt"
 REPLIED_IDS_FILE="${ISSUES_DIR}/replied-comment-ids.txt"
 touch "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE"
 
-log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log"; }
+log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log" >&2; }
 # Pipe BEFORE >&2 so tee actually sees the message; the trailing >&2 then
 # routes tee's stdout to stderr for terminal visibility.
 warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log" >&2; }
@@ -67,12 +67,19 @@ PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || echo "unk
 log "PR #${PR_NUMBER}: ${PR_URL} (branch: ${PR_BRANCH})"
 
 # ── Checkout branch in isolated worktree ────────────────────────────────────
+ORCHESTRATOR_WORKTREE="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
 POLL_WORKTREE="${REPO_ROOT}/.ai-worktrees/poll-pr-${PR_NUMBER}"
 cd "$REPO_ROOT"
 git fetch origin "$PR_BRANCH" 2>/dev/null || true
 
-if [[ -d "$POLL_WORKTREE" ]]; then
-  log "Reusing existing worktree at ${POLL_WORKTREE}"
+if [[ -n "$ISSUE_NUM" && -d "$ORCHESTRATOR_WORKTREE" ]]; then
+  POLL_WORKTREE="$ORCHESTRATOR_WORKTREE"
+  log "Reusing orchestrator worktree at ${POLL_WORKTREE}"
+  cd "$POLL_WORKTREE"
+  git checkout "$PR_BRANCH" 2>/dev/null || true
+  git pull --ff-only origin "$PR_BRANCH" 2>/dev/null || git merge "origin/$PR_BRANCH" 2>/dev/null || true
+elif [[ -d "$POLL_WORKTREE" ]]; then
+  log "Reusing existing poll worktree at ${POLL_WORKTREE}"
   cd "$POLL_WORKTREE"
   git checkout "$PR_BRANCH" 2>/dev/null || true
   git pull --ff-only origin "$PR_BRANCH" 2>/dev/null || git merge "origin/$PR_BRANCH" 2>/dev/null || true
@@ -192,7 +199,7 @@ resolve_result() {
   log "  Result (fallback): ${fallback}"
   echo "$fallback" > "$result_file" 2>/dev/null || true
   echo "$fallback"
-  return 1
+  return 0
 }
 
 # ── Verification functions ──────────────────────────────────────────────────
@@ -298,7 +305,7 @@ verify_replies_posted() {
   for cid in $expected_ids; do
     total=$((total + 1))
     local has_reply
-    has_reply=$(echo "$all_replies" | jq --argjson cid "$cid" '[.[] | select(. == $cid)] | length' 2>/dev/null || echo "0")
+    has_reply=$(echo "$all_replies" | jq --arg cid "$cid" '[.[] | select((. | tostring) == $cid or (. | tonumber) == ($cid | tonumber))] | length' 2>/dev/null || echo "0")
     if [[ "$has_reply" -eq 0 ]]; then
       warn "  verify_replies: comment ${cid} has no reply"
       missing=$((missing + 1))
@@ -315,6 +322,8 @@ verify_replies_posted() {
 }
 
 verify_build_passes() {
+  cd "$POLL_WORKTREE" || { warn "  verify_build: cannot cd to ${POLL_WORKTREE}"; return 1; }
+  pnpm install --frozen-lockfile 2>/dev/null || pnpm install 2>/dev/null || true
   log "  verify_build: running lint + typecheck + build + test..."
   local build_log="${ISSUES_DIR}/build-verify-p${POLL_COUNT}.log"
 
