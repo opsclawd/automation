@@ -94,5 +94,7 @@ export function failRun(run: Run, reason: string, at: Date = new Date()): Run {
   if (TERMINAL_STATUSES.has(run.status)) {
     throw new RunStateError(`cannot fail run ${run.displayId}: already ${run.status}`);
   }
-  return { ...run, status: 'failed', completedAt: at, failureReason: reason };
+  const next: Run = { ...run, status: 'failed', completedAt: at, failureReason: reason };
+  delete next.currentPhase;
+  return next;
 }
