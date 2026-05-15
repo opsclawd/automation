@@ -478,8 +478,12 @@ process_reviews() {
     warn "Failed to fetch reviews. Skipping this poll."
     return 1
   }
+  # Filter to TOP-LEVEL review comments only (in_reply_to_id == null).
+  # Without this, the agent's own past replies come back as fresh "comments"
+  # and it dutifully replies to their parent thread — which is the source of
+  # the runaway duplicate-reply spiral on PRs with prior poll history.
   all_comments=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" \
-    --jq '[.[] | {id, path, body, line, pull_request_review_id, user: .user.login}]' 2>/dev/null \
+    --jq '[.[] | select(.in_reply_to_id == null) | {id, path, body, line, pull_request_review_id, user: .user.login}]' 2>/dev/null \
     | jq -s 'flatten') || {
     warn "Failed to fetch comments. Skipping this poll."
     return 1
