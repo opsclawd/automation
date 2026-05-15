@@ -95,6 +95,16 @@ fi
 log "Working directory: $(pwd)"
 
 # ── Result resolution (three-tier: .result file → extractor agent → fallback) ──
+
+# Read first non-whitespace token from a result file. Uses `head -1 file`
+# (not `cat | head`) so head reads the file directly — no upstream
+# producer that could be SIGPIPE'd when head closes after one line. With
+# `pipefail`, the cat-piped variant silently returned empty when a
+# result file had >1 line; this avoids that footgun.
+read_result_value() {
+  head -1 "$1" 2>/dev/null | tr -d '[:space:]' || true
+}
+
 validate_result_file() {
   local result_file="$1"; shift
   local allowed_values=("$@")
@@ -104,7 +114,7 @@ validate_result_file() {
     return 1
   fi
 
-  val=$(cat "$result_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+  val=$(read_result_value "$result_file")
   if [[ -z "$val" ]]; then
     return 1
   fi
@@ -178,7 +188,7 @@ resolve_result() {
 
   if validate_result_file "$result_file" "${allowed_arr[@]}"; then
     local val
-    val=$(cat "$result_file" | head -1 | tr -d '[:space:]')
+    val=$(read_result_value "$result_file")
     log "  Result (file): ${val}"
     echo "$val"
     return 0
@@ -189,7 +199,7 @@ resolve_result() {
   if [[ -f "$source_file" ]]; then
     if extract_result "$(basename "$result_file" .result)" "$result_file" "$source_file" "${allowed_arr[@]}"; then
       local val
-      val=$(cat "$result_file" | head -1 | tr -d '[:space:]')
+      val=$(read_result_value "$result_file")
       log "  Result (extractor): ${val}"
       echo "$val"
       return 0

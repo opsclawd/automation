@@ -8,6 +8,14 @@
 # Idempotent: rerunning resumes or safely fails (no duplicate branches/PRs)
 # =============================================================================
 set -euo pipefail
+# SIGPIPE gotcha: with `set -e -o pipefail`, a `producer | head -N`
+# pattern inside a command substitution can crash the script silently
+# when the producer is large enough to outrun head. head closes the
+# pipe early, the producer (echo, cat, find, etc.) gets SIGPIPE → 141,
+# pipefail propagates that to the pipeline's exit code, errexit fires.
+# Prefer `head -N <<< "$str"` (herestring) or `head -N "$file"`
+# (head reads the file directly so there's no producer to SIGPIPE).
+# See read_result_value() below for the canonical pattern.
 
 ISSUE_NUM="${1:-}"
 export ISSUE_NUM
@@ -127,6 +135,13 @@ ensure_worktree() {
 # agent reads .md file (fallback), conservative default (tertiary).
 
 # validate_result_file: returns 0 if file exists and contains an allowed value
+# Read first non-whitespace token from a result file. Uses `head -1 file`
+# (not `cat | head`) so head reads the file directly — no upstream
+# producer that could be SIGPIPE'd when head closes after one line.
+read_result_value() {
+  head -1 "$1" 2>/dev/null | tr -d '[:space:]' || true
+}
+
 validate_result_file() {
   local result_file="$1"; shift
   local allowed_values=("$@")
@@ -136,7 +151,7 @@ validate_result_file() {
     return 1
   fi
 
-  val=$(cat "$result_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+  val=$(read_result_value "$result_file")
   if [[ -z "$val" ]]; then
     return 1
   fi
@@ -208,7 +223,7 @@ resolve_result() {
   # Primary: valid .result file
   if validate_result_file "$result_file" "${allowed_arr[@]}"; then
     local val
-    val=$(cat "$result_file" | head -1 | tr -d '[:space:]')
+    val=$(read_result_value "$result_file")
     log "  Result (file): ${val}"
     echo "$val"
     return 0
@@ -220,7 +235,7 @@ resolve_result() {
   if [[ -f "$source_file" ]]; then
     if extract_result "$(basename "$result_file" .result)" "$result_file" "$source_file" "${allowed_arr[@]}"; then
       local val
-      val=$(cat "$result_file" | head -1 | tr -d '[:space:]')
+      val=$(read_result_value "$result_file")
       log "  Result (extractor): ${val}"
       echo "$val"
       return 0
@@ -1289,7 +1304,7 @@ Write code-review.md now."
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
     info "Review saved to ${ISSUES_DIR}/review.md"
   else
-    REVIEW_FILE=$(find "${WORKTREE_DIR}" -name "code-review.md" 2>/dev/null | head -1)
+    REVIEW_FILE=$(find "${WORKTREE_DIR}" -name "code-review.md" 2>/dev/null | head -1 || true)
     if [[ -n "$REVIEW_FILE" && -f "$REVIEW_FILE" ]]; then
       cp "$REVIEW_FILE" "${ISSUES_DIR}/review.md"
     fi
