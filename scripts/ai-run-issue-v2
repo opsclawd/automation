@@ -809,14 +809,37 @@ Branch: ${BRANCH}
 
 You are using Subagent-Driven Development. Follow the process below exactly.
 
+## SCOPE RESTRICTION
+You are implementing ONLY Task ${task_n}: ${task_title}.
+
+Tasks numbered higher than ${task_n} in plan.md are EXPLICITLY OUT OF SCOPE
+for this run. They will be implemented by separate later runs of this
+orchestrator. You must NOT:
+- create files, types, schemas, tests, exports, or migrations that belong
+  to a later task, even if you have all the context to do so;
+- 'finish the plan' because tasks N+1..M look small or related;
+- pre-stage scaffolding for later tasks 'to save time later'.
+
+A commit that includes any later-task work is a scope violation, not
+helpfulness — it breaks per-task review, makes resume undecidable, and
+forces the operator to revert and re-run. The plan's per-task commit
+boundary is load-bearing: respect it.
+
+If you finish Task ${task_n} quickly: STOP, run the self-review, and
+report DONE. Do not 'continue' into the next task.
+
+You may READ files associated with later tasks for context, but you must
+not write, modify, stage, or commit them in this run.
+
 ## Your Job
 
-1. Read issue.md, design.md, and plan.md to understand the full scope.
-2. Implement exactly what the task specifies.
-3. Write tests following TDD where applicable.
-4. Verify implementation works.
+1. Read issue.md, design.md, and plan.md for context. Identify the
+   boundaries of Task ${task_n} specifically.
+2. Implement exactly what Task ${task_n} specifies — nothing more.
+3. Write tests following TDD where applicable, scoped to Task ${task_n}.
+4. Verify Task ${task_n}'s implementation works.
 5. Run: git add -A && git commit -m '${commit_msg}'
-6. Self-review before reporting back.
+6. Self-review before reporting back, including the scope check below.
 
 ## Questions?
 If you have clarifications or concerns BEFORE implementing, note them in your report
@@ -824,7 +847,10 @@ and proceed with a reasonable assumption. Do not ask questions — make decision
 and document them.
 
 ## Self-Review Checklist (before reporting back)
-- Completeness: Did I implement everything specified?
+- Scope: Run \`git diff --stat HEAD~1\` mentally — does every changed
+  file belong to Task ${task_n} alone? If any file is for a later task,
+  REMOVE it from the commit before reporting DONE.
+- Completeness: Did I implement everything Task ${task_n} specifies?
 - Quality: Is the code clean and maintainable?
 - Discipline: Did I avoid overbuilding?
 - Testing: Do tests verify actual behavior?
