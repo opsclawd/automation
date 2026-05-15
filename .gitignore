@@ -8,4 +8,5 @@ coverage/
 ai/
 *.result
 *.log
+.review-context/
 .DS_Store

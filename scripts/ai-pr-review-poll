@@ -500,8 +500,10 @@ process_reviews() {
     [[ -f "${REPO_ROOT}/ai/issues/${ISSUE_NUM}/$f" ]] && cp "${REPO_ROOT}/ai/issues/${ISSUE_NUM}/$f" "$CTX/" 2>/dev/null || true
   done
   cp "${ISSUES_DIR}/comments.json" "${ISSUES_DIR}/pr-diff.diff" "$CTX/" 2>/dev/null || true
-  if [[ -f "${POLL_WORKTREE}/.git/info/exclude" ]] && ! grep -qxF '.review-context/' "${POLL_WORKTREE}/.git/info/exclude" 2>/dev/null; then
-    echo '.review-context/' >> "${POLL_WORKTREE}/.git/info/exclude"
+  local COMMON_DIR
+  COMMON_DIR=$(cd "$POLL_WORKTREE" && git rev-parse --git-common-dir)
+  if ! grep -qxF '.review-context/' "${COMMON_DIR}/info/exclude" 2>/dev/null; then
+    echo '.review-context/' >> "${COMMON_DIR}/info/exclude"
   fi
   local RESULT_IN_WT="${CTX}/process-review-p${POLL_COUNT}.result"
   rm -f "$RESULT_IN_WT"

@@ -544,6 +544,7 @@ fix-review-task-*.log
 next-env.d.ts
 node_modules/
 .next/
+.review-context/
 EOF
 
   # Archive pre-seeding: skip phases that already have outputs from a prior run
