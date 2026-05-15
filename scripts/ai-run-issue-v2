@@ -48,7 +48,7 @@ WORKTREE_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
 ISSUES_DIR="${WORKTREE_DIR}"
 
 # ── helpers (functions) ───────────────────────────────────────────────────────
-log()  { echo "[$(date +%H:%M:%S)] $*" | tee -a "${ISSUES_DIR}/orchestrator.log"; }
+log()  { echo "[$(date +%H:%M:%S)] $*" | tee -a "${ISSUES_DIR}/orchestrator.log" >&2; }
 info() { log "INFO: $*"; }
 warn() { log "WARN: $*" >&2; }
 
@@ -231,7 +231,7 @@ resolve_result() {
   log "  Result (fallback): ${fallback}"
   echo "$fallback" > "$result_file" 2>/dev/null || true
   echo "$fallback"
-  return 1
+  return 0
 }
 
 run_agent_raw() {
@@ -310,10 +310,16 @@ LAST_PHASE="start"
 
   get_task_completion_status() {
     local task_n="$1"
+    local impl_result_file="${ISSUES_DIR}/implement-task-${task_n}.result"
     local spec_result_file="${ISSUES_DIR}/spec-review-task-${task_n}.result"
     local quality_result_file="${ISSUES_DIR}/quality-review-task-${task_n}.result"
 
-    if [[ ! -f "$spec_result_file" || ! -f "$quality_result_file" ]]; then
+    local impl_result="PENDING"
+    if [[ -f "$impl_result_file" ]]; then
+      impl_result=$(cat "$impl_result_file" 2>/dev/null || echo "PENDING")
+    fi
+
+    if [[ "$impl_result" != "DONE" ]]; then
       if [[ -f "${ISSUES_DIR}/implement-task-${task_n}.log" ]]; then
         echo "implementing"
       else
@@ -322,16 +328,19 @@ LAST_PHASE="start"
       return
     fi
 
+    if [[ ! -f "$spec_result_file" || ! -f "$quality_result_file" ]]; then
+      echo "review-needed"
+      return
+    fi
+
     local spec_result quality_result
     spec_result=$(cat "$spec_result_file" 2>/dev/null || echo "SPEC_FAIL")
     quality_result=$(cat "$quality_result_file" 2>/dev/null || echo "QUALITY_FAIL")
 
-    if [[ "$spec_result" == "SPEC_FAIL" ]]; then
-      echo "spec-failed"
-    elif [[ "$quality_result" == "QUALITY_FAIL" ]]; then
-      echo "quality-failed"
-    else
+    if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
       echo "complete"
+    else
+      echo "review-needed"
     fi
   }
 
@@ -386,10 +395,9 @@ detect_resume_point() {
         echo "implement"
       fi
       ;;
-    implementing)  echo "implement" ;;
+    implementing)    echo "implement" ;;
     pending)        echo "implement" ;;
-    spec-failed)    echo "spec-review" ;;
-    quality-failed) echo "quality-review" ;;
+    review-needed)  echo "spec-review" ;;
     *)              echo "implement" ;;
   esac
 }
@@ -460,19 +468,7 @@ if [[ "$PHASE" == "read_issue" ]]; then
   ISSUE_TITLE=$(gh issue view "$ISSUE_NUM" --json title --jq '.title')
   log "Issue #${ISSUE_NUM}: ${ISSUE_TITLE}"
 
-  # Validate required sections (flexible: any heading level, casing, or bold)
-  BODY=$(cat "${ISSUE_STAGING_DIR}/issue.md")
-  for section in "Goal" "Acceptance Criteria"; do
-    if ! echo "$BODY" | grep -qiE "^#{1,4}\s+${section}|^\*\*${section}\*\*"; then
-      orchestrator_fail "Issue body missing required section: $section"
-    fi
-  done
 
-  # Validate no unresolved open questions
-  OPEN_Q=$(echo "$BODY" | sed -n '/^# Open Questions$/,/^#/p' | grep -v "^# Open Questions$" | grep -v "^#" | grep -v "^$" | head -5 || true)
-  if [[ -n "$OPEN_Q" && "$OPEN_Q" != "None." && "$OPEN_Q" != "None" && "$OPEN_Q" != "N/A" && "$OPEN_Q" != "N/A." ]]; then
-    orchestrator_fail "Issue has unresolved open questions. Resolve before running."
-  fi
 
   # Check for blocked label
   if gh issue view "$ISSUE_NUM" --json labels --jq '.labels[].name' | grep -qx "ai:blocked"; then
@@ -520,6 +516,7 @@ if [[ "$PHASE" == "read_issue" ]]; then
 
   cat >> "${WORKTREE_GIT_DIR}/info/exclude" << 'EOF'
 *.log
+*.result
 code-review.md
 review.md
 design.md
@@ -538,6 +535,9 @@ CLAUDE.md
 tsconfig.tsbuildinfo
 spec-review-task-*.md
 quality-review-task-*.md
+implement-task-*.md
+fix-review-task-*.md
+fix-review-task-*.log
 next-env.d.ts
 node_modules/
 .next/
@@ -730,11 +730,47 @@ if [[ "$PHASE" == "implement" ]]; then
   # Get task number from title prefix
   task_num() { echo "$1" | cut -d. -f1; }
 
+  extract_task_commit_msg() {
+    local plan_file="$1"
+    local task_title="$2"
+    local fallback_msg="$3"
+
+    local title_file
+    title_file=$(mktemp)
+    printf '%s' "$task_title" > "$title_file"
+
+    local line_num
+    line_num=$(grep -F -n -f "$title_file" "$plan_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+    rm -f "$title_file"
+
+    if [[ -z "$line_num" ]]; then
+      echo "$fallback_msg"
+      return
+    fi
+
+    local next_task_line
+    next_task_line=$(awk -v start="$line_num" 'NR > start && /^#{2,3} Task [0-9]+:/ {print NR; exit}' "$plan_file")
+
+    local commit_msg
+    if [[ -n "$next_task_line" ]]; then
+      commit_msg=$(sed -n "${line_num},$((next_task_line - 1))p" "$plan_file" | grep -oP 'git commit -m "\K[^"]+' | tail -1)
+    else
+      commit_msg=$(tail -n +"$line_num" "$plan_file" | grep -oP 'git commit -m "\K[^"]+' | tail -1)
+    fi
+
+    if [[ -n "$commit_msg" ]]; then
+      echo "$commit_msg"
+    else
+      echo "$fallback_msg"
+    fi
+  }
+
   # Run implementer for a single task; writes status to file (not stdout)
   run_implementer() {
     local task_n="$1"
     local task_title="$2"
     local task_text="$3"
+    local commit_msg="$4"
     local output_log="${ISSUES_DIR}/implement-task-${task_n}.log"
     local impl_status="unknown"
 
@@ -760,7 +796,7 @@ You are using Subagent-Driven Development. Follow the process below exactly.
 2. Implement exactly what the task specifies.
 3. Write tests following TDD where applicable.
 4. Verify implementation works.
-5. Run: git add -A && git commit -m 'feat: implement issue #${ISSUE_NUM} task ${task_n}'
+5. Run: git add -A && git commit -m '${commit_msg}'
 6. Self-review before reporting back.
 
 ## Questions?
@@ -816,6 +852,13 @@ Read these files for full context on what was intended:
 - Design: ./design.md
 - Implementation plan: ./plan.md
 
+## SCOPE RESTRICTION
+You are reviewing ONLY Task ${task_n}: ${task_title}.
+Evaluate ONLY whether this task's requirements have been met. Do NOT flag
+missing features, files, or behaviors that belong to other tasks in the plan.
+The plan is executed task-by-task; tasks not yet implemented are expected to be
+absent. A missing task is NOT a spec failure for the current task.
+
 ## Task Requirements
 ${task_text}
 
@@ -827,11 +870,11 @@ You MUST read the actual code and verify line by line. Do not take the
 implementer's word for what was built.
 
 ## Your Job
-1. Read the design and plan documents first for full context.
+1. Read the design and plan documents first for context on this specific task.
 2. Read the code that was actually committed.
-3. Compare actual implementation to requirements and design intent.
-4. Check for missing pieces.
-5. Check for extra work not requested.
+3. Compare actual implementation to THIS task's requirements only.
+4. Check for missing pieces within this task's scope.
+5. Check for extra work not requested within this task's scope.
 6. Check for misunderstandings.
 
 ## Report Format
@@ -1038,6 +1081,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     BASE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
+    COMMIT_MSG=$(extract_task_commit_msg "plan.md" "$task_title" "feat: implement issue #${ISSUE_NUM} task ${TASK_NUM}")
+
     if [[ "$TASK_NUM" -eq "$RESUME_TASK_NUM" && "$RESUME_STAGE" == "review" ]]; then
       log "  Resuming at review loop for task ${TASK_NUM}"
     fi
@@ -1048,7 +1093,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     # Step 1: Implement
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
-      run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT"
+      run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
       IMPL_STATUS=$(resolve_result \
         "${ISSUES_DIR}/implement-task-${TASK_NUM}.result" \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.md" \
@@ -1075,6 +1120,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       while [[ $REVIEW_LOOPS -lt 5 ]]; do
         REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
         log "  Review-fix loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}"
+        log "  Cancel window: press Ctrl+C within 10s to abort..."
+        sleep 10
 
         run_fix_review "$TASK_NUM" "$task_title" "$TASK_TEXT"
         FIX_STATUS=$(resolve_result \
@@ -1090,15 +1137,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         # Update HEAD_SHA after potential fixes
         HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
-        # If agent says no fixes were needed, reviews are satisfied — done
-        if [[ "$FIX_STATUS" == "DONE_NO_FIXES_NEEDED" ]]; then
-          log "  Task ${TASK_NUM}: all reviews satisfied (no fixes needed)"
-          REVIEW_LOOPS=0
-          break
-        fi
-
-        # Fixes were made — re-run reviews to verify
-        log "  Task ${TASK_NUM}: fixes committed, re-running reviews..."
+        # Check current review status after fix attempt
+        log "  Task ${TASK_NUM}: re-running reviews after fix loop..."
         IMPL_REPORT=$(cat "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.log" 2>/dev/null || echo "")
         run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
         run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
@@ -1116,13 +1156,16 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           "QUALITY_FAIL")
 
         if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
-          log "  Task ${TASK_NUM}: both reviews pass after fixes"
+          log "  Task ${TASK_NUM}: both reviews pass"
+          break
+        elif [[ "$FIX_STATUS" == "DONE_NO_FIXES_NEEDED" ]]; then
+          log "  Task ${TASK_NUM}: no fixes offered and reviews still failing — breaking to avoid infinite loop"
           break
         fi
       done
 
       if [[ $REVIEW_LOOPS -eq 5 ]]; then
-        warn "Review loop hit max 5 iterations for task ${TASK_NUM}. Proceeding with caution."
+        orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing."
       fi
     fi
 
@@ -1137,11 +1180,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     log "  Task ${TASK_NUM} complete (impl=${IMPL_STATUS}, review_loops=${REVIEW_LOOPS})"
 
   done <<< "$TASKS"
-
-  # Final commit aggregating all tasks
-  log "Committing full implementation..."
-  git add -A
-  git commit -m "feat: implement issue #${ISSUE_NUM} — all ${TASK_COUNT} tasks complete" 2>/dev/null || true
 
   PHASE="validate"
 fi
@@ -1268,6 +1306,8 @@ while [[ "$PHASE" == "fix-review" ]]; do
     break
   fi
   log "=== Phase: fix-review (loop $FIX_LOOP_COUNT) ==="
+  log "Cancel window: press Ctrl+C within 10s to abort..."
+  sleep 10
   LAST_PHASE="fix-review"
 
   ensure_worktree

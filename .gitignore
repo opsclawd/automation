@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+.ai-runs/
+.ai-worktrees/
+*.result
+*.log
+.DS_Store
