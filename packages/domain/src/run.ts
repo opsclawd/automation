@@ -8,6 +8,8 @@ export type RunStatus =
   | 'blocked'
   | 'needs_human_review';
 
+const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(['passed', 'failed', 'cancelled']);
+
 export interface Run {
   uuid: string;
   displayId: string;
@@ -29,6 +31,13 @@ export interface CreateRunInput {
   type?: 'issue_to_pr' | 'pr_review';
 }
 
+export class RunStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RunStateError';
+  }
+}
+
 export function createRun(input: CreateRunInput): Run {
   return {
     uuid: input.uuid,
@@ -42,22 +51,48 @@ export function createRun(input: CreateRunInput): Run {
 }
 
 export function startPhase(run: Run, phase: string): Run {
+  if (run.currentPhase !== undefined) {
+    throw new RunStateError(
+      `cannot start phase '${phase}': run ${run.displayId} already has currentPhase '${run.currentPhase}' (call completePhase first)`,
+    );
+  }
+  if (TERMINAL_STATUSES.has(run.status)) {
+    throw new RunStateError(
+      `cannot start phase '${phase}': run ${run.displayId} is already ${run.status}`,
+    );
+  }
   return { ...run, currentPhase: phase };
 }
 
-export function completePhase(run: Run): Run {
-  if (!run.currentPhase) return run;
-  const { currentPhase: _currentPhase, ...rest } = run;
-  void _currentPhase;
-  return { ...rest, completedPhases: [...run.completedPhases, run.currentPhase] };
+// `phase` must equal `currentPhase` — guards against callers who skipped a
+// startPhase or passed the wrong name.
+export function completePhase(run: Run, phase: string): Run {
+  if (run.currentPhase === undefined) {
+    throw new RunStateError(
+      `cannot complete phase '${phase}': run ${run.displayId} has no currentPhase`,
+    );
+  }
+  if (run.currentPhase !== phase) {
+    throw new RunStateError(
+      `cannot complete phase '${phase}': run ${run.displayId} is on '${run.currentPhase}'`,
+    );
+  }
+  const { currentPhase, ...rest } = run;
+  return { ...rest, completedPhases: [...run.completedPhases, currentPhase] };
 }
 
 export function passRun(run: Run, at: Date): Run {
-  const { currentPhase: _currentPhase, ...rest } = run;
-  void _currentPhase;
+  if (TERMINAL_STATUSES.has(run.status)) {
+    throw new RunStateError(`cannot pass run ${run.displayId}: already ${run.status}`);
+  }
+  const { currentPhase: _drop, ...rest } = run;
+  void _drop;
   return { ...rest, status: 'passed', completedAt: at };
 }
 
 export function failRun(run: Run, reason: string, at: Date = new Date()): Run {
+  if (TERMINAL_STATUSES.has(run.status)) {
+    throw new RunStateError(`cannot fail run ${run.displayId}: already ${run.status}`);
+  }
   return { ...run, status: 'failed', completedAt: at, failureReason: reason };
 }

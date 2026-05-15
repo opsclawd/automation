@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   renameSync,
   writeFileSync,
@@ -9,6 +10,20 @@ import {
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Run } from '@ai-sdlc/domain';
+
+export class RunDirectoryExistsError extends Error {
+  constructor(
+    public readonly displayId: string,
+    public readonly path: string,
+  ) {
+    super(
+      `run directory already exists for displayId '${displayId}' at ${path}. ` +
+        `displayId is not unique across UTC seconds; the uuid is the primary key. ` +
+        `Pass { ifExists: 'reuse' } to opt into reusing the existing directory.`,
+    );
+    this.name = 'RunDirectoryExistsError';
+  }
+}
 
 export interface RunDirectoryPaths {
   runRoot: string;
@@ -40,10 +55,17 @@ export class RunDirectory {
     };
   }
 
-  static create(input: { rootDir: string; run: Run }): RunDirectory {
+  static create(input: { rootDir: string; run: Run; ifExists?: 'throw' | 'reuse' }): RunDirectory {
+    const ifExists = input.ifExists ?? 'throw';
     const paths = RunDirectory.paths(input.rootDir, input.run.displayId);
-    mkdirSync(input.rootDir, { recursive: true });
-    mkdirSync(paths.runRoot);
+    if (existsSync(paths.runRoot)) {
+      if (ifExists === 'throw') {
+        throw new RunDirectoryExistsError(input.run.displayId, paths.runRoot);
+      }
+      // 'reuse': leave existing children in place; mkdir { recursive } below
+      // is a no-op for dirs that already exist, and writeRunJson rewrites
+      // run.json atomically.
+    }
     mkdirSync(paths.phasesDir, { recursive: true });
     mkdirSync(paths.artifactsDir, { recursive: true });
     const dir = new RunDirectory(paths);
