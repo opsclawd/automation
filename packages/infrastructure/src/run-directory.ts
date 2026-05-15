@@ -81,11 +81,15 @@ export class RunDirectory {
         if (ifExists === 'throw') {
           throw new RunDirectoryExistsError(input.run.displayId, paths.runRoot);
         }
-        // 'reuse': runRoot already exists — leave it and its children alone.
-        // writeRunJson will atomically rewrite run.json.
       } else {
         throw e;
       }
+    }
+    const rootDirFd = openSync(input.rootDir, 'r');
+    try {
+      fsyncSync(rootDirFd);
+    } finally {
+      closeSync(rootDirFd);
     }
 
     mkdirSync(paths.phasesDir, { recursive: true });
