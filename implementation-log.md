@@ -19,3 +19,28 @@
 - Status: DONE
 - Review loops: 1
 - Commit: a971f84fb876f1b65aada228851deef8f8ff812b
+
+## Task 5: Scaffold `packages/application`
+- Status: DONE
+- Review loops: 1
+- Commit: 7d93201e22b04bfc3bfb77b11845fcd3d2d64405
+
+## Task 6: Scaffold `packages/infrastructure`
+- Status: DONE
+- Review loops: 1
+- Commit: 7d93201e22b04bfc3bfb77b11845fcd3d2d64405
+
+## Task 7: Scaffold `apps/api`
+- Status: DONE
+- Review loops: 1
+- Commit: 7d93201e22b04bfc3bfb77b11845fcd3d2d64405
+
+## Task 8: Scaffold `apps/web` placeholder
+- Status: DONE
+- Review loops: 1
+- Commit: 7d93201e22b04bfc3bfb77b11845fcd3d2d64405
+
+## Task 9: Install dependencies
+- Status: DONE
+- Review loops: 1
+- Commit: 7d93201e22b04bfc3bfb77b11845fcd3d2d64405
