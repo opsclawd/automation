@@ -1,6 +1,5 @@
 import {
   createWriteStream,
-  existsSync,
   mkdirSync,
   renameSync,
   writeFileSync,
@@ -68,14 +67,27 @@ export class RunDirectory {
   static create(input: { rootDir: string; run: Run; ifExists?: 'throw' | 'reuse' }): RunDirectory {
     const ifExists = input.ifExists ?? 'throw';
     const paths = RunDirectory.paths(input.rootDir, input.run.displayId);
-    if (existsSync(paths.runRoot)) {
-      if (ifExists === 'throw') {
-        throw new RunDirectoryExistsError(input.run.displayId, paths.runRoot);
+
+    // 1. Ensure parent rootDir exists (e.g. .ai-runs/).
+    // 2. Create runRoot exclusively — any concurrent creator that already
+    //    won will cause EEXIST here, which we handle below.
+    //    Using mkdirSync with recursive:false on an existing dir throws
+    //    EEXIST on Linux (the only platform we support).
+    mkdirSync(input.rootDir, { recursive: true });
+    try {
+      mkdirSync(paths.runRoot);
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
+        if (ifExists === 'throw') {
+          throw new RunDirectoryExistsError(input.run.displayId, paths.runRoot);
+        }
+        // 'reuse': runRoot already exists — leave it and its children alone.
+        // writeRunJson will atomically rewrite run.json.
+      } else {
+        throw e;
       }
-      // 'reuse': leave existing children in place; mkdir { recursive } below
-      // is a no-op for dirs that already exist, and writeRunJson rewrites
-      // run.json atomically.
     }
+
     mkdirSync(paths.phasesDir, { recursive: true });
     mkdirSync(paths.artifactsDir, { recursive: true });
     const dir = new RunDirectory(paths);
