@@ -44,3 +44,13 @@
 - Status: DONE
 - Review loops: 1
 - Commit: 7d93201e22b04bfc3bfb77b11845fcd3d2d64405
+
+## Task 10: Verify all commands pass
+- Status: DONE
+- Review loops: 1
+- Commit: 306323832ef1dfa4ef7e03edb8f216486add95fa
+
+## Task 11: Add CI workflow
+- Status: DONE
+- Review loops: 1
+- Commit: 9b29d7a39893fb99f7849b43c3bf0f772e45e4d3
