@@ -1,10 +1,26 @@
 [
   {
-    "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Refuse reuse of an existing run directory**\n\nIn the M1-03 acceptance case where two starts for the same issue happen concurrently, this recursive `mkdirSync` treats an already-created run root as success, and the following `writeRunJson` overwrites the first run's metadata because `displayId` is only second-resolution (`issue-<N>-<YYYYMMDD>-<HHMMSS>`). Use an exclusive directory/lock creation path or otherwise fail before writing when the run root already exists so the second create is refused instead of clobbering the first run.\n\nUseful? React with 👍 / 👎.",
-    "id": 3249411992,
+    "body": "Chosen approach: Removed  from  for runRoot. This causes mkdirSync to fail if the directory already exists (EEXIST), refusing the second concurrent create instead of silently succeeding and overwriting the first run's metadata.\n\nOptions considered:\n1. Exclusive file locking — adds complexity and requires lock cleanup; out of scope for M1.\n2. UUID-based subdirectory naming — would break the displayId directory layout required by PRD §22.1.\n3. Atomic rename-to-unique — requires a rollback mechanism if the rename fails.\n\nThe non-recursive mkdirSync is the minimal fix that directly addresses the race without introducing new abstractions.",
+    "id": 3249595594,
+    "line": null,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299747097,
+    "user": "opsclawd"
+  },
+  {
+    "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Create the runs root before the run directory**\n\nWhen the first Run is started with the default `.ai-runs` directory absent, this `mkdirSync(paths.runRoot)` throws `ENOENT` because the parent directory does not exist; the new tests only cover a pre-created temp root. M1-03 expects `RunDirectory` to create `.ai-runs/<displayId>/{phases,artifacts}` and the later CLI smoke path calls `RunDirectory.create({ rootDir: this.deps.runsDir, run })`, so a fresh checkout would fail before writing `run.json`. Create `rootDir` recursively first, then keep the leaf creation exclusive so existing run directories are still refused.\n\nUseful? React with 👍 / 👎.",
+    "id": 3249604995,
     "line": 45,
     "path": "packages/infrastructure/src/run-directory.ts",
-    "pull_request_review_id": 4299535551,
+    "pull_request_review_id": 4299757183,
     "user": "chatgpt-codex-connector[bot]"
+  },
+  {
+    "body": "**WARNING:** `completePhase` doesn't validate that `phase` matches `run.currentPhase`\n\nThe function accepts any `phase` string and appends it to `completedPhases` without checking if it matches the currently running phase. This allows invalid state transitions — e.g., completing a phase that was never started, or completing a different phase than the one currently running. A call like `completePhase(run, 'deploy')` when `currentPhase` is `'read_issue'` would silently record the wrong phase as completed.\n\nConsider either validating `phase === run.currentPhase` (throwing on mismatch), or removing the `phase` parameter entirely and using `run.currentPhase` directly.",
+    "id": 3249625984,
+    "line": 48,
+    "path": "packages/domain/src/run.ts",
+    "pull_request_review_id": 4299780021,
+    "user": "kilo-code-bot[bot]"
   }
 ]

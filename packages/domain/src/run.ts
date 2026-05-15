@@ -45,10 +45,11 @@ export function startPhase(run: Run, phase: string): Run {
   return { ...run, currentPhase: phase };
 }
 
-export function completePhase(run: Run, phase: string): Run {
+export function completePhase(run: Run): Run {
+  if (!run.currentPhase) return run;
   const { currentPhase: _currentPhase, ...rest } = run;
   void _currentPhase;
-  return { ...rest, completedPhases: [...run.completedPhases, phase] };
+  return { ...rest, completedPhases: [...run.completedPhases, run.currentPhase] };
 }
 
 export function passRun(run: Run, at: Date): Run {

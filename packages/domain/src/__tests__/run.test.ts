@@ -24,7 +24,7 @@ describe('Run state machine', () => {
   it('marks completed phases', () => {
     let r = createRun(base);
     r = startPhase(r, 'read_issue');
-    r = completePhase(r, 'read_issue');
+    r = completePhase(r);
     expect(r.completedPhases).toEqual(['read_issue']);
   });
 
