@@ -5,7 +5,7 @@ coverage/
 *.tsbuildinfo
 .ai-runs/
 .ai-worktrees/
-ai/issues/
+ai/
 *.result
 *.log
 .DS_Store
