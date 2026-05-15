@@ -152,8 +152,9 @@ After the observable wrapper exists, orchestration should migrate incrementally 
 ├── docs
 │   ├── adr
 │   │   └── 0001-local-first-orchestrator-architecture.md
-│   ├── ai-agent-sdlc-orchestrator-prd.md
+│   ├── prd.md
 │   └── design-decisions-report.md
+│   └── project-brief.md
 └── README.md
 ```
 
