@@ -7,7 +7,7 @@ import {
   closeSync,
   unlinkSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import type { Run } from '@ai-sdlc/domain';
 
 export interface RunDirectoryPaths {
@@ -62,6 +62,7 @@ export class RunDirectory {
 
 function atomicWriteJson(path: string, value: unknown): void {
   const tmp = `${path}.tmp`;
+  const dir = dirname(path);
   try {
     writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
     const fd = openSync(tmp, 'r+');
@@ -71,6 +72,12 @@ function atomicWriteJson(path: string, value: unknown): void {
       closeSync(fd);
     }
     renameSync(tmp, path);
+    const dirFd = openSync(dir, 'r');
+    try {
+      fsyncSync(dirFd);
+    } finally {
+      closeSync(dirFd);
+    }
   } catch (e) {
     try {
       unlinkSync(tmp);
