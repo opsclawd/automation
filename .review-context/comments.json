@@ -54,5 +54,125 @@
     "path": ".review-context/pr-diff.diff",
     "pull_request_review_id": 4299815525,
     "user": "chatgpt-codex-connector[bot]"
+  },
+  {
+    "body": "Acknowledged. The non-recursive mkdirSync for runRoot is the correct approach — it fails with EEXIST on collision while keeping the implementation minimal.",
+    "id": 3249680667,
+    "line": null,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299844713,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Valid. The fix adds  before the exclusive leaf creation. This creates the parent  directory if absent, while keeping the non-recursive  so concurrent creates for the same displayId still fail with EEXIST. Implementation pushed.",
+    "id": 3249680820,
+    "line": 46,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299844895,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Valid. The fix changes  to  — no phase parameter, uses  directly. Returns input unchanged if  is undefined. Aligns with design §13.2 — transition functions are simple and stateless; the caller is responsible for sequencing. Implementation pushed.",
+    "id": 3249680984,
+    "line": null,
+    "path": "packages/domain/src/run.ts",
+    "pull_request_review_id": 4299845051,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Confirmed. Non-recursive mkdirSync for runRoot correctly fails with EEXIST when directory already exists.",
+    "id": 3249681058,
+    "line": null,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299845114,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Confirmed. Added  before the exclusive leaf creation to handle first-run scenarios.",
+    "id": 3249681104,
+    "line": 46,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299845177,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Confirmed. Changed  to  with no phase parameter, using  directly.",
+    "id": 3249681138,
+    "line": null,
+    "path": "packages/domain/src/run.ts",
+    "pull_request_review_id": 4299845233,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Valid. Added  to  and removed these generated review artifacts from the commit. These files should not be tracked in source control.",
+    "id": 3249681238,
+    "line": 1,
+    "path": ".review-context/pr-diff.diff",
+    "pull_request_review_id": 4299845344,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Chosen approach: Confirmed — non-recursive mkdirSync on runRoot (line 46 in current code) fails with EEXIST when directory already exists, refusing concurrent creates.\n\nOptions considered:\n1. Exclusive file locking — adds complexity and requires lock cleanup; out of scope for M1.\n2. UUID-based subdirectory naming — would break the displayId directory layout required by PRD §22.1.\n3. Atomic rename-to-unique — requires a rollback mechanism if the rename fails.\n\nReasoning: The current implementation directly addresses the race condition with minimal change. This aligns with PRD §22.1.",
+    "id": 3249689168,
+    "line": null,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299853482,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Chosen approach: Already implemented — line 45 creates rootDir recursively before the exclusive leaf creation on line 46. This creates the parent .ai-runs directory if absent while keeping the non-recursive mkdirSync on the leaf so concurrent creates for the same displayId still fail with EEXIST.\n\nOptions considered:\n1. Keep recursive on runRoot — would silently succeed on collision, defeating the race safeguard.\n2. Check-and-create wrapper — adds branching logic; the two-line fix is simpler.\n\nReasoning: Aligns with PRD §22.1 MVP layout and M1-03 acceptance criteria for first-run scenarios. The implementation creates rootDir recursively first, then uses non-recursive mkdir for the runRoot to preserve the exclusive creation behavior.",
+    "id": 3249689746,
+    "line": 46,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299854124,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Chosen approach: Already implemented — completePhase(run) takes no phase parameter, uses run.currentPhase directly, and returns input unchanged if currentPhase is undefined. This is the approach already in the PR.\n\nOptions considered:\n1. Validate phase === currentPhase and throw on mismatch — adds control flow; the silent no-op is safer.\n2. Remove phase parameter but throw if currentPhase undefined — both behaviors have merit; went with silent no-op per YAGNI.\n\nReasoning: Aligns with design (§13.2) — transition functions should be simple and stateless. The caller is responsible for sequencing (startPhase → completePhase), so the helper doesn't need to enforce invariants the caller should already maintain. Test updated to match.",
+    "id": 3249690100,
+    "line": null,
+    "path": "packages/domain/src/run.ts",
+    "pull_request_review_id": 4299854534,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Chosen approach: No change needed. The PR already implements non-recursive mkdirSync for runRoot (line 46 in current code) which fails with EEXIST when the directory already exists, refusing the second concurrent create.\n\nOptions considered: N/A (already implemented as described).\n\nReasoning: Aligns with PRD §22.1 requirement for exclusive run directory creation.",
+    "id": 3249690490,
+    "line": null,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299855022,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Chosen approach: Already implemented — line 45 creates rootDir recursively before the exclusive leaf creation on line 46. This creates the parent .ai-runs directory if absent while keeping the non-recursive mkdirSync on the leaf so concurrent creates for the same displayId still fail with EEXIST.\n\nOptions considered:\n1. Keep recursive on runRoot — would silently succeed on collision, defeating the race safeguard.\n2. Check-and-create wrapper — adds branching logic; the two-line fix is simpler.\n\nReasoning: Aligns with PRD §22.1 MVP layout and M1-03 acceptance criteria for first-run scenarios.",
+    "id": 3249691260,
+    "line": 46,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299855716,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Chosen approach: Already implemented — completePhase(run) takes no phase parameter, uses run.currentPhase directly, and returns input unchanged if currentPhase is undefined. This is the approach already in the PR.\n\nOptions considered:\n1. Validate phase === currentPhase and throw on mismatch — adds control flow; the silent no-op is safer.\n2. Remove phase parameter but throw if currentPhase undefined — both behaviors have merit; went with silent no-op per YAGNI.\n\nReasoning: Aligns with design (§13.2) — transition functions should be simple and stateless. The caller is responsible for sequencing (startPhase → completePhase), so the helper doesn't need to enforce invariants the caller should already maintain. Test updated to match.",
+    "id": 3249691727,
+    "line": null,
+    "path": "packages/domain/src/run.ts",
+    "pull_request_review_id": 4299856162,
+    "user": "opsclawd"
+  },
+  {
+    "body": "Chosen approach: Acknowledged — .review-context/ is already in .gitignore and not tracked by git in this branch. The files exist in the worktree for review context but are not part of the commit. No action needed.\n\nOptions considered:\n1. Remove from git history — not tracked, nothing to remove.\n2. Add to gitignore — already done.\n\nReasoning: The .review-context/ directory contains staged review context for agent processing and is correctly ignored by git. This aligns with the suggestion to ignore .review-context/ rather than commit it.",
+    "id": 3249692470,
+    "line": 1,
+    "path": ".review-context/pr-diff.diff",
+    "pull_request_review_id": 4299857005,
+    "user": "opsclawd"
+  },
+  {
+    "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Model READY and SUCCESS Run states**\n\nWhen the orchestrator reaches the post-review waiting-for-merge point or observes the PR merge, ADR-0002 and `CONTEXT.md` require the Run to move to `READY` and then terminal `SUCCESS`, but this new domain type only exposes legacy states such as `waiting`/`passed` and `passRun` serializes `passed`. Any DB or `run.json` writer typed against this model cannot represent the documented lifecycle, so review polling and completion status will be stored with the wrong state.\n\nUseful? React with 👍 / 👎.",
+    "id": 3249694129,
+    "line": 5,
+    "path": "packages/domain/src/run.ts",
+    "pull_request_review_id": 4299858825,
+    "user": "chatgpt-codex-connector[bot]"
   }
 ]
