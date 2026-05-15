@@ -1127,65 +1127,66 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
     fi
 
-    # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations)
-    if [[ "$TASK_NUM" -eq "$RESUME_TASK_NUM" && "$RESUME_STAGE" == "review" ]]; then
-      log "  Skipping initial reviews for resumed task ${TASK_NUM} (already complete)"
-    else
-      IMPL_REPORT=$(cat "${ISSUES_DIR}/implement-task-${TASK_NUM}.log" 2>/dev/null || echo "")
+    # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations).
+    # We always run initial reviews here — even on resume. Reaching this point
+    # on a resumed run means find_first_incomplete_task returned this task
+    # because its status is "review-needed" (i.e. reviews are NOT both passing
+    # yet). Skipping reviews in that state would silently mark the task
+    # complete with no review evidence, as happened on the issue #4 run.
+    IMPL_REPORT=$(cat "${ISSUES_DIR}/implement-task-${TASK_NUM}.log" 2>/dev/null || echo "")
+    run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
+    run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
+
+    # Fix-review loop: agent fixes findings, then re-reviews, up to 5 times
+    while [[ $REVIEW_LOOPS -lt 5 ]]; do
+      REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
+      log "  Review-fix loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}"
+      log "  Cancel window: press Ctrl+C within 10s to abort..."
+      sleep 10
+
+      run_fix_review "$TASK_NUM" "$task_title" "$TASK_TEXT"
+      FIX_STATUS=$(resolve_result \
+        "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.result" \
+        "${WORKTREE_DIR}/fix-review-task-${TASK_NUM}.md" \
+        DONE DONE_NO_FIXES_NEEDED BLOCKED \
+        "DONE")
+
+      if [[ "$FIX_STATUS" == "BLOCKED" ]]; then
+        orchestrator_fail "Task ${TASK_NUM} fix review is blocked. Fix the blocker and re-run."
+      fi
+
+      # Update HEAD_SHA after potential fixes
+      HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+
+      # Check current review status after fix attempt
+      log "  Task ${TASK_NUM}: re-running reviews after fix loop..."
+      IMPL_REPORT=$(cat "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.log" 2>/dev/null || echo "")
       run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
       run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
 
-      # Fix-review loop: agent fixes findings, then re-reviews, up to 5 times
-      while [[ $REVIEW_LOOPS -lt 5 ]]; do
-        REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
-        log "  Review-fix loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}"
-        log "  Cancel window: press Ctrl+C within 10s to abort..."
-        sleep 10
+      # Check if reviews now pass — resolve from result files
+      SPEC_STATUS=$(resolve_result \
+        "${ISSUES_DIR}/spec-review-task-${TASK_NUM}.result" \
+        "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" \
+        SPEC_PASS SPEC_FAIL \
+        "SPEC_FAIL")
+      QUALITY_STATUS=$(resolve_result \
+        "${ISSUES_DIR}/quality-review-task-${TASK_NUM}.result" \
+        "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" \
+        QUALITY_PASS QUALITY_FAIL \
+        "QUALITY_FAIL")
 
-        run_fix_review "$TASK_NUM" "$task_title" "$TASK_TEXT"
-        FIX_STATUS=$(resolve_result \
-          "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.result" \
-          "${WORKTREE_DIR}/fix-review-task-${TASK_NUM}.md" \
-          DONE DONE_NO_FIXES_NEEDED BLOCKED \
-          "DONE")
-
-        if [[ "$FIX_STATUS" == "BLOCKED" ]]; then
-          orchestrator_fail "Task ${TASK_NUM} fix review is blocked. Fix the blocker and re-run."
-        fi
-
-        # Update HEAD_SHA after potential fixes
-        HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-
-        # Check current review status after fix attempt
-        log "  Task ${TASK_NUM}: re-running reviews after fix loop..."
-        IMPL_REPORT=$(cat "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.log" 2>/dev/null || echo "")
-        run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
-        run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
-
-        # Check if reviews now pass — resolve from result files
-        SPEC_STATUS=$(resolve_result \
-          "${ISSUES_DIR}/spec-review-task-${TASK_NUM}.result" \
-          "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" \
-          SPEC_PASS SPEC_FAIL \
-          "SPEC_FAIL")
-        QUALITY_STATUS=$(resolve_result \
-          "${ISSUES_DIR}/quality-review-task-${TASK_NUM}.result" \
-          "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" \
-          QUALITY_PASS QUALITY_FAIL \
-          "QUALITY_FAIL")
-
-        if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
-          log "  Task ${TASK_NUM}: both reviews pass"
-          break
-        elif [[ "$FIX_STATUS" == "DONE_NO_FIXES_NEEDED" ]]; then
-          log "  Task ${TASK_NUM}: no fixes offered and reviews still failing — breaking to avoid infinite loop"
-          break
-        fi
-      done
-
-      if [[ $REVIEW_LOOPS -eq 5 ]]; then
-        orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing."
+      if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
+        log "  Task ${TASK_NUM}: both reviews pass"
+        break
+      elif [[ "$FIX_STATUS" == "DONE_NO_FIXES_NEEDED" ]]; then
+        log "  Task ${TASK_NUM}: no fixes offered and reviews still failing — breaking to avoid infinite loop"
+        break
       fi
+    done
+
+    if [[ $REVIEW_LOOPS -eq 5 ]]; then
+      orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing."
     fi
 
     {
