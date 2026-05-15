@@ -867,7 +867,7 @@ absent. A missing task is NOT a spec failure for the current task.
 ${task_text}
 
 ## What Implementer Claims They Built
-$(echo "$impl_report" | head -50)
+$(head -n 50 <<< "$impl_report")
 
 ## CRITICAL: Do Not Trust the Report
 You MUST read the actual code and verify line by line. Do not take the
