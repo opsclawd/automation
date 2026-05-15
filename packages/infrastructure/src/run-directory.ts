@@ -42,7 +42,7 @@ export class RunDirectory {
 
   static create(input: { rootDir: string; run: Run }): RunDirectory {
     const paths = RunDirectory.paths(input.rootDir, input.run.displayId);
-    mkdirSync(paths.runRoot, { recursive: true });
+    mkdirSync(paths.runRoot);
     mkdirSync(paths.phasesDir, { recursive: true });
     mkdirSync(paths.artifactsDir, { recursive: true });
     const dir = new RunDirectory(paths);

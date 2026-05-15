@@ -1,0 +1,10 @@
+[
+  {
+    "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Refuse reuse of an existing run directory**\n\nIn the M1-03 acceptance case where two starts for the same issue happen concurrently, this recursive `mkdirSync` treats an already-created run root as success, and the following `writeRunJson` overwrites the first run's metadata because `displayId` is only second-resolution (`issue-<N>-<YYYYMMDD>-<HHMMSS>`). Use an exclusive directory/lock creation path or otherwise fail before writing when the run root already exists so the second create is refused instead of clobbering the first run.\n\nUseful? React with 👍 / 👎.",
+    "id": 3249411992,
+    "line": 45,
+    "path": "packages/infrastructure/src/run-directory.ts",
+    "pull_request_review_id": 4299535551,
+    "user": "chatgpt-codex-connector[bot]"
+  }
+]
