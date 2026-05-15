@@ -679,10 +679,27 @@ process_reviews() {
 
 # ── Main loop ──────────────────────────────────────────────────────────────
 POLL_COUNT=0
+TOTAL_POLLS=0
+LAST_REMOTE_SHA=""
+# Hard ceiling on total iterations regardless of resets — protects against
+# pathological loops where every push attracts a new comment.
+MAX_TOTAL_POLLS="${MAX_TOTAL_POLLS:-30}"
 
-while [[ $POLL_COUNT -lt $MAX_POLLS ]]; do
+while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
+  # Check whether the branch advanced since last iteration; if so, reset the
+  # "polls without progress" counter — a new push usually means a new round
+  # of reviewer comments is incoming.
+  git fetch origin "$PR_BRANCH" 2>/dev/null || true
+  CURRENT_REMOTE_SHA=$(git rev-parse "origin/${PR_BRANCH}" 2>/dev/null || echo "")
+  if [[ -n "$LAST_REMOTE_SHA" && -n "$CURRENT_REMOTE_SHA" && "$CURRENT_REMOTE_SHA" != "$LAST_REMOTE_SHA" ]]; then
+    log "Branch advanced (${LAST_REMOTE_SHA:0:7} → ${CURRENT_REMOTE_SHA:0:7}); resetting poll budget."
+    POLL_COUNT=0
+  fi
+  LAST_REMOTE_SHA="$CURRENT_REMOTE_SHA"
+
   POLL_COUNT=$((POLL_COUNT + 1))
-  log "=== Poll $POLL_COUNT/$MAX_POLLS ==="
+  TOTAL_POLLS=$((TOTAL_POLLS + 1))
+  log "=== Poll $POLL_COUNT/$MAX_POLLS (total: $TOTAL_POLLS/$MAX_TOTAL_POLLS) ==="
 
   review_ec=0
   process_reviews || review_ec=$?
@@ -694,7 +711,13 @@ while [[ $POLL_COUNT -lt $MAX_POLLS ]]; do
     *) warn "process_reviews exited with unexpected code ${review_ec}" ;;
   esac
 
-  if [[ $POLL_COUNT -ge $MAX_POLLS ]]; then
+  # Re-check remote AFTER processing — if the agent just pushed, capture that
+  # SHA now so the next iteration's diff check correctly attributes the
+  # advance to *this* round, not the next one.
+  git fetch origin "$PR_BRANCH" 2>/dev/null || true
+  LAST_REMOTE_SHA=$(git rev-parse "origin/${PR_BRANCH}" 2>/dev/null || echo "$LAST_REMOTE_SHA")
+
+  if [[ $POLL_COUNT -ge $MAX_POLLS || $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
     break
   fi
 
@@ -702,4 +725,7 @@ while [[ $POLL_COUNT -lt $MAX_POLLS ]]; do
   sleep "$POLL_INTERVAL"
 done
 
-log "=== PR review poll complete (${POLL_COUNT}/${MAX_POLLS} polls) ==="
+if [[ $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
+  warn "Reached MAX_TOTAL_POLLS hard ceiling (${MAX_TOTAL_POLLS}). Exiting."
+fi
+log "=== PR review poll complete (${POLL_COUNT}/${MAX_POLLS} consecutive, ${TOTAL_POLLS}/${MAX_TOTAL_POLLS} total) ==="
