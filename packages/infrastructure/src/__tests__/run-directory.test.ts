@@ -89,4 +89,29 @@ describe('RunDirectory', () => {
     const parsed = JSON.parse(readFileSync(join(dir.runRoot, 'run.json'), 'utf8'));
     expect(parsed.status).toBe('passed');
   });
+
+  it('openLogStreams writes to the expected files in append mode', async () => {
+    const root = makeRoot();
+    const dir = RunDirectory.create({
+      rootDir: root,
+      run: makeRun({ displayId: 'issue-11-20260513-000000' }),
+    });
+    const streams = dir.openLogStreams();
+    streams.stdout.write('hello stdout\n');
+    streams.stderr.write('hello stderr\n');
+    streams.combined.write('hello combined\n');
+    streams.events.write(JSON.stringify({ type: 'started' }) + '\n');
+    await streams.closeAll();
+
+    expect(readFileSync(dir.paths.stdoutLogPath, 'utf8')).toBe('hello stdout\n');
+    expect(readFileSync(dir.paths.stderrLogPath, 'utf8')).toBe('hello stderr\n');
+    expect(readFileSync(dir.paths.combinedLogPath, 'utf8')).toBe('hello combined\n');
+    expect(readFileSync(dir.paths.eventsJsonlPath, 'utf8')).toBe('{"type":"started"}\n');
+
+    // Reopen and append — verify append (not truncate) semantics.
+    const streams2 = dir.openLogStreams();
+    streams2.stdout.write('again\n');
+    await streams2.closeAll();
+    expect(readFileSync(dir.paths.stdoutLogPath, 'utf8')).toBe('hello stdout\nagain\n');
+  });
 });

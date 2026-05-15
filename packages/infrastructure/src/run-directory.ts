@@ -1,4 +1,5 @@
 import {
+  createWriteStream,
   existsSync,
   mkdirSync,
   renameSync,
@@ -8,8 +9,17 @@ import {
   closeSync,
   unlinkSync,
 } from 'node:fs';
+import type { WriteStream } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Run } from '@ai-sdlc/domain';
+
+export interface RunLogStreams {
+  stdout: WriteStream;
+  stderr: WriteStream;
+  combined: WriteStream;
+  events: WriteStream;
+  closeAll(): Promise<void>;
+}
 
 export class RunDirectoryExistsError extends Error {
   constructor(
@@ -79,6 +89,29 @@ export class RunDirectory {
 
   writeRunJson(run: Run): void {
     atomicWriteJson(this.paths.runJsonPath, run);
+  }
+
+  // Open append-mode write streams for the run's log files. Caller owns
+  // lifecycle and must invoke closeAll() before the run terminates.
+  // Append (not truncate) so resumed runs preserve prior output.
+  openLogStreams(): RunLogStreams {
+    const stdout = createWriteStream(this.paths.stdoutLogPath, { flags: 'a' });
+    const stderr = createWriteStream(this.paths.stderrLogPath, { flags: 'a' });
+    const combined = createWriteStream(this.paths.combinedLogPath, { flags: 'a' });
+    const events = createWriteStream(this.paths.eventsJsonlPath, { flags: 'a' });
+    return {
+      stdout,
+      stderr,
+      combined,
+      events,
+      closeAll(): Promise<void> {
+        return Promise.all(
+          [stdout, stderr, combined, events].map(
+            (s) => new Promise<void>((resolve) => s.end(resolve)),
+          ),
+        ).then(() => undefined);
+      },
+    };
   }
 }
 
