@@ -9,3 +9,13 @@
 - Status: DONE
 - Review loops: 1
 - Commit: 3c4999a1a7207e3c1b2c15c3972502a042776ff7
+
+## Task 3: Scaffold `packages/shared`
+- Status: DONE
+- Review loops: 1
+- Commit: a971f84fb876f1b65aada228851deef8f8ff812b
+
+## Task 4: Scaffold `packages/domain`
+- Status: DONE
+- Review loops: 1
+- Commit: a971f84fb876f1b65aada228851deef8f8ff812b
