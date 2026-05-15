@@ -85,9 +85,9 @@ export function passRun(run: Run, at: Date): Run {
   if (TERMINAL_STATUSES.has(run.status)) {
     throw new RunStateError(`cannot pass run ${run.displayId}: already ${run.status}`);
   }
-  const { currentPhase: _drop, ...rest } = run;
-  void _drop;
-  return { ...rest, status: 'passed', completedAt: at };
+  const next: Run = { ...run, status: 'passed', completedAt: at };
+  delete next.currentPhase;
+  return next;
 }
 
 export function failRun(run: Run, reason: string, at: Date = new Date()): Run {

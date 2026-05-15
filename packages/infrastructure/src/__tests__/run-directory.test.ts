@@ -1,12 +1,21 @@
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { RunDirectory, RunDirectoryExistsError } from '../run-directory.js';
 
+const tempRoots: string[] = [];
 function makeRoot() {
-  return mkdtempSync(join(tmpdir(), 'ai-orch-rd-'));
+  const root = mkdtempSync(join(tmpdir(), 'ai-orch-rd-'));
+  tempRoots.push(root);
+  return root;
 }
+
+afterEach(() => {
+  while (tempRoots.length > 0) {
+    rmSync(tempRoots.pop()!, { recursive: true, force: true });
+  }
+});
 
 function makeRun(overrides: Partial<{ displayId: string; status: string }> = {}) {
   return {

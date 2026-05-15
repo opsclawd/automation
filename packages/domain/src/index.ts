@@ -1,4 +1,3 @@
-export const packageName = '@ai-sdlc/domain';
 export * from './run.js';
 export * from './phase.js';
 export * from './failure.js';
