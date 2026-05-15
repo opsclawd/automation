@@ -85,6 +85,13 @@ export class RunDirectory {
         throw e;
       }
     }
+    const rootDirParent = dirname(input.rootDir);
+    const rootDirParentFd = openSync(rootDirParent, 'r');
+    try {
+      fsyncSync(rootDirParentFd);
+    } finally {
+      closeSync(rootDirParentFd);
+    }
     const rootDirFd = openSync(input.rootDir, 'r');
     try {
       fsyncSync(rootDirFd);
