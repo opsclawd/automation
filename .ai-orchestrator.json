@@ -1,0 +1,15 @@
+{
+  "validation": {
+    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
+    "timeout": 300
+  },
+  "phases": {
+    "skip": ["compound"],
+    "reviewFix": { "maxIterations": 10 },
+    "implement": { "maxIterations": 5 }
+  },
+  "timeouts": {
+    "readyMaxDays": 7,
+    "invocationMaxMinutes": 30
+  }
+}
