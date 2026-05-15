@@ -510,11 +510,13 @@ if [[ "$PHASE" == "read_issue" ]]; then
 
   # Run artifacts (issue.json, issue.md, issue-comments.md) are written directly to worktree
 
-  # Resolve the actual git directory (in worktrees, .git is a file, not a dir)
-  WORKTREE_GIT_DIR=$(cd "$WORKTREE_DIR" && git rev-parse --git-dir)
-  mkdir -p "${WORKTREE_GIT_DIR}/info"
+  # Resolve the common git directory (worktrees share the main repo's git dir)
+  # git rev-parse --git-dir resolves to .git/worktrees/issue-N/ for worktrees,
+  # but info/exclude is read from the common dir (.git/) not the worktree-local dir.
+  WORKTREE_COMMON_DIR=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
+  mkdir -p "${WORKTREE_COMMON_DIR}/info"
 
-  cat >> "${WORKTREE_GIT_DIR}/info/exclude" << 'EOF'
+  cat >> "${WORKTREE_COMMON_DIR}/info/exclude" << 'EOF'
 *.log
 *.result
 code-review.md
@@ -1223,10 +1225,10 @@ if [[ "$PHASE" == "validate" ]]; then
 
   # Record validation status for downstream phases
   if [[ $VALIDATE_EXIT -ne 0 ]]; then
-    echo "failed" > "${ISSUES_DIR}/validation-status.txt"
+    echo "failed" > "${ISSUES_DIR}/validation.result"
     warn "Validation had failures (check validation.md for details)"
   else
-    echo "passed" > "${ISSUES_DIR}/validation-status.txt"
+    echo "passed" > "${ISSUES_DIR}/validation.result"
     info "Validation passed"
   fi
 
@@ -1334,6 +1336,16 @@ Rules:
 - Do not rewrite working code for style preference.
 - If a finding is invalid, note it in ./review-fix-log.md and skip it.
 - If a finding is fixed, document the fix in ./review-fix-log.md.
+
+## ORCHESTRATOR ARTIFACTS — DO NOT DELETE
+The following files are orchestrator working artifacts. They are excluded
+from git via info/exclude and will NOT appear in the final PR. If a review
+finding flags them as out-of-scope, note in review-fix-log.md that they are
+excluded from git and move on. Do NOT delete or modify these files:
+- issue.md, issue.json, issue-comments.md
+- design.md, plan.md, implementation-log.md, orchestrator.log
+- *.result, *.log files (spec-review, quality-review, fix-review, etc.)
+- code-review.md, review.md, validation.md
 
 ## CRITICAL RULES
 - Do NOT ask questions.
@@ -1585,7 +1597,7 @@ EOF
 
   # Update issue labels — gate ai:pr-ready on validation passing
   gh issue edit "$ISSUE_NUM" --remove-label "ai:in-progress" 2>/dev/null || true
-  VALIDATION_STATUS=$(cat "${ISSUES_DIR}/validation-status.txt" 2>/dev/null || echo "unknown")
+  VALIDATION_STATUS=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || echo "unknown")
   if [[ "$VALIDATION_STATUS" == "passed" ]]; then
     gh issue edit "$ISSUE_NUM" --add-label "ai:pr-ready" 2>/dev/null || true
   else
