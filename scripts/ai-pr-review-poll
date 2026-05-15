@@ -491,6 +491,21 @@ process_reviews() {
   echo "$comments" > "${ISSUES_DIR}/comments.json"
   gh pr diff "$PR_NUMBER" > "${ISSUES_DIR}/pr-diff.diff" 2>/dev/null || warn "Failed to fetch PR diff"
 
+  # Stage everything the agent needs INSIDE its sandbox (POLL_WORKTREE).
+  # opencode auto-rejects external_directory reads, so the prompt must point
+  # at paths under the worktree, not REPO_ROOT.
+  local CTX="${POLL_WORKTREE}/.review-context"
+  mkdir -p "$CTX"
+  for f in issue.md design.md plan.md; do
+    [[ -f "${REPO_ROOT}/ai/issues/${ISSUE_NUM}/$f" ]] && cp "${REPO_ROOT}/ai/issues/${ISSUE_NUM}/$f" "$CTX/" 2>/dev/null || true
+  done
+  cp "${ISSUES_DIR}/comments.json" "${ISSUES_DIR}/pr-diff.diff" "$CTX/" 2>/dev/null || true
+  if [[ -f "${POLL_WORKTREE}/.git/info/exclude" ]] && ! grep -qxF '.review-context/' "${POLL_WORKTREE}/.git/info/exclude" 2>/dev/null; then
+    echo '.review-context/' >> "${POLL_WORKTREE}/.git/info/exclude"
+  fi
+  local RESULT_IN_WT="${CTX}/process-review-p${POLL_COUNT}.result"
+  rm -f "$RESULT_IN_WT"
+
   local comment_text
   comment_text=$(echo "$comments" | jq -r '.[] | "- \(.path):\(.line) — \(.body)"')
 
@@ -511,7 +526,7 @@ process_reviews() {
     echo "Branch: ${PR_BRANCH}"
     echo "Repository: ${OWNER_REPO}"
     echo "Your working directory: ${POLL_WORKTREE}"
-    echo "Issue Archive: ${REPO_ROOT}/ai/issues/${ISSUE_NUM}/ (issue.md, design.md, plan.md)"
+    echo "Review context (relative to working directory): .review-context/ (issue.md, design.md, plan.md, comments.json, pr-diff.diff)"
     echo ''
     echo '## PR DIFF'
     echo '```'
@@ -524,11 +539,11 @@ process_reviews() {
     echo '## TASK'
     echo ''
     echo '### Step 1: Understand the design context'
-    echo "The issue archive (issue.md, design.md, plan.md) is available on the local filesystem. Read it via:"
+    echo "The issue archive is staged inside your working directory at .review-context/. Read it via:"
     echo '```'
-    echo "cat ${REPO_ROOT}/ai/issues/${ISSUE_NUM}/issue.md"
-    echo "cat ${REPO_ROOT}/ai/issues/${ISSUE_NUM}/design.md"
-    echo "cat ${REPO_ROOT}/ai/issues/${ISSUE_NUM}/plan.md"
+    echo "cat .review-context/issue.md"
+    echo "cat .review-context/design.md"
+    echo "cat .review-context/plan.md"
     echo '```'
     echo ''
     echo '### Step 2: Assess each comment'
@@ -543,9 +558,9 @@ process_reviews() {
     echo '```'
     echo ''
     echo '### Step 4: Reply to all threads'
-    echo "Using comment IDs from ${ISSUES_DIR}/comments.json, reply to EVERY thread (both valid and invalid comments):"
+    echo "Using comment IDs from .review-context/comments.json, reply to EVERY thread (both valid and invalid comments):"
     echo '```'
-    echo "jq -r '.[] | \"gh api repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments/\(.id)/replies --method POST --raw-field body=Chosen approach: <what was done>. Options considered: <other approaches and why not chosen>. Reasoning: <why this decision aligns with the design>\"' ${ISSUES_DIR}/comments.json | bash"
+    echo "jq -r '.[] | \"gh api repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments/\(.id)/replies --method POST --raw-field body=Chosen approach: <what was done>. Options considered: <other approaches and why not chosen>. Reasoning: <why this decision aligns with the design>\"' .review-context/comments.json | bash"
     echo '```'
     echo 'Use the actual comment IDs from the JSON file. Replace the <...> placeholders with real content describing your reasoning.'
     echo ''
@@ -562,7 +577,7 @@ process_reviews() {
     echo '- PARTIAL — Some comments addressed but could not complete all (state which in your output)'
     echo '- BLOCKED — Cannot proceed (need info, conflicting constraints, etc.)'
     echo ''
-    echo "Result file: ${ISSUES_DIR}/process-review-p${POLL_COUNT}.result"
+    echo "Result file (write inside your working directory): .review-context/process-review-p${POLL_COUNT}.result"
     echo ''
     echo '## RULES'
     echo '- Follow the receiving-code-review skill strictly.'
@@ -580,6 +595,12 @@ process_reviews() {
 
   if [[ $agent_ec -ne 0 ]]; then
     warn "Agent exited with code ${agent_ec}"
+  fi
+
+  # Promote agent's in-worktree result (where opencode CAN write) to ISSUES_DIR
+  # so the existing resolver and artifact archiving keep working unchanged.
+  if [[ -f "$RESULT_IN_WT" ]]; then
+    cp "$RESULT_IN_WT" "${ISSUES_DIR}/process-review-p${POLL_COUNT}.result"
   fi
 
   # Resolve structured result from agent output
