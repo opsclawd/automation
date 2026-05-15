@@ -50,7 +50,7 @@ export class RunRepository {
     const tx = this.db.transaction((r: Run) => {
       const active = this.db
         .prepare(
-          `SELECT 1 FROM runs WHERE issue_number = ? AND status IN ('queued','running','waiting','blocked')`,
+          `SELECT 1 FROM runs WHERE issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
         )
         .get(r.issueNumber);
       if (active) {
