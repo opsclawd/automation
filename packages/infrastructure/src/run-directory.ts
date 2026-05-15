@@ -1,4 +1,12 @@
-import { mkdirSync, renameSync, writeFileSync, openSync, fsyncSync, closeSync } from 'node:fs';
+import {
+  mkdirSync,
+  renameSync,
+  writeFileSync,
+  openSync,
+  fsyncSync,
+  closeSync,
+  unlinkSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import type { Run } from '@ai-sdlc/domain';
 
@@ -53,12 +61,21 @@ export class RunDirectory {
 
 function atomicWriteJson(path: string, value: unknown): void {
   const tmp = `${path}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
-  const fd = openSync(tmp, 'r+');
   try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
+    writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8');
+    const fd = openSync(tmp, 'r+');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+  } catch (e) {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
+    throw e;
   }
-  renameSync(tmp, path);
 }

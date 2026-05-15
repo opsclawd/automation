@@ -43,7 +43,14 @@ importers:
 
   packages/domain: {}
 
-  packages/infrastructure: {}
+  packages/infrastructure:
+    dependencies:
+      '@ai-sdlc/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@ai-sdlc/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/shared:
     dependencies:
