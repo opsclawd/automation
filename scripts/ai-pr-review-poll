@@ -786,12 +786,11 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
     *) warn "process_reviews exited with unexpected code ${review_ec}" ;;
   esac
 
-  # Re-check remote AFTER processing — if the agent just pushed, capture that
-  # SHA now so the next iteration's diff check correctly attributes the
-  # advance to *this* round, not the next one.
-  git fetch origin "$PR_BRANCH" 2>/dev/null || true
-  LAST_REMOTE_SHA=$(git rev-parse "origin/${PR_BRANCH}" 2>/dev/null || echo "$LAST_REMOTE_SHA")
-
+  # Intentionally do NOT update LAST_REMOTE_SHA here — leave it as the
+  # SHA observed at the *start* of this iteration. If the agent pushed
+  # during process_reviews, the next iteration's top-of-loop fetch will
+  # see origin advanced past LAST_REMOTE_SHA and reset POLL_COUNT,
+  # giving the next round of reviewer comments a fresh budget.
   if [[ $POLL_COUNT -ge $MAX_POLLS || $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
     break
   fi
