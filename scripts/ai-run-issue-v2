@@ -1531,37 +1531,80 @@ if [[ "$PHASE" == "create-pr" ]]; then
   ISSUE_TITLE=$(echo "$ISSUE_META" | jq -r '.title')
   ISSUE_URL=$(echo "$ISSUE_META" | jq -r '.url')
 
+  PR_SUMMARY=""
+  if [[ -f "${ISSUES_DIR}/implementation-log.md" ]]; then
+    PR_SUMMARY=$(awk 'NR==2,/^$/ {if (/^$/) exit; print}' "${ISSUES_DIR}/implementation-log.md" 2>/dev/null || true)
+  fi
+
+  PR_TASKS=""
+  if [[ -f "${ISSUES_DIR}/plan.md" ]]; then
+    PR_TASKS=$(awk '/^#{2,3} Task [0-9]+:/ {sub(/^#{2,3} /, "- "); print}' "${ISSUES_DIR}/plan.md" 2>/dev/null || true)
+  fi
+
+  PR_CHANGES=""
+  if [[ -n "$BASE_SHA" ]]; then
+    PR_CHANGES=$(cd "$WORKTREE_DIR" && git diff --stat "${BASE_SHA}"..HEAD 2>/dev/null || true)
+  fi
+
+  PR_VALIDATION="Unknown"
+  if [[ -f "${ISSUES_DIR}/validation.result" ]]; then
+    PR_VALIDATION=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null | sed 's/.*/&/' | head -1)
+  fi
+  PR_VALIDATION_STEPS=""
+  if [[ -f "${ISSUES_DIR}/validate.log" ]]; then
+    phase_name=""
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^===\ (.+)\ ===$ ]]; then
+        phase_name="${BASH_REMATCH[1]}"
+      elif [[ -n "$phase_name" ]]; then
+        if echo "$line" | grep -qiE 'fail|error'; then
+          PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
+          phase_name=""
+        elif echo "$line" | grep -qiE 'passed|succeeded|done'; then
+          PR_VALIDATION_STEPS+="- ${phase_name}: passed"$'\n'
+          phase_name=""
+        fi
+      fi
+    done < "${ISSUES_DIR}/validate.log"
+    if [[ -z "$PR_VALIDATION_STEPS" ]]; then
+      PR_VALIDATION_STEPS=$(awk '/^=== / {gsub(/^=== | ===$/, ""); phase=$0; next} /fail|error/i {print "- " phase ": failed"; next} /passed|succeeded/i {print "- " phase ": passed"; next}' "${ISSUES_DIR}/validate.log" 2>/dev/null | head -10 || true)
+    fi
+  fi
+
+  PR_REVIEW=""
+  if [[ -f "${ISSUES_DIR}/code-review.md" ]]; then
+    crit_high=$(grep -ciE 'severity.*(critical|high)' "${ISSUES_DIR}/code-review.md" 2>/dev/null || echo 0)
+    medi_low=$(grep -ciE 'severity.*(medium|low)' "${ISSUES_DIR}/code-review.md" 2>/dev/null || echo 0)
+    PR_REVIEW="- Critical/High: ${crit_high}"$'\n'"- Medium/Low: ${medi_low}"
+  elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
+    crit_high=$(grep -ciE 'severity.*(critical|high)' "${ISSUES_DIR}/review.md" 2>/dev/null || echo 0)
+    medi_low=$(grep -ciE 'severity.*(medium|low)' "${ISSUES_DIR}/review.md" 2>/dev/null || echo 0)
+    PR_REVIEW="- Critical/High: ${crit_high}"$'\n'"- Medium/Low: ${medi_low}"
+  else
+    PR_REVIEW="No code review performed"
+  fi
+
   cat > "${ISSUES_DIR}/pr-summary.md" << EOF
-# PR Summary — Issue #${ISSUE_NUM}
+# ${ISSUE_TITLE}
 
-## Issue
-[#${ISSUE_NUM}](${ISSUE_URL}): ${ISSUE_TITLE}
+Closes #${ISSUE_NUM}
 
-## State
-**PR_READY** — All phases completed successfully.
+${PR_SUMMARY}
 
-## Phases Completed
-$(ls -1 "${ISSUES_DIR}"/*.md 2>/dev/null | while read f; do echo "- $(basename $f)"; done)
+## Tasks
+${PR_TASKS}
 
-## Validation Results
-$(grep -E "build|lint|typecheck|test|ERROR|fail" "${ISSUES_DIR}/validate.log" 2>/dev/null | grep -v "^==" | head -20 || echo "See validation.md")
+## Changes
+${PR_CHANGES}
+
+## Validation: ${PR_VALIDATION}
+${PR_VALIDATION_STEPS}
 
 ## Review Findings
-$(if [[ -f "${ISSUES_DIR}/review.md" ]]; then
-  echo "Critical/high: $(grep -ciE "severity.*(critical|high)" "${ISSUES_DIR}/review.md" 2>/dev/null || echo 0)"
-  echo "Medium/low: $(grep -ciE "severity.*(medium|low)" "${ISSUES_DIR}/review.md" 2>/dev/null || echo 0)"
-else
-  echo "No review.md found"
-fi)
+${PR_REVIEW}
 
-## Fix Loops
-$FIX_LOOP_COUNT
-
-## Branch
-\`${BRANCH}\`
-
-## Run Artifacts
-All logs and artifacts saved to \`ai/issues/${ISSUE_NUM}/\`
+## Artifacts
+Run logs and artifacts: \`ai/issues/${ISSUE_NUM}/\`
 EOF
 
   # Create PR. `gh pr create` does NOT support --json (only `gh pr view/list`
@@ -1570,7 +1613,7 @@ EOF
   PR_URL=$(gh pr create \
     --base "$BASE_BRANCH" \
     --head "$BRANCH" \
-    --title "Issue #${ISSUE_NUM}: automated implementation" \
+    --title "${ISSUE_TITLE}" \
     --body "$PR_BODY" 2>/dev/null | tail -1) || PR_URL=""
 
   if [[ -z "$PR_URL" ]]; then
@@ -1621,9 +1664,26 @@ if [[ "$PHASE" == "done" ]]; then
 
   ARCHIVE_DIR="${REPO_ROOT}/ai/issues/${ISSUE_NUM}"
   mkdir -p "$ARCHIVE_DIR"
-  cp -r "${WORKTREE_DIR}"/* "$ARCHIVE_DIR"/ 2>/dev/null || true
-  cp "${WORKTREE_DIR}/.git" "$ARCHIVE_DIR/.git-worktree" 2>/dev/null || true
-  log "Worktree archived to ${ARCHIVE_DIR}/"
+  for f in \
+    orchestrator.log \
+    issue.json issue.md issue-comments.md \
+    design.md plan.md \
+    implementation-log.md \
+    compound.md \
+    validation.md validation.result validate.log revalidate-*.log validation-*.md \
+    review.md review-fix-log.md code-review.md \
+    pr-summary.md pr-url.txt pr-number.txt \
+    poll-pr.log \
+    install-worktree.log \
+    blocked.json task-manifest.json \
+    implement-task-*.log implement-task-*.result \
+    spec-review-task-*.log spec-review-task-*.result \
+    quality-review-task-*.log quality-review-task-*.result \
+    fix-review-task-*.log fix-review-task-*.result \
+    fix-review-*.log fix-review-*.result; do
+    cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
+  done
+  log "Artifacts archived to ${ARCHIVE_DIR}/"
 
   # Start PR review poll loop in background
   log "Starting PR review poll loop (background)..."
