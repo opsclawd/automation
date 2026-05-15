@@ -6,6 +6,7 @@ coverage/
 .ai-runs/
 .ai-worktrees/
 ai/
+.review-context/
 *.result
 *.log
 .DS_Store
