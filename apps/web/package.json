@@ -4,6 +4,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "echo 'no-op until Task 7'"
+    "typecheck": "exit 0"
   }
 }
