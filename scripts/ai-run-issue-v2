@@ -926,13 +926,21 @@ implementer's word for what was built.
 - ✅ Spec compliant (if everything matches)
 - ❌ Issues found: [list specifically with file:line references]
 
-## MANDATORY RESULT FILE
-After writing your review, write EXACTLY ONE of these values to ./spec-review-task-${task_n}.result:
-- SPEC_PASS
-- SPEC_FAIL
-No other content in the file — just the status word.
+## MANDATORY OUTPUT FILES — write BOTH
 
-Stop after writing both files.
+1. ./spec-review-task-${task_n}.md
+   The detailed findings the fix-review agent will read. Include every
+   issue with file:line references, the spec requirement violated, and
+   what would satisfy it. If everything passes, write a single line:
+   'No findings. Implementation matches the spec.'
+
+2. ./spec-review-task-${task_n}.result
+   EXACTLY ONE of: SPEC_PASS | SPEC_FAIL
+   No other content in the file — just the status word.
+
+Both files MUST be written before you stop, even on SPEC_PASS. The
+.md file is the primary handoff to the fix-review agent — without it,
+the orchestrator silently marks the task complete despite failures.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 
@@ -991,13 +999,21 @@ Do NOT fail a documentation-only change for lacking tests, code patterns, or cod
 - Issues: [Critical | Important | Minor]
 - Assessment: APPROVED | NEEDS_WORK
 
-## MANDATORY RESULT FILE
-After writing your review, write EXACTLY ONE of these values to ./quality-review-task-${task_n}.result:
-- QUALITY_PASS
-- QUALITY_FAIL
-No other content in the file — just the status word.
+## MANDATORY OUTPUT FILES — write BOTH
 
-Stop after writing both files.
+1. ./quality-review-task-${task_n}.md
+   The detailed findings the fix-review agent will read. Include every
+   issue with file:line references, severity, and what would resolve it.
+   If everything passes, write a single line:
+   'No findings. Implementation meets the quality bar.'
+
+2. ./quality-review-task-${task_n}.result
+   EXACTLY ONE of: QUALITY_PASS | QUALITY_FAIL
+   No other content in the file — just the status word.
+
+Both files MUST be written before you stop, even on QUALITY_PASS. The
+.md file is the primary handoff to the fix-review agent — without it,
+the orchestrator silently marks the task complete despite failures.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 
@@ -1013,17 +1029,31 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     log "  Task ${task_n}: fix review..."
 
-    SPEC_REVIEW_FILE="./spec-review-task-${task_n}.md"
-    QUALITY_REVIEW_FILE="./quality-review-task-${task_n}.md"
+    # Read findings from .md if present (preferred), else fall back to the
+    # .log (the agent's full transcript). Without this fallback, the missing
+    # .md silently produces empty findings and the fix-review agent reports
+    # 'no fixes needed' against real review failures (observed on issue #4
+    # task 1 where SPEC_FAIL + QUALITY_FAIL still produced DONE_NO_FIXES_NEEDED).
+    local spec_findings="" quality_findings=""
+    local spec_md="${WORKTREE_DIR}/spec-review-task-${task_n}.md"
+    local quality_md="${WORKTREE_DIR}/quality-review-task-${task_n}.md"
+    local spec_log="${ISSUES_DIR}/spec-review-task-${task_n}.log"
+    local quality_log="${ISSUES_DIR}/quality-review-task-${task_n}.log"
 
-    local spec_findings=""
-    local quality_findings=""
-
-    if [[ -f "$SPEC_REVIEW_FILE" ]]; then
-      spec_findings=$(cat "$SPEC_REVIEW_FILE")
+    if [[ -s "$spec_md" ]]; then
+      spec_findings=$(cat "$spec_md")
+    elif [[ -s "$spec_log" ]]; then
+      # Strip ANSI escapes (\033[...m) so the agent reads clean prose.
+      spec_findings=$(sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$spec_log")
     fi
-    if [[ -f "$QUALITY_REVIEW_FILE" ]]; then
-      quality_findings=$(cat "$QUALITY_REVIEW_FILE")
+    if [[ -s "$quality_md" ]]; then
+      quality_findings=$(cat "$quality_md")
+    elif [[ -s "$quality_log" ]]; then
+      quality_findings=$(sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$quality_log")
+    fi
+
+    if [[ -z "$spec_findings" && -z "$quality_findings" ]]; then
+      orchestrator_fail "Task ${task_n} fix-review has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings."
     fi
 
     FIX_REVIEW_PROMPT="You are fixing review findings for Task ${task_n}: ${task_title}
@@ -1206,13 +1236,23 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         log "  Task ${TASK_NUM}: both reviews pass"
         break
       elif [[ "$FIX_STATUS" == "DONE_NO_FIXES_NEEDED" ]]; then
-        log "  Task ${TASK_NUM}: no fixes offered and reviews still failing — breaking to avoid infinite loop"
-        break
+        # Fix-agent declined to do anything but reviews remain failing.
+        # This is NOT a stable terminal state — it means the fix-agent
+        # didn't see the findings (Bug A/B), or the findings genuinely
+        # require human judgement. Either way, do not silently mark the
+        # task complete — fail the orchestrator so the operator looks.
+        orchestrator_fail "Task ${TASK_NUM}: reviews failing (spec=${SPEC_STATUS}, quality=${QUALITY_STATUS}) and fix-agent reported no fixes. Inspect spec-review-task-${TASK_NUM}.md / quality-review-task-${TASK_NUM}.md and re-run."
       fi
     done
 
     if [[ $REVIEW_LOOPS -eq 5 ]]; then
-      orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing."
+      orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})."
+    fi
+
+    # Defense in depth: even if a future code path adds a `break` that
+    # isn't gated on PASS, fail before declaring the task complete.
+    if [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
+      orchestrator_fail "Task ${TASK_NUM}: exited review loop with spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?}. Refusing to mark complete."
     fi
 
     {
