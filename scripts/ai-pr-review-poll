@@ -300,13 +300,21 @@ verify_replies_posted() {
     return 1
   }
 
+  # Per-ID status file lets the caller mark partial successes — without it,
+  # a 2/3 outcome leaves zero IDs tracked and the agent re-replies to the 2
+  # already-answered comments on the next poll.
+  local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
+  : > "$status_file"
+
   local missing=0
   local total=0
   for cid in $expected_ids; do
     total=$((total + 1))
     local has_reply
     has_reply=$(echo "$all_replies" | jq --arg cid "$cid" '[.[] | select((. | tostring) == $cid or (. | tonumber) == ($cid | tonumber))] | length' 2>/dev/null || echo "0")
-    if [[ "$has_reply" -eq 0 ]]; then
+    if [[ "$has_reply" -gt 0 ]]; then
+      echo "$cid" >> "$status_file"
+    else
       warn "  verify_replies: comment ${cid} has no reply"
       missing=$((missing + 1))
     fi
@@ -319,6 +327,52 @@ verify_replies_posted() {
     warn "  verify_replies: ${missing}/${total} threads missing replies"
     return 1
   fi
+}
+
+# Resolve PR review threads via GraphQL. Takes whitespace-separated databaseIds
+# (numeric REST comment IDs) and resolves each containing thread.
+resolve_threads() {
+  local ids="$*"
+  [[ -z "$ids" ]] && return 0
+  local owner="${OWNER_REPO%/*}"
+  local repo="${OWNER_REPO#*/}"
+
+  local threads_json
+  threads_json=$(gh api graphql -f query='
+    query($owner:String!,$repo:String!,$pr:Int!) {
+      repository(owner:$owner, name:$repo) {
+        pullRequest(number:$pr) {
+          reviewThreads(first:100) {
+            nodes { id isResolved comments(first:50){ nodes { databaseId } } }
+          }
+        }
+      }
+    }' -F owner="$owner" -F repo="$repo" -F pr="$PR_NUMBER" 2>/dev/null) || {
+    warn "  resolve_threads: failed to fetch review threads"
+    return 1
+  }
+
+  local resolved=0 skipped=0 failed=0
+  for cid in $ids; do
+    local thread_id
+    thread_id=$(echo "$threads_json" | jq -r --argjson cid "$cid" '
+      .data.repository.pullRequest.reviewThreads.nodes[]
+      | select(.isResolved == false)
+      | select(.comments.nodes | any(.databaseId == $cid))
+      | .id' 2>/dev/null | head -1)
+    if [[ -z "$thread_id" || "$thread_id" == "null" ]]; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    if gh api graphql -f query='mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}' \
+        -F id="$thread_id" >/dev/null 2>&1; then
+      resolved=$((resolved + 1))
+    else
+      failed=$((failed + 1))
+      warn "  resolve_threads: failed to resolve thread for comment ${cid}"
+    fi
+  done
+  log "  resolve_threads: resolved=${resolved} already-resolved=${skipped} failed=${failed}"
 }
 
 verify_build_passes() {
@@ -467,8 +521,12 @@ process_reviews() {
       ensure_local_pushed || reverify_ok=false
       verify_build_passes || reverify_ok=false
       if $reverify_ok; then
+        local promoted_ids
+        promoted_ids=$(tr '\n' ' ' < "$REPLIED_IDS_FILE")
         cat "$REPLIED_IDS_FILE" >> "$PROCESSED_IDS_FILE"
+        sort -u "$PROCESSED_IDS_FILE" -o "$PROCESSED_IDS_FILE"
         : > "$REPLIED_IDS_FILE"
+        resolve_threads $promoted_ids
         log "All checks passed; promoted ${pending_count} ID(s) from REPLIED to PROCESSED."
         return 0
       else
@@ -654,20 +712,31 @@ process_reviews() {
     verify_build_passes || verify_ok=false
   fi
 
-  # Two-tier append:
-  #   replies_ok && verify_ok   → PROCESSED (terminal; never re-touch these)
-  #   replies_ok && !verify_ok  → REPLIED   (don't re-prompt the agent, but
-  #                                          keep re-running build verification
-  #                                          on subsequent polls)
-  #   !replies_ok               → nothing   (full retry next poll)
+  # Per-ID append: every individually-replied comment gets marked REPLIED so
+  # the agent isn't re-prompted for it next poll, even when the overall
+  # batch was partial. Only IDs the agent ACTUALLY replied to land here.
+  local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
+  if [[ -f "$status_file" && -s "$status_file" ]]; then
+    cat "$status_file" >> "$REPLIED_IDS_FILE"
+    sort -u "$REPLIED_IDS_FILE" -o "$REPLIED_IDS_FILE"
+    local replied_count
+    replied_count=$(wc -l < "$status_file" | tr -d ' ')
+    log "Tracked ${replied_count} comment(s) as REPLIED (cumulative: $(wc -l < "$REPLIED_IDS_FILE" | tr -d ' '))."
+  fi
+
+  # Promotion to PROCESSED + thread resolution requires both: every comment
+  # in this batch got a reply AND build/commits verified clean.
   if $replies_ok && $verify_ok; then
-    echo "$comments" | jq -r '.[].id' >> "$PROCESSED_IDS_FILE"
+    local fed_ids
+    fed_ids=$(echo "$comments" | jq -r '.[].id' | tr '\n' ' ')
+    echo "$fed_ids" | tr ' ' '\n' | grep -v '^$' >> "$PROCESSED_IDS_FILE"
+    sort -u "$PROCESSED_IDS_FILE" -o "$PROCESSED_IDS_FILE"
     log "Replies + verification confirmed; marked ${comment_count} comment(s) as PROCESSED."
+    resolve_threads $fed_ids
   elif $replies_ok; then
-    echo "$comments" | jq -r '.[].id' >> "$REPLIED_IDS_FILE"
-    warn "Replies confirmed but verification failed; marked ${comment_count} comment(s) as REPLIED (will re-verify next poll)."
+    warn "All replies confirmed but verification failed; will re-verify next poll."
   else
-    warn "Replies not confirmed; comment IDs NOT marked (full retry next poll)."
+    warn "Partial/no replies; ${comment_count} comment(s) tracked individually above. Missing IDs retry next poll."
   fi
 
   if $verify_ok; then
