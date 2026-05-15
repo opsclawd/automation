@@ -1,11 +1,6 @@
 export const version = 1;
 
 export const sql = /* sql */ `
-CREATE TABLE IF NOT EXISTS schema_version (
-  version INTEGER PRIMARY KEY,
-  applied_at TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS runs (
   uuid TEXT PRIMARY KEY,
   display_id TEXT NOT NULL UNIQUE,

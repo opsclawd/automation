@@ -130,7 +130,7 @@ function toRecord(row: RunRow): RunRecord {
     completedPhases: JSON.parse(row.completed_phases) as string[],
     startedAt: new Date(row.started_at),
     ...(row.current_phase !== null ? { currentPhase: row.current_phase } : {}),
-    ...(row.completed_at ? { completedAt: new Date(row.completed_at) } : {}),
+    ...(row.completed_at !== null ? { completedAt: new Date(row.completed_at) } : {}),
     ...(row.failure_reason !== null ? { failureReason: row.failure_reason } : {}),
     ...(row.exit_code !== null ? { exitCode: row.exit_code } : {}),
     ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),

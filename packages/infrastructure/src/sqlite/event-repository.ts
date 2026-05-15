@@ -43,11 +43,14 @@ export class EventRepository {
   }
 
   listByRunSince(runUuid: string, sinceIso?: string): EventRow[] {
-    const rows = this.db
-      .prepare(
-        `SELECT * FROM events WHERE run_uuid = ? AND timestamp > COALESCE(?, '') ORDER BY timestamp ASC`,
-      )
-      .all(runUuid, sinceIso ?? '') as Array<{
+    let sql = 'SELECT * FROM events WHERE run_uuid = ?';
+    const params: unknown[] = [runUuid];
+    if (sinceIso !== undefined) {
+      sql += ' AND timestamp > ?';
+      params.push(sinceIso);
+    }
+    sql += ' ORDER BY timestamp ASC';
+    const rows = this.db.prepare(sql).all(...params) as Array<{
       id: number;
       run_uuid: string;
       phase: string | null;
@@ -60,7 +63,7 @@ export class EventRepository {
     return rows.map((r) => ({
       id: r.id,
       runUuid: r.run_uuid,
-      phase: r.phase ?? undefined,
+      ...(r.phase !== null ? { phase: r.phase } : {}),
       level: r.level,
       type: r.type,
       message: r.message,
