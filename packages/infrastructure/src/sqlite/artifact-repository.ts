@@ -35,7 +35,7 @@ export class ArtifactRepository {
     ).map((r) => ({
       id: r.id,
       runUuid: r.run_uuid,
-      phase: r.phase ?? undefined,
+      ...(r.phase !== null ? { phase: r.phase } : {}),
       type: r.type as Artifact['type'],
       path: r.path,
       createdAt: new Date(r.created_at),

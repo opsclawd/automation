@@ -48,12 +48,12 @@ export class FailureRepository {
     if (!row) return undefined;
     return {
       runUuid: row.run_uuid,
-      phase: row.phase ?? undefined,
-      step: row.step ?? undefined,
-      attempt: row.attempt ?? undefined,
+      ...(row.phase !== null ? { phase: row.phase } : {}),
+      ...(row.step !== null ? { step: row.step } : {}),
+      ...(row.attempt !== null ? { attempt: row.attempt } : {}),
       kind: row.kind as Failure['kind'],
       message: row.message,
-      exitCode: row.exit_code ?? undefined,
+      ...(row.exit_code !== null ? { exitCode: row.exit_code } : {}),
       canRetry: row.can_retry === 1,
       suggestedAction: row.suggested_action,
       artifacts: JSON.parse(row.artifacts) as string[],

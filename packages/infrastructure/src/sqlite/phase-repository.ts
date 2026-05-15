@@ -46,8 +46,8 @@ export class PhaseRepository {
       name: r.name,
       status: r.status as PhaseStatus,
       attempt: r.attempt,
-      startedAt: r.started_at ? new Date(r.started_at) : undefined,
-      completedAt: r.completed_at ? new Date(r.completed_at) : undefined,
+      ...(r.started_at !== null ? { startedAt: new Date(r.started_at) } : {}),
+      ...(r.completed_at !== null ? { completedAt: new Date(r.completed_at) } : {}),
     }));
   }
 }
