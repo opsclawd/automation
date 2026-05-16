@@ -41,7 +41,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
             <li key={f.path}>
               <a
                 className="text-blue-600 underline"
-                href={`/api/runs/${run.uuid}/artifacts/${f.path}`}
+                href={`/api/runs/${run.uuid}/artifacts/${encodeURIComponent(f.path)}`}
               >
                 {f.path}
               </a>

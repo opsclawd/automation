@@ -48,7 +48,9 @@ export async function listArtifacts(uuid: string): Promise<ArtifactFile[]> {
 }
 
 export async function getArtifact(uuid: string, path: string): Promise<string> {
-  const r = await fetch(`${apiUrl}/api/runs/${uuid}/artifacts/${path}`, { cache: 'no-store' });
+  const r = await fetch(`${apiUrl}/api/runs/${uuid}/artifacts/${encodeURIComponent(path)}`, {
+    cache: 'no-store',
+  });
   if (!r.ok) throw new Error(`failed to load artifact: ${r.status}`);
   return r.text();
 }
