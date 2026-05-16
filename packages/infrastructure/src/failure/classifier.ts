@@ -114,6 +114,7 @@ function lastPhase(tail: string): string | undefined {
 }
 
 function firstMatch(text: string, regex: RegExp): string | undefined {
+  if (regex.global) throw new Error('firstMatch requires a non-global regex');
   const m = text.match(regex);
   return m ? m[0] : undefined;
 }
