@@ -29,7 +29,9 @@ export class FailureRepository {
 
   findLatestByRun(runUuid: string): Failure | undefined {
     const row = this.db
-      .prepare('SELECT * FROM failures WHERE run_uuid = ? ORDER BY detected_at DESC LIMIT 1')
+      .prepare(
+        'SELECT * FROM failures WHERE run_uuid = ? ORDER BY detected_at DESC, id DESC LIMIT 1',
+      )
       .get(runUuid) as
       | {
           run_uuid: string;

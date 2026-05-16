@@ -46,11 +46,12 @@ export class EventRepository {
     let sql = 'SELECT * FROM events WHERE run_uuid = ?';
     const params: unknown[] = [runUuid];
     if (sinceIso !== undefined) {
-      const cursor = sinceIso.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
-        ? sinceIso.replace('Z', '.000Z')
-        : sinceIso;
+      const parsed = new Date(sinceIso);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error(`Invalid sinceIso cursor: ${sinceIso}`);
+      }
       sql += ' AND timestamp > ?';
-      params.push(cursor);
+      params.push(parsed.toISOString());
     }
     sql += ' ORDER BY timestamp ASC';
     const rows = this.db.prepare(sql).all(...params) as Array<{
