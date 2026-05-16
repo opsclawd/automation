@@ -49,16 +49,27 @@ class FakeFailureRepository implements FailureRepositoryPort {
   }
 }
 
-const fakeClassifyExit: ClassifyExitFn = (input) => ({
-  kind: 'command_failed',
-  message: `script exited with code ${input.exitCode}`,
-  exitCode: input.exitCode,
-  canRetry: false,
-  suggestedAction: 'Inspect combined.log and stderr.log for the cause.',
-  artifacts: input.artifacts ?? [],
-  detectedAt: input.detectedAt ?? new Date(),
-  runUuid: input.runUuid,
-});
+const fakeClassifyExit: ClassifyExitFn = (input) => {
+  const tail = input.combinedLogTail.trim();
+  const message = tail
+    ? tail
+        .split('\n')
+        .filter((l) => l.trim())
+        .slice(-3)
+        .join('\n')
+        .trim()
+    : `script exited with code ${input.exitCode}`;
+  return {
+    kind: 'command_failed',
+    message,
+    exitCode: input.exitCode,
+    canRetry: false,
+    suggestedAction: 'Inspect combined.log and stderr.log for the cause.',
+    artifacts: input.artifacts ?? [],
+    detectedAt: input.detectedAt ?? new Date(),
+    runUuid: input.runUuid,
+  };
+};
 
 interface FakeDir extends RunDirectoryHandle {
   writes: Run[];
@@ -302,7 +313,7 @@ describe('StartIssueRun', () => {
     await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
     expect(patch.status).toBe('failed');
-    expect(patch.failureReason).toMatch(/-1/);
+    expect(patch.failureReason).toContain('spawn EACCES');
     expect(patch.exitCode).toBe(-1);
     expect(dirs[0]!.writes).toHaveLength(1);
     expect(failureRepo.records).toHaveLength(1);
@@ -389,7 +400,7 @@ describe('StartIssueRun', () => {
     expect(dirs[0]!.failureWrites).toHaveLength(1);
     expect(dirs[0]!.failureWrites[0]!.exitCode).toBe(-1);
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
-    expect(patch.failureReason).toBe('script exited with code -1');
+    expect(patch.failureReason).toContain('spawn EACCES');
   });
 
   it('continues failure path when writeFailureJson throws', async () => {

@@ -91,9 +91,11 @@ export class StartIssueRun {
       const errorDuration = now().getTime() - startedAt.getTime();
       const completedAt = now();
       const tail = dir.readCombinedLog();
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const combinedLogTail = tail ? `${tail}\n${errorMessage}` : errorMessage;
       const failure = this.deps.classifyExit({
         exitCode: -1,
-        combinedLogTail: tail,
+        combinedLogTail,
         runUuid: run.uuid,
         artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
         detectedAt: completedAt,
