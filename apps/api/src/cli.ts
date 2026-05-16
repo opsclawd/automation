@@ -1,6 +1,7 @@
 #!/usr/bin/env -S node --import tsx/esm
 import { Command } from 'commander';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { composeRoot, type ComposeOptions } from './compose.js';
 
 export interface RunCliOptions {
@@ -55,7 +56,7 @@ export function buildProgram(): Command {
   return program;
 }
 
-const isMain = import.meta.url.endsWith('/cli.ts') && process.argv[1]?.endsWith('cli.ts');
+const isMain = resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url);
 if (isMain) {
   buildProgram()
     .parseAsync(process.argv)
