@@ -43,7 +43,8 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'git_failed',
-    regex: /fatal: .*git|git push failed|Failed to push branch/i,
+    regex:
+      /fatal: .*git|git push failed|Failed to push branch|Failed to checkout .* in worktree|Failed to attach worktree to local branch|Failed to recreate worktree from origin|is still not a worktree/i,
     suggestedAction: 'Inspect the git state in the worktree.',
   },
   {

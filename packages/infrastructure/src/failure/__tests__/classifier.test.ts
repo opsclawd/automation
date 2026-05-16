@@ -139,6 +139,42 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('git_failed');
   });
 
+  it('returns git_failed for "Failed to checkout ... in worktree" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Failed to checkout ai/issue-6 in worktree',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns git_failed for "Failed to attach worktree to local branch" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Failed to attach worktree to local branch ai/issue-6',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns git_failed for "Failed to recreate worktree from origin" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Failed to recreate worktree from origin/ai/issue-6',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns git_failed for "is still not a worktree" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '/path/to/dir is still not a worktree after recovery',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
   it('returns agent_blocked when log contains agent reported BLOCKED', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -277,6 +313,10 @@ describe('classifyExit', () => {
       'gh: api error',
       'fatal: git error',
       'Failed to push branch ai/issue-6',
+      'Failed to checkout ai/issue-6 in worktree',
+      'Failed to attach worktree to local branch issue-6',
+      'Failed to recreate worktree from origin/issue-6',
+      '/repo is still not a worktree after recovery',
       'agent reported BLOCKED',
       "Phase 'implement' is blocked",
       'switched branch from main to issue-1',
