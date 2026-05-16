@@ -1,4 +1,4 @@
-import type { Run, RunStatus } from '@ai-sdlc/domain';
+import type { Run, RunStatus, Failure } from '@ai-sdlc/domain';
 
 export interface RunRepositoryUpdatePatch {
   status?: RunStatus;
@@ -23,6 +23,8 @@ export interface RunDirectoryHandle {
     readonly combinedLogPath: string;
   };
   writeRunJson(run: Run): void;
+  writeFailureJson(failure: Failure): void;
+  readCombinedLog(): string;
 }
 
 export type RunDirectoryFactory = (input: { rootDir: string; run: Run }) => RunDirectoryHandle;
@@ -43,3 +45,18 @@ export interface RunBashScriptResult {
 }
 
 export type RunBashScriptFn = (input: RunBashScriptInput) => Promise<RunBashScriptResult>;
+
+export interface ClassifyExitInput {
+  exitCode: number;
+  combinedLogTail: string;
+  runUuid?: string;
+  artifacts?: string[];
+  detectedAt?: Date;
+}
+
+export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
+
+export interface FailureRepositoryPort {
+  insert(failure: Failure): void;
+  findLatestByRun(runUuid: string): Failure | undefined;
+}
