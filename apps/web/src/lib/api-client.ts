@@ -21,14 +21,16 @@ export interface FailureDto {
   artifacts: string[];
 }
 
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
+
 export async function listRuns(): Promise<RunDto[]> {
-  const r = await fetch('/api/runs', { cache: 'no-store' });
+  const r = await fetch(`${apiUrl}/api/runs`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load runs: ${r.status}`);
   return (await r.json()).runs as RunDto[];
 }
 
 export async function getRun(uuid: string): Promise<{ run: RunDto; failure: FailureDto | null }> {
-  const r = await fetch(`/api/runs/${uuid}`, { cache: 'no-store' });
+  const r = await fetch(`${apiUrl}/api/runs/${uuid}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load run: ${r.status}`);
   return r.json();
 }
@@ -40,13 +42,13 @@ export interface ArtifactFile {
 }
 
 export async function listArtifacts(uuid: string): Promise<ArtifactFile[]> {
-  const r = await fetch(`/api/runs/${uuid}/artifacts`, { cache: 'no-store' });
+  const r = await fetch(`${apiUrl}/api/runs/${uuid}/artifacts`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load artifacts: ${r.status}`);
   return (await r.json()).files as ArtifactFile[];
 }
 
 export async function getArtifact(uuid: string, path: string): Promise<string> {
-  const r = await fetch(`/api/runs/${uuid}/artifacts/${path}`, { cache: 'no-store' });
+  const r = await fetch(`${apiUrl}/api/runs/${uuid}/artifacts/${path}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load artifact: ${r.status}`);
   return r.text();
 }

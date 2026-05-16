@@ -19,7 +19,10 @@ async function walk(root: string, prefix = ''): Promise<FileEntry[]> {
     if (dirent.isDirectory()) {
       const resolvedRoot = await realpath(root);
       const resolvedAbs = await realpath(abs).catch(() => null);
-      if (resolvedAbs && !resolvedAbs.startsWith(resolvedRoot)) continue;
+      if (resolvedAbs) {
+        const rel = relative(resolvedRoot, resolvedAbs);
+        if (rel.startsWith('..') || isAbsolute(rel)) continue;
+      }
       out.push(...(await walk(abs, rel)));
     } else if (dirent.isFile()) {
       const s = await stat(abs);
@@ -68,7 +71,8 @@ export async function artifactsRoutes(app: FastifyInstance, c: Container): Promi
       try {
         const resolvedRoot = await realpath(root);
         const resolvedAbs = await realpath(abs);
-        if (!resolvedAbs.startsWith(resolvedRoot)) {
+        const rel = relative(resolvedRoot, resolvedAbs);
+        if (rel.startsWith('..') || isAbsolute(rel)) {
           return reply.code(400).send({ error: 'invalid_path' });
         }
       } catch {
