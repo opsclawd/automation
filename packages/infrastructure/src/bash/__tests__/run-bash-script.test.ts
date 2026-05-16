@@ -1,11 +1,21 @@
-import { mkdtempSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { runBashScript } from '../run-bash-script.js';
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function makeScript(body: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'ai-orch-sh-'));
+  tempDirs.push(dir);
   const path = join(dir, 'fake.sh');
   writeFileSync(path, `#!/usr/bin/env bash\n${body}\n`);
   chmodSync(path, 0o755);
@@ -13,7 +23,9 @@ function makeScript(body: string): string {
 }
 
 function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), 'ai-orch-out-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ai-orch-out-'));
+  tempDirs.push(dir);
+  return dir;
 }
 
 describe('runBashScript', () => {

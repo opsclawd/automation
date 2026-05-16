@@ -1,7 +1,7 @@
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   openDatabase,
   applyMigrations,
@@ -10,8 +10,23 @@ import {
 } from '@ai-sdlc/infrastructure';
 import { StartIssueRun } from '../start-issue-run.js';
 
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function trackDir<T>(fn: () => T): T {
+  const result = fn();
+  tempDirs.push(result);
+  return result;
+}
+
 function fakeScript(exitCode: number, stdout = 'hello', stderr = ''): string {
-  const dir = mkdtempSync(join(tmpdir(), 'ai-orch-fake-'));
+  const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-fake-')));
   const path = join(dir, 'ai-run.sh');
   writeFileSync(
     path,
@@ -23,7 +38,7 @@ function fakeScript(exitCode: number, stdout = 'hello', stderr = ''): string {
 
 describe('StartIssueRun', () => {
   it('creates a run row, directory, logs, and updates status on success', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ai-orch-run-'));
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
     const db = openDatabase(join(root, 'orch.sqlite'));
     applyMigrations(db);
     const repo = new RunRepository(db);
@@ -50,7 +65,7 @@ describe('StartIssueRun', () => {
   });
 
   it('marks the run failed on non-zero exit', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ai-orch-run-'));
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
     const db = openDatabase(join(root, 'orch.sqlite'));
     applyMigrations(db);
     const repo = new RunRepository(db);
@@ -70,7 +85,7 @@ describe('StartIssueRun', () => {
   });
 
   it('refuses to start a second active run for the same issue', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ai-orch-run-'));
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
     const db = openDatabase(join(root, 'orch.sqlite'));
     applyMigrations(db);
     const repo = new RunRepository(db);
@@ -93,11 +108,11 @@ describe('StartIssueRun', () => {
   });
 
   it('sets AI_RUN_UUID, AI_RUN_DISPLAY_ID, AI_RUN_DIR, AI_ISSUE_NUMBER in child env', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ai-orch-run-'));
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
     const db = openDatabase(join(root, 'orch.sqlite'));
     applyMigrations(db);
     const repo = new RunRepository(db);
-    const dir = mkdtempSync(join(tmpdir(), 'ai-orch-env-'));
+    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-env-')));
     const script = join(dir, 'print-env.sh');
     writeFileSync(script, `#!/usr/bin/env bash\nenv | grep AI_ | sort\nexit 0\n`);
     chmodSync(script, 0o755);
@@ -120,11 +135,11 @@ describe('StartIssueRun', () => {
   });
 
   it('passes optional env vars only when deps are provided', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ai-orch-run-'));
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
     const db = openDatabase(join(root, 'orch.sqlite'));
     applyMigrations(db);
     const repo = new RunRepository(db);
-    const dir = mkdtempSync(join(tmpdir(), 'ai-orch-env-'));
+    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-env-')));
     const script = join(dir, 'print-env.sh');
     writeFileSync(script, `#!/usr/bin/env bash\nenv | grep AI_ | sort\nexit 0\n`);
     chmodSync(script, 0o755);

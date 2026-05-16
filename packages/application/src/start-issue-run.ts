@@ -37,7 +37,13 @@ export class StartIssueRun {
       startedAt,
     });
     this.deps.runRepository.insertIfNoActive(run);
-    const dir = RunDirectory.create({ rootDir: this.deps.runsDir, run });
+    let dir: RunDirectory;
+    try {
+      dir = RunDirectory.create({ rootDir: this.deps.runsDir, run });
+    } catch (err) {
+      this.deps.runRepository.update(run.uuid, { status: 'cancelled' });
+      throw err;
+    }
     const env: Record<string, string> = {
       AI_RUN_UUID: run.uuid,
       AI_RUN_DISPLAY_ID: run.displayId,
@@ -53,14 +59,29 @@ export class StartIssueRun {
     if (this.deps.agentCli !== undefined) {
       env.AI_RUNTIME = this.deps.agentCli;
     }
-    const exec = await runBashScript({
-      scriptPath: this.deps.scriptPath,
-      args: [String(input.issueNumber)],
-      env,
-      stdoutPath: dir.paths.stdoutLogPath,
-      stderrPath: dir.paths.stderrLogPath,
-      combinedPath: dir.paths.combinedLogPath,
-    });
+    let exec: Awaited<ReturnType<typeof runBashScript>>;
+    // durationMs comes from runBashScript (infrastructure-level Date.now()), which
+    // is the authoritative duration measurement. startedAt/completedAt use the
+    // injectable `now` clock and may drift slightly from durationMs.
+    try {
+      exec = await runBashScript({
+        scriptPath: this.deps.scriptPath,
+        args: [String(input.issueNumber)],
+        env,
+        stdoutPath: dir.paths.stdoutLogPath,
+        stderrPath: dir.paths.stderrLogPath,
+        combinedPath: dir.paths.combinedLogPath,
+      });
+    } catch (err) {
+      const errorDuration = Date.now() - startedAt.getTime();
+      this.deps.runRepository.update(run.uuid, {
+        status: 'cancelled',
+        completedAt: now(),
+        failureReason: err instanceof Error ? err.message : String(err),
+        durationMs: errorDuration,
+      });
+      throw err;
+    }
     const completedAt = now();
     const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
     this.deps.runRepository.update(run.uuid, {
@@ -76,7 +97,11 @@ export class StartIssueRun {
       finalStatus === 'passed'
         ? passRun(run, completedAt)
         : failRun(run, `exit ${exec.exitCode}`, completedAt);
-    dir.writeRunJson(finalRun);
+    try {
+      dir.writeRunJson(finalRun);
+    } catch (err) {
+      console.error(`Failed to write run.json for ${run.displayId}:`, err);
+    }
     return {
       uuid: run.uuid,
       displayId: run.displayId,
