@@ -1,5 +1,6 @@
-#!/usr/bin/env -S node --import tsx/esm
+#!/usr/bin/env -S node --conditions=development --import tsx/esm
 import { Command } from 'commander';
+import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { composeRoot, type ComposeOptions } from './compose.js';
@@ -56,7 +57,7 @@ export function buildProgram(): Command {
   return program;
 }
 
-const isMain = resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url);
+const isMain = realpathSync(process.argv[1] ?? '') === fileURLToPath(import.meta.url);
 if (isMain) {
   buildProgram()
     .parseAsync(process.argv)
