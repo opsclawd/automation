@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "dev": "node --import tsx/esm src/cli.ts",
+    "dev": "NODE_OPTIONS='--conditions=development' node --import tsx/esm src/cli.ts",
     "start": "node --import tsx/esm src/cli.ts"
   },
   "dependencies": {
