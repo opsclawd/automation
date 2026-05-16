@@ -1,0 +1,136 @@
+import { createRun, passRun, failRun } from '@ai-sdlc/domain';
+import { newRunId } from '@ai-sdlc/shared';
+import type {
+  RunBashScriptFn,
+  RunDirectoryFactory,
+  RunDirectoryHandle,
+  RunRepositoryPort,
+} from './ports.js';
+
+export interface StartIssueRunDeps {
+  runRepository: RunRepositoryPort;
+  runDirectoryFactory: RunDirectoryFactory;
+  runBashScript: RunBashScriptFn;
+  runsDir: string;
+  scriptPath: string;
+  baseBranch?: string;
+  model?: string;
+  agentCli?: string;
+  now?: () => Date;
+  logger?: { error: (msg: string, err?: unknown) => void };
+}
+
+export interface StartIssueRunInput {
+  issueNumber: number;
+}
+
+export interface StartIssueRunOutput {
+  uuid: string;
+  displayId: string;
+  exitCode: number;
+  status: 'passed' | 'failed';
+}
+
+export class StartIssueRun {
+  constructor(private readonly deps: StartIssueRunDeps) {}
+
+  async execute(input: StartIssueRunInput): Promise<StartIssueRunOutput> {
+    const now = this.deps.now ?? (() => new Date());
+    const logger = this.deps.logger ?? { error: (m, e) => console.error(m, e) };
+    const startedAt = now();
+    const ids = newRunId({ issueNumber: input.issueNumber, now: startedAt });
+    const run = createRun({
+      uuid: ids.uuid,
+      displayId: ids.displayId,
+      issueNumber: input.issueNumber,
+      startedAt,
+    });
+    this.deps.runRepository.insertIfNoActive(run);
+    let dir: RunDirectoryHandle;
+    try {
+      dir = this.deps.runDirectoryFactory({ rootDir: this.deps.runsDir, run });
+    } catch (err) {
+      const failureReason = err instanceof Error ? err.message : String(err);
+      this.deps.runRepository.update(run.uuid, {
+        status: 'failed',
+        completedAt: now(),
+        exitCode: -1,
+        durationMs: 0,
+        failureReason,
+      });
+      throw err;
+    }
+    const env: Record<string, string> = {
+      AI_RUN_UUID: run.uuid,
+      AI_RUN_DISPLAY_ID: run.displayId,
+      AI_RUN_DIR: dir.runRoot,
+      AI_ISSUE_NUMBER: String(input.issueNumber),
+    };
+    if (this.deps.baseBranch !== undefined) env.AI_BASE_BRANCH = this.deps.baseBranch;
+    if (this.deps.model !== undefined) env.AI_MODEL = this.deps.model;
+    if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
+
+    // durationMs is measured inside runBashScript and is the authoritative
+    // duration. startedAt/completedAt use the injectable `now` clock and may
+    // drift slightly from durationMs.
+    let exec: Awaited<ReturnType<RunBashScriptFn>>;
+    try {
+      exec = await this.deps.runBashScript({
+        scriptPath: this.deps.scriptPath,
+        args: [String(input.issueNumber)],
+        env,
+        stdoutPath: dir.paths.stdoutLogPath,
+        stderrPath: dir.paths.stderrLogPath,
+        combinedPath: dir.paths.combinedLogPath,
+      });
+    } catch (err) {
+      const errorDuration = now().getTime() - startedAt.getTime();
+      const failureReason = err instanceof Error ? err.message : String(err);
+      this.deps.runRepository.update(run.uuid, {
+        status: 'failed',
+        completedAt: now(),
+        exitCode: -1,
+        failureReason,
+        durationMs: errorDuration,
+      });
+      try {
+        dir.writeRunJson(failRun(run, failureReason, now()));
+      } catch (writeErr) {
+        logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
+      }
+      throw err;
+    }
+    const completedAt = now();
+    const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
+    const failureReason =
+      finalStatus === 'failed' ? `script exited with code ${exec.exitCode}` : undefined;
+    this.deps.runRepository.update(run.uuid, {
+      status: finalStatus,
+      completedAt,
+      exitCode: exec.exitCode,
+      durationMs: exec.durationMs,
+      ...(failureReason !== undefined ? { failureReason } : {}),
+    });
+    const finalRun =
+      finalStatus === 'passed'
+        ? passRun(run, completedAt)
+        : failRun(run, `exit ${exec.exitCode}`, completedAt);
+    try {
+      dir.writeRunJson(finalRun);
+    } catch (err) {
+      // Artifact loss: the DB row is authoritative; mark failureReason so
+      // operators can see that on-disk run.json is missing/stale.
+      logger.error(`Failed to write run.json for ${run.displayId}`, err);
+      const writeFailReason = err instanceof Error ? err.message : String(err);
+      this.deps.runRepository.update(run.uuid, {
+        failureReason: `${failureReason ?? 'passed'}; run.json write failed: ${writeFailReason}`,
+      });
+    }
+    return {
+      uuid: run.uuid,
+      displayId: run.displayId,
+      exitCode: exec.exitCode,
+      status: finalStatus,
+    };
+  }
+}
