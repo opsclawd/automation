@@ -75,6 +75,21 @@ export function buildProgram(): Command {
       }
     });
 
+  program
+    .command('serve')
+    .description('Start the orchestrator HTTP API')
+    .option('--port <port>', 'Port to listen on', (v) => parseInt(v, 10), 4319)
+    .option(
+      '--script <path>',
+      'Path to Bash script to wrap',
+      resolve(process.cwd(), 'scripts/ai-run-issue-v2'),
+    )
+    .action(async (opts) => {
+      const c = composeRoot({ repoRoot: process.cwd(), scriptPath: opts.script });
+      const { startServer } = await import('./server.js');
+      await startServer({ container: c, port: opts.port });
+    });
+
   return program;
 }
 
