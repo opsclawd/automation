@@ -17,4 +17,5 @@ jobs:
       - run: pnpm -r build
       - run: pnpm -r typecheck
       - run: pnpm lint
+      - run: pnpm depcruise
       - run: pnpm test
