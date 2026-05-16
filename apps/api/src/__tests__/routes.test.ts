@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -91,5 +91,17 @@ describe('routes', () => {
     expect(r.status).toBe(200);
     const body = (await r.json()) as { files: Array<{ path: string }> };
     expect(body.files).toEqual([]);
+  });
+
+  it('does not infinite-loop on a symlink cycle', async () => {
+    const { baseUrl, container } = await bootServer({ withRun: true });
+    const run = container.runRepository.list()[0]!;
+    const runsDir = join(container.runsDir, run.displayId);
+    symlinkSync('.', join(runsDir, 'loop'));
+    const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { files: Array<{ path: string }> };
+    const loopEntries = body.files.filter((f) => f.path.startsWith('loop'));
+    expect(loopEntries.length).toBeLessThanOrEqual(1);
   });
 });

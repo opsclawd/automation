@@ -13,7 +13,8 @@ interface FileEntry {
 async function walk(root: string): Promise<FileEntry[]> {
   const resolvedRoot = await realpath(root);
   const out: FileEntry[] = [];
-  await walkInto(root, '', resolvedRoot, out);
+  const visited = new Set<string>([resolvedRoot]);
+  await walkInto(root, '', resolvedRoot, out, visited);
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -22,6 +23,7 @@ async function walkInto(
   prefix: string,
   resolvedRoot: string,
   out: FileEntry[],
+  visited: Set<string>,
 ): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const dirent of entries) {
@@ -30,6 +32,7 @@ async function walkInto(
     // For symlinks, resolve the target and surface it as a file or recurse
     // into it as a directory — but only after confirming the realpath stays
     // inside the run root, so a symlink can't smuggle in /etc content.
+    // A visited set prevents infinite recursion from symlink cycles.
     if (dirent.isSymbolicLink()) {
       const resolvedAbs = await realpath(abs).catch(() => null);
       if (!resolvedAbs) continue;
@@ -38,7 +41,9 @@ async function walkInto(
       const s = await stat(resolvedAbs).catch(() => null);
       if (!s) continue;
       if (s.isDirectory()) {
-        await walkInto(abs, rel, resolvedRoot, out);
+        if (visited.has(resolvedAbs)) continue;
+        visited.add(resolvedAbs);
+        await walkInto(abs, rel, resolvedRoot, out, visited);
       } else if (s.isFile()) {
         out.push({ path: rel, size: s.size, modifiedAt: s.mtime.toISOString() });
       }
@@ -47,8 +52,10 @@ async function walkInto(
       if (resolvedAbs) {
         const r = relative(resolvedRoot, resolvedAbs);
         if (r.startsWith('..') || isAbsolute(r)) continue;
+        if (visited.has(resolvedAbs)) continue;
+        visited.add(resolvedAbs);
       }
-      await walkInto(abs, rel, resolvedRoot, out);
+      await walkInto(abs, rel, resolvedRoot, out, visited);
     } else if (dirent.isFile()) {
       const s = await stat(abs);
       out.push({ path: rel, size: s.size, modifiedAt: s.mtime.toISOString() });
