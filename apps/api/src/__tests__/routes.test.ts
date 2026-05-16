@@ -64,6 +64,15 @@ describe('routes', () => {
     expect(r.status).toBe(400);
   });
 
+  it('returns 400 when the artifact path is an absolute path (URL-encoded)', async () => {
+    const { baseUrl, container } = await bootServer({ withRun: true });
+    const run = container.runRepository.list()[0]!;
+    const r = await fetch(
+      `${baseUrl}/api/runs/${run.uuid}/artifacts/${encodeURIComponent('/etc/passwd')}`,
+    );
+    expect(r.status).toBe(400);
+  });
+
   it('serves combined.log as text/plain', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
     const run = container.runRepository.list()[0]!;

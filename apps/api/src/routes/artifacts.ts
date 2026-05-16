@@ -10,26 +10,50 @@ interface FileEntry {
   modifiedAt: string;
 }
 
-async function walk(root: string, prefix = ''): Promise<FileEntry[]> {
+async function walk(root: string): Promise<FileEntry[]> {
+  const resolvedRoot = await realpath(root);
   const out: FileEntry[] = [];
-  const entries = await readdir(root, { withFileTypes: true });
+  await walkInto(root, '', resolvedRoot, out);
+  return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function walkInto(
+  dir: string,
+  prefix: string,
+  resolvedRoot: string,
+  out: FileEntry[],
+): Promise<void> {
+  const entries = await readdir(dir, { withFileTypes: true });
   for (const dirent of entries) {
     const rel = prefix ? `${prefix}/${dirent.name}` : dirent.name;
-    const abs = join(root, dirent.name);
-    if (dirent.isDirectory()) {
-      const resolvedRoot = await realpath(root);
+    const abs = join(dir, dirent.name);
+    // For symlinks, resolve the target and surface it as a file or recurse
+    // into it as a directory — but only after confirming the realpath stays
+    // inside the run root, so a symlink can't smuggle in /etc content.
+    if (dirent.isSymbolicLink()) {
+      const resolvedAbs = await realpath(abs).catch(() => null);
+      if (!resolvedAbs) continue;
+      const r = relative(resolvedRoot, resolvedAbs);
+      if (r.startsWith('..') || isAbsolute(r)) continue;
+      const s = await stat(resolvedAbs).catch(() => null);
+      if (!s) continue;
+      if (s.isDirectory()) {
+        await walkInto(abs, rel, resolvedRoot, out);
+      } else if (s.isFile()) {
+        out.push({ path: rel, size: s.size, modifiedAt: s.mtime.toISOString() });
+      }
+    } else if (dirent.isDirectory()) {
       const resolvedAbs = await realpath(abs).catch(() => null);
       if (resolvedAbs) {
-        const rel = relative(resolvedRoot, resolvedAbs);
-        if (rel.startsWith('..') || isAbsolute(rel)) continue;
+        const r = relative(resolvedRoot, resolvedAbs);
+        if (r.startsWith('..') || isAbsolute(r)) continue;
       }
-      out.push(...(await walk(abs, rel)));
+      await walkInto(abs, rel, resolvedRoot, out);
     } else if (dirent.isFile()) {
       const s = await stat(abs);
       out.push({ path: rel, size: s.size, modifiedAt: s.mtime.toISOString() });
     }
   }
-  return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,13 +101,18 @@ export async function artifactsRoutes(app: FastifyInstance, c: Container): Promi
       } catch {
         return reply.code(404).send({ error: 'not_found' });
       }
-      try {
-        reply.header('content-type', guessType(abs));
-        const stream = createReadStream(abs);
-        return reply.send(stream);
-      } catch {
+      const fileStat = await stat(abs).catch(() => null);
+      if (!fileStat || !fileStat.isFile()) {
         return reply.code(404).send({ error: 'not_found' });
       }
+      reply.header('content-type', guessType(abs));
+      reply.header('content-length', String(fileStat.size));
+      const stream = createReadStream(abs);
+      stream.on('error', (err) => {
+        req.log.error({ err }, 'artifact stream error');
+        if (!reply.sent) reply.code(500).send({ error: 'read_failed' });
+      });
+      return reply.send(stream);
     },
   );
 }

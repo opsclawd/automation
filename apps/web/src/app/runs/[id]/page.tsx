@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { getRun, listArtifacts, getArtifact } from '@/lib/api-client';
-import { formatDuration } from '@/lib/format';
+import { formatDuration, formatBytes } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +45,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
               >
                 {f.path}
               </a>
-              <span className="ml-2 text-slate-500">{f.size} B</span>
+              <span className="ml-2 text-slate-500">{formatBytes(f.size)}</span>
             </li>
           ))}
         </ul>
@@ -58,7 +58,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
             <div>
               <b>Kind:</b> {failure.kind}
             </div>
-            {failure.phase && (
+            {failure.phase != null && (
               <div>
                 <b>Phase:</b> {failure.phase}
               </div>
