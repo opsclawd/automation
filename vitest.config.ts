@@ -8,4 +8,12 @@ export default defineConfig({
       include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts'],
     },
   },
+  resolve: {
+    conditions: ['development'],
+  },
+  ssr: {
+    resolve: {
+      conditions: ['development'],
+    },
+  },
 });
