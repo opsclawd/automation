@@ -3,6 +3,7 @@ import {
   mkdirSync,
   renameSync,
   writeFileSync,
+  readFileSync,
   openSync,
   fsyncSync,
   closeSync,
@@ -10,7 +11,7 @@ import {
 } from 'node:fs';
 import type { WriteStream } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { Run } from '@ai-sdlc/domain';
+import type { Run, Failure } from '@ai-sdlc/domain';
 
 export interface RunLogStreams {
   stdout: WriteStream;
@@ -112,6 +113,22 @@ export class RunDirectory {
 
   writeRunJson(run: Run): void {
     atomicWriteJson(this.paths.runJsonPath, run);
+  }
+
+  writeFailureJson(failure: Failure): void {
+    atomicWriteJson(this.paths.failureJsonPath, failure);
+  }
+
+  readCombinedLog(): string {
+    try {
+      const buf = readFileSync(this.paths.combinedLogPath, 'utf8');
+      return buf.slice(-8000);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`Failed to read combined log at ${this.paths.combinedLogPath}:`, err);
+      }
+      return '';
+    }
   }
 
   // Open append-mode write streams for the run's log files. Caller owns

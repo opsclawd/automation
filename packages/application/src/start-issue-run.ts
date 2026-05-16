@@ -1,6 +1,9 @@
 import { createRun, passRun, failRun } from '@ai-sdlc/domain';
+import type { Failure } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type {
+  ClassifyExitFn,
+  FailureRepositoryPort,
   RunBashScriptFn,
   RunDirectoryFactory,
   RunDirectoryHandle,
@@ -9,6 +12,8 @@ import type {
 
 export interface StartIssueRunDeps {
   runRepository: RunRepositoryPort;
+  failureRepository: FailureRepositoryPort;
+  classifyExit: ClassifyExitFn;
   runDirectoryFactory: RunDirectoryFactory;
   runBashScript: RunBashScriptFn;
   runsDir: string;
@@ -85,16 +90,37 @@ export class StartIssueRun {
       });
     } catch (err) {
       const errorDuration = now().getTime() - startedAt.getTime();
-      const failureReason = err instanceof Error ? err.message : String(err);
+      const completedAt = now();
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const failure: Failure = {
+        runUuid: run.uuid,
+        kind: 'command_failed',
+        message: errorMessage,
+        exitCode: -1,
+        canRetry: false,
+        suggestedAction: 'Inspect the runner error and stderr.log for the cause.',
+        artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
+        detectedAt: completedAt,
+      };
+      try {
+        dir.writeFailureJson(failure);
+      } catch (writeErr) {
+        logger.error(`Failed to write failure.json for ${run.displayId}`, writeErr);
+      }
+      try {
+        this.deps.failureRepository.insert(failure);
+      } catch (dbErr) {
+        logger.error(`Failed to insert failure record for ${run.displayId}`, dbErr);
+      }
       this.deps.runRepository.update(run.uuid, {
         status: 'failed',
-        completedAt: now(),
+        completedAt,
         exitCode: -1,
-        failureReason,
+        failureReason: errorMessage,
         durationMs: errorDuration,
       });
       try {
-        dir.writeRunJson(failRun(run, failureReason, now()));
+        dir.writeRunJson(failRun(run, errorMessage, completedAt));
       } catch (writeErr) {
         logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
       }
@@ -102,29 +128,57 @@ export class StartIssueRun {
     }
     const completedAt = now();
     const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
-    const failureReason =
-      finalStatus === 'failed' ? `script exited with code ${exec.exitCode}` : undefined;
-    this.deps.runRepository.update(run.uuid, {
-      status: finalStatus,
-      completedAt,
-      exitCode: exec.exitCode,
-      durationMs: exec.durationMs,
-      ...(failureReason !== undefined ? { failureReason } : {}),
-    });
-    const finalRun =
-      finalStatus === 'passed'
-        ? passRun(run, completedAt)
-        : failRun(run, `exit ${exec.exitCode}`, completedAt);
-    try {
-      dir.writeRunJson(finalRun);
-    } catch (err) {
-      // Artifact loss: the DB row is authoritative; mark failureReason so
-      // operators can see that on-disk run.json is missing/stale.
-      logger.error(`Failed to write run.json for ${run.displayId}`, err);
-      const writeFailReason = err instanceof Error ? err.message : String(err);
-      this.deps.runRepository.update(run.uuid, {
-        failureReason: `${failureReason ?? 'passed'}; run.json write failed: ${writeFailReason}`,
+    if (finalStatus === 'failed') {
+      const tail = dir.readCombinedLog();
+      const failure = this.deps.classifyExit({
+        exitCode: exec.exitCode,
+        combinedLogTail: tail,
+        runUuid: run.uuid,
+        artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
+        detectedAt: completedAt,
       });
+      try {
+        dir.writeFailureJson(failure);
+      } catch (err) {
+        logger.error(`Failed to write failure.json for ${run.displayId}`, err);
+      }
+      try {
+        this.deps.failureRepository.insert(failure);
+      } catch (err) {
+        logger.error(`Failed to insert failure record for ${run.displayId}`, err);
+      }
+      this.deps.runRepository.update(run.uuid, {
+        status: 'failed',
+        completedAt,
+        exitCode: exec.exitCode,
+        durationMs: exec.durationMs,
+        failureReason: failure.message,
+      });
+      try {
+        dir.writeRunJson(failRun(run, failure.message, completedAt));
+      } catch (err) {
+        logger.error(`Failed to write run.json for ${run.displayId}`, err);
+        const writeFailReason = err instanceof Error ? err.message : String(err);
+        this.deps.runRepository.update(run.uuid, {
+          failureReason: `${failure.message}; run.json write failed: ${writeFailReason}`,
+        });
+      }
+    } else {
+      this.deps.runRepository.update(run.uuid, {
+        status: 'passed',
+        completedAt,
+        exitCode: exec.exitCode,
+        durationMs: exec.durationMs,
+      });
+      try {
+        dir.writeRunJson(passRun(run, completedAt));
+      } catch (err) {
+        logger.error(`Failed to write run.json for ${run.displayId}`, err);
+        const writeFailReason = err instanceof Error ? err.message : String(err);
+        this.deps.runRepository.update(run.uuid, {
+          failureReason: `passed; run.json write failed: ${writeFailReason}`,
+        });
+      }
     }
     return {
       uuid: run.uuid,

@@ -9,8 +9,13 @@ import {
   FailureRepository,
   RunDirectory,
   runBashScript,
+  classifyExit,
 } from '@ai-sdlc/infrastructure';
-import { StartIssueRun, type StartIssueRunDeps } from '@ai-sdlc/application';
+import { StartIssueRun, type StartIssueRunDeps, type ClassifyExitFn } from '@ai-sdlc/application';
+
+const classifyExitAdapter: ClassifyExitFn = (input) => {
+  return classifyExit(input);
+};
 
 export interface Container {
   runRepository: RunRepository;
@@ -41,6 +46,8 @@ export function composeRoot(opts: ComposeOptions): Container {
   const failureRepository = new FailureRepository(db);
   const deps: StartIssueRunDeps = {
     runRepository,
+    failureRepository,
+    classifyExit: classifyExitAdapter,
     runDirectoryFactory: ({ rootDir, run }) => RunDirectory.create({ rootDir, run }),
     runBashScript,
     runsDir,
