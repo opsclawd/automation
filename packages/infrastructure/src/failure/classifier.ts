@@ -11,7 +11,7 @@ interface Pattern {
 const PATTERNS: Pattern[] = [
   {
     kind: 'missing_artifact',
-    regex: /MISSING ARTIFACT|required artifact .* not found/i,
+    regex: /MISSING ARTIFACT|required artifact .* not found|not found after|not found in worktree/i,
     suggestedAction:
       'Inspect the phase prompt and stdout; the agent did not produce the expected file.',
   },
@@ -43,7 +43,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'git_failed',
-    regex: /fatal: .*git|git push failed/i,
+    regex: /fatal: .*git|git push failed|Failed to push branch/i,
     suggestedAction: 'Inspect the git state in the worktree.',
   },
   {

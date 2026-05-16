@@ -417,4 +417,37 @@ describe('StartIssueRun', () => {
     expect(patch.failureReason).toBeDefined();
     expect(errors[0]).toMatch(/Failed to write failure\.json/);
   });
+
+  it('continues failure path when failureRepository.insert throws', async () => {
+    const repo = new FakeRunRepository();
+    const throwingFailureRepo: FailureRepositoryPort = {
+      insert() {
+        throw new Error('SQLITE_CONSTRAINT: unique');
+      },
+      findLatestByRun() {
+        return undefined;
+      },
+    };
+    const { factory, dirs } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 1 });
+    const errors: string[] = [];
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: throwingFailureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
+      logger: { error: (m) => errors.push(m) },
+    });
+    const out = await usecase.execute({ issueNumber: 5 });
+    expect(out.status).toBe('failed');
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.status).toBe('failed');
+    expect(patch.failureReason).toBeDefined();
+    expect(errors.some((e) => /Failed to insert failure record/.test(e))).toBe(true);
+    expect(dirs[0]!.failureWrites).toHaveLength(1);
+  });
 });

@@ -120,7 +120,11 @@ export class StartIssueRun {
       } catch (err) {
         logger.error(`Failed to write failure.json for ${run.displayId}`, err);
       }
-      this.deps.failureRepository.insert(failure);
+      try {
+        this.deps.failureRepository.insert(failure);
+      } catch (err) {
+        logger.error(`Failed to insert failure record for ${run.displayId}`, err);
+      }
       this.deps.runRepository.update(run.uuid, {
         status: 'failed',
         completedAt,

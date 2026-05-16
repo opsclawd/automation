@@ -22,6 +22,33 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('missing_artifact');
   });
 
+  it('returns missing_artifact for "Design doc not found after plan-design phase"', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Design doc not found after plan-design phase',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('missing_artifact');
+  });
+
+  it('returns missing_artifact for "Plan file not found after plan-write phase"', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Plan file not found after plan-write phase',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('missing_artifact');
+  });
+
+  it('returns missing_artifact for "plan.md not found in worktree"', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'plan.md not found in worktree',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('missing_artifact');
+  });
+
   it('returns invalid_result when log contains invalid result file', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -98,6 +125,15 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'fatal: not a git repository',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns git_failed for "Failed to push branch" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Failed to push branch ai/issue-6',
       runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('git_failed');
@@ -230,6 +266,8 @@ describe('classifyExit', () => {
   it('defaults canRetry to false for every kind', () => {
     const tails = [
       'MISSING ARTIFACT design.md',
+      'required artifact design.md not found',
+      'Design doc not found after plan-design phase',
       'invalid result file',
       'branch changed from x to y',
       'timed out',
@@ -238,6 +276,7 @@ describe('classifyExit', () => {
       'pnpm test failed',
       'gh: api error',
       'fatal: git error',
+      'Failed to push branch ai/issue-6',
       'agent reported BLOCKED',
       "Phase 'implement' is blocked",
       'switched branch from main to issue-1',
