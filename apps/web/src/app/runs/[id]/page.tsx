@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
-import { getRun, listArtifacts, getArtifact } from '@/lib/api-client';
+import { listArtifacts, getArtifact } from '@/lib/api-client';
+import type { RunDto, FailureDto } from '@/lib/api-client';
 import { formatDuration } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
@@ -7,14 +8,12 @@ export const dynamic = 'force-dynamic';
 export default async function RunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   let run, failure;
-  try {
-    ({ run, failure } = await getRun(id));
-  } catch {
-    notFound();
-  }
-  if (!run) {
-    notFound();
-  }
+  const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? ''}/api/runs/${id}`, {
+    cache: 'no-store',
+  });
+  if (r.status === 404) notFound();
+  if (!r.ok) throw new Error(`failed to load run: ${r.status}`);
+  ({ run, failure } = (await r.json()) as { run: RunDto; failure: FailureDto | null });
 
   const files = await listArtifacts(id);
   const combined = files.find((f) => f.path === 'combined.log');

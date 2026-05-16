@@ -87,7 +87,13 @@ export function buildProgram(): Command {
     .action(async (opts) => {
       const c = composeRoot({ repoRoot: process.cwd(), scriptPath: opts.script });
       const { startServer } = await import('./server.js');
-      await startServer({ container: c, port: opts.port });
+      const server = await startServer({ container: c, port: opts.port });
+      const shutdown = async () => {
+        await server.stop();
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
     });
 
   return program;

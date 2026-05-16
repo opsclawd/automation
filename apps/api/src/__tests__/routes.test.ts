@@ -5,8 +5,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type Container } from '../compose.js';
 import { startServer } from '../server.js';
 
-let nextPort = 4400;
-
 async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
   baseUrl: string;
   container: Container;
@@ -19,8 +17,10 @@ async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
   chmodSync(scriptPath, 0o755);
   const container = composeRoot({ repoRoot, scriptPath });
   if (opts.withRun) await container.startIssueRun.execute({ issueNumber: 1 });
-  const port = nextPort++;
-  const server = await startServer({ container, port });
+  const server = await startServer({ container, port: 0 });
+  stoppers.push(server.stop);
+  const address = server.address as { port: number };
+  const port = address.port;
   return { baseUrl: `http://127.0.0.1:${port}`, container, stop: server.stop };
 }
 
@@ -36,24 +36,27 @@ afterEach(async () => {
 
 describe('routes', () => {
   it('lists runs', async () => {
-    const { baseUrl, stop } = await bootServer({ withRun: true });
-    stoppers.push(stop);
+    const { baseUrl } = await bootServer({ withRun: true });
     const r = await fetch(`${baseUrl}/api/runs`);
     const body = (await r.json()) as { runs: Array<{ issueNumber: number }> };
     expect(body.runs.length).toBe(1);
     expect(body.runs[0]!.issueNumber).toBe(1);
   });
 
-  it('returns 404 for an unknown run id', async () => {
-    const { baseUrl, stop } = await bootServer();
-    stoppers.push(stop);
-    const r = await fetch(`${baseUrl}/api/runs/does-not-exist`);
+  it('returns 400 for invalid runId format', async () => {
+    const { baseUrl } = await bootServer();
+    const r = await fetch(`${baseUrl}/api/runs/not-a-uuid`);
+    expect(r.status).toBe(400);
+  });
+
+  it('returns 404 for an unknown valid UUID', async () => {
+    const { baseUrl } = await bootServer();
+    const r = await fetch(`${baseUrl}/api/runs/00000000-0000-0000-0000-000000000000`);
     expect(r.status).toBe(404);
   });
 
   it('returns 400 when the artifact path tries to escape the run directory', async () => {
-    const { baseUrl, container, stop } = await bootServer({ withRun: true });
-    stoppers.push(stop);
+    const { baseUrl, container } = await bootServer({ withRun: true });
     const run = container.runRepository.list()[0]!;
     const r = await fetch(
       `${baseUrl}/api/runs/${run.uuid}/artifacts/${encodeURIComponent('../../etc/passwd')}`,
@@ -62,12 +65,22 @@ describe('routes', () => {
   });
 
   it('serves combined.log as text/plain', async () => {
-    const { baseUrl, container, stop } = await bootServer({ withRun: true });
-    stoppers.push(stop);
+    const { baseUrl, container } = await bootServer({ withRun: true });
     const run = container.runRepository.list()[0]!;
     const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts/combined.log`);
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toMatch(/text\/plain/);
     expect(await r.text()).toContain('ok');
+  });
+
+  it('returns empty files list when run directory is missing from disk', async () => {
+    const { baseUrl, container } = await bootServer({ withRun: true });
+    const run = container.runRepository.list()[0]!;
+    const runsDir = join(container.runsDir, run.displayId);
+    rmSync(runsDir, { recursive: true, force: true });
+    const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { files: Array<{ path: string }> };
+    expect(body.files).toEqual([]);
   });
 });
