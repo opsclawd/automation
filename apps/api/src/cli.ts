@@ -75,6 +75,31 @@ export function buildProgram(): Command {
       }
     });
 
+  program
+    .command('serve')
+    .description('Start the orchestrator HTTP API')
+    .option('--port <port>', 'Port to listen on', (v) => parseInt(v, 10), 4319)
+    .option('--script <path>', 'Path to Bash script to wrap')
+    .action(async (opts: { port: number; script?: string }) => {
+      const repoRoot = findRepoRoot(process.cwd());
+      const scriptPath = opts.script
+        ? isAbsolute(opts.script)
+          ? opts.script
+          : resolve(repoRoot, opts.script)
+        : join(repoRoot, 'scripts', 'ai-run-issue-v2');
+      const c = composeRoot({ repoRoot, scriptPath });
+      const { startServer } = await import('./server.js');
+      const server = await startServer({ container: c, port: opts.port });
+      const addr = server.address as { port: number };
+      console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
+      const shutdown = async () => {
+        await server.stop();
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+    });
+
   return program;
 }
 
