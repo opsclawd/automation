@@ -38,13 +38,9 @@ pnpm --filter @ai-sdlc/api dev run --issue 123
 
 On success the CLI prints a JSON line:
 
+<!-- prettier-ignore -->
 ```json
-{
-  "uuid": "a1b2c3d4-…",
-  "displayId": "issue-123-20260516-143000",
-  "exitCode": 0,
-  "status": "passed"
-}
+{"uuid":"a1b2c3d4-…","displayId":"issue-123-20260516-143000","exitCode":0,"status":"passed"}
 ```
 
 Exit code 0 means the run passed; exit code 1 means it failed.
