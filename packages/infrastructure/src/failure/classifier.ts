@@ -11,7 +11,8 @@ interface Pattern {
 const PATTERNS: Pattern[] = [
   {
     kind: 'missing_artifact',
-    regex: /MISSING ARTIFACT|required artifact .* not found|not found after|not found in worktree/i,
+    regex:
+      /MISSING ARTIFACT|required artifact .* not found|not found after|not found in worktree|no findings to act on/i,
     suggestedAction:
       'Inspect the phase prompt and stdout; the agent did not produce the expected file.',
   },
@@ -39,13 +40,13 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'github_failed',
-    regex: /gh: api error|gh: HTTP \d{3}|Failed to fetch issue/i,
+    regex: /gh: api error|gh: HTTP \d{3}|Failed to fetch issue|Failed to create PR and no open PR/i,
     suggestedAction: 'Check `gh auth status` and rate-limit headers.',
   },
   {
     kind: 'git_failed',
     regex:
-      /fatal:|git push failed|Failed to push branch|Failed to checkout .* in worktree|Failed to attach worktree to local branch|Failed to recreate worktree from origin|is still not a worktree|Worktree missing and no local or remote branch|Worktree creation failed|Worktree has no commits|Failed to create PR and no open PR/i,
+      /fatal:|git push failed|Failed to push branch|Failed to checkout .* in worktree|Failed to attach worktree to local branch|Failed to recreate worktree from origin|is still not a worktree|Worktree missing and no local or remote branch|Worktree creation failed|Worktree has no commits/i,
     suggestedAction: 'Inspect the git state in the worktree.',
   },
   {

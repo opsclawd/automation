@@ -414,6 +414,7 @@ describe('classifyExit', () => {
       'Worktree creation failed — /dir is not a git worktree',
       'Worktree has no commits — cannot create PR',
       'Failed to create PR and no open PR exists for branch ai/issue-6',
+      'Task 1 fix-review has no findings to act on (no .md, no .log)',
       'agent reported BLOCKED',
       "Phase 'implement' is blocked",
       'Task 3 is NEEDS_CONTEXT',
@@ -552,13 +553,23 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('agent_blocked');
   });
 
-  it('returns git_failed for "Failed to create PR and no open PR" sentinel', () => {
+  it('returns missing_artifact for "fix-review has no findings" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        'Task 1 fix-review has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings.',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('missing_artifact');
+  });
+
+  it('returns github_failed for "Failed to create PR and no open PR" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'Failed to create PR and no open PR exists for branch ai/issue-6',
       runUuid: 'test-uuid',
     });
-    expect(f.kind).toBe('git_failed');
+    expect(f.kind).toBe('github_failed');
   });
 
   it('returns github_failed for "Failed to fetch issue" sentinel', () => {
@@ -589,5 +600,16 @@ describe('classifyExit', () => {
     });
     expect(f.kind).toBe('git_failed');
     expect(f.message).toContain('Worktree has no commits');
+  });
+
+  it('classifies PR creation failure as github_failed when after validation failure', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        '=== Phase: validate ===\n[build failed]\n=== Phase: create-pr ===\nFailed to create PR and no open PR exists for branch ai/issue-6',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('github_failed');
+    expect(f.message).toContain('Failed to create PR');
   });
 });
