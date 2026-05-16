@@ -130,6 +130,15 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('git_failed');
   });
 
+  it('returns git_failed for "fatal:" without "git" word after it', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'fatal: invalid reference: origin/main',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
   it('returns git_failed for "Failed to push branch" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -312,6 +321,7 @@ describe('classifyExit', () => {
       'pnpm test failed',
       'gh: api error',
       'fatal: git error',
+      'fatal: invalid reference: origin/main',
       'Failed to push branch ai/issue-6',
       'Failed to checkout ai/issue-6 in worktree',
       'Failed to attach worktree to local branch issue-6',
