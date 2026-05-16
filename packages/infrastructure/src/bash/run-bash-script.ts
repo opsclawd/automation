@@ -22,6 +22,17 @@ export async function runBashScript(input: RunBashScriptInput): Promise<RunBashS
   const stderrFile = createWriteStream(input.stderrPath);
   const combinedFile = createWriteStream(input.combinedPath);
 
+  let streamError: Error | null = null;
+  stdoutFile.on('error', (e: Error) => {
+    streamError ??= e;
+  });
+  stderrFile.on('error', (e: Error) => {
+    streamError ??= e;
+  });
+  combinedFile.on('error', (e: Error) => {
+    streamError ??= e;
+  });
+
   const child = execa(input.scriptPath, input.args, {
     cwd: input.cwd,
     env: { ...process.env, ...input.env },
@@ -46,6 +57,8 @@ export async function runBashScript(input: RunBashScriptInput): Promise<RunBashS
     new Promise<void>((res) => stderrFile.end(res)),
     new Promise<void>((res) => combinedFile.end(res)),
   ]);
+
+  if (streamError) throw streamError;
 
   return {
     exitCode: result.exitCode ?? (result.signal ? 128 : 1),
