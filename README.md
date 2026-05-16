@@ -146,7 +146,7 @@ After the observable wrapper exists, orchestration should migrate incrementally 
 
 ## Quickstart
 
-See [`docs/quickstart.md`](./docs/quickstart.md) for prerequisites, install, and first-run instructions.
+See [`docs/quickstart.md`](./docs/quickstart.md) for installation, starting the API/UI, and triggering a run via the `orchestrator` CLI.
 
 ## Documentation
 
