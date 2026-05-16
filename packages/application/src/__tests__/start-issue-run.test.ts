@@ -49,7 +49,7 @@ describe('StartIssueRun', () => {
       now: () => new Date('2026-05-13T19:23:00Z'),
     });
     const out = await usecase.execute({ issueNumber: 42 });
-    expect(out.displayId).toBe('issue-42-20260513-192300');
+    expect(out.displayId).toBe('issue-42-20260513-192300000');
     expect(out.status).toBe('passed');
     expect(out.exitCode).toBe(0);
     expect(out.uuid).toBeTruthy();
@@ -129,7 +129,7 @@ describe('StartIssueRun', () => {
       'utf8',
     );
     expect(logContent).toContain('AI_RUN_UUID=');
-    expect(logContent).toContain('AI_RUN_DISPLAY_ID=issue-5-20260513-192300');
+    expect(logContent).toContain('AI_RUN_DISPLAY_ID=issue-5-20260513-192300000');
     expect(logContent).toContain('AI_RUN_DIR=');
     expect(logContent).toContain('AI_ISSUE_NUMBER=5');
   });

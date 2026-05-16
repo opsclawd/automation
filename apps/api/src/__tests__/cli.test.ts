@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildProgram } from '../cli.js';
+import { buildProgram, findRepoRoot } from '../cli.js';
 
 const tempDirs: string[] = [];
 
@@ -26,6 +26,20 @@ function fakeScript(exitCode: number): string {
   chmodSync(path, 0o755);
   return path;
 }
+
+describe('findRepoRoot', () => {
+  it('walks up to find pnpm-workspace.yaml', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-root-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const sub = trackDir(() => mkdtempSync(join(root, 'sub-')));
+    expect(findRepoRoot(sub)).toBe(root);
+  });
+
+  it('falls back to startDir when no pnpm-workspace.yaml is found', () => {
+    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-noroot-')));
+    expect(findRepoRoot(dir)).toBe(dir);
+  });
+});
 
 describe('CLI run command', () => {
   it('exits 0 on passed run and outputs JSON', async () => {

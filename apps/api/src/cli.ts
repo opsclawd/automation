@@ -1,8 +1,22 @@
+import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
-import { realpathSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { composeRoot, type ComposeOptions } from './compose.js';
+
+export function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (;;) {
+    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return startDir;
+    }
+    dir = parent;
+  }
+}
 
 export interface RunCliOptions {
   issue: number;
@@ -28,16 +42,14 @@ export function buildProgram(): Command {
     .option('--base-branch <branch>', 'Base branch (legacy default: main)')
     .option('--model <model>', 'AI_MODEL env var')
     .option('--agent-cli <cli>', 'AI_RUNTIME env var')
-    .option(
-      '--script <path>',
-      'Path to Bash script to wrap',
-      resolve(process.cwd(), 'scripts/ai-run-issue-v2'),
-    )
+    .option('--script <path>', 'Path to Bash script to wrap')
     .action(async (opts: RunCliOptions) => {
       try {
+        const repoRoot = findRepoRoot(process.cwd());
+        const scriptPath = opts.script ?? join(repoRoot, 'scripts', 'ai-run-issue-v2');
         const options: ComposeOptions = {
-          repoRoot: process.cwd(),
-          scriptPath: opts.script,
+          repoRoot,
+          scriptPath,
         };
         if (opts.baseBranch !== undefined) options.baseBranch = opts.baseBranch;
         if (opts.model !== undefined) options.model = opts.model;
