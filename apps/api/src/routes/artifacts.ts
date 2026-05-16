@@ -58,8 +58,7 @@ export async function artifactsRoutes(app: FastifyInstance, c: Container): Promi
       const run = c.runRepository.findByUuid(req.params.runId);
       if (!run) return reply.code(404).send({ error: 'not_found' });
       const root = join(c.runsDir, run.displayId);
-      const decoded = decodeURIComponent(req.params['*']);
-      const requested = normalize(decoded);
+      const requested = normalize(req.params['*']);
       if (requested.startsWith('..') || isAbsolute(requested)) {
         return reply.code(400).send({ error: 'invalid_path' });
       }

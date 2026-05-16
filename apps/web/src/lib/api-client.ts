@@ -21,7 +21,7 @@ export interface FailureDto {
   artifacts: string[];
 }
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
 
 export async function listRuns(): Promise<RunDto[]> {
   const r = await fetch(`${apiUrl}/api/runs`, { cache: 'no-store' });
