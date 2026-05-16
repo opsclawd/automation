@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
   stop: () => Promise<void>;
 }> {
   const repoRoot = mkdtempSync(join(tmpdir(), 'ai-orch-api-'));
+  tempDirs.push(repoRoot);
   const scriptPath = join(repoRoot, 'fake.sh');
   writeFileSync(scriptPath, '#!/usr/bin/env bash\necho ok\nexit 0\n');
   chmodSync(scriptPath, 0o755);
@@ -24,8 +25,13 @@ async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
 }
 
 const stoppers: Array<() => Promise<void>> = [];
+const tempDirs: string[] = [];
 afterEach(async () => {
   while (stoppers.length) await stoppers.pop()!();
+  while (tempDirs.length) {
+    const dir = tempDirs.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 describe('routes', () => {
