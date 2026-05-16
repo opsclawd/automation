@@ -58,6 +58,15 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('invalid_result');
   });
 
+  it('returns invalid_result for "No tasks found in plan.md" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'No tasks found in plan.md',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('invalid_result');
+  });
+
   it('returns branch_changed when log contains "branch changed from" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -395,6 +404,7 @@ describe('classifyExit', () => {
       'required artifact design.md not found',
       'Design doc not found after plan-design phase',
       'invalid result file',
+      'No tasks found in plan.md',
       'branch changed from x to y',
       'timed out',
       'TIMEOUT after 600s',

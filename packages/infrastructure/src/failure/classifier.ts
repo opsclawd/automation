@@ -18,7 +18,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'invalid_result',
-    regex: /invalid result file|unexpected result value/i,
+    regex: /invalid result file|unexpected result value|No tasks found in plan\.md/i,
     suggestedAction: 'Inspect the agent result.json and prompt template.',
   },
   {
