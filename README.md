@@ -172,14 +172,14 @@ The initial system is not intended to:
 
 ```text
 apps/
-  api/        Node/TypeScript API server (port 4319)
-  web/        React dashboard (port 4310)
+  api/        Fastify HTTP API + `orchestrator` CLI
+  web/        Next.js dashboard (run list, run detail, logs, artifacts)
 packages/
-  shared/     Shared config schema, types, utilities
-  domain/     Pure domain models and business rules
-  application/ Use cases and port interfaces
-  infrastructure/ Adapter implementations (SQLite, filesystem, scripts)
+  shared/     config schema, run identity, event schemas
+  domain/     pure types: Run, Phase, Failure, Artifact
+  application/ use cases (StartIssueRun)
+  infrastructure/ SQLite repositories, RunDirectory, Bash wrapper, failure classifier
 scripts/
-  ai-run-issue-v2       Legacy Bash orchestration script
-  ai-pr-review-poll     PR review polling script
+  ai-run-issue-v2       legacy Bash orchestrator (still authoritative in M1)
+  ai-pr-review-poll     legacy PR review poller
 ```
