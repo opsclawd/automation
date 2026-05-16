@@ -19,7 +19,11 @@ export function buildProgram(): Command {
   program
     .command('run')
     .description('Start an issue-to-PR run by wrapping the legacy Bash script')
-    .requiredOption('--issue <number>', 'GitHub issue number', (v) => parseInt(v, 10))
+    .requiredOption('--issue <number>', 'GitHub issue number', (v) => {
+      const n = parseInt(v, 10);
+      if (Number.isNaN(n)) throw new Error(`--issue must be a number, got: ${v}`);
+      return n;
+    })
     .option('--base-branch <branch>', 'Base branch (legacy default: main)')
     .option('--model <model>', 'AI_MODEL env var')
     .option('--agent-cli <cli>', 'AI_RUNTIME env var')

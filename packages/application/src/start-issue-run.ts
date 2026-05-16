@@ -73,7 +73,7 @@ export class StartIssueRun {
         combinedPath: dir.paths.combinedLogPath,
       });
     } catch (err) {
-      const errorDuration = Date.now() - startedAt.getTime();
+      const errorDuration = now().getTime() - startedAt.getTime();
       this.deps.runRepository.update(run.uuid, {
         status: 'cancelled',
         completedAt: now(),
