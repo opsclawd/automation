@@ -14,8 +14,7 @@ import {
 import { StartIssueRun, type StartIssueRunDeps, type ClassifyExitFn } from '@ai-sdlc/application';
 
 const classifyExitAdapter: ClassifyExitFn = (input) => {
-  const result = classifyExit(input);
-  return { ...result, runUuid: result.runUuid ?? input.runUuid ?? '' };
+  return classifyExit(input);
 };
 
 export interface Container {

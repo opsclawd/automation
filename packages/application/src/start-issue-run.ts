@@ -115,7 +115,11 @@ export class StartIssueRun {
         artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
         detectedAt: completedAt,
       });
-      dir.writeFailureJson(failure);
+      try {
+        dir.writeFailureJson(failure);
+      } catch (err) {
+        logger.error(`Failed to write failure.json for ${run.displayId}`, err);
+      }
       this.deps.failureRepository.insert(failure);
       this.deps.runRepository.update(run.uuid, {
         status: 'failed',

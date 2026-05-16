@@ -123,7 +123,10 @@ export class RunDirectory {
     try {
       const buf = readFileSync(this.paths.combinedLogPath, 'utf8');
       return buf.slice(-8000);
-    } catch {
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`Failed to read combined log at ${this.paths.combinedLogPath}:`, err);
+      }
       return '';
     }
   }

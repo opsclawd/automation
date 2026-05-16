@@ -1,12 +1,6 @@
-import type { Failure, FailureKind } from '@ai-sdlc/domain';
+import type { Failure, FailureKind, ClassifyExitInput } from '@ai-sdlc/domain';
 
-export interface ClassifyExitInput {
-  exitCode: number;
-  combinedLogTail: string;
-  runUuid?: string;
-  artifacts?: string[];
-  detectedAt?: Date;
-}
+export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
 interface Pattern {
   kind: FailureKind;
@@ -61,15 +55,15 @@ const PATTERNS: Pattern[] = [
 
 const PHASE_REGEX = /(?:starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
-export function classifyExit(
-  input: ClassifyExitInput,
-): Omit<Failure, 'runUuid'> & { runUuid?: string } {
+export function classifyExit(input: ClassifyExitInput): Failure {
   const tail = input.combinedLogTail.slice(-8000);
   const phase = lastPhase(tail);
 
   for (const p of PATTERNS) {
+    p.regex.lastIndex = 0;
     if (p.regex.test(tail)) {
-      const result: Omit<Failure, 'runUuid'> & { runUuid?: string } = {
+      const result: Failure = {
+        runUuid: input.runUuid,
         kind: p.kind,
         message: firstMatch(tail, p.regex) ?? `Detected ${p.kind}`,
         exitCode: input.exitCode,
@@ -78,14 +72,14 @@ export function classifyExit(
         artifacts: input.artifacts ?? [],
         detectedAt: input.detectedAt ?? new Date(),
       };
-      if (input.runUuid !== undefined) result.runUuid = input.runUuid;
       if (phase !== undefined) result.phase = phase;
       return result;
     }
   }
 
   const kind: FailureKind = input.exitCode === 1 ? 'command_failed' : 'unknown';
-  const fallback: Omit<Failure, 'runUuid'> & { runUuid?: string } = {
+  const fallback: Failure = {
+    runUuid: input.runUuid,
     kind,
     message:
       tail
@@ -100,7 +94,6 @@ export function classifyExit(
     artifacts: input.artifacts ?? [],
     detectedAt: input.detectedAt ?? new Date(),
   };
-  if (input.runUuid !== undefined) fallback.runUuid = input.runUuid;
   if (phase !== undefined) fallback.phase = phase;
   return fallback;
 }

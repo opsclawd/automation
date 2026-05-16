@@ -50,7 +50,6 @@ class FakeFailureRepository implements FailureRepositoryPort {
 }
 
 const fakeClassifyExit: ClassifyExitFn = (input) => ({
-  runUuid: input.runUuid ?? 'fake-uuid',
   kind: 'command_failed',
   message: `script exited with code ${input.exitCode}`,
   exitCode: input.exitCode,
@@ -58,6 +57,7 @@ const fakeClassifyExit: ClassifyExitFn = (input) => ({
   suggestedAction: 'Inspect combined.log and stderr.log for the cause.',
   artifacts: input.artifacts ?? [],
   detectedAt: input.detectedAt ?? new Date(),
+  runUuid: input.runUuid,
 });
 
 interface FakeDir extends RunDirectoryHandle {
@@ -69,6 +69,7 @@ interface FakeDir extends RunDirectoryHandle {
 function fakeDirectoryFactory(opts?: {
   failWrite?: boolean;
   failCreate?: boolean;
+  failWriteFailureJson?: boolean;
   combinedLogContent?: string;
 }): {
   factory: RunDirectoryFactory;
@@ -92,7 +93,7 @@ function fakeDirectoryFactory(opts?: {
         this.writes.push(r);
       },
       writeFailureJson(f) {
-        if (opts?.failWrite) throw new Error('disk full');
+        if (opts?.failWriteFailureJson || opts?.failWrite) throw new Error('disk full');
         this.failureWrites.push(f);
       },
       readCombinedLog() {
@@ -310,7 +311,7 @@ describe('StartIssueRun', () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
     const classifierThatDetectsMissingArtifact: ClassifyExitFn = (input) => ({
-      runUuid: input.runUuid ?? 'fake-uuid',
+      runUuid: input.runUuid,
       phase: 'implement',
       kind: 'missing_artifact',
       message: 'MISSING ARTIFACT design.md',
@@ -389,5 +390,31 @@ describe('StartIssueRun', () => {
     expect(classifierCalled).toBe(false);
     expect(failureRepo.records).toHaveLength(0);
     expect(dirs[0]!.failureWrites).toHaveLength(0);
+  });
+
+  it('continues failure path when writeFailureJson throws', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory({ failWriteFailureJson: true });
+    const { fn: bash } = fakeBash({ exitCode: 1 });
+    const errors: string[] = [];
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
+      logger: { error: (m) => errors.push(m) },
+    });
+    const out = await usecase.execute({ issueNumber: 4 });
+    expect(out.status).toBe('failed');
+    expect(failureRepo.records).toHaveLength(1);
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.status).toBe('failed');
+    expect(patch.failureReason).toBeDefined();
+    expect(errors[0]).toMatch(/Failed to write failure\.json/);
   });
 });

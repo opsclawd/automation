@@ -6,6 +6,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'orchestrator_fail: MISSING ARTIFACT design.md',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('missing_artifact');
     expect(f.canRetry).toBe(false);
@@ -16,6 +17,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'required artifact design.md not found',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('missing_artifact');
   });
@@ -24,6 +26,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'invalid result file: parse error',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('invalid_result');
   });
@@ -32,6 +35,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'check_branch_after_agent: branch changed from issue-1 to main',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('branch_changed');
   });
@@ -40,6 +44,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 124,
       combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('timeout');
   });
@@ -48,6 +53,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'process timed out after 120s',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('timeout');
   });
@@ -56,6 +62,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'validate phase failed: typecheck',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('validation_failed');
   });
@@ -64,6 +71,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'pnpm test failed with exit code 1',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('validation_failed');
   });
@@ -72,6 +80,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'gh: api error - rate limit exceeded',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('github_failed');
   });
@@ -80,6 +89,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'fatal: not a git repository',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('git_failed');
   });
@@ -88,6 +98,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'agent reported BLOCKED: unclear requirements',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('agent_blocked');
   });
@@ -96,6 +107,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'something went wrong\nstack trace here',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('command_failed');
     expect(f.canRetry).toBe(false);
@@ -106,6 +118,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 137,
       combinedLogTail: 'killed',
+      runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('unknown');
     expect(f.exitCode).toBe(137);
@@ -116,6 +129,7 @@ describe('classifyExit', () => {
       exitCode: 1,
       combinedLogTail:
         'starting phase plan-write\nplan-write done\nstarting phase implement\norchestrator_fail',
+      runUuid: 'test-uuid',
     });
     expect(f.phase).toBe('implement');
   });
@@ -124,6 +138,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'PHASE=implement\nsome error output',
+      runUuid: 'test-uuid',
     });
     expect(f.phase).toBe('implement');
   });
@@ -133,6 +148,7 @@ describe('classifyExit', () => {
       exitCode: 1,
       combinedLogTail:
         'starting phase plan-write\nPHASE=implement\nstarting phase validate\nTIMEOUT after 60s',
+      runUuid: 'test-uuid',
     });
     expect(f.phase).toBe('validate');
   });
@@ -141,11 +157,12 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'just some random error output',
+      runUuid: 'test-uuid',
     });
     expect(f.phase).toBeUndefined();
   });
 
-  it('populates runUuid when provided', () => {
+  it('populates runUuid from input', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'TIMEOUT after 600s',
@@ -158,6 +175,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid',
       artifacts: ['/path/to/stdout.log', '/path/to/stderr.log'],
     });
     expect(f.artifacts).toEqual(['/path/to/stdout.log', '/path/to/stderr.log']);
@@ -177,7 +195,7 @@ describe('classifyExit', () => {
       'agent reported BLOCKED',
     ];
     for (const tail of tails) {
-      const f = classifyExit({ exitCode: 1, combinedLogTail: tail });
+      const f = classifyExit({ exitCode: 1, combinedLogTail: tail, runUuid: 'test-uuid' });
       expect(f.canRetry).toBe(false);
     }
   });
@@ -186,6 +204,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'line1\n\nline2\n\nline3\nline4\nline5',
+      runUuid: 'test-uuid',
     });
     expect(f.message).toBe('line3\nline4\nline5');
   });
@@ -195,6 +214,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid',
     });
     const after = new Date();
     expect(f.detectedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
@@ -206,6 +226,7 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid',
       detectedAt: dt,
     });
     expect(f.detectedAt).toBe(dt);

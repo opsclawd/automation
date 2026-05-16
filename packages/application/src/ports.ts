@@ -1,4 +1,4 @@
-import type { Run, RunStatus, Failure } from '@ai-sdlc/domain';
+import type { Run, RunStatus, Failure, ClassifyExitInput } from '@ai-sdlc/domain';
 
 export interface RunRepositoryUpdatePatch {
   status?: RunStatus;
@@ -46,13 +46,7 @@ export interface RunBashScriptResult {
 
 export type RunBashScriptFn = (input: RunBashScriptInput) => Promise<RunBashScriptResult>;
 
-export interface ClassifyExitInput {
-  exitCode: number;
-  combinedLogTail: string;
-  runUuid?: string;
-  artifacts?: string[];
-  detectedAt?: Date;
-}
+export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
 export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
 
