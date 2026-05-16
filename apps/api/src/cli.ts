@@ -19,17 +19,24 @@ program
     'Path to Bash script to wrap',
     resolve(process.cwd(), 'scripts/ai-run-issue-v2'),
   )
-  .action(async (opts) => {
+  .action(async (rawOpts) => {
     try {
+      const opts = rawOpts as {
+        issue: number;
+        script: string;
+        baseBranch?: string;
+        model?: string;
+        agentCli?: string;
+      };
       const options: ComposeOptions = {
         repoRoot: process.cwd(),
-        scriptPath: opts.script as string,
+        scriptPath: opts.script,
       };
-      if (opts.baseBranch !== undefined) options.baseBranch = opts.baseBranch as string;
-      if (opts.model !== undefined) options.model = opts.model as string;
-      if (opts.agentCli !== undefined) options.agentCli = opts.agentCli as string;
+      if (opts.baseBranch !== undefined) options.baseBranch = opts.baseBranch;
+      if (opts.model !== undefined) options.model = opts.model;
+      if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
       const c = composeRoot(options);
-      const out = await c.startIssueRun.execute({ issueNumber: opts.issue as number });
+      const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
       // eslint-disable-next-line no-console
       console.log(JSON.stringify(out));
       process.exit(out.status === 'passed' ? 0 : 1);
