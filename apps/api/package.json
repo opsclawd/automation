@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "dev": "NODE_OPTIONS='--conditions=development' node --import tsx/esm src/cli.ts",
-    "start": "node --import tsx/esm src/cli.ts"
+    "start": "NODE_OPTIONS='--conditions=development' node --import tsx/esm src/cli.ts"
   },
   "dependencies": {
     "@ai-sdlc/application": "workspace:*",
