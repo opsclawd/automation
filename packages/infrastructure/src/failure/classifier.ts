@@ -64,22 +64,23 @@ export function classifyExit(input: ClassifyExitInput): Failure {
 
   let best: { pattern: Pattern; matchIndex: number } | undefined;
   for (const p of PATTERNS) {
-    p.regex.lastIndex = 0;
-    const match = p.regex.exec(tail);
-    if (match) {
-      const idx = match.index;
-      if (!best || idx > best.matchIndex) {
-        best = { pattern: p, matchIndex: idx };
+    const gRegex = new RegExp(p.regex.source, p.regex.flags + 'g');
+    let m: RegExpExecArray | null;
+    while ((m = gRegex.exec(tail))) {
+      if (!best || m.index > best.matchIndex) {
+        best = { pattern: p, matchIndex: m.index };
       }
     }
   }
 
   if (best) {
-    best.pattern.regex.lastIndex = 0;
+    const lineStart = tail.lastIndexOf('\n', best.matchIndex - 1) + 1;
+    const lineEnd = tail.indexOf('\n', best.matchIndex);
+    const message = tail.slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim();
     const result: Failure = {
       runUuid: input.runUuid,
       kind: best.pattern.kind,
-      message: firstMatch(tail, best.pattern.regex) ?? `Detected ${best.pattern.kind}`,
+      message: message || `Detected ${best.pattern.kind}`,
       exitCode: input.exitCode,
       canRetry: false,
       suggestedAction: best.pattern.suggestedAction,
@@ -117,13 +118,4 @@ function lastPhase(tail: string): string | undefined {
   while ((m = PHASE_REGEX.exec(tail))) last = m[1];
   PHASE_REGEX.lastIndex = 0;
   return last;
-}
-
-function firstMatch(text: string, regex: RegExp): string | undefined {
-  if (regex.global) throw new Error('firstMatch requires a non-global regex');
-  const idx = text.search(regex);
-  if (idx === -1) return undefined;
-  const lineStart = text.lastIndexOf('\n', idx - 1) + 1;
-  const lineEnd = text.indexOf('\n', idx);
-  return text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim();
 }

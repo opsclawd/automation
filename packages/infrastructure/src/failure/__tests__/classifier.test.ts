@@ -518,4 +518,14 @@ describe('classifyExit', () => {
     });
     expect(f.kind).toBe('validation_failed');
   });
+
+  it('picks the last match within the same pattern when log contains multiple bracketed failures', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '[build failed]\n[lint failed]\n[typecheck failed]\n[test failed]',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('validation_failed');
+    expect(f.message).toBe('[test failed]');
+  });
 });
