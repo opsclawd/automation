@@ -5,4 +5,12 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     passWithNoTests: true,
   },
+  resolve: {
+    conditions: ['development'],
+  },
+  ssr: {
+    resolve: {
+      conditions: ['development'],
+    },
+  },
 });
