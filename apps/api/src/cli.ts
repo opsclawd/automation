@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { composeRoot, type ComposeOptions } from './compose.js';
 
@@ -46,7 +46,11 @@ export function buildProgram(): Command {
     .action(async (opts: RunCliOptions) => {
       try {
         const repoRoot = findRepoRoot(process.cwd());
-        const scriptPath = opts.script ?? join(repoRoot, 'scripts', 'ai-run-issue-v2');
+        const scriptPath = opts.script
+          ? isAbsolute(opts.script)
+            ? opts.script
+            : resolve(repoRoot, opts.script)
+          : join(repoRoot, 'scripts', 'ai-run-issue-v2');
         const options: ComposeOptions = {
           repoRoot,
           scriptPath,
