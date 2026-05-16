@@ -1,4 +1,5 @@
 import { createRun, passRun, failRun } from '@ai-sdlc/domain';
+import type { Failure } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type {
   ClassifyExitFn,
@@ -90,16 +91,17 @@ export class StartIssueRun {
     } catch (err) {
       const errorDuration = now().getTime() - startedAt.getTime();
       const completedAt = now();
-      const tail = dir.readCombinedLog();
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const combinedLogTail = tail ? `${tail}\n${errorMessage}` : errorMessage;
-      const failure = this.deps.classifyExit({
-        exitCode: -1,
-        combinedLogTail,
+      const failure: Failure = {
         runUuid: run.uuid,
+        kind: 'command_failed',
+        message: errorMessage,
+        exitCode: -1,
+        canRetry: false,
+        suggestedAction: 'Inspect the runner error and stderr.log for the cause.',
         artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
         detectedAt: completedAt,
-      });
+      };
       try {
         dir.writeFailureJson(failure);
       } catch (writeErr) {
@@ -114,11 +116,11 @@ export class StartIssueRun {
         status: 'failed',
         completedAt,
         exitCode: -1,
-        failureReason: failure.message,
+        failureReason: errorMessage,
         durationMs: errorDuration,
       });
       try {
-        dir.writeRunJson(failRun(run, failure.message, completedAt));
+        dir.writeRunJson(failRun(run, errorMessage, completedAt));
       } catch (writeErr) {
         logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
       }

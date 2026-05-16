@@ -295,15 +295,22 @@ describe('StartIssueRun', () => {
     expect(patch.failureReason).toMatch(/run\.json write failed/);
   });
 
-  it('marks run failed when runBashScript throws and classifies exitCode -1', async () => {
+  it('marks run failed when runBashScript throws without calling classifier', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
-    const { factory, dirs } = fakeDirectoryFactory();
+    const { factory, dirs } = fakeDirectoryFactory({
+      combinedLogContent: '[build failed]\nsome earlier sentinel in log',
+    });
     const { fn: bash } = fakeBash(new Error('spawn EACCES'));
+    let classifierCalled = false;
+    const trackingClassifier: ClassifyExitFn = (input) => {
+      classifierCalled = true;
+      return fakeClassifyExit(input);
+    };
     const usecase = new StartIssueRun({
       runRepository: repo,
       failureRepository: failureRepo,
-      classifyExit: fakeClassifyExit,
+      classifyExit: trackingClassifier,
       runDirectoryFactory: factory,
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
@@ -311,13 +318,17 @@ describe('StartIssueRun', () => {
       now: fixedNow,
     });
     await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
+    expect(classifierCalled).toBe(false);
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
     expect(patch.status).toBe('failed');
-    expect(patch.failureReason).toContain('spawn EACCES');
+    expect(patch.failureReason).toBe('spawn EACCES');
     expect(patch.exitCode).toBe(-1);
     expect(dirs[0]!.writes).toHaveLength(1);
     expect(failureRepo.records).toHaveLength(1);
+    expect(failureRepo.records[0]!.kind).toBe('command_failed');
+    expect(failureRepo.records[0]!.message).toBe('spawn EACCES');
     expect(dirs[0]!.failureWrites).toHaveLength(1);
+    expect(dirs[0]!.failureWrites[0]!.message).toBe('spawn EACCES');
   });
 
   it('classifies failure and persists failure.json on non-zero exit', async () => {
