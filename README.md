@@ -4,9 +4,7 @@ A local-first orchestration system for running, monitoring, debugging, and recov
 
 ## Status
 
-This repository is currently in the **architecture and product specification phase**.
-
-The current repo contains planning documents, design decisions, and domain language for the orchestrator. It does not yet contain the production implementation.
+M1 (observable wrapper) is live. The repo now contains the TypeScript orchestrator alongside planning documents.
 
 ## What this project is
 

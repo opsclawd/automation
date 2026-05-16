@@ -14,7 +14,7 @@
 ## Install
 
 ```bash
-corepack enable
+corepack enable   # idempotent; safe to re-run if already enabled
 pnpm install
 ```
 
@@ -56,7 +56,10 @@ All run data is under `.ai-runs/` in the repo root.
 | `.ai-runs/<displayId>/stderr.log`   | Script stderr                          |
 | `.ai-runs/<displayId>/combined.log` | Merged stdout + stderr                 |
 | `.ai-runs/<displayId>/failure.json` | Classified failure (if the run failed) |
+| `.ai-runs/<displayId>/events.jsonl` | Structured event log                   |
 | `.ai-runs/orchestrator.sqlite`      | SQLite database of all runs            |
+
+Each run directory also contains `phases/` and `artifacts/` subdirectories.
 
 ## Configuration
 
@@ -65,10 +68,11 @@ See [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schem
 
 CLI flags for the `run` command:
 
-| Flag                | Env var      | Purpose                |
-| ------------------- | ------------ | ---------------------- |
-| `--model <model>`   | `AI_MODEL`   | Override the AI model  |
-| `--agent-cli <cli>` | `AI_RUNTIME` | Override the agent CLI |
+| Flag                     | Env var      | Purpose                     |
+| ------------------------ | ------------ | --------------------------- |
+| `--base-branch <branch>` | —            | Base branch (default: main) |
+| `--model <model>`        | `AI_MODEL`   | Override the AI model       |
+| `--agent-cli <cli>`      | `AI_RUNTIME` | Override the agent CLI      |
 
 ## Troubleshooting
 
@@ -78,6 +82,8 @@ The wrapper process died without updating the row. This will be fixed in a futur
 ```bash
 sqlite3 .ai-runs/orchestrator.sqlite "UPDATE runs SET status = 'failed' WHERE status = 'running';"
 ```
+
+Verify the schema first with `.schema runs` in the SQLite shell. If the table or column names differ, adjust the statement accordingly.
 
 **`active run already exists for issue N`**
 A previous run for that issue is in a non-terminal state. Resolve or fail the previous run before starting a new one.
