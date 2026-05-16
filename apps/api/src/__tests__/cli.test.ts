@@ -106,4 +106,22 @@ describe('CLI run command', () => {
 
     exitSpy.mockRestore();
   });
+
+  it('rejects malformed --issue values', async () => {
+    for (const bad of ['123abc', '12.5', '-5', 'abc']) {
+      const program = buildProgram();
+      program.exitOverride();
+      await expect(
+        program.parseAsync(['node', 'orchestrator', 'run', '--issue', bad]),
+      ).rejects.toThrow(/must be a positive integer/gi);
+    }
+  });
+
+  it('rejects zero as --issue', async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    await expect(
+      program.parseAsync(['node', 'orchestrator', 'run', '--issue', '0']),
+    ).rejects.toThrow(/must be >= 1/);
+  });
 });

@@ -35,8 +35,9 @@ export function buildProgram(): Command {
     .command('run')
     .description('Start an issue-to-PR run by wrapping the legacy Bash script')
     .requiredOption('--issue <number>', 'GitHub issue number', (v) => {
+      if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
       const n = parseInt(v, 10);
-      if (Number.isNaN(n)) throw new Error(`--issue must be a number, got: ${v}`);
+      if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
       return n;
     })
     .option('--base-branch <branch>', 'Base branch (legacy default: main)')
