@@ -89,16 +89,34 @@ export class StartIssueRun {
       });
     } catch (err) {
       const errorDuration = now().getTime() - startedAt.getTime();
-      const failureReason = err instanceof Error ? err.message : String(err);
+      const completedAt = now();
+      const tail = dir.readCombinedLog();
+      const failure = this.deps.classifyExit({
+        exitCode: -1,
+        combinedLogTail: tail,
+        runUuid: run.uuid,
+        artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
+        detectedAt: completedAt,
+      });
+      try {
+        dir.writeFailureJson(failure);
+      } catch (writeErr) {
+        logger.error(`Failed to write failure.json for ${run.displayId}`, writeErr);
+      }
+      try {
+        this.deps.failureRepository.insert(failure);
+      } catch (dbErr) {
+        logger.error(`Failed to insert failure record for ${run.displayId}`, dbErr);
+      }
       this.deps.runRepository.update(run.uuid, {
         status: 'failed',
-        completedAt: now(),
+        completedAt,
         exitCode: -1,
-        failureReason,
+        failureReason: failure.message,
         durationMs: errorDuration,
       });
       try {
-        dir.writeRunJson(failRun(run, failureReason, now()));
+        dir.writeRunJson(failRun(run, failure.message, completedAt));
       } catch (writeErr) {
         logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
       }

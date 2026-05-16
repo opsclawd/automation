@@ -284,7 +284,7 @@ describe('StartIssueRun', () => {
     expect(patch.failureReason).toMatch(/run\.json write failed/);
   });
 
-  it('marks run failed when runBashScript throws', async () => {
+  it('marks run failed when runBashScript throws and classifies exitCode -1', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
     const { factory, dirs } = fakeDirectoryFactory();
@@ -302,9 +302,11 @@ describe('StartIssueRun', () => {
     await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
     expect(patch.status).toBe('failed');
-    expect(patch.failureReason).toMatch(/spawn EACCES/);
+    expect(patch.failureReason).toMatch(/-1/);
     expect(patch.exitCode).toBe(-1);
     expect(dirs[0]!.writes).toHaveLength(1);
+    expect(failureRepo.records).toHaveLength(1);
+    expect(dirs[0]!.failureWrites).toHaveLength(1);
   });
 
   it('classifies failure and persists failure.json on non-zero exit', async () => {
@@ -366,20 +368,15 @@ describe('StartIssueRun', () => {
     expect(dirs[0]!.failureWrites).toHaveLength(0);
   });
 
-  it('does not call classifier when runBashScript throws', async () => {
+  it('classifies and persists failure when runBashScript throws', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
     const { factory, dirs } = fakeDirectoryFactory();
     const { fn: bash } = fakeBash(new Error('spawn EACCES'));
-    let classifierCalled = false;
-    const trackingClassifier: ClassifyExitFn = (input) => {
-      classifierCalled = true;
-      return fakeClassifyExit(input);
-    };
     const usecase = new StartIssueRun({
       runRepository: repo,
       failureRepository: failureRepo,
-      classifyExit: trackingClassifier,
+      classifyExit: fakeClassifyExit,
       runDirectoryFactory: factory,
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
@@ -387,9 +384,12 @@ describe('StartIssueRun', () => {
       now: fixedNow,
     });
     await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
-    expect(classifierCalled).toBe(false);
-    expect(failureRepo.records).toHaveLength(0);
-    expect(dirs[0]!.failureWrites).toHaveLength(0);
+    expect(failureRepo.records).toHaveLength(1);
+    expect(failureRepo.records[0]!.exitCode).toBe(-1);
+    expect(dirs[0]!.failureWrites).toHaveLength(1);
+    expect(dirs[0]!.failureWrites[0]!.exitCode).toBe(-1);
+    const patch = repo.finalPatch(repo.inserted[0]!.uuid);
+    expect(patch.failureReason).toBe('script exited with code -1');
   });
 
   it('continues failure path when writeFailureJson throws', async () => {
