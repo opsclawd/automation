@@ -220,6 +220,24 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('git_failed');
   });
 
+  it('returns git_failed for "Worktree missing and no local or remote branch" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Worktree missing and no local or remote branch ai/issue-6 to recover from',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns git_failed for "Worktree creation failed" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Worktree creation failed — /path/to/dir is not a git worktree',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
   it('returns agent_blocked when log contains agent reported BLOCKED', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -242,6 +260,24 @@ describe('classifyExit', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'Task 1 is BLOCKED. Fix the blocker and re-run.',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
+  it('returns agent_blocked for "Task N is NEEDS_CONTEXT" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Task 3 is NEEDS_CONTEXT. Fix the blocker and re-run.',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
+  it('returns agent_blocked for "fix review is blocked" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Task 2 fix review is blocked. Fix the blocker and re-run.',
       runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('agent_blocked');
@@ -365,8 +401,12 @@ describe('classifyExit', () => {
       'Failed to attach worktree to local branch issue-6',
       'Failed to recreate worktree from origin/issue-6',
       '/repo is still not a worktree after recovery',
+      'Worktree missing and no local or remote branch issue-6',
+      'Worktree creation failed — /dir is not a git worktree',
       'agent reported BLOCKED',
       "Phase 'implement' is blocked",
+      'Task 3 is NEEDS_CONTEXT',
+      'Task 2 fix review is blocked',
       'switched branch from main to issue-1',
     ];
     for (const tail of tails) {

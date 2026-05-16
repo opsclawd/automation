@@ -45,12 +45,13 @@ const PATTERNS: Pattern[] = [
   {
     kind: 'git_failed',
     regex:
-      /fatal:|git push failed|Failed to push branch|Failed to checkout .* in worktree|Failed to attach worktree to local branch|Failed to recreate worktree from origin|is still not a worktree/i,
+      /fatal:|git push failed|Failed to push branch|Failed to checkout .* in worktree|Failed to attach worktree to local branch|Failed to recreate worktree from origin|is still not a worktree|Worktree missing and no local or remote branch|Worktree creation failed/i,
     suggestedAction: 'Inspect the git state in the worktree.',
   },
   {
     kind: 'agent_blocked',
-    regex: /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis BLOCKED\b)/i,
+    regex:
+      /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis (?:BLOCKED|NEEDS_CONTEXT)\b|fix review is blocked)/i,
     suggestedAction: 'The agent blocked itself — review the prompt and the reported reason.',
   },
 ];
