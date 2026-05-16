@@ -33,7 +33,8 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'validation_failed',
-    regex: /validate phase failed|pnpm (test|lint|build|typecheck) failed/i,
+    regex:
+      /validate phase failed|pnpm (test|lint|build|typecheck) failed|\[(?:build|lint|typecheck|test) failed\]/i,
     suggestedAction: 'Open the validate phase logs and rerun the failing command locally.',
   },
   {

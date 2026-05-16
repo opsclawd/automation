@@ -112,6 +112,42 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('validation_failed');
   });
 
+  it('returns validation_failed for [build failed] bracketed sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '[build failed]',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('validation_failed');
+  });
+
+  it('returns validation_failed for [lint failed] bracketed sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '[lint failed]',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('validation_failed');
+  });
+
+  it('returns validation_failed for [typecheck failed] bracketed sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '[typecheck failed]',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('validation_failed');
+  });
+
+  it('returns validation_failed for [test failed] bracketed sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '[test failed]',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('validation_failed');
+  });
+
   it('returns github_failed for "gh: api error" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -319,6 +355,8 @@ describe('classifyExit', () => {
       'TIMEOUT after 600s',
       'validate phase failed',
       'pnpm test failed',
+      '[build failed]',
+      '[test failed]',
       'gh: api error',
       'fatal: git error',
       'fatal: invalid reference: origin/main',
