@@ -1,10 +1,10 @@
 import { createWriteStream } from 'node:fs';
-import { execa } from 'execa';
+import { execa, type Options as ExecaOptions } from 'execa';
 
 export interface RunBashScriptInput {
   scriptPath: string;
   args: string[];
-  env: NodeJS.ProcessEnv;
+  env: Record<string, string>;
   cwd?: string;
   stdoutPath: string;
   stderrPath: string;
@@ -33,13 +33,16 @@ export async function runBashScript(input: RunBashScriptInput): Promise<RunBashS
     streamError ??= e;
   });
 
-  const child = execa(input.scriptPath, input.args, {
-    cwd: input.cwd,
-    env: { ...process.env, ...input.env },
-    reject: false,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined) env[k] = v;
+  }
+  Object.assign(env, input.env);
+
+  const opts: ExecaOptions = input.cwd
+    ? { env, cwd: input.cwd, reject: false, stdout: 'pipe', stderr: 'pipe' }
+    : { env, reject: false, stdout: 'pipe', stderr: 'pipe' };
+  const child = execa(input.scriptPath, input.args, opts);
 
   child.stdout?.on('data', (chunk: Buffer) => {
     stdoutFile.write(chunk);
