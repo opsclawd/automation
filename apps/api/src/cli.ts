@@ -30,6 +30,7 @@ program
       if (opts.agentCli !== undefined) options.agentCli = opts.agentCli as string;
       const c = composeRoot(options);
       const out = await c.startIssueRun.execute({ issueNumber: opts.issue as number });
+      // eslint-disable-next-line no-console
       console.log(JSON.stringify(out));
       process.exit(out.status === 'passed' ? 0 : 1);
     } catch (err) {
