@@ -30,7 +30,9 @@ function serializeRun(r: ReturnType<Container['runRepository']['list']>[number])
   };
 }
 
-function serializeFailure(f: ReturnType<Container['failureRepository']['findLatestByRun']>) {
+function serializeFailure(
+  f: NonNullable<ReturnType<Container['failureRepository']['findLatestByRun']>>,
+) {
   return {
     kind: f.kind,
     message: f.message,
