@@ -31,10 +31,19 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('invalid_result');
   });
 
-  it('returns branch_changed when log contains branch change sentinel', () => {
+  it('returns branch_changed when log contains "branch changed from" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'check_branch_after_agent: branch changed from issue-1 to main',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('branch_changed');
+  });
+
+  it('returns branch_changed for wrapper "switched branch from" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'FAIL: Agent switched branch from issue-6 to main',
       runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('branch_changed');
@@ -103,6 +112,24 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('agent_blocked');
   });
 
+  it('returns agent_blocked for wrapper "Phase ... is blocked" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: "Phase 'implement' is blocked (agent emitted BLOCKED)",
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
+  it('returns agent_blocked for "Task N is BLOCKED" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Task 1 is BLOCKED. Fix the blocker and re-run.',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
   it('returns command_failed for exit 1 with no sentinel match', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -125,6 +152,25 @@ describe('classifyExit', () => {
   });
 
   it('extracts the last phase from the log', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        'starting phase plan-write\nplan-write done\nstarting phase implement\norchestrator_fail',
+      runUuid: 'test-uuid',
+    });
+    expect(f.phase).toBe('implement');
+  });
+
+  it('extracts phase from "=== Phase:" format (wrapper output)', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '=== Phase: validate ===\nsome error output\nFAIL: something',
+      runUuid: 'test-uuid',
+    });
+    expect(f.phase).toBe('validate');
+  });
+
+  it('extracts phase from PHASE= format', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail:
@@ -193,6 +239,8 @@ describe('classifyExit', () => {
       'gh: api error',
       'fatal: git error',
       'agent reported BLOCKED',
+      "Phase 'implement' is blocked",
+      'switched branch from main to issue-1',
     ];
     for (const tail of tails) {
       const f = classifyExit({ exitCode: 1, combinedLogTail: tail, runUuid: 'test-uuid' });

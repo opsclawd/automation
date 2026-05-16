@@ -22,7 +22,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'branch_changed',
-    regex: /branch changed from/i,
+    regex: /(?:branch changed from|switched branch from)/i,
     suggestedAction:
       'Reset the worktree branch and retry; verify the agent prompt does not switch branches.',
   },
@@ -48,12 +48,12 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'agent_blocked',
-    regex: /agent reported BLOCKED/i,
+    regex: /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\b BLOCKED\b)/i,
     suggestedAction: 'The agent blocked itself — review the prompt and the reported reason.',
   },
 ];
 
-const PHASE_REGEX = /(?:starting phase|PHASE=)\s*([a-z_-]+)/gi;
+const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
 export function classifyExit(input: ClassifyExitInput): Failure {
   const tail = input.combinedLogTail.slice(-8000);
