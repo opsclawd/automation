@@ -39,19 +39,19 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'github_failed',
-    regex: /gh: api error|gh: HTTP \d{3}/i,
+    regex: /gh: api error|gh: HTTP \d{3}|Failed to fetch issue/i,
     suggestedAction: 'Check `gh auth status` and rate-limit headers.',
   },
   {
     kind: 'git_failed',
     regex:
-      /fatal:|git push failed|Failed to push branch|Failed to checkout .* in worktree|Failed to attach worktree to local branch|Failed to recreate worktree from origin|is still not a worktree|Worktree missing and no local or remote branch|Worktree creation failed/i,
+      /fatal:|git push failed|Failed to push branch|Failed to checkout .* in worktree|Failed to attach worktree to local branch|Failed to recreate worktree from origin|is still not a worktree|Worktree missing and no local or remote branch|Worktree creation failed|Worktree has no commits|Failed to create PR and no open PR/i,
     suggestedAction: 'Inspect the git state in the worktree.',
   },
   {
     kind: 'agent_blocked',
     regex:
-      /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis (?:BLOCKED|NEEDS_CONTEXT)\b|fix review is blocked|ai:blocked)/i,
+      /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis (?:BLOCKED|NEEDS_CONTEXT)\b|fix review is blocked|ai:blocked|blocked from previous phase|reviews failing|review loop hit max|exited review loop)/i,
     suggestedAction: 'The agent blocked itself — review the prompt and the reported reason.',
   },
 ];

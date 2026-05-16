@@ -412,11 +412,16 @@ describe('classifyExit', () => {
       '/repo is still not a worktree after recovery',
       'Worktree missing and no local or remote branch issue-6',
       'Worktree creation failed — /dir is not a git worktree',
+      'Worktree has no commits — cannot create PR',
+      'Failed to create PR and no open PR exists for branch ai/issue-6',
       'agent reported BLOCKED',
       "Phase 'implement' is blocked",
       'Task 3 is NEEDS_CONTEXT',
       'Task 2 fix review is blocked',
       'ai:blocked',
+      'Orchestrator is blocked from previous phase',
+      'reviews failing and fix-agent reported no fixes',
+      'Failed to fetch issue #42',
       'switched branch from main to issue-1',
     ];
     for (const tail of tails) {
@@ -527,5 +532,62 @@ describe('classifyExit', () => {
     });
     expect(f.kind).toBe('validation_failed');
     expect(f.message).toBe('[test failed]');
+  });
+
+  it('returns git_failed for "Worktree has no commits" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Worktree has no commits — cannot create PR',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns agent_blocked for "Orchestrator is blocked from previous phase" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Orchestrator is blocked from previous phase',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
+  it('returns git_failed for "Failed to create PR and no open PR" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Failed to create PR and no open PR exists for branch ai/issue-6',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns github_failed for "Failed to fetch issue" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'Failed to fetch issue #42',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('github_failed');
+  });
+
+  it('returns agent_blocked for "reviews failing" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        'Task 1: reviews failing (spec=fail, quality=fail) and fix-agent reported no fixes.',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
+  it('classifies create-pr abort correctly when earlier validate produced [build failed]', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        '=== Phase: validate ===\n[build failed]\n=== Phase: create-pr ===\nWorktree has no commits — cannot create PR',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+    expect(f.message).toContain('Worktree has no commits');
   });
 });
