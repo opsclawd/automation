@@ -74,12 +74,18 @@ export class StartIssueRun {
       });
     } catch (err) {
       const errorDuration = now().getTime() - startedAt.getTime();
+      const failureReason = err instanceof Error ? err.message : String(err);
       this.deps.runRepository.update(run.uuid, {
-        status: 'cancelled',
+        status: 'failed',
         completedAt: now(),
-        failureReason: err instanceof Error ? err.message : String(err),
+        failureReason,
         durationMs: errorDuration,
       });
+      try {
+        dir.writeRunJson(failRun(run, failureReason, now()));
+      } catch (writeErr) {
+        console.error(`Failed to write run.json for ${run.displayId}:`, writeErr);
+      }
       throw err;
     }
     const completedAt = now();
