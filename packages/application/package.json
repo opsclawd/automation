@@ -22,7 +22,6 @@
   },
   "dependencies": {
     "@ai-sdlc/domain": "workspace:*",
-    "@ai-sdlc/infrastructure": "workspace:*",
     "@ai-sdlc/shared": "workspace:*"
   }
 }

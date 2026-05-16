@@ -33,6 +33,11 @@ export async function runBashScript(input: RunBashScriptInput): Promise<RunBashS
     streamError ??= e;
   });
 
+  // Inherit parent env by default so the wrapped legacy script keeps access
+  // to PATH, HOME, credentials it currently expects (GH_TOKEN, etc.). Callers
+  // that need isolation should pre-filter input.env and rely on the explicit
+  // overrides below; tightening to an allowlist is tracked for a later
+  // milestone once we know exactly which vars the script depends on.
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) env[k] = v;

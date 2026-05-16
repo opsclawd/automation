@@ -79,6 +79,33 @@ describe('runBashScript', () => {
     expect(readFileSync(join(out, 'stdout.log'), 'utf8')).toContain('arg=42');
   });
 
+  it('interleaves stdout and stderr in combined.log in emission order', async () => {
+    const out = tempDir();
+    // Force ordering with sleeps so the kernel scheduler doesn't reorder
+    // writes between unrelated pipes.
+    const script = makeScript(
+      'echo A; sleep 0.05; echo B 1>&2; sleep 0.05; echo C; sleep 0.05; echo D 1>&2',
+    );
+    const res = await runBashScript({
+      scriptPath: script,
+      args: [],
+      env: {},
+      stdoutPath: join(out, 'stdout.log'),
+      stderrPath: join(out, 'stderr.log'),
+      combinedPath: join(out, 'combined.log'),
+    });
+    expect(res.exitCode).toBe(0);
+    const combined = readFileSync(join(out, 'combined.log'), 'utf8');
+    const idxA = combined.indexOf('A');
+    const idxB = combined.indexOf('B');
+    const idxC = combined.indexOf('C');
+    const idxD = combined.indexOf('D');
+    expect(idxA).toBeGreaterThanOrEqual(0);
+    expect(idxB).toBeGreaterThan(idxA);
+    expect(idxC).toBeGreaterThan(idxB);
+    expect(idxD).toBeGreaterThan(idxC);
+  });
+
   it('passes env vars to the child process', async () => {
     const out = tempDir();
     const script = makeScript('echo "MY_VAR=$MY_VAR"');

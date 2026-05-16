@@ -61,8 +61,13 @@ export function buildProgram(): Command {
         if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
         const c = composeRoot(options);
         const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
-        // eslint-disable-next-line no-console
-        console.log(JSON.stringify(out));
+        // Flush stdout before exit; on some redirected stdout configurations
+        // process.exit can truncate buffered writes.
+        await new Promise<void>((resolve, reject) =>
+          process.stdout.write(JSON.stringify(out) + '\n', (err) =>
+            err ? reject(err) : resolve(),
+          ),
+        );
         process.exit(out.status === 'passed' ? 0 : 1);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));

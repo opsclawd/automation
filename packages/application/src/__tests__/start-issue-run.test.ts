@@ -1,164 +1,243 @@
-import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import {
-  openDatabase,
-  applyMigrations,
-  RunRepository,
-  RunDirectory,
-} from '@ai-sdlc/infrastructure';
+import { describe, expect, it } from 'vitest';
+import type { Run } from '@ai-sdlc/domain';
 import { StartIssueRun } from '../start-issue-run.js';
+import type {
+  RunBashScriptFn,
+  RunDirectoryFactory,
+  RunDirectoryHandle,
+  RunRepositoryPort,
+  RunRepositoryUpdatePatch,
+} from '../ports.js';
 
-const tempDirs: string[] = [];
+interface RecordedUpdate {
+  uuid: string;
+  patch: RunRepositoryUpdatePatch;
+}
 
-afterEach(() => {
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+class FakeRunRepository implements RunRepositoryPort {
+  inserted: Run[] = [];
+  updates: RecordedUpdate[] = [];
+  active = new Set<number>();
+  insertIfNoActive(run: Run): void {
+    if (this.active.has(run.issueNumber)) {
+      throw new Error(`An active run already exists for issue ${run.issueNumber}`);
+    }
+    this.inserted.push(run);
+    this.active.add(run.issueNumber);
   }
-});
-
-function trackDir<T>(fn: () => T): T {
-  const result = fn();
-  tempDirs.push(result);
-  return result;
+  update(uuid: string, patch: RunRepositoryUpdatePatch): void {
+    this.updates.push({ uuid, patch });
+  }
+  finalPatch(uuid: string): RunRepositoryUpdatePatch {
+    const merged: RunRepositoryUpdatePatch = {};
+    for (const u of this.updates) {
+      if (u.uuid === uuid) Object.assign(merged, u.patch);
+    }
+    return merged;
+  }
 }
 
-function fakeScript(exitCode: number, stdout = 'hello', stderr = ''): string {
-  const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-fake-')));
-  const path = join(dir, 'ai-run.sh');
-  writeFileSync(
-    path,
-    `#!/usr/bin/env bash\necho '${stdout}'\n${stderr ? `echo '${stderr}' 1>&2\n` : ''}exit ${exitCode}\n`,
-  );
-  chmodSync(path, 0o755);
-  return path;
+interface FakeDir extends RunDirectoryHandle {
+  writes: Run[];
 }
+
+function fakeDirectoryFactory(opts?: { failWrite?: boolean; failCreate?: boolean }): {
+  factory: RunDirectoryFactory;
+  dirs: FakeDir[];
+} {
+  const dirs: FakeDir[] = [];
+  const factory: RunDirectoryFactory = ({ run }) => {
+    if (opts?.failCreate) throw new Error('mkdir failed');
+    const dir: FakeDir = {
+      runRoot: `/fake/${run.displayId}`,
+      paths: {
+        stdoutLogPath: `/fake/${run.displayId}/stdout.log`,
+        stderrLogPath: `/fake/${run.displayId}/stderr.log`,
+        combinedLogPath: `/fake/${run.displayId}/combined.log`,
+      },
+      writes: [],
+      writeRunJson(r) {
+        if (opts?.failWrite) throw new Error('disk full');
+        this.writes.push(r);
+      },
+    };
+    dirs.push(dir);
+    return dir;
+  };
+  return { factory, dirs };
+}
+
+function fakeBash(result: { exitCode: number; durationMs?: number } | Error): {
+  fn: RunBashScriptFn;
+  calls: Parameters<RunBashScriptFn>[0][];
+} {
+  const calls: Parameters<RunBashScriptFn>[0][] = [];
+  const fn: RunBashScriptFn = async (input) => {
+    calls.push(input);
+    if (result instanceof Error) throw result;
+    return { exitCode: result.exitCode, durationMs: result.durationMs ?? 5 };
+  };
+  return { fn, calls };
+}
+
+const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
 describe('StartIssueRun', () => {
-  it('creates a run row, directory, logs, and updates status on success', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
-    const db = openDatabase(join(root, 'orch.sqlite'));
-    applyMigrations(db);
-    const repo = new RunRepository(db);
+  it('marks run passed on exit 0 and writes final run.json', async () => {
+    const repo = new FakeRunRepository();
+    const { factory, dirs } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0, durationMs: 42 });
     const usecase = new StartIssueRun({
       runRepository: repo,
-      runsDir: join(root, '.ai-runs'),
-      scriptPath: fakeScript(0, 'plan done'),
-      now: () => new Date('2026-05-13T19:23:00Z'),
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
     });
     const out = await usecase.execute({ issueNumber: 42 });
-    expect(out.displayId).toBe('issue-42-20260513-192300000');
     expect(out.status).toBe('passed');
     expect(out.exitCode).toBe(0);
-    expect(out.uuid).toBeTruthy();
-    const paths = RunDirectory.paths(join(root, '.ai-runs'), out.displayId);
-    expect(existsSync(paths.runJsonPath)).toBe(true);
-    expect(readFileSync(paths.stdoutLogPath, 'utf8')).toContain('plan done');
-    expect(existsSync(paths.stderrLogPath)).toBe(true);
-    expect(existsSync(paths.combinedLogPath)).toBe(true);
-    const row = repo.findByUuid(out.uuid);
-    expect(row?.status).toBe('passed');
-    expect(row?.exitCode).toBe(0);
-    expect(row?.durationMs).toBeGreaterThanOrEqual(0);
+    expect(out.displayId).toBe('issue-42-20260513-192300000');
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.status).toBe('passed');
+    expect(patch.exitCode).toBe(0);
+    expect(patch.durationMs).toBe(42);
+    expect(dirs[0]!.writes).toHaveLength(1);
+    expect(calls[0]!.env.AI_RUN_UUID).toBe(out.uuid);
+    expect(calls[0]!.env.AI_ISSUE_NUMBER).toBe('42');
   });
 
-  it('marks the run failed on non-zero exit', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
-    const db = openDatabase(join(root, 'orch.sqlite'));
-    applyMigrations(db);
-    const repo = new RunRepository(db);
+  it('marks run failed on non-zero exit and sets failureReason', async () => {
+    const repo = new FakeRunRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 3 });
     const usecase = new StartIssueRun({
       runRepository: repo,
-      runsDir: join(root, '.ai-runs'),
-      scriptPath: fakeScript(3, 'some output', 'stderr msg'),
-      now: () => new Date('2026-05-13T19:23:00Z'),
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 99 });
+    const out = await usecase.execute({ issueNumber: 7 });
     expect(out.status).toBe('failed');
     expect(out.exitCode).toBe(3);
-    const row = repo.findByUuid(out.uuid);
-    expect(row?.status).toBe('failed');
-    expect(row?.exitCode).toBe(3);
-    expect(row?.failureReason).toBeTruthy();
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.status).toBe('failed');
+    expect(patch.failureReason).toMatch(/3/);
   });
 
   it('refuses to start a second active run for the same issue', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
-    const db = openDatabase(join(root, 'orch.sqlite'));
-    applyMigrations(db);
-    const repo = new RunRepository(db);
-    repo.insert({
-      uuid: 'existing-uuid',
-      displayId: 'issue-7-20260513-000000',
-      issueNumber: 7,
-      type: 'issue_to_pr',
-      status: 'running',
-      completedPhases: [],
-      startedAt: new Date('2026-05-13T00:00:00Z'),
-    });
+    const repo = new FakeRunRepository();
+    repo.active.add(7);
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
     const usecase = new StartIssueRun({
       runRepository: repo,
-      runsDir: join(root, '.ai-runs'),
-      scriptPath: fakeScript(0),
-      now: () => new Date('2026-05-13T19:23:00Z'),
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
     });
     await expect(usecase.execute({ issueNumber: 7 })).rejects.toThrow(/active run/i);
   });
 
-  it('sets AI_RUN_UUID, AI_RUN_DISPLAY_ID, AI_RUN_DIR, AI_ISSUE_NUMBER in child env', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
-    const db = openDatabase(join(root, 'orch.sqlite'));
-    applyMigrations(db);
-    const repo = new RunRepository(db);
-    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-env-')));
-    const script = join(dir, 'print-env.sh');
-    writeFileSync(script, `#!/usr/bin/env bash\nenv | grep AI_ | sort\nexit 0\n`);
-    chmodSync(script, 0o755);
-    const now = new Date('2026-05-13T19:23:00Z');
+  it('passes optional env vars only when provided', async () => {
+    const repo = new FakeRunRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
     const usecase = new StartIssueRun({
       runRepository: repo,
-      runsDir: join(root, '.ai-runs'),
-      scriptPath: script,
-      now: () => now,
-    });
-    const out = await usecase.execute({ issueNumber: 5 });
-    const logContent = readFileSync(
-      RunDirectory.paths(join(root, '.ai-runs'), out.displayId).stdoutLogPath,
-      'utf8',
-    );
-    expect(logContent).toContain('AI_RUN_UUID=');
-    expect(logContent).toContain('AI_RUN_DISPLAY_ID=issue-5-20260513-192300000');
-    expect(logContent).toContain('AI_RUN_DIR=');
-    expect(logContent).toContain('AI_ISSUE_NUMBER=5');
-  });
-
-  it('passes optional env vars only when deps are provided', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-run-')));
-    const db = openDatabase(join(root, 'orch.sqlite'));
-    applyMigrations(db);
-    const repo = new RunRepository(db);
-    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-env-')));
-    const script = join(dir, 'print-env.sh');
-    writeFileSync(script, `#!/usr/bin/env bash\nenv | grep AI_ | sort\nexit 0\n`);
-    chmodSync(script, 0o755);
-    const usecase = new StartIssueRun({
-      runRepository: repo,
-      runsDir: join(root, '.ai-runs'),
-      scriptPath: script,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
       baseBranch: 'develop',
       model: 'gpt-4',
       agentCli: 'codex',
-      now: () => new Date('2026-05-13T19:23:00Z'),
+      now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 10 });
-    const logContent = readFileSync(
-      RunDirectory.paths(join(root, '.ai-runs'), out.displayId).stdoutLogPath,
-      'utf8',
-    );
-    expect(logContent).toContain('AI_BASE_BRANCH=develop');
-    expect(logContent).toContain('AI_MODEL=gpt-4');
-    expect(logContent).toContain('AI_RUNTIME=codex');
+    await usecase.execute({ issueNumber: 10 });
+    expect(calls[0]!.env.AI_BASE_BRANCH).toBe('develop');
+    expect(calls[0]!.env.AI_MODEL).toBe('gpt-4');
+    expect(calls[0]!.env.AI_RUNTIME).toBe('codex');
+  });
+
+  it('omits optional env vars when deps are not provided', async () => {
+    const repo = new FakeRunRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
+    });
+    await usecase.execute({ issueNumber: 1 });
+    expect(calls[0]!.env.AI_BASE_BRANCH).toBeUndefined();
+    expect(calls[0]!.env.AI_MODEL).toBeUndefined();
+    expect(calls[0]!.env.AI_RUNTIME).toBeUndefined();
+  });
+
+  it('cancels the run row when directory creation fails', async () => {
+    const repo = new FakeRunRepository();
+    const { factory } = fakeDirectoryFactory({ failCreate: true });
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
+    });
+    await expect(usecase.execute({ issueNumber: 5 })).rejects.toThrow(/mkdir/);
+    expect(repo.inserted).toHaveLength(1);
+    const patch = repo.finalPatch(repo.inserted[0]!.uuid);
+    expect(patch.status).toBe('cancelled');
+  });
+
+  it('surfaces writeRunJson failures as failureReason on the DB row', async () => {
+    const repo = new FakeRunRepository();
+    const { factory } = fakeDirectoryFactory({ failWrite: true });
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const errors: string[] = [];
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
+      logger: { error: (m) => errors.push(m) },
+    });
+    const out = await usecase.execute({ issueNumber: 3 });
+    expect(out.status).toBe('passed');
+    expect(errors[0]).toMatch(/Failed to write run\.json/);
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.failureReason).toMatch(/run\.json write failed/);
+  });
+
+  it('marks run failed when runBashScript throws', async () => {
+    const repo = new FakeRunRepository();
+    const { factory, dirs } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash(new Error('spawn EACCES'));
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
+    });
+    await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
+    const patch = repo.finalPatch(repo.inserted[0]!.uuid);
+    expect(patch.status).toBe('failed');
+    expect(patch.failureReason).toMatch(/spawn EACCES/);
+    expect(dirs[0]!.writes).toHaveLength(1);
   });
 });

@@ -45,7 +45,17 @@ describe('CLI run command', () => {
   it('exits 0 on passed run and outputs JSON', async () => {
     const scriptPath = fakeScript(0);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const writes: string[] = [];
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+      chunk: string | Uint8Array,
+      cbOrEnc?: unknown,
+      cb2?: unknown,
+    ) => {
+      writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+      if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+      return true;
+    }) as never);
 
     const program = buildProgram();
     await program.parseAsync([
@@ -59,20 +69,29 @@ describe('CLI run command', () => {
     ]);
 
     expect(exitSpy).toHaveBeenCalledWith(0);
-    const output = logSpy.mock.calls[0]?.[0];
-    const parsed = JSON.parse(output);
+    const parsed = JSON.parse(writes.join(''));
     expect(parsed.status).toBe('passed');
     expect(parsed.exitCode).toBe(0);
     expect(parsed.uuid).toBeTruthy();
 
     exitSpy.mockRestore();
-    logSpy.mockRestore();
+    writeSpy.mockRestore();
   });
 
   it('exits 1 on failed run', async () => {
     const scriptPath = fakeScript(7);
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const writes: string[] = [];
+    const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+      chunk: string | Uint8Array,
+      cbOrEnc?: unknown,
+      cb2?: unknown,
+    ) => {
+      writes.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+      if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+      return true;
+    }) as never);
 
     const program = buildProgram();
     await program.parseAsync([
@@ -86,25 +105,23 @@ describe('CLI run command', () => {
     ]);
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const output = logSpy.mock.calls[0]?.[0];
-    const parsed = JSON.parse(output);
+    const parsed = JSON.parse(writes.join(''));
     expect(parsed.status).toBe('failed');
     expect(parsed.exitCode).toBe(7);
 
     exitSpy.mockRestore();
-    logSpy.mockRestore();
+    writeSpy.mockRestore();
   });
 
-  it('missing required --issue causes Commander error', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+  it('missing required --issue causes Commander error mentioning --issue', async () => {
     const program = buildProgram();
-    program.exitOverride();
+    const runCmd = program.commands.find((c) => c.name() === 'run')!;
+    runCmd.exitOverride();
+    const errs: string[] = [];
+    runCmd.configureOutput({ writeErr: (s) => void errs.push(s), writeOut: () => {} });
 
-    await expect(
-      program.parseAsync(['node', 'orchestrator', 'run'], { from: 'user' }),
-    ).rejects.toThrow();
-
-    exitSpy.mockRestore();
+    await expect(runCmd.parseAsync(['run'], { from: 'user' })).rejects.toThrow(/--issue/);
+    expect(errs.join('')).toMatch(/--issue/);
   });
 
   it('rejects malformed --issue values', async () => {
