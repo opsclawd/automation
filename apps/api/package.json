@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "orchestrator": "./src/cli.ts"
+    "orchestrator": "./bin/orchestrator.mjs"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

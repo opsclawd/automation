@@ -1,4 +1,3 @@
-#!/usr/bin/env -S node --conditions=development --import tsx/esm
 import { Command } from 'commander';
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
