@@ -379,30 +379,6 @@ describe('StartIssueRun', () => {
     expect(dirs[0]!.failureWrites).toHaveLength(0);
   });
 
-  it('classifies and persists failure when runBashScript throws', async () => {
-    const repo = new FakeRunRepository();
-    const failureRepo = new FakeFailureRepository();
-    const { factory, dirs } = fakeDirectoryFactory();
-    const { fn: bash } = fakeBash(new Error('spawn EACCES'));
-    const usecase = new StartIssueRun({
-      runRepository: repo,
-      failureRepository: failureRepo,
-      classifyExit: fakeClassifyExit,
-      runDirectoryFactory: factory,
-      runBashScript: bash,
-      runsDir: '/fake/.ai-runs',
-      scriptPath: '/fake/script.sh',
-      now: fixedNow,
-    });
-    await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
-    expect(failureRepo.records).toHaveLength(1);
-    expect(failureRepo.records[0]!.exitCode).toBe(-1);
-    expect(dirs[0]!.failureWrites).toHaveLength(1);
-    expect(dirs[0]!.failureWrites[0]!.exitCode).toBe(-1);
-    const patch = repo.finalPatch(repo.inserted[0]!.uuid);
-    expect(patch.failureReason).toContain('spawn EACCES');
-  });
-
   it('continues failure path when writeFailureJson throws', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();

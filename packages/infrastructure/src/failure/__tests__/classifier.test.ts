@@ -287,7 +287,7 @@ describe('classifyExit', () => {
     expect(f.phase).toBe('validate');
   });
 
-  it('extracts phase from PHASE= format', () => {
+  it('extracts phase from "starting phase" format', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail:
