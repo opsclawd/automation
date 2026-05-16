@@ -1,0 +1,213 @@
+import { describe, expect, it } from 'vitest';
+import { classifyExit } from '../classifier.js';
+
+describe('classifyExit', () => {
+  it('returns missing_artifact when log contains MISSING ARTIFACT sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'orchestrator_fail: MISSING ARTIFACT design.md',
+    });
+    expect(f.kind).toBe('missing_artifact');
+    expect(f.canRetry).toBe(false);
+    expect(f.suggestedAction).toMatch(/inspect/i);
+  });
+
+  it('returns missing_artifact for "required artifact ... not found" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'required artifact design.md not found',
+    });
+    expect(f.kind).toBe('missing_artifact');
+  });
+
+  it('returns invalid_result when log contains invalid result file', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'invalid result file: parse error',
+    });
+    expect(f.kind).toBe('invalid_result');
+  });
+
+  it('returns branch_changed when log contains branch change sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'check_branch_after_agent: branch changed from issue-1 to main',
+    });
+    expect(f.kind).toBe('branch_changed');
+  });
+
+  it('returns timeout for "TIMEOUT" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 124,
+      combinedLogTail: 'TIMEOUT after 600s',
+    });
+    expect(f.kind).toBe('timeout');
+  });
+
+  it('returns timeout for "timed out" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'process timed out after 120s',
+    });
+    expect(f.kind).toBe('timeout');
+  });
+
+  it('returns validation_failed for "validate phase failed" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'validate phase failed: typecheck',
+    });
+    expect(f.kind).toBe('validation_failed');
+  });
+
+  it('returns validation_failed for pnpm test failed', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'pnpm test failed with exit code 1',
+    });
+    expect(f.kind).toBe('validation_failed');
+  });
+
+  it('returns github_failed for "gh: api error" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'gh: api error - rate limit exceeded',
+    });
+    expect(f.kind).toBe('github_failed');
+  });
+
+  it('returns git_failed for "fatal:" sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'fatal: not a git repository',
+    });
+    expect(f.kind).toBe('git_failed');
+  });
+
+  it('returns agent_blocked when log contains agent reported BLOCKED', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'agent reported BLOCKED: unclear requirements',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
+  it('returns command_failed for exit 1 with no sentinel match', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'something went wrong\nstack trace here',
+    });
+    expect(f.kind).toBe('command_failed');
+    expect(f.canRetry).toBe(false);
+    expect(f.message).toContain('something went wrong');
+  });
+
+  it('returns unknown for non-1 non-zero exit with no sentinel match', () => {
+    const f = classifyExit({
+      exitCode: 137,
+      combinedLogTail: 'killed',
+    });
+    expect(f.kind).toBe('unknown');
+    expect(f.exitCode).toBe(137);
+  });
+
+  it('extracts the last phase from the log', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        'starting phase plan-write\nplan-write done\nstarting phase implement\norchestrator_fail',
+    });
+    expect(f.phase).toBe('implement');
+  });
+
+  it('extracts phase from PHASE= format', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'PHASE=implement\nsome error output',
+    });
+    expect(f.phase).toBe('implement');
+  });
+
+  it('picks the last phase when multiple are present', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        'starting phase plan-write\nPHASE=implement\nstarting phase validate\nTIMEOUT after 60s',
+    });
+    expect(f.phase).toBe('validate');
+  });
+
+  it('returns undefined phase when no phase markers are in the log', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'just some random error output',
+    });
+    expect(f.phase).toBeUndefined();
+  });
+
+  it('populates runUuid when provided', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid-123',
+    });
+    expect(f.runUuid).toBe('test-uuid-123');
+  });
+
+  it('populates artifacts when provided', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'TIMEOUT after 600s',
+      artifacts: ['/path/to/stdout.log', '/path/to/stderr.log'],
+    });
+    expect(f.artifacts).toEqual(['/path/to/stdout.log', '/path/to/stderr.log']);
+  });
+
+  it('defaults canRetry to false for every kind', () => {
+    const tails = [
+      'MISSING ARTIFACT design.md',
+      'invalid result file',
+      'branch changed from x to y',
+      'timed out',
+      'TIMEOUT after 600s',
+      'validate phase failed',
+      'pnpm test failed',
+      'gh: api error',
+      'fatal: git error',
+      'agent reported BLOCKED',
+    ];
+    for (const tail of tails) {
+      const f = classifyExit({ exitCode: 1, combinedLogTail: tail });
+      expect(f.canRetry).toBe(false);
+    }
+  });
+
+  it('uses the last 3 non-empty lines as fallback message when no sentinel matches', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'line1\n\nline2\n\nline3\nline4\nline5',
+    });
+    expect(f.message).toBe('line3\nline4\nline5');
+  });
+
+  it('defaults detectedAt to current Date when not provided', () => {
+    const before = new Date();
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'TIMEOUT after 600s',
+    });
+    const after = new Date();
+    expect(f.detectedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
+    expect(f.detectedAt.getTime()).toBeLessThanOrEqual(after.getTime());
+  });
+
+  it('uses provided detectedAt when given', () => {
+    const dt = new Date('2026-05-13T19:23:00Z');
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'TIMEOUT after 600s',
+      detectedAt: dt,
+    });
+    expect(f.detectedAt).toBe(dt);
+  });
+});
