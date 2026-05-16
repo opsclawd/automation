@@ -50,7 +50,14 @@ export class StartIssueRun {
     try {
       dir = this.deps.runDirectoryFactory({ rootDir: this.deps.runsDir, run });
     } catch (err) {
-      this.deps.runRepository.update(run.uuid, { status: 'cancelled' });
+      const failureReason = err instanceof Error ? err.message : String(err);
+      this.deps.runRepository.update(run.uuid, {
+        status: 'failed',
+        completedAt: now(),
+        exitCode: -1,
+        durationMs: 0,
+        failureReason,
+      });
       throw err;
     }
     const env: Record<string, string> = {
@@ -82,6 +89,7 @@ export class StartIssueRun {
       this.deps.runRepository.update(run.uuid, {
         status: 'failed',
         completedAt: now(),
+        exitCode: -1,
         failureReason,
         durationMs: errorDuration,
       });

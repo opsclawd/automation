@@ -183,7 +183,7 @@ describe('StartIssueRun', () => {
     expect(calls[0]!.env.AI_RUNTIME).toBeUndefined();
   });
 
-  it('cancels the run row when directory creation fails', async () => {
+  it('marks run failed when directory creation fails', async () => {
     const repo = new FakeRunRepository();
     const { factory } = fakeDirectoryFactory({ failCreate: true });
     const { fn: bash } = fakeBash({ exitCode: 0 });
@@ -198,7 +198,9 @@ describe('StartIssueRun', () => {
     await expect(usecase.execute({ issueNumber: 5 })).rejects.toThrow(/mkdir/);
     expect(repo.inserted).toHaveLength(1);
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
-    expect(patch.status).toBe('cancelled');
+    expect(patch.status).toBe('failed');
+    expect(patch.exitCode).toBe(-1);
+    expect(patch.failureReason).toMatch(/mkdir/);
   });
 
   it('surfaces writeRunJson failures as failureReason on the DB row', async () => {
@@ -238,6 +240,7 @@ describe('StartIssueRun', () => {
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
     expect(patch.status).toBe('failed');
     expect(patch.failureReason).toMatch(/spawn EACCES/);
+    expect(patch.exitCode).toBe(-1);
     expect(dirs[0]!.writes).toHaveLength(1);
   });
 });
