@@ -283,6 +283,15 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('agent_blocked');
   });
 
+  it('returns agent_blocked for "ai:blocked" label sentinel', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'orchestrator_fail: Issue has ai:blocked label',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('agent_blocked');
+  });
+
   it('returns command_failed for exit 1 with no sentinel match', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -407,6 +416,7 @@ describe('classifyExit', () => {
       "Phase 'implement' is blocked",
       'Task 3 is NEEDS_CONTEXT',
       'Task 2 fix review is blocked',
+      'ai:blocked',
       'switched branch from main to issue-1',
     ];
     for (const tail of tails) {

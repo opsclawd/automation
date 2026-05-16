@@ -51,7 +51,7 @@ const PATTERNS: Pattern[] = [
   {
     kind: 'agent_blocked',
     regex:
-      /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis (?:BLOCKED|NEEDS_CONTEXT)\b|fix review is blocked)/i,
+      /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis (?:BLOCKED|NEEDS_CONTEXT)\b|fix review is blocked|ai:blocked)/i,
     suggestedAction: 'The agent blocked itself — review the prompt and the reported reason.',
   },
 ];
