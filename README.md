@@ -56,14 +56,14 @@ This project formalizes that workflow into a local-first orchestrator with expli
 
 ## Core concepts
 
-| Concept | Meaning |
-| --- | --- |
-| Run | One end-to-end orchestration attempt for a GitHub issue. |
-| Phase | A named major stage inside a Run, such as `plan-design`, `implement`, or `validate`. |
-| Step | An ordered sub-unit within a Phase. |
-| Loop | A bounded repeated cycle, such as review/fix. |
-| Agent Invocation | One call to an AI agent with a prompt, expected artifacts, and a result. |
-| Artifact | A persisted file produced or captured during orchestration. |
+| Concept          | Meaning                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| Run              | One end-to-end orchestration attempt for a GitHub issue.                             |
+| Phase            | A named major stage inside a Run, such as `plan-design`, `implement`, or `validate`. |
+| Step             | An ordered sub-unit within a Phase.                                                  |
+| Loop             | A bounded repeated cycle, such as review/fix.                                        |
+| Agent Invocation | One call to an AI agent with a prompt, expected artifacts, and a result.             |
+| Artifact         | A persisted file produced or captured during orchestration.                          |
 
 ## Planned architecture
 
@@ -144,19 +144,9 @@ After the observable wrapper exists, orchestration should migrate incrementally 
 8. Implementation task loop.
 9. Full issue-to-PR orchestration.
 
-## Repository structure
+## Quickstart
 
-```text
-.
-├── CONTEXT.md
-├── docs
-│   ├── adr
-│   │   └── 0001-local-first-orchestrator-architecture.md
-│   ├── prd.md
-│   └── design-decisions-report.md
-│   └── project-brief.md
-└── README.md
-```
+See [`docs/quickstart.md`](./docs/quickstart.md) for prerequisites, install, and first-run instructions.
 
 ## Documentation
 
@@ -178,18 +168,18 @@ The initial system is not intended to:
 - automatically merge PRs;
 - abstract over every possible AI agent runtime.
 
-## Current next step
-
-Build the smallest useful vertical slice:
+## Repository layout
 
 ```text
-Start run
-→ persist run metadata
-→ invoke existing Bash script
-→ capture logs
-→ emit events
-→ show run detail
-→ display failure report on non-zero exit
+apps/
+  api/        Node/TypeScript API server (port 4319)
+  web/        React dashboard (port 4310)
+packages/
+  shared/     Shared config schema, types, utilities
+  domain/     Pure domain models and business rules
+  application/ Use cases and port interfaces
+  infrastructure/ Adapter implementations (SQLite, filesystem, scripts)
+scripts/
+  ai-run-issue-v2       Legacy Bash orchestration script
+  ai-pr-review-poll     PR review polling script
 ```
-
-The project has enough documentation to begin implementation. More planning before that slice exists will create drag, not clarity.
