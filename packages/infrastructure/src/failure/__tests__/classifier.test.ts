@@ -318,4 +318,35 @@ describe('classifyExit', () => {
     });
     expect(f.detectedAt).toBe(dt);
   });
+
+  it('preserves the full containing line as message for missing_artifact', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        'running phase plan-design\nDesign doc not found after plan-design phase\nexit 1',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('missing_artifact');
+    expect(f.message).toBe('Design doc not found after plan-design phase');
+  });
+
+  it('preserves the full containing line as message for git_failed', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'pushing code\nFailed to push branch ai/issue-6 to origin\nexit 1',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+    expect(f.message).toBe('Failed to push branch ai/issue-6 to origin');
+  });
+
+  it('preserves the full containing line as message for branch_changed', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'check_branch_after_agent: branch changed from issue-1 to main\nexit 1',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('branch_changed');
+    expect(f.message).toBe('check_branch_after_agent: branch changed from issue-1 to main');
+  });
 });

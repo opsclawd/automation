@@ -108,6 +108,9 @@ function lastPhase(tail: string): string | undefined {
 
 function firstMatch(text: string, regex: RegExp): string | undefined {
   if (regex.global) throw new Error('firstMatch requires a non-global regex');
-  const m = text.match(regex);
-  return m ? m[0] : undefined;
+  const idx = text.search(regex);
+  if (idx === -1) return undefined;
+  const lineStart = text.lastIndexOf('\n', idx - 1) + 1;
+  const lineEnd = text.indexOf('\n', idx);
+  return text.slice(lineStart, lineEnd === -1 ? undefined : lineEnd).trim();
 }
