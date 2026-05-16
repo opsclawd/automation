@@ -487,4 +487,35 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('branch_changed');
     expect(f.message).toBe('check_branch_after_agent: branch changed from issue-1 to main');
   });
+
+  it('classifies based on the last sentinel in the log, not the first pattern match', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        '=== Phase: validate ===\n[build failed]\n=== Phase: review ===\nFailed to push branch ai/issue-6',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+    expect(f.message).toContain('Failed to push branch');
+  });
+
+  it('classifies based on last sentinel when earlier sentinel is from an earlier table entry', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail:
+        'validate phase failed: typecheck\nstarting phase create-pr\nFailed to push branch ai/issue-6 to origin',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('git_failed');
+    expect(f.message).toContain('Failed to push branch');
+  });
+
+  it('still matches when only one sentinel is present regardless of position', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: '[build failed]',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('validation_failed');
+  });
 });

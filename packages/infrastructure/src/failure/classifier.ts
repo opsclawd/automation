@@ -62,22 +62,32 @@ export function classifyExit(input: ClassifyExitInput): Failure {
   const tail = input.combinedLogTail.slice(-8000);
   const phase = lastPhase(tail);
 
+  let best: { pattern: Pattern; matchIndex: number } | undefined;
   for (const p of PATTERNS) {
     p.regex.lastIndex = 0;
-    if (p.regex.test(tail)) {
-      const result: Failure = {
-        runUuid: input.runUuid,
-        kind: p.kind,
-        message: firstMatch(tail, p.regex) ?? `Detected ${p.kind}`,
-        exitCode: input.exitCode,
-        canRetry: false,
-        suggestedAction: p.suggestedAction,
-        artifacts: input.artifacts ?? [],
-        detectedAt: input.detectedAt ?? new Date(),
-      };
-      if (phase !== undefined) result.phase = phase;
-      return result;
+    const match = p.regex.exec(tail);
+    if (match) {
+      const idx = match.index;
+      if (!best || idx > best.matchIndex) {
+        best = { pattern: p, matchIndex: idx };
+      }
     }
+  }
+
+  if (best) {
+    best.pattern.regex.lastIndex = 0;
+    const result: Failure = {
+      runUuid: input.runUuid,
+      kind: best.pattern.kind,
+      message: firstMatch(tail, best.pattern.regex) ?? `Detected ${best.pattern.kind}`,
+      exitCode: input.exitCode,
+      canRetry: false,
+      suggestedAction: best.pattern.suggestedAction,
+      artifacts: input.artifacts ?? [],
+      detectedAt: input.detectedAt ?? new Date(),
+    };
+    if (phase !== undefined) result.phase = phase;
+    return result;
   }
 
   const kind: FailureKind = input.exitCode === 1 ? 'command_failed' : 'unknown';
