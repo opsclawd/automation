@@ -83,7 +83,9 @@ export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewe
 
   return (
     <section>
-      <h2 className="font-semibold mb-2">Logs</h2>
+      <h2 className="font-semibold mb-2">
+        Logs <span className="text-sm rounded bg-slate-200 px-2 py-0.5 ml-2">{status}</span>
+      </h2>
       <pre
         ref={preRef}
         onScroll={handleScroll}

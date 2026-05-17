@@ -23,7 +23,6 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
     <main className="mx-auto max-w-5xl p-6 space-y-6">
       <header className="flex flex-wrap gap-4 items-baseline">
         <h1 className="text-2xl font-semibold font-mono">{run.displayId}</h1>
-        <span className="text-sm rounded bg-slate-200 px-2 py-0.5">{run.status}</span>
         <span className="text-sm text-slate-600">Issue #{run.issueNumber}</span>
         <span className="text-sm text-slate-600">{formatDuration(run.durationMs)}</span>
       </header>
