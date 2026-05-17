@@ -7,6 +7,11 @@ import { artifactsRoutes } from './routes/artifacts.js';
 export interface ServerOptions {
   container: Container;
   port?: number;
+  // Test-only: destroy all sockets (including in-flight responses) on stop.
+  // Production leaves this false so SIGINT/SIGTERM does not truncate artifact
+  // downloads or future SSE streams; tests set it so afterEach does not block
+  // on keep-alive sockets undici has not yet released.
+  forceCloseAllOnStop?: boolean;
 }
 
 export async function startServer(
@@ -20,6 +25,7 @@ export async function startServer(
   const address = app.server.address() as { port: number };
   return {
     stop: async () => {
+      if (opts.forceCloseAllOnStop) app.server.closeAllConnections();
       await app.close();
     },
     address,
