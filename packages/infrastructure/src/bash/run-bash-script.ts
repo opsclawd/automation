@@ -9,6 +9,7 @@ export interface RunBashScriptInput {
   stdoutPath: string;
   stderrPath: string;
   combinedPath: string;
+  tee?: boolean;
 }
 
 export interface RunBashScriptResult {
@@ -49,13 +50,16 @@ export async function runBashScript(input: RunBashScriptInput): Promise<RunBashS
     : { env, reject: false, stdout: 'pipe', stderr: 'pipe' };
   const child = execa(input.scriptPath, input.args, opts);
 
+  const tee = input.tee ?? false;
   child.stdout?.on('data', (chunk: Buffer) => {
     stdoutFile.write(chunk);
     combinedFile.write(chunk);
+    if (tee) process.stdout.write(chunk);
   });
   child.stderr?.on('data', (chunk: Buffer) => {
     stderrFile.write(chunk);
     combinedFile.write(chunk);
+    if (tee) process.stderr.write(chunk);
   });
 
   const result = await child;
