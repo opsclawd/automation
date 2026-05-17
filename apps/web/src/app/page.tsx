@@ -5,7 +5,7 @@ import { formatDuration } from '@/lib/format';
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
-  const runs = await listRuns();
+  const { runs } = await listRuns();
 
   return (
     <main className="mx-auto max-w-5xl p-6">
