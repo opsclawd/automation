@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getRun, listArtifacts, getArtifact } from '@/lib/api-client';
-import { formatDuration, formatBytes } from '@/lib/format';
-import { LiveLogViewer } from './LiveLogViewer';
+import { formatDuration } from '@/lib/format';
+import { RunDetailTabs } from '@/components/RunDetailTabs';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,51 +27,12 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         <span className="text-sm text-slate-600">{formatDuration(run.durationMs)}</span>
       </header>
 
-      <LiveLogViewer runId={run.uuid} runStatus={run.status} initialContent={combinedContent} />
-
-      <section>
-        <h2 className="font-semibold mb-2">Artifacts</h2>
-        <ul className="text-sm space-y-1">
-          {files.map((f) => (
-            <li key={f.path}>
-              <a
-                className="text-blue-600 underline"
-                href={`/api/runs/${run.uuid}/artifacts/${encodeURIComponent(f.path)}`}
-              >
-                {f.path}
-              </a>
-              <span className="ml-2 text-slate-500">{formatBytes(f.size)}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      {failure && (
-        <section>
-          <h2 className="font-semibold mb-2 text-red-700">Failure</h2>
-          <div className="rounded border bg-red-50 p-3 text-sm space-y-1">
-            <div>
-              <b>Kind:</b> {failure.kind}
-            </div>
-            {failure.phase != null && (
-              <div>
-                <b>Phase:</b> {failure.phase}
-              </div>
-            )}
-            {failure.exitCode !== undefined && (
-              <div>
-                <b>Exit code:</b> {failure.exitCode}
-              </div>
-            )}
-            <div>
-              <b>Message:</b> <pre className="inline whitespace-pre-wrap">{failure.message}</pre>
-            </div>
-            <div>
-              <b>Suggested action:</b> {failure.suggestedAction}
-            </div>
-          </div>
-        </section>
-      )}
+      <RunDetailTabs
+        run={run}
+        failure={failure}
+        files={files}
+        initialCombinedContent={combinedContent}
+      />
     </main>
   );
 }
