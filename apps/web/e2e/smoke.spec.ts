@@ -7,7 +7,7 @@ test('renders empty run list when no runs exist', async ({ page }) => {
 });
 
 test('LiveLogViewer polls for log updates while run is running', async ({ page }) => {
-  const runId = 'test-run-001';
+  const runId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
 
   const runPayload = {
     run: {
@@ -73,7 +73,7 @@ test('LiveLogViewer polls for log updates while run is running', async ({ page }
 });
 
 test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
-  const runId = 'test-run-002';
+  const runId = 'b2c3d4e5-f6a7-8901-bcde-f12345678901';
   let callCount = 0;
 
   // Intercept: run starts as running, then becomes passed on 3rd poll.
