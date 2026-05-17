@@ -129,7 +129,8 @@ test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
   await expect.poll(() => callCount, { timeout: 10000 }).toBeGreaterThanOrEqual(3);
 
   // After status flips to 'passed', callCount should stabilize — no new polls.
-  // Use polling assertion instead of fixed timeout to avoid flakiness on slow CI.
+  // Wait longer than one poll interval (2s) then assert no additional calls occurred.
   const callsBefore = callCount;
-  await expect.poll(() => callCount, { timeout: 5000 }).toBe(callsBefore);
+  await page.waitForTimeout(3000);
+  expect(callCount).toBe(callsBefore);
 });
