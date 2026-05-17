@@ -25,7 +25,7 @@ export interface FailureDto {
 // Next's /api/* rewrite (see next.config.mjs). If you add a 'use client'
 // component that calls these helpers, it will bypass the rewrite and hit
 // the API directly, which requires CORS on the API (already configured).
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
+export const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
 
 export async function listRuns(): Promise<RunDto[]> {
   const r = await fetch(`${apiUrl}/api/runs`, { cache: 'no-store' });

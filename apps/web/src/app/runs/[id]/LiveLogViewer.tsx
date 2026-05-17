@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { apiUrl } from '@/lib/api-client';
+
 const POLL_INTERVAL_MS = 2000;
 const TERMINAL_STATUSES = new Set(['passed', 'failed', 'cancelled']);
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
 
 interface LiveLogViewerProps {
   runId: string;
@@ -21,33 +22,51 @@ export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewe
   useEffect(() => {
     if (TERMINAL_STATUSES.has(status)) return;
 
-    const interval = setInterval(async () => {
+    const controller = new AbortController();
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    async function poll() {
       try {
-        const logRes = await fetch(`${apiBaseUrl}/api/runs/${runId}/artifacts/combined.log`);
-        if (logRes.ok) {
+        const logRes = await fetch(`${apiUrl}/api/runs/${runId}/artifacts/combined.log`, {
+          signal: controller.signal,
+        });
+        if (logRes.ok && !controller.signal.aborted) {
           setContent(await logRes.text());
-        } else if (logRes.status === 404) {
+        } else if (logRes.status === 404 && !controller.signal.aborted) {
           setContent('(waiting for logs...)');
         }
       } catch {
         // keep last successful content on network error
       }
 
+      if (controller.signal.aborted) return;
+
       try {
-        const runRes = await fetch(`${apiBaseUrl}/api/runs/${runId}`);
-        if (runRes.ok) {
+        const runRes = await fetch(`${apiUrl}/api/runs/${runId}`, {
+          signal: controller.signal,
+        });
+        if (runRes.ok && !controller.signal.aborted) {
           const { run } = (await runRes.json()) as { run: { status: string } };
           setStatus(run.status);
-        } else if (runRes.status === 404) {
+        } else if (runRes.status === 404 && !controller.signal.aborted) {
           setContent('(run deleted)');
           setStatus('cancelled');
         }
       } catch {
         // keep last known status on network error
       }
-    }, POLL_INTERVAL_MS);
 
-    return () => clearInterval(interval);
+      if (!controller.signal.aborted) {
+        timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+      }
+    }
+
+    timeoutId = setTimeout(poll, POLL_INTERVAL_MS);
+
+    return () => {
+      controller.abort();
+      clearTimeout(timeoutId);
+    };
   }, [runId, status]);
 
   useEffect(() => {

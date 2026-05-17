@@ -73,7 +73,10 @@ test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
   const runId = 'test-run-002';
   let callCount = 0;
 
-  // Intercept: run starts as running, then becomes passed on 3rd poll
+  // Intercept: run starts as running, then becomes passed on 3rd poll.
+  // Note: page.route only intercepts browser-side fetch requests; Next.js
+  // server-side renders the initial page using real (or mocked) API calls
+  // that Playwright does NOT intercept. callCount tracks client polls only.
   await page.route(`**/api/runs/${runId}`, async (route) => {
     callCount++;
     const status = callCount < 3 ? 'running' : 'passed';
@@ -119,13 +122,13 @@ test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
 
   await page.goto(`/runs/${runId}`);
 
-  // Wait for "passed" status badge to appear, confirming polling stopped
-  await expect(page.getByText('passed', { exact: true })).toBeVisible({ timeout: 10000 });
+  // Wait for at least 3 client-side poll requests to occur (the 3rd returns 'passed')
+  await expect.poll(() => callCount, { timeout: 10000 }).toBeGreaterThanOrEqual(3);
 
-  // Reset callCount tracker; after status is terminal, no more polls should happen
+  // Snapshot the call count, then wait long enough for any in-flight poll
+  // to resolve. If polling has stopped, callCount must not increase beyond
+  // at most one straggler request that was already in flight.
   const callsBefore = callCount;
   await page.waitForTimeout(3000);
-
-  // callCount should not have increased significantly (at most 1 in-flight request)
   expect(callCount).toBeLessThanOrEqual(callsBefore + 1);
 });
