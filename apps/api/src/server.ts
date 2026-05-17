@@ -12,7 +12,7 @@ export interface ServerOptions {
 export async function startServer(
   opts: ServerOptions,
 ): Promise<{ stop: () => Promise<void>; address: { port: number } }> {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, forceCloseConnections: 'idle' });
   await app.register(cors, { origin: ['http://127.0.0.1:4310'] });
   await runsRoutes(app, opts.container);
   await artifactsRoutes(app, opts.container);
