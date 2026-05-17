@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { apiUrl } from '@/lib/api-client';
-
 const POLL_INTERVAL_MS = 2000;
 const TERMINAL_STATUSES = new Set(['passed', 'failed', 'cancelled']);
 
@@ -27,7 +25,7 @@ export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewe
 
     async function poll() {
       try {
-        const logRes = await fetch(`${apiUrl}/api/runs/${runId}/artifacts/combined.log`, {
+        const logRes = await fetch(`/api/runs/${runId}/artifacts/combined.log`, {
           signal: controller.signal,
         });
         if (logRes.ok && !controller.signal.aborted) {
@@ -42,7 +40,7 @@ export function LiveLogViewer({ runId, runStatus, initialContent }: LiveLogViewe
       if (controller.signal.aborted) return;
 
       try {
-        const runRes = await fetch(`${apiUrl}/api/runs/${runId}`, {
+        const runRes = await fetch(`/api/runs/${runId}`, {
           signal: controller.signal,
         });
         if (runRes.ok && !controller.signal.aborted) {
