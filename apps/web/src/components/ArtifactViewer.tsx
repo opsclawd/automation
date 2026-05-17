@@ -81,7 +81,10 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
       )}
 
       {state === 'loaded' && renderer?.label === 'JSON' && (
-        <pre className="mt-2 rounded border bg-slate-50 p-3 text-sm overflow-x-auto">
+        <pre
+          className="mt-2 rounded border bg-slate-50 p-3 text-sm overflow-x-auto"
+          aria-label={`JSON output for ${fileName}`}
+        >
           {(() => {
             try {
               return JSON.stringify(JSON.parse(content), null, 2);
@@ -93,13 +96,19 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
       )}
 
       {state === 'loaded' && (renderer?.label === 'Log' || renderer?.label === 'Text') && (
-        <pre className="mt-2 rounded border bg-gray-900 p-3 text-sm text-green-300 overflow-x-auto font-mono">
+        <pre
+          className="mt-2 rounded border bg-gray-900 p-3 text-sm text-green-300 overflow-x-auto font-mono"
+          aria-label={`Log output for ${fileName}`}
+        >
           {content}
         </pre>
       )}
 
       {state === 'loaded' && renderer?.label === 'Diff' && (
-        <pre className="mt-2 rounded border bg-gray-50 p-3 text-sm overflow-x-auto font-mono">
+        <pre
+          className="mt-2 rounded border bg-gray-50 p-3 text-sm overflow-x-auto font-mono"
+          aria-label={`Diff output for ${fileName}`}
+        >
           {content.split('\n').map((line, i) => {
             let cls = '';
             if (line.startsWith('+')) cls = 'text-green-700 bg-green-50';

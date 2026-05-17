@@ -11,3 +11,4 @@ ai/
 *.log
 .review-context/
 .DS_Store
+test-results/
