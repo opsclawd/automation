@@ -61,10 +61,20 @@ All run data is under `.ai-runs/` in the repo root.
 
 Each run directory also contains `phases/` and `artifacts/` subdirectories.
 
+The legacy Bash script works in `.ai-worktrees/issue-<N>` and archives its
+outputs (design.md, plan.md, validation logs, reviews, PR metadata) to
+`ai/issues/<N>/` on completion. In M1 the wrapper does not copy those files
+into `.ai-runs/<displayId>/artifacts`; find the legacy script's working
+artifacts in `ai/issues/<N>/` instead.
+
 ## Configuration
 
-`.ai-orchestrator.json` at the repo root configures validation commands, skip-list, and timeouts.
-See [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schema.ts) for the full schema.
+`.ai-orchestrator.json` at the repo root defines a schema for validation
+commands, skip-list, and timeouts
+(see [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schema.ts)),
+but the M1 wrapper run path does **not** read this file.
+The legacy Bash script also hard-codes its own validation commands and
+timeouts. Editing `.ai-orchestrator.json` will not affect M1 runs.
 
 CLI flags for the `run` command:
 
