@@ -6,8 +6,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export async function runsRoutes(app: FastifyInstance, c: Container): Promise<void> {
   app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req) => {
-    const limit = req.query.limit ? parseInt(req.query.limit, 10) : undefined;
-    const offset = req.query.offset ? parseInt(req.query.offset, 10) : undefined;
+    const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : undefined;
+    const offset = req.query.offset !== undefined ? parseInt(req.query.offset, 10) : undefined;
     const { runs, total } = c.runRepository.list(
       limit !== undefined || offset !== undefined ? { limit, offset } : { limit: undefined },
     );
