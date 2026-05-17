@@ -76,9 +76,9 @@ _emit_event_metadata() {
     for pair in "$@"; do
       k=${pair%%=*}
       v=${pair#*=}
-      args+=(--arg "v$idx" "$v")
+      args+=(--arg "k$idx" "$k" --arg "v$idx" "$v")
       [[ $first -eq 1 ]] || jq_obj+=","
-      jq_obj+="\"$k\": (\$v$idx | (tonumber? // (if . == \"true\" then true elif . == \"false\" then false elif . == \"null\" then null else . end)))"
+      jq_obj+="(\$k$idx): (\$v$idx | (tonumber? // (if . == \"true\" then true elif . == \"false\" then false elif . == \"null\" then null else . end)))"
       (( idx++ )) || true
       first=0
     done

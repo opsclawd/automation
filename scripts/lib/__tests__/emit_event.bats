@@ -69,6 +69,13 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "metadata keys with special characters produce valid JSON" {
+  emit_event "p" "info" "phase.started" "test special key" 'a"b'="val1" 'c\d'="val2"
+  [ "$(wc -l < "$AI_RUN_EVENTS_FILE")" -eq 1 ]
+  run jq -e '.metadata["a\"b"] == "val1" and .metadata["c\\d"] == "val2"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
 @test "distinct metadata keys that sanitize identically preserve separate values" {
   emit_event "p" "info" "phase.started" "collision test" my-key="alpha" my_key="beta"
   [ "$(wc -l < "$AI_RUN_EVENTS_FILE")" -eq 1 ]
