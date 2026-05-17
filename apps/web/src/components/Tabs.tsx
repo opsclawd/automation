@@ -21,8 +21,10 @@ export function Tabs({ tabs, active, onChange, children }: TabsProps) {
         {tabs.map((tab) => (
           <button
             key={tab.id}
+            id={`tab-${tab.id}`}
             role="tab"
             aria-selected={active === tab.id}
+            aria-controls={`tabpanel-${tab.id}`}
             onClick={() => onChange(tab.id)}
             className={`px-4 py-2 text-sm font-medium transition-colors ${
               active === tab.id
@@ -34,7 +36,14 @@ export function Tabs({ tabs, active, onChange, children }: TabsProps) {
           </button>
         ))}
       </div>
-      <div className="pt-4">{children}</div>
+      <div
+        className="pt-4"
+        role="tabpanel"
+        id={`tabpanel-${active}`}
+        aria-labelledby={`tab-${active}`}
+      >
+        {children}
+      </div>
     </div>
   );
 }
