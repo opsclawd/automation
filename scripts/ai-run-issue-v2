@@ -60,6 +60,11 @@ log()  { echo "[$(date +%H:%M:%S)] $*" | tee -a "${ISSUES_DIR}/orchestrator.log"
 info() { log "INFO: $*"; }
 warn() { log "WARN: $*" >&2; }
 
+# Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
+# When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
+# shellcheck source=lib/emit_event.sh
+source "${REPO_ROOT}/scripts/lib/emit_event.sh"
+
 orchestrator_fail() {
   reason="$1"
   log "FAIL: $reason"

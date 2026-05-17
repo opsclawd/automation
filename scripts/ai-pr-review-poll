@@ -45,6 +45,10 @@ log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/po
 # Pipe BEFORE >&2 so tee actually sees the message; the trailing >&2 then
 # routes tee's stdout to stderr for terminal visibility.
 warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log" >&2; }
+# Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
+# When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
+# shellcheck source=lib/emit_event.sh
+source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 
 log "=== PR review poll starting (PR #${PR_NUMBER}, max_polls=${MAX_POLLS}, interval=${POLL_INTERVAL}s) ==="
 log "PID: $$"

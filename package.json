@@ -11,6 +11,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "vitest run",
+    "test:bash": "bats scripts/lib/__tests__",
     "test:watch": "vitest",
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write .",
@@ -36,6 +37,7 @@
     "prettier": "^3.3.3",
     "typescript": "^5.6.3",
     "vitest": "^2.1.4",
-    "dependency-cruiser": "^16.0.0"
+    "dependency-cruiser": "^16.0.0",
+    "bats": "^1.13.0"
   }
 }
