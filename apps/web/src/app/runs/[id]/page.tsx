@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getRun, listArtifacts, getArtifact } from '@/lib/api-client';
 import { formatDuration, formatBytes } from '@/lib/format';
+import { LiveLogViewer } from './LiveLogViewer';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,12 +28,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         <span className="text-sm text-slate-600">{formatDuration(run.durationMs)}</span>
       </header>
 
-      <section>
-        <h2 className="font-semibold mb-2">Logs</h2>
-        <pre className="rounded border bg-black text-green-200 p-3 overflow-auto max-h-[480px] text-xs">
-          {combinedContent || '(no combined.log)'}
-        </pre>
-      </section>
+      <LiveLogViewer runId={run.uuid} runStatus={run.status} initialContent={combinedContent} />
 
       <section>
         <h2 className="font-semibold mb-2">Artifacts</h2>
