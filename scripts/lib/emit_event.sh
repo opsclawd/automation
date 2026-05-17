@@ -64,26 +64,22 @@ _json_escape() {
 # With jq: numeric-looking values become JSON numbers, true/false/null become
 # those literals, everything else becomes a string.
 # Without jq: all values become JSON strings (no type inference).
-_sanitize_jq_ident() {
-  printf '%s' "$1" | sed 's/[^a-zA-Z0-9_]/_/g; s/^[0-9]/_&/'
-}
-
 _emit_event_metadata() {
   if _emit_event_have_jq; then
     if [[ $# -eq 0 ]]; then
       printf '{}'
       return
     fi
-    local args=() pair k v safe_k
+    local args=() pair k v idx=0
     local jq_obj="{"
     local first=1
     for pair in "$@"; do
       k=${pair%%=*}
       v=${pair#*=}
-      safe_k=$(_sanitize_jq_ident "$k")
-      args+=(--arg "v_$safe_k" "$v")
+      args+=(--arg "v$idx" "$v")
       [[ $first -eq 1 ]] || jq_obj+=","
-      jq_obj+="\"$k\": (\$v_$safe_k | (tonumber? // (if . == \"true\" then true elif . == \"false\" then false elif . == \"null\" then null else . end)))"
+      jq_obj+="\"$k\": (\$v$idx | (tonumber? // (if . == \"true\" then true elif . == \"false\" then false elif . == \"null\" then null else . end)))"
+      (( idx++ )) || true
       first=0
     done
     jq_obj+="}"

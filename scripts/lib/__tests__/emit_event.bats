@@ -69,6 +69,13 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "distinct metadata keys that sanitize identically preserve separate values" {
+  emit_event "p" "info" "phase.started" "collision test" my-key="alpha" my_key="beta"
+  [ "$(wc -l < "$AI_RUN_EVENTS_FILE")" -eq 1 ]
+  run jq -e '.metadata["my-key"] == "alpha" and .metadata.my_key == "beta"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
 @test "metadata value containing equals sign" {
   emit_event "p" "info" "t" "test equals in value" cmd="git commit -m \"fix\""
   run jq -e '.metadata.cmd == "git commit -m \"fix\""' "$AI_RUN_EVENTS_FILE"
