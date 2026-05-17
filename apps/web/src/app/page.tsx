@@ -4,8 +4,14 @@ import { formatDuration } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Page() {
-  const { runs } = await listRuns();
+const PAGE_SIZE = 25;
+
+export default async function Page(props: { searchParams?: Promise<{ page?: string }> }) {
+  const searchParams = await props.searchParams;
+  const page = Math.max(1, parseInt(searchParams?.page ?? '1', 10) || 1);
+  const offset = (page - 1) * PAGE_SIZE;
+  const { runs, total } = await listRuns({ limit: PAGE_SIZE, offset });
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <main className="mx-auto max-w-5xl p-6">
@@ -49,6 +55,36 @@ export default async function Page() {
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 && (
+        <nav className="flex items-center justify-between mt-4 text-sm" aria-label="Pagination">
+          <span className="text-slate-600">
+            Page {page} of {totalPages}
+          </span>
+          <div className="flex gap-2">
+            {page > 1 ? (
+              <Link
+                href={`/?page=${page - 1}`}
+                className="rounded border px-3 py-1.5 text-slate-700 hover:bg-slate-50"
+              >
+                Previous
+              </Link>
+            ) : (
+              <span className="rounded border px-3 py-1.5 text-slate-300">Previous</span>
+            )}
+            {page < totalPages ? (
+              <Link
+                href={`/?page=${page + 1}`}
+                className="rounded border px-3 py-1.5 text-slate-700 hover:bg-slate-50"
+              >
+                Next
+              </Link>
+            ) : (
+              <span className="rounded border px-3 py-1.5 text-slate-300">Next</span>
+            )}
+          </div>
+        </nav>
+      )}
     </main>
   );
 }
