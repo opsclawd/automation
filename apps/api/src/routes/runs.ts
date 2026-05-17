@@ -6,11 +6,15 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export async function runsRoutes(app: FastifyInstance, c: Container): Promise<void> {
   app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req) => {
-    const limit = req.query.limit !== undefined ? parseInt(req.query.limit, 10) : undefined;
-    const offset = req.query.offset !== undefined ? parseInt(req.query.offset, 10) : undefined;
-    const { runs, total } = c.runRepository.list(
-      limit !== undefined || offset !== undefined ? { limit, offset } : { limit: undefined },
-    );
+    const rawLimit = parseInt(req.query.limit ?? '', 10);
+    const limit = !Number.isNaN(rawLimit) ? rawLimit : undefined;
+    const rawOffset = parseInt(req.query.offset ?? '', 10);
+    const offset = !Number.isNaN(rawOffset) ? rawOffset : undefined;
+    const pagination =
+      limit !== undefined || offset !== undefined
+        ? { ...(limit !== undefined ? { limit } : {}), ...(offset !== undefined ? { offset } : {}) }
+        : undefined;
+    const { runs, total } = c.runRepository.list(pagination);
     return {
       runs: runs.map(serializeRun),
       total,
