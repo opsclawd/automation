@@ -68,11 +68,16 @@ See [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schem
 
 CLI flags for the `run` command:
 
-| Flag                     | Env var      | Purpose                     |
-| ------------------------ | ------------ | --------------------------- |
-| `--base-branch <branch>` | —            | Base branch (default: main) |
-| `--model <model>`        | `AI_MODEL`   | Override the AI model       |
-| `--agent-cli <cli>`      | `AI_RUNTIME` | Override the agent CLI      |
+| Flag                     | Wrapper env var  | Script env var | Purpose                     |
+| ------------------------ | ---------------- | -------------- | --------------------------- |
+| `--base-branch <branch>` | `AI_BASE_BRANCH` | `BASE_BRANCH`  | Base branch (default: main) |
+| `--model <model>`        | `AI_MODEL`       | `AGENT_MODEL`  | Override the AI model       |
+| `--agent-cli <cli>`      | `AI_RUNTIME`     | `AGENT_CLI`    | Override the agent CLI      |
+
+The wrapper passes CLI flags as `AI_*` env vars to the script's process
+environment, but the legacy Bash script reads `BASE_BRANCH`, `AGENT_MODEL`,
+and `AGENT_CLI` instead. Until the script is updated to read the `AI_*` names,
+set the script's env vars directly to override defaults.
 
 ## Troubleshooting
 
@@ -80,8 +85,10 @@ CLI flags for the `run` command:
 The wrapper process died without updating the row. This will be fixed in a future milestone. For now, update the row directly:
 
 ```bash
-sqlite3 .ai-runs/orchestrator.sqlite "UPDATE runs SET status = 'failed' WHERE status = 'running';"
+sqlite3 .ai-runs/orchestrator.sqlite "UPDATE runs SET status = 'failed' WHERE display_id = '<displayId>' AND status = 'running';"
 ```
+
+Replace `<displayId>` with the stuck run's display ID (visible in the run list or the `displayId` field from the CLI output).
 
 Verify the schema first with `.schema runs` in the SQLite shell. If the table or column names differ, adjust the statement accordingly.
 

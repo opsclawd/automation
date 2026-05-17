@@ -150,7 +150,7 @@ See [`docs/quickstart.md`](./docs/quickstart.md) for installation, starting the 
 
 - [`CONTEXT.md`](./CONTEXT.md) — project language, core domain model, relationships, outcome rules, and lifecycle states.
 - [`docs/adr/0001-local-first-orchestrator-architecture.md`](./docs/adr/0001-local-first-orchestrator-architecture.md) — architecture decision record for local-first design, persistence, agent execution, cancellation, and distribution boundaries.
-- [`docs/ai-agent-sdlc-orchestrator-prd.md`](./docs/ai-agent-sdlc-orchestrator-prd.md) — full product requirements document.
+- [`docs/prd.md`](./docs/prd.md) — full product requirements document.
 - [`docs/design-decisions-report.md`](./docs/design-decisions-report.md) — resolved design questions and implementation constraints.
 
 ## Non-goals
