@@ -12,6 +12,10 @@ Use the repo's automation labels: `ai:in-progress`, `ai:blocked`, `ai:failed`, `
 
 Single-context. Read root `CONTEXT.md`, the relevant ADRs in `docs/adr/`, and `docs/design-decisions-report.md` when working on orchestration behavior. See `docs/agents/domain.md`.
 
+### Documented solutions
+
+`docs/solutions/` — documented solutions to past problems (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Relevant when implementing or debugging in documented areas.
+
 ## Layer boundaries (hard rule)
 
 The orchestrator is structured as concentric layers. Dependencies flow **inward only**:

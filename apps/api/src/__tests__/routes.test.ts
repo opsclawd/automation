@@ -17,7 +17,7 @@ async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
   chmodSync(scriptPath, 0o755);
   const container = composeRoot({ repoRoot, scriptPath });
   if (opts.withRun) await container.startIssueRun.execute({ issueNumber: 1 });
-  const server = await startServer({ container, port: 0 });
+  const server = await startServer({ container, port: 0, forceCloseAllOnStop: true });
   stoppers.push(server.stop);
   const address = server.address as { port: number };
   const port = address.port;
