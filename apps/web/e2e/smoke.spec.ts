@@ -30,12 +30,8 @@ test('LiveLogViewer polls for log updates while run is running', async ({ page }
     files: [{ path: 'combined.log', size: 42, modifiedAt: new Date().toISOString() }],
   };
 
-  // Intercept all API requests for this run (browser-side from LiveLogViewer polling).
-  // Note: page.route() only intercepts browser-side requests. The Next.js server
-  // component that renders the initial page fetches data server-side, which
-  // page.route() does NOT intercept. These tests require a running API server
-  // (see playwright.config.ts) that can serve the initial SSR data for this runId.
-  // The route mocks here exercise client-side polling behavior only.
+  // Browser-side route mocks exercise LiveLogViewer client polling behavior.
+  // The initial SSR data is seeded into the API database by globalSetup.
   await page.route(`**/api/runs/${runId}`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -76,10 +72,9 @@ test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
   const runId = 'b2c3d4e5-f6a7-8901-bcde-f12345678901';
   let callCount = 0;
 
-  // Intercept: run starts as running, then becomes passed on 3rd poll.
-  // page.route() only intercepts browser-side fetch requests; Next.js
-  // server-side renders the initial page using server-side fetches that
-  // Playwright does NOT intercept. callCount tracks client polls only.
+  // Intercept: run starts as running (seeded in DB), then becomes passed on 3rd poll.
+  // Browser-side route mocks exercise LiveLogViewer client polling behavior.
+  // callCount tracks client polls only.
   await page.route(`**/api/runs/${runId}`, async (route) => {
     callCount++;
     const status = callCount < 3 ? 'running' : 'passed';
