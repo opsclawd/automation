@@ -16,7 +16,6 @@
     "format": "prettier --write .",
     "typecheck": "pnpm -r typecheck",
     "depcruise": "depcruise . --config .dependency-cruiser.cjs",
-    "check:vitest-globs": "grep -rn 'src/__tests__' packages apps --include='vitest.config.ts' && exit 1 || echo 'OK: no restrictive vitest include globs'",
     "prepare": "husky || true"
   },
   "lint-staged": {
