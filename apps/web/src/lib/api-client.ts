@@ -21,10 +21,9 @@ export interface FailureDto {
   artifacts: string[];
 }
 
-// Server Components fetch directly against the API origin; the browser uses
-// Next's /api/* rewrite (see next.config.mjs). If you add a 'use client'
-// component that calls these helpers, it will bypass the rewrite and hit
-// the API directly, which requires CORS on the API (already configured).
+// Server Components fetch directly against the API origin; client components
+// should use relative `/api/...` paths so the request goes through Next's
+// /api/* rewrite (see next.config.mjs) and avoids CORS issues.
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
 
 export async function listRuns(): Promise<RunDto[]> {
