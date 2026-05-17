@@ -4,9 +4,7 @@ A local-first orchestration system for running, monitoring, debugging, and recov
 
 ## Status
 
-This repository is currently in the **architecture and product specification phase**.
-
-The current repo contains planning documents, design decisions, and domain language for the orchestrator. It does not yet contain the production implementation.
+M1 (observable wrapper) is live. The repo now contains the TypeScript orchestrator alongside planning documents.
 
 ## What this project is
 
@@ -56,14 +54,14 @@ This project formalizes that workflow into a local-first orchestrator with expli
 
 ## Core concepts
 
-| Concept | Meaning |
-| --- | --- |
-| Run | One end-to-end orchestration attempt for a GitHub issue. |
-| Phase | A named major stage inside a Run, such as `plan-design`, `implement`, or `validate`. |
-| Step | An ordered sub-unit within a Phase. |
-| Loop | A bounded repeated cycle, such as review/fix. |
-| Agent Invocation | One call to an AI agent with a prompt, expected artifacts, and a result. |
-| Artifact | A persisted file produced or captured during orchestration. |
+| Concept          | Meaning                                                                              |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| Run              | One end-to-end orchestration attempt for a GitHub issue.                             |
+| Phase            | A named major stage inside a Run, such as `plan-design`, `implement`, or `validate`. |
+| Step             | An ordered sub-unit within a Phase.                                                  |
+| Loop             | A bounded repeated cycle, such as review/fix.                                        |
+| Agent Invocation | One call to an AI agent with a prompt, expected artifacts, and a result.             |
+| Artifact         | A persisted file produced or captured during orchestration.                          |
 
 ## Planned architecture
 
@@ -144,25 +142,15 @@ After the observable wrapper exists, orchestration should migrate incrementally 
 8. Implementation task loop.
 9. Full issue-to-PR orchestration.
 
-## Repository structure
+## Quickstart
 
-```text
-.
-├── CONTEXT.md
-├── docs
-│   ├── adr
-│   │   └── 0001-local-first-orchestrator-architecture.md
-│   ├── prd.md
-│   └── design-decisions-report.md
-│   └── project-brief.md
-└── README.md
-```
+See [`docs/quickstart.md`](./docs/quickstart.md) for installation, starting the API/UI, and triggering a run via the `orchestrator` CLI.
 
 ## Documentation
 
 - [`CONTEXT.md`](./CONTEXT.md) — project language, core domain model, relationships, outcome rules, and lifecycle states.
 - [`docs/adr/0001-local-first-orchestrator-architecture.md`](./docs/adr/0001-local-first-orchestrator-architecture.md) — architecture decision record for local-first design, persistence, agent execution, cancellation, and distribution boundaries.
-- [`docs/ai-agent-sdlc-orchestrator-prd.md`](./docs/ai-agent-sdlc-orchestrator-prd.md) — full product requirements document.
+- [`docs/prd.md`](./docs/prd.md) — full product requirements document.
 - [`docs/design-decisions-report.md`](./docs/design-decisions-report.md) — resolved design questions and implementation constraints.
 
 ## Non-goals
@@ -178,18 +166,18 @@ The initial system is not intended to:
 - automatically merge PRs;
 - abstract over every possible AI agent runtime.
 
-## Current next step
-
-Build the smallest useful vertical slice:
+## Repository layout
 
 ```text
-Start run
-→ persist run metadata
-→ invoke existing Bash script
-→ capture logs
-→ emit events
-→ show run detail
-→ display failure report on non-zero exit
+apps/
+  api/        Fastify HTTP API + `orchestrator` CLI
+  web/        Next.js dashboard (run list, run detail, logs, artifacts)
+packages/
+  shared/     config schema, run identity, event schemas
+  domain/     pure types: Run, Phase, Failure, Artifact
+  application/ use cases (StartIssueRun)
+  infrastructure/ SQLite repositories, RunDirectory, Bash wrapper, failure classifier
+scripts/
+  ai-run-issue-v2       legacy Bash orchestrator (still authoritative in M1)
+  ai-pr-review-poll     legacy PR review poller
 ```
-
-The project has enough documentation to begin implementation. More planning before that slice exists will create drag, not clarity.
