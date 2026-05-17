@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
 
-test('renders empty run list when no runs exist', async ({ page }) => {
+test('renders run list with seeded data', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible();
-  await expect(page.getByText('No runs yet')).toBeVisible();
+  await expect(page.getByText('R-001')).toBeVisible();
+  await expect(page.getByText('R-002')).toBeVisible();
 });
 
 test('LiveLogViewer polls for log updates while run is running', async ({ page }) => {
@@ -31,7 +32,8 @@ test('LiveLogViewer polls for log updates while run is running', async ({ page }
   };
 
   // Browser-side route mocks exercise LiveLogViewer client polling behavior.
-  // The initial SSR data is seeded into the API database by globalSetup.
+  // The initial SSR data is seeded into the API database by globalSetup;
+  // route mocks override client-side polls for deterministic test assertions.
   await page.route(`**/api/runs/${runId}`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -72,7 +74,7 @@ test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
   const runId = 'b2c3d4e5-f6a7-8901-bcde-f12345678901';
   let callCount = 0;
 
-  // Intercept: run starts as running (seeded in DB), then becomes passed on 3rd poll.
+  // Intercept: run starts as running, then becomes passed on 3rd poll.
   // Browser-side route mocks exercise LiveLogViewer client polling behavior.
   // callCount tracks client polls only.
   await page.route(`**/api/runs/${runId}`, async (route) => {
