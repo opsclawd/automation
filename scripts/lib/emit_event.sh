@@ -64,28 +64,35 @@ _json_escape() {
 # With jq: numeric-looking values become JSON numbers, true/false/null become
 # those literals, everything else becomes a string.
 # Without jq: all values become JSON strings (no type inference).
+_sanitize_jq_ident() {
+  printf '%s' "$1" | sed 's/[^a-zA-Z0-9_]/_/g; s/^[0-9]/_&/'
+}
+
 _emit_event_metadata() {
   if _emit_event_have_jq; then
     if [[ $# -eq 0 ]]; then
       printf '{}'
       return
     fi
-    local args=() pair k v
-    for pair in "$@"; do
-      k=${pair%%=*}
-      v=${pair#*=}
-      args+=(--arg "k_$k" "$v")
-    done
+    local args=() pair k v safe_k
     local jq_obj="{"
     local first=1
     for pair in "$@"; do
       k=${pair%%=*}
+      v=${pair#*=}
+      safe_k=$(_sanitize_jq_ident "$k")
+      args+=(--arg "v_$safe_k" "$v")
       [[ $first -eq 1 ]] || jq_obj+=","
-      jq_obj+="\"$k\": (\$k_$k | (tonumber? // (if . == \"true\" then true elif . == \"false\" then false elif . == \"null\" then null else . end)))"
+      jq_obj+="\"$k\": (\$v_$safe_k | (tonumber? // (if . == \"true\" then true elif . == \"false\" then false elif . == \"null\" then null else . end)))"
       first=0
     done
     jq_obj+="}"
-    jq -nc "${args[@]}" "$jq_obj"
+    local result
+    result=$(jq -nc "${args[@]}" "$jq_obj" 2>/dev/null) || result='{}'
+    if [[ -z "$result" ]]; then
+      result='{}'
+    fi
+    printf '%s' "$result"
   else
     if [[ $# -eq 0 ]]; then
       printf '{}'
@@ -112,10 +119,10 @@ emit_event() {
   local message=${4:-}
   shift 4 || true
 
-  if [[ -z "$AI_RUN_EVENTS_FILE" ]]; then
+  if [[ -z "${AI_RUN_EVENTS_FILE:-}" ]]; then
     return 0
   fi
-  if [[ -z "$AI_RUN_DISPLAY_ID" ]]; then
+  if [[ -z "${AI_RUN_DISPLAY_ID:-}" ]]; then
     printf 'emit_event: AI_RUN_DISPLAY_ID is unset, skipping\n' >&2
     return 0
   fi
@@ -129,6 +136,9 @@ emit_event() {
 
   local metadata
   metadata=$(_emit_event_metadata "$@")
+  if [[ -z "$metadata" ]]; then
+    metadata='{}'
+  fi
 
   local line
   if _emit_event_have_jq; then
@@ -158,6 +168,11 @@ emit_event() {
     else
       line="{\"runId\":\"$esc_runid\",\"level\":\"$esc_level\",\"type\":\"$esc_type\",\"message\":\"$esc_msg\",\"timestamp\":\"$timestamp\",\"metadata\":$metadata}"
     fi
+  fi
+
+  if [[ -z "$line" ]]; then
+    printf 'emit_event: produced empty JSON line, skipping\n' >&2
+    return 0
   fi
 
   # Single append-write. Errors warn to stderr, never abort the caller.

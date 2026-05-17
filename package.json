@@ -12,6 +12,7 @@
     "build": "pnpm -r build",
     "test": "vitest run",
     "test:bash": "bats scripts/lib/__tests__",
+    "//test:bash": "Not composed into 'test' — CI must run both pnpm test and pnpm test:bash",
     "test:watch": "vitest",
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write .",

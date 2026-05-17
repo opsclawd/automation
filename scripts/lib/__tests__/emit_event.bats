@@ -61,3 +61,66 @@ teardown() {
   done < "$AI_RUN_EVENTS_FILE"
   [ "$(wc -l < "$AI_RUN_EVENTS_FILE")" -eq 10 ]
 }
+
+@test "metadata keys with hyphens and dots produce valid JSON" {
+  emit_event "p" "info" "phase.started" "test hyphenated key" my-key="val1" phase.type="started"
+  [ "$(wc -l < "$AI_RUN_EVENTS_FILE")" -eq 1 ]
+  run jq -e '.metadata["my-key"] == "val1" and .metadata["phase.type"] == "started"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "metadata value containing equals sign" {
+  emit_event "p" "info" "t" "test equals in value" cmd="git commit -m \"fix\""
+  run jq -e '.metadata.cmd == "git commit -m \"fix\""' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "pure-Bash fallback path produces valid JSON when jq is unavailable" {
+  local fake_path
+  fake_path="$(mktemp -d)"
+  touch "$fake_path/jq"
+  chmod -x "$fake_path/jq"
+  local orig_path="$PATH"
+  PATH="$fake_path:$PATH"
+  export PATH
+
+  emit_event "p" "info" "phase.started" "fallback test" command="hello"
+
+  PATH="$orig_path"
+  export PATH
+  rm -rf "$fake_path"
+
+  local line_count
+  line_count=$(wc -l < "$AI_RUN_EVENTS_FILE")
+  [ "$line_count" -eq 1 ]
+
+  run jq -e '.runId == "issue-1-20260516-120000" and .level == "info" and .type == "phase.started"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "AI_RUN_DISPLAY_ID unset produces warning and no-op" {
+  unset AI_RUN_DISPLAY_ID
+  run emit_event "p" "info" "t" "should be skipped"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"emit_event: AI_RUN_DISPLAY_ID is unset"* ]]
+}
+
+@test "emit_event works under set -euo pipefail" {
+  (
+    set -euo pipefail
+    # shellcheck source=../emit_event.sh
+    source "${BATS_TEST_DIRNAME}/../emit_event.sh"
+    emit_event "p" "info" "t" "strict mode test"
+  )
+  [ "$(wc -l < "$AI_RUN_EVENTS_FILE")" -eq 1 ]
+  run jq -e '.message == "strict mode test"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+
+  (
+    set -euo pipefail
+    # shellcheck source=../emit_event.sh
+    source "${BATS_TEST_DIRNAME}/../emit_event.sh"
+    unset AI_RUN_EVENTS_FILE
+    emit_event "p" "info" "t" "no-op under strict"
+  )
+}
