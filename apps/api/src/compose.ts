@@ -33,6 +33,7 @@ export interface ComposeOptions {
   baseBranch?: string;
   model?: string;
   agentCli?: string;
+  tee?: boolean;
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
@@ -56,6 +57,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.baseBranch !== undefined) deps.baseBranch = opts.baseBranch;
   if (opts.model !== undefined) deps.model = opts.model;
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
+  if (opts.tee !== undefined) deps.tee = opts.tee;
   const startIssueRun = new StartIssueRun(deps);
   return {
     runRepository,

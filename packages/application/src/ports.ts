@@ -37,6 +37,7 @@ export interface RunBashScriptInput {
   stdoutPath: string;
   stderrPath: string;
   combinedPath: string;
+  tee?: boolean;
 }
 
 export interface RunBashScriptResult {

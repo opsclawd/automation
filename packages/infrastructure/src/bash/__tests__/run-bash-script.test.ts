@@ -49,6 +49,73 @@ describe('runBashScript', () => {
     expect(combined).toContain('oops');
   });
 
+  it('tees stdout and stderr to the parent process when tee=true', async () => {
+    const out = tempDir();
+    const script = makeScript('echo teed-out; echo teed-err 1>&2; exit 0');
+    const parentOut: string[] = [];
+    const parentErr: string[] = [];
+    const origOut = process.stdout.write.bind(process.stdout);
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      parentOut.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      parentErr.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await runBashScript({
+        scriptPath: script,
+        args: [],
+        env: {},
+        stdoutPath: join(out, 'stdout.log'),
+        stderrPath: join(out, 'stderr.log'),
+        combinedPath: join(out, 'combined.log'),
+        tee: true,
+      });
+    } finally {
+      process.stdout.write = origOut;
+      process.stderr.write = origErr;
+    }
+    expect(parentOut.join('')).toContain('teed-out');
+    expect(parentErr.join('')).toContain('teed-err');
+    expect(readFileSync(join(out, 'stdout.log'), 'utf8')).toContain('teed-out');
+    expect(readFileSync(join(out, 'stderr.log'), 'utf8')).toContain('teed-err');
+  });
+
+  it('does not tee to the parent process when tee is omitted', async () => {
+    const out = tempDir();
+    const script = makeScript('echo silent-out; echo silent-err 1>&2; exit 0');
+    const parentOut: string[] = [];
+    const parentErr: string[] = [];
+    const origOut = process.stdout.write.bind(process.stdout);
+    const origErr = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      parentOut.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      parentErr.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      await runBashScript({
+        scriptPath: script,
+        args: [],
+        env: {},
+        stdoutPath: join(out, 'stdout.log'),
+        stderrPath: join(out, 'stderr.log'),
+        combinedPath: join(out, 'combined.log'),
+      });
+    } finally {
+      process.stdout.write = origOut;
+      process.stderr.write = origErr;
+    }
+    expect(parentOut.join('')).not.toContain('silent-out');
+    expect(parentErr.join('')).not.toContain('silent-err');
+  });
+
   it('returns a non-zero exit code when the script fails', async () => {
     const out = tempDir();
     const script = makeScript('echo bye 1>&2; exit 7');

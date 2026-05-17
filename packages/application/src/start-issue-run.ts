@@ -21,6 +21,7 @@ export interface StartIssueRunDeps {
   baseBranch?: string;
   model?: string;
   agentCli?: string;
+  tee?: boolean;
   now?: () => Date;
   logger?: { error: (msg: string, err?: unknown) => void };
 }
@@ -87,6 +88,7 @@ export class StartIssueRun {
         stdoutPath: dir.paths.stdoutLogPath,
         stderrPath: dir.paths.stderrLogPath,
         combinedPath: dir.paths.combinedLogPath,
+        tee: this.deps.tee ?? false,
       });
     } catch (err) {
       const errorDuration = now().getTime() - startedAt.getTime();

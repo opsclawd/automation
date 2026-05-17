@@ -44,7 +44,9 @@ export function buildProgram(): Command {
     .option('--model <model>', 'AI_MODEL env var')
     .option('--agent-cli <cli>', 'AI_RUNTIME env var')
     .option('--script <path>', 'Path to Bash script to wrap')
-    .action(async (opts: RunCliOptions) => {
+    .option('--verbose', 'Stream script stdout/stderr to terminal (default: auto when TTY)')
+    .option('--no-verbose', 'Suppress streaming script output to terminal')
+    .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
       try {
         const repoRoot = findRepoRoot(process.cwd());
         const scriptPath = opts.script
@@ -52,9 +54,11 @@ export function buildProgram(): Command {
             ? opts.script
             : resolve(repoRoot, opts.script)
           : join(repoRoot, 'scripts', 'ai-run-issue-v2');
+        const tee = opts.verbose ?? Boolean(process.stdout.isTTY);
         const options: ComposeOptions = {
           repoRoot,
           scriptPath,
+          tee,
         };
         if (opts.baseBranch !== undefined) options.baseBranch = opts.baseBranch;
         if (opts.model !== undefined) options.model = opts.model;
