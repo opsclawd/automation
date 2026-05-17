@@ -38,9 +38,29 @@ describe('routes', () => {
   it('lists runs', async () => {
     const { baseUrl } = await bootServer({ withRun: true });
     const r = await fetch(`${baseUrl}/api/runs`);
-    const body = (await r.json()) as { runs: Array<{ issueNumber: number }> };
+    const body = (await r.json()) as { runs: Array<{ issueNumber: number }>; total: number };
     expect(body.runs.length).toBe(1);
     expect(body.runs[0]!.issueNumber).toBe(1);
+    expect(body.total).toBeGreaterThanOrEqual(1);
+  });
+
+  it('GET /api/runs accepts limit/offset and returns total', async () => {
+    const { baseUrl, container } = await bootServer({ withRun: true });
+    for (let i = 2; i <= 4; i++) {
+      await container.startIssueRun.execute({ issueNumber: i });
+    }
+    const r = await fetch(`${baseUrl}/api/runs?limit=2&offset=1`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as {
+      runs: unknown[];
+      total: number;
+      limit: number;
+      offset: number;
+    };
+    expect(body.runs.length).toBe(2);
+    expect(body.total).toBe(4);
+    expect(body.limit).toBe(2);
+    expect(body.offset).toBe(1);
   });
 
   it('returns 400 for invalid runId format', async () => {
@@ -57,7 +77,7 @@ describe('routes', () => {
 
   it('returns 400 when the artifact path tries to escape the run directory', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list()[0]!;
+    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
     const r = await fetch(
       `${baseUrl}/api/runs/${run.uuid}/artifacts/${encodeURIComponent('../../etc/passwd')}`,
     );
@@ -66,7 +86,7 @@ describe('routes', () => {
 
   it('returns 400 when the artifact path is an absolute path (URL-encoded)', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list()[0]!;
+    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
     const r = await fetch(
       `${baseUrl}/api/runs/${run.uuid}/artifacts/${encodeURIComponent('/etc/passwd')}`,
     );
@@ -75,7 +95,7 @@ describe('routes', () => {
 
   it('serves combined.log as text/plain', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list()[0]!;
+    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
     const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts/combined.log`);
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toMatch(/text\/plain/);
@@ -84,7 +104,7 @@ describe('routes', () => {
 
   it('returns empty files list when run directory is missing from disk', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list()[0]!;
+    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
     const runsDir = join(container.runsDir, run.displayId);
     rmSync(runsDir, { recursive: true, force: true });
     const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts`);
@@ -95,7 +115,7 @@ describe('routes', () => {
 
   it('does not infinite-loop on a symlink cycle', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list()[0]!;
+    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
     const runsDir = join(container.runsDir, run.displayId);
     symlinkSync('.', join(runsDir, 'loop'));
     const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts`);

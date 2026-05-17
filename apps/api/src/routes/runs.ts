@@ -1,12 +1,23 @@
 import type { FastifyInstance } from 'fastify';
 import type { Container } from '../compose.js';
+import type { RunRecord } from '@ai-sdlc/infrastructure';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function runsRoutes(app: FastifyInstance, c: Container): Promise<void> {
-  app.get('/api/runs', async () => ({
-    runs: c.runRepository.list().map(serializeRun),
-  }));
+  app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req) => {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : undefined;
+    const offset = req.query.offset ? parseInt(req.query.offset, 10) : undefined;
+    const { runs, total } = c.runRepository.list(
+      limit !== undefined || offset !== undefined ? { limit, offset } : { limit: undefined },
+    );
+    return {
+      runs: runs.map(serializeRun),
+      total,
+      limit: limit ?? 25,
+      offset: offset ?? 0,
+    };
+  });
 
   app.get<{ Params: { runId: string } }>('/api/runs/:runId', async (req, reply) => {
     if (!UUID_RE.test(req.params.runId)) {
@@ -19,7 +30,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
   });
 }
 
-function serializeRun(r: ReturnType<Container['runRepository']['list']>[number]) {
+function serializeRun(r: RunRecord) {
   return {
     uuid: r.uuid,
     displayId: r.displayId,
