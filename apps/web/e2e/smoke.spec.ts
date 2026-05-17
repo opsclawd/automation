@@ -120,7 +120,7 @@ test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
   await page.goto(`/runs/${runId}`);
 
   // Wait for "passed" status badge to appear, confirming polling stopped
-  await expect(page.getByText('passed')).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText('passed', { exact: true })).toBeVisible({ timeout: 10000 });
 
   // Reset callCount tracker; after status is terminal, no more polls should happen
   const callsBefore = callCount;
