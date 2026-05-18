@@ -68,9 +68,23 @@ export class RunRepository {
     return row ? toRecord(row) : undefined;
   }
 
-  list(): RunRecord[] {
-    const rows = this.db.prepare('SELECT * FROM runs ORDER BY started_at DESC').all() as RunRow[];
-    return rows.map(toRecord);
+  list(opts?: { limit: number; offset?: number }): { runs: RunRecord[]; total: number } {
+    const totalRow = this.db.prepare('SELECT COUNT(*) AS total FROM runs').get() as {
+      total: number;
+    };
+    const total = totalRow.total;
+
+    if (opts?.limit === undefined) {
+      const rows = this.db.prepare('SELECT * FROM runs ORDER BY started_at DESC').all() as RunRow[];
+      return { runs: rows.map(toRecord), total };
+    }
+
+    const limit = Math.max(1, Math.min(opts.limit, 100));
+    const offset = Math.max(0, opts.offset ?? 0);
+    const rows = this.db
+      .prepare('SELECT * FROM runs ORDER BY started_at DESC LIMIT ? OFFSET ?')
+      .all(limit, offset) as RunRow[];
+    return { runs: rows.map(toRecord), total };
   }
 
   update(

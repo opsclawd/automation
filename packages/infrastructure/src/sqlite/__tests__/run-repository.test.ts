@@ -33,7 +33,7 @@ describe('RunRepository', () => {
     db.close();
   });
 
-  it('lists runs ordered by startedAt desc', () => {
+  it('lists runs ordered by startedAt desc (no params → all)', () => {
     const db = freshDb();
     const repo = new RunRepository(db);
     for (let i = 1; i <= 3; i++) {
@@ -47,8 +47,28 @@ describe('RunRepository', () => {
         startedAt: new Date(`2026-05-13T00:00:0${i}Z`),
       });
     }
-    const all = repo.list();
-    expect(all.map((r) => r.uuid)).toEqual(['u3', 'u2', 'u1']);
+    const { runs } = repo.list();
+    expect(runs.map((r) => r.uuid)).toEqual(['u3', 'u2', 'u1']);
+    db.close();
+  });
+
+  it('list({ limit: 2, offset: 1 }) returns correct slice and total', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    for (let i = 1; i <= 5; i++) {
+      repo.insert({
+        uuid: `u${i}`,
+        displayId: `issue-${i}-20260513-00000${i}`,
+        issueNumber: i,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date(`2026-05-13T00:00:0${i}Z`),
+      });
+    }
+    const { runs, total } = repo.list({ limit: 2, offset: 1 });
+    expect(runs.map((r) => r.uuid)).toEqual(['u4', 'u3']);
+    expect(total).toBe(5);
     db.close();
   });
 

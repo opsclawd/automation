@@ -26,10 +26,21 @@ export interface FailureDto {
 // /api/* rewrite (see next.config.mjs) and avoids CORS issues.
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
 
-export async function listRuns(): Promise<RunDto[]> {
-  const r = await fetch(`${apiUrl}/api/runs`, { cache: 'no-store' });
+export interface ListRunsResult {
+  runs: RunDto[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function listRuns(params?: {
+  limit: number;
+  offset?: number;
+}): Promise<ListRunsResult> {
+  const qs = params ? `?limit=${params.limit}&offset=${params.offset ?? 0}` : '';
+  const r = await fetch(`${apiUrl}/api/runs${qs}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load runs: ${r.status}`);
-  return (await r.json()).runs as RunDto[];
+  return r.json() as Promise<ListRunsResult>;
 }
 
 export async function getRun(uuid: string): Promise<{ run: RunDto; failure: FailureDto | null }> {

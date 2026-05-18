@@ -34,11 +34,13 @@ export interface ComposeOptions {
   model?: string;
   agentCli?: string;
   tee?: boolean;
+  dbPath?: string;
+  runsDir?: string;
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
-  const runsDir = join(opts.repoRoot, '.ai-runs');
-  const db = openDatabase(join(runsDir, 'orchestrator.sqlite'));
+  const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
+  const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);
   const phaseRepository = new PhaseRepository(db);
@@ -59,6 +61,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
   const startIssueRun = new StartIssueRun(deps);
+
   return {
     runRepository,
     phaseRepository,
