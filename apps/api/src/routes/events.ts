@@ -53,12 +53,26 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       reply.raw.flushHeaders();
 
       let streamClosed = false;
-      const sseSend = (id: number | string, payload: unknown): void => {
-        if (streamClosed) return;
+      let drainResolve: (() => void) | null = null;
+      const onDrain = (): void => {
+        if (drainResolve) {
+          const resolve = drainResolve;
+          drainResolve = null;
+          resolve();
+        }
+      };
+      reply.raw.on('drain', onDrain);
+      const waitForDrain = (): Promise<void> =>
+        new Promise<void>((resolve) => {
+          drainResolve = resolve;
+        });
+      const sseWrite = (id: number | string, payload: unknown): boolean => {
+        if (streamClosed) return true;
         try {
-          reply.raw.write(`id: ${id}\ndata: ${JSON.stringify(payload)}\n\n`);
+          return reply.raw.write(`id: ${id}\ndata: ${JSON.stringify(payload)}\n\n`);
         } catch {
           cleanup();
+          return false;
         }
       };
 
@@ -80,7 +94,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
           // Still in backfill phase — queue for later.
           liveQueue.push(ev);
         } else {
-          sseSend(ev.timestamp, {
+          sseWrite(ev.timestamp, {
             runId: run.displayId,
             phase: ev.phase ?? null,
             level: ev.level,
@@ -96,15 +110,16 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       try {
         backfillEvents = c.eventRepository.listByRunSince(req.params.runId, req.query.since);
       } catch {
-        sseSend('error', { error: 'invalid_since' });
+        sseWrite('error', { error: 'invalid_since' });
         unsub();
         reply.raw.end();
         return;
       }
 
       for (const e of backfillEvents) {
-        sseSend(e.id, serializeEvent(e, run.displayId));
+        const ok = sseWrite(e.id, serializeEvent(e, run.displayId));
         lastTimestamp = e.timestamp.toISOString();
+        if (!ok) await waitForDrain();
       }
 
       // MVP limitation: if two events share the same millisecond timestamp,
@@ -119,7 +134,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       // If lastTimestamp is null (no backfill events), all live events are sent.
       for (const ev of liveQueue) {
         if (lastTimestamp !== null && new Date(ev.timestamp) <= new Date(lastTimestamp)) continue;
-        sseSend(ev.timestamp, {
+        const ok = sseWrite(ev.timestamp, {
           runId: run.displayId,
           phase: ev.phase ?? null,
           level: ev.level,
@@ -128,6 +143,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
           timestamp: ev.timestamp,
           metadata: ev.metadata,
         });
+        if (!ok) await waitForDrain();
       }
 
       const heartbeat = setInterval(() => {
@@ -144,6 +160,11 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
         streamClosed = true;
         clearInterval(heartbeat);
         unsub();
+        reply.raw.off('drain', onDrain);
+        if (drainResolve) {
+          drainResolve();
+          drainResolve = null;
+        }
       }
 
       req.raw.on('close', () => {

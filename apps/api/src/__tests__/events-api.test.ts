@@ -402,8 +402,8 @@ describe('event ingestion pipeline (tailer → SQLite → API)', () => {
     writeFileSync(
       scriptPath,
       `#!/usr/bin/env bash
-echo '{"runId":"$AI_RUN_DISPLAY_ID","level":"info","type":"run.started","message":"started","timestamp":"2026-05-16T12:00:00.000Z"}' >> "$AI_RUN_EVENTS_FILE"
-echo '{"runId":"$AI_RUN_DISPLAY_ID","level":"info","type":"run.completed","message":"done","timestamp":"2026-05-16T12:00:01.000Z"}' >> "$AI_RUN_EVENTS_FILE"
+printf '{"runId":"%s","level":"info","type":"run.started","message":"started","timestamp":"2026-05-16T12:00:00.000Z"}\\n' "$AI_RUN_DISPLAY_ID" >> "$AI_RUN_EVENTS_FILE"
+printf '{"runId":"%s","level":"info","type":"run.completed","message":"done","timestamp":"2026-05-16T12:00:01.000Z"}\\n' "$AI_RUN_DISPLAY_ID" >> "$AI_RUN_EVENTS_FILE"
 exit 0
 `,
     );

@@ -572,4 +572,52 @@ describe('StartIssueRun event ingestion', () => {
     expect(eventBus.published[0]!.runUuid).toBe(out.uuid);
     expect(eventBus.published[0]!.type).toBe('run.started');
   });
+
+  it('rejects events whose runId does not match the active run', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const eventRepo = new FakeEventRepository();
+    const eventBus = new FakeEventBus();
+
+    let tailerOnEvent: ((e: OrchestratorEvent) => void) | null = null;
+    const fakeTailerFactory: EventTailerFactory = (input) => {
+      tailerOnEvent = input.onEvent;
+      return {
+        start: async () => {},
+        drainAndStop: async () => {},
+        stop: async () => {},
+      };
+    };
+
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      eventRepository: eventRepo,
+      eventBus: eventBus,
+      createEventTailer: fakeTailerFactory,
+      now: fixedNow,
+    });
+
+    await usecase.execute({ issueNumber: 13 });
+
+    const mismatchEvent: OrchestratorEvent = {
+      runId: 'wrong-display-id',
+      level: 'info',
+      type: 'run.started',
+      message: 'stale event',
+      timestamp: fixedNow().toISOString(),
+      metadata: {},
+    };
+    tailerOnEvent!(mismatchEvent);
+
+    expect(eventRepo.events).toHaveLength(0);
+    expect(eventBus.published).toHaveLength(0);
+  });
 });

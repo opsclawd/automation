@@ -86,6 +86,10 @@ export class StartIssueRun {
 
     const onEvent = (e: OrchestratorEvent): void => {
       try {
+        if (e.runId !== run.displayId) {
+          logger.error(`Event runId mismatch for run ${run.displayId}: got ${e.runId}, skipping`);
+          return;
+        }
         const insertInput: Parameters<EventRepositoryPort['insert']>[0] = {
           runUuid: run.uuid,
           level: e.level,
