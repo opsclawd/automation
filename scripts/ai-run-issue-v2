@@ -507,17 +507,15 @@ _INITIAL_PHASE="$PHASE"
 
 log "Auto-resume: detected phase='${PHASE}'"
 
+emit_event "" "info" "run.started" "issue-to-PR run started" \
+  issueNumber="$ISSUE_NUM" baseBranch="${BASE_BRANCH:-main}" branch="$BRANCH"
+
 if [[ "$PHASE" == "done" ]]; then
   log "Orchestrator already completed. See $(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo 'PR')."
   emit_event "" "info" "run.completed" "run already completed" \
     prUrl="$(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo '')"
   exit 0
 fi
-
-emit_event "" "info" "run.started" "issue-to-PR run started" \
-  issueNumber="$ISSUE_NUM" baseBranch="${BASE_BRANCH:-main}" branch="$BRANCH"
-
-if [[ "$_INITIAL_PHASE" != "read_issue" ]]; then _emit_skipped_until "$_INITIAL_PHASE"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: read_issue
@@ -760,6 +758,8 @@ if [[ "$PHASE" == "spec-review" || "$PHASE" == "quality-review" ]]; then
   RESUME_STAGE_OVERRIDE="review"
   PHASE="implement"
 fi
+
+if [[ "$_INITIAL_PHASE" != "read_issue" ]]; then _emit_skipped_until "$PHASE"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: implement — subagent-driven development per task
@@ -1500,7 +1500,13 @@ _emit_phase_started "fix-review"
 
 while [[ "$PHASE" == "fix-review" ]]; do
   FIX_LOOP_COUNT=$((FIX_LOOP_COUNT + 1))
+  emit_event "fix-review" "info" "loop.iteration.started" \
+    "fix-review loop ${FIX_LOOP_COUNT}/10" \
+    iteration="${FIX_LOOP_COUNT}" max=10
   if [[ $FIX_LOOP_COUNT -gt 10 ]]; then
+    emit_event "fix-review" "error" "loop.exhausted" \
+      "fix-review hit max iterations" \
+      iterations="${FIX_LOOP_COUNT}"
     info "Fix loop limit (10) reached. Moving on."
     break
   fi
@@ -1513,6 +1519,9 @@ while [[ "$PHASE" == "fix-review" ]]; do
 
   if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
     info "No review.md found. Skipping fix loop."
+    emit_event "fix-review" "info" "loop.iteration.completed" \
+      "fix-review loop ${FIX_LOOP_COUNT} completed (no review.md)" \
+      iteration="${FIX_LOOP_COUNT}" status="skipped"
     break
   fi
 
@@ -1629,9 +1638,15 @@ Write code-review.md and review-findings-status.txt now."
 
   if [[ "$REVIEW_STATUS" == "ALL_RESOLVED" ]]; then
     info "All findings resolved. Exiting fix loop."
+    emit_event "fix-review" "info" "loop.iteration.completed" \
+      "fix-review loop ${FIX_LOOP_COUNT} completed (all resolved)" \
+      iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
     break
   fi
   info "Review status: ${REVIEW_STATUS}. Continuing fix loop."
+  emit_event "fix-review" "info" "loop.iteration.completed" \
+    "fix-review loop ${FIX_LOOP_COUNT} completed (has unresolved)" \
+    iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
 done
 
 _emit_phase_done "fix-review"
