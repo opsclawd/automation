@@ -488,6 +488,9 @@ process_reviews() {
     return 1
   }
   if echo "$pr_state" | jq -e '.state == "MERGED"' > /dev/null 2>&1; then
+    emit_event "pr-review-poll" "info" "pr-review-poll.run.completed" \
+      "PR #${PR_NUMBER} is already merged" \
+      totalProcessed="0" terminalReason="already_merged"
     log "PR #${PR_NUMBER} is already merged. Exiting."
     exit 0
   fi
@@ -796,10 +799,9 @@ process_reviews() {
     fi
   elif [[ "$review_result" == "BLOCKED" ]]; then
     warn "Agent is blocked. No verification possible."
-    verify_ok=false
-    emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
-      "agent blocked, skipping verification" \
-      commentId="batch-p${POLL_COUNT}" reason="BLOCKED"
+    emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
+      "Agent blocked" reason="BLOCKED" lastPoll="$POLL_COUNT"
+    exit 1
   else
     warn "Unknown result '${review_result}'. Running full verification."
     if verify_commits_pushed "$pre_sha" "$PR_BRANCH"; then
@@ -926,7 +928,18 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   sleep "$POLL_INTERVAL"
 done
 
+TOTAL_PROCESSED=$(wc -l < "$PROCESSED_IDS_FILE" 2>/dev/null | tr -d ' ')
 if [[ $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
-  warn "Reached MAX_TOTAL_POLLS hard ceiling (${MAX_TOTAL_POLLS}). Exiting."
+  emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
+    "reached MAX_TOTAL_POLLS hard ceiling (${MAX_TOTAL_POLLS})" \
+    reason="max_total_polls" lastPoll="$POLL_COUNT"
+elif [[ $review_ec -eq 0 ]]; then
+  emit_event "pr-review-poll" "info" "pr-review-poll.run.completed" \
+    "PR review poll finished" \
+    totalProcessed="${TOTAL_PROCESSED:-0}" terminalReason="ALL_DONE"
+else
+  emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
+    "PR review poll exhausted poll budget" \
+    reason="max_polls" lastPoll="$POLL_COUNT"
 fi
 log "=== PR review poll complete (${POLL_COUNT}/${MAX_POLLS} consecutive, ${TOTAL_POLLS}/${MAX_TOTAL_POLLS} total) ==="
