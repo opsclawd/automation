@@ -53,7 +53,7 @@ export class EventRepository {
       sql += ' AND timestamp > ?';
       params.push(parsed.toISOString());
     }
-    sql += ' ORDER BY timestamp ASC';
+    sql += ' ORDER BY timestamp ASC, id ASC';
     const rows = this.db.prepare(sql).all(...params) as Array<{
       id: number;
       run_uuid: string;
