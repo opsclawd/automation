@@ -53,6 +53,15 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       reply.raw.flushHeaders();
 
       let streamClosed = false;
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+      function cleanup() {
+        if (streamClosed) return;
+        streamClosed = true;
+        if (heartbeat !== null) clearInterval(heartbeat);
+        unsub();
+      }
+
       const sseWrite = (id: number | string, payload: unknown): boolean => {
         if (streamClosed) return true;
         try {
@@ -133,7 +142,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
         if (streamClosed) return;
       }
 
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         if (streamClosed) return;
         try {
           reply.raw.write(': hb\n\n');
@@ -141,13 +150,6 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
           cleanup();
         }
       }, 15_000);
-
-      function cleanup() {
-        if (streamClosed) return;
-        streamClosed = true;
-        clearInterval(heartbeat);
-        unsub();
-      }
 
       req.raw.on('close', () => {
         cleanup();

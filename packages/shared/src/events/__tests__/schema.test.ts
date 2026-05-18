@@ -35,6 +35,16 @@ describe('eventSchema', () => {
     expect(() => eventSchema.parse({ ...minimal, timestamp: 'last tuesday' })).toThrow();
   });
 
+  it('rejects locale-style and numeric-only timestamps', () => {
+    expect(() => eventSchema.parse({ ...minimal, timestamp: '1' })).toThrow();
+    expect(() => eventSchema.parse({ ...minimal, timestamp: '05/16/2026' })).toThrow();
+  });
+
+  it('accepts timestamps with timezone offsets', () => {
+    const parsed = eventSchema.parse({ ...minimal, timestamp: '2026-05-16T12:00:00+05:30' });
+    expect(parsed.timestamp).toBe('2026-05-16T12:00:00+05:30');
+  });
+
   it('defaults metadata to {}', () => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { metadata: _m, ...withoutMeta } = minimal;
