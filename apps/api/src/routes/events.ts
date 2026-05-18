@@ -70,7 +70,12 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       const liveQueue: OrchestratorEvent[] = [];
       const unsub = c.eventBus.subscribe(req.params.runId, (ev: OrchestratorEvent) => {
         if (streamClosed) return;
-        if (backfillComplete && lastTimestamp !== null && ev.timestamp <= lastTimestamp) return;
+        if (
+          backfillComplete &&
+          lastTimestamp !== null &&
+          new Date(ev.timestamp) <= new Date(lastTimestamp)
+        )
+          return;
         if (!backfillComplete) {
           // Still in backfill phase — queue for later.
           liveQueue.push(ev);
@@ -113,7 +118,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       // against lastTimestamp (skip any with timestamp <= lastTimestamp).
       // If lastTimestamp is null (no backfill events), all live events are sent.
       for (const ev of liveQueue) {
-        if (lastTimestamp !== null && ev.timestamp <= lastTimestamp) continue;
+        if (lastTimestamp !== null && new Date(ev.timestamp) <= new Date(lastTimestamp)) continue;
         sseSend(ev.timestamp, {
           runId: run.displayId,
           phase: ev.phase ?? null,
