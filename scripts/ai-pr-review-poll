@@ -915,9 +915,12 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   case $review_ec in
     0) log "Reviews processed and verified successfully."
        ALL_REVIEWS_RESOLVED=true ;;
-    1) log "No new reviews to process (poll $POLL_COUNT/$MAX_POLLS)." ;;
-    2) warn "Reviews processed but some verifications failed (poll $POLL_COUNT/$MAX_POLLS)." ;;
-    *) warn "process_reviews exited with unexpected code ${review_ec}" ;;
+    1) log "No new reviews to process (poll $POLL_COUNT/$MAX_POLLS)."
+       ALL_REVIEWS_RESOLVED=false ;;
+    2) warn "Reviews processed but some verifications failed (poll $POLL_COUNT/$MAX_POLLS)."
+       ALL_REVIEWS_RESOLVED=false ;;
+    *) warn "process_reviews exited with unexpected code ${review_ec}"
+       ALL_REVIEWS_RESOLVED=false ;;
   esac
 
   if $BLOCKED_EXIT; then
@@ -965,10 +968,6 @@ elif $ALL_REVIEWS_RESOLVED; then
   emit_event "pr-review-poll" "info" "pr-review-poll.run.completed" \
     "PR review poll finished" \
     totalProcessed="${TOTAL_PROCESSED}" terminalReason="ALL_DONE"
-elif [[ $review_ec -eq 1 ]]; then
-  emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
-    "no new reviews processed within poll budget" \
-    reason="no_reviews_exhausted" lastPoll="$POLL_COUNT"
 else
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "PR review poll exhausted poll budget" \
