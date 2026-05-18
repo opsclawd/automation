@@ -1386,7 +1386,8 @@ if [[ "$PHASE" == "validate" ]]; then
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
 
-  _VALIDATE_DUR=$(( $(_now_ms) - _VALIDATE_START_MS ))
+  _validate_now=$(_now_ms)
+  _VALIDATE_DUR=$(( _validate_now - _VALIDATE_START_MS ))
   if [[ $VALIDATE_EXIT -eq 0 ]]; then
     emit_event "validate" "info" "command.completed" "validate suite passed" \
       command="pnpm-validate-suite" exitCode=0 durationMs="$_VALIDATE_DUR"
