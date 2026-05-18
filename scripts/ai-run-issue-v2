@@ -370,6 +370,8 @@ log "=== Starting orchestrator for issue #${ISSUE_NUM} ==="
 
 # ── auto-resume: task-level checkpoint detection ─────────────────────────────
 LAST_PHASE="start"
+emit_event "" "info" "run.started" "issue-to-PR run started" \
+  issueNumber="$ISSUE_NUM" baseBranch="${BASE_BRANCH:-main}" branch="$BRANCH"
 
   get_task_completion_status() {
     local task_n="$1"
@@ -1841,4 +1843,6 @@ if [[ "$PHASE" == "done" ]]; then
   echo "✅ Issue #${ISSUE_NUM} → PR ready"
   echo "   PR: $(cat "${ISSUES_DIR}/pr-url.txt")"
   echo "   Branch: ${BRANCH}"
+  emit_event "" "info" "run.completed" "issue-to-PR run completed" \
+    prUrl="${PR_URL:-}"
 fi
