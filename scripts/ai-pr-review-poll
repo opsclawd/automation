@@ -734,6 +734,7 @@ process_reviews() {
       commentId="batch-p${POLL_COUNT}" reason="non_zero_exit" exitCode="$agent_ec" durationMs="$AGENT_DUR"
   else
     if [[ "$_result_was_valid" == "false" ]]; then
+      AGENT_FAILED=true
       emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
         "agent for poll iteration ${POLL_COUNT} produced no valid result file" \
         commentId="batch-p${POLL_COUNT}" reason="no_result_file" exitCode="$agent_ec" durationMs="$AGENT_DUR"
@@ -990,14 +991,14 @@ if [[ -f "$PROCESSED_IDS_FILE" ]]; then
 fi
 if $BLOCKED_EXIT; then
   : # Already emitted run.failed above before break
-elif [[ $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
-  emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
-    "reached MAX_TOTAL_POLLS hard ceiling (${MAX_TOTAL_POLLS})" \
-    reason="max_total_polls" lastPoll="$POLL_COUNT"
 elif $ALL_REVIEWS_RESOLVED; then
   emit_event "pr-review-poll" "info" "pr-review-poll.run.completed" \
     "PR review poll finished" \
     totalProcessed="${TOTAL_PROCESSED}" terminalReason="${LAST_REVIEW_RESULT:-ALL_DONE}"
+elif [[ $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
+  emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
+    "reached MAX_TOTAL_POLLS hard ceiling (${MAX_TOTAL_POLLS})" \
+    reason="max_total_polls" lastPoll="$POLL_COUNT"
 else
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "PR review poll exhausted poll budget" \
