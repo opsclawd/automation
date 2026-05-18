@@ -10,8 +10,15 @@ import {
   RunDirectory,
   runBashScript,
   classifyExit,
+  InMemoryEventBus,
+  EventTailer,
 } from '@ai-sdlc/infrastructure';
-import { StartIssueRun, type StartIssueRunDeps, type ClassifyExitFn } from '@ai-sdlc/application';
+import {
+  StartIssueRun,
+  type StartIssueRunDeps,
+  type ClassifyExitFn,
+  type EventTailerFactory,
+} from '@ai-sdlc/application';
 
 const classifyExitAdapter: ClassifyExitFn = (input) => {
   return classifyExit(input);
@@ -25,6 +32,7 @@ export interface Container {
   failureRepository: FailureRepository;
   startIssueRun: StartIssueRun;
   runsDir: string;
+  eventBus: InMemoryEventBus;
 }
 
 export interface ComposeOptions {
@@ -47,6 +55,8 @@ export function composeRoot(opts: ComposeOptions): Container {
   const eventRepository = new EventRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const failureRepository = new FailureRepository(db);
+  const eventBus = new InMemoryEventBus();
+  const createEventTailer: EventTailerFactory = (input) => new EventTailer(input);
   const deps: StartIssueRunDeps = {
     runRepository,
     failureRepository,
@@ -55,6 +65,9 @@ export function composeRoot(opts: ComposeOptions): Container {
     runBashScript,
     runsDir,
     scriptPath: opts.scriptPath,
+    eventRepository,
+    eventBus,
+    createEventTailer,
   };
   if (opts.baseBranch !== undefined) deps.baseBranch = opts.baseBranch;
   if (opts.model !== undefined) deps.model = opts.model;
@@ -70,5 +83,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     failureRepository,
     startIssueRun,
     runsDir,
+    eventBus,
   };
 }

@@ -61,7 +61,7 @@ export interface FailureRepositoryPort {
 export interface EventRepositoryPort {
   insert(event: {
     runUuid: string;
-    phase?: string;
+    phase?: string | undefined;
     level: string;
     type: string;
     message: string;
@@ -74,7 +74,7 @@ export interface EventRepositoryPort {
   ): Array<{
     id: number;
     runUuid: string;
-    phase?: string;
+    phase?: string | undefined;
     level: string;
     type: string;
     message: string;
