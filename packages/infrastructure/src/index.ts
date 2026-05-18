@@ -8,3 +8,5 @@ export * from './sqlite/artifact-repository.js';
 export * from './sqlite/failure-repository.js';
 export * from './failure/classifier.js';
 export * from './bash/run-bash-script.js';
+export * from './events/event-bus.js';
+export * from './events/tailer.js';

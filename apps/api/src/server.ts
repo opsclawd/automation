@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import type { Container } from './compose.js';
 import { runsRoutes } from './routes/runs.js';
 import { artifactsRoutes } from './routes/artifacts.js';
+import { eventsRoutes } from './routes/events.js';
 
 export interface ServerOptions {
   container: Container;
@@ -21,6 +22,7 @@ export async function startServer(
   await app.register(cors, { origin: ['http://127.0.0.1:4310'] });
   await runsRoutes(app, opts.container);
   await artifactsRoutes(app, opts.container);
+  await eventsRoutes(app, opts.container);
   await app.listen({ port: opts.port ?? 4319, host: '127.0.0.1' });
   const address = app.server.address() as { port: number };
   return {

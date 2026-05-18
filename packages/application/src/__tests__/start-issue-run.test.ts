@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Failure, Run } from '@ai-sdlc/domain';
+import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { StartIssueRun } from '../start-issue-run.js';
 import type {
   ClassifyExitFn,
+  EventBusPort,
+  EventRepositoryPort,
+  EventTailerFactory,
   FailureRepositoryPort,
   RunBashScriptFn,
   RunDirectoryFactory,
@@ -133,6 +137,16 @@ function fakeBash(result: { exitCode: number; durationMs?: number } | Error): {
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
+const defaultEventDeps = () => ({
+  eventRepository: new FakeEventRepository(),
+  eventBus: new FakeEventBus(),
+  createEventTailer: (() => ({
+    start: async () => {},
+    drainAndStop: async () => {},
+    stop: async () => {},
+  })) as EventTailerFactory,
+});
+
 describe('StartIssueRun', () => {
   it('marks run passed on exit 0 and writes final run.json', async () => {
     const repo = new FakeRunRepository();
@@ -147,6 +161,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     const out = await usecase.execute({ issueNumber: 42 });
@@ -175,6 +190,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     const out = await usecase.execute({ issueNumber: 7 });
@@ -199,6 +215,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     await expect(usecase.execute({ issueNumber: 7 })).rejects.toThrow(/active run/i);
@@ -220,6 +237,7 @@ describe('StartIssueRun', () => {
       baseBranch: 'develop',
       model: 'gpt-4',
       agentCli: 'codex',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     await usecase.execute({ issueNumber: 10 });
@@ -241,6 +259,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     await usecase.execute({ issueNumber: 1 });
@@ -262,6 +281,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     await expect(usecase.execute({ issueNumber: 5 })).rejects.toThrow(/mkdir/);
@@ -286,6 +306,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
       logger: { error: (m) => errors.push(m) },
     });
@@ -316,6 +337,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
@@ -358,6 +380,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     const out = await usecase.execute({ issueNumber: 9 });
@@ -384,6 +407,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     await usecase.execute({ issueNumber: 11 });
@@ -405,6 +429,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
       logger: { error: (m) => errors.push(m) },
     });
@@ -430,6 +455,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
     });
     const result = await usecase.execute({ issueNumber: 7 });
@@ -458,6 +484,7 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       now: fixedNow,
       logger: { error: (m) => errors.push(m) },
     });
@@ -468,5 +495,129 @@ describe('StartIssueRun', () => {
     expect(patch.failureReason).toBeDefined();
     expect(errors.some((e) => /Failed to insert failure record/.test(e))).toBe(true);
     expect(dirs[0]!.failureWrites).toHaveLength(1);
+  });
+});
+
+class FakeEventRepository implements EventRepositoryPort {
+  events: Array<{ runUuid: string; type: string; timestamp: Date }> = [];
+  insert(event: { runUuid: string; type: string; timestamp: Date; [k: string]: unknown }): number {
+    this.events.push({ runUuid: event.runUuid, type: event.type, timestamp: event.timestamp });
+    return this.events.length;
+  }
+  listByRunSince(): Array<{ id: number; runUuid: string; type: string; [k: string]: unknown }> {
+    return [];
+  }
+}
+
+class FakeEventBus implements EventBusPort {
+  published: Array<{ runUuid: string; type: string }> = [];
+  subscribe(): () => void {
+    return () => {};
+  }
+  publish(runUuid: string, event: OrchestratorEvent): void {
+    this.published.push({ runUuid, type: event.type });
+  }
+}
+
+describe('StartIssueRun event ingestion', () => {
+  it('tails events.jsonl and inserts events into EventRepository + EventBus during run', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const eventRepo = new FakeEventRepository();
+    const eventBus = new FakeEventBus();
+
+    let tailerOnEvent: ((e: OrchestratorEvent) => void) | null = null;
+    const fakeTailerFactory: EventTailerFactory = (input) => {
+      tailerOnEvent = input.onEvent;
+      return {
+        start: async () => {},
+        drainAndStop: async () => {},
+        stop: async () => {},
+      };
+    };
+
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      eventRepository: eventRepo,
+      eventBus: eventBus,
+      createEventTailer: fakeTailerFactory,
+      now: fixedNow,
+    });
+
+    const out = await usecase.execute({ issueNumber: 12 });
+    expect(tailerOnEvent).not.toBeNull();
+
+    const event: OrchestratorEvent = {
+      runId: out.displayId,
+      level: 'info',
+      type: 'run.started',
+      message: 'run started',
+      timestamp: fixedNow().toISOString(),
+      metadata: {},
+    };
+    tailerOnEvent!(event);
+
+    expect(eventRepo.events).toHaveLength(1);
+    expect(eventRepo.events[0]!.runUuid).toBe(out.uuid);
+    expect(eventRepo.events[0]!.type).toBe('run.started');
+    expect(eventBus.published).toHaveLength(1);
+    expect(eventBus.published[0]!.runUuid).toBe(out.uuid);
+    expect(eventBus.published[0]!.type).toBe('run.started');
+  });
+
+  it('rejects events whose runId does not match the active run', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const eventRepo = new FakeEventRepository();
+    const eventBus = new FakeEventBus();
+
+    let tailerOnEvent: ((e: OrchestratorEvent) => void) | null = null;
+    const fakeTailerFactory: EventTailerFactory = (input) => {
+      tailerOnEvent = input.onEvent;
+      return {
+        start: async () => {},
+        drainAndStop: async () => {},
+        stop: async () => {},
+      };
+    };
+
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      eventRepository: eventRepo,
+      eventBus: eventBus,
+      createEventTailer: fakeTailerFactory,
+      now: fixedNow,
+    });
+
+    await usecase.execute({ issueNumber: 13 });
+
+    const mismatchEvent: OrchestratorEvent = {
+      runId: 'wrong-display-id',
+      level: 'info',
+      type: 'run.started',
+      message: 'stale event',
+      timestamp: fixedNow().toISOString(),
+      metadata: {},
+    };
+    tailerOnEvent!(mismatchEvent);
+
+    expect(eventRepo.events).toHaveLength(0);
+    expect(eventBus.published).toHaveLength(0);
   });
 });

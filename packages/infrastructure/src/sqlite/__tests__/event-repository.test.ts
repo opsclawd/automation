@@ -91,6 +91,40 @@ describe('EventRepository', () => {
     db.close();
   });
 
+  it('orders by (timestamp, id) for deterministic pagination when timestamps collide', () => {
+    const db = freshDb();
+    const runs = new RunRepository(db);
+    const repo = new EventRepository(db);
+    runs.insert({
+      uuid: 'r',
+      displayId: 'issue-1-20260513-000000',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const sameTs = new Date('2026-05-13T00:00:01Z');
+    repo.insert({
+      runUuid: 'r',
+      level: 'info',
+      type: 'phase.started',
+      message: 'a',
+      timestamp: sameTs,
+    });
+    repo.insert({
+      runUuid: 'r',
+      level: 'info',
+      type: 'phase.completed',
+      message: 'b',
+      timestamp: sameTs,
+    });
+    const events = repo.listByRunSince('r');
+    expect(events[0]!.id).toBeLessThan(events[1]!.id);
+    expect(events).toHaveLength(2);
+    db.close();
+  });
+
   it('stores and retrieves metadata as JSON', () => {
     const db = freshDb();
     const runs = new RunRepository(db);

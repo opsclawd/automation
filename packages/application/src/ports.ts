@@ -1,4 +1,5 @@
 import type { Run, RunStatus, Failure, ClassifyExitInput } from '@ai-sdlc/domain';
+import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
 export interface RunRepositoryUpdatePatch {
   status?: RunStatus;
@@ -56,3 +57,43 @@ export interface FailureRepositoryPort {
   insert(failure: Failure): void;
   findLatestByRun(runUuid: string): Failure | undefined;
 }
+
+export interface EventRepositoryPort {
+  insert(event: {
+    runUuid: string;
+    phase?: string;
+    level: string;
+    type: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+    timestamp: Date;
+  }): number;
+  listByRunSince(
+    runUuid: string,
+    sinceIso?: string,
+  ): Array<{
+    id: number;
+    runUuid: string;
+    phase?: string;
+    level: string;
+    type: string;
+    message: string;
+    metadata: Record<string, unknown>;
+    timestamp: Date;
+  }>;
+}
+
+export interface EventBusPort {
+  subscribe(runUuid: string, listener: (event: OrchestratorEvent) => void): () => void;
+  publish(runUuid: string, event: OrchestratorEvent): void;
+}
+
+export type EventTailerFactory = (input: {
+  path: string;
+  onEvent: (event: OrchestratorEvent) => void;
+  onParseError: (err: Error, line: string) => void;
+}) => {
+  start(): Promise<void>;
+  drainAndStop(): Promise<void>;
+  stop(): Promise<void>;
+};

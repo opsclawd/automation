@@ -3,3 +3,4 @@ export * from './config/schema.js';
 export * from './config/loader.js';
 export * from './config/errors.js';
 export * from './ids/run-id.js';
+export * from './events/schema.js';
