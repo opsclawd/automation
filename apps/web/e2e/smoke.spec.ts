@@ -133,14 +133,16 @@ test('LiveLogViewer stops polling on terminal status', async ({ page }) => {
 });
 
 test('pagination controls appear with >25 seeded runs', async ({ page }) => {
-  // Data is seeded in globalSetup (30 runs -> ceil(30/25)=2 pages).
+  // globalSetup clears the DB then seeds exactly 30 runs → ceil(30/25)=2 pages.
   await page.goto('/');
   await expect(page.getByText('Page 1 of 2')).toBeVisible();
-  await expect(page.getByText('R-001')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'R-001' })).toBeVisible();
   await page.getByRole('link', { name: 'Next' }).click();
   await expect(page.getByText('Page 2 of 2')).toBeVisible();
   await expect(page.getByText('R-026')).toBeVisible();
   await expect(page.getByText('R-030')).toBeVisible();
+  await page.getByRole('link', { name: 'Previous' }).click();
+  await expect(page.getByText('Page 1 of 2')).toBeVisible();
 });
 
 test('run detail page switches between tabs', async ({ page }) => {
@@ -183,9 +185,12 @@ test('clicking a .md artifact renders markdown in-page', async ({ page }) => {
   // Switch to Artifacts tab
   await page.getByRole('tab', { name: 'Artifacts' }).click();
   // Click README.md toggle button
-  await page.getByText('README.md').click();
+  await page.getByRole('button', { name: 'README.md' }).click();
   await expect(page.getByText('This is bold markdown.')).toBeVisible();
+  // Click README.md again to collapse
+  await page.getByRole('button', { name: 'README.md' }).click();
+  await expect(page.getByText('This is bold markdown.')).not.toBeVisible();
   // Click data.json toggle button
-  await page.getByText('data.json').click();
-  await expect(page.getByText('"count": 42')).toBeVisible();
+  await page.getByRole('button', { name: 'data.json' }).click();
+  await expect(page.getByText('count: 42')).toBeVisible();
 });

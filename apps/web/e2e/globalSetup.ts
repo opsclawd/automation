@@ -94,6 +94,9 @@ for (let i = 4; i <= 30; i++) {
 export default async function globalSetup() {
   const db = new Database(DB_PATH);
 
+  db.exec('DELETE FROM failures');
+  db.exec('DELETE FROM runs');
+
   const insert = db.prepare(`
     INSERT OR REPLACE INTO runs (uuid, display_id, issue_number, type, status, current_phase,
       completed_phases, started_at, completed_at, failure_reason, exit_code, duration_ms)
