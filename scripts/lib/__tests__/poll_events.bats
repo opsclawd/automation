@@ -2,6 +2,13 @@
 # Golden-trace tests for PR review poll event emission.
 # Tests the event vocabulary and structure by sourcing emit_event.sh
 # directly and calling it with the poll event types.
+#
+# COVERAGE GAP: These tests validate the event vocabulary and structure
+# but do NOT invoke scripts/ai-pr-review-poll itself. They cannot verify
+# that events are emitted at the correct points in the poller's control
+# flow, that env var propagation works, or that exit paths (BLOCKED,
+# PR-already-merged) produce the right terminal events. Integration
+# tests mocking gh and opencode would be needed for full coverage.
 
 setup() {
   TMPDIR_TEST=$(mktemp -d)
@@ -30,7 +37,7 @@ _meta_value() {
 @test "3-poll happy trace emits exactly one terminal event" {
   for poll in 1 2 3; do
     emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" \
-      "poll ${poll}/3 for PR #456" prNumber=456 poll=$poll maxPolls=3
+      "poll ${poll}/3 for PR #456" prNumber=456 poll=$poll maxPolls=3 totalPolls=$poll maxTotalPolls=30
     emit_event "pr-review-poll" "info" "pr-review-poll.poll.comments.fetched" \
       "fetched comments" total=2 unprocessed=$((4 - poll))
     emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
@@ -41,12 +48,15 @@ _meta_value() {
     emit_event "pr-review-poll" "info" "pr-review-poll.reply.posted" \
       "replies confirmed for batch p${poll}" commentId="batch-p${poll}"
     emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
-      "verification passed for batch p${poll}" commentId="batch-p${poll}"
+      "commits pushed for batch p${poll}" commentId="batch-p${poll}" step="commits_pushed"
+    emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
+      "build verification passed for batch p${poll}" commentId="batch-p${poll}" step="build_passes"
     if [[ $poll -lt 3 ]]; then
       emit_event "pr-review-poll" "info" "pr-review-poll.poll.completed" \
         "poll ${poll} complete" poll=$poll processed=$poll pending=$((3 - poll))
     fi
   done
+  # Simulate poll.reset event (branch advance)
   emit_event "pr-review-poll" "info" "pr-review-poll.run.completed" \
     "PR review poll finished" totalProcessed=3 terminalReason="ALL_DONE"
 
@@ -61,13 +71,16 @@ _meta_value() {
   [ "$output" = "3" ]
 
   # 2 poll.completed (not 3 — final iteration omits it in favor of run.completed)
+  # NOTE: This test constructs its own trace; the actual poller's control flow
+  # determines which iterations emit poll.completed. This assertion validates
+  # the golden trace, not the poller's runtime behavior.
   run _count_type "pr-review-poll.poll.completed"
   [ "$output" = "2" ]
 }
 
 @test "blocked trace emits run.failed with reason BLOCKED" {
   emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" \
-    "poll 1/3 for PR #456" prNumber=456 poll=1 maxPolls=3
+    "poll 1/3 for PR #456" prNumber=456 poll=1 maxPolls=3 totalPolls=1 maxTotalPolls=30
   emit_event "pr-review-poll" "info" "pr-review-poll.poll.comments.fetched" \
     "fetched comments" total=1 unprocessed=1
   emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
@@ -75,6 +88,9 @@ _meta_value() {
   emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
     "agent blocked for poll iteration 1" \
     commentId="batch-p1" reason="BLOCKED" exitCode=0
+  emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
+    "agent blocked, skipping verification" \
+    commentId="batch-p1" reason="BLOCKED"
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "Agent blocked" reason="BLOCKED" lastPoll=1
 
@@ -92,7 +108,7 @@ _meta_value() {
 @test "max_polls exhaustion emits run.failed with reason max_polls" {
   for poll in 1 2 3; do
     emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" \
-      "poll ${poll}/3 for PR #456" prNumber=456 poll=$poll maxPolls=3
+      "poll ${poll}/3 for PR #456" prNumber=456 poll=$poll maxPolls=3 totalPolls=$poll maxTotalPolls=30
     emit_event "pr-review-poll" "info" "pr-review-poll.poll.comments.fetched" \
       "no new comments" total=0 unprocessed=0
   done
@@ -105,8 +121,43 @@ _meta_value() {
   [ "$output" = '"max_polls"' ]
 }
 
+@test "poll.reset event has previousPollCount and newPollCount" {
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.reset" \
+    "poll budget reset due to branch advance" previousPollCount=2 newPollCount=0
+
+  run _meta_value "pr-review-poll.poll.reset" "previousPollCount"
+  [ "$output" = '2' ]
+  run _meta_value "pr-review-poll.poll.reset" "newPollCount"
+  [ "$output" = '0' ]
+}
+
+@test "poll.started includes totalPolls and maxTotalPolls" {
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" \
+    "poll 1/3 for PR #456" prNumber=456 poll=1 maxPolls=3 totalPolls=1 maxTotalPolls=30
+
+  run _meta_value "pr-review-poll.poll.started" "totalPolls"
+  [ "$output" = '1' ]
+  run _meta_value "pr-review-poll.poll.started" "maxTotalPolls"
+  [ "$output" = '30' ]
+}
+
+@test "verification.passed events have step metadata" {
+  emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
+    "commits pushed" commentId="batch-p1" step="commits_pushed"
+  emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
+    "build passed" commentId="batch-p1" step="build_passes"
+
+  local count
+  count=$(jq -s '[.[] | select(.type == "pr-review-poll.verification.passed")] | length' "$AI_RUN_EVENTS_FILE")
+  [ "$count" = "2" ]
+
+  local steps
+  steps=$(jq -s '[.[] | select(.type == "pr-review-poll.verification.passed") | .metadata.step] | sort | join(",")' "$AI_RUN_EVENTS_FILE")
+  [ "$steps" = '"build_passes,commits_pushed"' ]
+}
+
 @test "events contain correct phase field" {
-  emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" "test" poll=1 maxPolls=3
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" "test" poll=1 maxPolls=3 totalPolls=1 maxTotalPolls=30
   run jq -r '.phase' "$AI_RUN_EVENTS_FILE"
   [ "$output" = "pr-review-poll" ]
 }

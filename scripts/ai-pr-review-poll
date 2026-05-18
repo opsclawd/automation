@@ -50,12 +50,17 @@ warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_
 # shellcheck source=lib/emit_event.sh
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 
-_HAS_NANOSECONDS=false
+if ! command -v jq >/dev/null 2>&1; then
+  echo "FATAL: jq is required but not found on PATH. Install jq and retry." >&2
+  exit 1
+fi
+
+_POLL_HAS_NANOSECONDS=false
 if date +%N >/dev/null 2>&1 && [[ "$(date +%N)" != "N" ]]; then
-  _HAS_NANOSECONDS=true
+  _POLL_HAS_NANOSECONDS=true
 fi
 _now_ms() {
-  if [[ "$_HAS_NANOSECONDS" == "true" ]]; then
+  if [[ "$_POLL_HAS_NANOSECONDS" == "true" ]]; then
     echo $(( $(date +%s%N) / 1000000 ))
   else
     echo $(( $(date +%s) * 1000 ))
@@ -760,8 +765,8 @@ process_reviews() {
     log "Agent reports no fixes needed. Skipping commit/build verification."
     if verify_replies_posted; then
       replies_ok=true
-      emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
-        "verification passed (no fixes needed, replies confirmed)" commentId="batch-p${POLL_COUNT}"
+      emit_event "pr-review-poll" "info" "pr-review-poll.reply.posted" \
+        "replies confirmed (no fixes needed)" commentId="batch-p${POLL_COUNT}"
     else
       verify_ok=false
       emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
@@ -771,12 +776,12 @@ process_reviews() {
   elif [[ "$review_result" == "ALL_DONE" || "$review_result" == "PARTIAL" ]]; then
     if verify_commits_pushed "$pre_sha" "$PR_BRANCH"; then
       emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
-        "commits pushed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
+        "commits pushed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="commits_pushed"
     else
       verify_ok=false
       emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
         "commits not pushed for batch p${POLL_COUNT}" \
-        commentId="batch-p${POLL_COUNT}" reason="commits_not_pushed"
+        commentId="batch-p${POLL_COUNT}" reason="commits_not_pushed" step="commits_pushed"
     fi
     if verify_replies_posted; then
       replies_ok=true
@@ -790,27 +795,29 @@ process_reviews() {
     fi
     if verify_build_passes; then
       emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
-        "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
+        "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="build_passes"
     else
       verify_ok=false
       emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
         "build verification failed for batch p${POLL_COUNT}" \
-        commentId="batch-p${POLL_COUNT}" reason="build_or_commits_failed"
+        commentId="batch-p${POLL_COUNT}" reason="build_or_commits_failed" step="build_passes"
     fi
   elif [[ "$review_result" == "BLOCKED" ]]; then
     warn "Agent is blocked. No verification possible."
-    emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
-      "Agent blocked" reason="BLOCKED" lastPoll="$POLL_COUNT"
-    exit 1
+    emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
+      "agent blocked, skipping verification" \
+      commentId="batch-p${POLL_COUNT}" reason="BLOCKED"
+    verify_ok=false
+    BLOCKED_EXIT=true
   else
     warn "Unknown result '${review_result}'. Running full verification."
     if verify_commits_pushed "$pre_sha" "$PR_BRANCH"; then
       emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
-        "commits pushed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
+        "commits pushed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="commits_pushed"
     else
       verify_ok=false
       emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
-        "commits not pushed" commentId="batch-p${POLL_COUNT}" reason="commits_not_pushed"
+        "commits not pushed" commentId="batch-p${POLL_COUNT}" reason="commits_not_pushed" step="commits_pushed"
     fi
     if verify_replies_posted; then
       replies_ok=true
@@ -824,12 +831,12 @@ process_reviews() {
     fi
     if verify_build_passes; then
       emit_event "pr-review-poll" "info" "pr-review-poll.verification.passed" \
-        "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
+        "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="build_passes"
     else
       verify_ok=false
       emit_event "pr-review-poll" "error" "pr-review-poll.verification.failed" \
         "build verification failed" \
-        commentId="batch-p${POLL_COUNT}" reason="build_or_commits_failed"
+        commentId="batch-p${POLL_COUNT}" reason="build_or_commits_failed" step="build_passes"
     fi
   fi
 
@@ -873,6 +880,8 @@ process_reviews() {
 POLL_COUNT=0
 TOTAL_POLLS=0
 LAST_REMOTE_SHA=""
+BLOCKED_EXIT=false
+ALL_REVIEWS_RESOLVED=false
 # Hard ceiling on total iterations regardless of resets — protects against
 # pathological loops where every push attracts a new comment.
 MAX_TOTAL_POLLS="${MAX_TOTAL_POLLS:-30}"
@@ -884,8 +893,12 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   git fetch origin "$PR_BRANCH" 2>/dev/null || true
   CURRENT_REMOTE_SHA=$(git rev-parse "origin/${PR_BRANCH}" 2>/dev/null || echo "")
   if [[ -n "$LAST_REMOTE_SHA" && -n "$CURRENT_REMOTE_SHA" && "$CURRENT_REMOTE_SHA" != "$LAST_REMOTE_SHA" ]]; then
+    local _PREV_POLL_COUNT=$POLL_COUNT
     log "Branch advanced (${LAST_REMOTE_SHA:0:7} → ${CURRENT_REMOTE_SHA:0:7}); resetting poll budget."
     POLL_COUNT=0
+    emit_event "pr-review-poll" "info" "pr-review-poll.poll.reset" \
+      "poll budget reset due to branch advance" \
+      previousPollCount="$_PREV_POLL_COUNT" newPollCount="0"
   fi
   LAST_REMOTE_SHA="$CURRENT_REMOTE_SHA"
 
@@ -894,17 +907,24 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   log "=== Poll $POLL_COUNT/$MAX_POLLS (total: $TOTAL_POLLS/$MAX_TOTAL_POLLS) ==="
   emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" \
     "poll ${POLL_COUNT}/${MAX_POLLS} for PR #${PR_NUMBER}" \
-    prNumber="$PR_NUMBER" poll="$POLL_COUNT" maxPolls="$MAX_POLLS"
+    prNumber="$PR_NUMBER" poll="$POLL_COUNT" maxPolls="$MAX_POLLS" totalPolls="$TOTAL_POLLS" maxTotalPolls="$MAX_TOTAL_POLLS"
 
   review_ec=0
   process_reviews || review_ec=$?
 
   case $review_ec in
-    0) log "Reviews processed and verified successfully." ;;
+    0) log "Reviews processed and verified successfully."
+       ALL_REVIEWS_RESOLVED=true ;;
     1) log "No new reviews to process (poll $POLL_COUNT/$MAX_POLLS)." ;;
     2) warn "Reviews processed but some verifications failed (poll $POLL_COUNT/$MAX_POLLS)." ;;
     *) warn "process_reviews exited with unexpected code ${review_ec}" ;;
   esac
+
+  if $BLOCKED_EXIT; then
+    emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
+      "Agent blocked" reason="BLOCKED" lastPoll="$POLL_COUNT"
+    break
+  fi
 
   # Intentionally do NOT update LAST_REMOTE_SHA here — leave it as the
   # SHA observed at the *start* of this iteration. If the agent pushed
@@ -915,28 +935,36 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
     break
   fi
 
-  PROCESSED_COUNT=$(wc -l < "$PROCESSED_IDS_FILE" 2>/dev/null | tr -d ' ')
+  PROCESSED_COUNT=0
+  if [[ -f "$PROCESSED_IDS_FILE" ]]; then
+    PROCESSED_COUNT=$(wc -l < "$PROCESSED_IDS_FILE" | tr -d ' ')
+  fi
   PENDING_COUNT=0
   if [[ -s "$REPLIED_IDS_FILE" ]]; then
     PENDING_COUNT=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
   fi
   emit_event "pr-review-poll" "info" "pr-review-poll.poll.completed" \
     "poll ${POLL_COUNT} complete" \
-    poll="$POLL_COUNT" processed="${PROCESSED_COUNT:-0}" pending="$PENDING_COUNT"
+    poll="$POLL_COUNT" processed="$PROCESSED_COUNT" pending="$PENDING_COUNT"
 
   log "Sleeping ${POLL_INTERVAL}s until next poll..."
   sleep "$POLL_INTERVAL"
 done
 
-TOTAL_PROCESSED=$(wc -l < "$PROCESSED_IDS_FILE" 2>/dev/null | tr -d ' ')
-if [[ $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
+TOTAL_PROCESSED=0
+if [[ -f "$PROCESSED_IDS_FILE" ]]; then
+  TOTAL_PROCESSED=$(wc -l < "$PROCESSED_IDS_FILE" | tr -d ' ')
+fi
+if $BLOCKED_EXIT; then
+  : # Already emitted run.failed above before break
+elif [[ $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "reached MAX_TOTAL_POLLS hard ceiling (${MAX_TOTAL_POLLS})" \
     reason="max_total_polls" lastPoll="$POLL_COUNT"
-elif [[ $review_ec -eq 0 ]]; then
+elif $ALL_REVIEWS_RESOLVED || [[ $review_ec -eq 1 ]]; then
   emit_event "pr-review-poll" "info" "pr-review-poll.run.completed" \
     "PR review poll finished" \
-    totalProcessed="${TOTAL_PROCESSED:-0}" terminalReason="ALL_DONE"
+    totalProcessed="${TOTAL_PROCESSED}" terminalReason="ALL_DONE"
 else
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "PR review poll exhausted poll budget" \
