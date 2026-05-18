@@ -29,21 +29,17 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     const limit =
       req.query.limit !== undefined && req.query.limit !== ''
         ? Math.min(Math.max(1, Number(req.query.limit)), MAX_LIMIT)
-        : undefined;
+        : 25;
     const offset =
       req.query.offset !== undefined && req.query.offset !== ''
         ? Math.max(0, Number(req.query.offset))
-        : undefined;
-    const pagination =
-      limit !== undefined || offset !== undefined
-        ? { limit: limit ?? 25, offset: offset ?? 0 }
-        : undefined;
-    const { runs, total } = c.runRepository.list(pagination);
+        : 0;
+    const { runs, total } = c.runRepository.list({ limit, offset });
     return {
       runs: runs.map(serializeRun),
       total,
-      limit: limit ?? 25,
-      offset: offset ?? 0,
+      limit,
+      offset,
     };
   });
 

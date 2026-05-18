@@ -1,7 +1,9 @@
-import type { RunRecord } from '@ai-sdlc/infrastructure';
-import type { FailureRepository } from '@ai-sdlc/infrastructure';
+import type { Container } from './compose.js';
 
-export function serializeRun(r: RunRecord) {
+type RunItem = ReturnType<Container['runRepository']['list']>['runs'][number];
+type FailureItem = NonNullable<ReturnType<Container['failureRepository']['findLatestByRun']>>;
+
+export function serializeRun(r: RunItem) {
   return {
     uuid: r.uuid,
     displayId: r.displayId,
@@ -17,7 +19,7 @@ export function serializeRun(r: RunRecord) {
   };
 }
 
-export function serializeFailure(f: NonNullable<ReturnType<FailureRepository['findLatestByRun']>>) {
+export function serializeFailure(f: FailureItem) {
   return {
     kind: f.kind,
     message: f.message,
