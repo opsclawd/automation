@@ -69,10 +69,9 @@ source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 # Invariant: _emit_phase_started must always be called before _emit_phase_done
 # in the same phase block. orchestrator_fail always exits the script, so a
 # missing _emit_phase_done on failure paths is acceptable (phase.failed
-# supersedes phase.completed). This variable holds the start time of the
+# supersedes phase.completed). _LAST_PHASE_START_MS holds the start time of the
 # current (most recently started) phase only.
-# current (most recently started) phase only.
-_PHASE_START_MS=0
+_LAST_PHASE_START_MS=0
 _HAS_NANOSECONDS=false
 if date +%N >/dev/null 2>&1 && [[ "$(date +%N)" != "N" ]]; then
   _HAS_NANOSECONDS=true
@@ -86,14 +85,14 @@ _now_ms() {
 }
 _emit_phase_started() {
   local phase=$1
-  _PHASE_START_MS=$(_now_ms)
+  _LAST_PHASE_START_MS=$(_now_ms)
   emit_event "$phase" "info" "phase.started" "phase ${phase} started"
 }
 _emit_phase_done() {
   local phase=$1
   local now ms_dur=0
   now=$(_now_ms)
-  ms_dur=$(( now - _PHASE_START_MS ))
+  ms_dur=$(( now - _LAST_PHASE_START_MS ))
   (( ms_dur < 0 )) && ms_dur=0
   emit_event "$phase" "info" "phase.completed" "phase ${phase} completed" durationMs="$ms_dur"
 }
