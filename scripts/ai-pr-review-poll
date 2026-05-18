@@ -571,6 +571,7 @@ process_reviews() {
         : > "$REPLIED_IDS_FILE"
         resolve_threads $promoted_ids
         log "All checks passed; promoted ${pending_count} ID(s) from REPLIED to PROCESSED."
+        LAST_REVIEW_RESULT="NO_FIXES_NEEDED"
         return 0
       else
         warn "Verification still failing; ${pending_count} ID(s) remain in REPLIED for next poll."
