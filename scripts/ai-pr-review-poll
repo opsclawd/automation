@@ -50,6 +50,18 @@ warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_
 # shellcheck source=lib/emit_event.sh
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 
+_HAS_NANOSECONDS=false
+if date +%N >/dev/null 2>&1 && [[ "$(date +%N)" != "N" ]]; then
+  _HAS_NANOSECONDS=true
+fi
+_now_ms() {
+  if [[ "$_HAS_NANOSECONDS" == "true" ]]; then
+    echo $(( $(date +%s%N) / 1000000 ))
+  else
+    echo $(( $(date +%s) * 1000 ))
+  fi
+}
+
 log "=== PR review poll starting (PR #${PR_NUMBER}, max_polls=${MAX_POLLS}, interval=${POLL_INTERVAL}s) ==="
 log "PID: $$"
 log "ISSUES_DIR: ${ISSUES_DIR}"
