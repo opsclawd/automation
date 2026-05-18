@@ -13,7 +13,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         return reply.code(400).send({ error: 'limit must be a positive integer' });
       }
       const n = Number(req.query.limit);
-      if (n < 1) {
+      if (!Number.isFinite(n) || n < 1) {
         return reply.code(400).send({ error: 'limit must be a positive integer' });
       }
     }
@@ -22,7 +22,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         return reply.code(400).send({ error: 'offset must be a non-negative integer' });
       }
       const n = Number(req.query.offset);
-      if (n < 0) {
+      if (!Number.isFinite(n) || n < 0) {
         return reply.code(400).send({ error: 'offset must be a non-negative integer' });
       }
     }

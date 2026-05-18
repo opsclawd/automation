@@ -34,6 +34,7 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
 
   async function handleToggle() {
     if (state === 'loaded' || state === 'loading' || state === 'no-preview') {
+      reqId.current++;
       setState('closed');
       setContent('');
       return;
