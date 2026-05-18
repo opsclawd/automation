@@ -87,7 +87,7 @@ describe('EventTailer', () => {
     await new Promise((r) => setTimeout(r, 100));
     writeFileSync(path, ev('b') + '\n');
     await waitUntil(() => seen.length >= 2, 3000);
-    expect(seen.map((e) => e.type)).toContain('b');
+    expect(seen.map((e) => e.type)).toEqual(['a', 'b']);
     await tailer.stop();
   });
 
