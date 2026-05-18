@@ -530,8 +530,13 @@ process_reviews() {
     comments="$all_comments"
   fi
 
+  local total_comment_count
+  total_comment_count=$(echo "$all_comments" | jq 'length' 2>/dev/null || echo 0)
   local comment_count
   comment_count=$(echo "$comments" | jq 'length')
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.comments.fetched" \
+    "fetched ${total_comment_count} comments, ${comment_count} unprocessed" \
+    total="$total_comment_count" unprocessed="$comment_count"
 
   if [[ $comment_count -eq 0 ]]; then
     # No new comments. But if any IDs are in REPLIED (replies posted, build
