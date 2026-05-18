@@ -259,4 +259,128 @@ describe('GET /api/runs/:runId/events/stream', () => {
     expect(body).not.toContain('"run.started"');
     expect(body).toContain('phase.completed');
   });
+
+  it('receives live events published during backfill (no race window)', async () => {
+    const { container, port } = await bootServer();
+    const result = await container.startIssueRun.execute({ issueNumber: 104 });
+    container.eventRepository.insert({
+      runUuid: result.uuid,
+      level: 'info',
+      type: 'run.started',
+      message: 'begin',
+      timestamp: new Date('2026-05-16T12:00:00.000Z'),
+    });
+
+    // Publish a live event on the bus while backfill is happening.
+    // Because subscribe-before-backfill is used, this event is queued
+    // during backfill and sent after backfill completes, with dedup
+    // against backfilled events.
+    const liveEvent_ts = '2026-05-16T12:00:01.000Z';
+
+    const body = await new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const req = http.get(
+        `http://127.0.0.1:${port}/api/runs/${result.uuid}/events/stream`,
+        (res) => {
+          expect(res.statusCode).toBe(200);
+          let data = '';
+
+          // Publish immediately — the subscribe-before-backfill approach
+          // means the bus subscription is already active, so this event
+          // gets queued during backfill and sent afterward.
+          container.eventBus.publish(result.uuid, {
+            runId: result.displayId,
+            level: 'info',
+            type: 'phase.completed',
+            message: 'live-during-backfill',
+            timestamp: liveEvent_ts,
+            metadata: {},
+          });
+
+          res.on('data', (chunk: Buffer) => {
+            data += chunk.toString();
+            if (data.includes('phase.completed')) {
+              clearTimeout(timer);
+              req.destroy();
+              resolve(data);
+            }
+          });
+          timer = setTimeout(() => {
+            req.destroy();
+            resolve(data);
+          }, 3000);
+        },
+      );
+      req.on('error', (err) => reject(err));
+    });
+
+    // Both backfilled and live-during-backfill events should appear
+    expect(body).toContain('run.started');
+    expect(body).toContain('phase.completed');
+    expect(body).toContain('live-during-backfill');
+  });
+
+  it('deduplicates live event against backfill when timestamps match', async () => {
+    const { container, port } = await bootServer();
+    const result = await container.startIssueRun.execute({ issueNumber: 105 });
+    const ts = '2026-05-16T12:00:00.000Z';
+    container.eventRepository.insert({
+      runUuid: result.uuid,
+      level: 'info',
+      type: 'run.started',
+      message: 'begin',
+      timestamp: new Date(ts),
+    });
+
+    const body = await new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const req = http.get(
+        `http://127.0.0.1:${port}/api/runs/${result.uuid}/events/stream`,
+        (res) => {
+          expect(res.statusCode).toBe(200);
+          let data = '';
+
+          // Publish a live event with the same timestamp as the backfilled event.
+          // It should be deduplicated (skipped) since ev.timestamp <= lastTimestamp.
+          container.eventBus.publish(result.uuid, {
+            runId: result.displayId,
+            level: 'info',
+            type: 'run.started',
+            message: 'duplicate',
+            timestamp: ts,
+            metadata: {},
+          });
+
+          // Also publish a newer event that should NOT be deduped
+          container.eventBus.publish(result.uuid, {
+            runId: result.displayId,
+            level: 'info',
+            type: 'phase.completed',
+            message: 'after-backfill',
+            timestamp: '2026-05-16T12:00:01.000Z',
+            metadata: {},
+          });
+
+          res.on('data', (chunk: Buffer) => {
+            data += chunk.toString();
+            if (data.includes('phase.completed')) {
+              clearTimeout(timer);
+              req.destroy();
+              resolve(data);
+            }
+          });
+          timer = setTimeout(() => {
+            req.destroy();
+            resolve(data);
+          }, 3000);
+        },
+      );
+      req.on('error', (err) => reject(err));
+    });
+
+    expect(body).toContain('run.started');
+    expect(body).toContain('phase.completed');
+    expect(body).not.toContain('duplicate');
+    expect(body).toContain('after-backfill');
+  });
 });
