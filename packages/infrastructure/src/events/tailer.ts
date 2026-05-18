@@ -66,12 +66,12 @@ export class EventTailer {
       try {
         const len = stat.size - this.offset;
         const buf = Buffer.alloc(len);
-        await fh.read(buf, 0, len, this.offset);
-        this.buffer += buf.toString('utf8');
-        // Advance offset only after buffer is successfully processed
-        // so that a failed flush doesn't skip data on the next tick.
+        const { bytesRead } = await fh.read(buf, 0, len, this.offset);
+        if (bytesRead > 0) {
+          this.buffer += buf.toString('utf8', 0, bytesRead);
+        }
         this.flushLines();
-        this.offset = stat.size;
+        this.offset += bytesRead;
       } finally {
         await fh.close();
       }
