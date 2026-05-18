@@ -89,27 +89,37 @@ export function buildProgram(): Command {
       '--db-path <path>',
       'Override database path (default: <repoRoot>/.ai-runs/orchestrator.sqlite)',
     )
-    .action(async (opts: { port: number; script?: string; repoRoot?: string; dbPath?: string }) => {
-      const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
-      const scriptPath = opts.script
-        ? isAbsolute(opts.script)
-          ? opts.script
-          : resolve(repoRoot, opts.script)
-        : join(repoRoot, 'scripts', 'ai-run-issue-v2');
-      const composeOpts: ComposeOptions = { repoRoot, scriptPath };
-      if (opts.dbPath) composeOpts.dbPath = opts.dbPath;
-      const c = composeRoot(composeOpts);
-      const { startServer } = await import('./server.js');
-      const server = await startServer({ container: c, port: opts.port });
-      const addr = server.address as { port: number };
-      console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
-      const shutdown = async () => {
-        await server.stop();
-        process.exit(0);
-      };
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
-    });
+    .option('--runs-dir <path>', 'Override runs directory (default: <repoRoot>/.ai-runs)')
+    .action(
+      async (opts: {
+        port: number;
+        script?: string;
+        repoRoot?: string;
+        dbPath?: string;
+        runsDir?: string;
+      }) => {
+        const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
+        const scriptPath = opts.script
+          ? isAbsolute(opts.script)
+            ? opts.script
+            : resolve(repoRoot, opts.script)
+          : join(repoRoot, 'scripts', 'ai-run-issue-v2');
+        const composeOpts: ComposeOptions = { repoRoot, scriptPath };
+        if (opts.dbPath) composeOpts.dbPath = opts.dbPath;
+        if (opts.runsDir) composeOpts.runsDir = opts.runsDir;
+        const c = composeRoot(composeOpts);
+        const { startServer } = await import('./server.js');
+        const server = await startServer({ container: c, port: opts.port });
+        const addr = server.address as { port: number };
+        console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
+        const shutdown = async () => {
+          await server.stop();
+          process.exit(0);
+        };
+        process.on('SIGINT', shutdown);
+        process.on('SIGTERM', shutdown);
+      },
+    );
 
   return program;
 }

@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..');
-const TEST_DB_PATH = join(REPO_ROOT, '.ai-runs', 'orchestrator-test.sqlite');
+const TEST_AI_DIR = join(REPO_ROOT, 'test-results', 'e2e');
+const TEST_DB_PATH = join(TEST_AI_DIR, 'orchestrator-test.sqlite');
 
 export default defineConfig({
   testDir: './e2e',
@@ -13,9 +14,9 @@ export default defineConfig({
   globalSetup: './e2e/globalSetup.ts',
   webServer: [
     {
-      // API server: uses --db-path to point at the isolated test database
-      // so e2e globalSetup seed data doesn't collide with development data.
-      command: `pnpm --filter @ai-sdlc/api dev serve --port 4319 --db-path ${TEST_DB_PATH}`,
+      // API server: uses --db-path and --runs-dir to point at the isolated
+      // test directory so e2e seed data doesn't collide with development data.
+      command: `pnpm --filter @ai-sdlc/api dev serve --port 4319 --db-path ${TEST_DB_PATH} --runs-dir ${TEST_AI_DIR}`,
       url: 'http://127.0.0.1:4319/api/runs',
       cwd: '../..',
       reuseExistingServer: false,

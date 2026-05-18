@@ -35,10 +35,11 @@ export interface ComposeOptions {
   agentCli?: string;
   tee?: boolean;
   dbPath?: string;
+  runsDir?: string;
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
-  const runsDir = join(opts.repoRoot, '.ai-runs');
+  const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);

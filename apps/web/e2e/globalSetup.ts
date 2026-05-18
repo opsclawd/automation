@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
-const DB_PATH = join(REPO_ROOT, '.ai-runs', 'orchestrator-test.sqlite');
-const RUNS_DIR = join(REPO_ROOT, '.ai-runs');
+const TEST_AI_DIR = join(REPO_ROOT, 'test-results', 'e2e');
+const DB_PATH = join(TEST_AI_DIR, 'orchestrator-test.sqlite');
+const RUNS_DIR = TEST_AI_DIR;
 
 const MIGRATION_SQL = `
 CREATE TABLE IF NOT EXISTS schema_version (
