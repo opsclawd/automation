@@ -155,6 +155,18 @@ describe('routes', () => {
     expect(r.status).toBe(400);
   });
 
+  it('returns 400 for unsafe-integer limit (exceeds MAX_SAFE_INTEGER)', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?limit=9007199254740993`);
+    expect(r.status).toBe(400);
+  });
+
+  it('returns 400 for unsafe-integer offset (exceeds MAX_SAFE_INTEGER)', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?offset=9007199254740993`);
+    expect(r.status).toBe(400);
+  });
+
   it('clamps limit to max of 100', async () => {
     const { baseUrl } = await bootServer({ withRun: true });
     const r = await fetch(`${baseUrl}/api/runs?limit=999999`);
