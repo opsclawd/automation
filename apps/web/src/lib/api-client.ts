@@ -75,6 +75,6 @@ export async function listRunEvents(runUuid: string, since?: string): Promise<Ap
   const base = typeof window === 'undefined' ? apiUrl : '';
   const qs = since ? `?since=${encodeURIComponent(since)}` : '';
   const r = await fetch(`${base}/api/runs/${runUuid}/events${qs}`, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`listRunEvents failed: ${r.status}`);
+  if (!r.ok) throw new Error(`failed to load run events: ${r.status}`);
   return ((await r.json()) as { events: ApiEvent[] }).events;
 }
