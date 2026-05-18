@@ -1,4 +1,5 @@
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,6 +10,7 @@ async function bootServer(): Promise<{
   baseUrl: string;
   container: Container;
   stop: () => Promise<void>;
+  port: number;
 }> {
   const repoRoot = mkdtempSync(join(tmpdir(), 'ai-orch-events-'));
   tempDirs.push(repoRoot);
@@ -19,7 +21,12 @@ async function bootServer(): Promise<{
   const server = await startServer({ container, port: 0, forceCloseAllOnStop: true });
   stoppers.push(server.stop);
   const address = server.address as { port: number };
-  return { baseUrl: `http://127.0.0.1:${address.port}`, container, stop: server.stop };
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    container,
+    stop: server.stop,
+    port: address.port,
+  };
 }
 
 const stoppers: Array<() => Promise<void>> = [];
@@ -99,5 +106,157 @@ describe('GET /api/runs/:runId/events', () => {
     const result = await container.startIssueRun.execute({ issueNumber: 97 });
     const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events?since=garbage`);
     expect(r.status).toBe(400);
+  });
+});
+
+describe('GET /api/runs/:runId/events/stream', () => {
+  it('returns 400 for invalid runId', async () => {
+    const { baseUrl } = await bootServer();
+    const r = await fetch(`${baseUrl}/api/runs/not-a-uuid/events/stream`);
+    expect(r.status).toBe(400);
+  });
+
+  it('returns 404 for unknown run', async () => {
+    const { baseUrl } = await bootServer();
+    const r = await fetch(`${baseUrl}/api/runs/00000000-0000-0000-0000-000000000000/events/stream`);
+    expect(r.status).toBe(404);
+  });
+
+  it('returns SSE stream with backfilled events', async () => {
+    const { container, port } = await bootServer();
+    const result = await container.startIssueRun.execute({ issueNumber: 101 });
+    container.eventRepository.insert({
+      runUuid: result.uuid,
+      level: 'info',
+      type: 'run.started',
+      message: 'begin',
+      timestamp: new Date('2026-05-16T12:00:00.000Z'),
+    });
+
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.get(
+        `http://127.0.0.1:${port}/api/runs/${result.uuid}/events/stream`,
+        (res) => {
+          expect(res.statusCode).toBe(200);
+          expect(res.headers['content-type']).toMatch(/text\/event-stream/);
+          let data = '';
+          res.on('data', (chunk: Buffer) => {
+            data += chunk.toString();
+            if (data.includes('run.started')) {
+              req.destroy();
+              resolve(data);
+            }
+          });
+          setTimeout(() => {
+            req.destroy();
+            resolve(data);
+          }, 2000);
+        },
+      );
+      req.on('error', reject);
+    });
+
+    expect(body).toContain('run.started');
+    expect(body).toContain('id:');
+    expect(body).toContain('data:');
+  });
+
+  it('sends live events via event bus after backfill', async () => {
+    const { container, port } = await bootServer();
+    const result = await container.startIssueRun.execute({ issueNumber: 102 });
+
+    const body = await new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const req = http.get(
+        `http://127.0.0.1:${port}/api/runs/${result.uuid}/events/stream`,
+        (res) => {
+          expect(res.statusCode).toBe(200);
+          let data = '';
+          // Wait for initial response, then publish a live event
+          // The subscription is registered synchronously in the route handler,
+          // so by the time we receive data chunks, subscribe is active.
+          // Use a small delay to ensure the Node HTTP response callback has fired
+          // and the handler has fully executed.
+          setTimeout(() => {
+            container.eventBus.publish(result.uuid, {
+              runId: result.displayId,
+              level: 'info',
+              type: 'phase.started',
+              message: 'planning',
+              timestamp: '2026-05-16T12:00:02.000Z',
+              metadata: {},
+            });
+          }, 50);
+
+          res.on('data', (chunk: Buffer) => {
+            data += chunk.toString();
+            if (data.includes('phase.started')) {
+              clearTimeout(timer);
+              req.destroy();
+              resolve(data);
+            }
+          });
+          timer = setTimeout(() => {
+            req.destroy();
+            resolve(data);
+          }, 3000);
+        },
+      );
+      req.on('error', (err) => reject(err));
+    });
+
+    expect(body).toContain('phase.started');
+  });
+
+  it('skips events already sent during backfill (dedup on reconnect)', async () => {
+    const { container, port } = await bootServer();
+    const result = await container.startIssueRun.execute({ issueNumber: 103 });
+    const ts = '2026-05-16T12:00:00.000Z';
+    container.eventRepository.insert({
+      runUuid: result.uuid,
+      level: 'info',
+      type: 'run.started',
+      message: 'begin',
+      timestamp: new Date(ts),
+    });
+
+    const body = await new Promise<string>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>;
+      const req = http.get(
+        `http://127.0.0.1:${port}/api/runs/${result.uuid}/events/stream?since=${encodeURIComponent(ts)}`,
+        (res) => {
+          expect(res.statusCode).toBe(200);
+          let data = '';
+
+          setTimeout(() => {
+            container.eventBus.publish(result.uuid, {
+              runId: result.displayId,
+              level: 'info',
+              type: 'phase.completed',
+              message: 'done',
+              timestamp: '2026-05-16T12:00:01.000Z',
+              metadata: {},
+            });
+          }, 50);
+
+          res.on('data', (chunk: Buffer) => {
+            data += chunk.toString();
+            if (data.includes('phase.completed')) {
+              clearTimeout(timer);
+              req.destroy();
+              resolve(data);
+            }
+          });
+          timer = setTimeout(() => {
+            req.destroy();
+            resolve(data);
+          }, 3000);
+        },
+      );
+      req.on('error', (err) => reject(err));
+    });
+
+    expect(body).not.toContain('"run.started"');
+    expect(body).toContain('phase.completed');
   });
 });
