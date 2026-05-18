@@ -85,17 +85,21 @@ export class StartIssueRun {
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
 
     const onEvent = (e: OrchestratorEvent): void => {
-      const insertInput: Parameters<EventRepositoryPort['insert']>[0] = {
-        runUuid: run.uuid,
-        level: e.level,
-        type: e.type,
-        message: e.message,
-        metadata: e.metadata,
-        timestamp: new Date(e.timestamp),
-      };
-      if (e.phase !== undefined) insertInput.phase = e.phase;
-      this.deps.eventRepository.insert(insertInput);
-      this.deps.eventBus.publish(run.uuid, e);
+      try {
+        const insertInput: Parameters<EventRepositoryPort['insert']>[0] = {
+          runUuid: run.uuid,
+          level: e.level,
+          type: e.type,
+          message: e.message,
+          metadata: e.metadata,
+          timestamp: new Date(e.timestamp),
+        };
+        if (e.phase !== undefined) insertInput.phase = e.phase;
+        this.deps.eventRepository.insert(insertInput);
+        this.deps.eventBus.publish(run.uuid, e);
+      } catch (err) {
+        logger.error(`Failed to process event for run ${run.displayId}`, err);
+      }
     };
     const tailer = this.deps.createEventTailer({
       path: dir.paths.eventsJsonlPath,
@@ -217,7 +221,11 @@ export class StartIssueRun {
         status: finalStatus,
       };
     } finally {
-      await tailer.drainAndStop();
+      try {
+        await tailer.drainAndStop();
+      } catch (e) {
+        logger.error('Failed to drain event tailer', e);
+      }
     }
   }
 }

@@ -14,10 +14,11 @@ export class InMemoryEventBus {
       emitter.setMaxListeners(0);
       this.emitters.set(runUuid, emitter);
     }
-    emitter.on('event', listener);
+    const em = emitter;
+    em.on('event', listener);
     return () => {
-      emitter!.off('event', listener);
-      if (emitter!.listenerCount('event') === 0) {
+      em.off('event', listener);
+      if (em.listenerCount('event') === 0) {
         this.emitters.delete(runUuid);
       }
     };
@@ -25,6 +26,15 @@ export class InMemoryEventBus {
 
   publish(runUuid: string, event: OrchestratorEvent): void {
     const emitter = this.emitters.get(runUuid);
-    if (emitter) emitter.emit('event', event);
+    if (!emitter) return;
+    const listeners = emitter.listeners('event') as EventListener[];
+    for (const listener of listeners) {
+      try {
+        listener(event);
+      } catch {
+        // Swallow listener errors to prevent one broken subscriber
+        // from crashing the publisher or other subscribers.
+      }
+    }
   }
 }

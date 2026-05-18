@@ -18,6 +18,7 @@ import {
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
+  type EventBusPort,
 } from '@ai-sdlc/application';
 
 const classifyExitAdapter: ClassifyExitFn = (input) => {
@@ -32,7 +33,7 @@ export interface Container {
   failureRepository: FailureRepository;
   startIssueRun: StartIssueRun;
   runsDir: string;
-  eventBus: InMemoryEventBus;
+  eventBus: EventBusPort;
 }
 
 export interface ComposeOptions {

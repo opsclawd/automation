@@ -124,6 +124,13 @@ describe('GET /api/runs/:runId/events/stream', () => {
     expect(r.status).toBe(404);
   });
 
+  it('returns 400 for invalid since cursor on SSE stream', async () => {
+    const { baseUrl, container } = await bootServer();
+    const result = await container.startIssueRun.execute({ issueNumber: 106 });
+    const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events/stream?since=garbage`);
+    expect(r.status).toBe(400);
+  });
+
   it('returns SSE stream with backfilled events', async () => {
     const { container, port } = await bootServer();
     const result = await container.startIssueRun.execute({ issueNumber: 101 });
@@ -262,7 +269,7 @@ describe('GET /api/runs/:runId/events/stream', () => {
     expect(body).toContain('phase.completed');
   });
 
-  it('receives live events published during backfill (no race window)', async () => {
+  it('receives live events published after SSE connection is established', async () => {
     const { container, port } = await bootServer();
     const result = await container.startIssueRun.execute({ issueNumber: 104 });
     container.eventRepository.insert({
@@ -408,6 +415,7 @@ exit 0
     const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events`);
     expect(r.status).toBe(200);
     const body = (await r.json()) as { events: Array<{ type: string }> };
+    expect(body.events.length).toBeGreaterThanOrEqual(2);
     expect(body.events.map((e) => e.type)).toContain('run.started');
     expect(body.events.map((e) => e.type)).toContain('run.completed');
   });

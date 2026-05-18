@@ -3,7 +3,7 @@ import type { Db } from './database.js';
 export interface EventRow {
   id: number;
   runUuid: string;
-  phase?: string | undefined;
+  phase?: string;
   level: string;
   type: string;
   message: string;

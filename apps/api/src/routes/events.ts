@@ -33,6 +33,14 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       const run = c.runRepository.findByUuid(req.params.runId);
       if (!run) return reply.code(404).send({ error: 'not_found' });
 
+      // Validate `since` parameter before committing to the SSE stream
+      // so we can return proper 400 errors instead of sending 200 then ending.
+      if (req.query.since !== undefined && Number.isNaN(Date.parse(req.query.since))) {
+        return reply
+          .code(400)
+          .send({ error: 'invalid_since', message: 'since must be a valid ISO 8601 timestamp' });
+      }
+
       // Hijack the reply to take over raw socket control for SSE streaming.
       // Fastify should not manage the response lifecycle after this point.
       reply.hijack();
@@ -44,18 +52,26 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       });
       reply.raw.flushHeaders();
 
+      let streamClosed = false;
       const sseSend = (id: number | string, payload: unknown): void => {
-        reply.raw.write(`id: ${id}\ndata: ${JSON.stringify(payload)}\n\n`);
+        if (streamClosed) return;
+        try {
+          reply.raw.write(`id: ${id}\ndata: ${JSON.stringify(payload)}\n\n`);
+        } catch {
+          cleanup();
+        }
       };
 
       // Subscribe BEFORE backfill to eliminate the race window where events
       // published between backfill completion and bus subscription are lost.
       // Live events received during backfill are queued and deduplicated after.
-      let lastTimestamp: string | undefined;
+      let lastTimestamp: string | null = null;
+      let backfillComplete = false;
       const liveQueue: OrchestratorEvent[] = [];
       const unsub = c.eventBus.subscribe(req.params.runId, (ev: OrchestratorEvent) => {
-        if (lastTimestamp !== undefined && ev.timestamp <= lastTimestamp) return;
-        if (lastTimestamp === undefined) {
+        if (streamClosed) return;
+        if (backfillComplete && lastTimestamp !== null && ev.timestamp <= lastTimestamp) return;
+        if (!backfillComplete) {
           // Still in backfill phase — queue for later.
           liveQueue.push(ev);
         } else {
@@ -75,6 +91,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       try {
         backfillEvents = c.eventRepository.listByRunSince(req.params.runId, req.query.since);
       } catch {
+        sseSend('error', { error: 'invalid_since' });
         unsub();
         reply.raw.end();
         return;
@@ -89,15 +106,14 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       // reconnecting with ?since=<that timestamp> may miss one event.
       // A future story can add (timestamp, id) total-order cursors.
 
-      // Mark backfill phase complete so the bus listener switches to direct-send.
-      // If no backfill events were sent, use empty string so that all live events
-      // pass the timestamp comparison (any non-empty ISO string > '').
-      if (lastTimestamp === undefined) lastTimestamp = '';
+      // Mark backfill complete so the bus listener switches to direct-send.
+      backfillComplete = true;
 
       // Drain the live queue — events buffered during backfill are deduplicated
       // against lastTimestamp (skip any with timestamp <= lastTimestamp).
+      // If lastTimestamp is null (no backfill events), all live events are sent.
       for (const ev of liveQueue) {
-        if (lastTimestamp !== '' && ev.timestamp <= lastTimestamp) continue;
+        if (lastTimestamp !== null && ev.timestamp <= lastTimestamp) continue;
         sseSend(ev.timestamp, {
           runId: run.displayId,
           phase: ev.phase ?? null,
@@ -110,15 +126,28 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       }
 
       const heartbeat = setInterval(() => {
-        reply.raw.write(': hb\n\n');
+        if (streamClosed) return;
+        try {
+          reply.raw.write(': hb\n\n');
+        } catch {
+          cleanup();
+        }
       }, 15_000);
 
-      req.raw.on('close', () => {
+      function cleanup() {
+        if (streamClosed) return;
+        streamClosed = true;
         clearInterval(heartbeat);
         unsub();
+      }
+
+      req.raw.on('close', () => {
+        cleanup();
       });
 
-      return reply;
+      reply.raw.on('error', () => {
+        cleanup();
+      });
     },
   );
 }

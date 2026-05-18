@@ -40,37 +40,43 @@ export class EventTailer {
   }
 
   private async tick(): Promise<void> {
-    let stat: Awaited<ReturnType<typeof fs.stat>>;
     try {
-      stat = await fs.stat(this.path);
+      let stat: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        stat = await fs.stat(this.path);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+        throw err;
+      }
+      if (stat.size < this.offset) {
+        this.offset = 0;
+        this.buffer = '';
+      } else if (
+        this.lastMtimeMs > 0 &&
+        stat.mtimeMs > this.lastMtimeMs &&
+        stat.size > 0 &&
+        stat.size <= this.offset
+      ) {
+        this.offset = 0;
+        this.buffer = '';
+      }
+      this.lastMtimeMs = stat.mtimeMs;
+      if (stat.size === this.offset) return;
+      const fh = await fs.open(this.path, 'r');
+      try {
+        const len = stat.size - this.offset;
+        const buf = Buffer.alloc(len);
+        await fh.read(buf, 0, len, this.offset);
+        this.buffer += buf.toString('utf8');
+        // Advance offset only after buffer is successfully processed
+        // so that a failed flush doesn't skip data on the next tick.
+        this.flushLines();
+        this.offset = stat.size;
+      } finally {
+        await fh.close();
+      }
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw err;
-    }
-    if (stat.size < this.offset) {
-      this.offset = 0;
-      this.buffer = '';
-    } else if (
-      this.lastMtimeMs > 0 &&
-      stat.mtimeMs > this.lastMtimeMs &&
-      stat.size > 0 &&
-      stat.size <= this.offset
-    ) {
-      this.offset = 0;
-      this.buffer = '';
-    }
-    this.lastMtimeMs = stat.mtimeMs;
-    if (stat.size === this.offset) return;
-    const fh = await fs.open(this.path, 'r');
-    try {
-      const len = stat.size - this.offset;
-      const buf = Buffer.alloc(len);
-      await fh.read(buf, 0, len, this.offset);
-      this.offset = stat.size;
-      this.buffer += buf.toString('utf8');
-      this.flushLines();
-    } finally {
-      await fh.close();
+      this.onParseError?.(err as Error, '');
     }
   }
 

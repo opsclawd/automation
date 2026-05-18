@@ -58,4 +58,30 @@ describe('InMemoryEventBus', () => {
     bus.publish('uuid-x', ev('d', 'after-cleanup'));
     expect(true).toBe(true);
   });
+
+  it('does not throw when a listener throws', () => {
+    const bus = new InMemoryEventBus();
+    const seen: string[] = [];
+    bus.subscribe('uuid-err', () => {
+      throw new Error('listener exploded');
+    });
+    bus.subscribe('uuid-err', (e) => seen.push(e.type));
+    expect(() => bus.publish('uuid-err', ev('d', 'survived'))).not.toThrow();
+    expect(seen).toEqual(['survived']);
+  });
+
+  it('continues delivering to remaining listeners after one throws', () => {
+    const bus = new InMemoryEventBus();
+    const seen: string[] = [];
+    let callCount = 0;
+    bus.subscribe('uuid-err', () => {
+      callCount++;
+      if (callCount === 1) throw new Error('first call throws');
+    });
+    bus.subscribe('uuid-err', (e) => seen.push(e.type));
+    bus.publish('uuid-err', ev('d', 'first'));
+    bus.publish('uuid-err', ev('d', 'second'));
+    expect(seen).toEqual(['first', 'second']);
+    expect(callCount).toBe(2);
+  });
 });
