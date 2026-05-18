@@ -933,7 +933,11 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
 
   case $review_ec in
     0) log "Reviews processed and verified successfully."
-       ALL_REVIEWS_RESOLVED=true ;;
+       if [[ "$LAST_REVIEW_RESULT" == "ALL_DONE" || "$LAST_REVIEW_RESULT" == "NO_FIXES_NEEDED" ]]; then
+         ALL_REVIEWS_RESOLVED=true
+       else
+         ALL_REVIEWS_RESOLVED=false
+       fi ;;
     1) log "No new reviews to process (poll $POLL_COUNT/$MAX_POLLS)."
        ALL_REVIEWS_RESOLVED=false ;;
     2) warn "Reviews processed but some verifications failed (poll $POLL_COUNT/$MAX_POLLS)."
