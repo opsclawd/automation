@@ -382,8 +382,6 @@ log "=== Starting orchestrator for issue #${ISSUE_NUM} ==="
 
 # ── auto-resume: task-level checkpoint detection ─────────────────────────────
 LAST_PHASE="start"
-emit_event "" "info" "run.started" "issue-to-PR run started" \
-  issueNumber="$ISSUE_NUM" baseBranch="${BASE_BRANCH:-main}" branch="$BRANCH"
 
   get_task_completion_status() {
     local task_n="$1"
@@ -511,8 +509,15 @@ log "Auto-resume: detected phase='${PHASE}'"
 
 if [[ "$PHASE" == "done" ]]; then
   log "Orchestrator already completed. See $(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo 'PR')."
+  emit_event "" "info" "run.completed" "run already completed" \
+    prUrl="$(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo '')"
   exit 0
 fi
+
+emit_event "" "info" "run.started" "issue-to-PR run started" \
+  issueNumber="$ISSUE_NUM" baseBranch="${BASE_BRANCH:-main}" branch="$BRANCH"
+
+if [[ "$_INITIAL_PHASE" != "read_issue" ]]; then _emit_skipped_until "$_INITIAL_PHASE"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: read_issue
@@ -755,7 +760,6 @@ if [[ "$PHASE" == "spec-review" || "$PHASE" == "quality-review" ]]; then
   RESUME_STAGE_OVERRIDE="review"
   PHASE="implement"
 fi
-if [[ "$_INITIAL_PHASE" != "read_issue" ]]; then _emit_skipped_until "$PHASE"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: implement — subagent-driven development per task
