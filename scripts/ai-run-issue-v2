@@ -1352,6 +1352,9 @@ if [[ "$PHASE" == "validate" ]]; then
   LAST_PHASE="validate"
   _emit_phase_done "validate"
 
+  _VALIDATE_START_MS=$(_now_ms)
+  emit_event "validate" "info" "command.started" "running validate suite" command="pnpm-validate-suite"
+
   ensure_worktree
 
   log "Running pnpm build && pnpm lint && pnpm typecheck && pnpm test..."
@@ -1382,6 +1385,15 @@ if [[ "$PHASE" == "validate" ]]; then
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
+
+  _VALIDATE_DUR=$(( $(_now_ms) - _VALIDATE_START_MS ))
+  if [[ $VALIDATE_EXIT -eq 0 ]]; then
+    emit_event "validate" "info" "command.completed" "validate suite passed" \
+      command="pnpm-validate-suite" exitCode=0 durationMs="$_VALIDATE_DUR"
+  else
+    emit_event "validate" "error" "command.failed" "validate suite failed" \
+      command="pnpm-validate-suite" exitCode="$VALIDATE_EXIT" durationMs="$_VALIDATE_DUR"
+  fi
 
   # Record validation status for downstream phases
   if [[ $VALIDATE_EXIT -ne 0 ]]; then
