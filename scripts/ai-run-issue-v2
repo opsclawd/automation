@@ -506,7 +506,9 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "read_issue" ]]; then
   log "=== Phase: read_issue ==="
+  _emit_phase_started "read_issue"
   LAST_PHASE="read_issue"
+  _emit_phase_done "read_issue"
 
   # Guard: don't destroy existing progress on accidental re-entry
   if [[ -f "${ISSUES_DIR}/design.md" || -f "${ISSUES_DIR}/plan.md" ]]; then
@@ -633,7 +635,9 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "plan-design" ]]; then
   log "=== Phase: plan-design (brainstorm) ==="
+  _emit_phase_started "plan-design"
   LAST_PHASE="plan-design"
+  _emit_phase_done "plan-design"
 
   ensure_worktree
 
@@ -679,7 +683,9 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "plan-write" ]]; then
   log "=== Phase: plan-write (implementation plan) ==="
+  _emit_phase_started "plan-write"
   LAST_PHASE="plan-write"
+  _emit_phase_done "plan-write"
 
   ensure_worktree
 
@@ -740,7 +746,9 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "implement" ]]; then
   log "=== Phase: implement ==="
+  _emit_phase_started "implement"
   LAST_PHASE="implement"
+  _emit_phase_done "implement"
 
   ensure_worktree
 
@@ -1325,7 +1333,9 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "validate" ]]; then
   log "=== Phase: validate ==="
+  _emit_phase_started "validate"
   LAST_PHASE="validate"
+  _emit_phase_done "validate"
 
   ensure_worktree
 
@@ -1374,7 +1384,9 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "review" ]]; then
   log "=== Phase: review ==="
+  _emit_phase_started "review"
   LAST_PHASE="review"
+  _emit_phase_done "review"
 
   ensure_worktree
 
@@ -1442,9 +1454,11 @@ while [[ "$PHASE" == "fix-review" ]]; do
     break
   fi
   log "=== Phase: fix-review (loop $FIX_LOOP_COUNT) ==="
+  _emit_phase_started "fix-review"
   log "Cancel window: press Ctrl+C within 10s to abort..."
   sleep 10
   LAST_PHASE="fix-review"
+  _emit_phase_done "fix-review"
 
   ensure_worktree
 
@@ -1578,7 +1592,9 @@ PHASE="compound"
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "compound" ]]; then
   log "=== Phase: compound ==="
+  _emit_phase_started "compound"
   LAST_PHASE="compound"
+  _emit_phase_done "compound"
 
   ensure_worktree
 
@@ -1633,7 +1649,9 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "create-pr" ]]; then
   log "=== Phase: create-pr ==="
+  _emit_phase_started "create-pr"
   LAST_PHASE="create-pr"
+  _emit_phase_done "create-pr"
 
   ensure_worktree
 
