@@ -36,6 +36,7 @@ export class EventTailer {
   private scheduleTick(): void {
     if (!this.running) return;
     this.timer = setTimeout(() => {
+      if (!this.running) return;
       this.tickInProgress = this.tick().finally(() => {
         this.tickInProgress = null;
         this.scheduleTick();
