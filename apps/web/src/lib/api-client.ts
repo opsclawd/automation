@@ -1,3 +1,5 @@
+import type { ApiEvent } from './timeline';
+
 export interface RunDto {
   uuid: string;
   displayId: string;
@@ -67,4 +69,12 @@ export async function getArtifact(uuid: string, path: string): Promise<string> {
   });
   if (!r.ok) throw new Error(`failed to load artifact: ${r.status}`);
   return r.text();
+}
+
+export async function listRunEvents(runUuid: string, since?: string): Promise<ApiEvent[]> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+  const r = await fetch(`${base}/api/runs/${runUuid}/events${qs}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`listRunEvents failed: ${r.status}`);
+  return ((await r.json()) as { events: ApiEvent[] }).events;
 }
