@@ -944,9 +944,7 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
          ALL_REVIEWS_RESOLVED=false
        fi ;;
     1) log "No new reviews to process (poll $POLL_COUNT/$MAX_POLLS)."
-       # No new reviews — leave ALL_REVIEWS_RESOLVED unchanged so a
-       # previously-set flag survives until a new round of comments arrives.
-       ;;
+       ALL_REVIEWS_RESOLVED=false ;;
     2) warn "Reviews processed but some verifications failed (poll $POLL_COUNT/$MAX_POLLS)."
        ALL_REVIEWS_RESOLVED=false ;;
     *) warn "process_reviews exited with unexpected code ${review_ec}"
