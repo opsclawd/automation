@@ -728,6 +728,7 @@ process_reviews() {
 
   AGENT_DUR=$(( $(_now_ms) - AGENT_START_MS ))
   if [[ $agent_ec -ne 0 ]]; then
+    AGENT_FAILED=true
     emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
       "agent for poll iteration ${POLL_COUNT} exited with code ${agent_ec}" \
       commentId="batch-p${POLL_COUNT}" reason="non_zero_exit" exitCode="$agent_ec" durationMs="$AGENT_DUR"
@@ -901,6 +902,7 @@ LAST_REMOTE_SHA=""
 BLOCKED_EXIT=false
 ALL_REVIEWS_RESOLVED=false
 LAST_REVIEW_RESULT=""
+AGENT_FAILED=false
 # Hard ceiling on total iterations regardless of resets — protects against
 # pathological loops where every push attracts a new comment.
 MAX_TOTAL_POLLS="${MAX_TOTAL_POLLS:-30}"
@@ -929,11 +931,12 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
     prNumber="$PR_NUMBER" poll="$POLL_COUNT" maxPolls="$MAX_POLLS" totalPolls="$TOTAL_POLLS" maxTotalPolls="$MAX_TOTAL_POLLS"
 
   review_ec=0
+  AGENT_FAILED=false
   process_reviews || review_ec=$?
 
   case $review_ec in
     0) log "Reviews processed and verified successfully."
-       if [[ "$LAST_REVIEW_RESULT" == "ALL_DONE" || "$LAST_REVIEW_RESULT" == "NO_FIXES_NEEDED" ]]; then
+       if [[ "$LAST_REVIEW_RESULT" == "ALL_DONE" || "$LAST_REVIEW_RESULT" == "NO_FIXES_NEEDED" ]] && ! $AGENT_FAILED; then
          ALL_REVIEWS_RESOLVED=true
        else
          ALL_REVIEWS_RESOLVED=false
