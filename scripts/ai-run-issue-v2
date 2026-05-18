@@ -1259,6 +1259,9 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     while [[ $REVIEW_LOOPS -lt 5 ]]; do
       REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
       log "  Review-fix loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}"
+      emit_event "fix-review" "info" "loop.iteration.started" \
+        "fix-review loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}" \
+        task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" max=5
       log "  Cancel window: press Ctrl+C within 10s to abort..."
       sleep 10
 
@@ -1294,6 +1297,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         QUALITY_PASS QUALITY_FAIL \
         "QUALITY_FAIL")
 
+      emit_event "fix-review" "info" "loop.iteration.completed" \
+        "fix-review loop ${REVIEW_LOOPS} completed (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})" \
+        task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" \
+        spec="${SPEC_STATUS:-unknown}" quality="${QUALITY_STATUS:-unknown}"
+
       if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
         log "  Task ${TASK_NUM}: both reviews pass"
         break
@@ -1308,6 +1316,9 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     done
 
     if [[ $REVIEW_LOOPS -eq 5 ]]; then
+      emit_event "fix-review" "error" "loop.exhausted" \
+        "fix-review hit max iterations for task ${TASK_NUM}" \
+        task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
       orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})."
     fi
 
