@@ -684,6 +684,10 @@ process_reviews() {
     echo '- Do NOT merge the PR (no gh pr merge). Only commit, push, and reply.'
   } > "$prompt_file"
 
+  AGENT_START_MS=$(_now_ms)
+  emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
+    "invoking agent for poll iteration ${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
+
   run_agent "process-review-p${POLL_COUNT}" 600 < "$prompt_file"
   local agent_ec=$?
   rm -f "$prompt_file"
@@ -707,6 +711,25 @@ process_reviews() {
     PARTIAL)
 
   log "Review result: ${review_result}"
+
+  AGENT_DUR=$(( $(_now_ms) - AGENT_START_MS ))
+  case "$review_result" in
+    ALL_DONE|NO_FIXES_NEEDED|PARTIAL)
+      emit_event "pr-review-poll" "info" "pr-review-poll.agent.completed" \
+        "agent completed for poll iteration ${POLL_COUNT}: ${review_result}" \
+        commentId="batch-p${POLL_COUNT}" result="$review_result" durationMs="$AGENT_DUR"
+      ;;
+    BLOCKED)
+      emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
+        "agent blocked for poll iteration ${POLL_COUNT}" \
+        commentId="batch-p${POLL_COUNT}" reason="BLOCKED" exitCode="$agent_ec"
+      ;;
+    *)
+      emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
+        "agent for poll iteration ${POLL_COUNT} produced invalid result: ${review_result}" \
+        commentId="batch-p${POLL_COUNT}" reason="invalid_result" exitCode="$agent_ec"
+      ;;
+  esac
 
   # ── Verification chain ──────────────────────────────────────────────────
   # Two independent flags:
