@@ -60,6 +60,9 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
           drainResolve = null;
           resolve();
         }
+        if (pendingLive.length > 0 && !streamClosed) {
+          drainPendingLive();
+        }
       };
       reply.raw.on('drain', onDrain);
       const waitForDrain = (): Promise<void> =>
@@ -82,6 +85,22 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       let lastTimestamp: string | null = null;
       let backfillComplete = false;
       const liveQueue: OrchestratorEvent[] = [];
+      const pendingLive: Array<{ id: string; payload: unknown }> = [];
+      let drainingLive = false;
+      async function drainPendingLive(): Promise<void> {
+        if (drainingLive) return;
+        drainingLive = true;
+        while (pendingLive.length > 0 && !streamClosed) {
+          const next = pendingLive[0]!;
+          const ok = sseWrite(next.id, next.payload);
+          if (ok) {
+            pendingLive.shift();
+          } else {
+            await waitForDrain();
+          }
+        }
+        drainingLive = false;
+      }
       const unsub = c.eventBus.subscribe(req.params.runId, (ev: OrchestratorEvent) => {
         if (streamClosed) return;
         if (
@@ -91,10 +110,9 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
         )
           return;
         if (!backfillComplete) {
-          // Still in backfill phase — queue for later.
           liveQueue.push(ev);
         } else {
-          sseWrite(ev.timestamp, {
+          const payload = {
             runId: run.displayId,
             phase: ev.phase ?? null,
             level: ev.level,
@@ -102,7 +120,11 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
             message: ev.message,
             timestamp: ev.timestamp,
             metadata: ev.metadata,
-          });
+          };
+          const ok = sseWrite(ev.timestamp, payload);
+          if (!ok && !streamClosed) {
+            pendingLive.push({ id: ev.timestamp, payload });
+          }
         }
       });
 
