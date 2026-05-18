@@ -18,7 +18,7 @@ export default defineConfig({
       command: `pnpm --filter @ai-sdlc/api dev serve --port 4319 --db-path ${TEST_DB_PATH}`,
       url: 'http://127.0.0.1:4319/api/runs',
       cwd: '../..',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 60_000,
     },
     {
@@ -26,7 +26,7 @@ export default defineConfig({
       command: 'pnpm --filter @ai-sdlc/web dev',
       url: 'http://127.0.0.1:4310',
       cwd: '../..',
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 60_000,
     },
   ],
