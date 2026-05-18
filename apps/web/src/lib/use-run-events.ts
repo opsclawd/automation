@@ -31,6 +31,7 @@ export function useRunEvents(runUuid: string): UseRunEventsResult {
         es = new EventSource(streamUrl);
         es.onmessage = (msg) => {
           try {
+            setError(null);
             const parsed = JSON.parse(msg.data) as ApiEvent;
             setEvents((prev) => {
               if (prev.some((p) => p.id === parsed.id)) return prev;
