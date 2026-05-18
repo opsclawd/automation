@@ -65,9 +65,52 @@ warn() { log "WARN: $*" >&2; }
 # shellcheck source=lib/emit_event.sh
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 
+# ── Per-phase wall-clock tracking ─────────────────────────────────────────────
+_PHASE_START_MS=0
+_now_ms() {
+  if date +%N >/dev/null 2>&1 && [[ "$(date +%N)" != "N" ]]; then
+    echo $(( $(date +%s%N) / 1000000 ))
+  else
+    echo $(( $(date +%s) * 1000 ))
+  fi
+}
+_emit_phase_started() {
+  local phase=$1
+  _PHASE_START_MS=$(_now_ms)
+  emit_event "$phase" "info" "phase.started" "phase ${phase} started"
+}
+_emit_phase_done() {
+  local phase=$1
+  local now ms_dur=0
+  now=$(_now_ms)
+  ms_dur=$(( now - _PHASE_START_MS ))
+  (( ms_dur < 0 )) && ms_dur=0
+  emit_event "$phase" "info" "phase.completed" "phase ${phase} completed" durationMs="$ms_dur"
+}
+_emit_phase_skipped() {
+  local phase=$1 reason=${2:-resume-detected}
+  emit_event "$phase" "warn" "phase.skipped" "phase ${phase} skipped" reason="$reason"
+}
+_emit_skipped_until() {
+  local target=$1
+  local p
+  for p in read_issue plan-design plan-write implement validate review fix-review compound create-pr; do
+    if [[ "$p" == "$target" ]]; then return 0; fi
+    _emit_phase_skipped "$p" "resume-detected"
+  done
+}
+_emit_artifact() {
+  local phase=$1 path=$2 kind=$3
+  if [[ -f "$path" ]]; then
+    emit_event "$phase" "info" "artifact.created" "artifact ${kind} written" path="$path" kind="$kind"
+  fi
+}
+
 orchestrator_fail() {
   reason="$1"
   log "FAIL: $reason"
+  emit_event "${LAST_PHASE:-unknown}" "error" "phase.failed" "$reason" reason="$reason"
+  emit_event "" "error" "run.failed" "$reason" lastPhase="${LAST_PHASE:-unknown}" reason="$reason"
   if [[ "$reason" == *"blocked"* || "$reason" == *"Blocking"* || "$reason" == *"waiting"* ]]; then
     printf '{"phase":"%s","reason":"%s","time":"%s"}\n' \
       "${LAST_PHASE:-unknown}" "$reason" "$(date -Iseconds)" \
