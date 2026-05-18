@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type Container } from '../compose.js';
 import { startServer } from '../server.js';
 
-async function bootServer(): Promise<{
+async function bootServer(opts?: { scriptPath?: string }): Promise<{
   baseUrl: string;
   container: Container;
   stop: () => Promise<void>;
@@ -14,9 +14,11 @@ async function bootServer(): Promise<{
 }> {
   const repoRoot = mkdtempSync(join(tmpdir(), 'ai-orch-events-'));
   tempDirs.push(repoRoot);
-  const scriptPath = join(repoRoot, 'fake.sh');
-  writeFileSync(scriptPath, '#!/usr/bin/env bash\necho ok\nexit 0\n');
-  chmodSync(scriptPath, 0o755);
+  const scriptPath = opts?.scriptPath ?? join(repoRoot, 'fake.sh');
+  if (!opts?.scriptPath) {
+    writeFileSync(scriptPath, '#!/usr/bin/env bash\necho ok\nexit 0\n');
+    chmodSync(scriptPath, 0o755);
+  }
   const container = composeRoot({ repoRoot, scriptPath });
   const server = await startServer({ container, port: 0, forceCloseAllOnStop: true });
   stoppers.push(server.stop);
@@ -382,5 +384,31 @@ describe('GET /api/runs/:runId/events/stream', () => {
     expect(body).toContain('phase.completed');
     expect(body).not.toContain('duplicate');
     expect(body).toContain('after-backfill');
+  });
+});
+
+describe('event ingestion pipeline (tailer → SQLite → API)', () => {
+  it('events written to events.jsonl during a run appear in the polling endpoint', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'ai-orch-e2e-'));
+    tempDirs.push(repoRoot);
+    const scriptPath = join(repoRoot, 'emit-event.sh');
+    writeFileSync(
+      scriptPath,
+      `#!/usr/bin/env bash
+echo '{"runId":"$AI_RUN_DISPLAY_ID","level":"info","type":"run.started","message":"started","timestamp":"2026-05-16T12:00:00.000Z"}' >> "$AI_RUN_EVENTS_FILE"
+echo '{"runId":"$AI_RUN_DISPLAY_ID","level":"info","type":"run.completed","message":"done","timestamp":"2026-05-16T12:00:01.000Z"}' >> "$AI_RUN_EVENTS_FILE"
+exit 0
+`,
+    );
+    chmodSync(scriptPath, 0o755);
+
+    const { baseUrl, container } = await bootServer({ scriptPath });
+    const result = await container.startIssueRun.execute({ issueNumber: 200 });
+
+    const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { events: Array<{ type: string }> };
+    expect(body.events.map((e) => e.type)).toContain('run.started');
+    expect(body.events.map((e) => e.type)).toContain('run.completed');
   });
 });
