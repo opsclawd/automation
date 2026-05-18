@@ -53,6 +53,7 @@ export class EventTailer {
     } else if (
       this.lastMtimeMs > 0 &&
       stat.mtimeMs > this.lastMtimeMs &&
+      stat.size > 0 &&
       stat.size <= this.offset
     ) {
       this.offset = 0;
