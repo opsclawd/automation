@@ -149,6 +149,12 @@ describe('routes', () => {
     expect(r.status).toBe(400);
   });
 
+  it('returns 400 for scientific notation limit', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?limit=1e2`);
+    expect(r.status).toBe(400);
+  });
+
   it('clamps limit to max of 100', async () => {
     const { baseUrl } = await bootServer({ withRun: true });
     const r = await fetch(`${baseUrl}/api/runs?limit=999999`);

@@ -3,26 +3,37 @@ import type { Container } from '../compose.js';
 import { serializeRun, serializeFailure } from '../serializers.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DECIMAL_INT_RE = /^-?\d+$/;
 
 export async function runsRoutes(app: FastifyInstance, c: Container): Promise<void> {
   app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req, reply) => {
     const MAX_LIMIT = 100;
     if (req.query.limit !== undefined && req.query.limit !== '') {
-      const rawLimit = Number(req.query.limit);
-      if (!Number.isFinite(rawLimit) || rawLimit < 1 || !Number.isInteger(rawLimit)) {
+      if (!DECIMAL_INT_RE.test(req.query.limit)) {
+        return reply.code(400).send({ error: 'limit must be a positive integer' });
+      }
+      const n = Number(req.query.limit);
+      if (n < 1) {
         return reply.code(400).send({ error: 'limit must be a positive integer' });
       }
     }
     if (req.query.offset !== undefined && req.query.offset !== '') {
-      const rawOffset = Number(req.query.offset);
-      if (!Number.isFinite(rawOffset) || rawOffset < 0 || !Number.isInteger(rawOffset)) {
+      if (!DECIMAL_INT_RE.test(req.query.offset)) {
+        return reply.code(400).send({ error: 'offset must be a non-negative integer' });
+      }
+      const n = Number(req.query.offset);
+      if (n < 0) {
         return reply.code(400).send({ error: 'offset must be a non-negative integer' });
       }
     }
-    const rawLimit = parseInt(req.query.limit ?? '', 10);
-    const limit = !Number.isNaN(rawLimit) ? Math.min(Math.max(1, rawLimit), MAX_LIMIT) : undefined;
-    const rawOffset = parseInt(req.query.offset ?? '', 10);
-    const offset = !Number.isNaN(rawOffset) ? Math.max(0, rawOffset) : undefined;
+    const limit =
+      req.query.limit !== undefined && req.query.limit !== ''
+        ? Math.min(Math.max(1, Number(req.query.limit)), MAX_LIMIT)
+        : undefined;
+    const offset =
+      req.query.offset !== undefined && req.query.offset !== ''
+        ? Math.max(0, Number(req.query.offset))
+        : undefined;
     const pagination =
       limit !== undefined || offset !== undefined
         ? { limit: limit ?? 25, offset: offset ?? 0 }

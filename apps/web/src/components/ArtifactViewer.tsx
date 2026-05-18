@@ -48,7 +48,9 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       if (reqId.current !== myId) return;
-      setContent(await r.text());
+      const text = await r.text();
+      if (reqId.current !== myId) return;
+      setContent(text);
       setState('loaded');
     } catch {
       if (reqId.current !== myId) return;

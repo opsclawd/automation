@@ -192,5 +192,5 @@ test('clicking a .md artifact renders markdown in-page', async ({ page }) => {
   await expect(page.getByText('This is bold markdown.')).not.toBeVisible();
   // Click data.json toggle button
   await page.getByRole('button', { name: 'data.json' }).click();
-  await expect(page.getByText('count: 42')).toBeVisible();
+  await expect(page.getByText('"count": 42')).toBeVisible();
 });
