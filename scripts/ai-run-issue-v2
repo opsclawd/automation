@@ -495,6 +495,7 @@ detect_phase() {
 PHASE="$(detect_phase)"
 
 log "Auto-resume: detected phase='${PHASE}'"
+_emit_skipped_until "$PHASE"
 
 if [[ "$PHASE" == "done" ]]; then
   log "Orchestrator already completed. See $(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo 'PR')."
