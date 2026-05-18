@@ -952,6 +952,10 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
     break
   fi
 
+  if $ALL_REVIEWS_RESOLVED; then
+    break
+  fi
+
   # Intentionally do NOT update LAST_REMOTE_SHA here — leave it as the
   # SHA observed at the *start* of this iteration. If the agent pushed
   # during process_reviews, the next iteration's top-of-loop fetch will
