@@ -77,7 +77,7 @@ describe('routes', () => {
 
   it('returns 400 when the artifact path tries to escape the run directory', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
+    const run = container.runRepository.list().runs[0]!;
     const r = await fetch(
       `${baseUrl}/api/runs/${run.uuid}/artifacts/${encodeURIComponent('../../etc/passwd')}`,
     );
@@ -86,7 +86,7 @@ describe('routes', () => {
 
   it('returns 400 when the artifact path is an absolute path (URL-encoded)', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
+    const run = container.runRepository.list().runs[0]!;
     const r = await fetch(
       `${baseUrl}/api/runs/${run.uuid}/artifacts/${encodeURIComponent('/etc/passwd')}`,
     );
@@ -95,7 +95,7 @@ describe('routes', () => {
 
   it('serves combined.log as text/plain', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
+    const run = container.runRepository.list().runs[0]!;
     const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts/combined.log`);
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toMatch(/text\/plain/);
@@ -104,7 +104,7 @@ describe('routes', () => {
 
   it('returns empty files list when run directory is missing from disk', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
+    const run = container.runRepository.list().runs[0]!;
     const runsDir = join(container.runsDir, run.displayId);
     rmSync(runsDir, { recursive: true, force: true });
     const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts`);
@@ -115,7 +115,7 @@ describe('routes', () => {
 
   it('does not infinite-loop on a symlink cycle', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
-    const run = container.runRepository.list({ limit: undefined }).runs[0]!;
+    const run = container.runRepository.list().runs[0]!;
     const runsDir = join(container.runsDir, run.displayId);
     symlinkSync('.', join(runsDir, 'loop'));
     const r = await fetch(`${baseUrl}/api/runs/${run.uuid}/artifacts`);
@@ -123,5 +123,37 @@ describe('routes', () => {
     const body = (await r.json()) as { files: Array<{ path: string }> };
     const loopEntries = body.files.filter((f) => f.path.startsWith('loop'));
     expect(loopEntries.length).toBeLessThanOrEqual(1);
+  });
+
+  it('returns 400 for negative limit', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?limit=-1`);
+    expect(r.status).toBe(400);
+  });
+
+  it('returns 400 for zero limit', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?limit=0`);
+    expect(r.status).toBe(400);
+  });
+
+  it('returns 400 for negative offset', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?offset=-5`);
+    expect(r.status).toBe(400);
+  });
+
+  it('returns 400 for non-numeric limit', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?limit=abc`);
+    expect(r.status).toBe(400);
+  });
+
+  it('clamps limit to max of 100', async () => {
+    const { baseUrl } = await bootServer({ withRun: true });
+    const r = await fetch(`${baseUrl}/api/runs?limit=999999`);
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as { limit: number };
+    expect(body.limit).toBe(100);
   });
 });

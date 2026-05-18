@@ -84,14 +84,21 @@ export function buildProgram(): Command {
     .description('Start the orchestrator HTTP API')
     .option('--port <port>', 'Port to listen on', (v) => parseInt(v, 10), 4319)
     .option('--script <path>', 'Path to Bash script to wrap')
-    .action(async (opts: { port: number; script?: string }) => {
-      const repoRoot = findRepoRoot(process.cwd());
+    .option('--repo-root <path>', 'Repository root (default: auto-detect)')
+    .option(
+      '--db-path <path>',
+      'Override database path (default: <repoRoot>/.ai-runs/orchestrator.sqlite)',
+    )
+    .action(async (opts: { port: number; script?: string; repoRoot?: string; dbPath?: string }) => {
+      const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
       const scriptPath = opts.script
         ? isAbsolute(opts.script)
           ? opts.script
           : resolve(repoRoot, opts.script)
         : join(repoRoot, 'scripts', 'ai-run-issue-v2');
-      const c = composeRoot({ repoRoot, scriptPath });
+      const composeOpts: ComposeOptions = { repoRoot, scriptPath };
+      if (opts.dbPath) composeOpts.dbPath = opts.dbPath;
+      const c = composeRoot(composeOpts);
       const { startServer } = await import('./server.js');
       const server = await startServer({ container: c, port: opts.port });
       const addr = server.address as { port: number };

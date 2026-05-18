@@ -1,11 +1,12 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..', '..', '..');
-const DB_PATH = join(REPO_ROOT, '.ai-runs', 'orchestrator.sqlite');
+const DB_PATH = join(REPO_ROOT, '.ai-runs', 'orchestrator-test.sqlite');
 const RUNS_DIR = join(REPO_ROOT, '.ai-runs');
 
 interface SeedRun {
@@ -71,12 +72,11 @@ const SEED_RUNS: SeedRun[] = [
 ];
 
 // Seed 27 more runs (R-004..R-030) so total = 30, triggering pagination (25/page)
+const extraUuids = Array.from({ length: 27 }, () => randomUUID());
 for (let i = 4; i <= 30; i++) {
   const displayId = `R-${i.toString().padStart(3, '0')}`;
-  // Deterministic UUID from index
-  const hex = i.toString(16).padStart(2, '0');
   SEED_RUNS.push({
-    uuid: `00000000-0000-4000-8000-${hex}000000000${hex}`,
+    uuid: extraUuids[i - 4]!,
     display_id: displayId,
     issue_number: i,
     type: 'issue_to_pr',

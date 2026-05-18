@@ -10,7 +10,6 @@ import {
   RunDirectory,
   runBashScript,
   classifyExit,
-  type RunRecord,
 } from '@ai-sdlc/infrastructure';
 import { StartIssueRun, type StartIssueRunDeps, type ClassifyExitFn } from '@ai-sdlc/application';
 
@@ -25,27 +24,6 @@ export interface Container {
   artifactRepository: ArtifactRepository;
   failureRepository: FailureRepository;
   startIssueRun: StartIssueRun;
-  serializeRun: (r: RunRecord) => {
-    uuid: string;
-    displayId: string;
-    issueNumber: number;
-    status: string;
-    currentPhase: string | null;
-    completedPhases: string[];
-    startedAt: string;
-    completedAt: string | null;
-    exitCode: number | null;
-    durationMs: number | null;
-    failureReason: string | null;
-  };
-  serializeFailure: (f: NonNullable<ReturnType<FailureRepository['findLatestByRun']>>) => {
-    kind: string;
-    message: string;
-    phase?: string;
-    exitCode?: number;
-    suggestedAction: string;
-    artifacts: string[];
-  };
   runsDir: string;
 }
 
@@ -56,11 +34,12 @@ export interface ComposeOptions {
   model?: string;
   agentCli?: string;
   tee?: boolean;
+  dbPath?: string;
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = join(opts.repoRoot, '.ai-runs');
-  const db = openDatabase(join(runsDir, 'orchestrator.sqlite'));
+  const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);
   const phaseRepository = new PhaseRepository(db);
@@ -81,28 +60,6 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
   const startIssueRun = new StartIssueRun(deps);
-  const serializeRun = (r: RunRecord) => ({
-    uuid: r.uuid,
-    displayId: r.displayId,
-    issueNumber: r.issueNumber,
-    status: r.status,
-    currentPhase: r.currentPhase !== undefined ? r.currentPhase : null,
-    completedPhases: r.completedPhases,
-    startedAt: r.startedAt.toISOString(),
-    completedAt: r.completedAt !== undefined ? r.completedAt.toISOString() : null,
-    exitCode: r.exitCode !== undefined ? r.exitCode : null,
-    durationMs: r.durationMs !== undefined ? r.durationMs : null,
-    failureReason: r.failureReason !== undefined ? r.failureReason : null,
-  });
-
-  const serializeFailure = (f: NonNullable<ReturnType<FailureRepository['findLatestByRun']>>) => ({
-    kind: f.kind,
-    message: f.message,
-    ...(f.phase !== undefined ? { phase: f.phase } : {}),
-    ...(f.exitCode !== undefined ? { exitCode: f.exitCode } : {}),
-    suggestedAction: f.suggestedAction,
-    artifacts: f.artifacts,
-  });
 
   return {
     runRepository,
@@ -111,8 +68,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     artifactRepository,
     failureRepository,
     startIssueRun,
-    serializeRun,
-    serializeFailure,
     runsDir,
   };
 }

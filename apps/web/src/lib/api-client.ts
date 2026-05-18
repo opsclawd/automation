@@ -34,10 +34,10 @@ export interface ListRunsResult {
 }
 
 export async function listRuns(params?: {
-  limit?: number;
+  limit: number;
   offset?: number;
 }): Promise<ListRunsResult> {
-  const qs = params ? `?limit=${params.limit ?? 25}&offset=${params.offset ?? 0}` : '';
+  const qs = params ? `?limit=${params.limit}&offset=${params.offset ?? 0}` : '';
   const r = await fetch(`${apiUrl}/api/runs${qs}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load runs: ${r.status}`);
   return r.json() as Promise<ListRunsResult>;

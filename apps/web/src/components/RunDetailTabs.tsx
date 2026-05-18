@@ -44,7 +44,7 @@ export function RunDetailTabs({ run, failure, files, initialCombinedContent }: R
         </div>
       )}
 
-      {activeTab === 'failure' && failure ? (
+      {activeTab === 'failure' && failure && (
         <div className="rounded border bg-red-50 p-3 text-sm space-y-1">
           <div>
             <b>Kind:</b> {failure.kind}
@@ -66,7 +66,7 @@ export function RunDetailTabs({ run, failure, files, initialCombinedContent }: R
             <b>Suggested action:</b> {failure.suggestedAction}
           </div>
         </div>
-      ) : activeTab === 'failure' ? null : null}
+      )}
     </Tabs>
   );
 }

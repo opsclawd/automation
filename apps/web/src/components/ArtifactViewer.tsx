@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { formatBytes } from '@/lib/format';
 
@@ -27,6 +27,7 @@ function getExt(path: string): string {
 export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProps) {
   const [state, setState] = useState<ViewState>('closed');
   const [content, setContent] = useState<string>('');
+  const reqId = useRef(0);
 
   const ext = getExt(fileName);
   const renderer = EXT_RENDERERS[ext];
@@ -38,15 +39,18 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
       return;
     }
 
+    const myId = ++reqId.current;
     setState('loading');
     try {
       const r = await fetch(`/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}`, {
         cache: 'no-store',
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (reqId.current !== myId) return;
       setContent(await r.text());
       setState('loaded');
     } catch {
+      if (reqId.current !== myId) return;
       setState('error');
     }
   }
