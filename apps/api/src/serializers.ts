@@ -2,6 +2,7 @@ import type { Container } from './compose.js';
 
 type RunItem = ReturnType<Container['runRepository']['list']>['runs'][number];
 type FailureItem = NonNullable<ReturnType<Container['failureRepository']['findLatestByRun']>>;
+type EventItem = ReturnType<Container['eventRepository']['listByRunSince']>[number];
 
 export function serializeRun(r: RunItem) {
   return {
@@ -16,6 +17,19 @@ export function serializeRun(r: RunItem) {
     exitCode: r.exitCode !== undefined ? r.exitCode : null,
     durationMs: r.durationMs !== undefined ? r.durationMs : null,
     failureReason: r.failureReason !== undefined ? r.failureReason : null,
+  };
+}
+
+export function serializeEvent(e: EventItem, displayId: string) {
+  return {
+    id: e.id,
+    runId: displayId,
+    phase: e.phase ?? null,
+    level: e.level,
+    type: e.type,
+    message: e.message,
+    timestamp: e.timestamp.toISOString(),
+    metadata: e.metadata,
   };
 }
 
