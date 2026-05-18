@@ -507,7 +507,6 @@ detect_phase() {
 PHASE="$(detect_phase)"
 
 log "Auto-resume: detected phase='${PHASE}'"
-_emit_skipped_until "$PHASE"
 
 if [[ "$PHASE" == "done" ]]; then
   log "Orchestrator already completed. See $(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo 'PR')."
@@ -755,6 +754,7 @@ if [[ "$PHASE" == "spec-review" || "$PHASE" == "quality-review" ]]; then
   RESUME_STAGE_OVERRIDE="review"
   PHASE="implement"
 fi
+_emit_skipped_until "$PHASE"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: implement — subagent-driven development per task
@@ -1490,6 +1490,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 FIX_LOOP_COUNT=0
 
+if [[ "$PHASE" == "fix-review" ]]; then
 _emit_phase_started "fix-review"
 
 while [[ "$PHASE" == "fix-review" ]]; do
@@ -1630,6 +1631,7 @@ done
 
 _emit_phase_done "fix-review"
 PHASE="compound"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: compound
