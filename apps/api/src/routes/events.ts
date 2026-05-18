@@ -53,22 +53,6 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       reply.raw.flushHeaders();
 
       let streamClosed = false;
-      let drainResolve: (() => void) | null = null;
-      const onDrain = (): void => {
-        if (drainResolve) {
-          const resolve = drainResolve;
-          drainResolve = null;
-          resolve();
-        }
-        if (pendingLive.length > 0 && !streamClosed) {
-          drainPendingLive();
-        }
-      };
-      reply.raw.on('drain', onDrain);
-      const waitForDrain = (): Promise<void> =>
-        new Promise<void>((resolve) => {
-          drainResolve = resolve;
-        });
       const sseWrite = (id: number | string, payload: unknown): boolean => {
         if (streamClosed) return true;
         try {
@@ -85,22 +69,6 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       let lastTimestamp: string | null = null;
       let backfillComplete = false;
       const liveQueue: OrchestratorEvent[] = [];
-      const pendingLive: Array<{ id: string; payload: unknown }> = [];
-      let drainingLive = false;
-      async function drainPendingLive(): Promise<void> {
-        if (drainingLive) return;
-        drainingLive = true;
-        while (pendingLive.length > 0 && !streamClosed) {
-          const next = pendingLive[0]!;
-          const ok = sseWrite(next.id, next.payload);
-          if (ok) {
-            pendingLive.shift();
-          } else {
-            await waitForDrain();
-          }
-        }
-        drainingLive = false;
-      }
       const unsub = c.eventBus.subscribe(req.params.runId, (ev: OrchestratorEvent) => {
         if (streamClosed) return;
         if (
@@ -121,10 +89,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
             timestamp: ev.timestamp,
             metadata: ev.metadata,
           };
-          const ok = sseWrite(ev.timestamp, payload);
-          if (!ok && !streamClosed) {
-            pendingLive.push({ id: ev.timestamp, payload });
-          }
+          sseWrite(ev.timestamp, payload);
         }
       });
 
@@ -139,9 +104,8 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       }
 
       for (const e of backfillEvents) {
-        const ok = sseWrite(e.id, serializeEvent(e, run.displayId));
+        sseWrite(e.id, serializeEvent(e, run.displayId));
         lastTimestamp = e.timestamp.toISOString();
-        if (!ok && !streamClosed) await waitForDrain();
         if (streamClosed) return;
       }
 
@@ -157,7 +121,7 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       // If lastTimestamp is null (no backfill events), all live events are sent.
       for (const ev of liveQueue) {
         if (lastTimestamp !== null && new Date(ev.timestamp) <= new Date(lastTimestamp)) continue;
-        const ok = sseWrite(ev.timestamp, {
+        sseWrite(ev.timestamp, {
           runId: run.displayId,
           phase: ev.phase ?? null,
           level: ev.level,
@@ -166,7 +130,6 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
           timestamp: ev.timestamp,
           metadata: ev.metadata,
         });
-        if (!ok && !streamClosed) await waitForDrain();
         if (streamClosed) return;
       }
 
@@ -184,11 +147,6 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
         streamClosed = true;
         clearInterval(heartbeat);
         unsub();
-        reply.raw.off('drain', onDrain);
-        if (drainResolve) {
-          drainResolve();
-          drainResolve = null;
-        }
       }
 
       req.raw.on('close', () => {
