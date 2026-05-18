@@ -215,5 +215,41 @@ export default async function globalSetup() {
     detected_at: new Date().toISOString(),
   });
 
+  const insertEvent = db.prepare(`
+    INSERT INTO events (run_uuid, phase, level, type, message, metadata, timestamp)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const now = new Date();
+  const ts = (offsetMs: number) => new Date(now.getTime() - offsetMs).toISOString();
+
+  const r001 = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+  insertEvent.run(r001, 'read_issue', 'info', 'phase.started', '', '{}', ts(120_000));
+  insertEvent.run(r001, 'read_issue', 'info', 'phase.completed', '', '{}', ts(115_000));
+  insertEvent.run(r001, 'plan-design', 'info', 'phase.started', '', '{}', ts(115_000));
+  insertEvent.run(r001, 'plan-design', 'info', 'phase.completed', '', '{}', ts(110_000));
+  insertEvent.run(r001, 'plan-write', 'info', 'phase.started', '', '{}', ts(110_000));
+  insertEvent.run(r001, 'plan-write', 'info', 'phase.completed', '', '{}', ts(100_000));
+  insertEvent.run(r001, 'implement', 'info', 'phase.started', '', '{}', ts(100_000));
+
+  const r003 = 'c3d4e5f6-a7b8-9012-cdef-123456789012';
+  insertEvent.run(r003, 'read_issue', 'info', 'phase.started', '', '{}', ts(180_000));
+  insertEvent.run(r003, 'read_issue', 'info', 'phase.completed', '', '{}', ts(175_000));
+  insertEvent.run(r003, 'plan-design', 'info', 'phase.started', '', '{}', ts(175_000));
+  insertEvent.run(r003, 'plan-design', 'info', 'phase.completed', '', '{}', ts(170_000));
+  insertEvent.run(r003, 'plan-write', 'info', 'phase.started', '', '{}', ts(170_000));
+  insertEvent.run(r003, 'plan-write', 'info', 'phase.completed', '', '{}', ts(160_000));
+  insertEvent.run(r003, 'implement', 'info', 'phase.started', '', '{}', ts(160_000));
+  insertEvent.run(r003, 'implement', 'info', 'phase.completed', '', '{}', ts(150_000));
+  insertEvent.run(r003, 'validate', 'info', 'phase.started', '', '{}', ts(150_000));
+  insertEvent.run(
+    r003,
+    'validate',
+    'error',
+    'phase.failed',
+    'something went wrong',
+    '{"command":"pnpm build","exitCode":1}',
+    ts(140_000),
+  );
+
   db.close();
 }
