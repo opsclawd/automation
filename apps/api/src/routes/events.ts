@@ -119,7 +119,8 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
       for (const e of backfillEvents) {
         const ok = sseWrite(e.id, serializeEvent(e, run.displayId));
         lastTimestamp = e.timestamp.toISOString();
-        if (!ok) await waitForDrain();
+        if (!ok && !streamClosed) await waitForDrain();
+        if (streamClosed) return;
       }
 
       // MVP limitation: if two events share the same millisecond timestamp,
@@ -143,7 +144,8 @@ export async function eventsRoutes(app: FastifyInstance, c: Container): Promise<
           timestamp: ev.timestamp,
           metadata: ev.metadata,
         });
-        if (!ok) await waitForDrain();
+        if (!ok && !streamClosed) await waitForDrain();
+        if (streamClosed) return;
       }
 
       const heartbeat = setInterval(() => {
