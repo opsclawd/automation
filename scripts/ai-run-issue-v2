@@ -65,9 +65,64 @@ warn() { log "WARN: $*" >&2; }
 # shellcheck source=lib/emit_event.sh
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 
+# ── Per-phase wall-clock tracking ─────────────────────────────────────────────
+# Invariant: _emit_phase_started must always be called before _emit_phase_done
+# in the same phase block. orchestrator_fail always exits the script, so a
+# missing _emit_phase_done on failure paths is acceptable (phase.failed
+# supersedes phase.completed). _LAST_PHASE_START_MS holds the start time of the
+# current (most recently started) phase only.
+_LAST_PHASE_START_MS=0
+_HAS_NANOSECONDS=false
+if date +%N >/dev/null 2>&1 && [[ "$(date +%N)" != "N" ]]; then
+  _HAS_NANOSECONDS=true
+fi
+_now_ms() {
+  if [[ "$_HAS_NANOSECONDS" == "true" ]]; then
+    echo $(( $(date +%s%N) / 1000000 ))
+  else
+    echo $(( $(date +%s) * 1000 ))
+  fi
+}
+_emit_phase_started() {
+  local phase=$1
+  _LAST_PHASE_START_MS=$(_now_ms)
+  emit_event "$phase" "info" "phase.started" "phase ${phase} started"
+}
+_emit_phase_done() {
+  local phase=$1
+  local now ms_dur=0
+  now=$(_now_ms)
+  ms_dur=$(( now - _LAST_PHASE_START_MS ))
+  (( ms_dur < 0 )) && ms_dur=0
+  emit_event "$phase" "info" "phase.completed" "phase ${phase} completed" durationMs="$ms_dur"
+}
+_emit_phase_skipped() {
+  local phase=$1 reason=${2:-resume-detected}
+  emit_event "$phase" "warn" "phase.skipped" "phase ${phase} skipped" reason="$reason"
+}
+_emit_skipped_until() {
+  local target=$1
+  local p found=false
+  for p in read_issue plan-design plan-write implement validate review fix-review compound create-pr; do
+    if [[ "$p" == "$target" ]]; then found=true; break; fi
+    _emit_phase_skipped "$p" "resume-detected"
+  done
+  if [[ "$found" == "false" ]]; then
+    warn "_emit_skipped_until did not find phase '$target' in canonical list"
+  fi
+}
+_emit_artifact() {
+  local phase=$1 path=$2 kind=$3
+  if [[ -f "$path" ]]; then
+    emit_event "$phase" "info" "artifact.created" "artifact ${kind} written" path="$path" kind="$kind"
+  fi
+}
+
 orchestrator_fail() {
   reason="$1"
   log "FAIL: $reason"
+  emit_event "${LAST_PHASE:-unknown}" "error" "phase.failed" "$reason" reason="$reason"
+  emit_event "" "error" "run.failed" "$reason" lastPhase="${LAST_PHASE:-unknown}" reason="$reason"
   if [[ "$reason" == *"blocked"* || "$reason" == *"Blocking"* || "$reason" == *"waiting"* ]]; then
     printf '{"phase":"%s","reason":"%s","time":"%s"}\n' \
       "${LAST_PHASE:-unknown}" "$reason" "$(date -Iseconds)" \
@@ -448,11 +503,17 @@ detect_phase() {
 }
 
 PHASE="$(detect_phase)"
+_INITIAL_PHASE="$PHASE"
 
 log "Auto-resume: detected phase='${PHASE}'"
 
+emit_event "" "info" "run.started" "issue-to-PR run started" \
+  issueNumber="$ISSUE_NUM" baseBranch="${BASE_BRANCH:-main}" branch="$BRANCH"
+
 if [[ "$PHASE" == "done" ]]; then
   log "Orchestrator already completed. See $(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo 'PR')."
+  emit_event "" "info" "run.completed" "run already completed" \
+    prUrl="$(cat "${ISSUES_DIR}/pr-url.txt" 2>/dev/null || echo '')"
   exit 0
 fi
 
@@ -461,6 +522,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "read_issue" ]]; then
   log "=== Phase: read_issue ==="
+  _emit_phase_started "read_issue"
   LAST_PHASE="read_issue"
 
   # Guard: don't destroy existing progress on accidental re-entry
@@ -581,6 +643,7 @@ EOF
   else
     PHASE="plan-design"
   fi
+  _emit_phase_done "read_issue"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -588,6 +651,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "plan-design" ]]; then
   log "=== Phase: plan-design (brainstorm) ==="
+  _emit_phase_started "plan-design"
   LAST_PHASE="plan-design"
 
   ensure_worktree
@@ -625,7 +689,9 @@ Write design.md now."
     orchestrator_fail "Design doc not found after plan-design phase"
   fi
   info "Design doc saved to ${WORKTREE_DIR}/design.md"
+  _emit_artifact "plan-design" "${WORKTREE_DIR}/design.md" "design"
 
+  _emit_phase_done "plan-design"
   PHASE="plan-write"
 fi
 
@@ -634,6 +700,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "plan-write" ]]; then
   log "=== Phase: plan-write (implementation plan) ==="
+  _emit_phase_started "plan-write"
   LAST_PHASE="plan-write"
 
   ensure_worktree
@@ -677,7 +744,9 @@ Write plan.md now."
     orchestrator_fail "Plan file not found after plan-write phase"
   fi
   info "Plan saved to ${WORKTREE_DIR}/plan.md"
+  _emit_artifact "plan-write" "${WORKTREE_DIR}/plan.md" "plan"
 
+  _emit_phase_done "plan-write"
   PHASE="implement"
 fi
 
@@ -690,11 +759,14 @@ if [[ "$PHASE" == "spec-review" || "$PHASE" == "quality-review" ]]; then
   PHASE="implement"
 fi
 
+if [[ "$_INITIAL_PHASE" != "read_issue" ]]; then _emit_skipped_until "$PHASE"; fi
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: implement — subagent-driven development per task
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "implement" ]]; then
   log "=== Phase: implement ==="
+  _emit_phase_started "implement"
   LAST_PHASE="implement"
 
   ensure_worktree
@@ -1131,6 +1203,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   TASK_NUM=0
   IMPLEMENTATION_LOG="${ISSUES_DIR}/implementation-log.md"
   echo "# Implementation Log — Issue #${ISSUE_NUM}" > "$IMPLEMENTATION_LOG"
+  _emit_artifact "implement" "${ISSUES_DIR}/implementation-log.md" "implementation_log"
 
   RESUME_TASK_NUM=0
   RESUME_STAGE=""
@@ -1202,6 +1275,9 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     while [[ $REVIEW_LOOPS -lt 5 ]]; do
       REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
       log "  Review-fix loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}"
+      emit_event "fix-review" "info" "loop.iteration.started" \
+        "fix-review loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}" \
+        task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" max=5
       log "  Cancel window: press Ctrl+C within 10s to abort..."
       sleep 10
 
@@ -1237,6 +1313,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         QUALITY_PASS QUALITY_FAIL \
         "QUALITY_FAIL")
 
+      emit_event "fix-review" "info" "loop.iteration.completed" \
+        "fix-review loop ${REVIEW_LOOPS} completed (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})" \
+        task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" \
+        spec="${SPEC_STATUS:-unknown}" quality="${QUALITY_STATUS:-unknown}"
+
       if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
         log "  Task ${TASK_NUM}: both reviews pass"
         break
@@ -1251,6 +1332,9 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     done
 
     if [[ $REVIEW_LOOPS -eq 5 ]]; then
+      emit_event "fix-review" "error" "loop.exhausted" \
+        "fix-review hit max iterations for task ${TASK_NUM}" \
+        task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
       orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})."
     fi
 
@@ -1272,6 +1356,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
   done <<< "$TASKS"
 
+  _emit_phase_done "implement"
   PHASE="validate"
 fi
 
@@ -1280,7 +1365,11 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "validate" ]]; then
   log "=== Phase: validate ==="
+  _emit_phase_started "validate"
   LAST_PHASE="validate"
+
+  _VALIDATE_START_MS=$(_now_ms)
+  emit_event "validate" "info" "command.started" "running validate suite" command="pnpm-validate-suite"
 
   ensure_worktree
 
@@ -1311,6 +1400,17 @@ if [[ "$PHASE" == "validate" ]]; then
   grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
+  _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
+
+  _validate_now=$(_now_ms)
+  _VALIDATE_DUR=$(( _validate_now - _VALIDATE_START_MS ))
+  if [[ $VALIDATE_EXIT -eq 0 ]]; then
+    emit_event "validate" "info" "command.completed" "validate suite passed" \
+      command="pnpm-validate-suite" exitCode=0 durationMs="$_VALIDATE_DUR"
+  else
+    emit_event "validate" "error" "command.failed" "validate suite failed" \
+      command="pnpm-validate-suite" exitCode="$VALIDATE_EXIT" durationMs="$_VALIDATE_DUR"
+  fi
 
   # Record validation status for downstream phases
   if [[ $VALIDATE_EXIT -ne 0 ]]; then
@@ -1321,6 +1421,7 @@ if [[ "$PHASE" == "validate" ]]; then
     info "Validation passed"
   fi
 
+  _emit_phase_done "validate"
   PHASE="review"
 fi
 
@@ -1329,6 +1430,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "review" ]]; then
   log "=== Phase: review ==="
+  _emit_phase_started "review"
   LAST_PHASE="review"
 
   ensure_worktree
@@ -1375,13 +1477,16 @@ Write code-review.md now."
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
     info "Review saved to ${ISSUES_DIR}/review.md"
+    _emit_artifact "review" "${ISSUES_DIR}/review.md" "review"
   else
     REVIEW_FILE=$(find "${WORKTREE_DIR}" -name "code-review.md" 2>/dev/null | head -1 || true)
     if [[ -n "$REVIEW_FILE" && -f "$REVIEW_FILE" ]]; then
       cp "$REVIEW_FILE" "${ISSUES_DIR}/review.md"
+      _emit_artifact "review" "${ISSUES_DIR}/review.md" "review"
     fi
   fi
 
+  _emit_phase_done "review"
   PHASE="fix-review"
 fi
 
@@ -1390,9 +1495,18 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 FIX_LOOP_COUNT=0
 
+if [[ "$PHASE" == "fix-review" ]]; then
+_emit_phase_started "fix-review"
+
 while [[ "$PHASE" == "fix-review" ]]; do
   FIX_LOOP_COUNT=$((FIX_LOOP_COUNT + 1))
+  emit_event "fix-review" "info" "loop.iteration.started" \
+    "fix-review loop ${FIX_LOOP_COUNT}/10" \
+    iteration="${FIX_LOOP_COUNT}" max=10
   if [[ $FIX_LOOP_COUNT -gt 10 ]]; then
+    emit_event "fix-review" "error" "loop.exhausted" \
+      "fix-review hit max iterations" \
+      iterations="${FIX_LOOP_COUNT}"
     info "Fix loop limit (10) reached. Moving on."
     break
   fi
@@ -1405,6 +1519,9 @@ while [[ "$PHASE" == "fix-review" ]]; do
 
   if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
     info "No review.md found. Skipping fix loop."
+    emit_event "fix-review" "info" "loop.iteration.completed" \
+      "fix-review loop ${FIX_LOOP_COUNT} completed (no review.md)" \
+      iteration="${FIX_LOOP_COUNT}" status="skipped"
     break
   fi
 
@@ -1521,18 +1638,27 @@ Write code-review.md and review-findings-status.txt now."
 
   if [[ "$REVIEW_STATUS" == "ALL_RESOLVED" ]]; then
     info "All findings resolved. Exiting fix loop."
+    emit_event "fix-review" "info" "loop.iteration.completed" \
+      "fix-review loop ${FIX_LOOP_COUNT} completed (all resolved)" \
+      iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
     break
   fi
   info "Review status: ${REVIEW_STATUS}. Continuing fix loop."
+  emit_event "fix-review" "info" "loop.iteration.completed" \
+    "fix-review loop ${FIX_LOOP_COUNT} completed (has unresolved)" \
+    iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
 done
 
+_emit_phase_done "fix-review"
 PHASE="compound"
+fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: compound
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "compound" ]]; then
   log "=== Phase: compound ==="
+  _emit_phase_started "compound"
   LAST_PHASE="compound"
 
   ensure_worktree
@@ -1577,9 +1703,11 @@ Start now."
     if [[ -f "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" ]]; then
       cp "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" "${ISSUES_DIR}/compound.md"
       info "Compound doc saved to ${ISSUES_DIR}/compound.md"
+      _emit_artifact "compound" "${ISSUES_DIR}/compound.md" "compound"
     fi
   fi
 
+  _emit_phase_done "compound"
   PHASE="create-pr"
 fi
 
@@ -1588,6 +1716,7 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "create-pr" ]]; then
   log "=== Phase: create-pr ==="
+  _emit_phase_started "create-pr"
   LAST_PHASE="create-pr"
 
   ensure_worktree
@@ -1724,6 +1853,11 @@ EOF
 
   echo "$PR_URL" > "${ISSUES_DIR}/pr-url.txt"
   echo "$PR_NUM" > "${ISSUES_DIR}/pr-number.txt"
+  _emit_artifact "create-pr" "${ISSUES_DIR}/pr-summary.md" "summary"
+  if [[ ! -f "${ISSUES_DIR}/pr-summary.md" ]]; then
+    warn "pr-summary.md not found after create-pr phase — artifact event silently skipped"
+  fi
+  _emit_artifact "create-pr" "${ISSUES_DIR}/pr-url.txt" "pr"
 
   log "PR created: ${PR_URL}"
 
@@ -1740,6 +1874,7 @@ EOF
   # Comment on issue
   gh issue comment "$ISSUE_NUM" --body "PR created: ${PR_URL}" 2>/dev/null || true
 
+  _emit_phase_done "create-pr"
   PHASE="done"
 fi
 
@@ -1798,4 +1933,6 @@ if [[ "$PHASE" == "done" ]]; then
   echo "✅ Issue #${ISSUE_NUM} → PR ready"
   echo "   PR: $(cat "${ISSUES_DIR}/pr-url.txt")"
   echo "   Branch: ${BRANCH}"
+  emit_event "" "info" "run.completed" "issue-to-PR run completed" \
+    prUrl="${PR_URL:-}"
 fi

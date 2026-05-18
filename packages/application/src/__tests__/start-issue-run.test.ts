@@ -95,6 +95,7 @@ function fakeDirectoryFactory(opts?: {
         stdoutLogPath: `/fake/${run.displayId}/stdout.log`,
         stderrLogPath: `/fake/${run.displayId}/stderr.log`,
         combinedLogPath: `/fake/${run.displayId}/combined.log`,
+        eventsJsonlPath: `/fake/${run.displayId}/events.jsonl`,
       },
       writes: [],
       failureWrites: [],
@@ -414,6 +415,26 @@ describe('StartIssueRun', () => {
     expect(patch.status).toBe('failed');
     expect(patch.failureReason).toBeDefined();
     expect(errors[0]).toMatch(/Failed to write failure\.json/);
+  });
+
+  it('passes AI_RUN_EVENTS_FILE and AI_RUN_DISPLAY_ID to the bash script env', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      now: fixedNow,
+    });
+    const result = await usecase.execute({ issueNumber: 7 });
+    expect(calls[0]!.env.AI_RUN_EVENTS_FILE).toMatch(/events\.jsonl$/);
+    expect(calls[0]!.env.AI_RUN_DISPLAY_ID).toBe(result.displayId);
   });
 
   it('continues failure path when failureRepository.insert throws', async () => {

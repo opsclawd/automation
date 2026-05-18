@@ -70,6 +70,7 @@ export class StartIssueRun {
       AI_RUN_UUID: run.uuid,
       AI_RUN_DISPLAY_ID: run.displayId,
       AI_RUN_DIR: dir.runRoot,
+      AI_RUN_EVENTS_FILE: dir.paths.eventsJsonlPath,
       AI_ISSUE_NUMBER: String(input.issueNumber),
     };
     if (this.deps.baseBranch !== undefined) env.AI_BASE_BRANCH = this.deps.baseBranch;

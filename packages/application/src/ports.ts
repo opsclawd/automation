@@ -21,6 +21,7 @@ export interface RunDirectoryHandle {
     readonly stdoutLogPath: string;
     readonly stderrLogPath: string;
     readonly combinedLogPath: string;
+    readonly eventsJsonlPath: string;
   };
   writeRunJson(run: Run): void;
   writeFailureJson(failure: Failure): void;
