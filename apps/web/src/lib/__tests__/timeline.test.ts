@@ -1,0 +1,201 @@
+import { describe, it, expect } from 'vitest';
+import { derivePhaseTimeline, CANONICAL_PHASES } from '@/lib/timeline';
+import type { ApiEvent } from '@/lib/timeline';
+
+const ev = (over: Partial<ApiEvent>): ApiEvent => ({
+  id: 1,
+  runId: 'R-001',
+  phase: null,
+  level: 'info',
+  type: 'x',
+  message: '',
+  timestamp: '2026-05-16T12:00:00.000Z',
+  metadata: {},
+  ...over,
+});
+
+describe('derivePhaseTimeline', () => {
+  it('returns all 9 canonical phases as pending when given no events (AC1)', () => {
+    const timeline = derivePhaseTimeline([]);
+    expect(timeline).toHaveLength(CANONICAL_PHASES.length);
+    for (const entry of timeline) {
+      expect(entry.status).toBe('pending');
+      expect(entry.durationMs).toBeNull();
+      expect(entry.startedAt).toBeNull();
+      expect(entry.completedAt).toBeNull();
+      expect(entry.artifacts).toEqual([]);
+      expect(entry.failure).toBeUndefined();
+    }
+  });
+
+  it('returns phases in canonical order (AC7)', () => {
+    const timeline = derivePhaseTimeline([]);
+    expect(timeline.map((p) => p.name)).toEqual([...CANONICAL_PHASES]);
+  });
+
+  it('marks a phase running after phase.started and sets startedAt (AC2)', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'plan-write',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+    ]);
+    const pw = timeline.find((p) => p.name === 'plan-write')!;
+    expect(pw.status).toBe('running');
+    expect(pw.startedAt).toBe('2026-05-16T12:00:00.000Z');
+    expect(pw.durationMs).toBeNull();
+  });
+
+  it('marks a phase passed after phase.completed and computes durationMs (AC3)', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'plan-write',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'plan-write',
+        type: 'phase.completed',
+        timestamp: '2026-05-16T12:00:03.000Z',
+      }),
+    ]);
+    const pw = timeline.find((p) => p.name === 'plan-write')!;
+    expect(pw.status).toBe('passed');
+    expect(pw.completedAt).toBe('2026-05-16T12:00:03.000Z');
+    expect(pw.durationMs).toBe(3000);
+  });
+
+  it('marks a phase failed with failure payload and computes durationMs (AC4)', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'validate',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'validate',
+        type: 'phase.failed',
+        level: 'error',
+        message: 'build failed',
+        timestamp: '2026-05-16T12:00:05.000Z',
+        metadata: { command: 'pnpm build', exitCode: 2 },
+      }),
+    ]);
+    const v = timeline.find((p) => p.name === 'validate')!;
+    expect(v.status).toBe('failed');
+    expect(v.completedAt).toBe('2026-05-16T12:00:05.000Z');
+    expect(v.durationMs).toBe(5000);
+    expect(v.failure?.message).toBe('build failed');
+    expect(v.failure?.metadata.exitCode).toBe(2);
+  });
+
+  it('marks phase.skipped phases as skipped, does not set timestamps (AC5)', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'read_issue',
+        type: 'phase.skipped',
+        level: 'warn',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+    ]);
+    const ri = timeline.find((p) => p.name === 'read_issue')!;
+    expect(ri.status).toBe('skipped');
+    expect(ri.startedAt).toBeNull();
+    expect(ri.completedAt).toBeNull();
+  });
+
+  it('attaches artifact.created events to the correct phase (AC6)', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'plan-design',
+        type: 'artifact.created',
+        timestamp: '2026-05-16T12:00:01.000Z',
+        metadata: { path: '/tmp/design.md', kind: 'design' },
+      }),
+    ]);
+    const pd = timeline.find((p) => p.name === 'plan-design')!;
+    expect(pd.artifacts).toEqual([{ path: '/tmp/design.md', kind: 'design' }]);
+  });
+
+  it('ignores artifact.created when metadata.path is not a string', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'plan-design',
+        type: 'artifact.created',
+        timestamp: '2026-05-16T12:00:01.000Z',
+        metadata: { kind: 'design' },
+      }),
+    ]);
+    const pd = timeline.find((p) => p.name === 'plan-design')!;
+    expect(pd.artifacts).toEqual([]);
+  });
+
+  it('ignores events with phase=null (run-level events) (AC7)', () => {
+    const timeline = derivePhaseTimeline([ev({ id: 1, phase: null, type: 'run.started' })]);
+    expect(timeline.every((p) => p.status === 'pending')).toBe(true);
+  });
+
+  it('ignores events for unknown phase names (AC7)', () => {
+    const timeline = derivePhaseTimeline([
+      ev({ id: 1, phase: 'invented-phase', type: 'phase.started' }),
+    ]);
+    expect(timeline.every((p) => p.status === 'pending')).toBe(true);
+  });
+
+  it('keeps phases in canonical order regardless of event arrival order', () => {
+    const timeline = derivePhaseTimeline([
+      ev({ id: 1, phase: 'review', type: 'phase.started', timestamp: '2026-05-16T12:00:01.000Z' }),
+      ev({
+        id: 2,
+        phase: 'plan-design',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+    ]);
+    expect(timeline.map((p) => p.name)).toEqual([...CANONICAL_PHASES]);
+    expect(timeline.find((p) => p.name === 'review')!.status).toBe('running');
+    expect(timeline.find((p) => p.name === 'plan-design')!.status).toBe('running');
+  });
+
+  it('computes sub-second duration correctly', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'implement',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'implement',
+        type: 'phase.completed',
+        timestamp: '2026-05-16T12:00:00.450Z',
+      }),
+    ]);
+    const impl = timeline.find((p) => p.name === 'implement')!;
+    expect(impl.durationMs).toBe(450);
+  });
+
+  it('returns null durationMs when startedAt is missing for completed/failed', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'implement',
+        type: 'phase.completed',
+        timestamp: '2026-05-16T12:00:01.000Z',
+      }),
+    ]);
+    const impl = timeline.find((p) => p.name === 'implement')!;
+    expect(impl.status).toBe('passed');
+    expect(impl.durationMs).toBeNull();
+  });
+});
