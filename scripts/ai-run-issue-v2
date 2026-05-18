@@ -66,9 +66,19 @@ warn() { log "WARN: $*" >&2; }
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
+# Invariant: _emit_phase_started must always be called before _emit_phase_done
+# in the same phase block. orchestrator_fail always exits the script, so a
+# missing _emit_phase_done on failure paths is acceptable (phase.failed
+# supersedes phase.completed). This variable holds the start time of the
+# current (most recently started) phase only.
+# current (most recently started) phase only.
 _PHASE_START_MS=0
+_HAS_NANOSECONDS=false
+if date +%N >/dev/null 2>&1 && [[ "$(date +%N)" != "N" ]]; then
+  _HAS_NANOSECONDS=true
+fi
 _now_ms() {
-  if date +%N >/dev/null 2>&1 && [[ "$(date +%N)" != "N" ]]; then
+  if [[ "$_HAS_NANOSECONDS" == "true" ]]; then
     echo $(( $(date +%s%N) / 1000000 ))
   else
     echo $(( $(date +%s) * 1000 ))
@@ -93,11 +103,14 @@ _emit_phase_skipped() {
 }
 _emit_skipped_until() {
   local target=$1
-  local p
+  local p found=false
   for p in read_issue plan-design plan-write implement validate review fix-review compound create-pr; do
-    if [[ "$p" == "$target" ]]; then return 0; fi
+    if [[ "$p" == "$target" ]]; then found=true; break; fi
     _emit_phase_skipped "$p" "resume-detected"
   done
+  if [[ "$found" == "false" ]]; then
+    warn "_emit_skipped_until did not find phase '$target' in canonical list"
+  fi
 }
 _emit_artifact() {
   local phase=$1 path=$2 kind=$3
@@ -509,7 +522,6 @@ if [[ "$PHASE" == "read_issue" ]]; then
   log "=== Phase: read_issue ==="
   _emit_phase_started "read_issue"
   LAST_PHASE="read_issue"
-  _emit_phase_done "read_issue"
 
   # Guard: don't destroy existing progress on accidental re-entry
   if [[ -f "${ISSUES_DIR}/design.md" || -f "${ISSUES_DIR}/plan.md" ]]; then
@@ -629,6 +641,7 @@ EOF
   else
     PHASE="plan-design"
   fi
+  _emit_phase_done "read_issue"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -638,7 +651,6 @@ if [[ "$PHASE" == "plan-design" ]]; then
   log "=== Phase: plan-design (brainstorm) ==="
   _emit_phase_started "plan-design"
   LAST_PHASE="plan-design"
-  _emit_phase_done "plan-design"
 
   ensure_worktree
 
@@ -677,6 +689,7 @@ Write design.md now."
   info "Design doc saved to ${WORKTREE_DIR}/design.md"
   _emit_artifact "plan-design" "${WORKTREE_DIR}/design.md" "design"
 
+  _emit_phase_done "plan-design"
   PHASE="plan-write"
 fi
 
@@ -687,7 +700,6 @@ if [[ "$PHASE" == "plan-write" ]]; then
   log "=== Phase: plan-write (implementation plan) ==="
   _emit_phase_started "plan-write"
   LAST_PHASE="plan-write"
-  _emit_phase_done "plan-write"
 
   ensure_worktree
 
@@ -732,6 +744,7 @@ Write plan.md now."
   info "Plan saved to ${WORKTREE_DIR}/plan.md"
   _emit_artifact "plan-write" "${WORKTREE_DIR}/plan.md" "plan"
 
+  _emit_phase_done "plan-write"
   PHASE="implement"
 fi
 
@@ -751,7 +764,6 @@ if [[ "$PHASE" == "implement" ]]; then
   log "=== Phase: implement ==="
   _emit_phase_started "implement"
   LAST_PHASE="implement"
-  _emit_phase_done "implement"
 
   ensure_worktree
 
@@ -1340,6 +1352,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
   done <<< "$TASKS"
 
+  _emit_phase_done "implement"
   PHASE="validate"
 fi
 
@@ -1350,7 +1363,6 @@ if [[ "$PHASE" == "validate" ]]; then
   log "=== Phase: validate ==="
   _emit_phase_started "validate"
   LAST_PHASE="validate"
-  _emit_phase_done "validate"
 
   _VALIDATE_START_MS=$(_now_ms)
   emit_event "validate" "info" "command.started" "running validate suite" command="pnpm-validate-suite"
@@ -1405,6 +1417,7 @@ if [[ "$PHASE" == "validate" ]]; then
     info "Validation passed"
   fi
 
+  _emit_phase_done "validate"
   PHASE="review"
 fi
 
@@ -1415,7 +1428,6 @@ if [[ "$PHASE" == "review" ]]; then
   log "=== Phase: review ==="
   _emit_phase_started "review"
   LAST_PHASE="review"
-  _emit_phase_done "review"
 
   ensure_worktree
 
@@ -1470,6 +1482,7 @@ Write code-review.md now."
     fi
   fi
 
+  _emit_phase_done "review"
   PHASE="fix-review"
 fi
 
@@ -1478,6 +1491,8 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 FIX_LOOP_COUNT=0
 
+_emit_phase_started "fix-review"
+
 while [[ "$PHASE" == "fix-review" ]]; do
   FIX_LOOP_COUNT=$((FIX_LOOP_COUNT + 1))
   if [[ $FIX_LOOP_COUNT -gt 10 ]]; then
@@ -1485,11 +1500,9 @@ while [[ "$PHASE" == "fix-review" ]]; do
     break
   fi
   log "=== Phase: fix-review (loop $FIX_LOOP_COUNT) ==="
-  _emit_phase_started "fix-review"
   log "Cancel window: press Ctrl+C within 10s to abort..."
   sleep 10
   LAST_PHASE="fix-review"
-  _emit_phase_done "fix-review"
 
   ensure_worktree
 
@@ -1616,6 +1629,7 @@ Write code-review.md and review-findings-status.txt now."
   info "Review status: ${REVIEW_STATUS}. Continuing fix loop."
 done
 
+_emit_phase_done "fix-review"
 PHASE="compound"
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1625,7 +1639,6 @@ if [[ "$PHASE" == "compound" ]]; then
   log "=== Phase: compound ==="
   _emit_phase_started "compound"
   LAST_PHASE="compound"
-  _emit_phase_done "compound"
 
   ensure_worktree
 
@@ -1673,6 +1686,7 @@ Start now."
     fi
   fi
 
+  _emit_phase_done "compound"
   PHASE="create-pr"
 fi
 
@@ -1683,7 +1697,6 @@ if [[ "$PHASE" == "create-pr" ]]; then
   log "=== Phase: create-pr ==="
   _emit_phase_started "create-pr"
   LAST_PHASE="create-pr"
-  _emit_phase_done "create-pr"
 
   ensure_worktree
 
@@ -1820,6 +1833,9 @@ EOF
   echo "$PR_URL" > "${ISSUES_DIR}/pr-url.txt"
   echo "$PR_NUM" > "${ISSUES_DIR}/pr-number.txt"
   _emit_artifact "create-pr" "${ISSUES_DIR}/pr-summary.md" "summary"
+  if [[ ! -f "${ISSUES_DIR}/pr-summary.md" ]]; then
+    warn "pr-summary.md not found after create-pr phase — artifact event silently skipped"
+  fi
   _emit_artifact "create-pr" "${ISSUES_DIR}/pr-url.txt" "pr"
 
   log "PR created: ${PR_URL}"
@@ -1837,6 +1853,7 @@ EOF
   # Comment on issue
   gh issue comment "$ISSUE_NUM" --body "PR created: ${PR_URL}" 2>/dev/null || true
 
+  _emit_phase_done "create-pr"
   PHASE="done"
 fi
 
