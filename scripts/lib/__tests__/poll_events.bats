@@ -175,3 +175,44 @@ _meta_value() {
   run jq -e '.metadata.total == 5 and .metadata.unprocessed == 2' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
+
+@test "agent.failed emitted for nonzero agent exit even when resolve_result returns PARTIAL" {
+  emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
+    "invoking agent for poll iteration 1" commentId="batch-p1"
+  emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
+    "agent for poll iteration 1 exited with code 1" \
+    commentId="batch-p1" reason="non_zero_exit" exitCode=1 durationMs=5000
+
+  run _count_type "pr-review-poll.agent.failed"
+  [ "$output" = "1" ]
+  run _count_type "pr-review-poll.agent.completed"
+  [ "$output" = "0" ]
+
+  run _meta_value "pr-review-poll.agent.failed" "reason"
+  [ "$output" = '"non_zero_exit"' ]
+  run _meta_value "pr-review-poll.agent.failed" "exitCode"
+  [ "$output" = '1' ]
+}
+
+@test "run.completed preserves NO_FIXES_NEEDED terminal reason" {
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" \
+    "poll 1/3 for PR #456" prNumber=456 poll=1 maxPolls=3 totalPolls=1 maxTotalPolls=30
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.comments.fetched" \
+    "fetched 1 comments, 1 unprocessed" total=1 unprocessed=1
+  emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
+    "invoking agent for poll iteration 1" commentId="batch-p1"
+  emit_event "pr-review-poll" "info" "pr-review-poll.agent.completed" \
+    "agent done for poll iteration 1: NO_FIXES_NEEDED" \
+    commentId="batch-p1" result="NO_FIXES_NEEDED" durationMs=800
+  emit_event "pr-review-poll" "info" "pr-review-poll.reply.posted" \
+    "replies confirmed (no fixes needed)" commentId="batch-p1"
+  emit_event "pr-review-poll" "info" "pr-review-poll.run.completed" \
+    "PR review poll finished" totalProcessed=1 terminalReason="NO_FIXES_NEEDED"
+
+  run _count_type "pr-review-poll.run.completed"
+  [ "$output" = "1" ]
+
+  local terminal_reason
+  terminal_reason=$(jq -s '[.[] | select(.type == "pr-review-poll.run.completed")][0].metadata.terminalReason' "$AI_RUN_EVENTS_FILE")
+  [ "$terminal_reason" = '"NO_FIXES_NEEDED"' ]
+}
