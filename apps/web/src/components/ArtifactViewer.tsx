@@ -9,7 +9,7 @@ interface ArtifactViewerProps {
   fileSize: number;
 }
 
-type ViewState = 'closed' | 'loading' | 'loaded' | 'error';
+type ViewState = 'closed' | 'loading' | 'loaded' | 'error' | 'no-preview';
 
 const EXT_RENDERERS: Record<string, { label: string }> = {
   '.md': { label: 'Markdown' },
@@ -33,10 +33,14 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
   const renderer = EXT_RENDERERS[ext];
 
   async function handleToggle() {
-    if (state === 'loaded' || state === 'loading') {
-      reqId.current++;
+    if (state === 'loaded' || state === 'loading' || state === 'no-preview') {
       setState('closed');
       setContent('');
+      return;
+    }
+
+    if (!renderer) {
+      setState('no-preview');
       return;
     }
 
@@ -130,7 +134,7 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
         </pre>
       )}
 
-      {state === 'loaded' && !renderer && (
+      {state === 'no-preview' && (
         <div className="mt-2 text-sm text-slate-500">
           Preview not available for this file type.{' '}
           <a
