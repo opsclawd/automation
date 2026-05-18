@@ -114,4 +114,31 @@ describe('EventTailer', () => {
     expect(seen[0]!.type).toBe('late');
     await tailer.stop();
   });
+
+  it('drainAndStop does not duplicate events when a timer tick is in flight', async () => {
+    const seen: OrchestratorEvent[] = [];
+    const tailer = new EventTailer({ path, onEvent: (e) => seen.push(e), pollIntervalMs: 20 });
+    await tailer.start();
+    appendFileSync(path, ev('x') + '\n');
+    await waitUntil(() => seen.length === 1, 1000);
+    appendFileSync(path, ev('y') + '\n');
+    await new Promise((r) => setTimeout(r, 5));
+    await tailer.drainAndStop();
+    const types = seen.map((e) => e.type);
+    expect(types).toContain('x');
+    expect(types).toContain('y');
+    const xCount = types.filter((t) => t === 'x').length;
+    const yCount = types.filter((t) => t === 'y').length;
+    expect(xCount).toBe(1);
+    expect(yCount).toBe(1);
+  });
+
+  it('drainAndStop flushes trailing line without newline', async () => {
+    const seen: OrchestratorEvent[] = [];
+    const tailer = new EventTailer({ path, onEvent: (e) => seen.push(e), pollIntervalMs: 1000 });
+    await tailer.start();
+    appendFileSync(path, ev('no-newline'));
+    await tailer.drainAndStop();
+    expect(seen.map((e) => e.type)).toEqual(['no-newline']);
+  });
 });

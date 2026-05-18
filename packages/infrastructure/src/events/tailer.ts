@@ -18,6 +18,7 @@ export class EventTailer {
   private buffer = '';
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private tickInProgress: Promise<void> | null = null;
 
   constructor(opts: EventTailerOptions) {
     this.path = opts.path;
@@ -35,7 +36,10 @@ export class EventTailer {
   private scheduleTick(): void {
     if (!this.running) return;
     this.timer = setTimeout(() => {
-      this.tick().finally(() => this.scheduleTick());
+      this.tickInProgress = this.tick().finally(() => {
+        this.tickInProgress = null;
+        this.scheduleTick();
+      });
     }, this.pollIntervalMs);
   }
 
@@ -106,7 +110,25 @@ export class EventTailer {
     this.running = false;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.tickInProgress) await this.tickInProgress;
     await this.tick();
+    if (this.buffer.trim() !== '') {
+      const line = this.buffer.trim();
+      this.buffer = '';
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch (err) {
+        this.onParseError?.(err as Error, line);
+        return;
+      }
+      const result = eventSchema.safeParse(parsed);
+      if (result.success) {
+        this.onEvent(result.data);
+      } else {
+        this.onParseError?.(new Error(result.error.message), line);
+      }
+    }
   }
 
   async stop(): Promise<void> {
