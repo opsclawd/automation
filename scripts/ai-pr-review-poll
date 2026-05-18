@@ -801,6 +801,9 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   POLL_COUNT=$((POLL_COUNT + 1))
   TOTAL_POLLS=$((TOTAL_POLLS + 1))
   log "=== Poll $POLL_COUNT/$MAX_POLLS (total: $TOTAL_POLLS/$MAX_TOTAL_POLLS) ==="
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.started" \
+    "poll ${POLL_COUNT}/${MAX_POLLS} for PR #${PR_NUMBER}" \
+    prNumber="$PR_NUMBER" poll="$POLL_COUNT" maxPolls="$MAX_POLLS"
 
   review_ec=0
   process_reviews || review_ec=$?
@@ -820,6 +823,15 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   if [[ $POLL_COUNT -ge $MAX_POLLS || $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
     break
   fi
+
+  PROCESSED_COUNT=$(wc -l < "$PROCESSED_IDS_FILE" 2>/dev/null | tr -d ' ')
+  PENDING_COUNT=0
+  if [[ -s "$REPLIED_IDS_FILE" ]]; then
+    PENDING_COUNT=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
+  fi
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.completed" \
+    "poll ${POLL_COUNT} complete" \
+    poll="$POLL_COUNT" processed="${PROCESSED_COUNT:-0}" pending="$PENDING_COUNT"
 
   log "Sleeping ${POLL_INTERVAL}s until next poll..."
   sleep "$POLL_INTERVAL"
