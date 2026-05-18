@@ -675,6 +675,7 @@ Write design.md now."
     orchestrator_fail "Design doc not found after plan-design phase"
   fi
   info "Design doc saved to ${WORKTREE_DIR}/design.md"
+  _emit_artifact "plan-design" "${WORKTREE_DIR}/design.md" "design"
 
   PHASE="plan-write"
 fi
@@ -729,6 +730,7 @@ Write plan.md now."
     orchestrator_fail "Plan file not found after plan-write phase"
   fi
   info "Plan saved to ${WORKTREE_DIR}/plan.md"
+  _emit_artifact "plan-write" "${WORKTREE_DIR}/plan.md" "plan"
 
   PHASE="implement"
 fi
@@ -1185,6 +1187,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   TASK_NUM=0
   IMPLEMENTATION_LOG="${ISSUES_DIR}/implementation-log.md"
   echo "# Implementation Log — Issue #${ISSUE_NUM}" > "$IMPLEMENTATION_LOG"
+  _emit_artifact "implement" "${ISSUES_DIR}/implementation-log.md" "implementation_log"
 
   RESUME_TASK_NUM=0
   RESUME_STAGE=""
@@ -1367,6 +1370,7 @@ if [[ "$PHASE" == "validate" ]]; then
   grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
+  _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
 
   # Record validation status for downstream phases
   if [[ $VALIDATE_EXIT -ne 0 ]]; then
@@ -1433,10 +1437,12 @@ Write code-review.md now."
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
     info "Review saved to ${ISSUES_DIR}/review.md"
+    _emit_artifact "review" "${ISSUES_DIR}/review.md" "review"
   else
     REVIEW_FILE=$(find "${WORKTREE_DIR}" -name "code-review.md" 2>/dev/null | head -1 || true)
     if [[ -n "$REVIEW_FILE" && -f "$REVIEW_FILE" ]]; then
       cp "$REVIEW_FILE" "${ISSUES_DIR}/review.md"
+      _emit_artifact "review" "${ISSUES_DIR}/review.md" "review"
     fi
   fi
 
@@ -1639,6 +1645,7 @@ Start now."
     if [[ -f "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" ]]; then
       cp "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" "${ISSUES_DIR}/compound.md"
       info "Compound doc saved to ${ISSUES_DIR}/compound.md"
+      _emit_artifact "compound" "${ISSUES_DIR}/compound.md" "compound"
     fi
   fi
 
@@ -1788,6 +1795,8 @@ EOF
 
   echo "$PR_URL" > "${ISSUES_DIR}/pr-url.txt"
   echo "$PR_NUM" > "${ISSUES_DIR}/pr-number.txt"
+  _emit_artifact "create-pr" "${ISSUES_DIR}/pr-summary.md" "summary"
+  _emit_artifact "create-pr" "${ISSUES_DIR}/pr-url.txt" "pr"
 
   log "PR created: ${PR_URL}"
 
