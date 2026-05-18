@@ -711,9 +711,14 @@ process_reviews() {
   fi
 
   # Resolve structured result from agent output
+  local _result_file="${ISSUES_DIR}/process-review-p${POLL_COUNT}.result"
+  local _result_was_valid=false
+  if validate_result_file "$_result_file" ALL_DONE NO_FIXES_NEEDED PARTIAL BLOCKED; then
+    _result_was_valid=true
+  fi
   local review_result
   review_result=$(resolve_result \
-    "${ISSUES_DIR}/process-review-p${POLL_COUNT}.result" \
+    "$_result_file" \
     "${ISSUES_DIR}/process-review-p${POLL_COUNT}.log" \
     ALL_DONE NO_FIXES_NEEDED PARTIAL BLOCKED \
     PARTIAL)
@@ -727,23 +732,29 @@ process_reviews() {
       "agent for poll iteration ${POLL_COUNT} exited with code ${agent_ec}" \
       commentId="batch-p${POLL_COUNT}" reason="non_zero_exit" exitCode="$agent_ec" durationMs="$AGENT_DUR"
   else
-    case "$review_result" in
-      ALL_DONE|NO_FIXES_NEEDED|PARTIAL)
-        emit_event "pr-review-poll" "info" "pr-review-poll.agent.completed" \
-          "agent completed for poll iteration ${POLL_COUNT}: ${review_result}" \
-          commentId="batch-p${POLL_COUNT}" result="$review_result" durationMs="$AGENT_DUR"
-        ;;
-      BLOCKED)
-        emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
-          "agent blocked for poll iteration ${POLL_COUNT}" \
-          commentId="batch-p${POLL_COUNT}" reason="BLOCKED" exitCode="$agent_ec"
-        ;;
-      *)
-        emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
-          "agent for poll iteration ${POLL_COUNT} produced invalid result: ${review_result}" \
-          commentId="batch-p${POLL_COUNT}" reason="invalid_result" exitCode="$agent_ec"
-        ;;
-    esac
+    if [[ "$_result_was_valid" == "false" ]]; then
+      emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
+        "agent for poll iteration ${POLL_COUNT} produced no valid result file" \
+        commentId="batch-p${POLL_COUNT}" reason="no_result_file" exitCode="$agent_ec" durationMs="$AGENT_DUR"
+    else
+      case "$review_result" in
+        ALL_DONE|NO_FIXES_NEEDED|PARTIAL)
+          emit_event "pr-review-poll" "info" "pr-review-poll.agent.completed" \
+            "agent completed for poll iteration ${POLL_COUNT}: ${review_result}" \
+            commentId="batch-p${POLL_COUNT}" result="$review_result" durationMs="$AGENT_DUR"
+          ;;
+        BLOCKED)
+          emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
+            "agent blocked for poll iteration ${POLL_COUNT}" \
+            commentId="batch-p${POLL_COUNT}" reason="BLOCKED" exitCode="$agent_ec"
+          ;;
+        *)
+          emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
+            "agent for poll iteration ${POLL_COUNT} produced invalid result: ${review_result}" \
+            commentId="batch-p${POLL_COUNT}" reason="invalid_result" exitCode="$agent_ec"
+          ;;
+      esac
+    fi
   fi
 
   # ── Verification chain ──────────────────────────────────────────────────

@@ -216,3 +216,19 @@ _meta_value() {
   terminal_reason=$(jq -s '[.[] | select(.type == "pr-review-poll.run.completed")][0].metadata.terminalReason' "$AI_RUN_EVENTS_FILE")
   [ "$terminal_reason" = '"NO_FIXES_NEEDED"' ]
 }
+
+@test "agent.failed emitted when agent exits 0 but produces no valid result file" {
+  emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
+    "invoking agent for poll iteration 1" commentId="batch-p1"
+  emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
+    "agent for poll iteration 1 produced no valid result file" \
+    commentId="batch-p1" reason="no_result_file" exitCode=0 durationMs=3000
+
+  run _count_type "pr-review-poll.agent.failed"
+  [ "$output" = "1" ]
+  run _count_type "pr-review-poll.agent.completed"
+  [ "$output" = "0" ]
+
+  run _meta_value "pr-review-poll.agent.failed" "reason"
+  [ "$output" = '"no_result_file"' ]
+}
