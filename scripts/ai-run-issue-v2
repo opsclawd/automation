@@ -194,6 +194,9 @@ ensure_worktree() {
 # Seed worktree-local exclude rules so orchestrator artifacts are never
 # tracked. Idempotent: duplicate lines in info/exclude are harmless.
 seed_excludes() {
+  if [[ -z "${WORKTREE_DIR:-}" ]] || [[ ! -e "${WORKTREE_DIR}/.git" ]]; then
+    return 1
+  fi
   local common_dir
   common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
   mkdir -p "${common_dir}/info"

@@ -23,7 +23,7 @@ setup() {
 teardown() {
   rm -rf "$TMPDIR_TEST"
 }
-@test "seed_excludes writes exclude file with all orchestrator patterns" {
+@test "seed_excludes writes exclude file with key orchestrator patterns" {
   # Source the helper from the script (it is defined as a shell function).
   # We extract just the seed_excludes function to test in isolation.
   local script_path
