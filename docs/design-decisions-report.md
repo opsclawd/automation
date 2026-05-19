@@ -140,6 +140,8 @@ Fixed default with skip-list. The canonical sequence is hardcoded. Config can de
 
 **What's the MVP config structure?**
 
+The M1/M2 config covers validation, phase skip-list, and timeouts. Starting in M3 (per Q27), the file also gains an `agent` section for runtime/model routing — see PRD §15.7 for the full schema and routing policy. The complete MVP shape is:
+
 ```json
 {
   "validation": {
@@ -154,9 +156,42 @@ Fixed default with skip-list. The canonical sequence is hardcoded. Config can de
   "timeouts": {
     "readyMaxDays": 7,
     "invocationMaxMinutes": 30
+  },
+  "agent": {
+    "defaultProfile": "opencode-frontier",
+    "profiles": {
+      "opencode-frontier": {
+        "runtime": "opencode",
+        "provider": "anthropic",
+        "model": "claude-opus-4.7",
+        "timeoutMinutes": 60
+      },
+      "pi-qwen-local": {
+        "runtime": "pi",
+        "provider": "local",
+        "model": "qwen3.6-27b",
+        "contextLimitTokens": 64000,
+        "promptBudgetTokens": 40000,
+        "outputBudgetTokens": 8000,
+        "timeoutMinutes": 30
+      }
+    },
+    "phaseProfiles": {
+      "plan-design": { "profile": "opencode-frontier" },
+      "plan-write": { "profile": "opencode-frontier" },
+      "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "validate-fix": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "review": { "profile": "opencode-frontier" },
+      "fix-review": { "profile": "opencode-frontier" },
+      "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "create-pr": { "profile": "opencode-frontier" },
+      "pr-review-poll": { "profile": "opencode-frontier" }
+    }
   }
 }
 ```
+
+The `agent` section is the source of truth for runtime/model routing per Q27 and PRD §15.7. M1/M2 configs without an `agent` section are valid until M3 lands; M3 onward requires it.
 
 ## Q27 — Agent model/runtime selection
 
@@ -221,4 +256,4 @@ Explicitly out of scope (non-goal). Every concrete decision is inherently local.
 ## Q39 — Config shape confirmation
 
 **Is the `.ai-orchestrator.json` shape complete for MVP?**
-Confirmed. See Q26 for final shape.
+Confirmed. See Q26 for the full shape including the M3+ `agent` section (and PRD §15.7 for the routing-policy and fallback-trigger details).
