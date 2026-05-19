@@ -847,7 +847,7 @@ describe('classifyExit with events (M2-06)', () => {
     });
     expect(failure.kind).toBe('command_failed');
   });
-  it('prefers loop.exhausted over phase.failed so exhausted review loops classify as agent_blocked', () => {
+  it('prefers paired loop.exhausted over phase.failed in the same phase', () => {
     const failure = classifyExit({
       ...baseInput,
       events: [
@@ -873,6 +873,38 @@ describe('classifyExit with events (M2-06)', () => {
     });
     expect(failure.kind).toBe('agent_blocked');
     expect(failure.phase).toBe('fix-review');
+  });
+  it('prefers later phase.failed over stale loop.exhausted from earlier phase', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'fix-review',
+          type: 'loop.exhausted',
+          message: 'fix-review loop exhausted',
+          metadata: { reason: 'blocked' },
+          timestamp: '2026-05-16T12:00:00.000Z',
+        }),
+        ev({
+          phase: 'fix-review',
+          type: 'phase.failed',
+          message: 'fix-review failed after loop',
+          metadata: { reason: 'Review loop hit max' },
+          timestamp: '2026-05-16T12:00:01.000Z',
+        }),
+        ev({
+          phase: 'validate',
+          type: 'phase.failed',
+          message: 'pnpm typecheck failed',
+          metadata: { command: 'pnpm typecheck', exitCode: 1 },
+          timestamp: '2026-05-16T12:01:00.000Z',
+        }),
+      ],
+      combinedLogTail: 'some leftover log noise',
+    });
+    expect(failure.kind).toBe('validation_failed');
+    expect(failure.phase).toBe('validate');
+    expect(failure.message).toMatch(/pnpm typecheck/);
   });
   it('prefers loop.exhausted over run.failed when no phase.failed', () => {
     const failure = classifyExit({

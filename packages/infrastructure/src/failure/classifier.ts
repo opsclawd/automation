@@ -139,17 +139,53 @@ function lastPhase(tail: string): string | undefined {
 // kinds. Those remain log-scraping-only until corresponding event types are defined.
 
 function pickTerminalEvent(events: ClassifierEvent[]): ClassifierEvent | undefined {
-  // loop.exhausted is checked before phase.failed because when a review loop
-  // exhausts, the script emits both loop.exhausted and a generic phase.failed.
-  // Selecting phase.failed would lose the structured agent_blocked signal and
-  // regress to command_failed. When loop.exhausted is present it is always
-  // the more informative event.
-  const loopExhausted = lastOf(events, (e) => e.type === 'loop.exhausted');
-  if (loopExhausted) return loopExhausted;
-  const phaseFailed = lastOf(events, (e) => e.type === 'phase.failed');
-  if (phaseFailed) return phaseFailed;
-  const runFailed = lastOf(events, (e) => e.type === 'run.failed');
-  return runFailed;
+  // Walk events in reverse chronological order (most recent first) to find the
+  // terminal event that best represents *why* the run failed.
+  //
+  // Special case: when loop.exhausted and phase.failed are emitted for the
+  // same phase (the "paired" pattern), loop.exhausted is preferred because
+  // it carries the structured agent_blocked signal. A generic phase.failed
+  // following loop.exhausted in fix-review would regress to command_failed.
+  //
+  // But when phase.failed comes from a LATER phase (e.g. compound or create-pr
+  // after fix-review exhausted), it represents the true terminal failure and
+  // must not be overridden by a stale loop.exhausted from an earlier phase.
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.type === 'phase.failed') {
+      // If there is a paired loop.exhausted in the same phase before this
+      // event, prefer the loop.exhausted — it is the more informative signal.
+      const paired = findPairedLoopExhausted(events, e, i);
+      if (paired) return paired;
+      return e;
+    }
+    if (e.type === 'loop.exhausted') {
+      // This is the most recent terminal event. It wins unless a later
+      // phase.failed from a different phase already matched above.
+      // Since we're walking reverse, reaching here means no later
+      // phase.failed exists, so loop.exhausted is the terminal event.
+      return e;
+    }
+  }
+  return lastOf(events, (e) => e.type === 'run.failed');
+}
+
+function findPairedLoopExhausted(
+  events: ClassifierEvent[],
+  phaseFailed: ClassifierEvent,
+  phaseFailedIndex: number,
+): ClassifierEvent | undefined {
+  // A loop.exhausted is "paired" with phase.failed when it appears in the
+  // same phase, earlier in the stream. This handles the common pattern where
+  // a fix-review loop emits both events for the same exhaustion incident.
+  if (phaseFailed.phase === undefined) return undefined;
+  for (let j = phaseFailedIndex - 1; j >= 0; j--) {
+    const candidate = events[j]!;
+    if (candidate.type === 'loop.exhausted' && candidate.phase === phaseFailed.phase) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 function lastOf<T>(arr: T[], pred: (t: T) => boolean): T | undefined {
