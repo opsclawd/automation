@@ -29,6 +29,23 @@ The seams (Repository, Job, Worker, WorkerLease, AgentPort, AgentProfile, AgentR
 
 **SQLite-backed Job table + repo-scoped WorkerLease + N local Worker processes (chosen).** Same SQLite file backs both the orchestration state and the queue. WAL mode and short transactions handle a handful of concurrent Workers. Repo uniqueness on the lease table makes the "one Worker per Repository" invariant a database-level guarantee. No second service; no horizontal scale-out; no leader election. Adding a new runtime is writing a new AgentPort adapter — not adding a new infra component.
 
+### Atomic lease acquisition
+
+Domain language uses `WorkerLease`. In persistence the active-lease invariant must be enforced atomically — implementations must use a database-level uniqueness constraint or an equivalent transaction around `repoId` for active leases. A Worker that observes "no active lease for repoId X" and then writes a new lease row must do so inside the same atomic step; two Workers attempting to acquire concurrently must result in exactly one success and one well-typed conflict error. Domain code uses `WorkerLease`; persistence may use locks/transactions internally to acquire the lease safely. The in-memory fake used in M3 mirrors this behaviour with a serialised `acquire`. The one-Worker-per-Repository rule must be enforced by persistence, not convention.
+
+### Stale lease recovery — minimum safety checks
+
+A `WorkerLease` may be reclaimed by another Worker only after **all** of the following hold:
+
+- the lease's `heartbeatAt` is past `expiresAt`;
+- the owning Worker's heartbeat is itself stale (or the Worker is marked `unhealthy` / `stopping`);
+- if the owning Worker is on the same host, its process is no longer alive or has been marked `unhealthy` / `stopping`;
+- the associated Run has been transitioned to `failed` / `cancelled`, or is explicitly marked for recovery by an operator action;
+- the repo's worktree has been reset to the last known-good commit, or the worktree has been quarantined under a separate path before reuse;
+- a `lease.reclaimed` event is emitted carrying `{ repoId, previousWorkerId, previousRunId, reclaimedByWorkerId, reason }` for auditability.
+
+This list is the documented minimum; concrete adapter implementations may add stricter checks. The fake `WorkerLeasePort` in M3 enforces these checks for tests.
+
 **Keep `opencode` hardcoded as the only runtime.** Cheapest in the short term, but blocks local execution and makes cost control impossible. Rejected: Pi/Qwen is already required for bounded mechanical work.
 
 **Generic plug-in runtime registry (anyone can drop in an adapter).** Maximum flexibility, maximum design surface, no near-term need. Rejected: the system is not a generic workflow engine; the closed set of `opencode` and `pi` is sufficient.
@@ -78,6 +95,16 @@ Security assumptions:
 
 Phases reference `AgentProfile`s declared in `.ai-orchestrator.json`. The `AgentRuntimeRouter` resolves the configured profile at invocation time and dispatches to the adapter registered for that profile's `runtime`. Fallback is a per-phase routing concern declared on `phaseProfiles[phase].fallbackProfile`.
 
+### Ownership of fallback decisions
+
+Fallback routing has two distinct owners, and this split is load-bearing — it keeps the router from quietly turning into a mini-orchestrator:
+
+- **Phase / loop use cases** own _semantic_ fallback decisions. They know phase context, validation-failure category, touched-file count, reviewer-facing-output requirement, and architectural ambiguity. When such a condition is observed, the use case explicitly invokes the configured `fallbackProfile` (or returns a fallback-request to the router).
+- **`AgentRuntimeRouter`** owns _mechanical dispatch_: resolving the requested profile to the registered adapter, recording every `AgentInvocation`, and linking a fallback invocation to the invocation it superseded. The router does not interpret phase semantics.
+- The router _may_ enforce a small, objective set of adapter-level triggers itself, because they are observable from the adapter return value alone — **timeout, missing required artifact, invalid `result.json`, prompt budget exceeded, contract violation**. Every higher-level trigger (validation-category change, touched-file budget, reviewer-facing output, architectural ambiguity, repeated-failure counts on a Step) must be signalled by the caller.
+
+This boundary is mirrored in the M4-02c story.
+
 Use **Pi / Qwen** when:
 
 - the expected change is ≤ 3 files;
@@ -98,14 +125,19 @@ Use **OpenCode / frontier** when:
 - the task becomes ambiguous;
 - the touched file count exceeds the budget.
 
-Explicit fallback triggers (router auto-escalates from a Pi profile to its `fallbackProfile`):
+Explicit fallback triggers (escalate from a Pi profile to its `fallbackProfile`), grouped by owner per the section above:
 
-- two consecutive failures from the same profile on the same Step;
+Router-enforced (adapter-level, observable from the return value alone):
+
 - timeout;
 - missing required artifact;
 - invalid `result.json`;
-- contract violation;
-- context budget exceeded;
+- prompt / context budget exceeded;
+- contract violation.
+
+Use-case-signalled (semantic):
+
+- two consecutive failures from the same profile on the same Step;
 - touched files exceed the expected limit declared by the phase;
 - validation failure changes category between iterations;
 - architectural ambiguity / reviewer-facing output requested.
