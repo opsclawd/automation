@@ -99,6 +99,8 @@ export function buildProgram(): Command {
 
         try {
           const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
+          // Use process.stdout.write with a callback (not console.log) because
+          // process.exit() does not wait for stdout to flush.
           await new Promise<void>((resolve, reject) =>
             process.stdout.write(JSON.stringify(out) + '\n', (err) =>
               err ? reject(err) : resolve(),
