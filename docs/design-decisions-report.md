@@ -12,7 +12,7 @@ UUID-identified, `issueNumber` mandatory field. One active Run per issue (domain
 ## Q2 — Phase structure
 
 **How does review/fix fit into the phase model?**
-Review/fix is a single Phase (`review-fix`) with an internal Loop. Each Loop iteration = one review + one fix. Phase sequence advances monotonically.
+Review/fix is a single Phase (`review-fix`) with an internal Loop in the **target** domain model. Each Loop iteration = one review + one fix. Phase sequence advances monotonically. **Until M8**, the shipped Bash code and observability surface (`apps/web/src/lib/timeline.ts`, classifier, scripts) still split this into two separate phases — `review` followed by `fix-review`. The `review` + `fix-review` → `review-fix` collapse is part of M8 (see milestone-stories M8-01 / M8-06) and is a coordinated rename across config, code, tests, and docs — not a runtime normalization layer. During M3–M7, `phaseProfiles` keys and event phase names use the current two-phase set (`review`, `fix-review`).
 
 ## Q3 — Implement phase internals
 

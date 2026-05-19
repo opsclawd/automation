@@ -790,7 +790,8 @@ The `.ai-orchestrator.json` file gains an `agent` section that declares profiles
       "plan-write": { "profile": "opencode-frontier" },
       "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
       "validate-fix": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "review-fix": { "profile": "opencode-frontier" },
+      "review": { "profile": "opencode-frontier" },
+      "fix-review": { "profile": "opencode-frontier" },
       "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
       "create-pr": { "profile": "opencode-frontier" },
       "pr-review-poll": { "profile": "opencode-frontier" }
@@ -799,14 +800,7 @@ The `.ai-orchestrator.json` file gains an `agent` section that declares profiles
 }
 ```
 
-**Phase key normalization.** `phaseProfiles` keys are the canonical phase names from §29 (e.g. `review-fix`, not the legacy Bash `review` or `fix-review`). The composition root's `resolveProfileForPhase(phaseName)` helper normalizes legacy Bash phase names to canonical names before lookup so the same routing map works for both Bash callers (during the M4–M7 migration) and TypeScript phase handlers (M8). The legacy-name map is:
-
-| Legacy Bash phase | Canonical phase |
-| ----------------- | --------------- |
-| `review`          | `review-fix`    |
-| `fix-review`      | `review-fix`    |
-
-Both Bash `review` and Bash `fix-review` map to the single canonical `review-fix` phase (per §29 canonical sequence). `resolveProfileForPhase` must fail loudly on an unmapped legacy name rather than silently falling back to `defaultProfile`, so routing misses surface as a typed `ConfigError` instead of a quiet downgrade to frontier defaults. Add a new row to this map any time a Bash phase is renamed during migration.
+**Phase keys match the shipped phase set.** During M4–M7 the canonical phase names are the ones emitted and consumed by current code — `review` and `fix-review` are two separate phases. Q2 / M8-01 / M8-06 describe a planned domain collapse into a single `review-fix` phase in M8; that rename is a coordinated change across config, code, and tests, **not** a runtime normalization concern. Until M8 lands, `phaseProfiles` keys must match the phase names actually emitted by Bash and consumed by `apps/web/src/lib/timeline.ts`. `resolveProfileForPhase(phaseName)` is therefore a direct lookup with no legacy-name remapping; an unknown phase name raises a typed `ConfigError` (no silent fallback to `defaultProfile`).
 
 #### Routing policy
 

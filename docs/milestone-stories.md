@@ -381,7 +381,7 @@ Test plan     How acceptance is verified.
   - Single `composeRoot()` factory in `apps/api` returning a typed `Container`. No DI framework — plain factory.
   - The container exposes an `AgentPort` whose implementation is resolved from `agent.profiles[<profileName>].runtime` at invocation time.
   - In M3 the only registered runtime adapter is the fake (test double); real adapters land in M4.
-  - The container reads `agent.phaseProfiles` and exposes a `resolveProfileForPhase(phaseName)` helper so phase handlers do not parse config themselves. The helper normalizes legacy Bash phase names to canonical names (e.g. both `review` and `fix-review` → `review-fix`) before lookup, and fails loudly with a `ConfigError` on an unmapped legacy name rather than silently falling back to `defaultProfile` — see PRD §15.7 phase-key normalization table.
+  - The container reads `agent.phaseProfiles` and exposes a `resolveProfileForPhase(phaseName)` helper so phase handlers do not parse config themselves. The helper is a **direct lookup** against the shipped phase-name set (e.g. `review` and `fix-review` as two separate phases until M8 merges them into `review-fix`); an unknown phase name raises a typed `ConfigError`. No legacy-name remapping — see PRD §15.7.
 - **Acceptance:**
   - Tests can build a Container with fakes for every port, including an `AgentPort` backed by the in-memory fake.
   - Wiring a real adapter in M4 requires only registering it in the composition root — no domain or application changes.
@@ -510,7 +510,7 @@ Test plan     How acceptance is verified.
 - **User story:** As an automation owner, I want the Bash scripts to delegate single-shot agent calls to the runtime-agnostic Node runner so observability and routing are uniform regardless of which runtime executes the call.
 - **Scope:**
   - Add a `node ./scripts/run-agent --profile <name>` CLI in `apps/cli` that the Bash scripts call instead of `opencode` directly. The CLI invokes `AgentPort.invoke(...)` — it does not name a runtime.
-  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls). Each Bash call passes its own phase name (canonical or legacy); the CLI calls `resolveProfileForPhase`, which normalizes legacy names (both `review` and `fix-review` → `review-fix`) before looking up `phaseProfiles` so routing succeeds regardless of which name the caller used. Unmapped legacy names raise a `ConfigError` — no silent fallback to `defaultProfile`.
+  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls). Each Bash call passes its current phase name verbatim; the CLI calls `resolveProfileForPhase` as a direct lookup against `phaseProfiles`. Unknown phase names raise a `ConfigError` — no silent fallback to `defaultProfile`. The eventual `review`+`fix-review` → `review-fix` collapse is M8's concern (see M8-06).
   - `implement` loop stays on direct `opencode` for now (covered by M8).
 - **Acceptance:** All previously-Bash-driven agent calls write `agent_invocations` rows with the resolved profile, runtime, provider, and model. End-to-end run still succeeds for both `opencode` and `pi` profiles (where the latter is configured).
 
@@ -720,11 +720,19 @@ Test plan     How acceptance is verified.
 - **Depends on:** M5-02, M8-01
 - **Scope:** Thin wrapper around the M5 validation runner; sets phase outcome from `validation-result.json`.
 
-## M8-06 — `review-fix` phase handler
+## M8-06 — `review-fix` phase handler (collapses legacy `review` + `fix-review`)
 
-- **Labels:** `milestone:M8`, `area:application`
+- **Labels:** `milestone:M8`, `area:application`, `area:bash`, `area:ui`
 - **Depends on:** M7-02, M8-05
-- **Scope:** Use M7's `ReviewFixLoop` directly; honour `phases.reviewFix.maxIterations`.
+- **Scope:**
+  - Use M7's `ReviewFixLoop` directly; honour `phases.reviewFix.maxIterations`.
+  - **Coordinated rename:** This story is where the two shipped Bash phases (`review`, `fix-review`) collapse into the single domain canonical `review-fix` (per Q2). The rename must land atomically across:
+    - `apps/web/src/lib/timeline.ts` phase array and `apps/web/src/app/runs/[id]/phase-timeline.tsx` label map
+    - `apps/web/e2e/run-detail-timeline.spec.ts` and other tests
+    - `packages/infrastructure/src/failure/classifier.ts` and its tests
+    - `scripts/ai-run-issue-v2` phase list (until the script is retired in M8-11)
+    - `.ai-orchestrator.json` `agent.phaseProfiles`: two keys `review` + `fix-review` become a single `review-fix` entry
+- **Acceptance:** No code path emits or consumes the legacy `review` or `fix-review` phase names after this story merges; `phaseProfiles` carries a single `review-fix` entry; all timeline / classifier / e2e tests pass with the unified phase.
 
 ## M8-07 — `compound` phase handler
 
