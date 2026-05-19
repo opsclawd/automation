@@ -159,6 +159,7 @@ check_branch_after_agent() {
 # rm-rf of .ai-worktrees/. Idempotent: no-op when the worktree is healthy.
 ensure_worktree() {
   if [[ -e "${WORKTREE_DIR}/.git" ]]; then
+    seed_excludes
     return 0
   fi
 
@@ -187,6 +188,45 @@ ensure_worktree() {
     orchestrator_fail "Worktree recovery completed but ${WORKTREE_DIR} is still not a worktree"
   fi
   log "Worktree recovered at ${WORKTREE_DIR}"
+  seed_excludes
+}
+
+# Seed worktree-local exclude rules so orchestrator artifacts are never
+# tracked. Idempotent: duplicate lines in info/exclude are harmless.
+seed_excludes() {
+  local common_dir
+  common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
+  mkdir -p "${common_dir}/info"
+  cat >> "${common_dir}/info/exclude" << 'EOF'
+*.log
+*.result
+code-review.md
+review.md
+design.md
+plan.md
+compound.md
+implementation-log.md
+review-fix-log.md
+validation*.md
+issue*.json
+issue*.md
+pr-summary.md
+pr-*.txt
+MEMORY.md
+AGENTS.md
+CLAUDE.md
+tsconfig.tsbuildinfo
+spec-review-task-*.md
+quality-review-task-*.md
+review-findings-status.txt
+implement-task-*.md
+fix-review-task-*.md
+fix-review-task-*.log
+next-env.d.ts
+node_modules/
+.next/
+.review-context/
+EOF
 }
 
 # ── result resolution helpers ───────────────────────────────────────────────
