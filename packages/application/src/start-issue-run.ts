@@ -87,7 +87,7 @@ export class StartIssueRun {
     const collectedEvents: ClassifierEvent[] = [];
     const onEvent = (e: OrchestratorEvent): void => {
       collectedEvents.push({
-        phase: e.phase,
+        ...(e.phase !== undefined && { phase: e.phase }),
         level: e.level,
         type: e.type,
         message: e.message,
