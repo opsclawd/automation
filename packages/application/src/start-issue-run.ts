@@ -86,17 +86,18 @@ export class StartIssueRun {
 
     const collectedEvents: ClassifierEvent[] = [];
     let classified = false;
-    // Events emitted during drainAndStop() (after classifyExit) are intentionally
-    // excluded from classification — they represent post-mortem events that arrive
-    // after the process has already exited. See plan.md Risk Area 1.
+    // After classifyExit runs, the classified flag prevents further events
+    // from being pushed into collectedEvents. This also guards against events
+    // arriving during the final tailer.drainAndStop() in the finally block —
+    // those are post-classification and should not influence failure.json.
     const onEvent = (e: OrchestratorEvent): void => {
       if (classified) return;
-      collectedEvents.push(toClassifierEvent(e));
       try {
         if (e.runId !== run.displayId) {
           logger.error(`Event runId mismatch for run ${run.displayId}: got ${e.runId}, skipping`);
           return;
         }
+        collectedEvents.push(toClassifierEvent(e));
         const insertInput: Parameters<EventRepositoryPort['insert']>[0] = {
           runUuid: run.uuid,
           level: e.level,
@@ -174,6 +175,11 @@ export class StartIssueRun {
       const completedAt = now();
       const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
       if (finalStatus === 'failed') {
+        try {
+          await tailer.drainAndStop();
+        } catch (e) {
+          logger.error('Failed to drain event tailer before classification', e);
+        }
         const tail = dir.readCombinedLog();
         const failure = this.deps.classifyExit({
           exitCode: exec.exitCode,
