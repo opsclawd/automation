@@ -408,18 +408,10 @@ handle_contradiction_reconciliation() {
     rerun_reviewer_for_contradiction "quality" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha"
   fi
 
-  # Re-resolve review statuses after re-run
-  SPEC_STATUS=$(resolve_result \
-    "${WORKTREE_DIR}/spec-review-task-${task_num}.result" \
-    "${WORKTREE_DIR}/spec-review-task-${task_num}.md" \
-    SPEC_PASS SPEC_FAIL "SPEC_FAIL")
-  QUALITY_STATUS=$(resolve_result \
-    "${WORKTREE_DIR}/quality-review-task-${task_num}.result" \
-    "${WORKTREE_DIR}/quality-review-task-${task_num}.md" \
-    QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
-
   # If the re-run didn't produce a valid .md, restore the original findings
-  # so the human operator has actionable evidence in the reviews_inconsistent error.
+  # BEFORE re-resolving statuses so the human operator has actionable evidence
+  # in the reviews_inconsistent error — and so an empty rerun .md doesn't
+  # produce a misleading PASS status from the stale .result file.
   if [[ -n "$spec_md_backup" && ! -s "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
     log "  Spec review re-run produced no .md — restoring original findings from backup"
     cp "$spec_md_backup" "${WORKTREE_DIR}/spec-review-task-${task_num}.md"
@@ -431,6 +423,19 @@ handle_contradiction_reconciliation() {
 
   # Clean up backup files
   rm -f "$spec_md_backup" "$quality_md_backup" 2>/dev/null || true
+
+  # Re-resolve review statuses after re-run (and potential backup restore).
+  # This must happen AFTER the backup restore so that an empty rerun .md
+  # doesn't yield a PASS status from a stale .result while the .md contains
+  # the original failing findings.
+  SPEC_STATUS=$(resolve_result \
+    "${WORKTREE_DIR}/spec-review-task-${task_num}.result" \
+    "${WORKTREE_DIR}/spec-review-task-${task_num}.md" \
+    SPEC_PASS SPEC_FAIL "SPEC_FAIL")
+  QUALITY_STATUS=$(resolve_result \
+    "${WORKTREE_DIR}/quality-review-task-${task_num}.result" \
+    "${WORKTREE_DIR}/quality-review-task-${task_num}.md" \
+    QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
 
   # Update caller's status variables via globals (set above)
   if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
