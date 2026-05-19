@@ -370,8 +370,17 @@ resolve_result() {
   local fallback="${all_args[-1]}"
   local allowed_arr=("${all_args[@]:0:$(( ${#all_args[@]} - 1 ))}")
 
-  # Detect invalid agent contract: .result present but .md missing.
-  if [[ -f "$result_file" && ! -f "$source_file" ]]; then
+  # Detect invalid agent contract for review tasks: .result present but .md missing.
+  # Only spec-review and quality-review require both files; implementer and
+  # fix-review tasks only write .result, so the guard must not apply to them.
+  local base_name
+  base_name=$(basename "$result_file")
+  local is_review_task=false
+  if [[ "$base_name" == spec-review-task-*.result || "$base_name" == quality-review-task-*.result ]]; then
+    is_review_task=true
+  fi
+
+  if $is_review_task && [[ -f "$result_file" && ! -f "$source_file" ]]; then
     log "  Result file present but source .md missing — invalid agent contract, ignoring stale .result"
     # Fall through to extractor (will fail since .md is absent), then fallback
   else
