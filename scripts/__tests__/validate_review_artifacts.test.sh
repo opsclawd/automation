@@ -2,9 +2,12 @@
 # Tests for validate_review_artifacts function
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Source the function from the main script (functions are defined inside a block,
-# so we source just the function definitions by extracting them)
-source <(sed -n '/^validate_review_artifacts/,/^}/p' "${SCRIPT_DIR}/../ai-run-issue-v2")
+# Extract the function using awk brace-counting to find the matching closing brace.
+# This is robust against any line starting with } inside the function body.
+source <(awk '
+  /^validate_review_artifacts\(\)/ { found=1 }
+  found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) exit }
+' "${SCRIPT_DIR}/../ai-run-issue-v2")
 PASS=0
 FAIL=0
 assert_return() {
