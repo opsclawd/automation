@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { derivePhaseTimeline, CANONICAL_PHASES } from '@/lib/timeline';
-import type { ApiEvent } from '@/lib/timeline';
+import { derivePhaseTimeline, CANONICAL_PHASES } from '../timeline';
+import type { ApiEvent } from '../timeline';
 
 const ev = (over: Partial<ApiEvent>): ApiEvent => ({
   id: 1,
