@@ -159,6 +159,7 @@ check_branch_after_agent() {
 # rm-rf of .ai-worktrees/. Idempotent: no-op when the worktree is healthy.
 ensure_worktree() {
   if [[ -e "${WORKTREE_DIR}/.git" ]]; then
+    seed_excludes
     return 0
   fi
 
@@ -187,6 +188,55 @@ ensure_worktree() {
     orchestrator_fail "Worktree recovery completed but ${WORKTREE_DIR} is still not a worktree"
   fi
   log "Worktree recovered at ${WORKTREE_DIR}"
+  seed_excludes
+}
+
+# Seed worktree-local exclude rules so orchestrator artifacts are never
+# tracked. Skips the append when a sentinel pattern is already present, so
+# the file doesn't accumulate duplicate blocks across every phase entry.
+seed_excludes() {
+  if [[ -z "${WORKTREE_DIR:-}" ]] || [[ ! -e "${WORKTREE_DIR}/.git" ]]; then
+    return 1
+  fi
+  local common_dir exclude_file
+  common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
+  exclude_file="${common_dir}/info/exclude"
+  mkdir -p "${common_dir}/info"
+  # Sentinel check: .review-context/ is the last pattern in the block, so its
+  # presence means a previous seed_excludes call already wrote the full set.
+  if [[ -f "$exclude_file" ]] && grep -qxF '.review-context/' "$exclude_file"; then
+    return 0
+  fi
+  cat >> "$exclude_file" << 'EOF'
+*.log
+*.result
+code-review.md
+review.md
+design.md
+plan.md
+compound.md
+implementation-log.md
+review-fix-log.md
+validation*.md
+issue*.json
+issue*.md
+pr-summary.md
+pr-*.txt
+MEMORY.md
+AGENTS.md
+CLAUDE.md
+tsconfig.tsbuildinfo
+spec-review-task-*.md
+quality-review-task-*.md
+review-findings-status.txt
+implement-task-*.md
+fix-review-task-*.md
+fix-review-task-*.log
+next-env.d.ts
+node_modules/
+.next/
+.review-context/
+EOF
 }
 
 # ── result resolution helpers ───────────────────────────────────────────────
@@ -591,43 +641,8 @@ if [[ "$PHASE" == "read_issue" ]]; then
   cp -r "${REPO_ROOT}/scripts/"*.sh "${WORKTREE_DIR}/scripts/" 2>/dev/null || true
 
   # Run artifacts (issue.json, issue.md, issue-comments.md) are written directly to worktree
-
-  # Resolve the common git directory (worktrees share the main repo's git dir)
-  # git rev-parse --git-dir resolves to .git/worktrees/issue-N/ for worktrees,
-  # but info/exclude is read from the common dir (.git/) not the worktree-local dir.
-  WORKTREE_COMMON_DIR=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
-  mkdir -p "${WORKTREE_COMMON_DIR}/info"
-
-  cat >> "${WORKTREE_COMMON_DIR}/info/exclude" << 'EOF'
-*.log
-*.result
-code-review.md
-review.md
-design.md
-plan.md
-compound.md
-implementation-log.md
-review-fix-log.md
-validation*.md
-issue*.json
-issue*.md
-pr-summary.md
-pr-*.txt
-MEMORY.md
-AGENTS.md
-CLAUDE.md
-tsconfig.tsbuildinfo
-spec-review-task-*.md
-quality-review-task-*.md
-review-findings-status.txt
-implement-task-*.md
-fix-review-task-*.md
-fix-review-task-*.log
-next-env.d.ts
-node_modules/
-.next/
-.review-context/
-EOF
+  # Seed exclude rules so orchestrator artifacts are never tracked by git.
+  seed_excludes
 
   # Archive pre-seeding: skip phases that already have outputs from a prior run
   ARCHIVE_DIR="${REPO_ROOT}/ai/issues/${ISSUE_NUM}"
