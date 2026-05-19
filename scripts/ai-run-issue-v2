@@ -323,6 +323,137 @@ rerun_reviewer_once() {
   fi
 }
 
+# rerun_reviewer_for_contradiction: re-run a reviewer for contradiction reconciliation.
+# Same cleanup as rerun_reviewer_once but does NOT set *_RERUN_WARNING flags,
+# because the prior review may be valid — it just disagrees with fix-review.
+rerun_reviewer_for_contradiction() {
+  local reviewer_type="$1"  # "spec" or "quality"
+  local task_n="$2"
+  local task_title="$3"
+  local task_text="$4"
+  local base_sha="$5"
+  local head_sha="$6"
+
+  log "  contradiction_retry: re-running ${reviewer_type}-review-task-${task_n} after review/fix contradiction"
+
+  # Clean up orphaned artifacts from both directories so the re-run starts fresh
+  rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
+  rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
+  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
+  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+
+  if [[ "$reviewer_type" == "spec" ]]; then
+    local impl_report="$7"
+    run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+  elif [[ "$reviewer_type" == "quality" ]]; then
+    run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+  fi
+}
+
+# handle_contradiction_reconciliation: when fix-review says DONE_NO_FIXES_NEEDED
+# but a review says FAIL, re-run the failing review once.
+# Sets CONTRADICTION_ACTION: "resolved" (both pass after re-run),
+#   "retried" (re-run done but still failing — caller should orchestrator_fail),
+#   "already_retried" (retry already consumed — caller should orchestrator_fail),
+#   or "none" (no contradiction detected).
+handle_contradiction_reconciliation() {
+  local fix_status="$1"
+  local spec_status="$2"
+  local quality_status="$3"
+  local task_num="$4"
+  local task_title="$5"
+  local task_text="$6"
+  local base_sha="$7"
+  local head_sha="$8"
+  local impl_report="$9"
+
+  CONTRADICTION_ACTION="none"
+
+  if [[ "$fix_status" != "DONE_NO_FIXES_NEEDED" ]]; then
+    return 0
+  fi
+  if [[ "$spec_status" == "SPEC_PASS" && "$quality_status" == "QUALITY_PASS" ]]; then
+    return 0
+  fi
+  if [[ "$CONTRADICTION_RETRIED" -ge 1 ]]; then
+    CONTRADICTION_ACTION="already_retried"
+    return 0
+  fi
+
+  CONTRADICTION_RETRIED=1
+  log "  Contradiction detected: review FAIL + fix-review DONE_NO_FIXES_NEEDED — re-running failing review once for task ${task_num}"
+  emit_event "fix-review" "warn" "contradiction.detected" \
+    "review/fix contradiction for task ${task_num}, re-running review" \
+    task="${task_num}" iteration="${REVIEW_LOOPS}" spec="${spec_status}" quality="${quality_status}"
+
+  # Preserve original review findings before rerun. If the re-run fails to
+  # regenerate valid reports (timeout, contract violation), the orchestrator
+  # will fail with reviews_inconsistent and the human operator needs the
+  # original findings to triage — not empty or partial re-run output.
+  local spec_md_backup="" quality_md_backup=""
+  if [[ -f "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
+    spec_md_backup="${WORKTREE_DIR}/spec-review-task-${task_num}.md.bak"
+    cp "${WORKTREE_DIR}/spec-review-task-${task_num}.md" "$spec_md_backup"
+  fi
+  if [[ -f "${WORKTREE_DIR}/quality-review-task-${task_num}.md" ]]; then
+    quality_md_backup="${WORKTREE_DIR}/quality-review-task-${task_num}.md.bak"
+    cp "${WORKTREE_DIR}/quality-review-task-${task_num}.md" "$quality_md_backup"
+  fi
+
+  # Track which reviewers were re-run so restore logic only applies to them
+  local spec_reran=0 quality_reran=0
+
+  # Re-run whichever review(s) are failing (without contract-violation warning)
+  if [[ "$spec_status" == "SPEC_FAIL" ]]; then
+    spec_reran=1
+    rerun_reviewer_for_contradiction "spec" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha" "$impl_report"
+  fi
+  if [[ "$quality_status" == "QUALITY_FAIL" ]]; then
+    quality_reran=1
+    rerun_reviewer_for_contradiction "quality" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha"
+  fi
+
+  # If the re-run didn't produce a valid .md, restore the original findings
+  # BEFORE re-resolving statuses so the human operator has actionable evidence
+  # in the reviews_inconsistent error — and so an empty rerun .md doesn't
+  # produce a misleading PASS status from the stale .result file.
+  # Only apply restore for reviewers that were actually re-run.
+  if [[ "$spec_reran" -eq 1 && -n "$spec_md_backup" && ! -s "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
+    log "  Spec review re-run produced no .md — restoring original findings from backup"
+    cp "$spec_md_backup" "${WORKTREE_DIR}/spec-review-task-${task_num}.md"
+    rm -f "${WORKTREE_DIR}/spec-review-task-${task_num}.result"
+  fi
+  if [[ "$quality_reran" -eq 1 && -n "$quality_md_backup" && ! -s "${WORKTREE_DIR}/quality-review-task-${task_num}.md" ]]; then
+    log "  Quality review re-run produced no .md — restoring original findings from backup"
+    cp "$quality_md_backup" "${WORKTREE_DIR}/quality-review-task-${task_num}.md"
+    rm -f "${WORKTREE_DIR}/quality-review-task-${task_num}.result"
+  fi
+
+  # Clean up backup files
+  rm -f "$spec_md_backup" "$quality_md_backup" 2>/dev/null || true
+
+  # Re-resolve review statuses after re-run (and potential backup restore).
+  # This must happen AFTER the backup restore so that an empty rerun .md
+  # doesn't yield a PASS status from a stale .result while the .md contains
+  # the original failing findings.
+  SPEC_STATUS=$(resolve_result \
+    "${WORKTREE_DIR}/spec-review-task-${task_num}.result" \
+    "${WORKTREE_DIR}/spec-review-task-${task_num}.md" \
+    SPEC_PASS SPEC_FAIL "SPEC_FAIL")
+  QUALITY_STATUS=$(resolve_result \
+    "${WORKTREE_DIR}/quality-review-task-${task_num}.result" \
+    "${WORKTREE_DIR}/quality-review-task-${task_num}.md" \
+    QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
+
+  # Update caller's status variables via globals (set above)
+  if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
+    log "  Task ${task_num}: contradiction resolved by review re-run, both reviews pass"
+    CONTRADICTION_ACTION="resolved"
+  else
+    CONTRADICTION_ACTION="retried"
+  fi
+}
+
 # extract_result: focused extractor agent that reads source .md and writes .result
 extract_result() {
   local phase="$1"
@@ -1334,6 +1465,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     IMPL_STATUS="DONE"
     HEAD_SHA=""
     REVIEW_LOOPS=0
+    CONTRADICTION_RETRIED=0
 
     # Step 1: Implement
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
@@ -1436,12 +1568,15 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         log "  Task ${TASK_NUM}: both reviews pass"
         break
       elif [[ "$FIX_STATUS" == "DONE_NO_FIXES_NEEDED" ]]; then
-        # Fix-agent declined to do anything but reviews remain failing.
-        # This is NOT a stable terminal state — it means the fix-agent
-        # didn't see the findings (Bug A/B), or the findings genuinely
-        # require human judgement. Either way, do not silently mark the
-        # task complete — fail the orchestrator so the operator looks.
-        orchestrator_fail "Task ${TASK_NUM}: reviews failing (spec=${SPEC_STATUS}, quality=${QUALITY_STATUS}) and fix-agent reported no fixes. Inspect spec-review-task-${TASK_NUM}.md / quality-review-task-${TASK_NUM}.md and re-run."
+        handle_contradiction_reconciliation \
+          "$FIX_STATUS" "$SPEC_STATUS" "$QUALITY_STATUS" \
+          "$TASK_NUM" "$task_title" "$TASK_TEXT" \
+          "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
+
+        if [[ "$CONTRADICTION_ACTION" == "resolved" ]]; then
+          break
+        fi
+        orchestrator_fail "reviews_inconsistent: Task ${TASK_NUM} — review says FAIL (spec=${SPEC_STATUS}, quality=${QUALITY_STATUS}) but fix-review says DONE_NO_FIXES_NEEDED. Spec review: ${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result / .md — Quality review: ${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result / .md"
       fi
     done
 
