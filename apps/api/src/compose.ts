@@ -15,6 +15,9 @@ import {
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
+  CancelRun,
+  SweepOrphanedRuns,
+  checkPid,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
@@ -32,6 +35,7 @@ export interface Container {
   artifactRepository: ArtifactRepository;
   failureRepository: FailureRepository;
   startIssueRun: StartIssueRun;
+  cancelRun: CancelRun;
   runsDir: string;
   eventBus: EventBusPort;
 }
@@ -52,6 +56,17 @@ export function composeRoot(opts: ComposeOptions): Container {
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);
+
+  // Sweep orphaned runs before any new run starts
+  const sweep = new SweepOrphanedRuns({
+    runRepository,
+    isProcessAlive: checkPid,
+  });
+  const sweepResult = sweep.execute();
+  if (sweepResult.swept > 0) {
+    console.error(`Recovered ${sweepResult.swept} orphaned run(s)`);
+  }
+
   const phaseRepository = new PhaseRepository(db);
   const eventRepository = new EventRepository(db);
   const artifactRepository = new ArtifactRepository(db);
@@ -75,6 +90,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
   const startIssueRun = new StartIssueRun(deps);
+  const cancelRun = new CancelRun({ runRepository });
 
   return {
     runRepository,
@@ -83,6 +99,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     artifactRepository,
     failureRepository,
     startIssueRun,
+    cancelRun,
     runsDir,
     eventBus,
   };
