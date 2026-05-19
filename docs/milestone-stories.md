@@ -1,9 +1,9 @@
 # AI SDLC Orchestrator — Milestone Stories
 
-**Status:** M1 and M2 complete. M3 next — introduces the runtime-agnostic agent abstraction. M4+ are planned.
+**Status:** M1 and M2 complete. M3 next — introduces the Repository / Job / Worker / WorkerLease seams **and** the runtime-agnostic agent abstraction. M4+ are planned.
 **Generated:** 2026-05-13
 **Source PRD:** [`prd.md`](./prd.md) §29 Milestones
-**Companion docs:** [`design-decisions-report.md`](./design-decisions-report.md), [`adr/0001-local-first-orchestrator-architecture.md`](./adr/0001-local-first-orchestrator-architecture.md)
+**Companion docs:** [`design-decisions-report.md`](./design-decisions-report.md), [`adr/0001-local-first-orchestrator-architecture.md`](./adr/0001-local-first-orchestrator-architecture.md), [`adr/0008-single-tenant-vps-worker-and-agent-runtime-architecture.md`](./adr/0008-single-tenant-vps-worker-and-agent-runtime-architecture.md)
 
 This document enumerates every GitHub issue needed to complete Milestones M1–M8. Each story is sized to be implementable in one PR by a single contributor (human or agent). Stories are grouped by milestone and ordered by dependency.
 
@@ -260,15 +260,67 @@ Test plan     How acceptance is verified.
 
 ---
 
-# Milestone M3 — Domain / Application Foundation (incl. Agent Runtime Seam)
+# Milestone M3 — Domain / Application Foundation for VPS Workers and Runtime-Agnostic Agents
 
-**Goal:** Establish Clean Architecture + DDD-lite boundaries **and the runtime-agnostic agent abstraction**. No new user-visible behavior. M3 creates the seam; it does not execute Pi or OpenCode yet — M4 implements the adapters.
+**Goal:** Establish Clean Architecture + DDD-lite boundaries for the seams needed to safely run on a VPS with multiple Worker processes against multiple approved Repositories, **and** the runtime-agnostic agent abstraction. No new user-visible behavior. M3 creates the seams; it does not execute Pi or OpenCode and does not yet start a real VPS worker pool — M4 implements the agent adapters; M8 wires the executor onto the queue/lease primitives.
 
 **Cross-cutting acceptance for M3:**
 
-- `packages/domain` and `packages/application` import no concrete runtime — no `opencode`, no `pi`, no `child_process`, no CLI-specific infrastructure.
+- `packages/domain` and `packages/application` import no concrete runtime and no infrastructure — no `opencode`, no `pi`, no `child_process`, no SQLite, no CLI-specific infra.
 - All agent-touching code paths can be exercised end-to-end with fake `AgentPort` implementations.
-- Adding the OpenCode and Pi adapters in M4 requires no further changes to domain or application code — only composition-root wiring.
+- Repository / Job / Worker / WorkerLease behaviour is exercised end-to-end with fake `RepositoryPort`, `JobQueuePort`, `WorkerRegistryPort`, and `WorkerLeasePort` implementations.
+- Tests can simulate multiple Repositories and multiple Workers, enforce one active Run per (Repository, Issue), and enforce one active lease per Repository.
+- Adding the OpenCode and Pi adapters (M4) or the SQLite queue/lease adapters (M8 prerequisites) requires no further changes to domain or application code — only composition-root wiring.
+
+## M3-00a — Repository registry domain and `RepositoryPort`
+
+- **Labels:** `milestone:M3`, `area:domain`, `area:application`
+- **Depends on:** M1-01
+- **User story:** As a maintainer, I want a first-class `Repository` concept so the orchestrator can only run against approved repositories and the rest of the model can reference repos by id.
+- **Context:** ADR-0008, PRD §11, §12 (invariants 0a/0b/0e), §15.
+- **Scope:**
+  - Pure domain type `Repository { id: RepositoryId; owner; name; fullName; defaultBranch; localBasePath; enabled; maxConcurrentRuns: 1; createdAt; updatedAt }` in `packages/domain`.
+  - Branded `RepositoryId`.
+  - `RepositoryPort` in `packages/application/ports/` (lookup by id, lookup by full name, list enabled).
+  - In-memory fake implementing `RepositoryPort` for tests.
+  - Invariants: a Run may only be created against an enabled Repository; an unknown / disabled `RepositoryId` produces a typed `RepositoryNotApprovedError`.
+- **Out of scope:** SQLite implementation (M8 prerequisites); UI for managing repos.
+- **Acceptance:** Use cases that accept a `RepositoryId` refuse unknown/disabled values via the fake; pure domain code never sees a raw owner/name string.
+
+## M3-00b — Job queue domain and `JobQueuePort`
+
+- **Labels:** `milestone:M3`, `area:domain`, `area:application`
+- **Depends on:** M3-00a, M3-01
+- **User story:** As a maintainer, I want manual run starts to enqueue a Job (not execute inline) so multiple Workers can drain work safely.
+- **Context:** ADR-0008, PRD §12 (invariant 0f).
+- **Scope:**
+  - Domain type `Job { id: JobId; runId; repoId; issueNumber; status: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled'; priority; attempts; claimedBy?: WorkerId; createdAt; startedAt?; completedAt? }`.
+  - `JobQueuePort` in `packages/application/ports/`: `enqueue`, `claimNext({ workerId })`, `markRunning`, `markSucceeded`, `markFailed`, `markCancelled`, `listForRepo`, `listForRun`.
+  - In-memory fake `JobQueuePort`.
+  - `StartIssueRun` use case creates a `Run` and a queued `Job` — it never calls phase code itself.
+- **Acceptance:** A queued job claimed twice raises; a job for an unknown / disabled `RepositoryId` is rejected at enqueue time.
+
+## M3-00c — Worker and lease domain (`WorkerRegistryPort`, `WorkerLeasePort`)
+
+- **Labels:** `milestone:M3`, `area:domain`, `area:application`
+- **Depends on:** M3-00a, M3-00b
+- **User story:** As a maintainer, I want repo-scoped worker leases so multiple Workers can run concurrently across Repositories without ever racing on a single repo.
+- **Context:** ADR-0008, PRD §12 (invariants 0c/0d/0e).
+- **Scope:**
+  - Domain types `Worker { id: WorkerId; hostname; processId; status: 'idle' | 'busy' | 'stopping' | 'unhealthy'; heartbeatAt }` and `WorkerLease { repoId; workerId; runId; acquiredAt; heartbeatAt; expiresAt }`.
+  - `WorkerRegistryPort` (register, heartbeat, mark stopping/unhealthy, list).
+  - `WorkerLeasePort` (`acquire({ repoId, workerId, runId })`, `heartbeat`, `release`, `reclaimExpired`, `current({ repoId })`).
+  - In-memory fakes for both ports.
+  - Invariants enforced in the fake:
+    - `acquire` fails when an active lease exists for the same `repoId`;
+    - `release` is idempotent;
+    - `reclaimExpired` only reclaims leases past `expiresAt` with no recent heartbeat;
+    - cancelling a Run must release its lease before the Run becomes terminal.
+- **Acceptance:** A test that spins up two simulated Workers and two queued Jobs against the same Repository observes serialisation; a test against two different Repositories observes true concurrency.
+
+## M3-00d — Runtime-agnostic `AgentPort` and profiles (preview)
+
+> Cross-references the existing agent-seam stories below. See M3-03, M3-03a, M3-03b, M3-03c, M3-06 for the full breakdown.
 
 ## M3-01 — Domain types and invariants
 
@@ -570,7 +622,7 @@ Test plan     How acceptance is verified.
 
 # Milestone M6 — Managed PR Review Polling
 
-**Goal:** Replace unmanaged `nohup` PR polling with a first-class durable job model. PR-review comment handling defaults to OpenCode/frontier and is invoked via `AgentPort` using `phaseProfiles["pr-review-poll"]` — reviewer-facing output is not routed to Pi/Qwen.
+**Goal:** Replace unmanaged `nohup` PR polling with a first-class durable job model. PR-poll jobs ride on the same `JobQueuePort` and `WorkerLeasePort` introduced in M3, so polling cannot race with an active issue Run on the same Repository. PR-review comment handling defaults to OpenCode/frontier and is invoked via `AgentPort` using `phaseProfiles["pr-review-poll"]` — reviewer-facing output is not routed to Pi/Qwen.
 
 ## M6-01 — PR review domain + tables
 
@@ -679,7 +731,18 @@ Test plan     How acceptance is verified.
 
 # Milestone M8 — Full TypeScript Phase Orchestration
 
-**Goal:** Retire Bash control flow. TypeScript drives every phase. All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name `opencode` or `pi` directly. Bash, if anything remains, is only an infrastructure adapter for a specific tool.
+**Goal:** Retire Bash control flow. A TypeScript `RunExecutor` driven by Workers replaces Bash orchestration:
+
+```text
+Worker claims queued Job
+  → acquires repo lease
+  → prepares worktree
+  → executes phase registry
+  → persists state after every transition
+  → releases repo lease
+```
+
+All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name `opencode` or `pi` directly. Retry / resume / cancel respect worker leases and repo locks. Bash, if anything remains, is only an infrastructure adapter for a specific tool.
 
 ## M8-01 — Phase definition registry
 
@@ -756,14 +819,15 @@ Test plan     How acceptance is verified.
 - **Depends on:** M6-04, M8-08
 - **Scope:** Enqueue managed poll job; Run transitions to READY when poller reports `all_resolved`; reactivates on new activity (M6-07).
 
-## M8-10 — TypeScript run executor (state machine)
+## M8-10 — TypeScript run executor (state machine, worker-driven)
 
 - **Labels:** `milestone:M8`, `area:application`
-- **Depends on:** M8-01..M8-09
+- **Depends on:** M8-01..M8-09, M3-00a, M3-00b, M3-00c
 - **Scope:**
-  - `RunExecutor` consumes phase registry; advances phases; persists state after every transition.
-  - Resume picks up at the failed Step (Q4) by default; `--retry-phase` flag re-runs from start of phase.
-  - Cancellation kills child agent process and resets worktree to `startCommitSha` (Q23/Q24).
+  - `RunExecutor` consumes `JobQueuePort`, `WorkerLeasePort`, `RepositoryPort`, `GitPort`, `GitHubPort`, `AgentPort`, `ValidationPort`, `ArtifactStore`, plus the phase registry.
+  - Worker loop: claim Job → acquire repo lease → prepare worktree → advance phases (persisting state after every transition) → release lease.
+  - Resume picks up at the failed Step (Q4) by default; `--retry-phase` flag re-runs from start of phase. Resume re-acquires the repo lease before doing any work.
+  - Cancellation kills child agent process, resets worktree to `startCommitSha` (Q23/Q24), and releases the repo lease.
 - **Acceptance:** Full happy-path issue run completes end-to-end without invoking any Bash control logic.
 
 ## M8-11 — Retire / quarantine legacy Bash scripts

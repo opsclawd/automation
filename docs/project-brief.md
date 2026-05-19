@@ -8,7 +8,7 @@ When something fails, it is difficult to answer basic questions like what phase 
 
 ## Solution
 
-Build a local-first orchestration platform that wraps the existing Bash workflow first, then migrates orchestration into TypeScript in small slices.
+Build a single-tenant local/VPS orchestration platform that wraps the existing Bash workflow first, then migrates orchestration into TypeScript in small slices. The same architecture runs locally or on a single VPS; multi-machine distribution is out of scope.
 
 The first version should make runs observable, resumable, and recoverable without replacing the current scripts. It should capture run state, events, logs, artifacts, and failure classifications, then present them in a web UI and API so users can see what happened and what to do next.
 
@@ -49,7 +49,10 @@ Over time, the platform should move phase logic from Bash into TypeScript while 
 
 ## Implementation Decisions
 
-- Build a local-first system that runs on one machine and stores state on that machine.
+- Build a single-tenant system that runs as one process group on one machine — either a developer machine (one Worker) or a single VPS (N Workers under systemd) — and stores state on that machine. See ADR-0008.
+- Add a first-class `Repository` registry: Runs may only start against approved/registered repositories selected from the UI; no arbitrary repo URLs.
+- Manual run start enqueues a `Job` against the `Repository`; the API never executes the pipeline inline. A `Worker` claims the Job, acquires a per-Repository `WorkerLease`, prepares a worktree, executes the Run, and releases the lease.
+- Enforce repo-scoped concurrency: multiple Repositories may run concurrently, but only one Worker may operate on a given Repository at any time.
 - Treat the current Bash scripts as infrastructure adapters during the first phase.
 - Use a Node/TypeScript API and worker to orchestrate runs.
 - Use a web UI for run list, run detail, logs, artifacts, and failure reporting.
@@ -83,8 +86,10 @@ Over time, the platform should move phase logic from Bash into TypeScript while 
 
 - Replacing GitHub.
 - General-purpose workflow engine behavior.
-- Distributed workers.
+- Distributed workers across multiple machines (a single VPS with N local Worker processes is supported; horizontal scale-out is not).
 - Multi-tenant SaaS hosting.
+- Automatic GitHub issue discovery.
+- Executing against arbitrary, unregistered GitHub repositories.
 - Automatic merging of pull requests.
 - Fully rewriting all Bash logic before the MVP delivers value.
 - Support for every possible agent runtime.

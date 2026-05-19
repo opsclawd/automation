@@ -7,7 +7,7 @@ All questions resolved during the grill-with-docs session.
 ## Q1 — Run identity
 
 **How is a Run identified and scoped?**
-UUID-identified, `issueNumber` mandatory field. One active Run per issue (domain invariant). Previous Run must be terminal (SUCCESS/FAILED/CANCELLED) before a new one starts.
+UUID-identified, scoped to exactly one approved Repository (`RepositoryId`) and one GitHub `issueNumber`. One active Run per (Repository, Issue) pair (domain invariant). Previous Run must be terminal (SUCCESS/FAILED/CANCELLED) before a new one starts.
 
 ## Q2 — Phase structure
 
@@ -64,7 +64,7 @@ Prompts in separate files in a known directory, referenced by phase/step name. G
 ## Q11 — Concurrency
 
 **Does the system support concurrent Runs?**
-Domain model supports multiple concurrent Runs (one per issue). MVP serializes execution — constraint in the runner, not the data model.
+Yes, with repo-scoped boundaries. Multiple Repositories may run concurrently; multiple Workers (one process each) drain a shared SQLite-backed Job queue. The hard invariants are: one active Run per (Repository, Issue) and one active WorkerLease per Repository. A Worker must acquire the repo lease before preparing a worktree or executing any phase. See ADR-0008.
 
 ## Q12 — State persistence
 
@@ -251,7 +251,7 @@ Both, structured is authoritative. `result.json` has pass/fail decision the orch
 ## Q38 — Distributed workers
 
 **Is distribution in scope?**
-Explicitly out of scope (non-goal). Every concrete decision is inherently local. Distribution would require rethinking half the architecture for a scenario that doesn't exist.
+Multi-machine distribution is explicitly out of scope. A single VPS running multiple local Worker processes under systemd **is** in scope and is the target VPS deployment mode (ADR-0008). All Workers in that deployment share the same filesystem and the same SQLite file; horizontal scale across machines is not supported. Distributed databases, Redis-backed queues, and Kubernetes are non-goals.
 
 ## Q39 — Config shape confirmation
 
