@@ -4,7 +4,7 @@ A local-first orchestration system for running, monitoring, debugging, and recov
 
 ## Status
 
-M1 (observable wrapper) is live. The repo now contains the TypeScript orchestrator alongside planning documents.
+M1 (observable wrapper) and M2 (structured events) are **complete**. M3 (clean seams, including the runtime-agnostic agent abstraction) is next. The repo contains the TypeScript orchestrator alongside planning documents.
 
 ## What this project is
 
@@ -78,7 +78,7 @@ Worker Process
   ↓
 Adapters
     ├─ Bash script adapter
-    ├─ Agent CLI adapter
+    ├─ Agent runtime adapters (OpenCode, Pi, …)
     ├─ Git adapter
     ├─ GitHub adapter
     ├─ Validation adapter
@@ -92,11 +92,14 @@ SQLite + filesystem artifacts
 - Local-first, single-machine operation.
 - SQLite for structured orchestration state.
 - Filesystem storage for prompts, logs, markdown artifacts, diffs, and result payloads.
-- `opencode` as the initial and only agent runtime.
+- `opencode` is the initial frontier-model runtime. The architecture supports multiple agent runtime adapters behind a single `AgentPort` contract starting in M3/M4.
+- `pi` is introduced after the M3 seam exists as a local small-model runtime (e.g. Qwen 3.6 27B with a 64k context limit) for bounded mechanical work; `opencode` remains the runtime for high-context, high-judgment, architecture, planning, review, and PR-comment work.
+- Runtime/model selection is config-driven (per phase), phase-aware, auditable, and fallback-capable.
 - Git worktrees scoped per issue.
 - One active Run per GitHub issue.
 - Clean cancellation by terminating the agent process and resetting the worktree to the last known-good commit.
 - Distributed workers and multi-user SaaS hosting are explicit non-goals for the initial system.
+- The system is not a generic workflow engine and will not abstract over every possible agent runtime — it supports a small, explicit set of configured runtimes.
 
 ## Planned lifecycle states
 
@@ -130,17 +133,16 @@ MVP capabilities:
 
 ## Future direction
 
-After the observable wrapper exists, orchestration should migrate incrementally from Bash to TypeScript:
+After the observable wrapper exists, orchestration should migrate incrementally from Bash to TypeScript, with runtime interchangeability introduced as a controlled architecture seam — not a new product direction. The intended order is observability first, clean seams second, runtime adapters third, full TypeScript orchestration last:
 
-1. Node wrapper around Bash.
-2. Structured event emission.
-3. TypeScript agent runner.
-4. TypeScript validation runner.
-5. Git and GitHub adapters.
-6. Review/fix loop.
-7. PR review polling job.
-8. Implementation task loop.
-9. Full issue-to-PR orchestration.
+1. Node wrapper around Bash. **(M1 complete)**
+2. Structured event emission. **(M2 complete)**
+3. Domain/application foundation, including the runtime-agnostic `AgentPort` seam and `AgentProfile` model. **(M3, next)**
+4. TypeScript agent runtime layer: `AgentRuntimeRouter`, `OpenCodeAgentAdapter`, `PiAgentAdapter`, prompt rendering, contract validation, result schemas, and phase-profile fallback.
+5. TypeScript validation runner.
+6. Managed PR review polling.
+7. TypeScript review/fix loop.
+8. Full TypeScript phase orchestration calling `AgentPort.invoke(...)`.
 
 ## Quickstart
 
@@ -164,7 +166,8 @@ The initial system is not intended to:
 - support distributed workers;
 - support complex RBAC;
 - automatically merge PRs;
-- abstract over every possible AI agent runtime.
+- abstract over every possible AI agent runtime (we support a small, explicit, configured set — currently `opencode` and `pi`);
+- auto-select runtimes by opaque LLM judgment — routing is driven by declared phase profiles and explicit fallback rules.
 
 ## Repository layout
 

@@ -1,6 +1,6 @@
 # AI SDLC Orchestrator — Milestone Stories
 
-**Status:** Draft for GitHub issue creation
+**Status:** M1 and M2 complete. M3 next — introduces the runtime-agnostic agent abstraction. M4+ are planned.
 **Generated:** 2026-05-13
 **Source PRD:** [`ai-agent-sdlc-orchestrator-prd.md`](./ai-agent-sdlc-orchestrator-prd.md) §29 Milestones
 **Companion docs:** [`design-decisions-report.md`](./design-decisions-report.md), [`adr/0001-local-first-orchestrator-architecture.md`](./adr/0001-local-first-orchestrator-architecture.md)
@@ -42,9 +42,11 @@ Test plan     How acceptance is verified.
 
 ---
 
-# Milestone M1 — Observable Bash Wrapper
+# Milestone M1 — Observable Bash Wrapper — **Complete**
 
 **Goal:** Make the existing scripts observable without changing their orchestration logic. After M1, every run produces a stable run directory, persisted metadata, captured stdout/stderr, a structured failure file, and a minimal UI to inspect it.
+
+**Note:** M1 is complete. Stories below are kept for historical reference and dependency tracking. Do not re-plan M1 scope. M1 does not own agent-runtime metadata; if events happen to carry runtime/model labels, they are pass-through values.
 
 ## M1-01 — Bootstrap monorepo + tooling
 
@@ -135,7 +137,7 @@ Test plan     How acceptance is verified.
 
 - **Labels:** `milestone:M1`, `area:application`
 - **Depends on:** M1-05
-- **User story:** As an automation owner, I want a `failure.json` per failed run so I see *what* failed without reading raw logs.
+- **User story:** As an automation owner, I want a `failure.json` per failed run so I see _what_ failed without reading raw logs.
 - **Context:** PRD §25 failure categories. In M1 we can only classify from exit code + log heuristics (the Bash script's own `orchestrator_fail` messages); richer signals arrive in M2.
 - **Scope:**
   - On non-zero exit: scan `combined.log` for known sentinels (e.g. `orchestrator_fail`, `MISSING ARTIFACT`, `TIMEOUT`, `branch changed`) and emit a `Failure` record with `kind`, `phase` (best-effort from last `LAST_PHASE`), `message`, `canRetry: false`, `suggestedAction`.
@@ -177,9 +179,11 @@ Test plan     How acceptance is verified.
 
 ---
 
-# Milestone M2 — Structured Events in Bash
+# Milestone M2 — Structured Events in Bash — **Complete**
 
 **Goal:** Make phase progress visible. Bash emits structured events that the orchestrator persists and the UI renders as a timeline.
+
+**Note:** M2 is complete. Stories below are kept for historical reference. M2 stays focused on observable Bash + structured events; runtime/model fields may be emitted in events if available but no runtime abstraction is introduced here.
 
 ## M2-01 — Bash `emit_event` helper
 
@@ -256,9 +260,15 @@ Test plan     How acceptance is verified.
 
 ---
 
-# Milestone M3 — Domain / Application Foundation
+# Milestone M3 — Domain / Application Foundation (incl. Agent Runtime Seam)
 
-**Goal:** Establish Clean Architecture + DDD-lite boundaries. No new user-visible behavior; future stories slot into clean seams.
+**Goal:** Establish Clean Architecture + DDD-lite boundaries **and the runtime-agnostic agent abstraction**. No new user-visible behavior. M3 creates the seam; it does not execute Pi or OpenCode yet — M4 implements the adapters.
+
+**Cross-cutting acceptance for M3:**
+
+- `packages/domain` and `packages/application` import no concrete runtime — no `opencode`, no `pi`, no `child_process`, no CLI-specific infrastructure.
+- All agent-touching code paths can be exercised end-to-end with fake `AgentPort` implementations.
+- Adding the OpenCode and Pi adapters in M4 requires no further changes to domain or application code — only composition-root wiring.
 
 ## M3-01 — Domain types and invariants
 
@@ -290,10 +300,61 @@ Test plan     How acceptance is verified.
 
 - **Labels:** `milestone:M3`, `area:application`
 - **Depends on:** M3-02
-- **User story:** As a developer, I want ports defined so infrastructure adapters have a contract to implement.
-- **Context:** PRD §14.
-- **Scope:** Interfaces in `packages/application/ports/`. Each port has a fake/in-memory implementation in `packages/application/test-doubles/`.
-- **Acceptance:** Application package builds with no infra imports. Fakes implement every method.
+- **User story:** As a developer, I want runtime-agnostic ports defined so infrastructure adapters have a contract to implement and no application code depends on a concrete CLI.
+- **Context:** PRD §14, §15.7, ADR-0007.
+- **Scope:**
+  - Interfaces in `packages/application/ports/`.
+  - `AgentPort` is **runtime-agnostic** with the shape from PRD §14:
+    ```ts
+    interface AgentPort {
+      invoke(input: AgentInvocationRequest): Promise<AgentInvocationResult>;
+    }
+    ```
+  - Each port has a fake/in-memory implementation in `packages/application/test-doubles/`.
+  - The fake `AgentPort` records every invocation request and lets tests script per-profile responses (success, contract violation, timeout, fallback-triggering failure).
+- **Acceptance:**
+  - Application package builds with no infra imports.
+  - No file under `packages/application/` or `packages/domain/` imports `opencode`, `pi`, `child_process`, or any CLI-specific infrastructure.
+  - Fakes implement every method.
+
+## M3-03a — AgentRuntimeKind and AgentProfile domain types
+
+- **Labels:** `milestone:M3`, `area:domain`, `area:config`
+- **Depends on:** M3-01
+- **User story:** As a developer, I want `AgentRuntimeKind` and `AgentProfile` as pure domain types so every later layer can refer to them without leaking a specific CLI.
+- **Context:** PRD §15.7, ADR-0007.
+- **Scope:**
+  - `AgentRuntimeKind = 'opencode' | 'pi'`.
+  - `AgentProfile` with fields: `runtime`, `provider`, `model`, optional `contextLimitTokens`, optional `promptBudgetTokens`, optional `outputBudgetTokens`, `timeoutMinutes`, optional `fallbackProfile`.
+  - Branded `AgentProfileName`.
+  - Pure TypeScript in `packages/domain`.
+- **Acceptance:** Unit tests for type guards (e.g. `isPiProfile`) and basic validation (e.g. Pi profile with `contextLimitTokens` set, OpenCode profile with `timeoutMinutes` set).
+
+## M3-03b — AgentInvocationRequest / AgentInvocationResult contracts
+
+- **Labels:** `milestone:M3`, `area:application`
+- **Depends on:** M3-01, M3-03a
+- **User story:** As a developer, I want runtime-agnostic invocation request/result types so phase code and tests can describe an Agent Invocation without naming a runtime.
+- **Context:** PRD §14, §15.3, §15.7.
+- **Scope:**
+  - `AgentInvocationRequest { profile, promptPath, expectedArtifacts, cwd, runId, phaseId, stepId? }`.
+  - `AgentInvocationResult { runtime, provider, model, exitCode, durationMs, stdoutPath, stderrPath, resultJsonPath?, contractViolations[], outcome }`.
+  - Both shapes live in `packages/application` (or `packages/domain` if pure enough — choose one and document).
+- **Acceptance:** Compiles; consumed by the fake `AgentPort` in M3-03; round-trips through composition root in M3-06.
+
+## M3-03c — Agent config schema in `.ai-orchestrator.json`
+
+- **Labels:** `milestone:M3`, `area:config`, `area:shared`
+- **Depends on:** M1-02, M3-03a
+- **User story:** As an operator, I want a config schema for `agent.profiles` and `agent.phaseProfiles` so I can declare runtimes per phase before any adapter ships.
+- **Context:** PRD §15.7. Specific provider/model values are configurable examples, not commitments.
+- **Scope:**
+  - Extend the Zod schema in `packages/shared` with the `agent` section shown in PRD §15.7.
+  - `loadConfig` returns a typed `AgentConfig` object including `defaultProfile`, `profiles`, and `phaseProfiles`.
+  - Invalid configuration (unknown profile referenced in `phaseProfiles`, unknown `runtime`, unknown `fallbackProfile`) produces a precise `ConfigError`.
+  - Sample `.ai-orchestrator.json` committed at repo root includes the example shape; values are illustrative.
+- **Out of scope:** Actually executing any runtime.
+- **Acceptance:** Valid configs parse; invalid configs (dangling profile refs, unknown runtime) fail with a clear error path.
 
 ## M3-04 — Wire existing SQLite adapter to RunRepository port
 
@@ -311,47 +372,101 @@ Test plan     How acceptance is verified.
 - **Scope:** `BashIssueRunAdapter implements IssueRunPort` and `BashPrReviewPollAdapter implements PrReviewPollPort`. The wrapper from M1-05 now resolves these adapters via the application layer.
 - **Acceptance:** Behavior identical; integration tests unchanged.
 
-## M3-06 — Dependency injection / composition root
+## M3-06 — Dependency injection / composition root (incl. agent profile resolution)
 
 - **Labels:** `milestone:M3`, `area:infra`
-- **Depends on:** M3-04, M3-05
-- **User story:** As a developer, I want one place that wires ports → adapters so tests can swap implementations cleanly.
-- **Scope:** Single `composeRoot()` factory in `apps/api` returning a typed `Container`. No DI framework — plain factory.
-- **Acceptance:** Tests can build a Container with fakes for every port.
+- **Depends on:** M3-04, M3-05, M3-03c
+- **User story:** As a developer, I want one place that wires ports → adapters and resolves agent profiles so tests can swap implementations cleanly.
+- **Scope:**
+  - Single `composeRoot()` factory in `apps/api` returning a typed `Container`. No DI framework — plain factory.
+  - The container exposes an `AgentPort` whose implementation is resolved from `agent.profiles[<profileName>].runtime` at invocation time.
+  - In M3 the only registered runtime adapter is the fake (test double); real adapters land in M4.
+  - The container reads `agent.phaseProfiles` and exposes a `resolveProfileForPhase(phaseName)` helper so phase handlers do not parse config themselves.
+- **Acceptance:**
+  - Tests can build a Container with fakes for every port, including an `AgentPort` backed by the in-memory fake.
+  - Wiring a real adapter in M4 requires only registering it in the composition root — no domain or application changes.
 
 ---
 
-# Milestone M4 — TypeScript Agent Runner
+# Milestone M4 — TypeScript Agent Runtime Layer
 
-**Goal:** Centralise every agent call into a single TypeScript runner that captures prompts, stdout/stderr, exit code, timeout, and validates the agent contract.
+**Goal:** Centralise every agent call into a single runtime-agnostic layer that captures prompts, stdout/stderr, exit code, timeout, selected profile/runtime/model, validates the agent contract, and supports configured fallback. All agent execution must be auditable through the same `AgentInvocation` record shape regardless of runtime.
 
 ## M4-01 — Agent invocation model + DB tables
 
 - **Labels:** `milestone:M4`, `area:domain`, `area:persistence`
-- **Depends on:** M3-01, M1-04
-- **User story:** As a developer, I want an `AgentInvocation` record persisted per agent call so I can audit prompts and outcomes.
-- **Context:** PRD §15.3, Q6, Q24.
+- **Depends on:** M3-01, M3-03b, M1-04
+- **User story:** As a developer, I want an `AgentInvocation` record persisted per agent call so I can audit prompts and outcomes regardless of which runtime executed the call.
+- **Context:** PRD §15.3, §15.7, Q6, Q24, ADR-0007.
 - **Scope:**
-  - Domain type `AgentInvocation { id, runId, phaseId, stepId?, cli, model, skill?, promptPath, stdoutPath, stderrPath, startCommitSha, endCommitSha?, exitCode?, durationMs?, outcome, contract, contractViolations }`.
-  - `agent_invocations` SQLite table + repository.
-- **Acceptance:** CRUD + queries by `runId` and `phaseId`.
+  - Domain type `AgentInvocation { id, runId, phaseId, stepId?, profile, runtime, provider, model, skill?, promptPath, stdoutPath, stderrPath, startCommitSha, endCommitSha?, exitCode?, durationMs?, timeoutMs, outcome, contractViolations[], resultJsonPath?, fallbackOfInvocationId? }`.
+  - `agent_invocations` SQLite table + repository. Columns must include `profile`, `runtime`, `provider`, `model`, `fallback_of_invocation_id`.
+  - Index on `(run_id, phase_id)`, plus index on `fallback_of_invocation_id` for escalation analytics.
+- **Acceptance:** CRUD + queries by `runId`, `phaseId`, and `runtime`. Round-trip preserves all fields.
 
-## M4-02 — `runAgent` adapter (OpenCodeAgentAdapter)
+## M4-02 — AgentRuntimeRouter + OpenCodeAgentAdapter
 
 - **Labels:** `milestone:M4`, `area:infra`
-- **Depends on:** M4-01, M3-03
-- **User story:** As the orchestrator, I want a single function to run `opencode` so behavior is consistent across phases.
-- **Context:** Q13, Q24. Spawn `opencode` with prompt; capture streams; record `startCommitSha` before spawn.
+- **Depends on:** M4-01, M3-03, M3-03c, M3-06
+- **User story:** As the orchestrator, I want an `AgentPort` that routes invocations to the correct runtime adapter based on the requested profile, and a concrete OpenCode adapter so frontier-model phases work end-to-end.
+- **Context:** ADR-0007, PRD §15.7, Q13, Q24.
 - **Scope:**
-  - `OpenCodeAgentAdapter implements AgentPort` in `packages/infrastructure`.
-  - Spawn via `execa` with `cwd = worktreePath`, configurable timeout (from `.ai-orchestrator.json` `timeouts.invocationMaxMinutes`).
-  - Capture stdout / stderr to artifact files, fsync on close.
-  - Record `startCommitSha`, `endCommitSha`, exit code, duration.
-  - Honour cancellation (Q23): on SIGTERM, kill child, await cleanup callback.
+  - `AgentRuntimeRouter implements AgentPort` in `packages/infrastructure`:
+    - Resolves `request.profile` via the loaded config.
+    - Dispatches to the runtime adapter registered for that profile's `runtime`.
+    - On adapter-returned failure that matches a configured fallback trigger (see M4-02c), invokes the `fallbackProfile` and records the new `AgentInvocation` with `fallbackOfInvocationId` set.
+  - `OpenCodeAgentAdapter implements AgentPort` (registered for `runtime: opencode`):
+    - Spawn via `execa` with `cwd = worktreePath`, timeout from the resolved profile's `timeoutMinutes`.
+    - Capture stdout / stderr to artifact files, fsync on close.
+    - Record `startCommitSha`, `endCommitSha`, exit code, duration, runtime/provider/model.
+    - Honour cancellation (Q23): on SIGTERM, kill child, await cleanup callback.
 - **Acceptance:**
-  - Successful invocation produces `prompt.md`, `stdout.log`, `stderr.log`, `exit-code.txt`, and an `agent_invocations` row.
-  - Timeout produces a `timeout` failure with the partial output preserved.
+  - Successful invocation routed through the router produces `prompt.md`, `stdout.log`, `stderr.log`, `exit-code.txt`, and an `agent_invocations` row with `runtime: opencode` and the resolved profile name.
+  - Timeout produces a `timeout` outcome with partial output preserved.
+  - The router can be configured with only the OpenCode adapter and still pass all its tests (Pi is optional).
 - **Test plan:** Integration test against a fake `opencode` shim script.
+
+## M4-02b — PiAgentAdapter for local Qwen profiles
+
+- **Labels:** `milestone:M4`, `area:infra`
+- **Depends on:** M4-02
+- **User story:** As the orchestrator, I want a Pi adapter so bounded local Qwen profiles execute through the same `AgentPort` contract as OpenCode.
+- **Context:** ADR-0007, PRD §15.7. Target runtime: local Qwen 3.6 27B with 64k context limit. Specific model name is configurable.
+- **Scope:**
+  - `PiAgentAdapter implements AgentPort` in `packages/infrastructure`, registered with the router for `runtime: pi`.
+  - Spawn `pi` (or the configured local harness binary) via `execa` with `cwd = worktreePath`.
+  - Honour `contextLimitTokens`, `promptBudgetTokens`, `outputBudgetTokens`, and `timeoutMinutes` from the resolved profile. If the rendered prompt exceeds `promptBudgetTokens`, return a `contract_violation` outcome with reason `prompt_budget_exceeded` (do not silently truncate).
+  - Capture stdout / stderr / exit code / duration identically to the OpenCode adapter.
+  - Record `runtime: pi` and the configured provider/model on the `AgentInvocation` row.
+- **Acceptance:**
+  - Invocation through a Pi profile produces an `agent_invocations` row with `runtime: pi`.
+  - Prompt-budget overflow produces a `contract_violation` invocation; the router escalates to the configured `fallbackProfile` (covered by M4-02c).
+  - Timeout produces a `timeout` outcome with partial output preserved.
+- **Test plan:** Integration test against a fake `pi` shim script.
+
+## M4-02c — Agent profile routing and fallback config
+
+- **Labels:** `milestone:M4`, `area:application`, `area:infra`
+- **Depends on:** M4-02, M4-02b
+- **User story:** As an operator, I want the router to apply documented fallback triggers automatically so a Pi failure escalates to OpenCode without manual intervention.
+- **Context:** PRD §15.7 "Promotion / fallback triggers". ADR-0007.
+- **Scope:**
+  - The router consults the resolved profile's `fallbackProfile` and escalates on any of the documented triggers:
+    - two consecutive failures from the same profile on the same Step;
+    - missing required artifact;
+    - invalid `result.json`;
+    - timeout;
+    - context budget exceeded;
+    - touched files exceed the expected limit declared by the phase;
+    - validation failure changes category between iterations (signalled by the caller);
+    - architectural ambiguity / reviewer-facing output requested (signalled by the caller).
+  - Each escalation:
+    - emits a `phase.fallback.escalated` event with `{ fromProfile, toProfile, triggerReason }`;
+    - persists a new `AgentInvocation` row with `fallbackOfInvocationId` pointing at the failing invocation.
+  - If the fallback profile itself fails, the failure surfaces as a normal `Failure` row — no further auto-escalation.
+- **Acceptance:**
+  - Each documented trigger has a passing test that asserts escalation happened and the escalated invocation links back to the failing one.
+  - A profile without a `fallbackProfile` surfaces the original failure without escalation.
 
 ## M4-03 — Prompt templating + context injection
 
@@ -391,19 +506,19 @@ Test plan     How acceptance is verified.
 ## M4-06 — Replace agent calls in Bash review/plan/PR phases (incremental)
 
 - **Labels:** `milestone:M4`, `area:bash`, `area:infra`
-- **Depends on:** M4-02, M4-03, M4-04
-- **User story:** As an automation owner, I want the Bash scripts to delegate single-shot agent calls to the Node runner so observability is uniform.
+- **Depends on:** M4-02, M4-02c, M4-03, M4-04
+- **User story:** As an automation owner, I want the Bash scripts to delegate single-shot agent calls to the runtime-agnostic Node runner so observability and routing are uniform regardless of which runtime executes the call.
 - **Scope:**
-  - Add a `node ./scripts/run-agent` CLI in `apps/cli` that the Bash scripts call instead of `opencode` directly.
-  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls).
+  - Add a `node ./scripts/run-agent --profile <name>` CLI in `apps/cli` that the Bash scripts call instead of `opencode` directly. The CLI invokes `AgentPort.invoke(...)` — it does not name a runtime.
+  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls). Each Bash call passes the phase name; the CLI resolves the profile via `resolveProfileForPhase`.
   - `implement` loop stays on direct `opencode` for now (covered by M8).
-- **Acceptance:** All previously-Bash-driven agent calls write `agent_invocations` rows. End-to-end run still succeeds.
+- **Acceptance:** All previously-Bash-driven agent calls write `agent_invocations` rows with the resolved profile, runtime, provider, and model. End-to-end run still succeeds for both `opencode` and `pi` profiles (where the latter is configured).
 
 ---
 
 # Milestone M5 — TypeScript Validation Runner
 
-**Goal:** Replace brittle log parsing of validation output with structured per-command results.
+**Goal:** Replace brittle log parsing of validation output with structured per-command results. Validation-fix invocations route through `AgentPort` using `phaseProfiles["validate-fix"]`; bounded fixes may run on Pi/Qwen with fallback to OpenCode per ADR-0007.
 
 ## M5-01 — Validation domain + DB table
 
@@ -454,7 +569,7 @@ Test plan     How acceptance is verified.
 
 # Milestone M6 — Managed PR Review Polling
 
-**Goal:** Replace unmanaged `nohup` PR polling with a first-class durable job model.
+**Goal:** Replace unmanaged `nohup` PR polling with a first-class durable job model. PR-review comment handling defaults to OpenCode/frontier and is invoked via `AgentPort` using `phaseProfiles["pr-review-poll"]` — reviewer-facing output is not routed to Pi/Qwen.
 
 ## M6-01 — PR review domain + tables
 
@@ -523,7 +638,7 @@ Test plan     How acceptance is verified.
 
 # Milestone M7 — TypeScript Review/Fix Loop
 
-**Goal:** Make the internal review/fix Loop a first-class, observable, resumable, bounded cycle.
+**Goal:** Make the internal review/fix Loop a first-class, observable, resumable, bounded cycle that supports per-iteration runtime routing via `AgentPort`. Bounded fix iterations may use Pi/Qwen; the loop escalates to OpenCode on repeated failure or any documented fallback trigger.
 
 ## M7-01 — Loop domain + iteration tracking
 
@@ -563,7 +678,7 @@ Test plan     How acceptance is verified.
 
 # Milestone M8 — Full TypeScript Phase Orchestration
 
-**Goal:** Retire Bash control flow. TypeScript drives every phase. Bash, if anything remains, is only an infrastructure adapter for a specific tool.
+**Goal:** Retire Bash control flow. TypeScript drives every phase. All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name `opencode` or `pi` directly. Bash, if anything remains, is only an infrastructure adapter for a specific tool.
 
 ## M8-01 — Phase definition registry
 
@@ -690,7 +805,8 @@ M1-01 ──┬─► M1-02
         │                       └─► M2-* … M8-*
         └─► M3-01 ─► M3-02 ─► M3-03 ─► M3-04 / M3-05 ─► M3-06
                                             │
-                                            ├─► M4-01 ─► M4-02 ─► M4-03/04/05 ─► M4-06
+                                            ├─► M3-03a/03b/03c (agent seam)
+                                            ├─► M4-01 ─► M4-02 ─► M4-02b ─► M4-02c ─► M4-03/04/05 ─► M4-06
                                             ├─► M5-01 ─► M5-02 ─► M5-03/04/05
                                             ├─► M6-01 ─► M6-02 ─► M6-03 ─► M6-04 ─► M6-05/06/07
                                             └─► M7-01 ─► M7-02 ─► M7-03/04

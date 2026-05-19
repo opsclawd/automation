@@ -21,8 +21,16 @@ A repeated cycle within a Phase or Step (e.g. review + fix, up to a max iteratio
 _Avoid_: Retry, cycle
 
 **Agent Invocation**:
-A single call to an AI agent with a prompt, producing artifacts and a result.
+A single, runtime-agnostic call to an AI agent with a prompt, producing artifacts and a result. An invocation may be executed by any configured agent runtime adapter (e.g. OpenCode, Pi). Each invocation records its selected profile, runtime, provider/model, prompt path, stdout/stderr paths, timeout, artifacts, result, and any agent contract violations.
 _Avoid_: Call, request, execution
+
+**Agent Runtime**:
+A concrete adapter that executes an Agent Invocation. The initial runtimes are `opencode` (frontier-model harness) and `pi` (local small-model harness, e.g. Qwen). Runtimes are interchangeable behind the `AgentPort` contract.
+_Avoid_: Backend, engine, executor
+
+**Agent Profile**:
+A named configuration consumed by `AgentPort`: runtime, provider, model, context/prompt/output budgets, timeout, and an optional fallback profile. Phases reference profiles, not runtimes directly.
+_Avoid_: Preset, model config
 
 **Artifact**:
 A file produced by an Agent Invocation that persists on the filesystem.
@@ -37,6 +45,7 @@ _Avoid_: Output, result file
 - A **Phase** or **Step** may contain a **Loop** (bounded iteration)
 - A **Step** groups one or more **Agent Invocations**
 - An **Agent Invocation** is validated immediately upon completion; missing artifacts or unparseable results are treated as FAILED outcome
+- The orchestrator owns state, policy, contracts, validation, retry/resume, and failure classification. **Agent Runtimes** only execute agent processes — they do not decide phase progression or retry policy
 
 ## Outcome rules
 
