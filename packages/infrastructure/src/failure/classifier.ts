@@ -134,10 +134,15 @@ function lastPhase(tail: string): string | undefined {
 // kinds. Those remain log-scraping-only until corresponding event types are defined.
 
 function pickTerminalEvent(events: ClassifierEvent[]): ClassifierEvent | undefined {
-  const phaseFailed = lastOf(events, (e) => e.type === 'phase.failed');
-  if (phaseFailed) return phaseFailed;
+  // loop.exhausted is checked before phase.failed because when a review loop
+  // exhausts, the script emits both loop.exhausted and a generic phase.failed.
+  // Selecting phase.failed would lose the structured agent_blocked signal and
+  // regress to command_failed. When loop.exhausted is present it is always
+  // the more informative event.
   const loopExhausted = lastOf(events, (e) => e.type === 'loop.exhausted');
   if (loopExhausted) return loopExhausted;
+  const phaseFailed = lastOf(events, (e) => e.type === 'phase.failed');
+  if (phaseFailed) return phaseFailed;
   const runFailed = lastOf(events, (e) => e.type === 'run.failed');
   return runFailed;
 }

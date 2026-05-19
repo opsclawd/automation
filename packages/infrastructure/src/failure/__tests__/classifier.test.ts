@@ -835,7 +835,7 @@ describe('classifyExit with events (M2-06)', () => {
     expect(failure.kind).toBe('command_failed');
     expect(failure.message).toBe('unhandled event error');
   });
-  it('prefers phase.failed over loop.exhausted and run.failed', () => {
+  it('prefers loop.exhausted over phase.failed so exhausted review loops classify as agent_blocked', () => {
     const failure = classifyExit({
       ...baseInput,
       events: [
@@ -848,18 +848,19 @@ describe('classifyExit with events (M2-06)', () => {
         ev({
           phase: 'fix-review',
           type: 'loop.exhausted',
-          message: 'loop exhausted',
-          timestamp: '2026-05-16T12:01:00.000Z',
+          message: 'Review loop hit max iterations for task 2',
+          metadata: { reason: 'blocked' },
         }),
         ev({
-          phase: 'validate',
+          phase: 'fix-review',
           type: 'phase.failed',
-          message: 'build bombed',
-          metadata: { command: 'pnpm build', exitCode: 2 },
+          message: 'Review loop hit max iterations for task 2',
+          metadata: { reason: 'Review loop hit max' },
         }),
       ],
     });
-    expect(failure.kind).toBe('validation_failed');
+    expect(failure.kind).toBe('agent_blocked');
+    expect(failure.phase).toBe('fix-review');
   });
   it('prefers loop.exhausted over run.failed when no phase.failed', () => {
     const failure = classifyExit({
