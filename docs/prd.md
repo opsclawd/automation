@@ -558,7 +558,13 @@ export interface AgentProfile {
   promptBudgetTokens?: number;
   outputBudgetTokens?: number;
   timeoutMinutes: number;
-  fallbackProfile?: string; // name of another profile to escalate to
+}
+
+// Fallback is a routing concern (per-phase), not a profile property.
+// See `phaseProfiles` in `.ai-orchestrator.json` (PRD §15.7).
+export interface PhaseRoutingEntry {
+  profile: string; // resolved AgentProfile name
+  fallbackProfile?: string; // profile to escalate to on documented triggers
 }
 
 export interface AgentInvocationRequest {
@@ -792,6 +798,14 @@ The `.ai-orchestrator.json` file gains an `agent` section that declares profiles
   }
 }
 ```
+
+**Phase key normalization.** `phaseProfiles` keys are the canonical phase names from §29 (e.g. `review-fix`, not the legacy Bash `fix-review`). The composition root's `resolveProfileForPhase(phaseName)` helper normalizes legacy Bash phase names to canonical names before lookup so the same routing map works for both Bash callers (during the M4–M7 migration) and TypeScript phase handlers (M8). The legacy-name map is:
+
+| Legacy Bash phase | Canonical phase |
+| ----------------- | --------------- |
+| `fix-review`      | `review-fix`    |
+
+Add a new row to this map any time a Bash phase is renamed during migration.
 
 #### Routing policy
 
@@ -1931,7 +1945,7 @@ Deliverables:
 
 - domain types for runs, phases, failures, artifacts, agent contracts, validation results, and PR review comments;
 - `AgentRuntimeKind` (`opencode | pi`);
-- `AgentProfile` (runtime, provider, model, context/prompt/output budgets, timeout, optional `fallbackProfile`);
+- `AgentProfile` (runtime, provider, model, context/prompt/output budgets, timeout). Fallback is a per-phase routing concern declared on `phaseProfiles` entries — not a profile field;
 - runtime-agnostic `AgentPort`, `AgentInvocationRequest`, `AgentInvocationResult`;
 - application use case interfaces;
 - infrastructure ports;

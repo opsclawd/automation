@@ -29,7 +29,7 @@ A concrete adapter that executes an Agent Invocation. The initial runtimes are `
 _Avoid_: Backend, engine, executor
 
 **Agent Profile**:
-A named configuration consumed by `AgentPort`: runtime, provider, model, context/prompt/output budgets, timeout, and an optional fallback profile. Phases reference profiles, not runtimes directly.
+A named configuration consumed by `AgentPort`: runtime, provider, model, context/prompt/output budgets, and timeout. Phases reference profiles, not runtimes directly. Fallback is a separate, per-phase _routing_ concern declared on `phaseProfiles` entries (see PRD §15.7) — it is **not** a property of an `AgentProfile`.
 _Avoid_: Preset, model config
 
 **Artifact**:

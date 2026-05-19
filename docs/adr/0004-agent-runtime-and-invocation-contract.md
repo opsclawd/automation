@@ -12,7 +12,7 @@ We expose agent execution to the application layer as a single runtime-agnostic 
 
 **Start commit tracking**: Record the baseline only if cancellation is needed vs. record it at invocation start. We chose to capture `startCommitSha` before each invocation so cancellation can safely restore the worktree.
 
-**Routing**: Hardcoded per phase vs. config-driven `AgentProfile` + `phaseProfiles` map. We chose config-driven routing with explicit `fallbackProfile` escalation (see PRD §15.7 and ADR-0007). Routing is auditable: each `AgentInvocation` records the selected profile and runtime, and fallback escalations link back to the failed invocation.
+**Routing**: Hardcoded per phase vs. config-driven `AgentProfile` + `phaseProfiles` map. We chose config-driven routing with explicit `phaseProfiles[phase].fallbackProfile` escalation (fallback is a per-phase routing concern, not a property of an `AgentProfile`; see PRD §15.7 and ADR-0007). Routing is auditable: each `AgentInvocation` records the selected profile and runtime, and fallback escalations link back to the failed invocation.
 
 ## Consequences
 

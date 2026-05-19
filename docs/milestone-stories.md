@@ -2,7 +2,7 @@
 
 **Status:** M1 and M2 complete. M3 next — introduces the runtime-agnostic agent abstraction. M4+ are planned.
 **Generated:** 2026-05-13
-**Source PRD:** [`ai-agent-sdlc-orchestrator-prd.md`](./ai-agent-sdlc-orchestrator-prd.md) §29 Milestones
+**Source PRD:** [`prd.md`](./prd.md) §29 Milestones
 **Companion docs:** [`design-decisions-report.md`](./design-decisions-report.md), [`adr/0001-local-first-orchestrator-architecture.md`](./adr/0001-local-first-orchestrator-architecture.md)
 
 This document enumerates every GitHub issue needed to complete Milestones M1–M8. Each story is sized to be implementable in one PR by a single contributor (human or agent). Stories are grouped by milestone and ordered by dependency.
@@ -325,7 +325,7 @@ Test plan     How acceptance is verified.
 - **Context:** PRD §15.7, ADR-0007.
 - **Scope:**
   - `AgentRuntimeKind = 'opencode' | 'pi'`.
-  - `AgentProfile` with fields: `runtime`, `provider`, `model`, optional `contextLimitTokens`, optional `promptBudgetTokens`, optional `outputBudgetTokens`, `timeoutMinutes`, optional `fallbackProfile`.
+  - `AgentProfile` with fields: `runtime`, `provider`, `model`, optional `contextLimitTokens`, optional `promptBudgetTokens`, optional `outputBudgetTokens`, `timeoutMinutes`. **Fallback is a per-phase routing concern declared on `phaseProfiles` entries (see PRD §15.7) — it is not a property of `AgentProfile`.**
   - Branded `AgentProfileName`.
   - Pure TypeScript in `packages/domain`.
 - **Acceptance:** Unit tests for type guards (e.g. `isPiProfile`) and basic validation (e.g. Pi profile with `contextLimitTokens` set, OpenCode profile with `timeoutMinutes` set).
@@ -351,7 +351,7 @@ Test plan     How acceptance is verified.
 - **Scope:**
   - Extend the Zod schema in `packages/shared` with the `agent` section shown in PRD §15.7.
   - `loadConfig` returns a typed `AgentConfig` object including `defaultProfile`, `profiles`, and `phaseProfiles`.
-  - Invalid configuration (unknown profile referenced in `phaseProfiles`, unknown `runtime`, unknown `fallbackProfile`) produces a precise `ConfigError`.
+  - Invalid configuration (unknown profile referenced in `phaseProfiles[*].profile`, unknown `runtime`, unknown `phaseProfiles[*].fallbackProfile`) produces a precise `ConfigError`.
   - Sample `.ai-orchestrator.json` committed at repo root includes the example shape; values are illustrative.
 - **Out of scope:** Actually executing any runtime.
 - **Acceptance:** Valid configs parse; invalid configs (dangling profile refs, unknown runtime) fail with a clear error path.
@@ -381,7 +381,7 @@ Test plan     How acceptance is verified.
   - Single `composeRoot()` factory in `apps/api` returning a typed `Container`. No DI framework — plain factory.
   - The container exposes an `AgentPort` whose implementation is resolved from `agent.profiles[<profileName>].runtime` at invocation time.
   - In M3 the only registered runtime adapter is the fake (test double); real adapters land in M4.
-  - The container reads `agent.phaseProfiles` and exposes a `resolveProfileForPhase(phaseName)` helper so phase handlers do not parse config themselves.
+  - The container reads `agent.phaseProfiles` and exposes a `resolveProfileForPhase(phaseName)` helper so phase handlers do not parse config themselves. The helper normalizes legacy Bash phase names to canonical names (e.g. `fix-review` → `review-fix`) before lookup — see PRD §15.7 phase-key normalization table.
 - **Acceptance:**
   - Tests can build a Container with fakes for every port, including an `AgentPort` backed by the in-memory fake.
   - Wiring a real adapter in M4 requires only registering it in the composition root — no domain or application changes.
@@ -414,7 +414,7 @@ Test plan     How acceptance is verified.
   - `AgentRuntimeRouter implements AgentPort` in `packages/infrastructure`:
     - Resolves `request.profile` via the loaded config.
     - Dispatches to the runtime adapter registered for that profile's `runtime`.
-    - On adapter-returned failure that matches a configured fallback trigger (see M4-02c), invokes the `fallbackProfile` and records the new `AgentInvocation` with `fallbackOfInvocationId` set.
+    - On adapter-returned failure that matches a configured fallback trigger (see M4-02c), invokes the phase's `fallbackProfile` (from the resolved `phaseProfiles` entry) and records the new `AgentInvocation` with `fallbackOfInvocationId` set.
   - `OpenCodeAgentAdapter implements AgentPort` (registered for `runtime: opencode`):
     - Spawn via `execa` with `cwd = worktreePath`, timeout from the resolved profile's `timeoutMinutes`.
     - Capture stdout / stderr to artifact files, fsync on close.
@@ -440,7 +440,7 @@ Test plan     How acceptance is verified.
   - Record `runtime: pi` and the configured provider/model on the `AgentInvocation` row.
 - **Acceptance:**
   - Invocation through a Pi profile produces an `agent_invocations` row with `runtime: pi`.
-  - Prompt-budget overflow produces a `contract_violation` invocation; the router escalates to the configured `fallbackProfile` (covered by M4-02c).
+  - Prompt-budget overflow produces a `contract_violation` invocation; the router escalates to the phase's `fallbackProfile` from `phaseProfiles` (covered by M4-02c).
   - Timeout produces a `timeout` outcome with partial output preserved.
 - **Test plan:** Integration test against a fake `pi` shim script.
 
@@ -451,7 +451,7 @@ Test plan     How acceptance is verified.
 - **User story:** As an operator, I want the router to apply documented fallback triggers automatically so a Pi failure escalates to OpenCode without manual intervention.
 - **Context:** PRD §15.7 "Promotion / fallback triggers". ADR-0007.
 - **Scope:**
-  - The router consults the resolved profile's `fallbackProfile` and escalates on any of the documented triggers:
+  - The router consults the resolved `phaseProfiles[phase].fallbackProfile` and escalates on any of the documented triggers:
     - two consecutive failures from the same profile on the same Step;
     - missing required artifact;
     - invalid `result.json`;
@@ -466,7 +466,7 @@ Test plan     How acceptance is verified.
   - If the fallback profile itself fails, the failure surfaces as a normal `Failure` row — no further auto-escalation.
 - **Acceptance:**
   - Each documented trigger has a passing test that asserts escalation happened and the escalated invocation links back to the failing one.
-  - A profile without a `fallbackProfile` surfaces the original failure without escalation.
+  - A `phaseProfiles` entry without a `fallbackProfile` surfaces the original failure without escalation.
 
 ## M4-03 — Prompt templating + context injection
 
@@ -510,7 +510,7 @@ Test plan     How acceptance is verified.
 - **User story:** As an automation owner, I want the Bash scripts to delegate single-shot agent calls to the runtime-agnostic Node runner so observability and routing are uniform regardless of which runtime executes the call.
 - **Scope:**
   - Add a `node ./scripts/run-agent --profile <name>` CLI in `apps/cli` that the Bash scripts call instead of `opencode` directly. The CLI invokes `AgentPort.invoke(...)` — it does not name a runtime.
-  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls). Each Bash call passes the phase name; the CLI resolves the profile via `resolveProfileForPhase`.
+  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls). Each Bash call passes its own phase name (canonical or legacy); the CLI calls `resolveProfileForPhase`, which normalizes legacy names (e.g. `fix-review` → `review-fix`) before looking up `phaseProfiles` so routing succeeds regardless of which name the caller used.
   - `implement` loop stays on direct `opencode` for now (covered by M8).
 - **Acceptance:** All previously-Bash-driven agent calls write `agent_invocations` rows with the resolved profile, runtime, provider, and model. End-to-end run still succeeds for both `opencode` and `pi` profiles (where the latter is configured).
 
