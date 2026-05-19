@@ -323,6 +323,33 @@ rerun_reviewer_once() {
   fi
 }
 
+# rerun_reviewer_for_contradiction: re-run a reviewer for contradiction reconciliation.
+# Same cleanup as rerun_reviewer_once but does NOT set *_RERUN_WARNING flags,
+# because the prior review may be valid — it just disagrees with fix-review.
+rerun_reviewer_for_contradiction() {
+  local reviewer_type="$1"  # "spec" or "quality"
+  local task_n="$2"
+  local task_title="$3"
+  local task_text="$4"
+  local base_sha="$5"
+  local head_sha="$6"
+
+  log "  contradiction_retry: re-running ${reviewer_type}-review-task-${task_n} after review/fix contradiction"
+
+  # Clean up orphaned artifacts from both directories so the re-run starts fresh
+  rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
+  rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
+  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
+  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+
+  if [[ "$reviewer_type" == "spec" ]]; then
+    local impl_report="$7"
+    run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+  elif [[ "$reviewer_type" == "quality" ]]; then
+    run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+  fi
+}
+
 # handle_contradiction_reconciliation: when fix-review says DONE_NO_FIXES_NEEDED
 # but a review says FAIL, re-run the failing review once.
 # Sets CONTRADICTION_ACTION: "resolved" (both pass after re-run),
@@ -373,12 +400,12 @@ handle_contradiction_reconciliation() {
     cp "${WORKTREE_DIR}/quality-review-task-${task_num}.md" "$quality_md_backup"
   fi
 
-  # Re-run whichever review(s) are failing
+  # Re-run whichever review(s) are failing (without contract-violation warning)
   if [[ "$spec_status" == "SPEC_FAIL" ]]; then
-    rerun_reviewer_once "spec" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha" "$impl_report"
+    rerun_reviewer_for_contradiction "spec" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha" "$impl_report"
   fi
   if [[ "$quality_status" == "QUALITY_FAIL" ]]; then
-    rerun_reviewer_once "quality" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha"
+    rerun_reviewer_for_contradiction "quality" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha"
   fi
 
   # Re-resolve review statuses after re-run

@@ -10,7 +10,7 @@ setup() {
   # Extract helper functions needed by handle_contradiction_reconciliation
   # via awk brace-counting so tests exercise the actual script implementation.
   eval "$(awk '
-    /^(validate_result_file|read_result_value|resolve_result|validate_review_artifacts|rerun_reviewer_once|handle_contradiction_reconciliation)\(\)/ { found=1 }
+    /^(validate_result_file|read_result_value|resolve_result|validate_review_artifacts|rerun_reviewer_once|rerun_reviewer_for_contradiction|handle_contradiction_reconciliation)\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
@@ -130,9 +130,9 @@ teardown() {
   echo "DONE_NO_FIXES_NEEDED" > "$TMPDIR_TEST/fix-review-task-1.result"
   touch "$TMPDIR_TEST/fix-review-task-1.md"
 
-  # Override rerun_reviewer_once to simulate a successful re-run
+  # Override rerun_reviewer_for_contradiction to simulate a successful re-run
   # that overwrites the result files with PASS values.
-  rerun_reviewer_once() {
+  rerun_reviewer_for_contradiction() {
     local reviewer_type="$1"
     if [[ "$reviewer_type" == "quality" ]]; then
       echo "QUALITY_PASS" > "$TMPDIR_TEST/quality-review-task-1.result"
