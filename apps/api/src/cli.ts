@@ -64,15 +64,53 @@ export function buildProgram(): Command {
         if (opts.model !== undefined) options.model = opts.model;
         if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
         const c = composeRoot(options);
-        const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
-        // Flush stdout before exit; on some redirected stdout configurations
-        // process.exit can truncate buffered writes.
-        await new Promise<void>((resolve, reject) =>
-          process.stdout.write(JSON.stringify(out) + '\n', (err) =>
-            err ? reject(err) : resolve(),
-          ),
-        );
-        process.exit(out.status === 'passed' ? 0 : 1);
+
+        const cleanup = async (signal: string) => {
+          c.runRepository.updateStatusByIssueNumber(opts.issue, {
+            status: 'cancelled',
+            completedAt: new Date(),
+            failureReason: `interrupted by ${signal}`,
+          });
+        };
+
+        const sigintHandler = () => {
+          cleanup('SIGINT').finally(() => process.exit(130));
+        };
+        const sigtermHandler = () => {
+          cleanup('SIGTERM').finally(() => process.exit(143));
+        };
+        const uncaughtHandler = (err: Error) => {
+          cleanup('uncaughtException').finally(() => {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(1);
+          });
+        };
+        const unhandledHandler = (reason: unknown) => {
+          cleanup('unhandledRejection').finally(() => {
+            console.error(reason instanceof Error ? reason.message : String(reason));
+            process.exit(1);
+          });
+        };
+
+        process.on('SIGINT', sigintHandler);
+        process.on('SIGTERM', sigtermHandler);
+        process.on('uncaughtException', uncaughtHandler);
+        process.on('unhandledRejection', unhandledHandler);
+
+        try {
+          const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
+          await new Promise<void>((resolve, reject) =>
+            process.stdout.write(JSON.stringify(out) + '\n', (err) =>
+              err ? reject(err) : resolve(),
+            ),
+          );
+          process.exit(out.status === 'passed' ? 0 : 1);
+        } finally {
+          process.off('SIGINT', sigintHandler);
+          process.off('SIGTERM', sigtermHandler);
+          process.off('uncaughtException', uncaughtHandler);
+          process.off('unhandledRejection', unhandledHandler);
+        }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
