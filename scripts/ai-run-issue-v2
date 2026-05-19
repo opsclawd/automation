@@ -1900,6 +1900,9 @@ if [[ "$PHASE" == "create-pr" ]]; then
       elif [[ -n "$phase_name" && "$line" =~ ^\[(build|lint|typecheck|test|install)\ failed\]$ ]]; then
         PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
         phase_name=""
+      elif [[ -n "$phase_name" && "$line" == "[install completed with warnings]" ]]; then
+        PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
+        phase_name=""
       fi
     done < "${ISSUES_DIR}/validate.log"
     if [[ -n "$phase_name" ]]; then
