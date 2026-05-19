@@ -134,6 +134,10 @@ teardown() {
   # that overwrites the result files with PASS values.
   rerun_reviewer_for_contradiction() {
     local reviewer_type="$1"
+    if [[ "$reviewer_type" == "spec" ]]; then
+      echo "SPEC_PASS" > "$TMPDIR_TEST/spec-review-task-1.result"
+      echo "spec re-run findings" > "$TMPDIR_TEST/spec-review-task-1.md"
+    fi
     if [[ "$reviewer_type" == "quality" ]]; then
       echo "QUALITY_PASS" > "$TMPDIR_TEST/quality-review-task-1.result"
       echo "quality re-run findings" > "$TMPDIR_TEST/quality-review-task-1.md"

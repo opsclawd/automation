@@ -415,10 +415,12 @@ handle_contradiction_reconciliation() {
   if [[ -n "$spec_md_backup" && ! -s "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
     log "  Spec review re-run produced no .md — restoring original findings from backup"
     cp "$spec_md_backup" "${WORKTREE_DIR}/spec-review-task-${task_num}.md"
+    rm -f "${WORKTREE_DIR}/spec-review-task-${task_num}.result"
   fi
   if [[ -n "$quality_md_backup" && ! -s "${WORKTREE_DIR}/quality-review-task-${task_num}.md" ]]; then
     log "  Quality review re-run produced no .md — restoring original findings from backup"
     cp "$quality_md_backup" "${WORKTREE_DIR}/quality-review-task-${task_num}.md"
+    rm -f "${WORKTREE_DIR}/quality-review-task-${task_num}.result"
   fi
 
   # Clean up backup files
