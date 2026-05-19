@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -73,5 +73,44 @@ describe('composeRoot', () => {
 
     const out = await container.startIssueRun.execute({ issueNumber: 2 });
     expect(out.status).toBe('passed');
+  });
+
+  it('classifies failure from phase.failed event end-to-end', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = join(dir, 'fail-with-event.sh');
+    writeFileSync(
+      scriptPath,
+      `#!/usr/bin/env bash
+mkdir -p "$(dirname "$AI_RUN_EVENTS_FILE")"
+echo '{"runId":"'"$AI_RUN_DISPLAY_ID"'","phase":"validate","level":"error","type":"phase.failed","message":"pnpm build failed","timestamp":"2026-05-18T10:00:00.000Z","metadata":{"command":"pnpm build","exitCode":2}}' >> "$AI_RUN_EVENTS_FILE"
+sleep 0.3
+exit 1
+`,
+    );
+    chmodSync(scriptPath, 0o755);
+
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath,
+    });
+
+    const out = await container.startIssueRun.execute({ issueNumber: 42 });
+    expect(out.status).toBe('failed');
+    expect(out.exitCode).toBe(1);
+
+    const failure = container.failureRepository.findLatestByRun(out.uuid);
+    expect(failure).toBeDefined();
+    expect(failure!.kind).toBe('validation_failed');
+    expect(failure!.phase).toBe('validate');
+    expect(failure!.exitCode).toBe(2);
+    expect(failure!.message).toMatch(/pnpm build/);
+
+    const runDir = join(container.runsDir, out.displayId);
+    if (existsSync(join(runDir, 'failure.json'))) {
+      const failureJson = JSON.parse(readFileSync(join(runDir, 'failure.json'), 'utf-8'));
+      expect(failureJson.kind).toBe('validation_failed');
+      expect(failureJson.phase).toBe('validate');
+    }
   });
 });

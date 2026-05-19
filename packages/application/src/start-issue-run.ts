@@ -85,15 +85,13 @@ export class StartIssueRun {
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
 
     const collectedEvents: ClassifierEvent[] = [];
+    let classified = false;
+    // Events emitted during drainAndStop() (after classifyExit) are intentionally
+    // excluded from classification — they represent post-mortem events that arrive
+    // after the process has already exited. See plan.md Risk Area 1.
     const onEvent = (e: OrchestratorEvent): void => {
-      collectedEvents.push({
-        ...(e.phase !== undefined && { phase: e.phase }),
-        level: e.level,
-        type: e.type,
-        message: e.message,
-        timestamp: e.timestamp,
-        metadata: e.metadata,
-      });
+      if (classified) return;
+      collectedEvents.push(toClassifierEvent(e));
       try {
         if (e.runId !== run.displayId) {
           logger.error(`Event runId mismatch for run ${run.displayId}: got ${e.runId}, skipping`);
@@ -185,6 +183,7 @@ export class StartIssueRun {
           detectedAt: completedAt,
           events: collectedEvents,
         });
+        classified = true;
         try {
           dir.writeFailureJson(failure);
         } catch (err) {
@@ -242,4 +241,18 @@ export class StartIssueRun {
       }
     }
   }
+}
+
+function toClassifierEvent(e: OrchestratorEvent): ClassifierEvent {
+  // Only include `phase` when present — `...(cond && { key: val })` spreads
+  // to nothing when falsy, omitting the key entirely rather than setting it
+  // to undefined.
+  return {
+    ...(e.phase !== undefined && { phase: e.phase }),
+    level: e.level,
+    type: e.type,
+    message: e.message,
+    timestamp: e.timestamp,
+    metadata: e.metadata,
+  };
 }

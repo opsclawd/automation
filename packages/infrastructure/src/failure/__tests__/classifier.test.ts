@@ -813,8 +813,27 @@ describe('classifyExit with events (M2-06)', () => {
           metadata: { reason: 'generic failure' },
         }),
       ],
+      combinedLogTail: 'line1\nline2\nline3\nline4',
     });
     expect(failure.kind).toBe('command_failed');
+    expect(failure.message).toMatch(/some unhandled error/);
+    expect(failure.message).toMatch(/line4/);
+  });
+
+  it('uses event message alone for command_failed when no log tail is available', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'unhandled event error',
+          metadata: { reason: 'generic failure' },
+        }),
+      ],
+      combinedLogTail: '',
+    });
+    expect(failure.kind).toBe('command_failed');
+    expect(failure.message).toBe('unhandled event error');
   });
   it('prefers phase.failed over loop.exhausted and run.failed', () => {
     const failure = classifyExit({

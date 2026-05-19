@@ -61,6 +61,10 @@ const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
 export function classifyExit(input: ClassifyExitInput): Failure {
   if (input.events && input.events.length > 0) {
+    // Events are preferred over log scraping. If a terminal event exists,
+    // the log-scraping path is entirely bypassed — even if the log would
+    // produce a more specific kind. This tradeoff favors structured data
+    // over raw log content.
     const terminal = pickTerminalEvent(input.events);
     if (terminal) return buildFailureFromEvent(terminal, input);
   }
@@ -126,6 +130,9 @@ function lastPhase(tail: string): string | undefined {
   return last;
 }
 
+// Event-driven classification does not produce github_failed or git_failed
+// kinds. Those remain log-scraping-only until corresponding event types are defined.
+
 function pickTerminalEvent(events: ClassifierEvent[]): ClassifierEvent | undefined {
   const phaseFailed = lastOf(events, (e) => e.type === 'phase.failed');
   if (phaseFailed) return phaseFailed;
@@ -184,6 +191,18 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
     suggestedAction = 'Open the validate phase logs and rerun the failing command locally.';
   } else {
     kind = 'command_failed';
+    // Append log context to the message when falling through to command_failed,
+    // since the event message alone may be unhelpful. Matches the log-scraping
+    // fallback which includes the last 3 lines of the combined log.
+    const logTail = input.combinedLogTail
+      .split('\n')
+      .filter((l) => l.trim())
+      .slice(-3)
+      .join('\n')
+      .trim();
+    if (logTail) {
+      message = message ? `${message}\n${logTail}` : logTail;
+    }
   }
 
   const failure: Failure = {

@@ -698,4 +698,68 @@ describe('StartIssueRun event ingestion', () => {
     expect(capturedInputs[0]!.events![0]!.type).toBe('phase.failed');
     expect(capturedInputs[0]!.events![0]!.metadata).toEqual({ command: 'pnpm build', exitCode: 2 });
   });
+
+  it('stops collecting events after classifyExit to avoid wasted work', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory({ combinedLogContent: 'error output' });
+    const { fn: bash } = fakeBash({ exitCode: 1 });
+    const capturedInputs: ClassifyExitInput[] = [];
+    const capturingClassifier: ClassifyExitFn = (input) => {
+      capturedInputs.push(input);
+      return {
+        runUuid: input.runUuid,
+        kind: 'command_failed',
+        message: 'test',
+        exitCode: input.exitCode,
+        canRetry: false,
+        suggestedAction: 'Inspect logs.',
+        artifacts: input.artifacts ?? [],
+        detectedAt: input.detectedAt ?? new Date(),
+      };
+    };
+
+    let tailerOnEvent: ((e: OrchestratorEvent) => void) | null = null;
+    const fakeTailerFactory: EventTailerFactory = (input) => {
+      tailerOnEvent = input.onEvent;
+      return {
+        start: async () => {},
+        drainAndStop: async () => {},
+        stop: async () => {},
+      };
+    };
+
+    const eventRepo = new FakeEventRepository();
+    const eventBus = new FakeEventBus();
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: capturingClassifier,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      eventRepository: eventRepo,
+      eventBus: eventBus,
+      createEventTailer: fakeTailerFactory,
+      now: fixedNow,
+    });
+
+    const out = await usecase.execute({ issueNumber: 55 });
+
+    expect(capturedInputs).toHaveLength(1);
+    const eventsBeforeDrain = capturedInputs[0]!.events ?? [];
+
+    tailerOnEvent!({
+      runId: out.displayId,
+      phase: 'implement',
+      level: 'error',
+      type: 'phase.failed',
+      message: 'late event after classification',
+      timestamp: '2026-05-13T19:23:00.000Z',
+      metadata: { reason: 'late' },
+    });
+
+    expect(capturedInputs[0]!.events).toEqual(eventsBeforeDrain);
+  });
 });
