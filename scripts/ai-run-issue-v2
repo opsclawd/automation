@@ -281,6 +281,19 @@ validate_result_file() {
   fi
 }
 
+# validate_review_artifacts: checks that .result and .md artifacts are a valid pair.
+# Returns 0 if the pair is valid (both present, both absent, or md-without-result).
+# Returns 1 if .result exists but .md is missing — an impossible combination
+# under the agent contract, indicating a stale or partial write.
+validate_review_artifacts() {
+  local result_file="$1"
+  local md_file="$2"
+  if [[ -f "$result_file" && ! -f "$md_file" ]]; then
+    return 1
+  fi
+  return 0
+}
+
 # extract_result: focused extractor agent that reads source .md and writes .result
 extract_result() {
   local phase="$1"
@@ -1018,7 +1031,13 @@ implementer's word for what was built.
 - ✅ Spec compliant (if everything matches)
 - ❌ Issues found: [list specifically with file:line references]
 
-## MANDATORY OUTPUT FILES — write BOTH
+## MANDATORY OUTPUT FILES — write BOTH, in this order
+
+WRITE ORDER: write the .md file FIRST, then the .result file.
+The orchestrator checks for the .result file as a completion signal.
+If the .result file appears before the .md file is fully flushed,
+the handoff to the fix-review agent will read an empty or partial
+findings file. Always write .md first, verify it exists, then write .result.
 
 1. ./spec-review-task-${task_n}.md
    The detailed findings the fix-review agent will read. Include every
