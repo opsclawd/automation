@@ -13,5 +13,8 @@ export interface ClassifyExitInput {
   runUuid: string;
   artifacts?: string[];
   detectedAt?: Date;
+  /** Optional structured event stream from the wrapped run. When provided
+   *  and a terminal event exists, the classifier prefers events over
+   *  log scraping. */
   events?: ClassifierEvent[];
 }
