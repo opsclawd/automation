@@ -1334,6 +1334,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     IMPL_STATUS="DONE"
     HEAD_SHA=""
     REVIEW_LOOPS=0
+    CONTRADICTION_RETRIED=0
 
     # Step 1: Implement
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
