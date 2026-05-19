@@ -14,23 +14,25 @@ interface RunRow {
   failure_reason: string | null;
   exit_code: number | null;
   duration_ms: number | null;
+  pid: number | null;
 }
 
 export interface RunRecord extends Run {
   exitCode?: number;
   durationMs?: number;
+  pid?: number;
 }
 
 export class RunRepository {
   constructor(private readonly db: Db) {}
 
-  insert(run: Run): void {
+  insert(run: Run, pid?: number): void {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, issue_number, type, status, current_phase,
-          completed_phases, started_at, completed_at, failure_reason)
+          completed_phases, started_at, completed_at, failure_reason, pid)
          VALUES (@uuid, @display_id, @issue_number, @type, @status, @current_phase,
-          @completed_phases, @started_at, @completed_at, @failure_reason)`,
+          @completed_phases, @started_at, @completed_at, @failure_reason, @pid)`,
       )
       .run({
         uuid: run.uuid,
@@ -43,6 +45,7 @@ export class RunRepository {
         started_at: run.startedAt.toISOString(),
         completed_at: run.completedAt?.toISOString() ?? null,
         failure_reason: run.failureReason ?? null,
+        pid: pid ?? null,
       });
   }
 
@@ -56,7 +59,7 @@ export class RunRepository {
       if (active) {
         throw new Error(`An active run already exists for issue ${r.issueNumber}`);
       }
-      this.insert(r);
+      this.insert(r, process.pid);
     });
     tx(run);
   }
@@ -132,6 +135,40 @@ export class RunRepository {
     if (fields.length === 0) return;
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
   }
+
+  findByIssueNumber(issueNumber: number): RunRecord | undefined {
+    const row = this.db
+      .prepare('SELECT * FROM runs WHERE issue_number = ? ORDER BY started_at DESC LIMIT 1')
+      .get(issueNumber) as RunRow | undefined;
+    return row ? toRecord(row) : undefined;
+  }
+
+  findActiveRuns(): RunRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM runs WHERE status NOT IN ('passed','failed','cancelled') ORDER BY started_at`,
+      )
+      .all() as RunRow[];
+    return rows.map(toRecord);
+  }
+
+  updateStatusByIssueNumber(
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
+         WHERE issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
+      )
+      .run({
+        status: patch.status,
+        completed_at: patch.completedAt.toISOString(),
+        failure_reason: patch.failureReason ?? null,
+        issue_number: issueNumber,
+      });
+    return result.changes > 0;
+  }
 }
 
 function toRecord(row: RunRow): RunRecord {
@@ -148,5 +185,6 @@ function toRecord(row: RunRow): RunRecord {
     ...(row.failure_reason !== null ? { failureReason: row.failure_reason } : {}),
     ...(row.exit_code !== null ? { exitCode: row.exit_code } : {}),
     ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
+    ...(row.pid !== null ? { pid: row.pid } : {}),
   };
 }
