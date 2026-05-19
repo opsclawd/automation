@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Tabs } from './Tabs';
 import { LiveLogViewer } from '@/app/runs/[id]/LiveLogViewer';
 import { ArtifactViewer } from './ArtifactViewer';
+import { TimelineIsland } from '@/app/runs/[id]/timeline-island';
 import type { RunDto, FailureDto, ArtifactFile } from '@/lib/api-client';
 
 interface RunDetailTabsProps {
@@ -17,6 +18,7 @@ const TAB_ITEMS = [
   { id: 'logs', label: 'Logs' },
   { id: 'artifacts', label: 'Artifacts' },
   { id: 'failure', label: 'Failure' },
+  { id: 'timeline', label: 'Timeline' },
 ];
 
 export function RunDetailTabs({ run, failure, files, initialCombinedContent }: RunDetailTabsProps) {
@@ -67,6 +69,8 @@ export function RunDetailTabs({ run, failure, files, initialCombinedContent }: R
           </div>
         </div>
       )}
+
+      {activeTab === 'timeline' && <TimelineIsland runUuid={run.uuid} />}
     </Tabs>
   );
 }
