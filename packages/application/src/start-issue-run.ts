@@ -1,5 +1,5 @@
 import { createRun, passRun, failRun } from '@ai-sdlc/domain';
-import type { Failure } from '@ai-sdlc/domain';
+import type { Failure, ClassifierEvent } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -84,12 +84,20 @@ export class StartIssueRun {
     if (this.deps.model !== undefined) env.AI_MODEL = this.deps.model;
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
 
+    const collectedEvents: ClassifierEvent[] = [];
+    let classified = false;
+    // After classifyExit runs, the classified flag prevents further events
+    // from being pushed into collectedEvents. This also guards against events
+    // arriving during the final tailer.drainAndStop() in the finally block —
+    // those are post-classification and should not influence failure.json.
     const onEvent = (e: OrchestratorEvent): void => {
+      if (classified) return;
       try {
         if (e.runId !== run.displayId) {
           logger.error(`Event runId mismatch for run ${run.displayId}: got ${e.runId}, skipping`);
           return;
         }
+        collectedEvents.push(toClassifierEvent(e));
         const insertInput: Parameters<EventRepositoryPort['insert']>[0] = {
           runUuid: run.uuid,
           level: e.level,
@@ -167,6 +175,11 @@ export class StartIssueRun {
       const completedAt = now();
       const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
       if (finalStatus === 'failed') {
+        try {
+          await tailer.drainAndStop();
+        } catch (e) {
+          logger.error('Failed to drain event tailer before classification', e);
+        }
         const tail = dir.readCombinedLog();
         const failure = this.deps.classifyExit({
           exitCode: exec.exitCode,
@@ -174,7 +187,9 @@ export class StartIssueRun {
           runUuid: run.uuid,
           artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
           detectedAt: completedAt,
+          events: collectedEvents,
         });
+        classified = true;
         try {
           dir.writeFailureJson(failure);
         } catch (err) {
@@ -232,4 +247,23 @@ export class StartIssueRun {
       }
     }
   }
+}
+
+function toClassifierEvent(e: OrchestratorEvent): ClassifierEvent {
+  // Only include `phase` when present — `...(cond && { key: val })` spreads
+  // to nothing when falsy, omitting the key entirely rather than setting it
+  // to undefined.
+  //
+  // Exhaustiveness: every field of ClassifierEvent must appear in the return
+  // object. If ClassifierEvent gains a new required field, TypeScript will
+  // error here until the mapping is updated.
+  const result: ClassifierEvent = {
+    ...(e.phase !== undefined && { phase: e.phase }),
+    level: e.level,
+    type: e.type,
+    message: e.message,
+    timestamp: e.timestamp,
+    metadata: e.metadata,
+  };
+  return result;
 }
