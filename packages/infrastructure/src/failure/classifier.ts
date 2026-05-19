@@ -1,4 +1,4 @@
-import type { Failure, FailureKind, ClassifyExitInput } from '@ai-sdlc/domain';
+import type { Failure, FailureKind, ClassifyExitInput, ClassifierEvent } from '@ai-sdlc/domain';
 
 export type { ClassifyExitInput, ClassifierEvent } from '@ai-sdlc/domain';
 
@@ -126,11 +126,7 @@ function lastPhase(tail: string): string | undefined {
   return last;
 }
 
-type ClassifierEventType = ClassifyExitInput extends { events?: infer E }
-  ? NonNullable<E>[number]
-  : never;
-
-function pickTerminalEvent(events: ClassifierEventType[]): ClassifierEventType | undefined {
+function pickTerminalEvent(events: ClassifierEvent[]): ClassifierEvent | undefined {
   const phaseFailed = lastOf(events, (e) => e.type === 'phase.failed');
   if (phaseFailed) return phaseFailed;
   const loopExhausted = lastOf(events, (e) => e.type === 'loop.exhausted');
@@ -146,7 +142,7 @@ function lastOf<T>(arr: T[], pred: (t: T) => boolean): T | undefined {
   return undefined;
 }
 
-function buildFailureFromEvent(e: ClassifierEventType, input: ClassifyExitInput): Failure {
+function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Failure {
   const meta = e.metadata ?? {};
   const reason = typeof meta.reason === 'string' ? meta.reason : '';
   const missingArtifact =
