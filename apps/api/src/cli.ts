@@ -167,7 +167,12 @@ export function buildProgram(): Command {
     .addCommand(
       new Command('cancel')
         .description('Cancel an active run')
-        .option('--issue <number>', 'Issue number', (v) => parseInt(v, 10))
+        .option('--issue <number>', 'Issue number', (v) => {
+          if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
+          const n = parseInt(v, 10);
+          if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
+          return n;
+        })
         .option('--uuid <uuid>', 'Run UUID')
         .option('--reason <string>', 'Cancellation reason')
         .action(async (opts: { issue?: number; uuid?: string; reason?: string }) => {
