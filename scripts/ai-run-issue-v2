@@ -1511,7 +1511,7 @@ if [[ "$PHASE" == "validate" ]]; then
   } > >(tee "${ISSUES_DIR}/validate.log") 2>&1
 
   VALIDATE_EXIT=0
-  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
+  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]|\[install completed with warnings\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
