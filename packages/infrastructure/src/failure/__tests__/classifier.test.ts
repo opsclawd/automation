@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyExit } from '../classifier.js';
+import type { ClassifierEvent } from '../classifier.js';
 
 describe('classifyExit', () => {
   it('returns missing_artifact when log contains MISSING ARTIFACT sentinel', () => {
@@ -621,5 +622,239 @@ describe('classifyExit', () => {
     });
     expect(f.kind).toBe('github_failed');
     expect(f.message).toContain('Failed to create PR');
+  });
+});
+
+describe('classifyExit with events (M2-06)', () => {
+  const baseInput = {
+    runUuid: '00000000-0000-0000-0000-000000000001',
+    combinedLogTail: '',
+    exitCode: 1,
+    artifacts: [] as string[],
+  };
+  const ev = (over: Partial<ClassifierEvent>): ClassifierEvent => ({
+    level: 'error',
+    type: 'phase.failed',
+    message: '',
+    timestamp: '2026-05-16T12:00:00.000Z',
+    metadata: {},
+    ...over,
+  });
+  it('prefers phase.failed event over log scraping for validation_failed', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'validate',
+          message: 'validate suite failed',
+          metadata: { command: 'pnpm build', exitCode: 2, reason: 'build failed' },
+        }),
+      ],
+      combinedLogTail: 'gh: api error\nfatal: nothing here',
+    });
+    expect(failure.kind).toBe('validation_failed');
+    expect(failure.phase).toBe('validate');
+    expect(failure.message).toMatch(/pnpm build/);
+    expect(failure.exitCode).toBe(2);
+  });
+  it('classifies missing_artifact when metadata.missingArtifact is set', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'plan-write',
+          message: 'plan.md missing',
+          metadata: { missingArtifact: 'plan.md' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('missing_artifact');
+    expect(failure.phase).toBe('plan-write');
+    expect(failure.message).toMatch(/plan\.md/);
+  });
+  it('classifies branch_changed via metadata.reason', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'switched branch from ai/issue-1 to main',
+          metadata: { reason: 'branch changed' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('branch_changed');
+  });
+  it('classifies timeout via metadata.reason matching /timeout|timed out/i', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'agent timed out after 600s',
+          metadata: { reason: 'timed out' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('timeout');
+  });
+  it('classifies agent_blocked from loop.exhausted', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'fix-review',
+          type: 'loop.exhausted',
+          message: 'fix-review hit max iterations for task 2',
+          metadata: { task: 2, iterations: 5 },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('agent_blocked');
+    expect(failure.phase).toBe('fix-review');
+  });
+  it('classifies agent_blocked via metadata.reason matching /blocked/i', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'agent blocked itself',
+          metadata: { reason: 'BLOCKED' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('agent_blocked');
+  });
+  it('falls back to log scraping when no terminal event present', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [ev({ phase: 'plan-write', type: 'phase.started', level: 'info' })],
+      combinedLogTail: 'pnpm typecheck failed',
+    });
+    expect(failure.kind).toBe('validation_failed');
+  });
+  it('falls back to log scraping when events is empty', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [],
+      combinedLogTail: 'MISSING ARTIFACT design.md',
+    });
+    expect(failure.kind).toBe('missing_artifact');
+  });
+  it('uses the event timestamp for detectedAt', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'validate',
+          message: 'build failed',
+          metadata: { command: 'pnpm build', exitCode: 2 },
+        }),
+      ],
+    });
+    expect(failure.detectedAt.toISOString()).toBe('2026-05-16T12:00:00.000Z');
+  });
+  it('uses the most recent phase.failed when multiple exist', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'validate',
+          message: 'first',
+          metadata: { reason: 'timed out' },
+          timestamp: '2026-05-16T12:00:00.000Z',
+        }),
+        ev({
+          phase: 'review',
+          message: 'second',
+          metadata: { reason: 'BLOCKED' },
+          timestamp: '2026-05-16T12:01:00.000Z',
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('agent_blocked');
+    expect(failure.phase).toBe('review');
+  });
+  it('returns unknown when only run.failed is present', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          type: 'run.failed',
+          message: 'something exploded',
+          metadata: { reason: 'something exploded', lastPhase: 'implement' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('unknown');
+    expect(failure.message).toMatch(/something exploded/);
+  });
+  it('classifies invalid_result via metadata.reason', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'plan-write',
+          message: 'invalid result',
+          metadata: { reason: 'invalid result format' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('invalid_result');
+  });
+  it('falls through to command_failed when phase.failed has no matching metadata rule', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'some unhandled error',
+          metadata: { reason: 'generic failure' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('command_failed');
+  });
+  it('prefers phase.failed over loop.exhausted and run.failed', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'implement',
+          type: 'run.failed',
+          message: 'run failed',
+          timestamp: '2026-05-16T12:00:00.000Z',
+        }),
+        ev({
+          phase: 'fix-review',
+          type: 'loop.exhausted',
+          message: 'loop exhausted',
+          timestamp: '2026-05-16T12:01:00.000Z',
+        }),
+        ev({
+          phase: 'validate',
+          type: 'phase.failed',
+          message: 'build bombed',
+          metadata: { command: 'pnpm build', exitCode: 2 },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('validation_failed');
+  });
+  it('prefers loop.exhausted over run.failed when no phase.failed', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({ type: 'run.failed', message: 'run failed', timestamp: '2026-05-16T12:00:00.000Z' }),
+        ev({
+          phase: 'fix-review',
+          type: 'loop.exhausted',
+          message: 'loop exhausted',
+          metadata: { reason: 'blocked' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('agent_blocked');
   });
 });

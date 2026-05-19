@@ -1,6 +1,6 @@
 import type { Failure, FailureKind, ClassifyExitInput } from '@ai-sdlc/domain';
 
-export type { ClassifyExitInput } from '@ai-sdlc/domain';
+export type { ClassifyExitInput, ClassifierEvent } from '@ai-sdlc/domain';
 
 interface Pattern {
   kind: FailureKind;
