@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
+import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 
 const tempDirs: string[] = [];
 
@@ -112,5 +113,33 @@ exit 1
       expect(failureJson.kind).toBe('validation_failed');
       expect(failureJson.phase).toBe('validate');
     }
+  });
+
+  it('sweeps orphaned runs on compose', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    // Manually insert a "running" row with a dead PID
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'dead-pid-uuid',
+      'issue-999-20260513-000000',
+      999,
+      'issue_to_pr',
+      'running',
+      '[]',
+      new Date().toISOString(),
+      1,
+    );
+    db.close();
+    // Compose should sweep it
+    const container = composeRoot({ repoRoot: root, scriptPath });
+    const run = container.runRepository.findByUuid('dead-pid-uuid');
+    expect(run?.status).toBe('cancelled');
+    expect(run?.failureReason).toMatch(/orphaned/);
   });
 });

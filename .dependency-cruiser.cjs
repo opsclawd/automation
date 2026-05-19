@@ -70,7 +70,7 @@ module.exports = {
         '@ai-sdlc/infrastructure. Move wiring there.',
       from: {
         path: '^apps/api/src',
-        pathNot: '^apps/api/src/compose\\.ts$',
+        pathNot: ['^apps/api/src/compose\\.ts$', '(^|/)__tests__/'],
       },
       to: {
         path: '^packages/infrastructure',
