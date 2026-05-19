@@ -198,4 +198,32 @@ describe('derivePhaseTimeline', () => {
     expect(impl.status).toBe('passed');
     expect(impl.durationMs).toBeNull();
   });
+
+  it('does not revert a completed phase back to running on late phase.started', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'validate',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'validate',
+        type: 'phase.failed',
+        level: 'error',
+        message: 'oops',
+        timestamp: '2026-05-16T12:00:05.000Z',
+      }),
+      ev({
+        id: 3,
+        phase: 'validate',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:06.000Z',
+      }),
+    ]);
+    const v = timeline.find((p) => p.name === 'validate')!;
+    expect(v.status).toBe('failed');
+    expect(v.completedAt).toBe('2026-05-16T12:00:05.000Z');
+  });
 });

@@ -23,8 +23,9 @@ export function TimelineIsland({ runUuid }: TimelineIslandProps) {
         <div className="text-sm text-slate-500" data-testid="timeline-loading">
           Loading timeline…
         </div>
-      ) : null}
-      <PhaseTimeline timeline={timeline} />
+      ) : (
+        <PhaseTimeline timeline={timeline} />
+      )}
     </div>
   );
 }

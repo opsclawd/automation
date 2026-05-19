@@ -74,6 +74,8 @@ export async function getArtifact(uuid: string, path: string): Promise<string> {
 export async function listRunEvents(runUuid: string, since?: string): Promise<ApiEvent[]> {
   const base = typeof window === 'undefined' ? apiUrl : '';
   const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+  // cache: 'no-store' only takes effect in server components (Next.js fetch extension);
+  // browser fetch silently ignores it. Kept for server-side call-site correctness.
   const r = await fetch(`${base}/api/runs/${runUuid}/events${qs}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load run events: ${r.status}`);
   return ((await r.json()) as { events: ApiEvent[] }).events;

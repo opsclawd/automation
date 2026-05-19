@@ -51,11 +51,17 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
   for (const e of events) {
     if (e.phase === null || !CANONICAL_SET.has(e.phase)) continue;
     const entry = byPhase.get(e.phase as PhaseName)!;
+    const meta: Record<string, unknown> =
+      typeof e.metadata === 'object' && e.metadata !== null && !Array.isArray(e.metadata)
+        ? e.metadata
+        : {};
 
     switch (e.type) {
       case 'phase.started':
-        entry.startedAt = e.timestamp;
-        entry.status = 'running';
+        if (entry.status === 'pending') {
+          entry.startedAt = e.timestamp;
+          entry.status = 'running';
+        }
         break;
       case 'phase.completed':
         entry.completedAt = e.timestamp;
@@ -66,14 +72,14 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
         entry.completedAt = e.timestamp;
         entry.status = 'failed';
         entry.durationMs = computeDuration(entry.startedAt, e.timestamp);
-        entry.failure = { message: e.message, metadata: e.metadata };
+        entry.failure = { message: e.message, metadata: meta };
         break;
       case 'phase.skipped':
         entry.status = 'skipped';
         break;
       case 'artifact.created': {
-        const path = typeof e.metadata.path === 'string' ? e.metadata.path : null;
-        const kind = typeof e.metadata.kind === 'string' ? e.metadata.kind : 'unknown';
+        const path = typeof meta.path === 'string' ? meta.path : null;
+        const kind = typeof meta.kind === 'string' ? meta.kind : 'unknown';
         if (path !== null) entry.artifacts.push({ path, kind });
         break;
       }
