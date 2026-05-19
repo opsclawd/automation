@@ -672,18 +672,32 @@ describe('classifyExit with events (M2-06)', () => {
     expect(failure.phase).toBe('plan-write');
     expect(failure.message).toMatch(/plan\.md/);
   });
-  it('classifies branch_changed via metadata.reason', () => {
+  it('classifies branch_changed via metadata.reason matching drift patterns', () => {
     const failure = classifyExit({
       ...baseInput,
       events: [
         ev({
           phase: 'implement',
           message: 'switched branch from ai/issue-1 to main',
-          metadata: { reason: 'branch changed' },
+          metadata: { reason: 'branch changed from ai/issue-1' },
         }),
       ],
     });
     expect(failure.kind).toBe('branch_changed');
+  });
+  it('does not classify "Failed to push branch" as branch_changed via event', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      events: [
+        ev({
+          phase: 'create-pr',
+          message: 'Failed to push branch ai/issue-1',
+          metadata: { reason: 'Failed to push branch ai/issue-1' },
+        }),
+      ],
+      combinedLogTail: 'Failed to push branch ai/issue-1',
+    });
+    expect(failure.kind).toBe('git_failed');
   });
   it('classifies timeout via metadata.reason matching /timeout|timed out/i', () => {
     const failure = classifyExit({
@@ -803,7 +817,7 @@ describe('classifyExit with events (M2-06)', () => {
     });
     expect(failure.kind).toBe('invalid_result');
   });
-  it('falls through to command_failed when phase.failed has no matching metadata rule', () => {
+  it('falls through to log scraping when phase.failed has no matching metadata rule', () => {
     const failure = classifyExit({
       ...baseInput,
       events: [
@@ -813,14 +827,13 @@ describe('classifyExit with events (M2-06)', () => {
           metadata: { reason: 'generic failure' },
         }),
       ],
-      combinedLogTail: 'line1\nline2\nline3\nline4',
+      combinedLogTail: 'fatal: not a git repository\nsome other output',
     });
-    expect(failure.kind).toBe('command_failed');
-    expect(failure.message).toMatch(/some unhandled error/);
-    expect(failure.message).toMatch(/line4/);
+    expect(failure.kind).toBe('git_failed');
+    expect(failure.message).toContain('fatal: not a git repository');
   });
 
-  it('uses event message alone for command_failed when no log tail is available', () => {
+  it('falls through to log scraping fallback when no metadata rule and no log patterns match', () => {
     const failure = classifyExit({
       ...baseInput,
       events: [
@@ -833,7 +846,6 @@ describe('classifyExit with events (M2-06)', () => {
       combinedLogTail: '',
     });
     expect(failure.kind).toBe('command_failed');
-    expect(failure.message).toBe('unhandled event error');
   });
   it('prefers loop.exhausted over phase.failed so exhausted review loops classify as agent_blocked', () => {
     const failure = classifyExit({

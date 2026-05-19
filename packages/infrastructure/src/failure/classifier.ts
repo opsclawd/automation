@@ -61,12 +61,17 @@ const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
 export function classifyExit(input: ClassifyExitInput): Failure {
   if (input.events && input.events.length > 0) {
-    // Events are preferred over log scraping. If a terminal event exists,
-    // the log-scraping path is entirely bypassed — even if the log would
-    // produce a more specific kind. This tradeoff favors structured data
-    // over raw log content.
+    // Event-driven classification is attempted first. When the terminal event
+    // matches a structured metadata rule (e.g. missingArtifact, reason pattern),
+    // its result is used directly. When no rule matches (the catch-all case),
+    // buildFailureFromEvent returns null and the classifier falls through to
+    // log scraping — preserving artifact/specific classifications that the
+    // event's reason string alone would lose.
     const terminal = pickTerminalEvent(input.events);
-    if (terminal) return buildFailureFromEvent(terminal, input);
+    if (terminal) {
+      const fromEvent = buildFailureFromEvent(terminal, input);
+      if (fromEvent !== null) return fromEvent;
+    }
   }
 
   const tail = input.combinedLogTail.slice(-8000);
@@ -154,7 +159,7 @@ function lastOf<T>(arr: T[], pred: (t: T) => boolean): T | undefined {
   return undefined;
 }
 
-function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Failure {
+function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Failure | null {
   const meta = e.metadata ?? {};
   const reason = typeof meta.reason === 'string' ? meta.reason : '';
   const missingArtifact =
@@ -180,7 +185,7 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
   } else if (/invalid result/i.test(reason)) {
     kind = 'invalid_result';
     suggestedAction = 'Inspect the agent result.json and prompt template.';
-  } else if (/branch/i.test(reason)) {
+  } else if (/(?:branch changed from|switched branch from|branch drifted)/i.test(reason)) {
     kind = 'branch_changed';
     suggestedAction =
       'Reset the worktree branch and retry; verify the agent prompt does not switch branches.';
@@ -195,19 +200,7 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
     message = `${command} exited ${metaExit ?? input.exitCode}`;
     suggestedAction = 'Open the validate phase logs and rerun the failing command locally.';
   } else {
-    kind = 'command_failed';
-    // Append log context to the message when falling through to command_failed,
-    // since the event message alone may be unhelpful. Matches the log-scraping
-    // fallback which includes the last 3 lines of the combined log.
-    const logTail = input.combinedLogTail
-      .split('\n')
-      .filter((l) => l.trim())
-      .slice(-3)
-      .join('\n')
-      .trim();
-    if (logTail) {
-      message = message ? `${message}\n${logTail}` : logTail;
-    }
+    return null;
   }
 
   const failure: Failure = {
