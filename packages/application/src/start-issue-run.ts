@@ -1,5 +1,5 @@
 import { createRun, passRun, failRun } from '@ai-sdlc/domain';
-import type { Failure } from '@ai-sdlc/domain';
+import type { Failure, ClassifierEvent } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -84,7 +84,16 @@ export class StartIssueRun {
     if (this.deps.model !== undefined) env.AI_MODEL = this.deps.model;
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
 
+    const collectedEvents: ClassifierEvent[] = [];
     const onEvent = (e: OrchestratorEvent): void => {
+      collectedEvents.push({
+        phase: e.phase,
+        level: e.level,
+        type: e.type,
+        message: e.message,
+        timestamp: e.timestamp,
+        metadata: e.metadata,
+      });
       try {
         if (e.runId !== run.displayId) {
           logger.error(`Event runId mismatch for run ${run.displayId}: got ${e.runId}, skipping`);
@@ -174,6 +183,7 @@ export class StartIssueRun {
           runUuid: run.uuid,
           artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
           detectedAt: completedAt,
+          events: collectedEvents,
         });
         try {
           dir.writeFailureJson(failure);
