@@ -161,6 +161,59 @@ export function buildProgram(): Command {
       },
     );
 
+  program
+    .command('runs')
+    .description('Manage orchestrator runs')
+    .addCommand(
+      new Command('cancel')
+        .description('Cancel an active run')
+        .option('--issue <number>', 'Issue number', (v) => parseInt(v, 10))
+        .option('--uuid <uuid>', 'Run UUID')
+        .option('--reason <string>', 'Cancellation reason')
+        .action(async (opts: { issue?: number; uuid?: string; reason?: string }) => {
+          if (!opts.issue && !opts.uuid) {
+            console.error('Error: specify --issue or --uuid');
+            process.exit(1);
+          }
+          if (opts.issue && opts.uuid) {
+            console.error('Error: specify --issue or --uuid, not both');
+            process.exit(1);
+          }
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+            };
+            const c = composeRoot(options);
+            if (opts.uuid) {
+              const run = c.runRepository.findByUuid(opts.uuid);
+              if (!run) {
+                console.error(`Run not found: ${opts.uuid}`);
+                process.exit(1);
+              }
+              if (['passed', 'failed', 'cancelled'].includes(run.status)) {
+                console.error(`Run ${opts.uuid} is already ${run.status}`);
+                process.exit(1);
+              }
+              c.runRepository.update(run.uuid, {
+                status: 'cancelled',
+                completedAt: new Date(),
+                ...(opts.reason ? { failureReason: opts.reason } : {}),
+              });
+            } else {
+              const input: { issueNumber: number; reason?: string } = { issueNumber: opts.issue! };
+              if (opts.reason) input.reason = opts.reason;
+              c.cancelRun.execute(input);
+            }
+            console.error('Run cancelled successfully');
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(1);
+          }
+        }),
+    );
+
   return program;
 }
 
