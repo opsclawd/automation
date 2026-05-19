@@ -297,6 +297,8 @@ validate_review_artifacts() {
 # rerun_reviewer_once: re-run a single reviewer once after a contract violation
 # (.result written without matching .md). Cleans up all orphaned artifacts
 # from both ISSUES_DIR and WORKTREE_DIR so the re-run starts fresh.
+# Uses ISSUES_DIR and WORKTREE_DIR from caller scope (dynamic bash globals
+# set by the orchestrator's main loop).
 rerun_reviewer_once() {
   local reviewer_type="$1"  # "spec" or "quality"
   local task_n="$2"
@@ -1882,22 +1884,26 @@ if [[ "$PHASE" == "create-pr" ]]; then
   fi
   PR_VALIDATION_STEPS=""
   if [[ -f "${ISSUES_DIR}/validate.log" ]]; then
+    # Match the exact sentinels the validate phase emits via `|| echo "[<step> failed]"`
+    # (see the validate block near line 1417). The prior parser scanned for `fail|error`
+    # against raw tool output, which produced false "test: failed" entries because vitest
+    # legitimately prints those words on passing runs ("0 failed", test names like
+    # "should fail gracefully", etc.). Steps with no failure sentinel are reported as
+    # passed by absence-of-failure.
     phase_name=""
     while IFS= read -r line; do
       if [[ "$line" =~ ^===\ (.+)\ ===$ ]]; then
-        phase_name="${BASH_REMATCH[1]}"
-      elif [[ -n "$phase_name" ]]; then
-        if echo "$line" | grep -qiE 'fail|error'; then
-          PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
-          phase_name=""
-        elif echo "$line" | grep -qiE 'passed|succeeded|done'; then
+        if [[ -n "$phase_name" ]]; then
           PR_VALIDATION_STEPS+="- ${phase_name}: passed"$'\n'
-          phase_name=""
         fi
+        phase_name="${BASH_REMATCH[1]}"
+      elif [[ -n "$phase_name" && "$line" =~ ^\[(build|lint|typecheck|test|install)\ failed\]$ ]]; then
+        PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
+        phase_name=""
       fi
     done < "${ISSUES_DIR}/validate.log"
-    if [[ -z "$PR_VALIDATION_STEPS" ]]; then
-      PR_VALIDATION_STEPS=$(awk '/^=== / {gsub(/^=== | ===$/, ""); phase=$0; next} /fail|error/i {print "- " phase ": failed"; next} /passed|succeeded/i {print "- " phase ": passed"; next}' "${ISSUES_DIR}/validate.log" 2>/dev/null | head -10 || true)
+    if [[ -n "$phase_name" ]]; then
+      PR_VALIDATION_STEPS+="- ${phase_name}: passed"$'\n'
     fi
   fi
 
