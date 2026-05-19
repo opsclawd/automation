@@ -16,10 +16,10 @@ export function TimelineIsland({ runUuid }: TimelineIslandProps) {
     <div>
       {error ? (
         <div className="mb-2 text-xs text-yellow-400" data-testid="timeline-warning">
-          {error.message} — reconnecting…
+          {error.message}
         </div>
       ) : null}
-      {isLoading && !error ? (
+      {isLoading ? (
         <div className="text-sm text-slate-500" data-testid="timeline-loading">
           Loading timeline…
         </div>

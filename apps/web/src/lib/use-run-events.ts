@@ -31,50 +31,67 @@ export function useRunEvents(runUuid: string): UseRunEventsResult {
   useEffect(() => {
     let cancelled = false;
     let es: EventSource | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    (async () => {
-      try {
-        const backfill = await listRunEvents(runUuid);
-        if (cancelled) return;
-        setEvents(backfill);
-        setIsLoading(false);
+    const MAX_BACKOFF_MS = 30_000;
 
-        const lastTimestamp = backfill.at(-1)?.timestamp;
-        const streamUrl = lastTimestamp
-          ? `/api/runs/${runUuid}/events/stream?since=${encodeURIComponent(lastTimestamp)}`
-          : `/api/runs/${runUuid}/events/stream`;
+    function scheduleRetry(attempt: number) {
+      const delay = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+      retryTimer = setTimeout(() => {
+        if (!cancelled) startBackfill(attempt + 1);
+      }, delay);
+    }
 
-        es = new EventSource(streamUrl);
-        es.onmessage = (msg) => {
-          try {
-            setError(null);
-            const parsed = JSON.parse(msg.data) as ApiEvent;
-            const dedupeKey = eventKey(parsed);
-            setEvents((prev) => {
-              if (prev.some((p) => eventKey(p) === dedupeKey)) return prev;
-              const next = [...prev, parsed];
-              if (next.length > MAX_EVENTS) next.splice(0, next.length - MAX_EVENTS);
-              return next;
-            });
-          } catch {
-            // ignore malformed SSE frames
-          }
-        };
-        es.onerror = () => {
-          setError(new Error('event stream interrupted'));
-          // EventSource auto-reconnects; nothing else to do
-        };
-        es.onopen = () => {
+    function startBackfill(attempt: number) {
+      listRunEvents(runUuid)
+        .then((backfill) => {
+          if (cancelled) return;
+          setEvents(backfill);
+          setIsLoading(false);
           setError(null);
-        };
-      } catch (e) {
-        if (!cancelled) setError(e as Error);
-      }
-    })();
+
+          const lastTimestamp = backfill.at(-1)?.timestamp;
+          const streamUrl = lastTimestamp
+            ? `/api/runs/${runUuid}/events/stream?since=${encodeURIComponent(lastTimestamp)}`
+            : `/api/runs/${runUuid}/events/stream`;
+
+          es = new EventSource(streamUrl);
+          es.onmessage = (msg) => {
+            try {
+              setError(null);
+              const parsed = JSON.parse(msg.data) as ApiEvent;
+              const dedupeKey = eventKey(parsed);
+              setEvents((prev) => {
+                if (prev.some((p) => eventKey(p) === dedupeKey)) return prev;
+                const next = [...prev, parsed];
+                if (next.length > MAX_EVENTS) next.splice(0, next.length - MAX_EVENTS);
+                return next;
+              });
+            } catch {
+              // ignore malformed SSE frames
+            }
+          };
+          es.onerror = () => {
+            setError(new Error('event stream interrupted'));
+          };
+          es.onopen = () => {
+            setError(null);
+          };
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setIsLoading(false);
+          setError(e as Error);
+          scheduleRetry(attempt);
+        });
+    }
+
+    startBackfill(0);
 
     return () => {
       cancelled = true;
       es?.close();
+      if (retryTimer !== null) clearTimeout(retryTimer);
     };
   }, [runUuid]);
 
