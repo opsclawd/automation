@@ -192,15 +192,22 @@ ensure_worktree() {
 }
 
 # Seed worktree-local exclude rules so orchestrator artifacts are never
-# tracked. Idempotent: duplicate lines in info/exclude are harmless.
+# tracked. Skips the append when a sentinel pattern is already present, so
+# the file doesn't accumulate duplicate blocks across every phase entry.
 seed_excludes() {
   if [[ -z "${WORKTREE_DIR:-}" ]] || [[ ! -e "${WORKTREE_DIR}/.git" ]]; then
     return 1
   fi
-  local common_dir
+  local common_dir exclude_file
   common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
+  exclude_file="${common_dir}/info/exclude"
   mkdir -p "${common_dir}/info"
-  cat >> "${common_dir}/info/exclude" << 'EOF'
+  # Sentinel check: .review-context/ is the last pattern in the block, so its
+  # presence means a previous seed_excludes call already wrote the full set.
+  if [[ -f "$exclude_file" ]] && grep -qxF '.review-context/' "$exclude_file"; then
+    return 0
+  fi
+  cat >> "$exclude_file" << 'EOF'
 *.log
 *.result
 code-review.md

@@ -43,7 +43,7 @@ teardown() {
   grep -q '\*\.result' "$exclude_file"
   grep -q 'node_modules/' "$exclude_file"
 }
-@test "seed_excludes is idempotent — calling twice appends but does not break" {
+@test "seed_excludes is idempotent — calling twice does not duplicate patterns" {
   local script_path
   script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
@@ -52,11 +52,11 @@ teardown() {
   local common_dir
   common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
   local exclude_file="${common_dir}/info/exclude"
-  # File should exist and contain the patterns (duplicates are harmless)
   [ -f "$exclude_file" ]
+  # Sentinel guard short-circuits the second call, so each pattern appears once.
   local count
   count=$(grep -c 'design\.md' "$exclude_file")
-  [ "$count" -ge 2 ]
+  [ "$count" -eq 1 ]
 }
 @test "orchestrator artifacts are excluded from git after seed_excludes" {
   local script_path
