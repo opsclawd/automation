@@ -1,6 +1,28 @@
 import type { Run, RunStatus, Failure, ClassifyExitInput } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
+/**
+ * RunRecord extends the domain Run with infrastructure-level fields
+ * (exitCode, durationMs, pid) that the application layer needs for
+ * querying and status updates. Defined here to avoid importing from
+ * @ai-sdlc/infrastructure (layer boundary).
+ */
+export interface RunRecord {
+  uuid: string;
+  displayId: string;
+  issueNumber: number;
+  type: Run['type'];
+  status: RunStatus;
+  completedPhases: string[];
+  startedAt: Date;
+  completedAt?: Date;
+  failureReason?: string;
+  exitCode?: number;
+  durationMs?: number;
+  pid?: number;
+  currentPhase?: string;
+}
+
 export interface RunRepositoryUpdatePatch {
   status?: RunStatus;
   currentPhase?: string | null;
@@ -14,6 +36,12 @@ export interface RunRepositoryUpdatePatch {
 export interface RunRepositoryPort {
   insertIfNoActive(run: Run): void;
   update(uuid: string, patch: RunRepositoryUpdatePatch): void;
+  findByIssueNumber(issueNumber: number): RunRecord | undefined;
+  findActiveRuns(): RunRecord[];
+  updateStatusByIssueNumber(
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
 }
 
 export interface RunDirectoryHandle {
