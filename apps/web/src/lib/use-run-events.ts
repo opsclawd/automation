@@ -12,9 +12,13 @@ interface UseRunEventsResult {
 
 // Live SSE events from the server omit the `id` field (only backfilled
 // events include it). Use a compound key so deduplication works regardless.
+// Include payload fields to avoid collapsing distinct events that share
+// type/phase/timestamp (e.g. multiple artifact.created in the same ms).
 function eventKey(e: ApiEvent): string {
   if (e.id !== undefined && e.id !== null) return `id:${e.id}`;
-  return `${e.type}:${e.phase ?? '_'}:${e.timestamp}`;
+  const path = typeof e.metadata?.path === 'string' ? e.metadata.path : '';
+  const msg = e.message ? e.message : '';
+  return `${e.type}:${e.phase ?? '_'}:${e.timestamp}:${path}:${msg}`;
 }
 
 export function useRunEvents(runUuid: string): UseRunEventsResult {
