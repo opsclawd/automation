@@ -1202,6 +1202,12 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     timeout 120 pnpm install --frozen-lockfile 2>&1 | tail -10 || echo "[install completed with warnings]"
   } > >(tee -a "${ISSUES_DIR}/install-worktree.log") 2>&1 || true
 
+  log "Building workspace packages in worktree..."
+  {
+    echo "=== pnpm -r build ==="
+    timeout 180 pnpm -r build 2>&1 | tail -20 || echo "[build completed with warnings]"
+  } > >(tee -a "${ISSUES_DIR}/install-worktree.log") 2>&1 || true
+
   if [[ ! -f "plan.md" ]]; then
     orchestrator_fail "plan.md not found in worktree"
   fi
