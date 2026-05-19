@@ -789,7 +789,7 @@ The `.ai-orchestrator.json` file gains an `agent` section that declares profiles
       "plan-design": { "profile": "opencode-frontier" },
       "plan-write": { "profile": "opencode-frontier" },
       "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "validate-fix": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "validate": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
       "review": { "profile": "opencode-frontier" },
       "fix-review": { "profile": "opencode-frontier" },
       "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
@@ -1989,7 +1989,7 @@ Deliverables:
 - build/lint/typecheck/test result JSON;
 - validation UI;
 - validation failure classification;
-- validation-fix invocations called via `AgentPort` using the configured `phaseProfiles["validate-fix"]`.
+- validation-fix invocations called via `AgentPort` using the configured `phaseProfiles["validate"]` (validation-fix is a Loop _within_ the `validate` phase — agent calls inside that loop route through the `validate` entry; there is no separate `validate-fix` phase in the shipped phase set).
 
 ### Milestone 6: Managed PR Review Polling
 

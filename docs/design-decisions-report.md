@@ -180,7 +180,7 @@ The M1/M2 config covers validation, phase skip-list, and timeouts. Starting in M
       "plan-design": { "profile": "opencode-frontier" },
       "plan-write": { "profile": "opencode-frontier" },
       "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "validate-fix": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "validate": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
       "review": { "profile": "opencode-frontier" },
       "fix-review": { "profile": "opencode-frontier" },
       "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },

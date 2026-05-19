@@ -519,7 +519,7 @@ Test plan     How acceptance is verified.
 
 # Milestone M5 — TypeScript Validation Runner
 
-**Goal:** Replace brittle log parsing of validation output with structured per-command results. Validation-fix invocations route through `AgentPort` using `phaseProfiles["validate-fix"]`; bounded fixes may run on Pi/Qwen with fallback to OpenCode per ADR-0007.
+**Goal:** Replace brittle log parsing of validation output with structured per-command results. Validation-fix invocations route through `AgentPort` using `phaseProfiles["validate"]` — validation-fix is a Loop _within_ the `validate` phase, not a separate emitted phase; bounded fixes may run on Pi/Qwen with fallback to OpenCode per ADR-0007.
 
 ## M5-01 — Validation domain + DB table
 
