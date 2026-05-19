@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+
 # Regression test: worktree exclude rules must be seeded on every orchestrator
 # invocation, including resumed runs where the worktree already exists.
 # See: scripts/ai-run-issue-v2 — seed_excludes() / ensure_worktree()
@@ -55,7 +56,7 @@ teardown() {
   [ -f "$exclude_file" ]
   local count
   count=$(grep -c 'design\.md' "$exclude_file")
-  [ "$count" -ge 1 ]
+  [ "$count" -ge 2 ]
 }
 @test "orchestrator artifacts are excluded from git after seed_excludes" {
   local script_path
