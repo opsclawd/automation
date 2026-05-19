@@ -161,7 +161,7 @@ Fixed default with skip-list. The canonical sequence is hardcoded. Config can de
 ## Q27 — Agent model/runtime selection
 
 **Where does model config live?**
-In `.ai-orchestrator.json` under `agent.profiles` and `agent.phaseProfiles` (see PRD §15.7). Profiles bind a runtime (`opencode | pi`), provider, model, budgets, timeout, and optional `fallbackProfile`. Phases reference profiles, never runtimes directly, so model/runtime selection is config-driven, phase-aware, auditable, and fallback-capable. Env vars (`AI_MODEL`, `AI_RUNTIME`) may still override the active profile per process for local experimentation, but the source of truth is the config file.
+In `.ai-orchestrator.json` under `agent.profiles` and `agent.phaseProfiles` (see PRD §15.7). Profiles bind a runtime (`opencode | pi`), provider, model, budgets, and timeout. Phases reference profiles via `phaseProfiles` entries, which also carry an optional `fallbackProfile` — **fallback is a per-phase routing concern, not a property of a profile**. Selection is config-driven, phase-aware, auditable, and fallback-capable. Env vars (`AI_MODEL`, `AI_RUNTIME`) may still override the active profile per process for local experimentation, but the source of truth is the config file.
 
 ## Q28 — Error classification
 

@@ -799,13 +799,14 @@ The `.ai-orchestrator.json` file gains an `agent` section that declares profiles
 }
 ```
 
-**Phase key normalization.** `phaseProfiles` keys are the canonical phase names from §29 (e.g. `review-fix`, not the legacy Bash `fix-review`). The composition root's `resolveProfileForPhase(phaseName)` helper normalizes legacy Bash phase names to canonical names before lookup so the same routing map works for both Bash callers (during the M4–M7 migration) and TypeScript phase handlers (M8). The legacy-name map is:
+**Phase key normalization.** `phaseProfiles` keys are the canonical phase names from §29 (e.g. `review-fix`, not the legacy Bash `review` or `fix-review`). The composition root's `resolveProfileForPhase(phaseName)` helper normalizes legacy Bash phase names to canonical names before lookup so the same routing map works for both Bash callers (during the M4–M7 migration) and TypeScript phase handlers (M8). The legacy-name map is:
 
 | Legacy Bash phase | Canonical phase |
 | ----------------- | --------------- |
+| `review`          | `review-fix`    |
 | `fix-review`      | `review-fix`    |
 
-Add a new row to this map any time a Bash phase is renamed during migration.
+Both Bash `review` and Bash `fix-review` map to the single canonical `review-fix` phase (per §29 canonical sequence). `resolveProfileForPhase` must fail loudly on an unmapped legacy name rather than silently falling back to `defaultProfile`, so routing misses surface as a typed `ConfigError` instead of a quiet downgrade to frontier defaults. Add a new row to this map any time a Bash phase is renamed during migration.
 
 #### Routing policy
 

@@ -381,7 +381,7 @@ Test plan     How acceptance is verified.
   - Single `composeRoot()` factory in `apps/api` returning a typed `Container`. No DI framework — plain factory.
   - The container exposes an `AgentPort` whose implementation is resolved from `agent.profiles[<profileName>].runtime` at invocation time.
   - In M3 the only registered runtime adapter is the fake (test double); real adapters land in M4.
-  - The container reads `agent.phaseProfiles` and exposes a `resolveProfileForPhase(phaseName)` helper so phase handlers do not parse config themselves. The helper normalizes legacy Bash phase names to canonical names (e.g. `fix-review` → `review-fix`) before lookup — see PRD §15.7 phase-key normalization table.
+  - The container reads `agent.phaseProfiles` and exposes a `resolveProfileForPhase(phaseName)` helper so phase handlers do not parse config themselves. The helper normalizes legacy Bash phase names to canonical names (e.g. both `review` and `fix-review` → `review-fix`) before lookup, and fails loudly with a `ConfigError` on an unmapped legacy name rather than silently falling back to `defaultProfile` — see PRD §15.7 phase-key normalization table.
 - **Acceptance:**
   - Tests can build a Container with fakes for every port, including an `AgentPort` backed by the in-memory fake.
   - Wiring a real adapter in M4 requires only registering it in the composition root — no domain or application changes.
@@ -510,7 +510,7 @@ Test plan     How acceptance is verified.
 - **User story:** As an automation owner, I want the Bash scripts to delegate single-shot agent calls to the runtime-agnostic Node runner so observability and routing are uniform regardless of which runtime executes the call.
 - **Scope:**
   - Add a `node ./scripts/run-agent --profile <name>` CLI in `apps/cli` that the Bash scripts call instead of `opencode` directly. The CLI invokes `AgentPort.invoke(...)` — it does not name a runtime.
-  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls). Each Bash call passes its own phase name (canonical or legacy); the CLI calls `resolveProfileForPhase`, which normalizes legacy names (e.g. `fix-review` → `review-fix`) before looking up `phaseProfiles` so routing succeeds regardless of which name the caller used.
+  - Migrate `plan-design`, `plan-write`, `review`, `fix-review`, and `create-pr` invocations first (the easiest single-shot calls). Each Bash call passes its own phase name (canonical or legacy); the CLI calls `resolveProfileForPhase`, which normalizes legacy names (both `review` and `fix-review` → `review-fix`) before looking up `phaseProfiles` so routing succeeds regardless of which name the caller used. Unmapped legacy names raise a `ConfigError` — no silent fallback to `defaultProfile`.
   - `implement` loop stays on direct `opencode` for now (covered by M8).
 - **Acceptance:** All previously-Bash-driven agent calls write `agent_invocations` rows with the resolved profile, runtime, provider, and model. End-to-end run still succeeds for both `opencode` and `pi` profiles (where the latter is configured).
 
