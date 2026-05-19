@@ -10,12 +10,11 @@ interface UseRunEventsResult {
   isLoading: boolean;
 }
 
-// Live SSE events from the server omit the `id` field (only backfilled
-// events include it). Use a compound key so deduplication works regardless.
-// Include payload fields to avoid collapsing distinct events that share
-// type/phase/timestamp (e.g. multiple artifact.created in the same ms).
+// Use a compound key that is stable across live SSE payloads (which omit the
+// `id` field) and persisted/backfilled events (which include it). Using
+// `id:N` for one form and the compound key for the other would let the same
+// real-world event survive as a duplicate after reconnection.
 function eventKey(e: ApiEvent): string {
-  if (e.id !== undefined && e.id !== null) return `id:${e.id}`;
   const path = typeof e.metadata?.path === 'string' ? e.metadata.path : '';
   const msg = e.message ? e.message : '';
   return `${e.type}:${e.phase ?? '_'}:${e.timestamp}:${path}:${msg}`;
