@@ -226,4 +226,33 @@ describe('derivePhaseTimeline', () => {
     expect(v.status).toBe('failed');
     expect(v.completedAt).toBe('2026-05-16T12:00:05.000Z');
   });
+
+  it('does not overwrite failed status with late phase.completed (AC4 idempotency)', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'validate',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'validate',
+        type: 'phase.failed',
+        level: 'error',
+        message: 'oops',
+        timestamp: '2026-05-16T12:00:05.000Z',
+      }),
+      ev({
+        id: 3,
+        phase: 'validate',
+        type: 'phase.completed',
+        timestamp: '2026-05-16T12:00:06.000Z',
+      }),
+    ]);
+    const v = timeline.find((p) => p.name === 'validate')!;
+    expect(v.status).toBe('failed');
+    expect(v.completedAt).toBe('2026-05-16T12:00:05.000Z');
+    expect(v.failure?.message).toBe('oops');
+  });
 });

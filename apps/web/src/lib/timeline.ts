@@ -64,9 +64,11 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
         }
         break;
       case 'phase.completed':
-        entry.completedAt = e.timestamp;
-        entry.status = 'passed';
-        entry.durationMs = computeDuration(entry.startedAt, e.timestamp);
+        if (entry.status === 'running' || entry.status === 'pending') {
+          entry.completedAt = e.timestamp;
+          entry.status = 'passed';
+          entry.durationMs = computeDuration(entry.startedAt, e.timestamp);
+        }
         break;
       case 'phase.failed':
         entry.completedAt = e.timestamp;

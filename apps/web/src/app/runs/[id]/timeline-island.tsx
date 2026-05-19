@@ -10,7 +10,7 @@ interface TimelineIslandProps {
 }
 
 export function TimelineIsland({ runUuid }: TimelineIslandProps) {
-  const { events, error } = useRunEvents(runUuid);
+  const { events, error, isLoading } = useRunEvents(runUuid);
   const timeline = useMemo(() => derivePhaseTimeline(events), [events]);
   return (
     <div>
@@ -19,7 +19,7 @@ export function TimelineIsland({ runUuid }: TimelineIslandProps) {
           {error.message} — reconnecting…
         </div>
       ) : null}
-      {events.length === 0 && !error ? (
+      {isLoading && !error ? (
         <div className="text-sm text-slate-500" data-testid="timeline-loading">
           Loading timeline…
         </div>

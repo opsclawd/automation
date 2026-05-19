@@ -7,6 +7,7 @@ import type { ApiEvent } from '@/lib/timeline';
 interface UseRunEventsResult {
   events: ApiEvent[];
   error: Error | null;
+  isLoading: boolean;
 }
 
 // Live SSE events from the server omit the `id` field (only backfilled
@@ -19,6 +20,7 @@ function eventKey(e: ApiEvent): string {
 export function useRunEvents(runUuid: string): UseRunEventsResult {
   const [events, setEvents] = useState<ApiEvent[]>([]);
   const [error, setError] = useState<Error | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const MAX_EVENTS = 2000;
 
@@ -31,6 +33,7 @@ export function useRunEvents(runUuid: string): UseRunEventsResult {
         const backfill = await listRunEvents(runUuid);
         if (cancelled) return;
         setEvents(backfill);
+        setIsLoading(false);
 
         const lastTimestamp = backfill.at(-1)?.timestamp;
         const streamUrl = lastTimestamp
@@ -71,5 +74,5 @@ export function useRunEvents(runUuid: string): UseRunEventsResult {
     };
   }, [runUuid]);
 
-  return { events, error };
+  return { events, error, isLoading };
 }
