@@ -1146,6 +1146,31 @@ ${QUALITY_REVIEWER_PROMPT}"
     check_branch_after_agent
   }
 
+  # Re-run a single reviewer once after a contract violation (.result without .md).
+  # Cleans up both .result and .md so the re-run starts fresh.
+  rerun_reviewer_once() {
+    local reviewer_type="$1"  # "spec" or "quality"
+    local task_n="$2"
+    local task_title="$3"
+    local task_text="$4"
+    local base_sha="$5"
+    local head_sha="$6"
+
+    log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} wrote .result but not .md — re-running once"
+
+    # Clean up orphaned artifacts so the re-run starts fresh
+    rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
+    rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
+    rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+
+    if [[ "$reviewer_type" == "spec" ]]; then
+      local impl_report="$7"
+      SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+    elif [[ "$reviewer_type" == "quality" ]]; then
+      QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+    fi
+  }
+
   # Run fix-review: agent reads both review reports and fixes findings
   run_fix_review() {
     local task_n="$1"
@@ -1330,29 +1355,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     spec_md="${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md"
     quality_result="${ISSUES_DIR}/quality-review-task-${TASK_NUM}.result"
     quality_md="${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md"
-
-    # Helper: re-run a single reviewer once after contract violation
-    rerun_reviewer_once() {
-      local reviewer_type="$1"  # "spec" or "quality"
-      local task_n="$2"
-      local task_title="$3"
-      local task_text="$4"
-      local base_sha="$5"
-      local head_sha="$6"
-
-      log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} wrote .result but not .md — re-running once"
-
-      # Clean up the orphaned .result so the re-run starts fresh
-      rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
-      rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
-
-      if [[ "$reviewer_type" == "spec" ]]; then
-        local impl_report="$7"
-        SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
-      elif [[ "$reviewer_type" == "quality" ]]; then
-        QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
-      fi
-    }
 
     # Validate spec-review artifacts
     if ! validate_review_artifacts "$spec_result" "$spec_md"; then
