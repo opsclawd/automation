@@ -279,13 +279,15 @@ The core problem is not only that the current scripts are written in Bash. The d
 Clean Architecture should be used to keep the core orchestration model independent from:
 
 - Bash scripts;
-- `opencode`;
+- specific agent runtimes (`opencode`, `pi`, …);
 - GitHub CLI;
 - Git;
 - `pnpm`;
 - SQLite/Postgres;
 - filesystem artifacts;
 - web API/UI.
+
+Agent execution is exposed to the application layer as a single runtime-agnostic `AgentPort`. Concrete runtimes (initially OpenCode for frontier work, Pi for local Qwen work) are adapters behind that port. The orchestrator owns state, policy, contracts, validation, retry/resume, and failure classification. Runtime adapters only execute agent processes.
 
 ### 9.2 Lightweight DDD Recommendation
 
@@ -426,7 +428,8 @@ apps/
 packages/
   domain/
     Pure domain model
-    No filesystem, no GitHub CLI, no DB, no opencode
+    No filesystem, no GitHub CLI, no DB, no agent runtime imports
+    (no `opencode`, no `pi`, no `child_process`)
 
   application/
     Use cases / orchestration services
@@ -474,7 +477,7 @@ It should not know about:
 
 - `gh pr view`;
 - `git worktree add`;
-- `opencode --model`;
+- `opencode --model` or `pi run`;
 - `pnpm test`;
 - SQLite;
 - Postgres;
@@ -512,7 +515,9 @@ Examples:
 
 - `GitHubCliAdapter`
 - `GitCliAdapter`
-- `OpenCodeAgentAdapter`
+- `OpenCodeAgentAdapter` (implements `AgentPort`, frontier-model runtime)
+- `PiAgentAdapter` (implements `AgentPort`, local Qwen runtime)
+- `AgentRuntimeRouter` (resolves `AgentProfile` → adapter; handles fallback)
 - `PnpmValidationAdapter`
 - `FilesystemArtifactStore`
 - `SqliteRunRepository`
@@ -541,8 +546,50 @@ The application layer should depend on interfaces, not concrete external tools.
 Example ports:
 
 ```ts
+// Runtime-agnostic. Concrete adapters (OpenCodeAgentAdapter, PiAgentAdapter)
+// implement this interface. The application layer never imports a specific runtime.
+export type AgentRuntimeKind = 'opencode' | 'pi';
+
+export interface AgentProfile {
+  runtime: AgentRuntimeKind;
+  provider: string; // e.g. "anthropic", "local"
+  model: string; // e.g. "claude-opus-4.7", "qwen3.6-27b"
+  contextLimitTokens?: number;
+  promptBudgetTokens?: number;
+  outputBudgetTokens?: number;
+  timeoutMinutes: number;
+}
+
+// Fallback is a routing concern (per-phase), not a profile property.
+// See `phaseProfiles` in `.ai-orchestrator.json` (PRD §15.7).
+export interface PhaseRoutingEntry {
+  profile: string; // resolved AgentProfile name
+  fallbackProfile?: string; // profile to escalate to on documented triggers
+}
+
+export interface AgentInvocationRequest {
+  profile: string; // profile name; resolved via composition root
+  promptPath: string;
+  expectedArtifacts: string[];
+  cwd: string; // worktree path
+  // … plus run/phase/step identifiers for audit
+}
+
+export interface AgentInvocationResult {
+  runtime: AgentRuntimeKind;
+  provider: string;
+  model: string;
+  exitCode: number;
+  durationMs: number;
+  stdoutPath: string;
+  stderrPath: string;
+  resultJsonPath?: string;
+  contractViolations: string[];
+  outcome: 'success' | 'failed' | 'timeout' | 'contract_violation';
+}
+
 export interface AgentPort {
-  run(input: AgentRunInput): Promise<AgentRunResult>;
+  invoke(input: AgentInvocationRequest): Promise<AgentInvocationResult>;
 }
 
 export interface GitHubPort {
@@ -580,20 +627,20 @@ export interface RunRepository {
 ```ts
 type Run = {
   id: string;
-  type: "issue_to_pr" | "pr_review";
+  type: 'issue_to_pr' | 'pr_review';
   issueNumber?: number;
   prNumber?: number;
   branch?: string;
   baseBranch?: string;
   status:
-    | "queued"
-    | "running"
-    | "waiting"
-    | "passed"
-    | "failed"
-    | "cancelled"
-    | "blocked"
-    | "needs_human_review";
+    | 'queued'
+    | 'running'
+    | 'waiting'
+    | 'passed'
+    | 'failed'
+    | 'cancelled'
+    | 'blocked'
+    | 'needs_human_review';
   currentPhase?: string;
   startedAt: string;
   completedAt?: string;
@@ -607,13 +654,7 @@ type Phase = {
   id: string;
   runId: string;
   name: string;
-  status:
-    | "pending"
-    | "running"
-    | "passed"
-    | "failed"
-    | "skipped"
-    | "blocked";
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'blocked';
   attempt: number;
   startedAt?: string;
   completedAt?: string;
@@ -627,14 +668,24 @@ type AgentInvocation = {
   id: string;
   runId: string;
   phaseId: string;
-  cli: "opencode";
+  stepId?: string;
+  profile: string; // resolved AgentProfile name
+  runtime: 'opencode' | 'pi'; // recorded at invocation time
+  provider: string;
   model: string;
   skill?: string;
   promptPath: string;
   stdoutPath: string;
   stderrPath: string;
+  startCommitSha: string;
+  endCommitSha?: string;
   exitCode?: number;
   durationMs?: number;
+  timeoutMs: number;
+  outcome?: 'success' | 'failed' | 'timeout' | 'contract_violation';
+  contractViolations?: string[];
+  resultJsonPath?: string;
+  fallbackOfInvocationId?: string; // set when this invocation was a fallback escalation
 };
 ```
 
@@ -646,23 +697,23 @@ type Artifact = {
   runId: string;
   phaseId?: string;
   type:
-    | "prompt"
-    | "stdout"
-    | "stderr"
-    | "combined_log"
-    | "issue"
-    | "design"
-    | "plan"
-    | "implementation_log"
-    | "validation"
-    | "review"
-    | "fix_log"
-    | "diff"
-    | "result"
-    | "summary"
-    | "pr"
-    | "comment"
-    | "reply";
+    | 'prompt'
+    | 'stdout'
+    | 'stderr'
+    | 'combined_log'
+    | 'issue'
+    | 'design'
+    | 'plan'
+    | 'implementation_log'
+    | 'validation'
+    | 'review'
+    | 'fix_log'
+    | 'diff'
+    | 'result'
+    | 'summary'
+    | 'pr'
+    | 'comment'
+    | 'reply';
   path: string;
   createdAt: string;
 };
@@ -677,18 +728,18 @@ type Failure = {
   step?: string;
   attempt?: number;
   kind:
-    | "command_failed"
-    | "timeout"
-    | "missing_artifact"
-    | "invalid_result"
-    | "agent_blocked"
-    | "agent_contract_violation"
-    | "branch_changed"
-    | "validation_failed"
-    | "github_failed"
-    | "git_failed"
-    | "polling_failed"
-    | "unknown";
+    | 'command_failed'
+    | 'timeout'
+    | 'missing_artifact'
+    | 'invalid_result'
+    | 'agent_blocked'
+    | 'agent_contract_violation'
+    | 'branch_changed'
+    | 'validation_failed'
+    | 'github_failed'
+    | 'git_failed'
+    | 'polling_failed'
+    | 'unknown';
   message: string;
   canRetry: boolean;
   suggestedAction: string;
@@ -708,6 +759,84 @@ type AgentContract = {
   mustPostReplies?: boolean;
 };
 ```
+
+### 15.7 Agent Profile and Phase Routing Config
+
+The `.ai-orchestrator.json` file gains an `agent` section that declares profiles and per-phase routing. The orchestrator resolves each phase to a profile, which resolves to a concrete runtime adapter. Specific provider/model strings are configurable examples, not hardcoded product commitments.
+
+```json
+{
+  "agent": {
+    "defaultProfile": "opencode-frontier",
+    "profiles": {
+      "opencode-frontier": {
+        "runtime": "opencode",
+        "provider": "anthropic",
+        "model": "claude-opus-4.7",
+        "timeoutMinutes": 60
+      },
+      "pi-qwen-local": {
+        "runtime": "pi",
+        "provider": "local",
+        "model": "qwen3.6-27b",
+        "contextLimitTokens": 64000,
+        "promptBudgetTokens": 40000,
+        "outputBudgetTokens": 8000,
+        "timeoutMinutes": 30
+      }
+    },
+    "phaseProfiles": {
+      "plan-design": { "profile": "opencode-frontier" },
+      "plan-write": { "profile": "opencode-frontier" },
+      "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "validate": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "review": { "profile": "opencode-frontier" },
+      "fix-review": { "profile": "opencode-frontier" },
+      "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "create-pr": { "profile": "opencode-frontier" },
+      "pr-review-poll": { "profile": "opencode-frontier" }
+    }
+  }
+}
+```
+
+**Phase keys match the shipped phase set.** During M4–M7 the canonical phase names are the ones emitted and consumed by current code — `review` and `fix-review` are two separate phases. Q2 / M8-01 / M8-06 describe a planned domain collapse into a single `review-fix` phase in M8; that rename is a coordinated change across config, code, and tests, **not** a runtime normalization concern. Until M8 lands, `phaseProfiles` keys must match the phase names actually emitted by Bash and consumed by `apps/web/src/lib/timeline.ts`. `resolveProfileForPhase(phaseName)` is therefore a direct lookup with no legacy-name remapping; an unknown phase name raises a typed `ConfigError` (no silent fallback to `defaultProfile`).
+
+#### Routing policy
+
+**Use Pi/Qwen (local, bounded) when all of the following hold:**
+
+- expected change ≤ 3 files;
+- context pack ≤ 35k–40k tokens;
+- task is mechanical or already planned;
+- validation failure is narrow;
+- no major architecture decision is required.
+
+**Use OpenCode/frontier for:**
+
+- design and architecture;
+- implementation planning;
+- high-context review;
+- PR review comment handling;
+- complex or fuzzy fixes;
+- any Pi/Qwen fallback after repeated failure;
+- tasks involving reviewer-facing responses.
+
+#### Promotion / fallback triggers
+
+Escalate from Pi/Qwen to the configured `fallbackProfile` when any of the following occurs:
+
+- Pi/Qwen fails twice on the same Step;
+- a required artifact is missing;
+- `result.json` is invalid;
+- timeout;
+- context budget exceeded;
+- touched files exceed the expected limit;
+- validation failure changes category between iterations;
+- architectural ambiguity appears;
+- reviewer-facing output is required.
+
+Fallback is recorded: the escalated `AgentInvocation` references the failing invocation via `fallbackOfInvocationId`, and the event stream emits a `phase.fallback.escalated` event with the triggering reason.
 
 ---
 
@@ -729,10 +858,11 @@ Inputs:
 {
   "issueNumber": 123,
   "baseBranch": "main",
-  "agentCli": "opencode",
-  "model": "minimax-coding-plan/MiniMax-M2.7"
+  "agentProfile": "opencode-frontier"
 }
 ```
+
+`agentProfile` references a named profile in `.ai-orchestrator.json → agent.profiles`. The profile carries runtime (`opencode` or `pi`), provider, model, context/prompt/output budgets, and timeout. Specific provider/model strings shown anywhere in this PRD are configurable examples, not product commitments.
 
 Acceptance criteria:
 
@@ -1399,8 +1529,7 @@ Request:
   "type": "issue_to_pr",
   "issueNumber": 123,
   "baseBranch": "main",
-  "agentCli": "opencode",
-  "model": "minimax-coding-plan/MiniMax-M2.7"
+  "agentProfile": "opencode-frontier"
 }
 ```
 
@@ -1764,7 +1893,7 @@ Mitigation:
 
 ## 29. Milestones
 
-### Milestone 1: Observable Bash Wrapper
+### Milestone 1: Observable Bash Wrapper — **Complete**
 
 Goal:
 
@@ -1782,7 +1911,9 @@ Deliverables:
 - basic run list UI;
 - run detail UI with logs and artifacts.
 
-### Milestone 2: Structured Events in Bash
+Out of scope for M1: agent runtime/model metadata is not introduced here. If structured events happen to carry runtime/model labels (because the underlying script reports them), they are passed through; M1 does not own that data shape.
+
+### Milestone 2: Structured Events in Bash — **Complete**
 
 Goal:
 
@@ -1797,55 +1928,74 @@ Deliverables:
 - failure events;
 - UI timeline powered by events.
 
-### Milestone 3: Domain/Application Foundation
+Out of scope for M2: M2 stays focused on observable Bash + structured events. Runtime/model fields may be emitted in events if available, but no runtime abstraction is introduced.
+
+### Milestone 3: Domain/Application Foundation (incl. Agent Runtime Seam)
 
 Goal:
 
-Establish Clean Architecture and DDD-lite boundaries.
+Establish Clean Architecture and DDD-lite boundaries, including the runtime-agnostic agent abstraction. M3 creates the seam; it does not execute Pi or OpenCode yet.
 
 Deliverables:
 
 - domain types for runs, phases, failures, artifacts, agent contracts, validation results, and PR review comments;
+- `AgentRuntimeKind` (`opencode | pi`);
+- `AgentProfile` (runtime, provider, model, context/prompt/output budgets, timeout). Fallback is a per-phase routing concern declared on `phaseProfiles` entries — not a profile field;
+- runtime-agnostic `AgentPort`, `AgentInvocationRequest`, `AgentInvocationResult`;
 - application use case interfaces;
 - infrastructure ports;
 - repository interfaces;
-- fake adapters for tests.
+- fake/in-memory `AgentPort` test doubles;
+- composition root support for later resolution of configured runtime adapters.
 
-### Milestone 4: TypeScript Agent Runner
+Acceptance:
+
+- `packages/domain` and `packages/application` import no concrete runtime (no `opencode`, no `pi`, no `child_process`, no CLI-specific infra).
+- Tests can wire fake `AgentPort` implementations end-to-end.
+
+### Milestone 4: TypeScript Agent Runtime Layer
 
 Goal:
 
-Improve observability around agent calls.
+Centralise every agent call into a single runtime-agnostic layer that captures prompts, stdout/stderr, exit codes, timeouts, selected profile/runtime/model, and validates the agent contract — regardless of which runtime executed the call.
 
 Deliverables:
 
-- shared `runAgent` adapter;
-- prompt capture;
+- `AgentInvocation` persistence model + DB table (records selected profile, runtime, provider, model, prompt path, stdout/stderr, timeout, artifacts, result, contract violations);
+- `AgentRuntimeRouter` (profile lookup, runtime resolution, fallback);
+- `OpenCodeAgentAdapter implements AgentPort` (frontier runtime);
+- `PiAgentAdapter implements AgentPort` (local Qwen runtime, e.g. Qwen 3.6 27B with 64k context);
+- prompt rendering and capture;
 - stdout/stderr separation;
 - exit code capture;
 - timeout handling;
-- result file validation;
+- per-phase `result.json` schemas and parsing;
+- agent contract validation;
 - missing artifact detection;
-- agent failure classification.
+- agent failure classification;
+- configured fallback from Pi/Qwen to OpenCode/frontier per phase profile.
+
+All agent execution must be auditable through the same `AgentInvocation` record shape regardless of runtime.
 
 ### Milestone 5: TypeScript Validation Runner
 
 Goal:
 
-Replace brittle log parsing with structured command results.
+Replace brittle log parsing with structured command results. Validation-fix loops route through `AgentPort` and may use bounded Pi/Qwen profiles for narrow fixes, escalating to OpenCode on repeated failure.
 
 Deliverables:
 
 - command-by-command validation execution;
 - build/lint/typecheck/test result JSON;
 - validation UI;
-- validation failure classification.
+- validation failure classification;
+- validation-fix invocations called via `AgentPort` using the configured `phaseProfiles["validate"]` (validation-fix is a Loop _within_ the `validate` phase — agent calls inside that loop route through the `validate` entry; there is no separate `validate-fix` phase in the shipped phase set).
 
 ### Milestone 6: Managed PR Review Polling
 
 Goal:
 
-Replace unmanaged background PR polling with a visible, durable job.
+Replace unmanaged background PR polling with a visible, durable job. PR-review comment handling defaults to OpenCode/frontier and is invoked through `AgentPort`.
 
 Deliverables:
 
@@ -1856,13 +2006,14 @@ Deliverables:
 - reply verification;
 - commit verification;
 - validation verification;
-- PR comment UI.
+- PR comment UI;
+- PR-review-handling invocations called via `AgentPort` using the configured `phaseProfiles["pr-review-poll"]` (default: OpenCode/frontier).
 
 ### Milestone 7: TypeScript Review/Fix Loop
 
 Goal:
 
-Make internal review/fix loops debuggable and resumable.
+Make internal review/fix loops debuggable and resumable, with per-iteration runtime routing.
 
 Deliverables:
 
@@ -1871,17 +2022,18 @@ Deliverables:
 - revalidation tracking;
 - re-review result tracking;
 - loop-level artifacts;
-- max-loop failure behavior.
+- max-loop failure behavior;
+- per-iteration `AgentPort` invocation with phase-profile lookup; bounded fixes may use Pi/Qwen, with fallback to OpenCode on repeated failure or escalation triggers.
 
 ### Milestone 8: Full TypeScript Phase Orchestration
 
 Goal:
 
-Replace Bash control flow with TypeScript state machine/use cases.
+Replace Bash control flow with a TypeScript state machine. All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name a concrete runtime.
 
 Deliverables:
 
-- phase handlers;
+- phase handlers (call `AgentPort.invoke(...)`, never `opencode` or `pi` directly);
 - persisted phase state;
 - resume from phase;
 - retry failed phase;

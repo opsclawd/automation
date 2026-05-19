@@ -60,7 +60,7 @@ Over time, the platform should move phase logic from Bash into TypeScript while 
 - Record the start commit before each agent invocation so cancellation can restore the worktree safely.
 - Capture structured events for run start, phase start, phase completion, artifact creation, failure detection, and run completion.
 - Classify failures into explicit categories such as command failure, timeout, missing artifact, invalid result, branch drift, validation failure, GitHub failure, Git failure, and polling failure.
-- Keep `opencode` as the initial and only agent runtime.
+- Expose agent execution behind a runtime-agnostic `AgentPort`. `opencode` is the initial frontier-model runtime; `pi` (local Qwen) is added in M4 as a second adapter. Phases reference named `AgentProfile`s, not runtimes directly. See ADR-0007.
 - Make post-PR review polling a managed job rather than an invisible background process.
 - Migrate phase handlers from Bash into TypeScript gradually rather than rewriting everything at once.
 - Use the project’s glossary terms consistently, especially Run, Phase, Step, Loop, Agent Invocation, and Artifact.
