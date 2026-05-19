@@ -323,6 +323,69 @@ rerun_reviewer_once() {
   fi
 }
 
+# handle_contradiction_reconciliation: when fix-review says DONE_NO_FIXES_NEEDED
+# but a review says FAIL, re-run the failing review once.
+# Sets CONTRADICTION_ACTION: "resolved" (both pass after re-run),
+#   "retried" (re-run done but still failing — caller should orchestrator_fail),
+#   "already_retried" (retry already consumed — caller should orchestrator_fail),
+#   or "none" (no contradiction detected).
+handle_contradiction_reconciliation() {
+  local fix_status="$1"
+  local spec_status="$2"
+  local quality_status="$3"
+  local task_num="$4"
+  local task_title="$5"
+  local task_text="$6"
+  local base_sha="$7"
+  local head_sha="$8"
+  local impl_report="$9"
+
+  CONTRADICTION_ACTION="none"
+
+  if [[ "$fix_status" != "DONE_NO_FIXES_NEEDED" ]]; then
+    return 0
+  fi
+  if [[ "$spec_status" == "SPEC_PASS" && "$quality_status" == "QUALITY_PASS" ]]; then
+    return 0
+  fi
+  if [[ "$CONTRADICTION_RETRIED" -ge 1 ]]; then
+    CONTRADICTION_ACTION="already_retried"
+    return 0
+  fi
+
+  CONTRADICTION_RETRIED=1
+  log "  Contradiction detected: review FAIL + fix-review DONE_NO_FIXES_NEEDED — re-running failing review once for task ${task_num}"
+  emit_event "fix-review" "warn" "contradiction.detected" \
+    "review/fix contradiction for task ${task_num}, re-running review" \
+    task="${task_num}" iteration="${REVIEW_LOOPS}" spec="${spec_status}" quality="${quality_status}"
+
+  # Re-run whichever review(s) are failing
+  if [[ "$spec_status" == "SPEC_FAIL" ]]; then
+    rerun_reviewer_once "spec" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha" "$impl_report"
+  fi
+  if [[ "$quality_status" == "QUALITY_FAIL" ]]; then
+    rerun_reviewer_once "quality" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha"
+  fi
+
+  # Re-resolve review statuses after re-run
+  SPEC_STATUS=$(resolve_result \
+    "${WORKTREE_DIR}/spec-review-task-${task_num}.result" \
+    "${WORKTREE_DIR}/spec-review-task-${task_num}.md" \
+    SPEC_PASS SPEC_FAIL "SPEC_FAIL")
+  QUALITY_STATUS=$(resolve_result \
+    "${WORKTREE_DIR}/quality-review-task-${task_num}.result" \
+    "${WORKTREE_DIR}/quality-review-task-${task_num}.md" \
+    QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
+
+  # Update caller's status variables via globals (set above)
+  if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
+    log "  Task ${task_num}: contradiction resolved by review re-run, both reviews pass"
+    CONTRADICTION_ACTION="resolved"
+  else
+    CONTRADICTION_ACTION="retried"
+  fi
+}
+
 # extract_result: focused extractor agent that reads source .md and writes .result
 extract_result() {
   local phase="$1"
@@ -1437,36 +1500,13 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         log "  Task ${TASK_NUM}: both reviews pass"
         break
       elif [[ "$FIX_STATUS" == "DONE_NO_FIXES_NEEDED" ]]; then
-        # Contradiction: review says FAIL but fix-review says nothing to fix.
-        # Re-run the failing review once before giving up.
-        if [[ "$CONTRADICTION_RETRIED" -lt 1 ]]; then
-          CONTRADICTION_RETRIED=1
-          log "  Contradiction detected: review FAIL + fix-review DONE_NO_FIXES_NEEDED — re-running failing review once for task ${TASK_NUM}"
-          emit_event "fix-review" "warn" "contradiction.detected" \
-            "review/fix contradiction for task ${TASK_NUM}, re-running review" \
-            task="${TASK_NUM}" spec="${SPEC_STATUS}" quality="${QUALITY_STATUS}"
-          # Re-run whichever review(s) are failing
-          if [[ "$SPEC_STATUS" == "SPEC_FAIL" ]]; then
-            rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
-          fi
-          if [[ "$QUALITY_STATUS" == "QUALITY_FAIL" ]]; then
-            rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
-          fi
-          # Re-resolve review statuses after re-run
-          SPEC_STATUS=$(resolve_result \
-            "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result" \
-            "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" \
-            SPEC_PASS SPEC_FAIL "SPEC_FAIL")
-          QUALITY_STATUS=$(resolve_result \
-            "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result" \
-            "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" \
-            QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
-          # If contradiction resolved, continue the loop
-          if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
-            log "  Task ${TASK_NUM}: contradiction resolved by review re-run, both reviews pass"
-            break
-          fi
-          # If still contradictory, fall through to fail below
+        handle_contradiction_reconciliation \
+          "$FIX_STATUS" "$SPEC_STATUS" "$QUALITY_STATUS" \
+          "$TASK_NUM" "$task_title" "$TASK_TEXT" \
+          "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
+
+        if [[ "$CONTRADICTION_ACTION" == "resolved" ]]; then
+          break
         fi
         orchestrator_fail "reviews_inconsistent: Task ${TASK_NUM} — review says FAIL (spec=${SPEC_STATUS}, quality=${QUALITY_STATUS}) but fix-review says DONE_NO_FIXES_NEEDED. Spec review: ${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result / .md — Quality review: ${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result / .md"
       fi
