@@ -400,11 +400,16 @@ handle_contradiction_reconciliation() {
     cp "${WORKTREE_DIR}/quality-review-task-${task_num}.md" "$quality_md_backup"
   fi
 
+  # Track which reviewers were re-run so restore logic only applies to them
+  local spec_reran=0 quality_reran=0
+
   # Re-run whichever review(s) are failing (without contract-violation warning)
   if [[ "$spec_status" == "SPEC_FAIL" ]]; then
+    spec_reran=1
     rerun_reviewer_for_contradiction "spec" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha" "$impl_report"
   fi
   if [[ "$quality_status" == "QUALITY_FAIL" ]]; then
+    quality_reran=1
     rerun_reviewer_for_contradiction "quality" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha"
   fi
 
@@ -412,12 +417,13 @@ handle_contradiction_reconciliation() {
   # BEFORE re-resolving statuses so the human operator has actionable evidence
   # in the reviews_inconsistent error — and so an empty rerun .md doesn't
   # produce a misleading PASS status from the stale .result file.
-  if [[ -n "$spec_md_backup" && ! -s "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
+  # Only apply restore for reviewers that were actually re-run.
+  if [[ "$spec_reran" -eq 1 && -n "$spec_md_backup" && ! -s "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
     log "  Spec review re-run produced no .md — restoring original findings from backup"
     cp "$spec_md_backup" "${WORKTREE_DIR}/spec-review-task-${task_num}.md"
     rm -f "${WORKTREE_DIR}/spec-review-task-${task_num}.result"
   fi
-  if [[ -n "$quality_md_backup" && ! -s "${WORKTREE_DIR}/quality-review-task-${task_num}.md" ]]; then
+  if [[ "$quality_reran" -eq 1 && -n "$quality_md_backup" && ! -s "${WORKTREE_DIR}/quality-review-task-${task_num}.md" ]]; then
     log "  Quality review re-run produced no .md — restoring original findings from backup"
     cp "$quality_md_backup" "${WORKTREE_DIR}/quality-review-task-${task_num}.md"
     rm -f "${WORKTREE_DIR}/quality-review-task-${task_num}.result"
