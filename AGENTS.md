@@ -54,15 +54,6 @@ pnpm -r test
 pnpm lint
 ```
 
-## Shell tests (bash / orchestrator scripts)
-
-Shell-level tests for `scripts/` belong in **`scripts/lib/__tests__/`** as
-**`.bats`** files (bats-core format). `pnpm test:bash` runs everything in that
-directory; tests placed anywhere else (e.g. `scripts/__tests__/`) or in any
-other format (plain `.sh`, plain `.test.sh`) will **not** be picked up by CI
-and are effectively dead.
-
-When testing a single function in isolation, extract it from the host script
-with an `awk` brace-counter — this is robust against `}` characters inside
-heredocs, which a naive `sed` range would not be. See
-`scripts/lib/__tests__/validate_review_artifacts.bats` for a working example.
+**Shell tests** for `scripts/` belong in `scripts/lib/__tests__/*.bats` — anything
+else is silently ignored by `pnpm test:bash`. See
+`docs/solutions/orchestrator/shell-test-location-2026-05-19.md`.
