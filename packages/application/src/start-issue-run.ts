@@ -247,7 +247,11 @@ function toClassifierEvent(e: OrchestratorEvent): ClassifierEvent {
   // Only include `phase` when present — `...(cond && { key: val })` spreads
   // to nothing when falsy, omitting the key entirely rather than setting it
   // to undefined.
-  return {
+  //
+  // Exhaustiveness: every field of ClassifierEvent must appear in the return
+  // object. If ClassifierEvent gains a new required field, TypeScript will
+  // error here until the mapping is updated.
+  const result: ClassifierEvent = {
     ...(e.phase !== undefined && { phase: e.phase }),
     level: e.level,
     type: e.type,
@@ -255,4 +259,5 @@ function toClassifierEvent(e: OrchestratorEvent): ClassifierEvent {
     timestamp: e.timestamp,
     metadata: e.metadata,
   };
+  return result;
 }
