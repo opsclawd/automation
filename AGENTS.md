@@ -53,3 +53,7 @@ pnpm -r typecheck       # also catches missing workspace deps
 pnpm -r test
 pnpm lint
 ```
+
+**Shell tests** for `scripts/` belong in `scripts/lib/__tests__/*.bats` — anything
+else is silently ignored by `pnpm test:bash`. See
+`docs/solutions/orchestrator/shell-test-location-2026-05-19.md`.

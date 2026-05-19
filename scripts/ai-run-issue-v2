@@ -281,6 +281,48 @@ validate_result_file() {
   fi
 }
 
+# validate_review_artifacts: checks that .result and .md artifacts are a valid pair.
+# Returns 0 if the pair is valid (both present, both absent, or md-without-result).
+# Returns 1 if .result exists but .md is missing — an impossible combination
+# under the agent contract, indicating a stale or partial write.
+validate_review_artifacts() {
+  local result_file="$1"
+  local md_file="$2"
+  if [[ -f "$result_file" && ! -f "$md_file" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# rerun_reviewer_once: re-run a single reviewer once after a contract violation
+# (.result written without matching .md). Cleans up all orphaned artifacts
+# from both ISSUES_DIR and WORKTREE_DIR so the re-run starts fresh.
+# Uses ISSUES_DIR and WORKTREE_DIR from caller scope (dynamic bash globals
+# set by the orchestrator's main loop).
+rerun_reviewer_once() {
+  local reviewer_type="$1"  # "spec" or "quality"
+  local task_n="$2"
+  local task_title="$3"
+  local task_text="$4"
+  local base_sha="$5"
+  local head_sha="$6"
+
+  log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} wrote .result but not .md — re-running once"
+
+  # Clean up orphaned artifacts from both directories so the re-run starts fresh
+  rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
+  rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
+  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
+  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+
+  if [[ "$reviewer_type" == "spec" ]]; then
+    local impl_report="$7"
+    SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+  elif [[ "$reviewer_type" == "quality" ]]; then
+    QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+  fi
+}
+
 # extract_result: focused extractor agent that reads source .md and writes .result
 extract_result() {
   local phase="$1"
@@ -330,13 +372,28 @@ resolve_result() {
   local fallback="${all_args[-1]}"
   local allowed_arr=("${all_args[@]:0:$(( ${#all_args[@]} - 1 ))}")
 
-  # Primary: valid .result file
-  if validate_result_file "$result_file" "${allowed_arr[@]}"; then
-    local val
-    val=$(read_result_value "$result_file")
-    log "  Result (file): ${val}"
-    echo "$val"
-    return 0
+  # Detect invalid agent contract for review tasks: .result present but .md missing.
+  # Only spec-review and quality-review require both files; implementer and
+  # fix-review tasks only write .result, so the guard must not apply to them.
+  local base_name
+  base_name=$(basename "$result_file")
+  local is_review_task=false
+  if [[ "$base_name" == spec-review-task-*.result || "$base_name" == quality-review-task-*.result ]]; then
+    is_review_task=true
+  fi
+
+  if $is_review_task && [[ -f "$result_file" && ! -f "$source_file" ]]; then
+    log "  Result file present but source .md missing — invalid agent contract, ignoring stale .result"
+    # Fall through to extractor (will fail since .md is absent), then fallback
+  else
+    # Primary: valid .result file
+    if validate_result_file "$result_file" "${allowed_arr[@]}"; then
+      local val
+      val=$(read_result_value "$result_file")
+      log "  Result (file): ${val}"
+      echo "$val"
+      return 0
+    fi
   fi
 
   log "  Result file missing or invalid, trying extractor..."
@@ -1018,23 +1075,30 @@ implementer's word for what was built.
 - ✅ Spec compliant (if everything matches)
 - ❌ Issues found: [list specifically with file:line references]
 
-## MANDATORY OUTPUT FILES — write BOTH
+## MANDATORY OUTPUT FILES — write BOTH, in this exact order
 
-1. ./spec-review-task-${task_n}.md
-   The detailed findings the fix-review agent will read. Include every
-   issue with file:line references, the spec requirement violated, and
-   what would satisfy it. If everything passes, write a single line:
-   'No findings. Implementation matches the spec.'
+**Step 1**: Write \`./spec-review-task-${task_n}.md\` — the detailed findings
+the fix-review agent will read. Include every issue with file:line references,
+the spec requirement violated, and what would satisfy it. If everything passes,
+write a single line: 'No findings. Implementation matches the spec.'
 
-2. ./spec-review-task-${task_n}.result
-   EXACTLY ONE of: SPEC_PASS | SPEC_FAIL
-   No other content in the file — just the status word.
+**Step 2**: Write \`./spec-review-task-${task_n}.result\` — EXACTLY ONE of:
+SPEC_PASS | SPEC_FAIL. No other content — just the status word.
 
-Both files MUST be written before you stop, even on SPEC_PASS. The
-.md file is the primary handoff to the fix-review agent — without it,
-the orchestrator silently marks the task complete despite failures.
+CRITICAL ORDERING RULE:
+- You MUST write the .md file FIRST, then the .result file LAST.
+- Do NOT write the .result file until you have finalized your verdict.
+- The .result file is your final action before stopping.
+- If you changed your mind during analysis, rewrite BOTH files with the
+  final verdict. The .result file must match the conclusion in the .md file.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+
+    if [[ "${SPEC_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
+      SPEC_REVIEWER_PROMPT="WARNING: Your previous attempt wrote the .result file but did not write the .md report file. This is a contract violation. You MUST write BOTH files in order: .md first, then .result last.
+
+${SPEC_REVIEWER_PROMPT}"
+    fi
 
     echo "$SPEC_REVIEWER_PROMPT" | run_agent_raw "spec-review-task-${task_n}" "$TIMEOUT_REVIEW"
     check_branch_after_agent
@@ -1108,6 +1172,12 @@ Both files MUST be written before you stop, even on QUALITY_PASS. The
 the orchestrator silently marks the task complete despite failures.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+
+    if [[ "${QUALITY_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
+      QUALITY_REVIEWER_PROMPT="WARNING: Your previous attempt wrote the .result file but did not write the .md report file. This is a contract violation. You MUST write BOTH files in order: .md first, then .result last.
+
+${QUALITY_REVIEWER_PROMPT}"
+    fi
 
     echo "$QUALITY_REVIEWER_PROMPT" | run_agent_raw "quality-review-task-${task_n}" "$TIMEOUT_REVIEW"
     check_branch_after_agent
@@ -1269,7 +1339,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
       run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
       IMPL_STATUS=$(resolve_result \
-        "${ISSUES_DIR}/implement-task-${TASK_NUM}.result" \
+        "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.md" \
         DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT \
         "DONE")
@@ -1292,6 +1362,29 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
     run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
 
+    # Validate review artifacts: .result without .md = invalid agent contract
+    # Both files are written by the agent to WORKTREE_DIR using relative paths.
+    spec_result="${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result"
+    spec_md="${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md"
+    quality_result="${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result"
+    quality_md="${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md"
+
+    # Validate spec-review artifacts
+    if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+      rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
+      if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+        orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} wrote .result but not .md after re-run"
+      fi
+    fi
+
+    # Validate quality-review artifacts
+    if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+      rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
+      if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+        orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} wrote .result but not .md after re-run"
+      fi
+    fi
+
     # Fix-review loop: agent fixes findings, then re-reviews, up to 5 times
     while [[ $REVIEW_LOOPS -lt 5 ]]; do
       REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
@@ -1304,7 +1397,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
       run_fix_review "$TASK_NUM" "$task_title" "$TASK_TEXT"
       FIX_STATUS=$(resolve_result \
-        "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.result" \
+        "${WORKTREE_DIR}/fix-review-task-${TASK_NUM}.result" \
         "${WORKTREE_DIR}/fix-review-task-${TASK_NUM}.md" \
         DONE DONE_NO_FIXES_NEEDED BLOCKED \
         "DONE")
@@ -1324,12 +1417,12 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
       # Check if reviews now pass — resolve from result files
       SPEC_STATUS=$(resolve_result \
-        "${ISSUES_DIR}/spec-review-task-${TASK_NUM}.result" \
+        "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result" \
         "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" \
         SPEC_PASS SPEC_FAIL \
         "SPEC_FAIL")
       QUALITY_STATUS=$(resolve_result \
-        "${ISSUES_DIR}/quality-review-task-${TASK_NUM}.result" \
+        "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result" \
         "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" \
         QUALITY_PASS QUALITY_FAIL \
         "QUALITY_FAIL")
@@ -1418,7 +1511,7 @@ if [[ "$PHASE" == "validate" ]]; then
   } > >(tee "${ISSUES_DIR}/validate.log") 2>&1
 
   VALIDATE_EXIT=0
-  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
+  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]|\[install completed with warnings\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
@@ -1791,22 +1884,29 @@ if [[ "$PHASE" == "create-pr" ]]; then
   fi
   PR_VALIDATION_STEPS=""
   if [[ -f "${ISSUES_DIR}/validate.log" ]]; then
+    # Match the exact sentinels the validate phase emits via `|| echo "[<step> failed]"`
+    # (see the validate block near line 1417). The prior parser scanned for `fail|error`
+    # against raw tool output, which produced false "test: failed" entries because vitest
+    # legitimately prints those words on passing runs ("0 failed", test names like
+    # "should fail gracefully", etc.). Steps with no failure sentinel are reported as
+    # passed by absence-of-failure.
     phase_name=""
     while IFS= read -r line; do
       if [[ "$line" =~ ^===\ (.+)\ ===$ ]]; then
-        phase_name="${BASH_REMATCH[1]}"
-      elif [[ -n "$phase_name" ]]; then
-        if echo "$line" | grep -qiE 'fail|error'; then
-          PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
-          phase_name=""
-        elif echo "$line" | grep -qiE 'passed|succeeded|done'; then
+        if [[ -n "$phase_name" ]]; then
           PR_VALIDATION_STEPS+="- ${phase_name}: passed"$'\n'
-          phase_name=""
         fi
+        phase_name="${BASH_REMATCH[1]}"
+      elif [[ -n "$phase_name" && "$line" =~ ^\[(build|lint|typecheck|test|install)\ failed\]$ ]]; then
+        PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
+        phase_name=""
+      elif [[ -n "$phase_name" && "$line" == "[install completed with warnings]" ]]; then
+        PR_VALIDATION_STEPS+="- ${phase_name}: failed"$'\n'
+        phase_name=""
       fi
     done < "${ISSUES_DIR}/validate.log"
-    if [[ -z "$PR_VALIDATION_STEPS" ]]; then
-      PR_VALIDATION_STEPS=$(awk '/^=== / {gsub(/^=== | ===$/, ""); phase=$0; next} /fail|error/i {print "- " phase ": failed"; next} /passed|succeeded/i {print "- " phase ": passed"; next}' "${ISSUES_DIR}/validate.log" 2>/dev/null | head -10 || true)
+    if [[ -n "$phase_name" ]]; then
+      PR_VALIDATION_STEPS+="- ${phase_name}: passed"$'\n'
     fi
   fi
 
