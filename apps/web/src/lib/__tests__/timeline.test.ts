@@ -255,4 +255,96 @@ describe('derivePhaseTimeline', () => {
     expect(v.completedAt).toBe('2026-05-16T12:00:05.000Z');
     expect(v.failure?.message).toBe('oops');
   });
+
+  it('marks phase as blocked when phase.failed metadata.reason contains "blocked"', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'implement',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'implement',
+        type: 'phase.failed',
+        level: 'error',
+        message: "Phase 'implement' is blocked (agent emitted BLOCKED)",
+        timestamp: '2026-05-16T12:00:10.000Z',
+        metadata: { reason: "Phase 'implement' is blocked (agent emitted BLOCKED)" },
+      }),
+    ]);
+    const impl = timeline.find((p) => p.name === 'implement')!;
+    expect(impl.status).toBe('blocked');
+    expect(impl.completedAt).toBe('2026-05-16T12:00:10.000Z');
+    expect(impl.durationMs).toBe(10_000);
+    expect(impl.failure?.message).toBe("Phase 'implement' is blocked (agent emitted BLOCKED)");
+  });
+
+  it('marks phase as blocked when phase.failed metadata.reason contains "waiting"', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'implement',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'implement',
+        type: 'phase.failed',
+        level: 'error',
+        message: 'waiting for human input',
+        timestamp: '2026-05-16T12:00:08.000Z',
+        metadata: { reason: 'waiting for human input' },
+      }),
+    ]);
+    const impl = timeline.find((p) => p.name === 'implement')!;
+    expect(impl.status).toBe('blocked');
+    expect(impl.failure?.message).toBe('waiting for human input');
+  });
+
+  it('marks phase as failed when phase.failed metadata.reason is absent', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'validate',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'validate',
+        type: 'phase.failed',
+        level: 'error',
+        message: 'build failed',
+        timestamp: '2026-05-16T12:00:05.000Z',
+        metadata: { command: 'pnpm build', exitCode: 1 },
+      }),
+    ]);
+    const v = timeline.find((p) => p.name === 'validate')!;
+    expect(v.status).toBe('failed');
+  });
+
+  it('marks phase as failed when phase.failed metadata.reason is not a string', () => {
+    const timeline = derivePhaseTimeline([
+      ev({
+        id: 1,
+        phase: 'validate',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:00.000Z',
+      }),
+      ev({
+        id: 2,
+        phase: 'validate',
+        type: 'phase.failed',
+        level: 'error',
+        message: 'build failed',
+        timestamp: '2026-05-16T12:00:05.000Z',
+        metadata: { reason: 42 },
+      }),
+    ]);
+    const v = timeline.find((p) => p.name === 'validate')!;
+    expect(v.status).toBe('failed');
+  });
 });

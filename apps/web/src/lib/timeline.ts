@@ -25,7 +25,7 @@ export interface ApiEvent {
 
 export interface PhaseTimelineEntry {
   name: PhaseName;
-  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped';
+  status: 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'blocked';
   startedAt: string | null;
   completedAt: string | null;
   durationMs: number | null;
@@ -70,12 +70,14 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
           entry.durationMs = computeDuration(entry.startedAt, e.timestamp);
         }
         break;
-      case 'phase.failed':
+      case 'phase.failed': {
+        const isBlocked = typeof meta.reason === 'string' && /blocked|waiting/i.test(meta.reason);
         entry.completedAt = e.timestamp;
-        entry.status = 'failed';
+        entry.status = isBlocked ? 'blocked' : 'failed';
         entry.durationMs = computeDuration(entry.startedAt, e.timestamp);
         entry.failure = { message: e.message, metadata: meta };
         break;
+      }
       case 'phase.skipped':
         entry.status = 'skipped';
         break;

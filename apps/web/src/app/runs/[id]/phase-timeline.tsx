@@ -38,7 +38,7 @@ export function PhaseTimeline({ timeline }: PhaseTimelineProps) {
             </div>
             {entry.failure ? (
               <div
-                className="mt-1 text-xs text-red-300"
+                className={`mt-1 text-xs ${entry.status === 'blocked' ? 'text-orange-300' : 'text-red-300'}`}
                 data-testid={`phase-${entry.name}-failure`}
               >
                 {entry.failure.message}
@@ -67,6 +67,7 @@ function StatusDot({ status }: { status: PhaseTimelineEntry['status'] }) {
     passed: 'bg-green-500',
     failed: 'bg-red-500',
     skipped: 'bg-yellow-600',
+    blocked: 'bg-orange-500',
   }[status];
   return <span aria-label={status} className={`mt-1.5 h-2 w-2 rounded-full ${colour}`} />;
 }
