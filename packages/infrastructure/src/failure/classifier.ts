@@ -60,6 +60,11 @@ const PATTERNS: Pattern[] = [
 const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
 export function classifyExit(input: ClassifyExitInput): Failure {
+  if (input.events && input.events.length > 0) {
+    const terminal = pickTerminalEvent(input.events);
+    if (terminal) return buildFailureFromEvent(terminal, input);
+  }
+
   const tail = input.combinedLogTail.slice(-8000);
   const phase = lastPhase(tail);
 
@@ -119,4 +124,82 @@ function lastPhase(tail: string): string | undefined {
   while ((m = PHASE_REGEX.exec(tail))) last = m[1];
   PHASE_REGEX.lastIndex = 0;
   return last;
+}
+
+type ClassifierEventType = ClassifyExitInput extends { events?: infer E }
+  ? NonNullable<E>[number]
+  : never;
+
+function pickTerminalEvent(events: ClassifierEventType[]): ClassifierEventType | undefined {
+  const phaseFailed = lastOf(events, (e) => e.type === 'phase.failed');
+  if (phaseFailed) return phaseFailed;
+  const loopExhausted = lastOf(events, (e) => e.type === 'loop.exhausted');
+  if (loopExhausted) return loopExhausted;
+  const runFailed = lastOf(events, (e) => e.type === 'run.failed');
+  return runFailed;
+}
+
+function lastOf<T>(arr: T[], pred: (t: T) => boolean): T | undefined {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (pred(arr[i]!)) return arr[i];
+  }
+  return undefined;
+}
+
+function buildFailureFromEvent(e: ClassifierEventType, input: ClassifyExitInput): Failure {
+  const meta = e.metadata ?? {};
+  const reason = typeof meta.reason === 'string' ? meta.reason : '';
+  const missingArtifact =
+    typeof meta.missingArtifact === 'string' ? meta.missingArtifact : undefined;
+  const command = typeof meta.command === 'string' ? meta.command : undefined;
+  const metaExit = typeof meta.exitCode === 'number' ? meta.exitCode : undefined;
+
+  let kind: FailureKind;
+  let message = e.message || '';
+  let suggestedAction = 'Inspect the failed phase artifacts and stderr.log.';
+
+  if (e.type === 'loop.exhausted') {
+    kind = 'agent_blocked';
+    suggestedAction = 'The fix-review loop hit max iterations — inspect the latest review.md.';
+  } else if (e.type === 'run.failed') {
+    kind = 'unknown';
+    suggestedAction = 'Inspect combined.log and stderr.log for the cause.';
+  } else if (missingArtifact !== undefined) {
+    kind = 'missing_artifact';
+    message = `Missing artifact: ${missingArtifact}`;
+    suggestedAction =
+      'Inspect the phase prompt and stdout; the agent did not produce the expected file.';
+  } else if (/invalid result/i.test(reason)) {
+    kind = 'invalid_result';
+    suggestedAction = 'Inspect the agent result.json and prompt template.';
+  } else if (/branch/i.test(reason)) {
+    kind = 'branch_changed';
+    suggestedAction =
+      'Reset the worktree branch and retry; verify the agent prompt does not switch branches.';
+  } else if (/timeout|timed out/i.test(reason)) {
+    kind = 'timeout';
+    suggestedAction = 'Raise invocationMaxMinutes or investigate why the agent hung.';
+  } else if (/blocked/i.test(reason)) {
+    kind = 'agent_blocked';
+    suggestedAction = 'The agent blocked itself — review the prompt and the reported reason.';
+  } else if (e.phase === 'validate' && command !== undefined) {
+    kind = 'validation_failed';
+    message = `${command} exited ${metaExit ?? input.exitCode}`;
+    suggestedAction = 'Open the validate phase logs and rerun the failing command locally.';
+  } else {
+    kind = 'command_failed';
+  }
+
+  const failure: Failure = {
+    runUuid: input.runUuid,
+    kind,
+    message: message || `Detected ${kind}`,
+    exitCode: metaExit ?? input.exitCode,
+    canRetry: false,
+    suggestedAction,
+    artifacts: input.artifacts ?? [],
+    detectedAt: new Date(e.timestamp),
+  };
+  if (e.phase !== undefined) failure.phase = e.phase;
+  return failure;
 }
