@@ -359,6 +359,20 @@ handle_contradiction_reconciliation() {
     "review/fix contradiction for task ${task_num}, re-running review" \
     task="${task_num}" iteration="${REVIEW_LOOPS}" spec="${spec_status}" quality="${quality_status}"
 
+  # Preserve original review findings before rerun. If the re-run fails to
+  # regenerate valid reports (timeout, contract violation), the orchestrator
+  # will fail with reviews_inconsistent and the human operator needs the
+  # original findings to triage — not empty or partial re-run output.
+  local spec_md_backup="" quality_md_backup=""
+  if [[ -f "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
+    spec_md_backup="${WORKTREE_DIR}/spec-review-task-${task_num}.md.bak"
+    cp "${WORKTREE_DIR}/spec-review-task-${task_num}.md" "$spec_md_backup"
+  fi
+  if [[ -f "${WORKTREE_DIR}/quality-review-task-${task_num}.md" ]]; then
+    quality_md_backup="${WORKTREE_DIR}/quality-review-task-${task_num}.md.bak"
+    cp "${WORKTREE_DIR}/quality-review-task-${task_num}.md" "$quality_md_backup"
+  fi
+
   # Re-run whichever review(s) are failing
   if [[ "$spec_status" == "SPEC_FAIL" ]]; then
     rerun_reviewer_once "spec" "$task_num" "$task_title" "$task_text" "$base_sha" "$head_sha" "$impl_report"
@@ -376,6 +390,20 @@ handle_contradiction_reconciliation() {
     "${WORKTREE_DIR}/quality-review-task-${task_num}.result" \
     "${WORKTREE_DIR}/quality-review-task-${task_num}.md" \
     QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
+
+  # If the re-run didn't produce a valid .md, restore the original findings
+  # so the human operator has actionable evidence in the reviews_inconsistent error.
+  if [[ -n "$spec_md_backup" && ! -s "${WORKTREE_DIR}/spec-review-task-${task_num}.md" ]]; then
+    log "  Spec review re-run produced no .md — restoring original findings from backup"
+    cp "$spec_md_backup" "${WORKTREE_DIR}/spec-review-task-${task_num}.md"
+  fi
+  if [[ -n "$quality_md_backup" && ! -s "${WORKTREE_DIR}/quality-review-task-${task_num}.md" ]]; then
+    log "  Quality review re-run produced no .md — restoring original findings from backup"
+    cp "$quality_md_backup" "${WORKTREE_DIR}/quality-review-task-${task_num}.md"
+  fi
+
+  # Clean up backup files
+  rm -f "$spec_md_backup" "$quality_md_backup" 2>/dev/null || true
 
   # Update caller's status variables via globals (set above)
   if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
