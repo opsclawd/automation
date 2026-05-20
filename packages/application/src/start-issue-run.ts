@@ -211,7 +211,7 @@ export class StartIssueRun {
           uuid: run.uuid,
           displayId: run.displayId,
           exitCode: exec.exitCode,
-          status: current.status === 'cancelled' ? 'cancelled' : finalStatus,
+          status: current.status as 'passed' | 'failed' | 'cancelled',
         };
       }
       if (finalStatus === 'failed') {
