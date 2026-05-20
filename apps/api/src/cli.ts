@@ -196,12 +196,18 @@ export function buildProgram(): Command {
             };
             const c = composeRoot(options);
             const input = {} as CancelRunInput;
-            if (opts.issue) input.issueNumber = opts.issue;
-            if (opts.uuid) input.uuid = opts.uuid;
+            if (opts.uuid) {
+              input.uuid = opts.uuid;
+            } else {
+              const run = c.runRepository.findByIssueNumber(opts.issue!);
+              if (!run) {
+                console.error(`No run found for issue ${opts.issue}`);
+                process.exit(1);
+              }
+              input.uuid = run.uuid;
+            }
             if (opts.reason) input.reason = opts.reason;
-            const run = opts.uuid
-              ? c.runRepository.findByUuid(opts.uuid)
-              : c.runRepository.findByIssueNumber(opts.issue!);
+            const run = c.runRepository.findByUuid(input.uuid);
             const pid = run?.pid;
             c.cancelRun.execute(input);
             if (pid !== undefined && pid !== null && pid !== process.pid) {
