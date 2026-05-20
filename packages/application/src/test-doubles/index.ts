@@ -2,3 +2,7 @@ export * from './fake-repository-port.js';
 export * from './fake-job-queue-port.js';
 export * from './fake-worker-registry-port.js';
 export * from './fake-worker-lease-port.js';
+export * from './fake-github-port.js';
+export * from './fake-git-port.js';
+export * from './fake-validation-port.js';
+export * from './fake-artifact-store.js';

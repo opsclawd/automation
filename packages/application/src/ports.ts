@@ -118,6 +118,21 @@ export type {
   ReclaimExpiredInput,
 } from './ports/worker-lease-port.js';
 
+export type {
+  GitHubPort,
+  GitHubIssue,
+  PullRequest,
+  PrReviewComment,
+  CreatePullRequestInput,
+} from './ports/github-port.js';
+export type { GitPort, CreateWorktreeInput, PushInput } from './ports/git-port.js';
+export type {
+  ValidationPort,
+  RunValidationInput,
+  ValidationCommandResult,
+} from './ports/validation-port.js';
+export type { ArtifactStore, WriteArtifactInput, Artifact } from './ports/artifact-store.js';
+
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
 export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
