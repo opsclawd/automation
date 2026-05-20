@@ -585,15 +585,9 @@ describe('StartIssueRun', () => {
       runBashScript: bash,
       runsDir: '/fake/.ai-runs',
       scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
       baseTmpDir: '/custom/tmp',
       tmpDirectoryFactory: fakeTmpDir,
-      eventRepository: new FakeEventRepository(),
-      eventBus: new FakeEventBus(),
-      createEventTailer: (() => ({
-        start: async () => {},
-        drainAndStop: async () => {},
-        stop: async () => {},
-      })) as EventTailerFactory,
       now: fixedNow,
     });
     const out = await usecase.execute({ issueNumber: 30 });
