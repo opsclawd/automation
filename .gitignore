@@ -4,6 +4,7 @@ dist/
 coverage/
 *.tsbuildinfo
 .ai-runs/
+.ai-tmp/
 .ai-worktrees/
 ai/
 .review-context/
