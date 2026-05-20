@@ -5,6 +5,11 @@ import {
   type AgentInvocationOutcome,
   AgentProfileName,
 } from '../agent/invocation.js';
+// Smoke check: types are re-exported from the package entry point
+import {
+  type AgentInvocationOutcome as EntryOutcome,
+  AgentProfileName as EntryProfileName,
+} from '../index.js';
 
 describe('AgentInvocationRequest', () => {
   it('constructs a request with all required fields', () => {
@@ -95,6 +100,18 @@ describe('AgentInvocationOutcome', () => {
   it('rejects invalid outcome values at compile time', () => {
     const outcome: AgentInvocationOutcome = 'success';
     expect(['success', 'failed', 'timeout', 'contract_violation']).toContain(outcome);
+  });
+});
+
+describe('package entry point re-exports', () => {
+  it('re-exports AgentProfileName from @ai-sdlc/application', () => {
+    const name = EntryProfileName('opencode-frontier');
+    expect(name).toBe('opencode-frontier');
+  });
+
+  it('re-exports AgentInvocationOutcome type from @ai-sdlc/application', () => {
+    const outcomes: EntryOutcome[] = ['success', 'failed', 'timeout', 'contract_violation'];
+    expect(outcomes).toHaveLength(4);
   });
 });
 
