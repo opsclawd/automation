@@ -5,7 +5,12 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
  * RunRecord extends the domain Run with infrastructure-level fields
  * (exitCode, durationMs, pid) that the application layer needs for
  * querying and status updates. Defined here to avoid importing from
- * @ai-sdlc/infrastructure (layer boundary).
+ * @ai-sdlc/infrastructure (layer boundary: application MUST NOT import
+ * infrastructure per AGENTS.md).
+ *
+ * NOTE: This type is duplicated in @ai-sdlc/infrastructure
+ * (run-repository.ts). Both definitions must stay in sync manually.
+ * If a new field is added to one, add it to the other as well.
  */
 export interface RunRecord {
   uuid: string;

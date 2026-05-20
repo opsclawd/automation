@@ -197,15 +197,15 @@ export function buildProgram(): Command {
                 console.error(`Run not found: ${opts.uuid}`);
                 process.exit(1);
               }
-              if (['passed', 'failed', 'cancelled'].includes(run.status)) {
-                console.error(`Run ${opts.uuid} is already ${run.status}`);
-                process.exit(1);
-              }
-              c.runRepository.update(run.uuid, {
+              const updated = c.runRepository.updateStatusByIssueNumber(run.issueNumber, {
                 status: 'cancelled',
                 completedAt: new Date(),
                 ...(opts.reason ? { failureReason: opts.reason } : {}),
               });
+              if (!updated) {
+                console.error(`Run ${opts.uuid} is already ${run.status}`);
+                process.exit(1);
+              }
             } else {
               const input: { issueNumber: number; reason?: string } = { issueNumber: opts.issue! };
               if (opts.reason) input.reason = opts.reason;

@@ -16,10 +16,15 @@ class FakeRunRepo implements RunRepositoryPort {
     this.updates.push({ uuid, patch });
   }
   findByIssueNumber(issueNumber: number): RunRecord | undefined {
+    let latest: RunRecord | undefined;
     for (const r of this.runs.values()) {
-      if (r.issueNumber === issueNumber) return r;
+      if (r.issueNumber === issueNumber) {
+        if (!latest || r.startedAt > latest.startedAt) {
+          latest = r;
+        }
+      }
     }
-    return undefined;
+    return latest;
   }
   findActiveRuns(): RunRecord[] {
     return Array.from(this.runs.values()).filter(
@@ -30,11 +35,19 @@ class FakeRunRepo implements RunRepositoryPort {
     issueNumber: number,
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
-    for (const [, r] of this.runs) {
+    for (const [uuid, r] of this.runs) {
       if (r.issueNumber === issueNumber && !['passed', 'failed', 'cancelled'].includes(r.status)) {
         r.status = patch.status;
         r.completedAt = patch.completedAt;
         r.failureReason = patch.failureReason;
+        this.updates.push({
+          uuid,
+          patch: {
+            status: patch.status,
+            completedAt: patch.completedAt,
+            ...(patch.failureReason ? { failureReason: patch.failureReason } : {}),
+          },
+        });
         return true;
       }
     }

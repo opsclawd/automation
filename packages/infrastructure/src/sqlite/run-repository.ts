@@ -17,6 +17,15 @@ interface RunRow {
   pid: number | null;
 }
 
+/**
+ * RunRecord extends the domain Run with infrastructure-level fields
+ * (exitCode, durationMs, pid) for persistence and querying.
+ *
+ * NOTE: A matching RunRecord type is defined in @ai-sdlc/application
+ * (ports.ts). Both definitions must stay in sync manually. This
+ * duplication is required because application MUST NOT import
+ * infrastructure per AGENTS.md layer boundary rules.
+ */
 export interface RunRecord extends Run {
   exitCode?: number;
   durationMs?: number;
