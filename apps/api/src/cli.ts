@@ -2,8 +2,8 @@ import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cancelRun } from '@ai-sdlc/domain';
 import { composeRoot, type ComposeOptions } from './compose.js';
+import type { CancelRunInput } from '@ai-sdlc/application';
 
 export function findRepoRoot(startDir: string): string {
   let dir = startDir;
@@ -192,50 +192,23 @@ export function buildProgram(): Command {
               scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
             };
             const c = composeRoot(options);
-            let pid: number | undefined;
-            if (opts.uuid) {
-              const run = c.runRepository.findByUuid(opts.uuid);
-              if (!run) {
-                console.error(`Run not found: ${opts.uuid}`);
-                process.exit(1);
-              }
-              pid = run.pid;
-              const now = new Date();
-              try {
-                const cancelled = cancelRun(run, opts.reason, now);
-                const updated = c.runRepository.updateStatusByIssueNumber(cancelled.issueNumber, {
-                  status: cancelled.status,
-                  completedAt: cancelled.completedAt!,
-                  ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
-                });
-                if (!updated) {
-                  console.error(`Run ${opts.uuid} is already ${run.status}`);
-                  process.exit(1);
-                }
-              } catch (err) {
-                console.error(err instanceof Error ? err.message : String(err));
-                process.exit(1);
-              }
-            } else {
-              const run = c.runRepository.findByIssueNumber(opts.issue!);
-              if (!run) {
-                console.error(`No active run found for issue ${opts.issue}`);
-                process.exit(1);
-              }
-              pid = run.pid;
-              const input: { issueNumber: number; reason?: string } = { issueNumber: opts.issue! };
-              if (opts.reason) input.reason = opts.reason;
-              c.cancelRun.execute(input);
-            }
-            // Terminate the live process so it cannot overwrite the cancelled status
-            if (pid !== undefined && pid !== null) {
+            const input = {} as CancelRunInput;
+            if (opts.issue) input.issueNumber = opts.issue;
+            if (opts.uuid) input.uuid = opts.uuid;
+            if (opts.reason) input.reason = opts.reason;
+            const run = opts.uuid
+              ? c.runRepository.findByUuid(opts.uuid)
+              : c.runRepository.findByIssueNumber(opts.issue!);
+            const pid = run?.pid;
+            c.cancelRun.execute(input);
+            if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
                 process.kill(pid, 'SIGTERM');
               } catch {
                 // Process already exited — cancellation already recorded in DB
               }
             }
-            console.error('Run cancelled successfully');
+            process.stdout.write('Run cancelled successfully\n');
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
             process.exit(1);

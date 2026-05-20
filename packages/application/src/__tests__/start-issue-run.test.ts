@@ -35,6 +35,9 @@ class FakeRunRepository implements RunRepositoryPort {
   update(uuid: string, patch: RunRepositoryUpdatePatch): void {
     this.updates.push({ uuid, patch });
   }
+  findByUuid(_uuid: string): RunRecord | undefined {
+    return undefined;
+  }
   finalPatch(uuid: string): RunRepositoryUpdatePatch {
     const merged: RunRepositoryUpdatePatch = {};
     for (const u of this.updates) {

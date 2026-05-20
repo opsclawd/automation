@@ -37,7 +37,9 @@ export function checkPid(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EPERM') return true;
     return false;
   }
 }

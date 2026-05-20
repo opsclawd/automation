@@ -133,7 +133,7 @@ exit 1
       'running',
       '[]',
       new Date().toISOString(),
-      1,
+      999999,
     );
     db.close();
     // Compose should sweep it

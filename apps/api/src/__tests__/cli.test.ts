@@ -164,9 +164,9 @@ describe('CLI run command', () => {
 describe('CLI runs cancel command', () => {
   it('cancels a run by issue number', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-')));
-    // Make findRepoRoot stop here
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-    // Insert a "running" row directly into the DB
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1000)']);
+    await new Promise((r) => setTimeout(r, 50));
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
     const db = openDatabase(dbPath);
     applyMigrations(db);
@@ -181,26 +181,31 @@ describe('CLI runs cancel command', () => {
       'running',
       '[]',
       new Date().toISOString(),
-      process.pid,
+      child.pid,
     );
     db.close();
 
-    // chdir into temp dir so findRepoRoot returns root
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
-      // Now cancel it
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
       const consoleErrs: string[] = [];
-      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
         consoleErrs.push(String(msg));
       });
       const program = buildProgram();
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['cancel', '--issue', '50'], { from: 'user' });
-      spy.mockRestore();
-      expect(consoleErrs.join('')).toMatch(/cancelled successfully/i);
+      writeSpy.mockRestore();
+      errSpy.mockRestore();
+      expect(stdoutChunks.join('')).toMatch(/cancelled successfully/i);
     } finally {
+      if (!child.killed) child.kill('SIGKILL');
       process.chdir(savedCwd);
     }
   });
@@ -218,9 +223,11 @@ describe('CLI runs cancel command', () => {
     spy.mockRestore();
   });
 
-  it('cancels a run by uuid using domain cancelRun', async () => {
+  it('cancels a run by uuid using CancelRun use case', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1000)']);
+    await new Promise((r) => setTimeout(r, 50));
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
     const db = openDatabase(dbPath);
     applyMigrations(db);
@@ -235,24 +242,31 @@ describe('CLI runs cancel command', () => {
       'running',
       '[]',
       new Date().toISOString(),
-      process.pid,
+      child.pid,
     );
     db.close();
 
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
       const consoleErrs: string[] = [];
-      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
         consoleErrs.push(String(msg));
       });
       const program = buildProgram();
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['cancel', '--uuid', 'cancel-uuid-test'], { from: 'user' });
-      spy.mockRestore();
-      expect(consoleErrs.join('')).toMatch(/cancelled successfully/i);
+      writeSpy.mockRestore();
+      errSpy.mockRestore();
+      expect(stdoutChunks.join('')).toMatch(/cancelled successfully/i);
     } finally {
+      if (!child.killed) child.kill('SIGKILL');
       process.chdir(savedCwd);
     }
   });
@@ -320,7 +334,7 @@ describe('CLI runs cancel command', () => {
       await runsCmd.parseAsync(['cancel', '--uuid', 'nonexistent-uuid'], { from: 'user' });
       spy.mockRestore();
       exitSpy.mockRestore();
-      expect(consoleErrs.join('')).toMatch(/run not found/i);
+      expect(consoleErrs.join('')).toMatch(/no active run found/i);
     } finally {
       process.chdir(savedCwd);
     }

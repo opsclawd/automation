@@ -41,6 +41,7 @@ export interface RunRepositoryUpdatePatch {
 export interface RunRepositoryPort {
   insertIfNoActive(run: Run): void;
   update(uuid: string, patch: RunRepositoryUpdatePatch): void;
+  findByUuid(uuid: string): RunRecord | undefined;
   findByIssueNumber(issueNumber: number): RunRecord | undefined;
   findActiveRuns(): RunRecord[];
   updateStatusByIssueNumber(

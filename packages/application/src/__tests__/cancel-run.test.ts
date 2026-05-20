@@ -15,6 +15,9 @@ class FakeRunRepo implements RunRepositoryPort {
   update(uuid: string, patch: RunRepositoryUpdatePatch): void {
     this.updates.push({ uuid, patch });
   }
+  findByUuid(uuid: string): RunRecord | undefined {
+    return this.runs.get(uuid);
+  }
   findByIssueNumber(issueNumber: number): RunRecord | undefined {
     let latest: RunRecord | undefined;
     for (const r of this.runs.values()) {
@@ -115,5 +118,23 @@ describe('CancelRun', () => {
     const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
     usecase.execute({ issueNumber: 10 });
     expect(repo.updates[0]!.patch.failureReason).toBeUndefined();
+  });
+
+  it('cancels an active run by uuid', () => {
+    const repo = new FakeRunRepo();
+    repo.addRun({
+      uuid: 'xyz-001',
+      displayId: 'issue-15-20260513-000000',
+      issueNumber: 15,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T19:00:00Z'),
+    });
+    const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
+    usecase.execute({ uuid: 'xyz-001', reason: 'manual override' });
+    expect(repo.updates).toHaveLength(1);
+    expect(repo.updates[0]!.patch.status).toBe('cancelled');
+    expect(repo.updates[0]!.patch.failureReason).toBe('manual override');
   });
 });
