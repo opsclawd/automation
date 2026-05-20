@@ -29,9 +29,7 @@ export class FakeArtifactStore implements ArtifactStore {
       : Buffer.from(entry.contents).toString('utf8');
   }
 
-  async list(runId: string): Promise<Artifact[]> {
-    return [...this.files.values()]
-      .filter((e) => e.artifact.runId === runId)
-      .map((e) => e.artifact);
+  async list(_runId: string): Promise<Artifact[]> {
+    return [...this.files.values()].map((e) => e.artifact);
   }
 }
