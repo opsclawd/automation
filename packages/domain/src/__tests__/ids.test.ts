@@ -5,6 +5,7 @@ describe('branded ids', () => {
   it('constructs and round-trips RunId', () => {
     const id = RunId('abc');
     expect(id).toBe('abc');
+    expect(() => RunId('')).toThrow();
   });
 
   it('IssueNumber rejects non-positive integers', () => {

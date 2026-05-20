@@ -27,6 +27,18 @@ describe('transitionToReady', () => {
   it('rejects if run is already terminal', () => {
     const run = { ...createRun(baseInput), status: 'passed' as const, completedAt: new Date() };
     expect(() => transitionToReady(run)).toThrow(RunStateError);
+    const failedRun = {
+      ...createRun(baseInput),
+      status: 'failed' as const,
+      completedAt: new Date(),
+    };
+    expect(() => transitionToReady(failedRun)).toThrow(RunStateError);
+    const cancelledRun = {
+      ...createRun(baseInput),
+      status: 'cancelled' as const,
+      completedAt: new Date(),
+    };
+    expect(() => transitionToReady(cancelledRun)).toThrow(RunStateError);
   });
 });
 
@@ -41,6 +53,15 @@ describe('reactivate', () => {
   it('rejects reactivating a non-waiting run', () => {
     const run = createRun(baseInput);
     expect(() => reactivate(run)).toThrow(RunStateError);
+  });
+
+  it('rejects reactivating a terminal run', () => {
+    expect(() => reactivate({ ...createRun(baseInput), status: 'failed' as const })).toThrow(
+      RunStateError,
+    );
+    expect(() => reactivate({ ...createRun(baseInput), status: 'cancelled' as const })).toThrow(
+      RunStateError,
+    );
   });
 });
 
