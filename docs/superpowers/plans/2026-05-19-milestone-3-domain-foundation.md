@@ -27,6 +27,8 @@
   ```
   All four must pass before the commit step.
 - **Commit style:** Conventional commits. Scope = story id, e.g. `feat(m3-01): add core domain types`. Each step that says "Commit" is one commit.
+- **Commit cadence (hard rule):** Commit after **every** task once its verification passes — not just at the end of the story. This gives the autonomous loop per-task recovery checkpoints (`git reset --hard HEAD` rewinds exactly one task) and makes the eventual squashed PR diff readable commit-by-commit. The final task of each story is a **final verification only** — by that point every prior task has already landed its own commit.
+- **Stage only the task's files:** Each commit step lists the exact paths to `git add`. Do not use `git add -A` or `git add .` — staging unrelated changes defeats the per-task recovery property.
 - **Branch / push / PR are orchestrator-managed:** Do not create branches, push, or open PRs from inside a story. Land your work as commits on the current branch and stop. The orchestrator will package the changes into a PR.
 
 ---
@@ -161,6 +163,13 @@ export * from './ids.js';
 Run: `pnpm --filter @ai-sdlc/domain test --run ids`
 Expected: PASS (4 tests).
 
+- [ ] **Step 6: Commit**
+
+```
+git add packages/domain/src/ids.ts packages/domain/src/__tests__/ids.test.ts packages/domain/src/index.ts
+git commit -m "feat(m3-01): add branded ID types (RunId, IssueNumber, PhaseName, RepositoryId, JobId, WorkerId)"
+```
+
 ### Task 3: Add `transitionToReady` and `reactivate` state transitions
 
 Context: PRD Q9/Q10/Q33 — READY is a resting state for post-PR-merge waiting; new review activity reactivates a READY run back to RUNNING. `RunStatus` already includes `waiting` — treat `waiting` as the READY state.
@@ -239,6 +248,13 @@ export function reactivate(run: Run): Run {
 Run: `pnpm --filter @ai-sdlc/domain test --run`
 Expected: PASS (all tests, including the new ones).
 
+- [ ] **Step 5: Commit**
+
+```
+git add packages/domain/src/run.ts packages/domain/src/__tests__/run-transitions.test.ts
+git commit -m "feat(m3-01): add transitionToReady and reactivate state transitions on Run"
+```
+
 ### Task 4: Property test — no path from `running` to `passed` without going through all required phases
 
 (This is the invariant called out in M3-01 acceptance.)
@@ -269,7 +285,14 @@ describe('property: passRun requires no pending currentPhase', () => {
 Run: `pnpm --filter @ai-sdlc/domain test --run run-transitions`
 Expected: PASS.
 
-### Task 5: Final verification + commit
+- [ ] **Step 4: Commit**
+
+```
+git add packages/domain/src/__tests__/run-transitions.test.ts
+git commit -m "test(m3-01): property test — passRun rejects mid-phase runs"
+```
+
+### Task 5: Final verification
 
 - [ ] **Step 1: Full verification**
 
@@ -279,18 +302,7 @@ Run from repo root:
 pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise
 ```
 
-Expected: all green.
-
-- [ ] **Step 2: Commit**
-
-```
-git add packages/domain
-git commit -m "feat(m3-01): branded ids + ready/reactivate transitions
-
-Adds RunId, IssueNumber, PhaseName, RepositoryId, JobId, WorkerId branded
-types and transitionToReady/reactivate state transitions on Run. Property
-test asserts passRun cannot succeed mid-phase."
-```
+Expected: all green. (All work is already committed via per-task commits above; no further commit here.)
 
 ---
 
@@ -385,6 +397,13 @@ export * from './repository.js';
 Run: `pnpm --filter @ai-sdlc/domain test --run repository`
 Expected: PASS.
 
+- [ ] **Step 6: Commit**
+
+```
+git add packages/domain/src/repository.ts packages/domain/src/__tests__/repository.test.ts packages/domain/src/index.ts
+git commit -m "feat(m3-02): add Repository domain type and RepositoryNotApprovedError"
+```
+
 ### Task 2: Define `RepositoryPort`
 
 - [ ] **Step 1: Create the port file** — `packages/application/src/ports/repository-port.ts`:
@@ -409,6 +428,13 @@ export type { RepositoryPort } from './ports/repository-port.js';
 
 Run: `pnpm --filter @ai-sdlc/application typecheck`
 Expected: PASS.
+
+- [ ] **Step 4: Commit**
+
+```
+git add packages/application/src/ports/repository-port.ts packages/application/src/ports.ts
+git commit -m "feat(m3-02): add RepositoryPort interface"
+```
 
 ### Task 3: In-memory fake `RepositoryPort` + tests
 
@@ -520,17 +546,17 @@ export * from './fake-repository-port.js';
 Run: `pnpm --filter @ai-sdlc/application test --run fake-repository-port`
 Expected: PASS (4 tests).
 
-### Task 4: Verify + commit
+- [ ] **Step 6: Commit**
+
+```
+git add packages/application/src/test-doubles/fake-repository-port.ts packages/application/src/test-doubles/index.ts packages/application/src/__tests__/fake-repository-port.test.ts
+git commit -m "test(m3-02): add FakeRepositoryPort in-memory test double"
+```
+
+### Task 4: Final verification
 
 - [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`
-- [ ] **Step 2: Commit**
-
-```
-git add packages/domain packages/application
-git commit -m "feat(m3-02): Repository domain + RepositoryPort + in-memory fake"
-```
-
-- [ ] **Step 3: Stop.** The orchestrator handles push + PR.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -723,6 +749,13 @@ export * from './job.js';
 
 - [ ] **Step 5: Run domain tests — expect PASS.**
 
+- [ ] **Step 6: Commit**
+
+```
+git add packages/domain/src/job.ts packages/domain/src/__tests__/job.test.ts packages/domain/src/index.ts
+git commit -m "feat(m3-03): add Job domain type and lifecycle transitions"
+```
+
 ### Task 2: `JobQueuePort` interface
 
 - [ ] **Step 1: Create** `packages/application/src/ports/job-queue-port.ts`:
@@ -751,6 +784,13 @@ export interface JobQueuePort {
 
 ```ts
 export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
+```
+
+- [ ] **Step 3: Commit**
+
+```
+git add packages/application/src/ports/job-queue-port.ts packages/application/src/ports.ts
+git commit -m "feat(m3-03): add JobQueuePort interface"
 ```
 
 ### Task 3: In-memory fake `JobQueuePort`
@@ -932,11 +972,17 @@ export * from './fake-job-queue-port.js';
 
 - [ ] **Step 5: Run tests — expect PASS.**
 
-### Task 4: Verify + commit + PR
+- [ ] **Step 6: Commit**
+
+```
+git add packages/application/src/test-doubles/fake-job-queue-port.ts packages/application/src/test-doubles/index.ts packages/application/src/__tests__/fake-job-queue-port.test.ts
+git commit -m "test(m3-03): add FakeJobQueuePort in-memory test double"
+```
+
+### Task 4: Final verification
 
 - [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
-- [ ] **Step 2:** Commit `feat(m3-03): Job domain + JobQueuePort + in-memory fake`.
-- [ ] **Step 3: Stop.** The orchestrator handles push + PR.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -1076,6 +1122,13 @@ export * from './worker-lease.js';
 
 - [ ] **Step 5: Run all domain tests — expect PASS.**
 
+- [ ] **Step 6: Commit**
+
+```
+git add packages/domain/src/worker.ts packages/domain/src/worker-lease.ts packages/domain/src/__tests__/worker.test.ts packages/domain/src/index.ts
+git commit -m "feat(m3-04): add Worker and WorkerLease domain types"
+```
+
 ### Task 2: `WorkerRegistryPort` interface + fake
 
 - [ ] **Step 1: Port** — `packages/application/src/ports/worker-registry-port.ts`:
@@ -1151,6 +1204,13 @@ export class FakeWorkerRegistryPort implements WorkerRegistryPort {
 
 - [ ] **Step 4: Export + write a minimal test** confirming register + heartbeat + list. (Use the pattern from earlier fake tests; 4 small `it()`s is enough.)
 
+- [ ] **Step 5: Commit**
+
+```
+git add packages/application/src/ports/worker-registry-port.ts packages/application/src/ports.ts packages/application/src/test-doubles/fake-worker-registry-port.ts packages/application/src/test-doubles/index.ts packages/application/src/__tests__/fake-worker-registry-port.test.ts
+git commit -m "feat(m3-04): add WorkerRegistryPort + FakeWorkerRegistryPort"
+```
+
 ### Task 3: `WorkerLeasePort` interface
 
 - [ ] **Step 1:** Create `packages/application/src/ports/worker-lease-port.ts`:
@@ -1193,6 +1253,13 @@ export interface WorkerLeasePort {
 ```
 
 - [ ] **Step 2:** Re-export from `ports.ts`.
+
+- [ ] **Step 3: Commit**
+
+```
+git add packages/application/src/ports/worker-lease-port.ts packages/application/src/ports.ts
+git commit -m "feat(m3-04): add WorkerLeasePort interface"
+```
 
 ### Task 4: Fake `WorkerLeasePort`
 
@@ -1487,6 +1554,13 @@ export * from './fake-worker-lease-port.js';
 
 - [ ] **Step 4: Run all tests — expect PASS (all 8 lease tests).**
 
+- [ ] **Step 5: Commit**
+
+```
+git add packages/application/src/test-doubles/fake-worker-lease-port.ts packages/application/src/test-doubles/index.ts packages/application/src/__tests__/fake-worker-lease-port.test.ts
+git commit -m "test(m3-04): add FakeWorkerLeasePort enforcing one active lease per repo"
+```
+
 ### Task 5: Concurrency simulation test (acceptance criterion)
 
 - [ ] **Step 1:** Create `packages/application/src/__tests__/worker-concurrency.test.ts`:
@@ -1629,7 +1703,14 @@ describe('worker concurrency simulation', () => {
 });
 ```
 
-- [ ] **Step 2: Verify + commit.** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`. Commit `feat(m3-04): Worker + WorkerLease domain, ports, and fakes`. Then stop — the orchestrator handles push + PR.
+- [ ] **Step 2: Commit**
+
+```
+git add packages/application/src/__tests__/worker-concurrency.test.ts
+git commit -m "test(m3-04): concurrency simulation — exactly one worker wins lease per repo"
+```
+
+- [ ] **Step 3: Final verification.** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`. All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -1716,6 +1797,13 @@ export interface CreatePullRequestUseCase {
 ```
 
 - [ ] **Step 2:** Add `export * from './use-cases.js';` to `packages/application/src/index.ts`.
+
+- [ ] **Step 3: Commit**
+
+```
+git add packages/application/src/use-cases.ts packages/application/src/index.ts
+git commit -m "feat(m3-05): add application use-case interfaces"
+```
 
 ### Task 2: Non-agent ports (signatures only — agent port is M3-06)
 
@@ -1874,6 +1962,13 @@ export type { ArtifactStore, WriteArtifactInput, Artifact } from './ports/artifa
 Run: `pnpm -r typecheck`
 Expected: PASS.
 
+- [ ] **Step 7: Commit**
+
+```
+git add packages/application/src/ports/github-port.ts packages/application/src/ports/git-port.ts packages/application/src/ports/validation-port.ts packages/application/src/ports/artifact-store.ts packages/application/src/ports.ts
+git commit -m "feat(m3-05): add GitHubPort, GitPort, ValidationPort, ArtifactStore interfaces"
+```
+
 ### Task 3: In-memory fakes for each port
 
 Each fake gets ~30 lines. Implement them as straightforward `Map`-backed objects. Example for `FakeArtifactStore`:
@@ -2003,11 +2098,17 @@ describe('test-doubles barrel', () => {
 
 Run + expect PASS.
 
-### Task 4: Verify + commit + PR
+- [ ] **Step 5: Commit**
 
-- [ ] **Step 1:** Full verify.
-- [ ] **Step 2:** Commit `feat(m3-05): application use-case interfaces + non-agent ports + fakes`.
-- [ ] **Step 3: Stop.** The orchestrator handles push + PR.
+```
+git add packages/application/src/test-doubles/fake-github-port.ts packages/application/src/test-doubles/fake-git-port.ts packages/application/src/test-doubles/fake-validation-port.ts packages/application/src/test-doubles/fake-artifact-store.ts packages/application/src/test-doubles/index.ts packages/application/src/__tests__/test-doubles-smoke.test.ts
+git commit -m "test(m3-05): add in-memory fakes for GitHub/Git/Validation/Artifact ports"
+```
+
+### Task 4: Final verification
+
+- [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -2137,6 +2238,13 @@ export * from './agent/types.js';
 
 - [ ] **Step 4: Run tests — expect PASS.**
 
+- [ ] **Step 5: Commit**
+
+```
+git add packages/application/src/agent/types.ts packages/application/src/__tests__/agent-types.test.ts packages/application/src/index.ts
+git commit -m "feat(m3-06): add AgentRuntimeKind, AgentProfile, and type guards"
+```
+
 ### Task 2: `AgentInvocationRequest` / `AgentInvocationResult` (covers M3-07; merging M3-06 + M3-07 here keeps the PR coherent — see "Note on M3-07" at end)
 
 We split M3-06 and M3-07 into **two PRs** for the milestone-stories doc, but a single agent type module is easier to maintain. Implement request/result here too; the M3-07 PR becomes a no-op rename or is deferred. **For the autonomous loop: keep M3-06 strictly to the profile + AgentPort + FakeAgentPort, and put the request/result types in M3-07.** Below is the M3-06-only AgentPort that depends on the request/result types created in M3-07 — meaning M3-06 cannot land before M3-07 in the autonomous loop. **Reorder accordingly: implement M3-07 first, then M3-06.** (See "Story ordering note" at the very end.)
@@ -2161,6 +2269,13 @@ export interface AgentPort {
 
 ```ts
 export type { AgentPort } from './ports/agent-port.js';
+```
+
+- [ ] **Step 3: Commit**
+
+```
+git add packages/application/src/ports/agent-port.ts packages/application/src/ports.ts
+git commit -m "feat(m3-06): add AgentPort interface"
 ```
 
 ### Task 4: `FakeAgentPort`
@@ -2270,13 +2385,23 @@ export class FakeAgentPort implements AgentPort {
 
 - [ ] **Step 4: Run tests — expect PASS.**
 
+- [ ] **Step 5: Commit**
+
+```
+git add packages/application/src/test-doubles/fake-agent-port.ts packages/application/src/test-doubles/index.ts packages/application/src/__tests__/fake-agent-port.test.ts
+git commit -m "test(m3-06): add FakeAgentPort with FIFO per-profile scripted responses"
+```
+
 ### Task 5: Layer-boundary regression test
 
 - [ ] **Step 1:** `pnpm depcruise` should still pass — no application file should import `@ai-sdlc/infrastructure` or `child_process`. If depcruise fails, you imported the wrong thing.
 
-### Task 6: Verify + commit + PR
+(No commit step here — this task only runs an existing check; nothing to stage.)
 
-- [ ] Commit `feat(m3-06): AgentRuntimeKind, AgentProfile, AgentPort, FakeAgentPort`.
+### Task 6: Final verification
+
+- [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -2368,9 +2493,17 @@ export * from './agent/invocation.js';
 
 - [ ] **Step 4: Run tests — expect PASS.**
 
-### Task 2: Verify + commit + PR
+- [ ] **Step 5: Commit**
 
-- [ ] Commit `feat(m3-07): AgentInvocationRequest / AgentInvocationResult types`.
+```
+git add packages/application/src/agent/invocation.ts packages/application/src/__tests__/agent-invocation.test.ts packages/application/src/index.ts
+git commit -m "feat(m3-07): add AgentInvocationRequest and AgentInvocationResult types"
+```
+
+### Task 2: Final verification
+
+- [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -2555,6 +2688,13 @@ export type AgentConfig = NonNullable<OrchestratorConfig['agent']>;
 
 - [ ] **Step 5: Run tests — expect PASS.**
 
+- [ ] **Step 6: Commit**
+
+```
+git add packages/shared/src/config/schema.ts packages/shared/src/__tests__/agent-config.test.ts
+git commit -m "feat(m3-08): extend Zod config schema with agent profiles and phaseProfiles"
+```
+
 ### Task 2: Update sample config
 
 - [ ] **Step 1:** Edit `.ai-orchestrator.json` at the repo root and add the `agent` block per PRD §15.7 (copy the JSON example verbatim from PRD §15.7). Keep existing top-level keys intact.
@@ -2573,11 +2713,17 @@ it('the committed .ai-orchestrator.json parses', () => {
 
 (If the relative path resolution fails in your monorepo runner, replace `process.cwd(), '../..'` with the absolute path detection used in other shared tests — check `packages/shared/src/__tests__` for the existing convention before pasting.)
 
-### Task 3: Verify + commit + PR
+- [ ] **Step 3: Commit**
 
-- [ ] `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
-- [ ] Commit `feat(m3-08): agent profile + phaseProfiles schema in .ai-orchestrator.json`.
-- [ ] Stop. The orchestrator handles push + PR.
+```
+git add .ai-orchestrator.json packages/shared/src/__tests__/agent-config.test.ts
+git commit -m "feat(m3-08): add agent block to sample .ai-orchestrator.json and assert it parses"
+```
+
+### Task 3: Final verification
+
+- [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -2633,6 +2779,13 @@ If `expectTypeOf` is unavailable, fall back to a structural assertion via a disc
 
 - [ ] **Step 2:** Run `pnpm --filter @ai-sdlc/api test --run port-conformance`. If a port mismatch surfaces, fix the **port** (in application) — not the adapter — and re-run.
 
+- [ ] **Step 3: Commit**
+
+```
+git add apps/api/src/__tests__/port-conformance.test.ts
+git commit -m "test(m3-09): typecheck-only conformance — infrastructure repos implement application ports"
+```
+
 ### Task 2: Document the Bash adapter as a port implementation
 
 - [ ] **Step 1:** Open the file that exports `runBashScript` in `packages/infrastructure/src/bash/`. Add a JSDoc above the export:
@@ -2652,11 +2805,17 @@ it('runBashScript conforms to RunBashScriptFn', () => {
 });
 ```
 
-### Task 3: Verify + commit + PR
+- [ ] **Step 3: Commit** — stage the JSDoc'd bash adapter file(s) plus the appended conformance test:
 
-- [ ] Full verify. All M1 integration tests in `apps/api/src/__tests__/` must still pass.
-- [ ] Commit `refactor(m3-09): document infrastructure adapters as port implementations`.
-- [ ] Stop. The orchestrator handles push + PR.
+```
+git add packages/infrastructure/src/bash apps/api/src/__tests__/port-conformance.test.ts
+git commit -m "refactor(m3-09): document Bash adapter as RunBashScriptFn port implementation"
+```
+
+### Task 3: Final verification
+
+- [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`. All M1 integration tests in `apps/api/src/__tests__/` must still pass.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
@@ -2849,11 +3008,17 @@ Add `agentRuntime` to the returned object.
 agentRuntime?: AgentRuntimeRegistry;
 ```
 
-### Task 2: Verify + commit + PR
+- [ ] **Step 5: Commit**
 
-- [ ] Full verify (`pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`).
-- [ ] Commit `feat(m3-10): composition root resolves AgentPort + resolveProfileForPhase helper`.
-- [ ] Stop. The orchestrator handles push + PR.
+```
+git add apps/api/src/compose.ts apps/api/src/__tests__/compose.test.ts
+git commit -m "feat(m3-10): composition root resolves AgentPort + resolveProfileForPhase helper"
+```
+
+### Task 2: Final verification
+
+- [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
+- [ ] **Step 2: Stop.** All work is already committed via per-task commits. The orchestrator handles push + PR.
 
 ---
 
