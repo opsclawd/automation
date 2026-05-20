@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   openDatabase,
@@ -22,6 +23,7 @@ import {
   type ClassifyExitFn,
   type EventTailerFactory,
   type EventBusPort,
+  type TmpDirectoryFactory,
 } from '@ai-sdlc/application';
 
 const classifyExitAdapter: ClassifyExitFn = (input) => {
@@ -37,6 +39,7 @@ export interface Container {
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
   runsDir: string;
+  baseTmpDir: string;
   eventBus: EventBusPort;
 }
 
@@ -53,6 +56,10 @@ export interface ComposeOptions {
 
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
+  const baseTmpDir = process.env.TMPDIR
+    ? join(process.env.TMPDIR, '.ai-tmp')
+    : join(opts.repoRoot, '.ai-tmp');
+  mkdirSync(baseTmpDir, { recursive: true });
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);
@@ -67,12 +74,32 @@ export function composeRoot(opts: ComposeOptions): Container {
     console.error(`Recovered ${sweepResult.swept} orphaned run(s)`);
   }
 
+  // Sweep orphaned tmp dirs: remove .ai-tmp/<runId>/ where the runId
+  // has no active or recent run, or the run is in a terminal state.
+  sweepOrphanedTmpDirs(baseTmpDir, runRepository);
+
   const phaseRepository = new PhaseRepository(db);
   const eventRepository = new EventRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const failureRepository = new FailureRepository(db);
   const eventBus = new InMemoryEventBus();
   const createEventTailer: EventTailerFactory = (input) => new EventTailer(input);
+
+  const tmpDirectoryFactory: TmpDirectoryFactory = ({ baseTmpDir: base, runId }) => {
+    const tmpDir = join(base, runId);
+    mkdirSync(tmpDir, { recursive: true });
+    return {
+      tmpDir,
+      remove() {
+        try {
+          rmSync(tmpDir, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup
+        }
+      },
+    };
+  };
+
   const deps: StartIssueRunDeps = {
     runRepository,
     failureRepository,
@@ -84,6 +111,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     eventRepository,
     eventBus,
     createEventTailer,
+    baseTmpDir,
+    tmpDirectoryFactory,
   };
   if (opts.baseBranch !== undefined) deps.baseBranch = opts.baseBranch;
   if (opts.model !== undefined) deps.model = opts.model;
@@ -101,6 +130,29 @@ export function composeRoot(opts: ComposeOptions): Container {
     startIssueRun,
     cancelRun,
     runsDir,
+    baseTmpDir,
     eventBus,
   };
+}
+
+function sweepOrphanedTmpDirs(baseTmpDir: string, runRepository: RunRepository): void {
+  if (!existsSync(baseTmpDir)) return;
+  const entries = readdirSync(baseTmpDir);
+  for (const entry of entries) {
+    const entryPath = join(baseTmpDir, entry);
+    try {
+      const stat = statSync(entryPath);
+      if (!stat.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const record = runRepository.findByUuid(entry);
+    if (!record || ['passed', 'failed', 'cancelled'].includes(record.status)) {
+      try {
+        rmSync(entryPath, { recursive: true, force: true });
+      } catch {
+        // Best-effort: if removal fails (e.g., file in use), leave for next sweep
+      }
+    }
+  }
 }

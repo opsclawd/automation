@@ -295,6 +295,11 @@ export class StartIssueRun {
       } catch (e) {
         logger.error('Failed to drain event tailer', e);
       }
+      try {
+        tmpDirHandle.remove();
+      } catch (e) {
+        logger.error('Failed to remove run tmp directory', e);
+      }
     }
   }
 }

@@ -183,6 +183,7 @@ const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
 const fakeTmpDir: TmpDirectoryFactory = (input) => ({
   tmpDir: `${input.baseTmpDir}/${input.runId}`,
+  remove() {},
 });
 
 const defaultEventDeps = () => ({

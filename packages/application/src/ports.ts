@@ -89,6 +89,7 @@ export type RunBashScriptFn = (input: RunBashScriptInput) => Promise<RunBashScri
 
 export interface TmpDirectoryHandle {
   readonly tmpDir: string;
+  remove(): void;
 }
 
 export type TmpDirectoryFactory = (input: {
