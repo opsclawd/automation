@@ -1,4 +1,11 @@
-import type { Run, RunStatus, Failure, ClassifyExitInput } from '@ai-sdlc/domain';
+import type {
+  Run,
+  RunStatus,
+  Failure,
+  ClassifyExitInput,
+  Repository,
+  RepositoryId,
+} from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
 /**
@@ -96,6 +103,12 @@ export type TmpDirectoryFactory = (input: {
   baseTmpDir: string;
   runId: string;
 }) => TmpDirectoryHandle;
+
+export interface RepositoryPort {
+  findById(id: RepositoryId): Repository | undefined;
+  findByFullName(fullName: string): Repository | undefined;
+  listEnabled(): Repository[];
+}
 
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
