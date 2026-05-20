@@ -9,7 +9,12 @@ import type {
 export class FakeGitHubPort implements GitHubPort {
   issues = new Map<string, GitHubIssue>();
   comments = new Map<string, PrReviewComment[]>();
-  repliesPosted: Array<{ commentId: number; body: string }> = [];
+  repliesPosted: Array<{
+    repoFullName: string;
+    prNumber: number;
+    commentId: number;
+    body: string;
+  }> = [];
   labelChanges: Array<{
     repoFullName: string;
     issueNumber: number;
@@ -41,12 +46,12 @@ export class FakeGitHubPort implements GitHubPort {
   }
 
   async replyToReviewComment(
-    _repoFullName: string,
-    _prNumber: number,
+    repoFullName: string,
+    prNumber: number,
     commentId: number,
     body: string,
   ): Promise<void> {
-    this.repliesPosted.push({ commentId, body });
+    this.repliesPosted.push({ repoFullName, prNumber, commentId, body });
   }
 
   async updateIssueLabels(
