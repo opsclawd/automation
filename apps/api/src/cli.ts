@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { composeRoot, type ComposeOptions } from './compose.js';
+import type { CancelRunInput } from '@ai-sdlc/application';
 
 export function findRepoRoot(startDir: string): string {
   let dir = startDir;
@@ -64,15 +65,58 @@ export function buildProgram(): Command {
         if (opts.model !== undefined) options.model = opts.model;
         if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
         const c = composeRoot(options);
-        const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
-        // Flush stdout before exit; on some redirected stdout configurations
-        // process.exit can truncate buffered writes.
-        await new Promise<void>((resolve, reject) =>
-          process.stdout.write(JSON.stringify(out) + '\n', (err) =>
-            err ? reject(err) : resolve(),
-          ),
-        );
-        process.exit(out.status === 'passed' ? 0 : 1);
+
+        const cleanup = async (signal: string) => {
+          const existing = c.runRepository.findByIssueNumber(opts.issue);
+          if (existing && existing.pid === process.pid) {
+            c.runRepository.updateStatusByIssueNumber(opts.issue, {
+              status: 'cancelled',
+              completedAt: new Date(),
+              failureReason: `interrupted by ${signal}`,
+            });
+          }
+        };
+
+        const sigintHandler = () => {
+          cleanup('SIGINT').finally(() => process.exit(130));
+        };
+        const sigtermHandler = () => {
+          cleanup('SIGTERM').finally(() => process.exit(143));
+        };
+        const uncaughtHandler = (err: Error) => {
+          cleanup('uncaughtException').finally(() => {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(1);
+          });
+        };
+        const unhandledHandler = (reason: unknown) => {
+          cleanup('unhandledRejection').finally(() => {
+            console.error(reason instanceof Error ? reason.message : String(reason));
+            process.exit(1);
+          });
+        };
+
+        process.on('SIGINT', sigintHandler);
+        process.on('SIGTERM', sigtermHandler);
+        process.on('uncaughtException', uncaughtHandler);
+        process.on('unhandledRejection', unhandledHandler);
+
+        try {
+          const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
+          // Use process.stdout.write with a callback (not console.log) because
+          // process.exit() does not wait for stdout to flush.
+          await new Promise<void>((resolve, reject) =>
+            process.stdout.write(JSON.stringify(out) + '\n', (err) =>
+              err ? reject(err) : resolve(),
+            ),
+          );
+          process.exit(out.status === 'passed' ? 0 : 1);
+        } finally {
+          process.off('SIGINT', sigintHandler);
+          process.off('SIGTERM', sigtermHandler);
+          process.off('uncaughtException', uncaughtHandler);
+          process.off('unhandledRejection', unhandledHandler);
+        }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
         process.exit(2);
@@ -119,6 +163,71 @@ export function buildProgram(): Command {
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
       },
+    );
+
+  program
+    .command('runs')
+    .description('Manage orchestrator runs')
+    .addCommand(
+      new Command('cancel')
+        .description('Cancel an active run')
+        .option('--issue <number>', 'Issue number', (v) => {
+          if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
+          const n = parseInt(v, 10);
+          if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
+          return n;
+        })
+        .option('--uuid <uuid>', 'Run UUID')
+        .option('--reason <string>', 'Cancellation reason')
+        .action(async (opts: { issue?: number; uuid?: string; reason?: string }) => {
+          if (!opts.issue && !opts.uuid) {
+            console.error('Error: specify --issue or --uuid');
+            process.exit(1);
+          }
+          if (opts.issue && opts.uuid) {
+            console.error('Error: specify --issue or --uuid, not both');
+            process.exit(1);
+          }
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+            };
+            const c = composeRoot(options);
+            const input = {} as CancelRunInput;
+            if (opts.uuid) {
+              input.uuid = opts.uuid;
+            } else {
+              const run = c.runRepository.findByIssueNumber(opts.issue!);
+              if (!run) {
+                console.error(`No run found for issue ${opts.issue}`);
+                process.exit(1);
+              }
+              input.uuid = run.uuid;
+            }
+            if (opts.reason) input.reason = opts.reason;
+            const run = c.runRepository.findByUuid(input.uuid);
+            const pid = run?.pid;
+            c.cancelRun.execute(input);
+            if (pid !== undefined && pid !== null && pid !== process.pid) {
+              try {
+                process.kill(pid, 'SIGTERM');
+              } catch (killErr: unknown) {
+                const code = (killErr as NodeJS.ErrnoException).code;
+                if (code === 'EPERM') {
+                  console.error(
+                    `Warning: run cancelled in DB but could not signal PID ${pid} (permission denied). The process may still be running.`,
+                  );
+                }
+              }
+            }
+            process.stdout.write('Run cancelled successfully\n');
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(1);
+          }
+        }),
     );
 
   return program;

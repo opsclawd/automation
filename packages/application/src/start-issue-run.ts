@@ -1,4 +1,4 @@
-import { createRun, passRun, failRun } from '@ai-sdlc/domain';
+import { createRun, passRun, failRun, cancelRun } from '@ai-sdlc/domain';
 import type { Failure, ClassifierEvent } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -41,7 +41,7 @@ export interface StartIssueRunOutput {
   uuid: string;
   displayId: string;
   exitCode: number;
-  status: 'passed' | 'failed';
+  status: 'passed' | 'failed' | 'cancelled';
 }
 
 export class StartIssueRun {
@@ -174,6 +174,46 @@ export class StartIssueRun {
       }
       const completedAt = now();
       const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
+      // If the run was cancelled (e.g. via SIGTERM or `runs cancel`), do not
+      // overwrite the terminal status with passed/failed.
+      // Query by UUID (not issueNumber) to avoid picking up a newer run for
+      // the same issue if one was inserted after cancellation.
+      const current = this.deps.runRepository.findByUuid(run.uuid);
+      if (current && ['passed', 'failed', 'cancelled'].includes(current.status)) {
+        if (current.status === 'cancelled') {
+          try {
+            dir.writeRunJson(
+              cancelRun(run, current.failureReason, current.completedAt ?? completedAt),
+            );
+          } catch (writeErr) {
+            logger.error(`Failed to write run.json for ${run.displayId} on cancel`, writeErr);
+          }
+        } else if (current.status === 'failed') {
+          try {
+            dir.writeRunJson(
+              failRun(
+                run,
+                current.failureReason ?? 'externally marked failed',
+                current.completedAt ?? completedAt,
+              ),
+            );
+          } catch (writeErr) {
+            logger.error(`Failed to write run.json for ${run.displayId} on fail`, writeErr);
+          }
+        } else if (current.status === 'passed') {
+          try {
+            dir.writeRunJson(passRun(run, current.completedAt ?? completedAt));
+          } catch (writeErr) {
+            logger.error(`Failed to write run.json for ${run.displayId} on pass`, writeErr);
+          }
+        }
+        return {
+          uuid: run.uuid,
+          displayId: run.displayId,
+          exitCode: exec.exitCode,
+          status: current.status as 'passed' | 'failed' | 'cancelled',
+        };
+      }
       if (finalStatus === 'failed') {
         try {
           await tailer.drainAndStop();

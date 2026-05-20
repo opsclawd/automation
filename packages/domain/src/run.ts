@@ -98,3 +98,17 @@ export function failRun(run: Run, reason: string, at: Date = new Date()): Run {
   delete next.currentPhase;
   return next;
 }
+
+export function cancelRun(run: Run, reason?: string, at: Date = new Date()): Run {
+  if (TERMINAL_STATUSES.has(run.status)) {
+    throw new RunStateError(`cannot cancel run ${run.displayId}: already ${run.status}`);
+  }
+  const next: Run = {
+    ...run,
+    status: 'cancelled',
+    completedAt: at,
+    ...(reason ? { failureReason: reason } : {}),
+  };
+  delete next.currentPhase;
+  return next;
+}

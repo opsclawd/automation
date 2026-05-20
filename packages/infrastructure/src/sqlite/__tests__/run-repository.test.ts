@@ -149,4 +149,173 @@ describe('RunRepository', () => {
     ).not.toThrow();
     db.close();
   });
+
+  it('records pid on insert', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert(
+      {
+        uuid: 'u1',
+        displayId: 'issue-1-20260513-000000',
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T00:00:00Z'),
+      },
+      12345,
+    );
+    const found = repo.findByUuid('u1');
+    expect(found?.pid).toBe(12345);
+    db.close();
+  });
+
+  it('findByIssueNumber returns latest run for an issue', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-1-20260513-000000',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'passed',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    repo.insert({
+      uuid: 'u2',
+      displayId: 'issue-1-20260513-000001',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T01:00:00Z'),
+    });
+    const found = repo.findByIssueNumber(1);
+    expect(found?.uuid).toBe('u2');
+    db.close();
+  });
+
+  it('findActiveRuns returns only non-terminal runs', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-1-20260513-000000',
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'passed',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    repo.insert({
+      uuid: 'u2',
+      displayId: 'issue-2-20260513-000000',
+      issueNumber: 2,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    repo.insert({
+      uuid: 'u3',
+      displayId: 'issue-3-20260513-000000',
+      issueNumber: 3,
+      type: 'issue_to_pr',
+      status: 'waiting',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:01Z'),
+    });
+    const active = repo.findActiveRuns();
+    expect(active.map((r) => r.uuid)).toEqual(['u2', 'u3']);
+    db.close();
+  });
+
+  it('updateStatusByIssueNumber updates and returns true for active run', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-5-20260513-000000',
+      issueNumber: 5,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const updated = repo.updateStatusByIssueNumber(5, {
+      status: 'cancelled',
+      completedAt: new Date('2026-05-13T01:00:00Z'),
+      failureReason: 'test',
+    });
+    expect(updated).toBe(true);
+    const row = repo.findByIssueNumber(5);
+    expect(row?.status).toBe('cancelled');
+    expect(row?.failureReason).toBe('test');
+    db.close();
+  });
+
+  it('updateStatusByIssueNumber returns false for terminal run', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-6-20260513-000000',
+      issueNumber: 6,
+      type: 'issue_to_pr',
+      status: 'passed',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const updated = repo.updateStatusByIssueNumber(6, {
+      status: 'cancelled',
+      completedAt: new Date('2026-05-13T01:00:00Z'),
+    });
+    expect(updated).toBe(false);
+    db.close();
+  });
+
+  it('updateStatusByUuid updates and returns true for active run', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-7-20260513-000000',
+      issueNumber: 7,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const updated = repo.updateStatusByUuid('u1', {
+      status: 'cancelled',
+      completedAt: new Date('2026-05-13T01:00:00Z'),
+      failureReason: 'test',
+    });
+    expect(updated).toBe(true);
+    const row = repo.findByUuid('u1');
+    expect(row?.status).toBe('cancelled');
+    expect(row?.failureReason).toBe('test');
+    db.close();
+  });
+
+  it('updateStatusByUuid returns false for terminal run', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-8-20260513-000000',
+      issueNumber: 8,
+      type: 'issue_to_pr',
+      status: 'passed',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const updated = repo.updateStatusByUuid('u1', {
+      status: 'cancelled',
+      completedAt: new Date('2026-05-13T01:00:00Z'),
+    });
+    expect(updated).toBe(false);
+    db.close();
+  });
 });

@@ -1,8 +1,26 @@
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
+import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const apiRoot = join(__dirname, '..', '..');
+const require = createRequire(join(apiRoot, 'package.json'));
+const tsxEsmPath = require.resolve('tsx/esm');
+const cliPath = join(apiRoot, 'src', 'cli.ts');
+
+function spawnOrchestrator(args: string[], cwd: string) {
+  return spawn('node', ['--conditions=development', '--import', tsxEsmPath, cliPath, ...args], {
+    cwd,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
 
 const tempDirs: string[] = [];
 
@@ -141,4 +159,284 @@ describe('CLI run command', () => {
       program.parseAsync(['node', 'orchestrator', 'run', '--issue', '0']),
     ).rejects.toThrow(/must be >= 1/);
   });
+});
+
+describe('CLI runs cancel command', () => {
+  it('cancels a run by issue number', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1000)']);
+    await new Promise((r) => setTimeout(r, 50));
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'cancel-test-uuid',
+      'issue-50-20260519-000000',
+      50,
+      'issue_to_pr',
+      'running',
+      '[]',
+      new Date().toISOString(),
+      child.pid,
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+      const consoleErrs: string[] = [];
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--issue', '50'], { from: 'user' });
+      writeSpy.mockRestore();
+      errSpy.mockRestore();
+      expect(stdoutChunks.join('')).toMatch(/cancelled successfully/i);
+    } finally {
+      if (!child.killed) child.kill('SIGKILL');
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('rejects cancel without --issue or --uuid', async () => {
+    const program = buildProgram();
+    const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+    runsCmd.exitOverride();
+    const consoleErrs: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+      consoleErrs.push(String(msg));
+    });
+    await expect(runsCmd.parseAsync(['cancel'], { from: 'user' })).rejects.toThrow();
+    expect(consoleErrs.join('')).toMatch(/specify --issue or --uuid/i);
+    spy.mockRestore();
+  });
+
+  it('cancels a run by uuid using CancelRun use case', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1000)']);
+    await new Promise((r) => setTimeout(r, 50));
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'cancel-uuid-test',
+      'issue-60-20260519-000000',
+      60,
+      'issue_to_pr',
+      'running',
+      '[]',
+      new Date().toISOString(),
+      child.pid,
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+      const consoleErrs: string[] = [];
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--uuid', 'cancel-uuid-test'], { from: 'user' });
+      writeSpy.mockRestore();
+      errSpy.mockRestore();
+      expect(stdoutChunks.join('')).toMatch(/cancelled successfully/i);
+    } finally {
+      if (!child.killed) child.kill('SIGKILL');
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('rejects cancel by uuid when run is already terminal', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-term-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'terminal-uuid',
+      'issue-61-20260519-000000',
+      61,
+      'issue_to_pr',
+      'passed',
+      '[]',
+      new Date().toISOString(),
+      null,
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--uuid', 'terminal-uuid'], { from: 'user' });
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(consoleErrs.join('')).toMatch(/already passed/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('rejects cancel by uuid when run not found', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-nf-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--uuid', 'nonexistent-uuid'], { from: 'user' });
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(consoleErrs.join('')).toMatch(/no active run found/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+});
+
+describe('CLI run command signal handlers', () => {
+  it('marks run as cancelled when process receives SIGTERM', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigterm-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const scriptPath = join(root, 'long-running.sh');
+    writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
+    chmodSync(scriptPath, 0o755);
+
+    const child = spawnOrchestrator(['run', '--issue', '77', '--script', scriptPath], root);
+
+    const stderr: string[] = [];
+    child.stderr?.on('data', (d) => stderr.push(d.toString()));
+
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+
+    // Wait for the run row to appear (up to 15s)
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for run row')), 15_000);
+      const poll = () => {
+        try {
+          const db = openDatabase(dbPath);
+          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 77').get();
+          db.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGTERM');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const db = openDatabase(dbPath);
+    const run = db
+      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 77')
+      .get() as { status: string; failure_reason: string | null };
+    db.close();
+
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGTERM/i);
+  }, 45_000);
+
+  it('marks run as cancelled when process receives SIGINT', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigint-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const scriptPath = join(root, 'long-running.sh');
+    writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
+    chmodSync(scriptPath, 0o755);
+
+    const child = spawnOrchestrator(['run', '--issue', '78', '--script', scriptPath], root);
+
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for run row')), 15_000);
+      const poll = () => {
+        try {
+          const db = openDatabase(dbPath);
+          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 78').get();
+          db.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGINT');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const db = openDatabase(dbPath);
+    const run = db
+      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 78')
+      .get() as { status: string; failure_reason: string | null };
+    db.close();
+
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+  }, 45_000);
 });

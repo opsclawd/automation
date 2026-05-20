@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Failure, Run, ClassifyExitInput } from '@ai-sdlc/domain';
+import type { Failure, Run, ClassifyExitInput, RunStatus } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { StartIssueRun } from '../start-issue-run.js';
 import type {
@@ -13,6 +13,7 @@ import type {
   RunDirectoryHandle,
   RunRepositoryPort,
   RunRepositoryUpdatePatch,
+  RunRecord,
 } from '../ports.js';
 
 interface RecordedUpdate {
@@ -34,12 +35,54 @@ class FakeRunRepository implements RunRepositoryPort {
   update(uuid: string, patch: RunRepositoryUpdatePatch): void {
     this.updates.push({ uuid, patch });
   }
+  findByUuid(_uuid: string): RunRecord | undefined {
+    return undefined;
+  }
   finalPatch(uuid: string): RunRepositoryUpdatePatch {
     const merged: RunRepositoryUpdatePatch = {};
     for (const u of this.updates) {
       if (u.uuid === uuid) Object.assign(merged, u.patch);
     }
     return merged;
+  }
+  findByIssueNumber(issueNumber: number): RunRecord | undefined {
+    const inserted = this.inserted.find((r) => r.issueNumber === issueNumber);
+    if (!inserted) return undefined;
+    // Check if a terminal status was applied via update()
+    let status = inserted.status;
+    let completedAt: Date | undefined;
+    let failureReason: string | undefined;
+    for (const u of this.updates) {
+      if (u.patch.status) status = u.patch.status;
+      if (u.patch.completedAt) completedAt = u.patch.completedAt;
+      if (u.patch.failureReason) failureReason = u.patch.failureReason;
+    }
+    return {
+      uuid: inserted.uuid,
+      displayId: inserted.displayId,
+      issueNumber: inserted.issueNumber,
+      type: inserted.type,
+      status,
+      completedPhases: inserted.completedPhases,
+      startedAt: inserted.startedAt,
+      ...(completedAt ? { completedAt } : {}),
+      ...(failureReason ? { failureReason } : {}),
+    };
+  }
+  findActiveRuns(): RunRecord[] {
+    return [];
+  }
+  updateStatusByIssueNumber(
+    _issueNumber: number,
+    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean {
+    return true;
+  }
+  updateStatusByUuid(
+    _uuid: string,
+    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean {
+    return true;
   }
 }
 

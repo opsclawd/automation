@@ -1,8 +1,10 @@
 import type { Db } from './database.js';
 import * as init from './migrations/0001-init.js';
+import * as addPid from './migrations/0002-add-pid-column.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
+  { version: addPid.version, sql: addPid.sql },
 ];
 
 export function applyMigrations(db: Db): void {
