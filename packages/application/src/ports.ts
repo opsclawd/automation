@@ -111,6 +111,12 @@ export interface RepositoryPort {
 }
 
 export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
+export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
+export type {
+  WorkerLeasePort,
+  AcquireLeaseInput,
+  ReclaimExpiredInput,
+} from './ports/worker-lease-port.js';
 
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
