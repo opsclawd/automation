@@ -85,6 +85,11 @@ export function passRun(run: Run, at: Date): Run {
   if (TERMINAL_STATUSES.has(run.status)) {
     throw new RunStateError(`cannot pass run ${run.displayId}: already ${run.status}`);
   }
+  if (run.currentPhase !== undefined) {
+    throw new RunStateError(
+      `cannot pass run ${run.displayId}: currentPhase '${run.currentPhase}' still set`,
+    );
+  }
   const next: Run = { ...run, status: 'passed', completedAt: at };
   delete next.currentPhase;
   return next;
@@ -111,4 +116,25 @@ export function cancelRun(run: Run, reason?: string, at: Date = new Date()): Run
   };
   delete next.currentPhase;
   return next;
+}
+
+export function transitionToReady(run: Run): Run {
+  if (run.currentPhase !== undefined) {
+    throw new RunStateError(
+      `cannot transition ${run.displayId} to ready: currentPhase '${run.currentPhase}' still set`,
+    );
+  }
+  if (TERMINAL_STATUSES.has(run.status)) {
+    throw new RunStateError(`cannot transition ${run.displayId} to ready: run is ${run.status}`);
+  }
+  return { ...run, status: 'waiting' };
+}
+
+export function reactivate(run: Run): Run {
+  if (run.status !== 'waiting') {
+    throw new RunStateError(
+      `cannot reactivate ${run.displayId}: status is '${run.status}', expected 'waiting'`,
+    );
+  }
+  return { ...run, status: 'running' };
 }
