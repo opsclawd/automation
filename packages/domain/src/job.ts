@@ -70,6 +70,9 @@ export function markJobRunning(job: Job, now: Date): Job {
   return { ...job, status: 'running', startedAt: now };
 }
 
+// Stricter guard than TERMINAL.has() — only running jobs may be terminated.
+// This prevents transitioning queued, claimed, or terminal jobs to a terminal
+// state, matching PRD workflow semantics where jobs follow a strict lifecycle.
 function terminate(job: Job, status: 'succeeded' | 'failed' | 'cancelled', now: Date): Job {
   if (job.status !== 'running') {
     throw new JobStateError(

@@ -47,8 +47,8 @@ describe('FakeJobQueuePort', () => {
   });
   it('claimNext on second attempt returns next job (no double-claim)', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
-    q.enqueue({ job: job('a', 'r1') });
-    q.enqueue({ job: job('b', 'r1', { createdAt: new Date(Date.now() + 1000) }) });
+    q.enqueue({ job: job('a', 'r1', { createdAt: new Date('2026-01-01T00:00:00Z') }) });
+    q.enqueue({ job: job('b', 'r1', { createdAt: new Date('2026-01-01T00:00:01Z') }) });
     expect(q.claimNext({ workerId: WorkerId('w1') })?.id).toBe('a');
     expect(q.claimNext({ workerId: WorkerId('w2') })?.id).toBe('b');
   });
@@ -63,6 +63,22 @@ describe('FakeJobQueuePort', () => {
     q.markRunning(c.id, new Date());
     q.markSucceeded(c.id, new Date());
     expect(q.findById(c.id)?.status).toBe('succeeded');
+  });
+  it('lifecycle: claim -> markRunning -> markFailed', () => {
+    const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
+    q.enqueue({ job: job('a', 'r1') });
+    const c = q.claimNext({ workerId: WorkerId('w1') })!;
+    q.markRunning(c.id, new Date());
+    q.markFailed(c.id, new Date());
+    expect(q.findById(c.id)?.status).toBe('failed');
+  });
+  it('lifecycle: claim -> markRunning -> markCancelled', () => {
+    const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1')]));
+    q.enqueue({ job: job('a', 'r1') });
+    const c = q.claimNext({ workerId: WorkerId('w1') })!;
+    q.markRunning(c.id, new Date());
+    q.markCancelled(c.id, new Date());
+    expect(q.findById(c.id)?.status).toBe('cancelled');
   });
   it('listForRepo / listForRun return matching jobs', () => {
     const q = new FakeJobQueuePort(new FakeRepositoryPort([repo('r1'), repo('r2')]));
