@@ -41,7 +41,7 @@ export interface StartIssueRunOutput {
   uuid: string;
   displayId: string;
   exitCode: number;
-  status: 'passed' | 'failed';
+  status: 'passed' | 'failed' | 'cancelled';
 }
 
 export class StartIssueRun {
@@ -174,6 +174,17 @@ export class StartIssueRun {
       }
       const completedAt = now();
       const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
+      // If the run was cancelled (e.g. via SIGTERM or `runs cancel`), do not
+      // overwrite the terminal status with passed/failed.
+      const current = this.deps.runRepository.findByIssueNumber(input.issueNumber);
+      if (current && ['passed', 'failed', 'cancelled'].includes(current.status)) {
+        return {
+          uuid: run.uuid,
+          displayId: run.displayId,
+          exitCode: exec.exitCode,
+          status: current.status === 'cancelled' ? 'cancelled' : finalStatus,
+        };
+      }
       if (finalStatus === 'failed') {
         try {
           await tailer.drainAndStop();
