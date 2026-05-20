@@ -6,3 +6,4 @@ export * from './artifact.js';
 export * from './classify-exit.js';
 export * from './ids.js';
 export * from './repository.js';
+export * from './job.js';
