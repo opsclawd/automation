@@ -178,6 +178,24 @@ export class RunRepository {
       });
     return result.changes > 0;
   }
+
+  updateStatusByUuid(
+    uuid: string,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
+         WHERE uuid = @uuid AND status NOT IN ('passed','failed','cancelled')`,
+      )
+      .run({
+        status: patch.status,
+        completed_at: patch.completedAt.toISOString(),
+        failure_reason: patch.failureReason ?? null,
+        uuid,
+      });
+    return result.changes > 0;
+  }
 }
 
 function toRecord(row: RunRow): RunRecord {

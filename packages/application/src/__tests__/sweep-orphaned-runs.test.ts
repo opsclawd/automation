@@ -41,6 +41,12 @@ class FakeRunRepo implements RunRepositoryPort {
     }
     return false;
   }
+  updateStatusByUuid(
+    _uuid: string,
+    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean {
+    return false;
+  }
   addRun(r: RunRecord): void {
     this.runs.set(r.uuid, r);
   }

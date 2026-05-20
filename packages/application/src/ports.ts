@@ -48,6 +48,10 @@ export interface RunRepositoryPort {
     issueNumber: number,
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean;
+  updateStatusByUuid(
+    uuid: string,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
 }
 
 export interface RunDirectoryHandle {

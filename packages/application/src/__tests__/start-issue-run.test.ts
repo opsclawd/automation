@@ -78,6 +78,12 @@ class FakeRunRepository implements RunRepositoryPort {
   ): boolean {
     return true;
   }
+  updateStatusByUuid(
+    _uuid: string,
+    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean {
+    return true;
+  }
 }
 
 class FakeFailureRepository implements FailureRepositoryPort {

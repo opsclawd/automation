@@ -56,6 +56,27 @@ class FakeRunRepo implements RunRepositoryPort {
     }
     return false;
   }
+  updateStatusByUuid(
+    uuid: string,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean {
+    const r = this.runs.get(uuid);
+    if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) {
+      return false;
+    }
+    r.status = patch.status;
+    r.completedAt = patch.completedAt;
+    r.failureReason = patch.failureReason;
+    this.updates.push({
+      uuid,
+      patch: {
+        status: patch.status,
+        completedAt: patch.completedAt,
+        ...(patch.failureReason ? { failureReason: patch.failureReason } : {}),
+      },
+    });
+    return true;
+  }
   addRun(r: RunRecord): void {
     this.runs.set(r.uuid, r);
   }
@@ -166,5 +187,20 @@ describe('CancelRun', () => {
     expect(repo.updates).toHaveLength(1);
     expect(repo.updates[0]!.uuid).toBe('old-uuid');
     expect(repo.updates[0]!.patch.status).toBe('cancelled');
+  });
+
+  it('uuid path throws when run is already terminal', () => {
+    const repo = new FakeRunRepo();
+    repo.addRun({
+      uuid: 'already-passed',
+      displayId: 'issue-30-20260513-000000',
+      issueNumber: 30,
+      type: 'issue_to_pr',
+      status: 'passed',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T19:00:00Z'),
+    });
+    const usecase = new CancelRun({ runRepository: repo });
+    expect(() => usecase.execute({ uuid: 'already-passed' })).toThrow(/already passed/i);
   });
 });

@@ -31,7 +31,10 @@ export class CancelRun {
       ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
     };
     if (input.uuid) {
-      this.deps.runRepository.update(existing.uuid, patch);
+      const updated = this.deps.runRepository.updateStatusByUuid(existing.uuid, patch);
+      if (!updated) {
+        throw new Error(`Run ${existing.uuid} is already ${existing.status}`);
+      }
     } else {
       const updated = this.deps.runRepository.updateStatusByIssueNumber(
         existing.issueNumber,
