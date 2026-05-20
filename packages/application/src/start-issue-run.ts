@@ -76,23 +76,35 @@ export class StartIssueRun {
       });
       throw err;
     }
+    let tmpDirHandle: ReturnType<TmpDirectoryFactory>;
+    try {
+      tmpDirHandle = this.deps.tmpDirectoryFactory({
+        baseTmpDir: this.deps.baseTmpDir,
+        runId: run.uuid,
+      });
+    } catch (err) {
+      const failureReason = err instanceof Error ? err.message : String(err);
+      this.deps.runRepository.update(run.uuid, {
+        status: 'failed',
+        completedAt: now(),
+        exitCode: -1,
+        durationMs: 0,
+        failureReason,
+      });
+      throw err;
+    }
     const env: Record<string, string> = {
       AI_RUN_UUID: run.uuid,
       AI_RUN_DISPLAY_ID: run.displayId,
       AI_RUN_DIR: dir.runRoot,
       AI_RUN_EVENTS_FILE: dir.paths.eventsJsonlPath,
       AI_ISSUE_NUMBER: String(input.issueNumber),
+      TMPDIR: tmpDirHandle.tmpDir,
+      SQLITE_TMPDIR: tmpDirHandle.tmpDir,
     };
     if (this.deps.baseBranch !== undefined) env.AI_BASE_BRANCH = this.deps.baseBranch;
     if (this.deps.model !== undefined) env.AI_MODEL = this.deps.model;
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
-
-    const tmpDirHandle = this.deps.tmpDirectoryFactory({
-      baseTmpDir: this.deps.baseTmpDir,
-      runId: run.uuid,
-    });
-    env.TMPDIR = tmpDirHandle.tmpDir;
-    env.SQLITE_TMPDIR = tmpDirHandle.tmpDir;
 
     const collectedEvents: ClassifierEvent[] = [];
     let classified = false;

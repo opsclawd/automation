@@ -143,7 +143,8 @@ function sweepOrphanedTmpDirs(baseTmpDir: string, runRepository: RunRepositoryPo
       continue;
     }
     const record = runRepository.findByUuid(entry);
-    if (!record || ['passed', 'failed', 'cancelled'].includes(record.status)) {
+    if (!record) continue;
+    if (['passed', 'failed', 'cancelled'].includes(record.status)) {
       try {
         rmSync(entryPath, { recursive: true, force: true });
       } catch {

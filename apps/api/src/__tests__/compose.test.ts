@@ -253,6 +253,26 @@ exit 1
     }
   });
 
+  it('does not sweep tmp dirs for unknown UUIDs', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const origTmpdir = process.env.TMPDIR;
+    delete process.env.TMPDIR;
+    try {
+      const tmpBase = join(root, '.ai-tmp');
+      mkdirSync(tmpBase, { recursive: true });
+      const unknownTmpDir = join(tmpBase, 'unknown-uuid-from-another-instance');
+      mkdirSync(unknownTmpDir, { recursive: true });
+      writeFileSync(join(unknownTmpDir, 'test.tmp'), 'active run from another repo');
+      expect(existsSync(unknownTmpDir)).toBe(true);
+      composeRoot({ repoRoot: root, scriptPath });
+      expect(existsSync(unknownTmpDir)).toBe(true);
+    } finally {
+      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
+      else delete process.env.TMPDIR;
+    }
+  });
+
   it('removes per-run tmp dir after a passing run completes', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);

@@ -680,6 +680,33 @@ describe('StartIssueRun', () => {
     await expect(usecase.execute({ issueNumber: 42 })).rejects.toThrow(/spawn EACCES/);
     expect(removedDirs).toHaveLength(1);
   });
+
+  it('marks run as failed when tmpDirectoryFactory throws', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const failingTmpDir: TmpDirectoryFactory = () => {
+      throw new Error('ENOSPC: no space left on device');
+    };
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: failingTmpDir,
+      now: fixedNow,
+    });
+    await expect(usecase.execute({ issueNumber: 50 })).rejects.toThrow(/ENOSPC/);
+    const patch = repo.finalPatch(repo.inserted[0]!.uuid);
+    expect(patch.status).toBe('failed');
+    expect(patch.failureReason).toContain('ENOSPC');
+  });
 });
 
 class FakeEventRepository implements EventRepositoryPort {
