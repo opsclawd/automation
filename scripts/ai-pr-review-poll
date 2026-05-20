@@ -961,15 +961,30 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
     : # keep polling — reviewers may add follow-up comments
   fi
 
-  # Intentionally do NOT update LAST_REMOTE_SHA here — leave it as the
-  # SHA observed at the *start* of this iteration. If the agent pushed
-  # during process_reviews, the next iteration's top-of-loop fetch will
-  # see origin advanced past LAST_REMOTE_SHA and reset POLL_COUNT,
-  # giving the next round of reviewer comments a fresh budget.
+  # Emit poll.completed BEFORE the branch-advance check below, so the
+  # started/completed pair stays consistent on this iteration's POLL_COUNT
+  # even if the reset fires immediately after.
+  PROCESSED_COUNT=0
+  if [[ -f "$PROCESSED_IDS_FILE" ]]; then
+    PROCESSED_COUNT=$(wc -l < "$PROCESSED_IDS_FILE" | tr -d ' ')
+  fi
+  PENDING_COUNT=0
+  if [[ -s "$REPLIED_IDS_FILE" ]]; then
+    PENDING_COUNT=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
+  fi
+  emit_event "pr-review-poll" "info" "pr-review-poll.poll.completed" \
+    "poll ${POLL_COUNT} complete" \
+    poll="$POLL_COUNT" processed="$PROCESSED_COUNT" pending="$PENDING_COUNT"
+
+  # Intentionally do NOT update LAST_REMOTE_SHA at the top of the loop —
+  # it stays pinned to the SHA observed at the *start* of this iteration.
+  # If the agent pushed during process_reviews, this check sees origin
+  # advanced past LAST_REMOTE_SHA and resets POLL_COUNT, giving the next
+  # round of reviewer comments a fresh budget.
   #
-  # We must check for the branch advance BEFORE the break check below,
-  # otherwise a push on the final consecutive poll exits the loop
-  # without granting the promised fresh budget.
+  # The check must run BEFORE the break below, otherwise a push on the
+  # final consecutive poll exits without granting the promised fresh
+  # budget.
   git fetch origin "$PR_BRANCH" 2>/dev/null || true
   CURRENT_REMOTE_SHA=$(git rev-parse "origin/${PR_BRANCH}" 2>/dev/null || echo "")
   if [[ -n "$LAST_REMOTE_SHA" && -n "$CURRENT_REMOTE_SHA" && "$CURRENT_REMOTE_SHA" != "$LAST_REMOTE_SHA" ]]; then
@@ -985,18 +1000,6 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   if [[ $POLL_COUNT -ge $MAX_POLLS || $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
     break
   fi
-
-  PROCESSED_COUNT=0
-  if [[ -f "$PROCESSED_IDS_FILE" ]]; then
-    PROCESSED_COUNT=$(wc -l < "$PROCESSED_IDS_FILE" | tr -d ' ')
-  fi
-  PENDING_COUNT=0
-  if [[ -s "$REPLIED_IDS_FILE" ]]; then
-    PENDING_COUNT=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
-  fi
-  emit_event "pr-review-poll" "info" "pr-review-poll.poll.completed" \
-    "poll ${POLL_COUNT} complete" \
-    poll="$POLL_COUNT" processed="$PROCESSED_COUNT" pending="$PENDING_COUNT"
 
   log "Sleeping ${POLL_INTERVAL}s until next poll..."
   sleep "$POLL_INTERVAL"
