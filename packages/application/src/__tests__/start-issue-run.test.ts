@@ -14,6 +14,7 @@ import type {
   RunRepositoryPort,
   RunRepositoryUpdatePatch,
   RunRecord,
+  TmpDirectoryFactory,
 } from '../ports.js';
 
 interface RecordedUpdate {
@@ -180,6 +181,11 @@ function fakeBash(result: { exitCode: number; durationMs?: number } | Error): {
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
+const fakeTmpDir: TmpDirectoryFactory = (input) => ({
+  tmpDir: `${input.baseTmpDir}/${input.runId}`,
+  remove() {},
+});
+
 const defaultEventDeps = () => ({
   eventRepository: new FakeEventRepository(),
   eventBus: new FakeEventBus(),
@@ -188,6 +194,8 @@ const defaultEventDeps = () => ({
     drainAndStop: async () => {},
     stop: async () => {},
   })) as EventTailerFactory,
+  baseTmpDir: '/fake/.ai-tmp',
+  tmpDirectoryFactory: fakeTmpDir,
 });
 
 describe('StartIssueRun', () => {
@@ -539,6 +547,166 @@ describe('StartIssueRun', () => {
     expect(errors.some((e) => /Failed to insert failure record/.test(e))).toBe(true);
     expect(dirs[0]!.failureWrites).toHaveLength(1);
   });
+
+  it('injects TMPDIR and SQLITE_TMPDIR into the run env dict', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 20 });
+    const env = calls[0]!.env;
+    expect(env.TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
+    expect(env.SQLITE_TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
+  });
+
+  it('uses operator-provided baseTmpDir for per-run tmp directories', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      baseTmpDir: '/custom/tmp',
+      tmpDirectoryFactory: fakeTmpDir,
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 30 });
+    const env = calls[0]!.env;
+    expect(env.TMPDIR).toBe(`/custom/tmp/${out.uuid}`);
+    expect(env.SQLITE_TMPDIR).toBe(`/custom/tmp/${out.uuid}`);
+  });
+
+  it('calls tmpDirHandle.remove() in finally block on passing run', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const removedDirs: string[] = [];
+    const trackingTmpDir: TmpDirectoryFactory = (input) => ({
+      tmpDir: `${input.baseTmpDir}/${input.runId}`,
+      remove() {
+        removedDirs.push(`${input.baseTmpDir}/${input.runId}`);
+      },
+    });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      tmpDirectoryFactory: trackingTmpDir,
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 40 });
+    expect(removedDirs).toHaveLength(1);
+    expect(removedDirs[0]).toBe(`/fake/.ai-tmp/${out.uuid}`);
+  });
+
+  it('calls tmpDirHandle.remove() in finally block on failed run', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 1 });
+    const removedDirs: string[] = [];
+    const trackingTmpDir: TmpDirectoryFactory = (input) => ({
+      tmpDir: `${input.baseTmpDir}/${input.runId}`,
+      remove() {
+        removedDirs.push(`${input.baseTmpDir}/${input.runId}`);
+      },
+    });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      tmpDirectoryFactory: trackingTmpDir,
+      now: fixedNow,
+    });
+    await usecase.execute({ issueNumber: 41 });
+    expect(removedDirs).toHaveLength(1);
+  });
+
+  it('calls tmpDirHandle.remove() in finally block when runBashScript throws', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash(new Error('spawn EACCES'));
+    const removedDirs: string[] = [];
+    const trackingTmpDir: TmpDirectoryFactory = (input) => ({
+      tmpDir: `${input.baseTmpDir}/${input.runId}`,
+      remove() {
+        removedDirs.push(`${input.baseTmpDir}/${input.runId}`);
+      },
+    });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      tmpDirectoryFactory: trackingTmpDir,
+      now: fixedNow,
+    });
+    await expect(usecase.execute({ issueNumber: 42 })).rejects.toThrow(/spawn EACCES/);
+    expect(removedDirs).toHaveLength(1);
+  });
+
+  it('marks run as failed when tmpDirectoryFactory throws', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const failingTmpDir: TmpDirectoryFactory = () => {
+      throw new Error('ENOSPC: no space left on device');
+    };
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: failingTmpDir,
+      now: fixedNow,
+    });
+    await expect(usecase.execute({ issueNumber: 50 })).rejects.toThrow(/ENOSPC/);
+    const patch = repo.finalPatch(repo.inserted[0]!.uuid);
+    expect(patch.status).toBe('failed');
+    expect(patch.failureReason).toContain('ENOSPC');
+  });
 });
 
 class FakeEventRepository implements EventRepositoryPort {
@@ -592,6 +760,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 
@@ -645,6 +815,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 
@@ -716,6 +888,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 
@@ -785,6 +959,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 

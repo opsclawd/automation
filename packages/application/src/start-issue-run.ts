@@ -12,6 +12,7 @@ import type {
   RunDirectoryFactory,
   RunDirectoryHandle,
   RunRepositoryPort,
+  TmpDirectoryFactory,
 } from './ports.js';
 
 export interface StartIssueRunDeps {
@@ -25,6 +26,8 @@ export interface StartIssueRunDeps {
   eventRepository: EventRepositoryPort;
   eventBus: EventBusPort;
   createEventTailer: EventTailerFactory;
+  baseTmpDir: string;
+  tmpDirectoryFactory: TmpDirectoryFactory;
   baseBranch?: string;
   model?: string;
   agentCli?: string;
@@ -73,12 +76,31 @@ export class StartIssueRun {
       });
       throw err;
     }
+    let tmpDirHandle: ReturnType<TmpDirectoryFactory>;
+    try {
+      tmpDirHandle = this.deps.tmpDirectoryFactory({
+        baseTmpDir: this.deps.baseTmpDir,
+        runId: run.uuid,
+      });
+    } catch (err) {
+      const failureReason = err instanceof Error ? err.message : String(err);
+      this.deps.runRepository.update(run.uuid, {
+        status: 'failed',
+        completedAt: now(),
+        exitCode: -1,
+        durationMs: 0,
+        failureReason,
+      });
+      throw err;
+    }
     const env: Record<string, string> = {
       AI_RUN_UUID: run.uuid,
       AI_RUN_DISPLAY_ID: run.displayId,
       AI_RUN_DIR: dir.runRoot,
       AI_RUN_EVENTS_FILE: dir.paths.eventsJsonlPath,
       AI_ISSUE_NUMBER: String(input.issueNumber),
+      TMPDIR: tmpDirHandle.tmpDir,
+      SQLITE_TMPDIR: tmpDirHandle.tmpDir,
     };
     if (this.deps.baseBranch !== undefined) env.AI_BASE_BRANCH = this.deps.baseBranch;
     if (this.deps.model !== undefined) env.AI_MODEL = this.deps.model;
@@ -120,170 +142,185 @@ export class StartIssueRun {
         logger.error(`Invalid event line for run ${run.displayId}: ${err.message}`, { line });
       },
     });
-    await tailer.start();
-
-    let exec: Awaited<ReturnType<RunBashScriptFn>>;
     try {
+      await tailer.start();
       try {
-        exec = await this.deps.runBashScript({
-          scriptPath: this.deps.scriptPath,
-          args: [String(input.issueNumber)],
-          env,
-          stdoutPath: dir.paths.stdoutLogPath,
-          stderrPath: dir.paths.stderrLogPath,
-          combinedPath: dir.paths.combinedLogPath,
-          tee: this.deps.tee ?? false,
-        });
-      } catch (err) {
-        const errorDuration = now().getTime() - startedAt.getTime();
+        let exec: Awaited<ReturnType<RunBashScriptFn>>;
+        try {
+          exec = await this.deps.runBashScript({
+            scriptPath: this.deps.scriptPath,
+            args: [String(input.issueNumber)],
+            env,
+            stdoutPath: dir.paths.stdoutLogPath,
+            stderrPath: dir.paths.stderrLogPath,
+            combinedPath: dir.paths.combinedLogPath,
+            tee: this.deps.tee ?? false,
+          });
+        } catch (err) {
+          const errorDuration = now().getTime() - startedAt.getTime();
+          const completedAt = now();
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          const failure: Failure = {
+            runUuid: run.uuid,
+            kind: 'command_failed',
+            message: errorMessage,
+            exitCode: -1,
+            canRetry: false,
+            suggestedAction: 'Inspect the runner error and stderr.log for the cause.',
+            artifacts: [
+              dir.paths.stdoutLogPath,
+              dir.paths.stderrLogPath,
+              dir.paths.combinedLogPath,
+            ],
+            detectedAt: completedAt,
+          };
+          try {
+            dir.writeFailureJson(failure);
+          } catch (writeErr) {
+            logger.error(`Failed to write failure.json for ${run.displayId}`, writeErr);
+          }
+          try {
+            this.deps.failureRepository.insert(failure);
+          } catch (dbErr) {
+            logger.error(`Failed to insert failure record for ${run.displayId}`, dbErr);
+          }
+          this.deps.runRepository.update(run.uuid, {
+            status: 'failed',
+            completedAt,
+            exitCode: -1,
+            failureReason: errorMessage,
+            durationMs: errorDuration,
+          });
+          try {
+            dir.writeRunJson(failRun(run, errorMessage, completedAt));
+          } catch (writeErr) {
+            logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
+          }
+          throw err;
+        }
         const completedAt = now();
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        const failure: Failure = {
-          runUuid: run.uuid,
-          kind: 'command_failed',
-          message: errorMessage,
-          exitCode: -1,
-          canRetry: false,
-          suggestedAction: 'Inspect the runner error and stderr.log for the cause.',
-          artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
-          detectedAt: completedAt,
-        };
-        try {
-          dir.writeFailureJson(failure);
-        } catch (writeErr) {
-          logger.error(`Failed to write failure.json for ${run.displayId}`, writeErr);
-        }
-        try {
-          this.deps.failureRepository.insert(failure);
-        } catch (dbErr) {
-          logger.error(`Failed to insert failure record for ${run.displayId}`, dbErr);
-        }
-        this.deps.runRepository.update(run.uuid, {
-          status: 'failed',
-          completedAt,
-          exitCode: -1,
-          failureReason: errorMessage,
-          durationMs: errorDuration,
-        });
-        try {
-          dir.writeRunJson(failRun(run, errorMessage, completedAt));
-        } catch (writeErr) {
-          logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
-        }
-        throw err;
-      }
-      const completedAt = now();
-      const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
-      // If the run was cancelled (e.g. via SIGTERM or `runs cancel`), do not
-      // overwrite the terminal status with passed/failed.
-      // Query by UUID (not issueNumber) to avoid picking up a newer run for
-      // the same issue if one was inserted after cancellation.
-      const current = this.deps.runRepository.findByUuid(run.uuid);
-      if (current && ['passed', 'failed', 'cancelled'].includes(current.status)) {
-        if (current.status === 'cancelled') {
-          try {
-            dir.writeRunJson(
-              cancelRun(run, current.failureReason, current.completedAt ?? completedAt),
-            );
-          } catch (writeErr) {
-            logger.error(`Failed to write run.json for ${run.displayId} on cancel`, writeErr);
+        const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
+        // If the run was cancelled (e.g. via SIGTERM or `runs cancel`), do not
+        // overwrite the terminal status with passed/failed.
+        // Query by UUID (not issueNumber) to avoid picking up a newer run for
+        // the same issue if one was inserted after cancellation.
+        const current = this.deps.runRepository.findByUuid(run.uuid);
+        if (current && ['passed', 'failed', 'cancelled'].includes(current.status)) {
+          if (current.status === 'cancelled') {
+            try {
+              dir.writeRunJson(
+                cancelRun(run, current.failureReason, current.completedAt ?? completedAt),
+              );
+            } catch (writeErr) {
+              logger.error(`Failed to write run.json for ${run.displayId} on cancel`, writeErr);
+            }
+          } else if (current.status === 'failed') {
+            try {
+              dir.writeRunJson(
+                failRun(
+                  run,
+                  current.failureReason ?? 'externally marked failed',
+                  current.completedAt ?? completedAt,
+                ),
+              );
+            } catch (writeErr) {
+              logger.error(`Failed to write run.json for ${run.displayId} on fail`, writeErr);
+            }
+          } else if (current.status === 'passed') {
+            try {
+              dir.writeRunJson(passRun(run, current.completedAt ?? completedAt));
+            } catch (writeErr) {
+              logger.error(`Failed to write run.json for ${run.displayId} on pass`, writeErr);
+            }
           }
-        } else if (current.status === 'failed') {
+          return {
+            uuid: run.uuid,
+            displayId: run.displayId,
+            exitCode: exec.exitCode,
+            status: current.status as 'passed' | 'failed' | 'cancelled',
+          };
+        }
+        if (finalStatus === 'failed') {
           try {
-            dir.writeRunJson(
-              failRun(
-                run,
-                current.failureReason ?? 'externally marked failed',
-                current.completedAt ?? completedAt,
-              ),
-            );
-          } catch (writeErr) {
-            logger.error(`Failed to write run.json for ${run.displayId} on fail`, writeErr);
+            await tailer.drainAndStop();
+          } catch (e) {
+            logger.error('Failed to drain event tailer before classification', e);
           }
-        } else if (current.status === 'passed') {
+          const tail = dir.readCombinedLog();
+          const failure = this.deps.classifyExit({
+            exitCode: exec.exitCode,
+            combinedLogTail: tail,
+            runUuid: run.uuid,
+            artifacts: [
+              dir.paths.stdoutLogPath,
+              dir.paths.stderrLogPath,
+              dir.paths.combinedLogPath,
+            ],
+            detectedAt: completedAt,
+            events: collectedEvents,
+          });
+          classified = true;
           try {
-            dir.writeRunJson(passRun(run, current.completedAt ?? completedAt));
-          } catch (writeErr) {
-            logger.error(`Failed to write run.json for ${run.displayId} on pass`, writeErr);
+            dir.writeFailureJson(failure);
+          } catch (err) {
+            logger.error(`Failed to write failure.json for ${run.displayId}`, err);
+          }
+          try {
+            this.deps.failureRepository.insert(failure);
+          } catch (err) {
+            logger.error(`Failed to insert failure record for ${run.displayId}`, err);
+          }
+          this.deps.runRepository.update(run.uuid, {
+            status: 'failed',
+            completedAt,
+            exitCode: exec.exitCode,
+            durationMs: exec.durationMs,
+            failureReason: failure.message,
+          });
+          try {
+            dir.writeRunJson(failRun(run, failure.message, completedAt));
+          } catch (err) {
+            logger.error(`Failed to write run.json for ${run.displayId}`, err);
+            const writeFailReason = err instanceof Error ? err.message : String(err);
+            this.deps.runRepository.update(run.uuid, {
+              failureReason: `${failure.message}; run.json write failed: ${writeFailReason}`,
+            });
+          }
+        } else {
+          this.deps.runRepository.update(run.uuid, {
+            status: 'passed',
+            completedAt,
+            exitCode: exec.exitCode,
+            durationMs: exec.durationMs,
+          });
+          try {
+            dir.writeRunJson(passRun(run, completedAt));
+          } catch (err) {
+            logger.error(`Failed to write run.json for ${run.displayId}`, err);
+            const writeFailReason = err instanceof Error ? err.message : String(err);
+            this.deps.runRepository.update(run.uuid, {
+              failureReason: `passed; run.json write failed: ${writeFailReason}`,
+            });
           }
         }
         return {
           uuid: run.uuid,
           displayId: run.displayId,
           exitCode: exec.exitCode,
-          status: current.status as 'passed' | 'failed' | 'cancelled',
+          status: finalStatus,
         };
-      }
-      if (finalStatus === 'failed') {
+      } finally {
         try {
           await tailer.drainAndStop();
         } catch (e) {
-          logger.error('Failed to drain event tailer before classification', e);
-        }
-        const tail = dir.readCombinedLog();
-        const failure = this.deps.classifyExit({
-          exitCode: exec.exitCode,
-          combinedLogTail: tail,
-          runUuid: run.uuid,
-          artifacts: [dir.paths.stdoutLogPath, dir.paths.stderrLogPath, dir.paths.combinedLogPath],
-          detectedAt: completedAt,
-          events: collectedEvents,
-        });
-        classified = true;
-        try {
-          dir.writeFailureJson(failure);
-        } catch (err) {
-          logger.error(`Failed to write failure.json for ${run.displayId}`, err);
-        }
-        try {
-          this.deps.failureRepository.insert(failure);
-        } catch (err) {
-          logger.error(`Failed to insert failure record for ${run.displayId}`, err);
-        }
-        this.deps.runRepository.update(run.uuid, {
-          status: 'failed',
-          completedAt,
-          exitCode: exec.exitCode,
-          durationMs: exec.durationMs,
-          failureReason: failure.message,
-        });
-        try {
-          dir.writeRunJson(failRun(run, failure.message, completedAt));
-        } catch (err) {
-          logger.error(`Failed to write run.json for ${run.displayId}`, err);
-          const writeFailReason = err instanceof Error ? err.message : String(err);
-          this.deps.runRepository.update(run.uuid, {
-            failureReason: `${failure.message}; run.json write failed: ${writeFailReason}`,
-          });
-        }
-      } else {
-        this.deps.runRepository.update(run.uuid, {
-          status: 'passed',
-          completedAt,
-          exitCode: exec.exitCode,
-          durationMs: exec.durationMs,
-        });
-        try {
-          dir.writeRunJson(passRun(run, completedAt));
-        } catch (err) {
-          logger.error(`Failed to write run.json for ${run.displayId}`, err);
-          const writeFailReason = err instanceof Error ? err.message : String(err);
-          this.deps.runRepository.update(run.uuid, {
-            failureReason: `passed; run.json write failed: ${writeFailReason}`,
-          });
+          logger.error('Failed to drain event tailer', e);
         }
       }
-      return {
-        uuid: run.uuid,
-        displayId: run.displayId,
-        exitCode: exec.exitCode,
-        status: finalStatus,
-      };
     } finally {
       try {
-        await tailer.drainAndStop();
+        tmpDirHandle.remove();
       } catch (e) {
-        logger.error('Failed to drain event tailer', e);
+        logger.error('Failed to remove run tmp directory', e);
       }
     }
   }

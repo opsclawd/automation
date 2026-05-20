@@ -87,6 +87,16 @@ export interface RunBashScriptResult {
 
 export type RunBashScriptFn = (input: RunBashScriptInput) => Promise<RunBashScriptResult>;
 
+export interface TmpDirectoryHandle {
+  readonly tmpDir: string;
+  remove(): void;
+}
+
+export type TmpDirectoryFactory = (input: {
+  baseTmpDir: string;
+  runId: string;
+}) => TmpDirectoryHandle;
+
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
 export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
