@@ -176,7 +176,9 @@ export class StartIssueRun {
       const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';
       // If the run was cancelled (e.g. via SIGTERM or `runs cancel`), do not
       // overwrite the terminal status with passed/failed.
-      const current = this.deps.runRepository.findByIssueNumber(input.issueNumber);
+      // Query by UUID (not issueNumber) to avoid picking up a newer run for
+      // the same issue if one was inserted after cancellation.
+      const current = this.deps.runRepository.findByUuid(run.uuid);
       if (current && ['passed', 'failed', 'cancelled'].includes(current.status)) {
         if (current.status === 'cancelled') {
           try {
@@ -185,6 +187,24 @@ export class StartIssueRun {
             );
           } catch (writeErr) {
             logger.error(`Failed to write run.json for ${run.displayId} on cancel`, writeErr);
+          }
+        } else if (current.status === 'failed') {
+          try {
+            dir.writeRunJson(
+              failRun(
+                run,
+                current.failureReason ?? 'externally marked failed',
+                current.completedAt ?? completedAt,
+              ),
+            );
+          } catch (writeErr) {
+            logger.error(`Failed to write run.json for ${run.displayId} on fail`, writeErr);
+          }
+        } else if (current.status === 'passed') {
+          try {
+            dir.writeRunJson(passRun(run, current.completedAt ?? completedAt));
+          } catch (writeErr) {
+            logger.error(`Failed to write run.json for ${run.displayId} on pass`, writeErr);
           }
         }
         return {
