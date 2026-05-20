@@ -44,8 +44,7 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, newExpiresAt: Date): void {
     const l = this.leases.get(repoId);
-    if (!l) return;
-    if (l.workerId !== workerId) throw new WorkerLeaseConflictError(repoId, l.workerId);
+    if (!l || l.workerId !== workerId) return;
     this.leases.set(repoId, { ...l, heartbeatAt: now, expiresAt: newExpiresAt });
   }
 
@@ -71,13 +70,13 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
       if (!workerStale) continue;
       if (!input.recoverableRunIds.has(lease.runId)) continue;
       input.resetWorktree(lease.repoId);
+      this.leases.delete(lease.repoId);
       input.onReclaimed({
         repoId: lease.repoId,
         previousWorkerId: lease.workerId,
         previousRunId: lease.runId,
         reason: 'expired + worker stale + run recoverable',
       });
-      this.leases.delete(lease.repoId);
       reclaimed.push(lease);
     }
     return reclaimed;
