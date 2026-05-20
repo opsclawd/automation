@@ -14,6 +14,7 @@ import type {
   RunRepositoryPort,
   RunRepositoryUpdatePatch,
   RunRecord,
+  TmpDirectoryFactory,
 } from '../ports.js';
 
 interface RecordedUpdate {
@@ -538,6 +539,33 @@ describe('StartIssueRun', () => {
     expect(patch.failureReason).toBeDefined();
     expect(errors.some((e) => /Failed to insert failure record/.test(e))).toBe(true);
     expect(dirs[0]!.failureWrites).toHaveLength(1);
+  });
+
+  it('injects TMPDIR and SQLITE_TMPDIR into the run env dict', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const fakeTmpDir: TmpDirectoryFactory = (input) => ({
+      tmpDir: `${input.baseTmpDir}/${input.runId}`,
+    });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 20 });
+    const env = calls[0]!.env;
+    expect(env.TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
+    expect(env.SQLITE_TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
   });
 });
 
