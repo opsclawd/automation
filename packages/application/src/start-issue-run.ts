@@ -12,6 +12,7 @@ import type {
   RunDirectoryFactory,
   RunDirectoryHandle,
   RunRepositoryPort,
+  TmpDirectoryFactory,
 } from './ports.js';
 
 export interface StartIssueRunDeps {
@@ -25,6 +26,8 @@ export interface StartIssueRunDeps {
   eventRepository: EventRepositoryPort;
   eventBus: EventBusPort;
   createEventTailer: EventTailerFactory;
+  baseTmpDir: string;
+  tmpDirectoryFactory: TmpDirectoryFactory;
   baseBranch?: string;
   model?: string;
   agentCli?: string;
@@ -83,6 +86,13 @@ export class StartIssueRun {
     if (this.deps.baseBranch !== undefined) env.AI_BASE_BRANCH = this.deps.baseBranch;
     if (this.deps.model !== undefined) env.AI_MODEL = this.deps.model;
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
+
+    const tmpDirHandle = this.deps.tmpDirectoryFactory({
+      baseTmpDir: this.deps.baseTmpDir,
+      runId: run.uuid,
+    });
+    env.TMPDIR = tmpDirHandle.tmpDir;
+    env.SQLITE_TMPDIR = tmpDirHandle.tmpDir;
 
     const collectedEvents: ClassifierEvent[] = [];
     let classified = false;

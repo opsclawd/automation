@@ -181,6 +181,10 @@ function fakeBash(result: { exitCode: number; durationMs?: number } | Error): {
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
+const fakeTmpDir: TmpDirectoryFactory = (input) => ({
+  tmpDir: `${input.baseTmpDir}/${input.runId}`,
+});
+
 const defaultEventDeps = () => ({
   eventRepository: new FakeEventRepository(),
   eventBus: new FakeEventBus(),
@@ -189,6 +193,8 @@ const defaultEventDeps = () => ({
     drainAndStop: async () => {},
     stop: async () => {},
   })) as EventTailerFactory,
+  baseTmpDir: '/fake/.ai-tmp',
+  tmpDirectoryFactory: fakeTmpDir,
 });
 
 describe('StartIssueRun', () => {
@@ -546,9 +552,6 @@ describe('StartIssueRun', () => {
     const failureRepo = new FakeFailureRepository();
     const { factory } = fakeDirectoryFactory();
     const { fn: bash, calls } = fakeBash({ exitCode: 0 });
-    const fakeTmpDir: TmpDirectoryFactory = (input) => ({
-      tmpDir: `${input.baseTmpDir}/${input.runId}`,
-    });
     const usecase = new StartIssueRun({
       runRepository: repo,
       failureRepository: failureRepo,
@@ -620,6 +623,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 
@@ -673,6 +678,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 
@@ -744,6 +751,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 
@@ -813,6 +822,8 @@ describe('StartIssueRun event ingestion', () => {
       eventRepository: eventRepo,
       eventBus: eventBus,
       createEventTailer: fakeTailerFactory,
+      baseTmpDir: '/fake/.ai-tmp',
+      tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
 
