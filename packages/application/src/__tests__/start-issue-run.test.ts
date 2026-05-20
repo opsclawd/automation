@@ -571,6 +571,36 @@ describe('StartIssueRun', () => {
     expect(env.TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
     expect(env.SQLITE_TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
   });
+
+  it('uses operator-provided baseTmpDir for per-run tmp directories', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      baseTmpDir: '/custom/tmp',
+      tmpDirectoryFactory: fakeTmpDir,
+      eventRepository: new FakeEventRepository(),
+      eventBus: new FakeEventBus(),
+      createEventTailer: (() => ({
+        start: async () => {},
+        drainAndStop: async () => {},
+        stop: async () => {},
+      })) as EventTailerFactory,
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 30 });
+    const env = calls[0]!.env;
+    expect(env.TMPDIR).toBe(`/custom/tmp/${out.uuid}`);
+    expect(env.SQLITE_TMPDIR).toBe(`/custom/tmp/${out.uuid}`);
+  });
 });
 
 class FakeEventRepository implements EventRepositoryPort {
