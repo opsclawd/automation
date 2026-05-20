@@ -372,4 +372,57 @@ describe('CLI run command signal handlers', () => {
     expect(run.status).toBe('cancelled');
     expect(run.failure_reason).toMatch(/interrupted by SIGTERM/i);
   }, 45_000);
+
+  it('marks run as cancelled when process receives SIGINT', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigint-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const scriptPath = join(root, 'long-running.sh');
+    writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
+    chmodSync(scriptPath, 0o755);
+
+    const tsxPath = join(apiRoot, 'node_modules/.bin/tsx');
+    const cliPath = join(apiRoot, 'src/cli.ts');
+    const child = spawn(tsxPath, [cliPath, 'run', '--issue', '78', '--script', scriptPath], {
+      cwd: root,
+      env: { ...process.env, NODE_NO_WARNINGS: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for run row')), 15_000);
+      const poll = () => {
+        try {
+          const db = openDatabase(dbPath);
+          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 78').get();
+          db.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGINT');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const db = openDatabase(dbPath);
+    const run = db
+      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 78')
+      .get() as { status: string; failure_reason: string | null };
+    db.close();
+
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+  }, 45_000);
 });
