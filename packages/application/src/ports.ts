@@ -110,6 +110,8 @@ export interface RepositoryPort {
   listEnabled(): Repository[];
 }
 
+export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
+
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
 export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
