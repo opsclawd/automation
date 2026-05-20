@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
@@ -9,6 +10,17 @@ import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(__dirname, '..', '..');
+const require = createRequire(join(apiRoot, 'package.json'));
+const tsxEsmPath = require.resolve('tsx/esm');
+const cliPath = join(apiRoot, 'src', 'cli.ts');
+
+function spawnOrchestrator(args: string[], cwd: string) {
+  return spawn('node', ['--conditions=development', '--import', tsxEsmPath, cliPath, ...args], {
+    cwd,
+    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
 
 const tempDirs: string[] = [];
 
@@ -323,13 +335,7 @@ describe('CLI run command signal handlers', () => {
     writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
     chmodSync(scriptPath, 0o755);
 
-    const tsxPath = join(apiRoot, 'node_modules/.bin/tsx');
-    const cliPath = join(apiRoot, 'src/cli.ts');
-    const child = spawn(tsxPath, [cliPath, 'run', '--issue', '77', '--script', scriptPath], {
-      cwd: root,
-      env: { ...process.env, NODE_NO_WARNINGS: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const child = spawnOrchestrator(['run', '--issue', '77', '--script', scriptPath], root);
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
@@ -380,13 +386,7 @@ describe('CLI run command signal handlers', () => {
     writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
     chmodSync(scriptPath, 0o755);
 
-    const tsxPath = join(apiRoot, 'node_modules/.bin/tsx');
-    const cliPath = join(apiRoot, 'src/cli.ts');
-    const child = spawn(tsxPath, [cliPath, 'run', '--issue', '78', '--script', scriptPath], {
-      cwd: root,
-      env: { ...process.env, NODE_NO_WARNINGS: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    const child = spawnOrchestrator(['run', '--issue', '78', '--script', scriptPath], root);
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
