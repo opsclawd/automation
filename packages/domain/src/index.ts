@@ -7,3 +7,5 @@ export * from './classify-exit.js';
 export * from './ids.js';
 export * from './repository.js';
 export * from './job.js';
+export * from './worker.js';
+export * from './worker-lease.js';
