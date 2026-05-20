@@ -65,4 +65,21 @@ describe('Job lifecycle', () => {
     const failed = markJobFailed(j, new Date());
     expect(() => markJobCancelled(failed, new Date())).toThrow(JobStateError);
   });
+
+  it.each([
+    ['succeeded', markJobSucceeded],
+    ['failed', markJobFailed],
+    ['cancelled', markJobCancelled],
+  ])('cannot markJob%s from queued', (_, fn) => {
+    expect(() => fn(createJob(base), new Date())).toThrow(JobStateError);
+  });
+
+  it.each([
+    ['succeeded', markJobSucceeded],
+    ['failed', markJobFailed],
+    ['cancelled', markJobCancelled],
+  ])('cannot markJob%s from claimed', (_, fn) => {
+    const claimed = claimJob(createJob(base), WorkerId('w1'), new Date());
+    expect(() => fn(claimed, new Date())).toThrow(JobStateError);
+  });
 });

@@ -33,8 +33,6 @@ export class JobStateError extends Error {
   }
 }
 
-const TERMINAL: ReadonlySet<JobStatus> = new Set(['succeeded', 'failed', 'cancelled']);
-
 export function createJob(input: CreateJobInput): Job {
   return {
     id: input.id,
@@ -73,8 +71,10 @@ export function markJobRunning(job: Job, now: Date): Job {
 }
 
 function terminate(job: Job, status: 'succeeded' | 'failed' | 'cancelled', now: Date): Job {
-  if (TERMINAL.has(job.status)) {
-    throw new JobStateError(`cannot transition job ${job.id} to ${status}: already ${job.status}`);
+  if (job.status !== 'running') {
+    throw new JobStateError(
+      `cannot mark job ${job.id} ${status}: status is '${job.status}', expected 'running'`,
+    );
   }
   return { ...job, status, completedAt: now };
 }
