@@ -6,7 +6,7 @@ export type JobId = string & { readonly __brand: 'JobId' };
 export type WorkerId = string & { readonly __brand: 'WorkerId' };
 
 function nonEmpty(name: string, v: string): void {
-  if (typeof v !== 'string' || v.length === 0) {
+  if (typeof v !== 'string' || v.trim().length === 0) {
     throw new Error(`${name} must be a non-empty string`);
   }
 }

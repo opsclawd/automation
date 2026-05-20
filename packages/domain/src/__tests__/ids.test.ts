@@ -25,5 +25,7 @@ describe('branded ids', () => {
     expect(JobId('j1')).toBe('j1');
     expect(WorkerId('w1')).toBe('w1');
     expect(() => RepositoryId('')).toThrow();
+    expect(() => JobId('')).toThrow();
+    expect(() => WorkerId('')).toThrow();
   });
 });

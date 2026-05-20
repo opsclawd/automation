@@ -82,6 +82,11 @@ export function completePhase(run: Run, phase: string): Run {
 }
 
 export function passRun(run: Run, at: Date): Run {
+  if (run.currentPhase !== undefined) {
+    throw new RunStateError(
+      `cannot pass run ${run.displayId}: currentPhase '${run.currentPhase}' is still set`,
+    );
+  }
   if (TERMINAL_STATUSES.has(run.status)) {
     throw new RunStateError(`cannot pass run ${run.displayId}: already ${run.status}`);
   }
@@ -121,6 +126,11 @@ export function transitionToReady(run: Run): Run {
   }
   if (TERMINAL_STATUSES.has(run.status)) {
     throw new RunStateError(`cannot transition ${run.displayId} to ready: run is ${run.status}`);
+  }
+  if (run.status !== 'running') {
+    throw new RunStateError(
+      `cannot transition ${run.displayId} to ready: status is '${run.status}', expected 'running'`,
+    );
   }
   return { ...run, status: 'waiting' };
 }
