@@ -938,7 +938,7 @@ The plan MUST include:
 - Do NOT rely on agent memory. Write everything to plan.md.
 - Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
 - Stop after writing plan.md. Do not implement anything.
-- All shell commands in the plan MUST be relative — no absolute paths, no cd to directories outside the worktree. The agent executing the plan runs inside the worktree and cannot access paths outside it. Commands like "pnpm --filter @ai-sdlc/domain test -- --run ..." should work without any cd prefix.
+- All shell commands in the plan MUST be relative — no absolute paths, no cd to directories outside the worktree. The agent executing the plan runs inside the worktree and cannot access paths outside it. Commands like 'pnpm --filter @ai-sdlc/domain test -- --run ...' should work without any cd prefix.
 
 Write plan.md now."
 
