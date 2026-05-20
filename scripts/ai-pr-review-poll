@@ -28,6 +28,14 @@ fi
 
 ISSUES_DIR="${REPO_ROOT}/ai/poll-pr-${PR_NUMBER}"
 mkdir -p "$ISSUES_DIR"
+
+# Own our scratch path. The orchestrator (ai-run-issue-v2) exports a per-run
+# TMPDIR pointing at .ai-tmp/<run-id>/ and deletes it on terminal status. The
+# poll inherits that TMPDIR via nohup and outlives the orchestrator, so every
+# mktemp here would fail once the per-run dir is swept. Point TMPDIR at a
+# directory we control for the lifetime of this poll.
+export TMPDIR="${ISSUES_DIR}/tmp"
+mkdir -p "$TMPDIR"
 # Two-tier processed-ID tracking. The agent's reply is the irreversible
 # side-effect we must never duplicate; the build outcome can flip back and
 # forth across polls. Splitting the tracking lets us:
