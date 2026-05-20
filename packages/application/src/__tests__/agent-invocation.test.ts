@@ -97,7 +97,7 @@ describe('AgentInvocationOutcome', () => {
     expect(outcomes).toHaveLength(4);
   });
 
-  it('rejects invalid outcome values at compile time', () => {
+  it('verifies known outcome values satisfy the union type', () => {
     const outcome: AgentInvocationOutcome = 'success';
     expect(['success', 'failed', 'timeout', 'contract_violation']).toContain(outcome);
   });
