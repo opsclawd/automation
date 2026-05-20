@@ -57,9 +57,8 @@ export interface ComposeOptions {
 
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
-  const baseTmpDir = process.env.TMPDIR
-    ? join(process.env.TMPDIR, '.ai-tmp')
-    : join(opts.repoRoot, '.ai-tmp');
+  const envTmpdir = process.env.TMPDIR?.trim();
+  const baseTmpDir = envTmpdir ? join(envTmpdir, '.ai-tmp') : join(opts.repoRoot, '.ai-tmp');
   mkdirSync(baseTmpDir, { recursive: true });
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
@@ -92,11 +91,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     return {
       tmpDir,
       remove() {
-        try {
-          rmSync(tmpDir, { recursive: true, force: true });
-        } catch {
-          // Best-effort cleanup
-        }
+        rmSync(tmpDir, { recursive: true, force: true });
       },
     };
   };
