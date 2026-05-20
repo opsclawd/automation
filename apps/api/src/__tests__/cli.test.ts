@@ -1,9 +1,14 @@
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const apiRoot = join(__dirname, '..', '..');
 
 const tempDirs: string[] = [];
 
@@ -200,4 +205,171 @@ describe('CLI runs cancel command', () => {
     expect(consoleErrs.join('')).toMatch(/specify --issue or --uuid/i);
     spy.mockRestore();
   });
+
+  it('cancels a run by uuid using domain cancelRun', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'cancel-uuid-test',
+      'issue-60-20260519-000000',
+      60,
+      'issue_to_pr',
+      'running',
+      '[]',
+      new Date().toISOString(),
+      process.pid,
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--uuid', 'cancel-uuid-test'], { from: 'user' });
+      spy.mockRestore();
+      expect(consoleErrs.join('')).toMatch(/cancelled successfully/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('rejects cancel by uuid when run is already terminal', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-term-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'terminal-uuid',
+      'issue-61-20260519-000000',
+      61,
+      'issue_to_pr',
+      'passed',
+      '[]',
+      new Date().toISOString(),
+      null,
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--uuid', 'terminal-uuid'], { from: 'user' });
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(consoleErrs.join('')).toMatch(/already passed/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('rejects cancel by uuid when run not found', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cancel-uuid-nf-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['cancel', '--uuid', 'nonexistent-uuid'], { from: 'user' });
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(consoleErrs.join('')).toMatch(/run not found/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+});
+
+describe('CLI run command signal handlers', () => {
+  it('marks run as cancelled when process receives SIGTERM', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigterm-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const scriptPath = join(root, 'long-running.sh');
+    writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
+    chmodSync(scriptPath, 0o755);
+
+    const tsxPath = join(apiRoot, 'node_modules/.bin/tsx');
+    const cliPath = join(apiRoot, 'src/cli.ts');
+    const child = spawn(tsxPath, [cliPath, 'run', '--issue', '77', '--script', scriptPath], {
+      cwd: root,
+      env: { ...process.env, NODE_NO_WARNINGS: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    const stderr: string[] = [];
+    child.stderr?.on('data', (d) => stderr.push(d.toString()));
+
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+
+    // Wait for the run row to appear (up to 15s)
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for run row')), 15_000);
+      const poll = () => {
+        try {
+          const db = openDatabase(dbPath);
+          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 77').get();
+          db.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGTERM');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const db = openDatabase(dbPath);
+    const run = db
+      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 77')
+      .get() as { status: string; failure_reason: string | null };
+    db.close();
+
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGTERM/i);
+  }, 45_000);
 });

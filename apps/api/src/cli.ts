@@ -2,6 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cancelRun } from '@ai-sdlc/domain';
 import { composeRoot, type ComposeOptions } from './compose.js';
 
 export function findRepoRoot(startDir: string): string {
@@ -197,13 +198,20 @@ export function buildProgram(): Command {
                 console.error(`Run not found: ${opts.uuid}`);
                 process.exit(1);
               }
-              const updated = c.runRepository.updateStatusByIssueNumber(run.issueNumber, {
-                status: 'cancelled',
-                completedAt: new Date(),
-                ...(opts.reason ? { failureReason: opts.reason } : {}),
-              });
-              if (!updated) {
-                console.error(`Run ${opts.uuid} is already ${run.status}`);
+              const now = new Date();
+              try {
+                const cancelled = cancelRun(run, opts.reason, now);
+                const updated = c.runRepository.updateStatusByIssueNumber(cancelled.issueNumber, {
+                  status: cancelled.status,
+                  completedAt: cancelled.completedAt!,
+                  ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
+                });
+                if (!updated) {
+                  console.error(`Run ${opts.uuid} is already ${run.status}`);
+                  process.exit(1);
+                }
+              } catch (err) {
+                console.error(err instanceof Error ? err.message : String(err));
                 process.exit(1);
               }
             } else {
