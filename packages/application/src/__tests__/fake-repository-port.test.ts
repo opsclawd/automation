@@ -57,4 +57,8 @@ describe('FakeRepositoryPort', () => {
     ]);
     expect(p.findByFullName('o/n')?.id).toBe('r1');
   });
+  it('findByFullName returns undefined for unknown name', () => {
+    const p = new FakeRepositoryPort([]);
+    expect(p.findByFullName('unknown/o')).toBeUndefined();
+  });
 });

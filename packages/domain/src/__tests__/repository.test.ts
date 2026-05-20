@@ -7,6 +7,7 @@ describe('Repository', () => {
     const e = new RepositoryNotApprovedError(RepositoryId('r'));
     expect(e.name).toBe('RepositoryNotApprovedError');
     expect(e).toBeInstanceOf(Error);
+    expect(e.message).toContain('r');
   });
   it('Repository type carries expected fields (compile-time)', () => {
     const r: Repository = {

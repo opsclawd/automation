@@ -1,5 +1,5 @@
 import type { Repository, RepositoryId } from '@ai-sdlc/domain';
-import type { RepositoryPort } from '../ports/repository-port.js';
+import type { RepositoryPort } from '../ports.js';
 
 export class FakeRepositoryPort implements RepositoryPort {
   private byId = new Map<RepositoryId, Repository>();
@@ -15,8 +15,5 @@ export class FakeRepositoryPort implements RepositoryPort {
   }
   listEnabled(): Repository[] {
     return [...this.byId.values()].filter((r) => r.enabled);
-  }
-  add(r: Repository): void {
-    this.byId.set(r.id, r);
   }
 }
