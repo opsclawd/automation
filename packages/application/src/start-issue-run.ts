@@ -1,4 +1,4 @@
-import { createRun, passRun, failRun } from '@ai-sdlc/domain';
+import { createRun, passRun, failRun, cancelRun } from '@ai-sdlc/domain';
 import type { Failure, ClassifierEvent } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -178,6 +178,15 @@ export class StartIssueRun {
       // overwrite the terminal status with passed/failed.
       const current = this.deps.runRepository.findByIssueNumber(input.issueNumber);
       if (current && ['passed', 'failed', 'cancelled'].includes(current.status)) {
+        if (current.status === 'cancelled') {
+          try {
+            dir.writeRunJson(
+              cancelRun(run, current.failureReason, current.completedAt ?? completedAt),
+            );
+          } catch (writeErr) {
+            logger.error(`Failed to write run.json for ${run.displayId} on cancel`, writeErr);
+          }
+        }
         return {
           uuid: run.uuid,
           displayId: run.displayId,
