@@ -81,18 +81,9 @@ export function completePhase(run: Run, phase: string): Run {
   return { ...rest, completedPhases: [...run.completedPhases, currentPhase] };
 }
 
-// Scope exception: mid-phase guard added here for the M3-01 property test
-// (passRun throws when called mid-phase). The original M1 design doc listed
-// passRun as out of scope, but the invariant is semantically correct — a run
-// with an active phase should not be allowed to pass without completing it.
 export function passRun(run: Run, at: Date): Run {
   if (TERMINAL_STATUSES.has(run.status)) {
     throw new RunStateError(`cannot pass run ${run.displayId}: already ${run.status}`);
-  }
-  if (run.currentPhase !== undefined) {
-    throw new RunStateError(
-      `cannot pass run ${run.displayId}: currentPhase '${run.currentPhase}' still set`,
-    );
   }
   const next: Run = { ...run, status: 'passed', completedAt: at };
   delete next.currentPhase;

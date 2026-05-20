@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import fc from 'fast-check';
-import {
-  createRun,
-  transitionToReady,
-  reactivate,
-  startPhase,
-  passRun,
-  RunStateError,
-} from '../run.js';
+import { createRun, transitionToReady, reactivate, RunStateError } from '../run.js';
 
 const baseInput = { uuid: 'u', displayId: 'd', issueNumber: 1, startedAt: new Date('2026-01-01') };
 
@@ -61,18 +53,6 @@ describe('reactivate', () => {
     );
     expect(() => reactivate({ ...createRun(baseInput), status: 'cancelled' as const })).toThrow(
       RunStateError,
-    );
-  });
-});
-
-describe('property: passRun requires no pending currentPhase', () => {
-  it('passRun throws when called mid-phase', () => {
-    fc.assert(
-      fc.property(fc.string({ minLength: 1 }), (phaseName) => {
-        let run = createRun(baseInput);
-        run = startPhase(run, phaseName);
-        expect(() => passRun(run, new Date())).toThrow();
-      }),
     );
   });
 });
