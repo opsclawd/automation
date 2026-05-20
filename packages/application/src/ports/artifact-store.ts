@@ -2,7 +2,7 @@ export interface WriteArtifactInput {
   runId: string;
   phaseId?: string;
   relativePath: string;
-  contents: string | Uint8Array;
+  contents: string;
 }
 
 export interface Artifact {

@@ -1,14 +1,11 @@
 import type { ArtifactStore, WriteArtifactInput, Artifact } from '../ports/artifact-store.js';
 
 export class FakeArtifactStore implements ArtifactStore {
-  private files = new Map<string, { artifact: Artifact; contents: string | Uint8Array }>();
+  private files = new Map<string, { artifact: Artifact; contents: string }>();
 
   async write(input: WriteArtifactInput): Promise<Artifact> {
     const key = `${input.runId}/${input.relativePath}`;
-    const bytes =
-      typeof input.contents === 'string'
-        ? Buffer.byteLength(input.contents)
-        : input.contents.byteLength;
+    const bytes = Buffer.byteLength(input.contents);
     const artifact: Artifact = {
       runId: input.runId,
       ...(input.phaseId ? { phaseId: input.phaseId } : {}),
@@ -24,12 +21,12 @@ export class FakeArtifactStore implements ArtifactStore {
   async read(runId: string, relativePath: string): Promise<string> {
     const entry = this.files.get(`${runId}/${relativePath}`);
     if (!entry) throw new Error(`no artifact ${runId}/${relativePath}`);
-    return typeof entry.contents === 'string'
-      ? entry.contents
-      : Buffer.from(entry.contents).toString('utf8');
+    return entry.contents;
   }
 
-  async list(_runId: string): Promise<Artifact[]> {
-    return [...this.files.values()].map((e) => e.artifact);
+  async list(runId: string): Promise<Artifact[]> {
+    return [...this.files.values()]
+      .filter((e) => e.artifact.runId === runId)
+      .map((e) => e.artifact);
   }
 }

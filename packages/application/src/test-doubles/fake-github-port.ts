@@ -17,6 +17,7 @@ export class FakeGitHubPort implements GitHubPort {
     remove?: string[];
   }> = [];
   createdPrs: PullRequest[] = [];
+  createdPrInputs: CreatePullRequestInput[] = [];
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);
@@ -24,7 +25,8 @@ export class FakeGitHubPort implements GitHubPort {
     return i;
   }
 
-  async createPullRequest(_input: CreatePullRequestInput): Promise<PullRequest> {
+  async createPullRequest(input: CreatePullRequestInput): Promise<PullRequest> {
+    this.createdPrInputs.push(input);
     const pr: PullRequest = {
       number: this.createdPrs.length + 1,
       url: `https://example/pr/${this.createdPrs.length + 1}`,
