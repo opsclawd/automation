@@ -167,7 +167,7 @@ exit 1
     }
   });
 
-  it('creates per-run tmp dir and sets TMPDIR/SQLITE_TMPDIR in child env', async () => {
+  it('sets TMPDIR/SQLITE_TMPDIR in child env to per-run tmp dir', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
     const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
     const scriptPath = join(dir, 'check-env.sh');
