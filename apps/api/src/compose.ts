@@ -23,6 +23,7 @@ import {
   type ClassifyExitFn,
   type EventTailerFactory,
   type EventBusPort,
+  type RunRepositoryPort,
   type TmpDirectoryFactory,
 } from '@ai-sdlc/application';
 
@@ -135,7 +136,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   };
 }
 
-function sweepOrphanedTmpDirs(baseTmpDir: string, runRepository: RunRepository): void {
+function sweepOrphanedTmpDirs(baseTmpDir: string, runRepository: RunRepositoryPort): void {
   if (!existsSync(baseTmpDir)) return;
   const entries = readdirSync(baseTmpDir);
   for (const entry of entries) {

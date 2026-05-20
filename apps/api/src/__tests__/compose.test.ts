@@ -1,4 +1,13 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+  chmodSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -141,5 +150,139 @@ exit 1
     const run = container.runRepository.findByUuid('dead-pid-uuid');
     expect(run?.status).toBe('cancelled');
     expect(run?.failureReason).toMatch(/orphaned/);
+  });
+
+  it('creates .ai-tmp/ directory at compose time', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const origTmpdir = process.env.TMPDIR;
+    delete process.env.TMPDIR;
+    try {
+      composeRoot({ repoRoot: root, scriptPath });
+      expect(existsSync(join(root, '.ai-tmp'))).toBe(true);
+      expect(statSync(join(root, '.ai-tmp')).isDirectory()).toBe(true);
+    } finally {
+      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
+      else delete process.env.TMPDIR;
+    }
+  });
+
+  it('creates per-run tmp dir and sets TMPDIR/SQLITE_TMPDIR in child env', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = join(dir, 'check-env.sh');
+    writeFileSync(
+      scriptPath,
+      `#!/usr/bin/env bash\necho "TMPDIR=$TMPDIR"\necho "SQLITE_TMPDIR=$SQLITE_TMPDIR"\nexit 0\n`,
+    );
+    chmodSync(scriptPath, 0o755);
+    const origTmpdir = process.env.TMPDIR;
+    delete process.env.TMPDIR;
+    try {
+      const container = composeRoot({ repoRoot: root, scriptPath });
+      const out = await container.startIssueRun.execute({ issueNumber: 1 });
+      const runDir = join(container.runsDir, out.displayId);
+      const combined = readFileSync(join(runDir, 'combined.log'), 'utf8');
+      expect(combined).toContain('TMPDIR=');
+      expect(combined).toContain('SQLITE_TMPDIR=');
+      expect(combined).toContain(out.uuid);
+    } finally {
+      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
+      else delete process.env.TMPDIR;
+    }
+  });
+
+  it('respects operator-set TMPDIR and nests per-run tmp dirs under it', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const customTmp = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-custom-tmp-')));
+    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = join(dir, 'check-tmpdir.sh');
+    writeFileSync(scriptPath, `#!/usr/bin/env bash\necho "TMPDIR=$TMPDIR"\nexit 0\n`);
+    chmodSync(scriptPath, 0o755);
+    const origTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = customTmp;
+    try {
+      const container = composeRoot({ repoRoot: root, scriptPath });
+      expect(container.baseTmpDir).toBe(join(customTmp, '.ai-tmp'));
+      const out = await container.startIssueRun.execute({ issueNumber: 2 });
+      const runDir = join(container.runsDir, out.displayId);
+      const combined = readFileSync(join(runDir, 'combined.log'), 'utf8');
+      expect(combined).toContain(`TMPDIR=${join(customTmp, '.ai-tmp', out.uuid)}`);
+    } finally {
+      if (origTmpdir === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = origTmpdir;
+      }
+    }
+  });
+
+  it('sweeps orphaned tmp dirs on compose', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const origTmpdir = process.env.TMPDIR;
+    delete process.env.TMPDIR;
+    try {
+      const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+      const db = openDatabase(dbPath);
+      applyMigrations(db);
+      db.prepare(
+        `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'completed-uuid',
+        'issue-888-20260513-000000',
+        888,
+        'issue_to_pr',
+        'passed',
+        '[]',
+        new Date().toISOString(),
+      );
+      db.close();
+      const tmpBase = join(root, '.ai-tmp');
+      mkdirSync(tmpBase, { recursive: true });
+      const orphanTmpDir = join(tmpBase, 'completed-uuid');
+      mkdirSync(orphanTmpDir, { recursive: true });
+      writeFileSync(join(orphanTmpDir, 'test.tmp'), 'orphan');
+      expect(existsSync(orphanTmpDir)).toBe(true);
+      composeRoot({ repoRoot: root, scriptPath });
+      expect(existsSync(orphanTmpDir)).toBe(false);
+    } finally {
+      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
+      else delete process.env.TMPDIR;
+    }
+  });
+
+  it('removes per-run tmp dir after a passing run completes', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const origTmpdir = process.env.TMPDIR;
+    delete process.env.TMPDIR;
+    try {
+      const container = composeRoot({ repoRoot: root, scriptPath });
+      const out = await container.startIssueRun.execute({ issueNumber: 3 });
+      const tmpRunDir = join(container.baseTmpDir, out.uuid);
+      expect(existsSync(tmpRunDir)).toBe(false);
+    } finally {
+      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
+      else delete process.env.TMPDIR;
+    }
+  });
+
+  it('removes per-run tmp dir after a failed run completes', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(1);
+    const origTmpdir = process.env.TMPDIR;
+    delete process.env.TMPDIR;
+    try {
+      const container = composeRoot({ repoRoot: root, scriptPath });
+      const out = await container.startIssueRun.execute({ issueNumber: 4 });
+      const tmpRunDir = join(container.baseTmpDir, out.uuid);
+      expect(out.status).toBe('failed');
+      expect(existsSync(tmpRunDir)).toBe(false);
+    } finally {
+      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
+      else delete process.env.TMPDIR;
+    }
   });
 });
