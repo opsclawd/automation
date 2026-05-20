@@ -12,7 +12,7 @@ import {
   RepositoryNotApprovedError,
 } from '@ai-sdlc/domain';
 import type { JobQueuePort, EnqueueJobInput } from '../ports/job-queue-port.js';
-import type { RepositoryPort } from '../ports/repository-port.js';
+import type { RepositoryPort } from '../ports.js';
 
 export class FakeJobQueuePort implements JobQueuePort {
   private jobs = new Map<JobId, Job>();
