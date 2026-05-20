@@ -97,6 +97,7 @@ export type TmpDirectoryFactory = (input: {
   runId: string;
 }) => TmpDirectoryHandle;
 
+export type { RepositoryPort } from './ports/repository-port.js';
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
 export type ClassifyExitFn = (input: ClassifyExitInput) => Failure;
