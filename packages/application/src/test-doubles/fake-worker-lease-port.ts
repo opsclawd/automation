@@ -44,7 +44,8 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, newExpiresAt: Date): void {
     const l = this.leases.get(repoId);
-    if (!l || l.workerId !== workerId) return;
+    if (!l) return;
+    if (l.workerId !== workerId) throw new WorkerLeaseConflictError(repoId, l.workerId);
     this.leases.set(repoId, { ...l, heartbeatAt: now, expiresAt: newExpiresAt });
   }
 

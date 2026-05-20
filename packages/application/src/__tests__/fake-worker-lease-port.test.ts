@@ -76,7 +76,7 @@ describe('FakeWorkerLeasePort', () => {
     expect(leases.current(RepositoryId('r'))).toBeUndefined();
   });
 
-  it('reclaimExpired requires heartbeat past expiresAt', () => {
+  it('reclaimExpired does not reclaim unexpired leases', () => {
     const { registry, leases } = makePorts();
     registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
     leases.acquire({
