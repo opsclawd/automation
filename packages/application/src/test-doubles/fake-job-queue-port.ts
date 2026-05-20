@@ -10,6 +10,7 @@ import {
   markJobFailed,
   markJobCancelled,
   RepositoryNotApprovedError,
+  DuplicateJobIdError,
 } from '@ai-sdlc/domain';
 import type { JobQueuePort, EnqueueJobInput } from '../ports/job-queue-port.js';
 import type { RepositoryPort } from '../ports.js';
@@ -24,7 +25,7 @@ export class FakeJobQueuePort implements JobQueuePort {
       throw new RepositoryNotApprovedError(input.job.repoId);
     }
     if (this.jobs.has(input.job.id)) {
-      throw new Error(`duplicate job id ${input.job.id}`);
+      throw new DuplicateJobIdError(input.job.id);
     }
     this.jobs.set(input.job.id, input.job);
   }
