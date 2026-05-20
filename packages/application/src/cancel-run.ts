@@ -25,13 +25,21 @@ export class CancelRun {
       throw new Error(`No active run found for ${identifier}`);
     }
     const cancelled = cancelRun(existing, input.reason, now());
-    const updated = this.deps.runRepository.updateStatusByIssueNumber(existing.issueNumber, {
+    const patch = {
       status: cancelled.status,
       completedAt: cancelled.completedAt!,
       ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
-    });
-    if (!updated) {
-      throw new Error(`Run for issue ${existing.issueNumber} is already ${existing.status}`);
+    };
+    if (input.uuid) {
+      this.deps.runRepository.update(existing.uuid, patch);
+    } else {
+      const updated = this.deps.runRepository.updateStatusByIssueNumber(
+        existing.issueNumber,
+        patch,
+      );
+      if (!updated) {
+        throw new Error(`Run for issue ${existing.issueNumber} is already ${existing.status}`);
+      }
     }
   }
 }

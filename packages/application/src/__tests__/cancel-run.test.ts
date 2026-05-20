@@ -120,7 +120,7 @@ describe('CancelRun', () => {
     expect(repo.updates[0]!.patch.failureReason).toBeUndefined();
   });
 
-  it('cancels an active run by uuid', () => {
+  it('cancels an active run by uuid using uuid-targeted update', () => {
     const repo = new FakeRunRepo();
     repo.addRun({
       uuid: 'xyz-001',
@@ -134,7 +134,37 @@ describe('CancelRun', () => {
     const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
     usecase.execute({ uuid: 'xyz-001', reason: 'manual override' });
     expect(repo.updates).toHaveLength(1);
+    expect(repo.updates[0]!.uuid).toBe('xyz-001');
     expect(repo.updates[0]!.patch.status).toBe('cancelled');
     expect(repo.updates[0]!.patch.failureReason).toBe('manual override');
+  });
+
+  it('uuid path only cancels the targeted run when multiple runs share an issue', () => {
+    const repo = new FakeRunRepo();
+    const oldRun: RunRecord = {
+      uuid: 'old-uuid',
+      displayId: 'issue-20-20260513-000000',
+      issueNumber: 20,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T19:00:00Z'),
+    };
+    const newRun: RunRecord = {
+      uuid: 'new-uuid',
+      displayId: 'issue-20-20260513-001500',
+      issueNumber: 20,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T19:15:00Z'),
+    };
+    repo.addRun(oldRun);
+    repo.addRun(newRun);
+    const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
+    usecase.execute({ uuid: 'old-uuid', reason: 'stale' });
+    expect(repo.updates).toHaveLength(1);
+    expect(repo.updates[0]!.uuid).toBe('old-uuid');
+    expect(repo.updates[0]!.patch.status).toBe('cancelled');
   });
 });
