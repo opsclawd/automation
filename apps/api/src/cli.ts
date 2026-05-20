@@ -67,11 +67,14 @@ export function buildProgram(): Command {
         const c = composeRoot(options);
 
         const cleanup = async (signal: string) => {
-          c.runRepository.updateStatusByIssueNumber(opts.issue, {
-            status: 'cancelled',
-            completedAt: new Date(),
-            failureReason: `interrupted by ${signal}`,
-          });
+          const existing = c.runRepository.findByIssueNumber(opts.issue);
+          if (existing && existing.pid === process.pid) {
+            c.runRepository.updateStatusByIssueNumber(opts.issue, {
+              status: 'cancelled',
+              completedAt: new Date(),
+              failureReason: `interrupted by ${signal}`,
+            });
+          }
         };
 
         const sigintHandler = () => {
@@ -204,8 +207,13 @@ export function buildProgram(): Command {
             if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
                 process.kill(pid, 'SIGTERM');
-              } catch {
-                // Process already exited — cancellation already recorded in DB
+              } catch (killErr: unknown) {
+                const code = (killErr as NodeJS.ErrnoException).code;
+                if (code === 'EPERM') {
+                  console.error(
+                    `Warning: run cancelled in DB but could not signal PID ${pid} (permission denied). The process may still be running.`,
+                  );
+                }
               }
             }
             process.stdout.write('Run cancelled successfully\n');
