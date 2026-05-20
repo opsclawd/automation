@@ -15,9 +15,11 @@
 
 ### Summary
 
-AI Agent SDLC Orchestrator is a local-first web application and TypeScript-based orchestration platform for running, monitoring, debugging, and recovering AI-agent-driven software delivery workflows.
+AI Agent SDLC Orchestrator is a single-tenant local/VPS AI SDLC orchestrator for manually starting issue-to-PR runs across approved GitHub repositories. It runs as a Node/TypeScript backend with a browser UI, executes multiple Repositories concurrently while enforcing one active Worker per Repository, and supports interchangeable agent runtime adapters (initially OpenCode and Pi) behind a single `AgentPort` contract.
 
 The system will evolve the current Bash-based automation into a structured, observable, resumable workflow that takes a GitHub issue through design, planning, implementation, validation, review/fix loops, PR creation, and post-PR review response automation.
+
+It is not SaaS, not multi-user, not multi-machine, and not a generic workflow engine. Runs are always started manually by selecting a registered Repository and an issue number; the orchestrator never discovers issues automatically and never operates against unregistered repositories. See ADR-0001 and ADR-0008.
 
 The existing workflow currently includes two Bash scripts:
 
@@ -229,30 +231,39 @@ The script stores processed comment IDs, uses a result file with values such as 
 
 ## 8. Proposed Solution
 
-Build a local-first web application backed by a Node/TypeScript orchestrator.
+Build a single-tenant orchestration application backed by a Node/TypeScript backend with a browser UI. The same architecture runs locally on a developer machine (one API process + one Worker process) or on a single VPS (one API process + N Worker processes under systemd). Multi-machine distribution is out of scope.
 
 Initial implementation should wrap the existing Bash scripts and improve observability. Over time, phase orchestration should migrate from Bash into TypeScript modules.
 
 ```text
-React / Next.js UI
+Browser UI (Next.js)
   ↓
-Node/TypeScript API
+API (Fastify)
   ↓
-Run Orchestrator
+Job Queue (SQLite)
   ↓
-Worker Process
+Worker Pool (1..N local processes)
   ↓
-Adapters
-    ├─ Bash script adapter
-    ├─ Agent CLI adapter
-    ├─ Git adapter
-    ├─ GitHub adapter
-    ├─ Validation adapter
-    └─ Artifact adapter
+Repository Lease (one Worker per Repository)
   ↓
-Filesystem + SQLite initially
-Postgres/object storage later if deployed as a team service
+Run Executor
+  ↓
+Ports
+    ├─ AgentPort
+    │    ├─ OpenCodeAgentAdapter
+    │    └─ PiAgentAdapter
+    ├─ GitHubPort
+    ├─ GitPort
+    ├─ ValidationPort
+    └─ ArtifactStore
+  ↓
+SQLite (WAL) + filesystem artifacts
 ```
+
+Deployment modes:
+
+- **Local mode** — API + one Worker run on the developer machine.
+- **VPS mode** — API + N Worker processes run under systemd on a single VPS (`ai-orchestrator-api.service`, `ai-orchestrator-worker@N.service`). Tailscale-only or Cloudflare Access access is recommended. Single approved GitHub identity / token / app installation.
 
 ---
 
@@ -369,6 +380,10 @@ Responsible for:
 
 The project should consistently use the following terms:
 
+- **Repository** — an approved/registered GitHub repository the orchestrator is allowed to run against.
+- **Job** — a queued unit of orchestration work claimed by a Worker to execute one Run.
+- **Worker** — a long-lived process that claims Jobs and executes Runs. One Worker handles at most one Job at a time.
+- **WorkerLease** — a per-Repository lease held by exactly one Worker for the duration of an active Run.
 - **Run** — a single workflow execution.
 - **Issue Run** — a run that converts a GitHub issue into a PR.
 - **PR Review Run** — a run that processes reviewer comments after PR creation.
@@ -394,6 +409,13 @@ The project should consistently use the following terms:
 ## 12. Domain Invariants
 
 The system should enforce these domain rules:
+
+0a. A Run may only be started against an approved/registered Repository.
+0b. Only one active Run may exist per (Repository, Issue) pair.
+0c. Only one active WorkerLease may exist per Repository.
+0d. A Worker must acquire the Repository's WorkerLease before preparing a worktree or executing any phase.
+0e. Multiple Workers may execute Runs against different Repositories concurrently.
+0f. Manual run start enqueues a Job; the API never executes the phase pipeline inline.
 
 1. A run cannot be marked `passed` if any required phase failed.
 2. A phase cannot complete without recording a structured result.
@@ -1297,9 +1319,9 @@ Failed runs should be resumable or retryable where safe.
 
 New phases, agents, validation commands, and review strategies should be easy to add.
 
-### NFR5: Local-First Operation
+### NFR5: Single-Tenant Local-or-VPS Operation
 
-The MVP should run locally against an existing repository using Git, GitHub CLI, `pnpm`, and the configured agent CLI.
+The orchestrator runs as a single process group on one machine. The deployment may be either local (developer machine, one API process + one Worker process) or VPS (one API process + N Worker processes under systemd). It uses Git, GitHub CLI, `pnpm`, and the configured agent runtimes (`opencode`, `pi`). Multi-machine distribution is out of scope.
 
 ### NFR6: Minimal Disruption
 
@@ -1327,16 +1349,22 @@ SQLite + filesystem artifacts
 
 SQLite should store structured metadata:
 
+- repositories (registry of approved repos);
+- jobs (queued/claimed/running/succeeded/failed/cancelled);
+- workers (registered worker processes + heartbeats);
+- worker_leases (one active lease per Repository);
 - runs;
 - phases;
 - events;
 - artifacts;
 - failures;
-- agent invocations;
+- agent invocations (records selected profile, runtime, provider, model);
 - validation results;
 - PR review comments;
 - processed comment IDs;
 - retry/resume state.
+
+SQLite runs in WAL mode with short transactions. Repository uniqueness on the active leases table makes the "one Worker per Repository" invariant a database-level guarantee.
 
 The filesystem should store large artifacts:
 
@@ -1352,18 +1380,15 @@ The filesystem should store large artifacts:
 
 ### 20.2 Future Storage
 
-Postgres should be used when the product requires:
+SQLite remains acceptable while the orchestrator runs as a single process group on one machine (local or one VPS) — even with multiple local Worker processes. Postgres would only be considered if one of the following becomes a real requirement:
 
-- multiple users;
-- distributed workers;
-- concurrent runs;
-- team-wide run history;
-- durable job queue semantics;
-- production deployment;
-- analytics/reporting;
-- stronger operational guarantees.
+- multiple VPS machines (not currently planned);
+- many concurrent Workers beyond what one SQLite file can comfortably serve;
+- centralised backups / HA;
+- remote team access with audit requirements;
+- analytics / reporting workloads that contend with orchestrator writes.
 
-The data layer should be implemented behind repository interfaces so SQLite can be replaced with Postgres without changing orchestration logic.
+These are future triggers, not current commitments. The data layer is implemented behind repository interfaces so SQLite can be replaced with Postgres without changing orchestration logic — but the roadmap does not switch to Postgres now.
 
 ---
 
@@ -1402,18 +1427,42 @@ Domain Layer
   Validation results
 
 Infrastructure Layer
-  Agent CLI adapter
+  AgentRuntimeRouter + Agent runtime adapters (OpenCode, Pi)
   Git adapter
   GitHub adapter
   Validation adapter
   Artifact adapter
-  SQLite/Postgres repositories
+  SQLite repositories (runs, phases, events, jobs, workers, worker_leases, repositories, agent_invocations)
 
 Storage
-  Filesystem for large artifacts
-  SQLite for MVP metadata
-  Postgres for production/team deployment
+  Filesystem for large artifacts (per-Repository repo cache + per-Run artifacts)
+  SQLite (WAL) for orchestration metadata + job queue + worker leases
+  Postgres only if multi-VPS, heavy contention, or HA become real (see §20.2)
 ```
+
+### 21.1 VPS Filesystem Layout
+
+When deployed under systemd on a VPS, the suggested layout is:
+
+```text
+/var/lib/ai-orchestrator/
+  repos/
+    owner__repo/
+      bare.git/
+      worktrees/
+        issue-123-run-<runId>/
+  runs/
+    <runId>/
+      prompts/
+      logs/
+      artifacts/
+      diffs/
+  orchestrator.sqlite
+```
+
+- One active worktree per repo lease.
+- Repo cache (`bare.git`) and per-Run artifacts are stored in separate trees.
+- Completed worktrees may be cleaned or archived.
 
 ---
 
@@ -1930,27 +1979,29 @@ Deliverables:
 
 Out of scope for M2: M2 stays focused on observable Bash + structured events. Runtime/model fields may be emitted in events if available, but no runtime abstraction is introduced.
 
-### Milestone 3: Domain/Application Foundation (incl. Agent Runtime Seam)
+### Milestone 3: Domain/Application Foundation for VPS Workers and Runtime-Agnostic Agents
 
 Goal:
 
-Establish Clean Architecture and DDD-lite boundaries, including the runtime-agnostic agent abstraction. M3 creates the seam; it does not execute Pi or OpenCode yet.
+Establish Clean Architecture and DDD-lite boundaries, including the seams required to safely run on a VPS with multiple Worker processes against multiple Repositories, **and** the runtime-agnostic agent abstraction. M3 creates the seams; it does not execute Pi or OpenCode and it does not yet start a real VPS worker pool.
 
 Deliverables:
 
-- domain types for runs, phases, failures, artifacts, agent contracts, validation results, and PR review comments;
+- domain types for `Repository`, `Job`, `Worker`, `WorkerLease`, `Run`, `Phase`, `Step`, `Loop`, `AgentInvocation`, `Artifact`, `Failure`, `AgentContract`, `AgentProfile`;
 - `AgentRuntimeKind` (`opencode | pi`);
 - `AgentProfile` (runtime, provider, model, context/prompt/output budgets, timeout). Fallback is a per-phase routing concern declared on `phaseProfiles` entries — not a profile field;
 - runtime-agnostic `AgentPort`, `AgentInvocationRequest`, `AgentInvocationResult`;
-- application use case interfaces;
-- infrastructure ports;
-- repository interfaces;
-- fake/in-memory `AgentPort` test doubles;
-- composition root support for later resolution of configured runtime adapters.
+- application ports: `RepositoryPort`, `JobQueuePort`, `WorkerRegistryPort`, `WorkerLeasePort`, `RunRepository`, `EventBus`, `AgentPort`, `GitHubPort`, `GitPort`, `ValidationPort`, `ArtifactStore`;
+- application use case interfaces (StartIssueRun, ResumeRun, RetryFailedPhase, CancelRun, ClaimNextJob, AcquireRepoLease, ReleaseRepoLease);
+- fake/in-memory implementations of every port (including `AgentPort`) for use in tests;
+- composition root support for later resolution of configured runtime adapters and infrastructure implementations of the queue / worker / lease ports;
+- invariants enforced in pure domain code: one active Run per (Repository, Issue), one active WorkerLease per Repository.
 
 Acceptance:
 
-- `packages/domain` and `packages/application` import no concrete runtime (no `opencode`, no `pi`, no `child_process`, no CLI-specific infra).
+- `packages/domain` and `packages/application` import no concrete runtime and no infrastructure (no `opencode`, no `pi`, no `child_process`, no SQLite, no CLI-specific infra).
+- Tests can simulate multiple Repositories, multiple Workers, queued Jobs, and lease acquisition/release end-to-end using fakes only.
+- Tests enforce one active Run per (Repository, Issue) and one active lease per Repository.
 - Tests can wire fake `AgentPort` implementations end-to-end.
 
 ### Milestone 4: TypeScript Agent Runtime Layer
@@ -2029,15 +2080,17 @@ Deliverables:
 
 Goal:
 
-Replace Bash control flow with a TypeScript state machine. All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name a concrete runtime.
+Replace Bash control flow with a worker-driven TypeScript state machine. Workers claim queued Jobs, acquire repo leases, prepare worktrees, execute phases, persist state, and release leases. All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name a concrete runtime.
 
 Deliverables:
 
+- `RunExecutor` consuming `JobQueuePort`, `WorkerLeasePort`, `RepositoryPort`, `GitPort`, `GitHubPort`, `AgentPort`, `ValidationPort`, `ArtifactStore`;
+- worker lifecycle: claim Job → acquire repo lease → prepare worktree → execute phase registry → persist state after every transition → release lease;
 - phase handlers (call `AgentPort.invoke(...)`, never `opencode` or `pi` directly);
 - persisted phase state;
-- resume from phase;
+- resume from phase (respects lease and repo locks);
 - retry failed phase;
-- cancel run;
+- cancel run (kills agent process, resets worktree, releases lease);
 - GitHub adapter;
 - PR creation adapter;
 - Bash scripts deprecated or reduced to compatibility wrappers.
@@ -2070,9 +2123,9 @@ Deliverables:
 
 12. **Until PR merged, with READY resting state and global timeout.** Not bounded by poll count. Run lifecycle extends to merge. Timeout prevents indefinite lingering.
 
-13. **SQLite. Swappable later via RunRepository port.** Local-first single-developer tool. No planned migration to Postgres. Port abstraction makes it replaceable if needed.
+13. **SQLite (WAL). Swappable later via RunRepository port.** Single-tenant single-machine tool (local or one VPS). No planned migration to Postgres; future triggers documented in §20.2. Port abstraction makes it replaceable if needed.
 
-14. **Explicitly out of scope (non-goal).** Every concrete decision (filesystem artifacts, SQLite, worktree reuse, env vars) is inherently local. Distribution would require rethinking half the architecture.
+14. **Multi-machine distribution is out of scope.** The orchestrator runs as a single process group on one machine (local or one VPS). A VPS deployment with multiple local Worker processes under systemd is supported because every process shares the same filesystem and SQLite file (see ADR-0008); horizontal scale across machines is not.
 
 15. **Append-only observability events, not full event sourcing.** Mutable tables are source of truth for state. Events are an audit trail with rich metadata (`{ outcome, durationMs, commitSha, reason, loopIteration }`). No projections.
 
@@ -2080,7 +2133,7 @@ Deliverables:
 
 ## 31. Recommended MVP Decision
 
-Build the first version as a **local-first AI SDLC observability dashboard**.
+Build the first version as a **single-tenant AI SDLC observability dashboard** runnable locally or on a single VPS.
 
 Do not start with a full rewrite.
 

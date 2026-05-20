@@ -1,9 +1,9 @@
 # AI SDLC Orchestrator — Milestone Stories
 
-**Status:** M1 and M2 complete. M3 next — introduces the runtime-agnostic agent abstraction. M4+ are planned.
+**Status:** M1 and M2 complete. M3 next — introduces the Repository / Job / Worker / WorkerLease seams **and** the runtime-agnostic agent abstraction. M4+ are planned.
 **Generated:** 2026-05-13
 **Source PRD:** [`prd.md`](./prd.md) §29 Milestones
-**Companion docs:** [`design-decisions-report.md`](./design-decisions-report.md), [`adr/0001-local-first-orchestrator-architecture.md`](./adr/0001-local-first-orchestrator-architecture.md)
+**Companion docs:** [`design-decisions-report.md`](./design-decisions-report.md), [`adr/0001-local-first-orchestrator-architecture.md`](./adr/0001-local-first-orchestrator-architecture.md), [`adr/0008-single-tenant-vps-worker-and-agent-runtime-architecture.md`](./adr/0008-single-tenant-vps-worker-and-agent-runtime-architecture.md)
 
 This document enumerates every GitHub issue needed to complete Milestones M1–M8. Each story is sized to be implementable in one PR by a single contributor (human or agent). Stories are grouped by milestone and ordered by dependency.
 
@@ -260,17 +260,19 @@ Test plan     How acceptance is verified.
 
 ---
 
-# Milestone M3 — Domain / Application Foundation (incl. Agent Runtime Seam)
+# Milestone M3 — Domain / Application Foundation for VPS Workers and Runtime-Agnostic Agents
 
-**Goal:** Establish Clean Architecture + DDD-lite boundaries **and the runtime-agnostic agent abstraction**. No new user-visible behavior. M3 creates the seam; it does not execute Pi or OpenCode yet — M4 implements the adapters.
+**Goal:** Establish Clean Architecture + DDD-lite boundaries for the seams needed to safely run on a VPS with multiple Worker processes against multiple approved Repositories, **and** the runtime-agnostic agent abstraction. No new end-user UI behavior. M3 may change internal application flow so manual start creates a queued `Job` instead of executing the phase pipeline inline. M3 does not execute Pi or OpenCode and does not yet start a real VPS worker pool — M4 implements the agent adapters; M8 wires the executor onto the queue/lease primitives.
 
 **Cross-cutting acceptance for M3:**
 
-- `packages/domain` and `packages/application` import no concrete runtime — no `opencode`, no `pi`, no `child_process`, no CLI-specific infrastructure.
+- `packages/domain` and `packages/application` import no concrete runtime and no infrastructure — no `opencode`, no `pi`, no `child_process`, no SQLite, no CLI-specific infra.
 - All agent-touching code paths can be exercised end-to-end with fake `AgentPort` implementations.
-- Adding the OpenCode and Pi adapters in M4 requires no further changes to domain or application code — only composition-root wiring.
+- Repository / Job / Worker / WorkerLease behaviour is exercised end-to-end with fake `RepositoryPort`, `JobQueuePort`, `WorkerRegistryPort`, and `WorkerLeasePort` implementations.
+- Tests can simulate multiple Repositories and multiple Workers, enforce one active Run per (Repository, Issue), and enforce one active lease per Repository.
+- Adding the OpenCode and Pi adapters (M4) or the SQLite queue/lease adapters (M8 prerequisites) requires no further changes to domain or application code — only composition-root wiring.
 
-## M3-01 — Domain types and invariants
+## M3-01 — Core domain types and invariants
 
 - **Labels:** `milestone:M3`, `area:domain`
 - **Depends on:** M1-01
@@ -280,72 +282,107 @@ Test plan     How acceptance is verified.
   - Pure TypeScript in `packages/domain`. No `fs`, no `child_process`, no SQLite imports.
   - State transition functions: `Run.start`, `Run.completePhase`, `Run.fail`, `Run.transitionToReady`, `Run.reactivate`, `Run.cancel`, with explicit guards.
   - Step outcome rule (binary), Phase outcome rule (allows PARTIAL), Loop exhaustion → FAILED.
-  - Branded types for `RunId`, `IssueNumber`, `PhaseName`.
+  - Branded types for `RunId`, `IssueNumber`, `PhaseName`, `RepositoryId`, `JobId`, `WorkerId`.
   - Pure functions only; no side effects.
 - **Acceptance:**
   - Property tests assert: PARTIAL only at phase level; Step transitions are binary; you cannot leave RUNNING for SUCCESS without all required phases passed.
 - **Test plan:** Vitest + fast-check.
 
-## M3-02 — Application use case interfaces (no implementations)
+## M3-02 — Repository registry domain and `RepositoryPort`
 
-- **Labels:** `milestone:M3`, `area:application`
+- **Labels:** `milestone:M3`, `area:domain`, `area:application`
 - **Depends on:** M3-01
-- **User story:** As a developer, I want use case interfaces declared so M4–M8 can fill them in.
-- **Scope:** Types/interfaces only:
-  - `StartIssueRun`, `ResumeRun`, `RetryFailedPhase`, `CancelRun`.
-  - `RunAgentWithContract`, `RunValidation`, `ProcessPrReviewComments`, `CreatePullRequest`.
-- **Acceptance:** Compiles; consumed by tests via fake implementations.
+- **User story:** As a maintainer, I want a first-class `Repository` concept so the orchestrator can only run against approved repositories and the rest of the model can reference repos by id.
+- **Context:** ADR-0008, PRD §11, §12 (invariants 0a/0b/0e), §15.
+- **Scope:**
+  - Pure domain type `Repository { id: RepositoryId; owner; name; fullName; defaultBranch; localBasePath; enabled; maxConcurrentRuns: 1; createdAt; updatedAt }` in `packages/domain`.
+  - `RepositoryPort` in `packages/application/ports/` (lookup by id, lookup by full name, list enabled).
+  - In-memory fake implementing `RepositoryPort` for tests.
+  - Invariants: a Run may only be created against an enabled Repository; an unknown / disabled `RepositoryId` produces a typed `RepositoryNotApprovedError`.
+- **Out of scope:** SQLite implementation (M8 prerequisites); UI for managing repos.
+- **Acceptance:** Use cases that accept a `RepositoryId` refuse unknown/disabled values via the fake; pure domain code never sees a raw owner/name string.
 
-## M3-03 — Ports: Agent, GitHub, Git, ArtifactStore, RunRepository, EventBus
+## M3-03 — Job queue domain and `JobQueuePort`
+
+- **Labels:** `milestone:M3`, `area:domain`, `area:application`
+- **Depends on:** M3-01, M3-02
+- **User story:** As a maintainer, I want manual run starts to enqueue a Job (not execute inline) so multiple Workers can drain work safely.
+- **Context:** ADR-0008, PRD §12 (invariant 0f).
+- **Scope:**
+  - Domain type `Job { id: JobId; runId; repoId; issueNumber; status: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled'; priority; attempts; claimedBy?: WorkerId; createdAt; startedAt?; completedAt? }`.
+  - `JobQueuePort` in `packages/application/ports/`: `enqueue`, `claimNext({ workerId })`, `markRunning`, `markSucceeded`, `markFailed`, `markCancelled`, `listForRepo`, `listForRun`.
+  - In-memory fake `JobQueuePort`.
+  - `StartIssueRun` use case (declared here, implemented in M3-05) must create a `Run` and a queued `Job` — it never calls phase code itself.
+- **Acceptance:** A queued job claimed twice raises; a job for an unknown / disabled `RepositoryId` is rejected at enqueue time.
+
+## M3-04 — Worker / WorkerLease domain and ports
+
+- **Labels:** `milestone:M3`, `area:domain`, `area:application`
+- **Depends on:** M3-01, M3-02, M3-03
+- **User story:** As a maintainer, I want repo-scoped worker leases so multiple Workers can run concurrently across Repositories without ever racing on a single repo.
+- **Context:** ADR-0008, PRD §12 (invariants 0c/0d/0e).
+- **Scope:**
+  - Domain types `Worker { id: WorkerId; hostname; processId; status: 'idle' | 'busy' | 'stopping' | 'unhealthy'; heartbeatAt }` and `WorkerLease { repoId; workerId; runId; acquiredAt; heartbeatAt; expiresAt }`.
+  - `WorkerRegistryPort` (register, heartbeat, mark stopping/unhealthy, list).
+  - `WorkerLeasePort` (`acquire({ repoId, workerId, runId })`, `heartbeat`, `release`, `reclaimExpired`, `current({ repoId })`).
+  - In-memory fakes for both ports.
+  - Invariants enforced in the fake:
+    - `acquire` fails when an active lease exists for the same `repoId`;
+    - `release` is idempotent;
+    - `reclaimExpired` only reclaims leases that meet the safety checks listed in ADR-0008 (heartbeat past `expiresAt`, owning Worker stale or marked unhealthy/stopping, associated Run transitioned to failed/cancelled or explicitly marked for recovery, worktree reset or quarantined, `lease.reclaimed` event emitted);
+    - cancelling a Run must release its lease before the Run becomes terminal.
+- **Acceptance:**
+  - A test that spins up two simulated Workers and two queued Jobs against the same Repository observes serialisation; a test against two different Repositories observes true concurrency.
+  - **Persistence note for the future SQLite adapter:** active `WorkerLease` acquisition must be atomic. The active-lease invariant is enforced with a database-level uniqueness constraint or equivalent transaction around `repoId` for active leases. Domain language uses `WorkerLease`; persistence may use locks/transactions internally to acquire the lease safely. The in-memory fake mirrors this behaviour with a serialised acquire.
+
+## M3-05 — Application use case interfaces
 
 - **Labels:** `milestone:M3`, `area:application`
-- **Depends on:** M3-02
-- **User story:** As a developer, I want runtime-agnostic ports defined so infrastructure adapters have a contract to implement and no application code depends on a concrete CLI.
+- **Depends on:** M3-01, M3-02, M3-03, M3-04
+- **User story:** As a developer, I want use case interfaces and the non-agent infrastructure ports declared so M4–M8 can fill them in.
+- **Scope:** Types/interfaces only in `packages/application/`:
+  - Use cases: `StartIssueRun`, `ResumeRun`, `RetryFailedPhase`, `CancelRun`, `ClaimNextJob`, `AcquireRepoLease`, `ReleaseRepoLease`, `RunAgentWithContract`, `RunValidation`, `ProcessPrReviewComments`, `CreatePullRequest`.
+  - Ports: `RunRepository`, `EventBus`, `GitHubPort`, `GitPort`, `ValidationPort`, `ArtifactStore` (in addition to the `RepositoryPort` / `JobQueuePort` / `WorkerRegistryPort` / `WorkerLeasePort` introduced in M3-02..M3-04).
+  - In-memory fakes for each new port in `packages/application/test-doubles/`.
+- **Acceptance:** Compiles; consumed by tests via fake implementations; `StartIssueRun` is documented to enqueue a `Job` rather than execute phases inline.
+
+## M3-06 — Runtime-agnostic `AgentPort` and profiles
+
+- **Labels:** `milestone:M3`, `area:application`, `area:domain`, `area:config`
+- **Depends on:** M3-01
+- **User story:** As a developer, I want a runtime-agnostic `AgentPort` plus `AgentRuntimeKind` / `AgentProfile` so phase code can describe agent calls without naming a runtime.
 - **Context:** PRD §14, §15.7, ADR-0007.
 - **Scope:**
-  - Interfaces in `packages/application/ports/`.
-  - `AgentPort` is **runtime-agnostic** with the shape from PRD §14:
+  - `AgentRuntimeKind = 'opencode' | 'pi'` (pure domain).
+  - `AgentProfile` with fields: `runtime`, `provider`, `model`, optional `contextLimitTokens`, optional `promptBudgetTokens`, optional `outputBudgetTokens`, `timeoutMinutes`. **Fallback is a per-phase routing concern declared on `phaseProfiles` entries (see PRD §15.7) — it is not a property of `AgentProfile`.**
+  - Branded `AgentProfileName`.
+  - `AgentPort` interface in `packages/application/ports/`:
     ```ts
     interface AgentPort {
       invoke(input: AgentInvocationRequest): Promise<AgentInvocationResult>;
     }
     ```
-  - Each port has a fake/in-memory implementation in `packages/application/test-doubles/`.
-  - The fake `AgentPort` records every invocation request and lets tests script per-profile responses (success, contract violation, timeout, fallback-triggering failure).
+  - Fake `AgentPort` in `packages/application/test-doubles/` that records every invocation and lets tests script per-profile responses (success, contract violation, timeout, fallback-triggering failure).
 - **Acceptance:**
-  - Application package builds with no infra imports.
-  - No file under `packages/application/` or `packages/domain/` imports `opencode`, `pi`, `child_process`, or any CLI-specific infrastructure.
-  - Fakes implement every method.
+  - Application package builds with no infra imports; no file under `packages/application/` or `packages/domain/` imports `opencode`, `pi`, `child_process`, or any CLI-specific infrastructure.
+  - Unit tests for type guards (e.g. `isPiProfile`) and basic profile validation (Pi profile with `contextLimitTokens` set, OpenCode profile with `timeoutMinutes` set).
 
-## M3-03a — AgentRuntimeKind and AgentProfile domain types
-
-- **Labels:** `milestone:M3`, `area:domain`, `area:config`
-- **Depends on:** M3-01
-- **User story:** As a developer, I want `AgentRuntimeKind` and `AgentProfile` as pure domain types so every later layer can refer to them without leaking a specific CLI.
-- **Context:** PRD §15.7, ADR-0007.
-- **Scope:**
-  - `AgentRuntimeKind = 'opencode' | 'pi'`.
-  - `AgentProfile` with fields: `runtime`, `provider`, `model`, optional `contextLimitTokens`, optional `promptBudgetTokens`, optional `outputBudgetTokens`, `timeoutMinutes`. **Fallback is a per-phase routing concern declared on `phaseProfiles` entries (see PRD §15.7) — it is not a property of `AgentProfile`.**
-  - Branded `AgentProfileName`.
-  - Pure TypeScript in `packages/domain`.
-- **Acceptance:** Unit tests for type guards (e.g. `isPiProfile`) and basic validation (e.g. Pi profile with `contextLimitTokens` set, OpenCode profile with `timeoutMinutes` set).
-
-## M3-03b — AgentInvocationRequest / AgentInvocationResult contracts
+## M3-07 — `AgentInvocationRequest` / `AgentInvocationResult` contracts
 
 - **Labels:** `milestone:M3`, `area:application`
-- **Depends on:** M3-01, M3-03a
+- **Depends on:** M3-01, M3-06
 - **User story:** As a developer, I want runtime-agnostic invocation request/result types so phase code and tests can describe an Agent Invocation without naming a runtime.
 - **Context:** PRD §14, §15.3, §15.7.
 - **Scope:**
-  - `AgentInvocationRequest { profile, promptPath, expectedArtifacts, cwd, runId, phaseId, stepId? }`.
+  - `AgentInvocationRequest { profile, promptPath, expectedArtifacts, cwd, runId, repoId, workerId?, phaseId, stepId? }`.
   - `AgentInvocationResult { runtime, provider, model, exitCode, durationMs, stdoutPath, stderrPath, resultJsonPath?, contractViolations[], outcome }`.
   - Both shapes live in `packages/application` (or `packages/domain` if pure enough — choose one and document).
-- **Acceptance:** Compiles; consumed by the fake `AgentPort` in M3-03; round-trips through composition root in M3-06.
+- **Acceptance:** Compiles; consumed by the fake `AgentPort` from M3-06; round-trips through composition root in M3-10.
 
-## M3-03c — Agent config schema in `.ai-orchestrator.json`
+## M3-08 — Agent config schema in `.ai-orchestrator.json`
 
 - **Labels:** `milestone:M3`, `area:config`, `area:shared`
-- **Depends on:** M1-02, M3-03a
+- **Depends on:** M1-02, M3-06
 - **User story:** As an operator, I want a config schema for `agent.profiles` and `agent.phaseProfiles` so I can declare runtimes per phase before any adapter ships.
 - **Context:** PRD §15.7. Specific provider/model values are configurable examples, not commitments.
 - **Scope:**
@@ -356,26 +393,20 @@ Test plan     How acceptance is verified.
 - **Out of scope:** Actually executing any runtime.
 - **Acceptance:** Valid configs parse; invalid configs (dangling profile refs, unknown runtime) fail with a clear error path.
 
-## M3-04 — Wire existing SQLite adapter to RunRepository port
+## M3-09 — Existing adapters wired to ports
 
 - **Labels:** `milestone:M3`, `area:infra`
-- **Depends on:** M1-04, M3-03
-- **User story:** As a developer, I want the M1 SQLite repos to implement the M3 ports so existing code routes through the clean layer.
-- **Scope:** Move adapters to `packages/infrastructure`. Update M1 wrapper to depend on ports, not adapters directly. No behavior change.
-- **Acceptance:** All M1 tests still pass.
+- **Depends on:** M1-04, M1-05, M3-05, M3-06
+- **User story:** As a developer, I want the M1 SQLite repositories and the legacy Bash invocation to live behind the M3 ports so existing code routes through the clean layer.
+- **Scope:**
+  - Move M1 SQLite adapters into `packages/infrastructure` and have them implement `RunRepository` and the other persistence ports declared in M3-05. No behaviour change.
+  - `BashIssueRunAdapter implements IssueRunPort` and `BashPrReviewPollAdapter implements PrReviewPollPort`; the M1-05 wrapper now resolves these adapters via the application layer.
+- **Acceptance:** All M1 tests still pass; integration tests unchanged.
 
-## M3-05 — Bash adapter implements AgentPort + IssueRunPort
-
-- **Labels:** `milestone:M3`, `area:infra`
-- **Depends on:** M3-03, M1-05
-- **User story:** As a developer, I want the legacy Bash invocation to live behind a port so we can swap pieces out incrementally.
-- **Scope:** `BashIssueRunAdapter implements IssueRunPort` and `BashPrReviewPollAdapter implements PrReviewPollPort`. The wrapper from M1-05 now resolves these adapters via the application layer.
-- **Acceptance:** Behavior identical; integration tests unchanged.
-
-## M3-06 — Dependency injection / composition root (incl. agent profile resolution)
+## M3-10 — Dependency injection / composition root
 
 - **Labels:** `milestone:M3`, `area:infra`
-- **Depends on:** M3-04, M3-05, M3-03c
+- **Depends on:** M3-08, M3-09
 - **User story:** As a developer, I want one place that wires ports → adapters and resolves agent profiles so tests can swap implementations cleanly.
 - **Scope:**
   - Single `composeRoot()` factory in `apps/api` returning a typed `Container`. No DI framework — plain factory.
@@ -395,7 +426,7 @@ Test plan     How acceptance is verified.
 ## M4-01 — Agent invocation model + DB tables
 
 - **Labels:** `milestone:M4`, `area:domain`, `area:persistence`
-- **Depends on:** M3-01, M3-03b, M1-04
+- **Depends on:** M3-01, M3-07, M1-04
 - **User story:** As a developer, I want an `AgentInvocation` record persisted per agent call so I can audit prompts and outcomes regardless of which runtime executed the call.
 - **Context:** PRD §15.3, §15.7, Q6, Q24, ADR-0007.
 - **Scope:**
@@ -407,7 +438,7 @@ Test plan     How acceptance is verified.
 ## M4-02 — AgentRuntimeRouter + OpenCodeAgentAdapter
 
 - **Labels:** `milestone:M4`, `area:infra`
-- **Depends on:** M4-01, M3-03, M3-03c, M3-06
+- **Depends on:** M4-01, M3-06, M3-08, M3-10
 - **User story:** As the orchestrator, I want an `AgentPort` that routes invocations to the correct runtime adapter based on the requested profile, and a concrete OpenCode adapter so frontier-model phases work end-to-end.
 - **Context:** ADR-0007, PRD §15.7, Q13, Q24.
 - **Scope:**
@@ -448,25 +479,33 @@ Test plan     How acceptance is verified.
 
 - **Labels:** `milestone:M4`, `area:application`, `area:infra`
 - **Depends on:** M4-02, M4-02b
-- **User story:** As an operator, I want the router to apply documented fallback triggers automatically so a Pi failure escalates to OpenCode without manual intervention.
-- **Context:** PRD §15.7 "Promotion / fallback triggers". ADR-0007.
+- **User story:** As an operator, I want phase code and the router to apply documented fallback triggers automatically so a Pi failure escalates to OpenCode without manual intervention.
+- **Context:** PRD §15.7 "Promotion / fallback triggers". ADR-0007, ADR-0008 ("Runtime routing — ownership of fallback decisions").
+- **Responsibility split (load-bearing):**
+  - **Phase / loop use cases** own _semantic_ fallback decisions because they know phase context, validation-failure category, touched-file count, reviewer-facing output, and architectural ambiguity. When such a condition occurs, the use case explicitly signals fallback (e.g. by invoking `AgentPort.invoke(...)` with the resolved `phaseProfiles[phase].fallbackProfile`, or by returning a fallback-request to the router).
+  - **`AgentRuntimeRouter`** owns _mechanical dispatch only_: resolving `request.profile` to the registered adapter, recording every `AgentInvocation`, and linking fallback invocations once a fallback profile is supplied. It does not interpret phase semantics.
+  - The router _may_ enforce a small set of objective adapter-level triggers itself, because they are observable from the adapter return value alone: timeout, missing required artifact, invalid `result.json`, prompt budget exceeded, and contract violation. All higher-level triggers (validation-category change, touched-file budget, reviewer-facing output, architectural ambiguity, "two consecutive failures from the same profile on the same Step") must be signalled by the caller.
 - **Scope:**
-  - The router consults the resolved `phaseProfiles[phase].fallbackProfile` and escalates on any of the documented triggers:
-    - two consecutive failures from the same profile on the same Step;
-    - missing required artifact;
-    - invalid `result.json`;
-    - timeout;
-    - context budget exceeded;
-    - touched files exceed the expected limit declared by the phase;
-    - validation failure changes category between iterations (signalled by the caller);
-    - architectural ambiguity / reviewer-facing output requested (signalled by the caller).
-  - Each escalation:
-    - emits a `phase.fallback.escalated` event with `{ fromProfile, toProfile, triggerReason }`;
+  - The router consults the resolved `phaseProfiles[phase].fallbackProfile` and dispatches to it when an objective adapter-level trigger fires _or_ when the calling use case explicitly requests fallback. Documented triggers (split by owner):
+    - **Adapter-level (router-enforced):**
+      - missing required artifact;
+      - invalid `result.json`;
+      - timeout;
+      - prompt / context budget exceeded;
+      - contract violation.
+    - **Use-case-level (caller-signalled):**
+      - two consecutive failures from the same profile on the same Step;
+      - touched files exceed the expected limit declared by the phase;
+      - validation failure changes category between iterations;
+      - architectural ambiguity / reviewer-facing output requested.
+  - Each escalation, regardless of who signalled it:
+    - emits a `phase.fallback.escalated` event with `{ fromProfile, toProfile, triggerReason, triggerOwner: 'router' | 'use_case' }`;
     - persists a new `AgentInvocation` row with `fallbackOfInvocationId` pointing at the failing invocation.
   - If the fallback profile itself fails, the failure surfaces as a normal `Failure` row — no further auto-escalation.
 - **Acceptance:**
-  - Each documented trigger has a passing test that asserts escalation happened and the escalated invocation links back to the failing one.
-  - A `phaseProfiles` entry without a `fallbackProfile` surfaces the original failure without escalation.
+  - Each adapter-level trigger has a passing test that asserts the router escalates without caller involvement.
+  - Each use-case-level trigger has a passing test that asserts the _use case_ signals fallback and the router obeys.
+  - A `phaseProfiles` entry without a `fallbackProfile` surfaces the original failure without escalation regardless of owner.
 
 ## M4-03 — Prompt templating + context injection
 
@@ -570,7 +609,7 @@ Test plan     How acceptance is verified.
 
 # Milestone M6 — Managed PR Review Polling
 
-**Goal:** Replace unmanaged `nohup` PR polling with a first-class durable job model. PR-review comment handling defaults to OpenCode/frontier and is invoked via `AgentPort` using `phaseProfiles["pr-review-poll"]` — reviewer-facing output is not routed to Pi/Qwen.
+**Goal:** Replace unmanaged `nohup` PR polling with a first-class durable job model. PR-poll jobs ride on the same `JobQueuePort` and `WorkerLeasePort` introduced in M3, so polling cannot race with an active issue Run on the same Repository. PR-review comment handling defaults to OpenCode/frontier and is invoked via `AgentPort` using `phaseProfiles["pr-review-poll"]` — reviewer-facing output is not routed to Pi/Qwen.
 
 ## M6-01 — PR review domain + tables
 
@@ -584,7 +623,7 @@ Test plan     How acceptance is verified.
 ## M6-02 — GitHubPort implementation (gh CLI adapter)
 
 - **Labels:** `milestone:M6`, `area:infra`
-- **Depends on:** M3-03
+- **Depends on:** M3-05
 - **Scope:**
   - `GhCliAdapter implements GitHubPort` covering `getIssue`, `getPr`, `listReviewComments`, `replyToReviewComment`, `updateIssueLabels`, `getPrState`, `createPullRequest`.
   - All calls via `gh api`/`gh pr` with structured JSON.
@@ -679,7 +718,18 @@ Test plan     How acceptance is verified.
 
 # Milestone M8 — Full TypeScript Phase Orchestration
 
-**Goal:** Retire Bash control flow. TypeScript drives every phase. All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name `opencode` or `pi` directly. Bash, if anything remains, is only an infrastructure adapter for a specific tool.
+**Goal:** Retire Bash control flow. A TypeScript `RunExecutor` driven by Workers replaces Bash orchestration:
+
+```text
+Worker claims queued Job
+  → acquires repo lease
+  → prepares worktree
+  → executes phase registry
+  → persists state after every transition
+  → releases repo lease
+```
+
+All phase handlers call `AgentPort.invoke(...)` and remain runtime-agnostic — they never name `opencode` or `pi` directly. Retry / resume / cancel respect worker leases and repo locks. Bash, if anything remains, is only an infrastructure adapter for a specific tool.
 
 ## M8-01 — Phase definition registry
 
@@ -756,14 +806,15 @@ Test plan     How acceptance is verified.
 - **Depends on:** M6-04, M8-08
 - **Scope:** Enqueue managed poll job; Run transitions to READY when poller reports `all_resolved`; reactivates on new activity (M6-07).
 
-## M8-10 — TypeScript run executor (state machine)
+## M8-10 — TypeScript run executor (state machine, worker-driven)
 
 - **Labels:** `milestone:M8`, `area:application`
-- **Depends on:** M8-01..M8-09
+- **Depends on:** M8-01..M8-09, M3-02, M3-03, M3-04
 - **Scope:**
-  - `RunExecutor` consumes phase registry; advances phases; persists state after every transition.
-  - Resume picks up at the failed Step (Q4) by default; `--retry-phase` flag re-runs from start of phase.
-  - Cancellation kills child agent process and resets worktree to `startCommitSha` (Q23/Q24).
+  - `RunExecutor` consumes `JobQueuePort`, `WorkerLeasePort`, `RepositoryPort`, `GitPort`, `GitHubPort`, `AgentPort`, `ValidationPort`, `ArtifactStore`, plus the phase registry.
+  - Worker loop: claim Job → acquire repo lease → prepare worktree → advance phases (persisting state after every transition) → release lease.
+  - Resume picks up at the failed Step (Q4) by default; `--retry-phase` flag re-runs from start of phase. Resume re-acquires the repo lease before doing any work.
+  - Cancellation kills child agent process, resets worktree to `startCommitSha` (Q23/Q24), and releases the repo lease.
 - **Acceptance:** Full happy-path issue run completes end-to-end without invoking any Bash control logic.
 
 ## M8-11 — Retire / quarantine legacy Bash scripts
@@ -788,7 +839,7 @@ Test plan     How acceptance is verified.
 ## M8-13 — Worktree lifecycle adapter
 
 - **Labels:** `milestone:M8`, `area:infra`
-- **Depends on:** M3-03, M8-10
+- **Depends on:** M3-05, M8-10
 - **Context:** Q14, Q23.
 - **Scope:**
   - `GitWorktreeAdapter implements GitPort` managing `.ai-worktrees/issue-<N>`.
@@ -800,7 +851,7 @@ Test plan     How acceptance is verified.
 
 - **Labels:** `milestone:M8`, `area:application`
 - **Depends on:** M8-10
-- **Scope:** Audit + tests verifying every invariant from PRD §12 is enforced in code (one active Run per issue, missing artifact → failure, invalid result → failure, branch change → failure, loop exhaustion → FAILED, no duplicate comment processing, etc.).
+- **Scope:** Audit + tests verifying every invariant from PRD §12 is enforced in code (Run runs only against an approved Repository, one active Run per (Repository, Issue), one active WorkerLease per Repository, missing artifact → failure, invalid result → failure, branch change → failure, loop exhaustion → FAILED, no duplicate comment processing, etc.).
 - **Acceptance:** Each invariant has at least one test that would fail if the invariant were removed.
 
 ---
@@ -812,9 +863,10 @@ M1-01 ──┬─► M1-02
         ├─► M1-03 ─► M1-04 ─► M1-05 ─► M1-06
         │                       └─► M1-07
         │                       └─► M2-* … M8-*
-        └─► M3-01 ─► M3-02 ─► M3-03 ─► M3-04 / M3-05 ─► M3-06
+        └─► M3-01 ─► M3-02 ─► M3-03 ─► M3-04 ─► M3-05 ─► M3-09 ─► M3-10
+                       │                                   ▲
+                       └─► M3-06 ─► M3-07 ─► M3-08 ────────┘
                                             │
-                                            ├─► M3-03a/03b/03c (agent seam)
                                             ├─► M4-01 ─► M4-02 ─► M4-02b ─► M4-02c ─► M4-03/04/05 ─► M4-06
                                             ├─► M5-01 ─► M5-02 ─► M5-03/04/05
                                             ├─► M6-01 ─► M6-02 ─► M6-03 ─► M6-04 ─► M6-05/06/07
