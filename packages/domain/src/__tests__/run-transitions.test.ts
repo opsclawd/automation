@@ -67,6 +67,13 @@ describe('reactivate', () => {
       }),
     ).toThrow(RunStateError);
   });
+
+  it('rejects reactivating a run with currentPhase set', () => {
+    let run = createRun(baseInput);
+    run = transitionToReady(run);
+    run = { ...run, currentPhase: 'review' };
+    expect(() => reactivate(run)).toThrow(RunStateError);
+  });
 });
 
 describe('property: passRun requires no pending currentPhase', () => {

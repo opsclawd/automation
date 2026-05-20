@@ -136,6 +136,11 @@ export function transitionToReady(run: Run): Run {
 }
 
 export function reactivate(run: Run): Run {
+  if (run.currentPhase !== undefined) {
+    throw new RunStateError(
+      `cannot reactivate ${run.displayId}: currentPhase '${run.currentPhase}' still set`,
+    );
+  }
   if (run.status !== 'waiting') {
     throw new RunStateError(
       `cannot reactivate ${run.displayId}: status is '${run.status}', expected 'waiting'`,

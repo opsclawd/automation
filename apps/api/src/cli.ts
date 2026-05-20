@@ -5,10 +5,13 @@ import { fileURLToPath } from 'node:url';
 import { composeRoot, type ComposeOptions } from './compose.js';
 import type { CancelRunInput } from '@ai-sdlc/application';
 
-export function findRepoRoot(startDir: string): string {
+export function findRepoRoot(
+  startDir: string,
+  exists: (p: string) => boolean = existsSync,
+): string {
   let dir = startDir;
   for (;;) {
-    if (existsSync(join(dir, 'pnpm-workspace.yaml'))) {
+    if (exists(join(dir, 'pnpm-workspace.yaml'))) {
       return dir;
     }
     const parent = dirname(dir);

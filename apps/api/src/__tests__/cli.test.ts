@@ -55,7 +55,7 @@ describe('findRepoRoot', () => {
 
   it('falls back to startDir when no pnpm-workspace.yaml is found', () => {
     const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-noroot-')));
-    expect(findRepoRoot(dir)).toBe(dir);
+    expect(findRepoRoot(dir, () => false)).toBe(dir);
   });
 });
 
