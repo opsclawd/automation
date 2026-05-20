@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Autonomous-loop note:** Each numbered Story below is a self-contained PR-sized chunk. An autonomous loop should pick one Story, implement every Task inside it, run the verification commands, commit, and open a PR. Do **not** mix stories in a single PR — the milestone-stories document explicitly sizes each as one PR.
+> **Autonomous-loop note:** Each numbered Story below is a self-contained PR-sized chunk. An autonomous loop should pick one Story, implement every Task inside it, run the verification commands, and commit. **The orchestrator handles branch creation, push, and PR opening — stories must not push or call `gh pr create` themselves.** Do **not** mix stories in a single PR — the milestone-stories document explicitly sizes each as one PR.
 
 **Goal:** Establish Clean-Architecture seams (Repository registry, Job queue, Worker, WorkerLease) and the runtime-agnostic `AgentPort` abstraction in `packages/domain` and `packages/application`, with in-memory fakes for every port, so that M4–M8 can plug in real adapters without touching domain or application code.
 
@@ -27,7 +27,7 @@
   ```
   All four must pass before the commit step.
 - **Commit style:** Conventional commits. Scope = story id, e.g. `feat(m3-01): add core domain types`. Each step that says "Commit" is one commit.
-- **Branch + PR per story:** Before starting a story, create a branch `m3/<story-id>-<slug>`, e.g. `m3/m3-02-repository-registry`. After the story's final commit, open a PR with title `feat(M3): <story title>` and body referencing the story id (`Closes #<issue-number-if-known>`).
+- **Branch / push / PR are orchestrator-managed:** Do not create branches, push, or open PRs from inside a story. Land your work as commits on the current branch and stop. The orchestrator will package the changes into a PR.
 
 ---
 
@@ -292,13 +292,6 @@ types and transitionToReady/reactivate state transitions on Run. Property
 test asserts passRun cannot succeed mid-phase."
 ```
 
-- [ ] **Step 3: Open PR**
-
-```
-git push -u origin HEAD
-gh pr create --title "feat(M3-01): core domain types and invariants" --body "Implements M3-01 from docs/milestone-stories.md."
-```
-
 ---
 
 ## Story M3-02 — Repository registry domain and `RepositoryPort`
@@ -537,7 +530,7 @@ git add packages/domain packages/application
 git commit -m "feat(m3-02): Repository domain + RepositoryPort + in-memory fake"
 ```
 
-- [ ] **Step 3: Push + PR** — title `feat(M3-02): Repository registry domain and RepositoryPort`.
+- [ ] **Step 3: Stop.** The orchestrator handles push + PR.
 
 ---
 
@@ -943,7 +936,7 @@ export * from './fake-job-queue-port.js';
 
 - [ ] **Step 1:** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
 - [ ] **Step 2:** Commit `feat(m3-03): Job domain + JobQueuePort + in-memory fake`.
-- [ ] **Step 3:** Push + PR titled `feat(M3-03): job queue domain and JobQueuePort`.
+- [ ] **Step 3: Stop.** The orchestrator handles push + PR.
 
 ---
 
@@ -1636,7 +1629,7 @@ describe('worker concurrency simulation', () => {
 });
 ```
 
-- [ ] **Step 2: Verify + commit + PR.** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`. Commit `feat(m3-04): Worker + WorkerLease domain, ports, and fakes`. PR titled `feat(M3-04): worker / worker-lease domain and ports`.
+- [ ] **Step 2: Verify + commit.** `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`. Commit `feat(m3-04): Worker + WorkerLease domain, ports, and fakes`. Then stop — the orchestrator handles push + PR.
 
 ---
 
@@ -2014,7 +2007,7 @@ Run + expect PASS.
 
 - [ ] **Step 1:** Full verify.
 - [ ] **Step 2:** Commit `feat(m3-05): application use-case interfaces + non-agent ports + fakes`.
-- [ ] **Step 3:** PR titled `feat(M3-05): application use case interfaces`.
+- [ ] **Step 3: Stop.** The orchestrator handles push + PR.
 
 ---
 
@@ -2584,7 +2577,7 @@ it('the committed .ai-orchestrator.json parses', () => {
 
 - [ ] `pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`.
 - [ ] Commit `feat(m3-08): agent profile + phaseProfiles schema in .ai-orchestrator.json`.
-- [ ] PR titled `feat(M3-08): agent config schema`.
+- [ ] Stop. The orchestrator handles push + PR.
 
 ---
 
@@ -2663,7 +2656,7 @@ it('runBashScript conforms to RunBashScriptFn', () => {
 
 - [ ] Full verify. All M1 integration tests in `apps/api/src/__tests__/` must still pass.
 - [ ] Commit `refactor(m3-09): document infrastructure adapters as port implementations`.
-- [ ] PR titled `refactor(M3-09): existing adapters wired to ports`.
+- [ ] Stop. The orchestrator handles push + PR.
 
 ---
 
@@ -2860,7 +2853,7 @@ agentRuntime?: AgentRuntimeRegistry;
 
 - [ ] Full verify (`pnpm -r typecheck && pnpm -r test --run && pnpm lint && pnpm depcruise`).
 - [ ] Commit `feat(m3-10): composition root resolves AgentPort + resolveProfileForPhase helper`.
-- [ ] PR titled `feat(M3-10): dependency injection / composition root`.
+- [ ] Stop. The orchestrator handles push + PR.
 
 ---
 
