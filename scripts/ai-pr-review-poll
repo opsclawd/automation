@@ -985,6 +985,11 @@ while [[ $POLL_COUNT -lt $MAX_POLLS && $TOTAL_POLLS -lt $MAX_TOTAL_POLLS ]]; do
   # The check must run BEFORE the break below, otherwise a push on the
   # final consecutive poll exits without granting the promised fresh
   # budget.
+  # Snapshot the iteration's actual POLL_COUNT before any reset, so terminal
+  # telemetry (e.g. lastPoll on a max_total_polls exit) reports the real
+  # number even when an in-flight push triggers a reset on the same tick.
+  LAST_ITERATION_POLL=$POLL_COUNT
+
   git fetch origin "$PR_BRANCH" 2>/dev/null || true
   CURRENT_REMOTE_SHA=$(git rev-parse "origin/${PR_BRANCH}" 2>/dev/null || echo "")
   if [[ -n "$LAST_REMOTE_SHA" && -n "$CURRENT_REMOTE_SHA" && "$CURRENT_REMOTE_SHA" != "$LAST_REMOTE_SHA" ]]; then
@@ -1016,12 +1021,18 @@ elif $ALL_REVIEWS_RESOLVED; then
     "PR review poll finished" \
     totalProcessed="${TOTAL_PROCESSED}" terminalReason="${LAST_REVIEW_RESULT:-ALL_DONE}"
 elif [[ $TOTAL_POLLS -ge $MAX_TOTAL_POLLS ]]; then
+  # Prefer the pre-reset snapshot — a same-iteration push reset POLL_COUNT
+  # to 0 before this break, but the iteration that hit the hard cap had a
+  # real consecutive-poll number worth reporting.
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "reached MAX_TOTAL_POLLS hard ceiling (${MAX_TOTAL_POLLS})" \
-    reason="max_total_polls" lastPoll="$POLL_COUNT"
+    reason="max_total_polls" lastPoll="${LAST_ITERATION_POLL:-$POLL_COUNT}"
 else
+  # max_polls exit implies no reset fired this iteration (otherwise
+  # POLL_COUNT would be 0 and we wouldn't be here), so POLL_COUNT is
+  # already correct — but use the snapshot for consistency.
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "PR review poll exhausted poll budget" \
-    reason="max_polls" lastPoll="$POLL_COUNT"
+    reason="max_polls" lastPoll="${LAST_ITERATION_POLL:-$POLL_COUNT}"
 fi
-log "=== PR review poll complete (${POLL_COUNT}/${MAX_POLLS} consecutive, ${TOTAL_POLLS}/${MAX_TOTAL_POLLS} total) ==="
+log "=== PR review poll complete (${LAST_ITERATION_POLL:-$POLL_COUNT}/${MAX_POLLS} consecutive, ${TOTAL_POLLS}/${MAX_TOTAL_POLLS} total) ==="
