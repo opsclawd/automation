@@ -20,7 +20,7 @@ export class SweepOrphanedRuns {
       }
       if (!this.deps.isProcessAlive(run.pid)) {
         const completedAt = now();
-        this.deps.runRepository.updateStatusByIssueNumber(run.issueNumber, {
+        this.deps.runRepository.updateStatusByUuid(run.uuid, {
           status: 'cancelled',
           completedAt,
           failureReason: `orphaned: process ${run.pid} no longer running`,
