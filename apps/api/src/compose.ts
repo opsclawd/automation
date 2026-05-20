@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   openDatabase,
   applyMigrations,
@@ -53,12 +53,14 @@ export interface ComposeOptions {
   tee?: boolean;
   dbPath?: string;
   runsDir?: string;
+  baseTmpDir?: string;
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
-  const baseTmpDir = envTmpdir ? join(envTmpdir, '.ai-tmp') : join(opts.repoRoot, '.ai-tmp');
+  const baseTmpDir =
+    opts.baseTmpDir ?? (envTmpdir ? join(envTmpdir, '.ai-tmp') : join(dirname(runsDir), '.ai-tmp'));
   mkdirSync(baseTmpDir, { recursive: true });
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);

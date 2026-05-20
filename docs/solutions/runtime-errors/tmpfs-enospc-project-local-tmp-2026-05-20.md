@@ -109,10 +109,14 @@ Both `TMPDIR` and `SQLITE_TMPDIR` are set because SQLite ignores `TMPDIR` on som
 ### 3. Composition root wiring in `apps/api/src/compose.ts`
 
 ```typescript
+const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
 const envTmpdir = process.env.TMPDIR?.trim();
-const baseTmpDir = envTmpdir ? join(envTmpdir, '.ai-tmp') : join(opts.repoRoot, '.ai-tmp');
+const baseTmpDir =
+  opts.baseTmpDir ?? (envTmpdir ? join(envTmpdir, '.ai-tmp') : join(dirname(runsDir), '.ai-tmp'));
 mkdirSync(baseTmpDir, { recursive: true });
 ```
+
+The default tmp base is derived from `runsDir`'s parent directory (which itself defaults to `repoRoot`). This means `.ai-tmp/` lands alongside `.ai-runs/` — if the operator overrides `--runs-dir` to a writable path, the tmp directory follows automatically. Operators can also pass `baseTmpDir` explicitly for independent control.
 
 The `tmpDirectoryFactory` implementation:
 
