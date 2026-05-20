@@ -105,6 +105,10 @@ describe('AgentProfileName brand', () => {
   });
 
   it('rejects empty string', () => {
-    expect(() => AgentProfileName('')).toThrow('AgentProfileName must be non-empty');
+    expect(() => AgentProfileName('')).toThrow('AgentProfileName must be a non-empty string');
+  });
+
+  it('rejects whitespace-only string', () => {
+    expect(() => AgentProfileName('   ')).toThrow('AgentProfileName must be a non-empty string');
   });
 });
