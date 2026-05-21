@@ -216,4 +216,5 @@ packages/
 scripts/
   ai-run-issue-v2       legacy Bash orchestrator (still authoritative in M1)
   ai-pr-review-poll     legacy PR review poller
+  ai-consolidate-compound milestone consolidation pass over `ai/issues/*/compound.md` and `ai/poll-pr-*/compound-*.md`. Run manually after a milestone closes. `--dry-run` to preview, `--since <ref>` or `--issues N,M` to scope.
 ```
