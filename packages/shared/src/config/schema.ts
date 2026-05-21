@@ -79,7 +79,7 @@ const agentSchema = z
     }
   });
 
-export const orchestratorConfigSchema = z.object({
+export const orchestratorConfigSchema = z.strictObject({
   validation: validationSchema,
   phases: phasesSchema,
   timeouts: timeoutsSchema,

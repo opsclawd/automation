@@ -1,5 +1,4 @@
 {
-  "_comment": "Model names and provider values are illustrative placeholders — do not copy to production without updating them",
   "validation": {
     "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
     "timeout": 300

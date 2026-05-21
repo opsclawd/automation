@@ -117,6 +117,13 @@ describe('agent config schema', () => {
     bad.agent.phaseProfiles['plan-design'].profile = '   ';
     expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/profile/);
   });
+
+  it('rejects misspelled top-level keys like "agnet"', () => {
+    const { validation, phases, timeouts, agent } = baseValid;
+    expect(() =>
+      orchestratorConfigSchema.parse({ validation, phases, timeouts, agnet: agent }),
+    ).toThrow(/unrecognized/i);
+  });
 });
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
