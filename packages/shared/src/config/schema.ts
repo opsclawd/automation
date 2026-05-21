@@ -19,11 +19,13 @@ const timeoutsSchema = z.object({
 // Keep in sync with AgentRuntimeKind in @ai-sdlc/application/agent/types.ts
 const agentRuntime = z.enum(['opencode', 'pi']);
 
+const nonBlankString = z.string().trim().min(1);
+
 const agentProfileSchema = z
   .strictObject({
     runtime: agentRuntime,
-    provider: z.string().min(1),
-    model: z.string().min(1),
+    provider: nonBlankString,
+    model: nonBlankString,
     contextLimitTokens: z.number().int().positive().optional(),
     promptBudgetTokens: z.number().int().positive().optional(),
     outputBudgetTokens: z.number().int().positive().optional(),
@@ -40,15 +42,15 @@ const agentProfileSchema = z
   });
 
 const phaseProfileEntrySchema = z.strictObject({
-  profile: z.string().min(1),
-  fallbackProfile: z.string().min(1).optional(),
+  profile: nonBlankString,
+  fallbackProfile: nonBlankString.optional(),
 });
 
 const agentSchema = z
   .strictObject({
-    defaultProfile: z.string().min(1),
-    profiles: z.record(z.string().min(1), agentProfileSchema),
-    phaseProfiles: z.record(z.string().min(1), phaseProfileEntrySchema),
+    defaultProfile: nonBlankString,
+    profiles: z.record(nonBlankString, agentProfileSchema),
+    phaseProfiles: z.record(nonBlankString, phaseProfileEntrySchema),
   })
   .superRefine((agent, ctx) => {
     const names = new Set(Object.keys(agent.profiles));

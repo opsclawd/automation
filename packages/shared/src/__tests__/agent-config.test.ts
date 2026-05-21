@@ -93,6 +93,30 @@ describe('agent config schema', () => {
     const { validation, phases, timeouts } = baseValid;
     expect(() => orchestratorConfigSchema.parse({ validation, phases, timeouts })).not.toThrow();
   });
+
+  it('rejects whitespace-only provider', () => {
+    const bad = structuredClone(baseValid);
+    (bad.agent.profiles['opencode-frontier'] as Record<string, unknown>).provider = '   ';
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/provider/);
+  });
+
+  it('rejects whitespace-only model', () => {
+    const bad = structuredClone(baseValid);
+    (bad.agent.profiles['opencode-frontier'] as Record<string, unknown>).model = '   ';
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/model/);
+  });
+
+  it('rejects whitespace-only defaultProfile', () => {
+    const bad = structuredClone(baseValid);
+    bad.agent.defaultProfile = '   ';
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/defaultProfile/);
+  });
+
+  it('rejects whitespace-only phaseProfiles profile reference', () => {
+    const bad = structuredClone(baseValid);
+    bad.agent.phaseProfiles['plan-design'].profile = '   ';
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/profile/);
+  });
 });
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
