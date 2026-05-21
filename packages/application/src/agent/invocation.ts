@@ -1,5 +1,5 @@
-import type { AgentRuntimeKind, AgentProfileName } from './types.js';
-export { AgentProfileName, type AgentRuntimeKind } from './types.js';
+import { AgentProfileName, type AgentRuntimeKind } from './types.js';
+export { AgentProfileName, type AgentRuntimeKind };
 
 export type AgentInvocationOutcome = 'success' | 'failed' | 'timeout' | 'contract_violation';
 
