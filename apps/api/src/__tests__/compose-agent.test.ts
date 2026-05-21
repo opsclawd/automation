@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ConfigError } from '@ai-sdlc/shared';
 import { AgentProfileName } from '@ai-sdlc/application';
 import { FakeAgentPort } from '@ai-sdlc/application/test-doubles';
 import { AgentRuntimeRegistry } from '../agent-runtime-registry.js';
@@ -39,7 +40,7 @@ describe('AgentRuntimeRegistry', () => {
       },
       adapters: { opencode: new FakeAgentPort({}), pi: new FakeAgentPort({}) },
     });
-    expect(() => reg.resolveProfileForPhase('mystery')).toThrow(/unknown phase/);
+    expect(() => reg.resolveProfileForPhase('mystery')).toThrow(ConfigError);
   });
 
   it('agentPort.invoke dispatches to the adapter for the requested profile runtime', async () => {
@@ -86,5 +87,35 @@ describe('AgentRuntimeRegistry', () => {
     expect(r.outcome).toBe('success');
     expect(opencode.invocations).toHaveLength(1);
     expect(pi.invocations).toHaveLength(0);
+  });
+
+  it('invoke throws ConfigError when no adapter is registered for a profile runtime', async () => {
+    const reg = new AgentRuntimeRegistry({
+      agent: {
+        defaultProfile: 'pi-profile',
+        profiles: {
+          'pi-profile': {
+            runtime: 'pi' as const,
+            provider: 'openai',
+            model: 'o1',
+            timeoutMinutes: 30,
+            contextLimitTokens: 100000,
+          },
+        },
+        phaseProfiles: { 'plan-design': { profile: 'pi-profile' } },
+      },
+      adapters: { opencode: new FakeAgentPort({}) },
+    });
+    await expect(async () => {
+      await reg.agentPort.invoke({
+        profile: AgentProfileName('pi-profile'),
+        promptPath: '/tmp/prompt',
+        expectedArtifacts: [],
+        cwd: '/',
+        runId: 'test-run',
+        repoId: 'test-repo',
+        phaseId: 'plan-design',
+      });
+    }).rejects.toThrow(/no adapter registered/);
   });
 });

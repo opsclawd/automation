@@ -26,7 +26,7 @@ import {
   type RunRepositoryPort,
   type TmpDirectoryFactory,
 } from '@ai-sdlc/application';
-import { loadConfig } from '@ai-sdlc/shared';
+import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 import { FakeAgentPort } from '@ai-sdlc/application/test-doubles';
 import { AgentRuntimeRegistry } from './agent-runtime-registry.js';
 
@@ -45,7 +45,7 @@ export interface Container {
   runsDir: string;
   baseTmpDir: string;
   eventBus: EventBusPort;
-  agentRuntime: AgentRuntimeRegistry | undefined;
+  agentRuntime?: AgentRuntimeRegistry;
 }
 
 export interface ComposeOptions {
@@ -135,7 +135,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
       });
     }
-  } catch {
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
     // No config file or no agent block — agentRuntime stays undefined.
     // Existing compose callers (tests, CLI without .ai-orchestrator.json)
     // continue to work without modification.
@@ -152,7 +153,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runsDir,
     baseTmpDir,
     eventBus,
-    agentRuntime,
+    ...(agentRuntime ? { agentRuntime } : {}),
   };
 }
 
