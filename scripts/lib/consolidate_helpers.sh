@@ -41,7 +41,7 @@ discover_inputs() {
 
   local all_files
   all_files=$(find ai/issues -name 'compound.md' -type f 2>/dev/null; \
-              find ai/poll-pr-* -name 'compound-*.md' -type f 2>/dev/null) || true
+              find ai/ -path '*/poll-pr-*/compound-*.md' -type f 2>/dev/null) || true
 
   if [[ -z "$since_ref" ]]; then
     echo "$all_files" | grep -v '^$' | sort
