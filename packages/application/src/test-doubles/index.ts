@@ -6,3 +6,4 @@ export * from './fake-github-port.js';
 export * from './fake-git-port.js';
 export * from './fake-validation-port.js';
 export * from './fake-artifact-store.js';
+export * from './fake-agent-port.js';
