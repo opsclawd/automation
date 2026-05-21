@@ -130,6 +130,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       agentRuntime = new AgentRuntimeRegistry({
         agent: config.agent,
         adapters: {
+          // TODO(M4): Replace with real adapters (opencode, pi).
           opencode: new FakeAgentPort({}),
           pi: new FakeAgentPort({}),
         },
