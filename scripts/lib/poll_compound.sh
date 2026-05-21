@@ -33,7 +33,19 @@ should_emit_compound() {
 emit_compound_doc() {
   local ts
   ts=$(date -u +'%Y-%m-%dT%H-%M-%SZ')
-  COMPOUND_OUT="${ISSUES_DIR}/compound-${ts}.md"
+
+  local agent_target
+  local final_target="${ISSUES_DIR}/compound-${ts}.md"
+
+  # opencode sandboxes agent writes to the worktree directory. Write inside
+  # POLL_WORKTREE (where the agent can reach), then promote to ISSUES_DIR.
+  if [[ -n "${POLL_WORKTREE:-}" ]]; then
+    agent_target="${POLL_WORKTREE}/.review-context/compound-${ts}.md"
+  else
+    agent_target="$final_target"
+  fi
+
+  COMPOUND_OUT="$agent_target"
 
   local processed_count=0 replied_count=0
   if [[ -f "${PROCESSED_IDS_FILE:-}" ]]; then
@@ -53,11 +65,13 @@ emit_compound_doc() {
     echo "Paired issue: ${ISSUE_NUM:-unknown}"
     echo "Loop stats: TOTAL_POLLS=${TOTAL_POLLS:-0}, DID_PUSH_COMMITS=${DID_PUSH_COMMITS:-0}, BLOCKED_EXIT=${BLOCKED_EXIT:-false}, CONTRADICTION_FIRED=${CONTRADICTION_FIRED:-false}, processed=${processed_count}, replied=${replied_count}"
     echo ""
-    echo "Artifact dir: ${ISSUES_DIR}"
-    echo "Logs available: poll.log, process-review-p*.log, build-verify-p*.log"
-    echo ""
+    if [[ -n "${POLL_WORKTREE:-}" ]]; then
+      echo "Your working directory: ${POLL_WORKTREE}"
+      echo "Write your output relative to the working directory."
+      echo ""
+    fi
     echo "## TASK"
-    echo "Write a markdown document to: ${COMPOUND_OUT}"
+    echo "Write a markdown document to: ${agent_target}"
     echo ""
     echo "This is RAW MATERIAL, not a curated doc. A later consolidation pass will"
     echo "decide what (if anything) makes it into docs/solutions/."
@@ -78,12 +92,18 @@ emit_compound_doc() {
     echo "- Write only the file at the path above."
   } > "$prompt_file"
 
-  log "  Emitting compound doc to ${COMPOUND_OUT}"
+  log "  Emitting compound doc to ${final_target}"
   run_agent "compound" 300 < "$prompt_file" || warn "  compound agent exited non-zero"
   rm -f "$prompt_file"
 
-  if [[ -f "$COMPOUND_OUT" ]]; then
-    log "  Compound doc written: ${COMPOUND_OUT}"
+  # Promote from sandbox (worktree) to ISSUES_DIR
+  if [[ "$agent_target" != "$final_target" ]]; then
+    mkdir -p "$(dirname "$final_target")"
+    cp "$agent_target" "$final_target" 2>/dev/null || true
+  fi
+
+  if [[ -f "$final_target" ]]; then
+    log "  Compound doc written: ${final_target}"
     return 0
   else
     warn "  Compound doc not written"

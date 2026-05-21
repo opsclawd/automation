@@ -59,7 +59,7 @@ discover_inputs() {
               find ai/ -path '*/poll-pr-*/compound-*.md' -type f 2>/dev/null) || true
 
   if [[ -z "$since_ref" ]]; then
-    echo "$all_files" | grep -v '^$' | sort
+    echo "$all_files" | sed -n '/^$/!p' | sort
     return 0
   fi
 
@@ -69,7 +69,7 @@ discover_inputs() {
     warn "Invalid --since ref: '${since_ref}'. Use a valid commit, tag, or branch name."
     return 2
   }
-  echo "$all_files" | grep -v '^$' | while IFS= read -r f; do
+  echo "$all_files" | sed -n '/^$/!p' | while IFS= read -r f; do
     local mtime
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
     if [[ "$mtime" -gt "$since_epoch" ]]; then
