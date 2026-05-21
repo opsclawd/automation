@@ -25,8 +25,8 @@ warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG_FILE
 usage() {
   cat >&2 <<EOF
 Usage: $0 [--since <git-ref>] [--issues <n,m,...>] [--dry-run] [--yes]
-  --since REF    Consolidate compound files newer than REF.
-  --issues LIST  Consolidate only the listed issue numbers (poll-pr files excluded).
+  --since REF    Consolidate compound files newer than REF (mutually exclusive with --issues).
+  --issues LIST  Consolidate only the listed issue numbers, poll-pr files excluded (mutually exclusive with --since).
   --dry-run      Run the agent but do not stage or commit anything.
   --yes          Skip the interactive confirmation prompt.
 EOF
@@ -46,6 +46,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$REPO_ROOT"
+
+if [[ -n "$SINCE" && -n "$ISSUES" ]]; then
+  warn "--since and --issues are mutually exclusive (they define disjoint input scopes). Pass one or the other."
+  usage
+fi
 
 INPUT_ARGS=()
 if [[ -n "$ISSUES" ]]; then
