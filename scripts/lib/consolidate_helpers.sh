@@ -57,7 +57,7 @@ discover_inputs() {
     if [[ "$mtime" -gt "$since_epoch" ]]; then
       echo "$f"
     fi
-    done | sort
+  done | sort
 }
 
 # diff_and_confirm — show the working-tree diff under docs/solutions/ and ask
