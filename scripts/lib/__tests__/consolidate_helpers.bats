@@ -52,3 +52,29 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
   echo "$output" | grep -q "ai/issues/2/compound.md"
   ! echo "$output" | grep -q "ai/poll-pr-"
 }
+
+@test "diff_and_confirm: returns 0 when user answers y" {
+  echo "existing" > docs/solutions/orchestrator/test.md
+  git add docs/solutions
+  git commit -q -m "seed"
+  echo "modified" > docs/solutions/orchestrator/test.md
+  run bash -c 'source "'"${BATS_TEST_DIRNAME}"'/../consolidate_helpers.sh"; echo "y" | diff_and_confirm'
+  [ "$status" -eq 0 ]
+}
+
+@test "diff_and_confirm: returns non-zero when user answers n" {
+  echo "existing" > docs/solutions/orchestrator/test.md
+  git add docs/solutions
+  git commit -q -m "seed"
+  echo "modified" > docs/solutions/orchestrator/test.md
+  run bash -c 'source "'"${BATS_TEST_DIRNAME}"'/../consolidate_helpers.sh"; echo "n" | diff_and_confirm'
+  [ "$status" -ne 0 ]
+}
+
+@test "diff_and_confirm: returns 0 with note when there is nothing to commit" {
+  git add docs/solutions 2>/dev/null || true
+  git commit -q --allow-empty -m "no changes"
+  run bash -c 'source "'"${BATS_TEST_DIRNAME}"'/../consolidate_helpers.sh"; diff_and_confirm'
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -qi "nothing to commit"
+}
