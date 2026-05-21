@@ -82,6 +82,13 @@ describe('agent config schema', () => {
     expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/defaultProfile/);
   });
 
+  it('rejects unknown keys in phaseProfile entries', () => {
+    const bad = structuredClone(baseValid);
+    (bad.agent.phaseProfiles['plan-design'] as Record<string, unknown>).fallbackprofile =
+      'opencode-frontier';
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/unrecognized/i);
+  });
+
   it('accepts config without agent field', () => {
     const { validation, phases, timeouts } = baseValid;
     expect(() => orchestratorConfigSchema.parse({ validation, phases, timeouts })).not.toThrow();

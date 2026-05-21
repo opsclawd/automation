@@ -39,7 +39,7 @@ const agentProfileSchema = z
     }
   });
 
-const phaseProfileEntrySchema = z.object({
+const phaseProfileEntrySchema = z.strictObject({
   profile: z.string().min(1),
   fallbackProfile: z.string().min(1).optional(),
 });
