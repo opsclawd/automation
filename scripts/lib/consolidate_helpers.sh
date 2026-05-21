@@ -33,8 +33,8 @@ discover_inputs() {
   local mode=auto since_ref="" issues=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --since) mode=since; since_ref="$2"; shift 2 ;;
-      --issues) mode=issues; issues="$2"; shift 2 ;;
+      --since) [[ -n "$2" && "$2" != -* ]] || { echo "discover_inputs: --since requires a non-flag value" >&2; return 2; }; mode=since; since_ref="$2"; shift 2 ;;
+      --issues) [[ -n "$2" && "$2" != -* ]] || { echo "discover_inputs: --issues requires a non-flag value" >&2; return 2; }; mode=issues; issues="$2"; shift 2 ;;
       *) echo "discover_inputs: unknown arg $1" >&2; return 2 ;;
     esac
   done
