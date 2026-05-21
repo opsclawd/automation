@@ -21,6 +21,11 @@ const agentRuntime = z.enum(['opencode', 'pi']);
 
 const nonBlankString = z.string().trim().min(1);
 
+const recordKeySchema = z
+  .string()
+  .min(1)
+  .refine((v) => v === v.trim(), 'key must not have leading or trailing whitespace');
+
 const agentProfileSchema = z
   .strictObject({
     runtime: agentRuntime,
@@ -49,8 +54,8 @@ const phaseProfileEntrySchema = z.strictObject({
 const agentSchema = z
   .strictObject({
     defaultProfile: nonBlankString,
-    profiles: z.record(nonBlankString, agentProfileSchema),
-    phaseProfiles: z.record(nonBlankString, phaseProfileEntrySchema),
+    profiles: z.record(recordKeySchema, agentProfileSchema),
+    phaseProfiles: z.record(recordKeySchema, phaseProfileEntrySchema),
   })
   .superRefine((agent, ctx) => {
     const names = new Set(Object.keys(agent.profiles));

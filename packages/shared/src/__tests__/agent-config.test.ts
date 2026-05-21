@@ -124,6 +124,24 @@ describe('agent config schema', () => {
       orchestratorConfigSchema.parse({ validation, phases, timeouts, agnet: agent }),
     ).toThrow(/unrecognized/i);
   });
+
+  it('rejects profiles key with leading/trailing whitespace', () => {
+    const bad = structuredClone(baseValid);
+    bad.agent.profiles[' opencode-frontier'] = structuredClone(
+      bad.agent.profiles['opencode-frontier'],
+    );
+    delete bad.agent.profiles['opencode-frontier'];
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/whitespace/);
+  });
+
+  it('rejects phaseProfiles key with leading/trailing whitespace', () => {
+    const bad = structuredClone(baseValid);
+    bad.agent.phaseProfiles[' plan-design'] = structuredClone(
+      bad.agent.phaseProfiles['plan-design'],
+    );
+    delete bad.agent.phaseProfiles['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/whitespace/);
+  });
 });
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
