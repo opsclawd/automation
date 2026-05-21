@@ -46,7 +46,7 @@ TIMEOUT_BRAINSTORM=600
 TIMEOUT_PLAN_WRITE=600
 TIMEOUT_IMPLEMENT=1800
 TIMEOUT_VALIDATE=300
-TIMEOUT_REVIEW=600
+TIMEOUT_REVIEW=180
 TIMEOUT_FIX=900
 TIMEOUT_PR_FIX=1200
 TIMEOUT_COMPOUND=600
@@ -1223,6 +1223,17 @@ CRITICAL ORDERING RULE:
 - If you changed your mind during analysis, rewrite BOTH files with the
   final verdict. The .result file must match the conclusion in the .md file.
 
+STOP RULE — THIS IS THE MOST IMPORTANT RULE:
+After writing BOTH files you are DONE. Do NOT:
+- Re-read any files
+- Re-verify your work
+- Run any commands
+- Start the review over
+- Do anything at all
+
+You MUST emit no further actions after the .result file is written.
+Any action after writing .result is a contract violation.
+
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 
     if [[ "${SPEC_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
@@ -1326,6 +1337,17 @@ Do NOT fail a documentation-only change for lacking tests, code patterns, or cod
 Both files MUST be written before you stop, even on QUALITY_PASS. The
 .md file is the primary handoff to the fix-review agent — without it,
 the orchestrator silently marks the task complete despite failures.
+
+STOP RULE — THIS IS THE MOST IMPORTANT RULE:
+After writing BOTH files you are DONE. Do NOT:
+- Re-read any files
+- Re-verify your work
+- Run any commands
+- Start the review over
+- Do anything at all
+
+You MUST emit no further actions after the .result file is written.
+Any action after writing .result is a contract violation.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 
