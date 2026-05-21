@@ -20,7 +20,7 @@ const timeoutsSchema = z.object({
 const agentRuntime = z.enum(['opencode', 'pi']);
 
 const agentProfileSchema = z
-  .object({
+  .strictObject({
     runtime: agentRuntime,
     provider: z.string().min(1),
     model: z.string().min(1),
