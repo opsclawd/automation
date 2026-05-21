@@ -48,11 +48,13 @@ discover_inputs() {
     return 0
   fi
 
-  # filter to files that did not exist in the tree at since_ref
-  local at_ref
-  at_ref=$(git ls-tree -r --name-only "$since_ref" 2>/dev/null || echo "")
+  # filter to files modified after since_ref via mtime comparison
+  local since_epoch
+  since_epoch=$(git log -1 --format=%ct "$since_ref" 2>/dev/null || echo 0)
   echo "$all_files" | grep -v '^$' | while IFS= read -r f; do
-    if ! echo "$at_ref" | grep -qxF "$f"; then
+    local mtime
+    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+    if [[ "$mtime" -gt "$since_epoch" ]]; then
       echo "$f"
     fi
   done | sort

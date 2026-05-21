@@ -35,6 +35,7 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
   git commit -q -m "snapshot before consolidation"
   local snap_sha
   snap_sha=$(git rev-parse HEAD)
+  sleep 1
   # add a new file after the ref
   mkdir -p ai/issues/3
   echo "issue 3 compound" > ai/issues/3/compound.md
