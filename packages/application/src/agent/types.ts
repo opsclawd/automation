@@ -32,12 +32,19 @@ export function validateAgentProfile(name: AgentProfileName, profile: AgentProfi
   if (!profile.model || profile.model.trim().length === 0) {
     throw new Error(`AgentProfile "${name}" has empty model`);
   }
-  if (profile.timeoutMinutes <= 0) {
+  if (!Number.isFinite(profile.timeoutMinutes) || profile.timeoutMinutes <= 0) {
     throw new Error(
       `AgentProfile "${name}" has non-positive timeoutMinutes: ${profile.timeoutMinutes}`,
     );
   }
-  if (profile.runtime === 'pi' && profile.contextLimitTokens === undefined) {
-    throw new Error(`Pi AgentProfile "${name}" is missing required contextLimitTokens`);
+  if (
+    profile.runtime === 'pi' &&
+    (profile.contextLimitTokens === undefined ||
+      !Number.isFinite(profile.contextLimitTokens) ||
+      profile.contextLimitTokens <= 0)
+  ) {
+    throw new Error(
+      `Pi AgentProfile "${name}" has invalid contextLimitTokens: ${profile.contextLimitTokens}`,
+    );
   }
 }

@@ -84,7 +84,7 @@ describe('validateAgentProfile', () => {
     ).toThrow('empty model');
   });
 
-  it.each([0, -1])('rejects timeoutMinutes=%s', (timeoutMinutes) => {
+  it.each([0, -1, Number.NaN])('rejects timeoutMinutes=%s', (timeoutMinutes) => {
     expect(() =>
       validateAgentProfile(AgentProfileName('bad-timeout'), opencodeProfile({ timeoutMinutes })),
     ).toThrow('non-positive timeoutMinutes');
@@ -99,24 +99,12 @@ describe('validateAgentProfile', () => {
     ).toThrow('contextLimitTokens');
   });
 
-  it('accepts Pi profile with contextLimitTokens: 0', () => {
-    expect(() =>
-      validateAgentProfile(AgentProfileName('pi-zero-ctx'), piProfile({ contextLimitTokens: 0 })),
-    ).not.toThrow();
-  });
-
-  it('accepts Pi profile with negative contextLimitTokens (currently passes, regression guard)', () => {
-    expect(() =>
-      validateAgentProfile(AgentProfileName('pi-neg-ctx'), piProfile({ contextLimitTokens: -1 })),
-    ).not.toThrow();
-  });
-
-  it('accepts Pi profile with NaN contextLimitTokens (currently passes, regression guard)', () => {
-    expect(() =>
-      validateAgentProfile(
-        AgentProfileName('pi-nan-ctx'),
-        piProfile({ contextLimitTokens: Number.NaN }),
-      ),
-    ).not.toThrow();
-  });
+  it.each([0, -1, Number.NaN])(
+    'rejects Pi profile with contextLimitTokens=%s',
+    (contextLimitTokens) => {
+      expect(() =>
+        validateAgentProfile(AgentProfileName('pi-bad-ctx'), piProfile({ contextLimitTokens })),
+      ).toThrow('invalid contextLimitTokens');
+    },
+  );
 });
