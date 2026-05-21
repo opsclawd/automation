@@ -54,7 +54,14 @@ elif [[ -n "$SINCE" ]]; then
   INPUT_ARGS=(--since "$SINCE")
 fi
 
-mapfile -t INPUT_FILES < <(discover_inputs "${INPUT_ARGS[@]}")
+INPUT_TMP=$(mktemp)
+if ! discover_inputs "${INPUT_ARGS[@]}" > "$INPUT_TMP"; then
+  ec=$?; rm -f "$INPUT_TMP"
+  warn "discover_inputs failed (exit ${ec})"
+  exit "$ec"
+fi
+mapfile -t INPUT_FILES < "$INPUT_TMP"
+rm -f "$INPUT_TMP"
 log "Discovered ${#INPUT_FILES[@]} compound input file(s)."
 if [[ ${#INPUT_FILES[@]} -eq 0 ]]; then
   log "No compound inputs to consolidate. Exiting."

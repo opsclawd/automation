@@ -91,9 +91,9 @@ diff_and_confirm() {
     return 0
   fi
   echo "--- Proposed changes under docs/solutions/ ---"
-  git diff --stat -- docs/solutions/
+  git diff HEAD --stat -- docs/solutions/
   echo
-  git diff -- docs/solutions/
+  git diff HEAD -- docs/solutions/
   echo
   read -r -p "Commit these changes? [y/N] " answer
   case "$answer" in
