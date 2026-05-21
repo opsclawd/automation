@@ -57,5 +57,39 @@ discover_inputs() {
     if [[ "$mtime" -gt "$since_epoch" ]]; then
       echo "$f"
     fi
-  done | sort
+    done | sort
+}
+
+# diff_and_confirm — show the working-tree diff under docs/solutions/ and ask
+# the user to confirm. Returns 0 on yes, 1 on no, 0 with a note when nothing
+# changed (so the caller can exit clean on a zero-output run).
+diff_and_confirm() {
+  cd "$REPO_ROOT" || return 1
+  if git diff --quiet -- docs/solutions/ && [[ -z "$(git status --porcelain -- docs/solutions/)" ]]; then
+    echo "Nothing to commit under docs/solutions/."
+    return 0
+  fi
+  echo "--- Proposed changes under docs/solutions/ ---"
+  git diff --stat -- docs/solutions/
+  echo
+  git diff -- docs/solutions/
+  echo
+  read -r -p "Commit these changes? [y/N] " answer
+  case "$answer" in
+    y|Y|yes|YES) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# commit_consolidation — stage docs/solutions/ and commit with a standard
+# message. Caller is responsible for having run diff_and_confirm first.
+commit_consolidation() {
+  cd "$REPO_ROOT" || return 1
+  if git diff --quiet -- docs/solutions/ && [[ -z "$(git status --porcelain -- docs/solutions/)" ]]; then
+    return 0
+  fi
+  git add docs/solutions/
+  git commit -m "docs(solutions): consolidate compound artifacts
+
+Curated from ai/issues/*/compound.md and ai/poll-pr-*/compound-*.md."
 }
