@@ -21,6 +21,16 @@ should_emit_compound() {
   return 1
 }
 
+# emit_compound_doc — writes a per-run compound markdown doc to
+# ${ISSUES_DIR}/compound-<ISO-timestamp>.md. Timestamp suffix lets the poll
+# loop be rerun against the same PR without clobbering prior docs.
+#
+# Required env (in addition to should_emit_compound's):
+#   PR_NUMBER, PR_BRANCH, OWNER_REPO  — PR identity, included in prompt
+#   ISSUE_NUM (optional)              — paired issue if known
+#
+# Calls run_agent (defined in ai-pr-review-poll). For testing, stub run_agent
+# in the test setup before calling this function.
 emit_compound_doc() {
   local ts
   ts=$(date -u +'%Y-%m-%dT%H-%M-%SZ')
