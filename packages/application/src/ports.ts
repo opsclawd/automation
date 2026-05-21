@@ -1,11 +1,4 @@
-import type {
-  Run,
-  RunStatus,
-  Failure,
-  ClassifyExitInput,
-  Repository,
-  RepositoryId,
-} from '@ai-sdlc/domain';
+import type { Run, RunStatus, Failure, ClassifyExitInput } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
 /**
@@ -104,12 +97,7 @@ export type TmpDirectoryFactory = (input: {
   runId: string;
 }) => TmpDirectoryHandle;
 
-export interface RepositoryPort {
-  findById(id: RepositoryId): Repository | undefined;
-  findByFullName(fullName: string): Repository | undefined;
-  listEnabled(): Repository[];
-}
-
+export type { RepositoryPort } from './ports/repository-port.js';
 export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
 export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {
