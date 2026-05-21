@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { orchestratorConfigSchema } from '../config/schema.js';
 
@@ -73,10 +75,6 @@ describe('agent config schema', () => {
     expect(() => orchestratorConfigSchema.parse({ validation, phases, timeouts })).not.toThrow();
   });
 });
-
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
     const text = readFileSync(
