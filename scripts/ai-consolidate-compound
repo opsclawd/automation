@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# ai-consolidate-compound — milestone-triggered curation pass over per-run
+# compound artifacts. Reads ai/issues/*/compound.md and
+# ai/poll-pr-*/compound-*.md, hands them plus the existing docs/solutions/
+# corpus to one agent invocation, and lets the agent decide what (if anything)
+# to write back into docs/solutions/.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+export REPO_ROOT
+
+AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
+AGENT_CLI="${AGENT_CLI:-opencode}"
+TIMEOUT_SEC="${TIMEOUT_SEC:-900}"
+LOG_FILE="${LOG_FILE:-${REPO_ROOT}/ai/consolidate-$(date -u +%Y%m%dT%H%M%SZ).log}"
+mkdir -p "$(dirname "$LOG_FILE")"
+
+# shellcheck source=lib/consolidate_helpers.sh
+source "${REPO_ROOT}/scripts/lib/consolidate_helpers.sh"
+
+log()  { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG_FILE" >&2; }
+warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG_FILE" >&2; }
+
+usage() {
+  cat >&2 <<EOF
+Usage: $0 [--since <git-ref>] [--issues <n,m,...>] [--dry-run] [--yes]
+  --since REF    Consolidate compound files newer than REF.
+  --issues LIST  Consolidate only the listed issue numbers (poll-pr files excluded).
+  --dry-run      Run the agent but do not stage or commit anything.
+  --yes          Skip the interactive confirmation prompt.
+EOF
+  exit 2
+}
+
+SINCE="" ISSUES="" DRY_RUN=false ASSUME_YES=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --since)   SINCE="$2"; shift 2 ;;
+    --issues)  ISSUES="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=true; shift ;;
+    --yes)     ASSUME_YES=true; shift ;;
+    -h|--help) usage ;;
+    *) usage ;;
+  esac
+done
+
+cd "$REPO_ROOT"
+
+INPUT_ARGS=()
+if [[ -n "$ISSUES" ]]; then
+  INPUT_ARGS=(--issues "$ISSUES")
+elif [[ -n "$SINCE" ]]; then
+  INPUT_ARGS=(--since "$SINCE")
+fi
+
+mapfile -t INPUT_FILES < <(discover_inputs "${INPUT_ARGS[@]}")
+log "Discovered ${#INPUT_FILES[@]} compound input file(s)."
+if [[ ${#INPUT_FILES[@]} -eq 0 ]]; then
+  log "No compound inputs to consolidate. Exiting."
+  exit 0
+fi
+
+# Stage existing curated docs for the agent's context.
+mapfile -t EXISTING_DOCS < <(find docs/solutions -name '*.md' -type f 2>/dev/null | sort)
+log "Existing curated docs in scope: ${#EXISTING_DOCS[@]}"
+
+PROMPT_FILE=$(mktemp)
+{
+  echo "You are running a milestone consolidation pass over raw compound-engineering artifacts."
+  echo ""
+  echo "## YOUR JOB"
+  echo "Decide whether anything in the inputs is worth committing to docs/solutions/."
+  echo "Most batches should produce ZERO or a SMALL number of new/updated docs. Restating"
+  echo "the diff or the PR description is noise. Only commit lessons that would change"
+  echo "how a future issue is approached."
+  echo ""
+  echo "## OUTPUT CONVENTION (existing structure — match it)"
+  echo "- Files live under docs/solutions/<category>/<topic-slug>-<YYYY-MM-DD>.md"
+  echo "- Categories already in use: domain, orchestrator, runtime-errors, test-failures"
+  echo "- Use YAML frontmatter (title, date, category, module, problem_type, ..., tags)"
+  echo "- Cluster by TOPIC, not by issue. One file per cluster."
+  echo "- Update an existing file in place if a new input reinforces or contradicts it."
+  echo "- Filename should be slug-ish and stable: edit existing files rather than"
+  echo "  creating a v2 with a slightly different name."
+  echo ""
+  echo "## ZERO-OUTPUT IS A VALID RESULT"
+  echo "If nothing in the inputs warrants a curated doc, write nothing and exit."
+  echo "Do NOT pad the batch with low-signal docs to feel productive."
+  echo ""
+  echo "## EXISTING CURATED DOCS (read these first; update in place when applicable)"
+  for d in "${EXISTING_DOCS[@]}"; do
+    echo ""
+    echo "### ${d}"
+    echo '```markdown'
+    cat "$d"
+    echo '```'
+  done
+  echo ""
+  echo "## RAW INPUTS (this consolidation pass)"
+  for f in "${INPUT_FILES[@]}"; do
+    echo ""
+    echo "### ${f}"
+    echo '```markdown'
+    cat "$f"
+    echo '```'
+  done
+  echo ""
+  echo "## RULES"
+  echo "- Write only inside docs/solutions/."
+  echo "- Do not delete existing files (you may overwrite/update them)."
+  echo "- Do not modify any per-run input file under ai/."
+  echo "- Do not run git commands. Do not commit. The wrapping script handles that."
+} > "$PROMPT_FILE"
+
+log "Invoking agent (timeout ${TIMEOUT_SEC}s, model ${AGENT_MODEL})..."
+
+run_agent() {
+  local prompt="$1"
+  case "$AGENT_CLI" in
+    claude|claude-minimax)
+      timeout "$TIMEOUT_SEC" bash -c "~/bin/claude-minimax --settings ~/.claude/profiles/minimax.json --print --model $AGENT_MODEL" < "$prompt"
+      ;;
+    opencode)
+      timeout "$TIMEOUT_SEC" bash -c "opencode --model $AGENT_MODEL run" < "$prompt"
+      ;;
+    *)
+      warn "Unsupported AGENT_CLI: $AGENT_CLI"; return 1 ;;
+  esac
+}
+
+run_agent "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
+AGENT_EC=${PIPESTATUS[0]}
+rm -f "$PROMPT_FILE"
+
+if [[ $AGENT_EC -ne 0 ]]; then
+  warn "Agent exited non-zero (${AGENT_EC}); inspect $LOG_FILE before deciding to commit."
+fi
+
+if $DRY_RUN; then
+  log "--dry-run: leaving working tree as-is. Inspect with: git status -- docs/solutions/"
+  exit 0
+fi
+
+if $ASSUME_YES; then
+  if git diff --quiet -- docs/solutions/ && [[ -z "$(git status --porcelain -- docs/solutions/)" ]]; then
+    log "Nothing to commit under docs/solutions/."
+    exit 0
+  fi
+  commit_consolidation
+  exit 0
+fi
+
+if diff_and_confirm; then
+  commit_consolidation
+else
+  warn "Aborted by user. docs/solutions/ left modified for inspection."
+  exit 1
+fi
