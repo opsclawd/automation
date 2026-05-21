@@ -20,3 +20,64 @@ should_emit_compound() {
   if [[ -s "${PROCESSED_IDS_FILE:-/dev/null}" ]]; then return 0; fi
   return 1
 }
+
+emit_compound_doc() {
+  local ts
+  ts=$(date -u +'%Y-%m-%dT%H-%M-%SZ')
+  COMPOUND_OUT="${ISSUES_DIR}/compound-${ts}.md"
+
+  local processed_count=0 replied_count=0
+  if [[ -f "${PROCESSED_IDS_FILE:-}" ]]; then
+    processed_count=$(wc -l < "$PROCESSED_IDS_FILE" | tr -d ' ')
+  fi
+  if [[ -f "${REPLIED_IDS_FILE:-}" ]]; then
+    replied_count=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
+  fi
+
+  local prompt_file
+  prompt_file=$(mktemp)
+  {
+    echo "You are writing a compound-engineering raw artifact for a PR review loop."
+    echo ""
+    echo "## CONTEXT"
+    echo "PR: #${PR_NUMBER} on ${OWNER_REPO} (branch ${PR_BRANCH})"
+    echo "Paired issue: ${ISSUE_NUM:-unknown}"
+    echo "Loop stats: TOTAL_POLLS=${TOTAL_POLLS:-0}, COMMITS_PUSHED=${COMMITS_PUSHED:-0}, BLOCKED_EXIT=${BLOCKED_EXIT:-false}, CONTRADICTION_FIRED=${CONTRADICTION_FIRED:-false}, processed=${processed_count}, replied-pending=${replied_count}"
+    echo ""
+    echo "Artifact dir: ${ISSUES_DIR}"
+    echo "Logs available: poll.log, process-review-p*.log, build-verify-p*.log"
+    echo ""
+    echo "## TASK"
+    echo "Write a markdown document to: ${COMPOUND_OUT}"
+    echo ""
+    echo "This is RAW MATERIAL, not a curated doc. A later consolidation pass will"
+    echo "decide what (if anything) makes it into docs/solutions/."
+    echo ""
+    echo "Capture only what is genuinely non-obvious:"
+    echo "- Contested decisions and how they were resolved"
+    echo "- Reviewer pushback that revealed a hidden constraint"
+    echo "- Mistakes the agent made and corrected mid-loop"
+    echo "- Agent-loop failure modes (contradictions, build flapping, repeated reviewer rounds)"
+    echo ""
+    echo "Drop anything that just restates the diff or the PR description."
+    echo "If genuinely nothing is worth writing, write a one-paragraph file saying so."
+    echo ""
+    echo "## RULES"
+    echo "- Do not commit anything."
+    echo "- Do not push."
+    echo "- Do not create a PR."
+    echo "- Write only the file at the path above."
+  } > "$prompt_file"
+
+  log "  Emitting compound doc to ${COMPOUND_OUT}"
+  run_agent "compound" 300 < "$prompt_file" || warn "  compound agent exited non-zero"
+  rm -f "$prompt_file"
+
+  if [[ -f "$COMPOUND_OUT" ]]; then
+    log "  Compound doc written: ${COMPOUND_OUT}"
+    return 0
+  else
+    warn "  Compound doc not written"
+    return 1
+  fi
+}

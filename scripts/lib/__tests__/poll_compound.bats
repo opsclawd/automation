@@ -11,6 +11,9 @@ setup() {
   export BLOCKED_EXIT=false
   export COMMITS_PUSHED=0
   export CONTRADICTION_FIRED=false
+  log()  { echo "$*" >&2; }
+  warn() { echo "WARN: $*" >&2; }
+  export -f log warn
   # shellcheck source=../poll_compound.sh
   source "${BATS_TEST_DIRNAME}/../poll_compound.sh"
 }
