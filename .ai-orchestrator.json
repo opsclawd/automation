@@ -11,5 +11,31 @@
   "timeouts": {
     "readyMaxDays": 7,
     "invocationMaxMinutes": 30
+  },
+  "agent": {
+    "defaultProfile": "opencode-frontier",
+    "profiles": {
+      "opencode-frontier": {
+        "runtime": "opencode",
+        "provider": "anthropic",
+        "model": "claude-opus-4.7",
+        "timeoutMinutes": 60
+      },
+      "pi-qwen-local": {
+        "runtime": "pi",
+        "provider": "local",
+        "model": "qwen3.6-27b",
+        "contextLimitTokens": 64000,
+        "promptBudgetTokens": 40000,
+        "outputBudgetTokens": 8000,
+        "timeoutMinutes": 30
+      }
+    },
+    "phaseProfiles": {
+      "plan-design": { "profile": "opencode-frontier" },
+      "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "review": { "profile": "opencode-frontier" },
+      "fix-review": { "profile": "opencode-frontier" }
+    }
   }
 }

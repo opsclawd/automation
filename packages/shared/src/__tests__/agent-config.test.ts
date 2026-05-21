@@ -67,4 +67,22 @@ describe('agent config schema', () => {
     delete (bad.agent.profiles['pi-qwen-local'] as Record<string, unknown>).contextLimitTokens;
     expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/contextLimitTokens/);
   });
+
+  it('accepts config without agent field', () => {
+    const { validation, phases, timeouts } = baseValid;
+    expect(() => orchestratorConfigSchema.parse({ validation, phases, timeouts })).not.toThrow();
+  });
+});
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+describe('committed .ai-orchestrator.json', () => {
+  it('parses against orchestratorConfigSchema', () => {
+    const text = readFileSync(
+      join(import.meta.dirname, '..', '..', '..', '..', '.ai-orchestrator.json'),
+      'utf8',
+    );
+    expect(() => orchestratorConfigSchema.parse(JSON.parse(text))).not.toThrow();
+  });
 });
