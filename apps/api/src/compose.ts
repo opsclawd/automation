@@ -137,9 +137,11 @@ export function composeRoot(opts: ComposeOptions): Container {
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
-    // No config file or no agent block — agentRuntime stays undefined.
-    // Existing compose callers (tests, CLI without .ai-orchestrator.json)
-    // continue to work without modification.
+    // Only suppress ENOENT (config file missing) — invalid JSON, schema
+    // violations, and read errors must surface to the operator.
+    if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
+    // agentRuntime stays undefined. Existing compose callers (tests, CLI
+    // without .ai-orchestrator.json) continue to work.
   }
 
   return {
