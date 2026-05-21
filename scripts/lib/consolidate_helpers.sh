@@ -91,7 +91,7 @@ diff_and_confirm() {
     return 0
   fi
   echo "--- Proposed changes under docs/solutions/ ---"
-  git diff HEAD --stat -- docs/solutions/
+  git status --short -- docs/solutions/
   echo
   git diff HEAD -- docs/solutions/
   echo

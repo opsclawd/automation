@@ -55,8 +55,10 @@ elif [[ -n "$SINCE" ]]; then
 fi
 
 INPUT_TMP=$(mktemp)
-if ! discover_inputs "${INPUT_ARGS[@]}" > "$INPUT_TMP"; then
-  ec=$?; rm -f "$INPUT_TMP"
+discover_inputs "${INPUT_ARGS[@]}" > "$INPUT_TMP"
+ec=$?
+if [[ $ec -ne 0 ]]; then
+  rm -f "$INPUT_TMP"
   warn "discover_inputs failed (exit ${ec})"
   exit "$ec"
 fi
