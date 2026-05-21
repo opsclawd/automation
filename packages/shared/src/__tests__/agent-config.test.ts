@@ -70,6 +70,18 @@ describe('agent config schema', () => {
     expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/contextLimitTokens/);
   });
 
+  it('rejects negative promptBudgetTokens on a pi profile', () => {
+    const bad = structuredClone(baseValid);
+    (bad.agent.profiles['pi-qwen-local'] as Record<string, unknown>).promptBudgetTokens = -1;
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/promptBudgetTokens/);
+  });
+
+  it('rejects empty profiles with a non-empty defaultProfile', () => {
+    const bad = structuredClone(baseValid);
+    bad.agent.profiles = {};
+    expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/defaultProfile/);
+  });
+
   it('accepts config without agent field', () => {
     const { validation, phases, timeouts } = baseValid;
     expect(() => orchestratorConfigSchema.parse({ validation, phases, timeouts })).not.toThrow();

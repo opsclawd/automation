@@ -16,6 +16,7 @@ const timeoutsSchema = z.object({
   invocationMaxMinutes: z.number().int().positive(),
 });
 
+// Keep in sync with AgentRuntimeKind in @ai-sdlc/application/agent/types.ts
 const agentRuntime = z.enum(['opencode', 'pi']);
 
 const agentProfileSchema = z
@@ -26,7 +27,7 @@ const agentProfileSchema = z
     contextLimitTokens: z.number().int().positive().optional(),
     promptBudgetTokens: z.number().int().positive().optional(),
     outputBudgetTokens: z.number().int().positive().optional(),
-    timeoutMinutes: z.number().positive(),
+    timeoutMinutes: z.number().positive(), // fractional minutes intentionally allowed (e.g. 0.5)
   })
   .superRefine((profile, ctx) => {
     if (profile.runtime === 'pi' && profile.contextLimitTokens === undefined) {
