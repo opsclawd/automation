@@ -57,6 +57,8 @@ warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_
 # When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
 # shellcheck source=lib/emit_event.sh
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
+# shellcheck source=lib/poll_compound.sh
+source "${REPO_ROOT}/scripts/lib/poll_compound.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "FATAL: jq is required but not found on PATH. Install jq and retry." >&2
@@ -287,6 +289,7 @@ verify_commits_pushed() {
   if [[ -n "$new_commits" ]]; then
     log "  verify_commits: new commits detected on origin/${branch}:"
     echo "$new_commits" | while IFS= read -r line; do log "    $line"; done
+    COMMITS_PUSHED=$((COMMITS_PUSHED + 1))
     return 0
   fi
 
@@ -302,6 +305,7 @@ verify_commits_pushed() {
     new_commits=$(git log "${pre_sha}..origin/${branch}" --oneline 2>/dev/null) || true
     if [[ -n "$new_commits" ]]; then
       log "  verify_commits: push succeeded, commits now on remote"
+      COMMITS_PUSHED=$((COMMITS_PUSHED + 1))
       return 0
     fi
   fi
@@ -913,6 +917,8 @@ BLOCKED_EXIT=false
 ALL_REVIEWS_RESOLVED=false
 LAST_REVIEW_RESULT=""
 AGENT_FAILED=false
+COMMITS_PUSHED=0
+CONTRADICTION_FIRED=false
 # Hard ceiling on total iterations regardless of resets — protects against
 # pathological loops where every push attracts a new comment.
 MAX_TOTAL_POLLS="${MAX_TOTAL_POLLS:-30}"
@@ -1042,5 +1048,10 @@ else
   emit_event "pr-review-poll" "error" "pr-review-poll.run.failed" \
     "PR review poll exhausted poll budget" \
     reason="max_polls" lastPoll="${LAST_ITERATION_POLL:-$POLL_COUNT}"
+fi
+if should_emit_compound; then
+  emit_compound_doc || warn "compound doc emission failed"
+else
+  log "Skipping compound doc — loop produced no signal worth recording."
 fi
 log "=== PR review poll complete (${LAST_ITERATION_POLL:-$POLL_COUNT}/${MAX_POLLS} consecutive, ${TOTAL_POLLS}/${MAX_TOTAL_POLLS} total) ==="
