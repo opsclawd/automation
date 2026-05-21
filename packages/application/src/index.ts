@@ -4,3 +4,4 @@ export * from './cancel-run.js';
 export * from './sweep-orphaned-runs.js';
 export * from './ports.js';
 export * from './use-cases.js';
+export * from './agent/invocation.js';
