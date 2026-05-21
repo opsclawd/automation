@@ -26,7 +26,7 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
   echo "$output" | grep -q "ai/issues/2/compound.md"
   echo "$output" | grep -q "ai/poll-pr-100/compound-2026-05-20T10-00-00Z.md"
   echo "$output" | grep -q "ai/poll-pr-101/compound-2026-05-20T12-00-00Z.md"
-  [ "$(echo "$output" | wc -l | tr -d ' ')" -eq 5 ]
+  [ "${#lines[@]}" -eq 5 ]
 }
 
 @test "discover_inputs: with --since <ref> returns only files newer than the ref" {

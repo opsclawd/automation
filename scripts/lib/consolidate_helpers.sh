@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # consolidate_helpers.sh — helpers for ai-consolidate-compound.
 # Sourced by the main script and by bats tests.
+#
+# NOTE: log() and warn() are defined by the sourcing script (ai-consolidate-compound),
+# not in this file. Callers may use echo directly. If sourcing standalone (e.g. in
+# tests), log/warn are not available.
+
+# Portability stubs — overridden by the sourcing script when present.
+log()  { echo "$*"; }
+warn() { echo "WARN: $*" >&2; }
 
 # discover_inputs — emit one path per line of compound files that should be
 # considered for this consolidation pass.
@@ -12,6 +20,13 @@
 #   discover_inputs --since <ref>  — all compound files newer than <ref>
 #   discover_inputs --issues a,b,c — only ai/issues/<a>/compound.md etc.
 #                                    (poll-pr files excluded in issue mode)
+#
+# LIMITATION (auto / --since mode): Filesystem mtime (stat -c %Y) is compared
+# against git committer timestamp (git log -1 --format=%ct). These clocks can
+# diverge — git checkout, clone, cp -a, or backup/restore can reset mtime to a
+# value that no longer corresponds to when the file was written. In practice this
+# is acceptable for a developer-run, manually-triggered consolidation tool. For
+# CI automation, prefer --issues to pin exact paths.
 #
 # Requires REPO_ROOT to be set.
 discover_inputs() {
@@ -63,6 +78,9 @@ discover_inputs() {
 # diff_and_confirm — show the working-tree diff under docs/solutions/ and ask
 # the user to confirm. Returns 0 on yes, 1 on no, 0 with a note when nothing
 # changed (so the caller can exit clean on a zero-output run).
+#
+# NOTE: Interactive confirmation reads from stdin (fd 0). In piping/CI contexts
+# use --yes instead, which skips the prompt and commits directly.
 diff_and_confirm() {
   cd "$REPO_ROOT" || return 1
   if git diff --quiet -- docs/solutions/ && [[ -z "$(git status --porcelain -- docs/solutions/)" ]]; then

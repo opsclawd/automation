@@ -7,13 +7,13 @@
 #   PROCESSED_IDS_FILE      — non-empty if any comments reached terminal state
 #   TOTAL_POLLS             — int, loop iteration count
 #   BLOCKED_EXIT            — true/false
-#   COMMITS_PUSHED          — int, commits the agent pushed during this run
+#   DID_PUSH_COMMITS          — int, commits the agent pushed during this run
 #   CONTRADICTION_FIRED     — true/false (reserved for future use; set by caller
 #                             when the review-fix contradiction reconciliation
 #                             path is taken)
 
 should_emit_compound() {
-  if [[ "${COMMITS_PUSHED:-0}" -gt 0 ]]; then return 0; fi
+  if [[ "${DID_PUSH_COMMITS:-0}" -gt 0 ]]; then return 0; fi
   if [[ "${TOTAL_POLLS:-0}" -gt 1 ]]; then return 0; fi
   if [[ "${BLOCKED_EXIT:-false}" == "true" ]]; then return 0; fi
   if [[ "${CONTRADICTION_FIRED:-false}" == "true" ]]; then return 0; fi
@@ -52,7 +52,7 @@ emit_compound_doc() {
     echo "## CONTEXT"
     echo "PR: #${PR_NUMBER} on ${OWNER_REPO} (branch ${PR_BRANCH})"
     echo "Paired issue: ${ISSUE_NUM:-unknown}"
-    echo "Loop stats: TOTAL_POLLS=${TOTAL_POLLS:-0}, COMMITS_PUSHED=${COMMITS_PUSHED:-0}, BLOCKED_EXIT=${BLOCKED_EXIT:-false}, CONTRADICTION_FIRED=${CONTRADICTION_FIRED:-false}, processed=${processed_count}, replied-pending=${replied_count}"
+    echo "Loop stats: TOTAL_POLLS=${TOTAL_POLLS:-0}, DID_PUSH_COMMITS=${DID_PUSH_COMMITS:-0}, BLOCKED_EXIT=${BLOCKED_EXIT:-false}, CONTRADICTION_FIRED=${CONTRADICTION_FIRED:-false}, processed=${processed_count}, replied=${replied_count}"
     echo ""
     echo "Artifact dir: ${ISSUES_DIR}"
     echo "Logs available: poll.log, process-review-p*.log, build-verify-p*.log"

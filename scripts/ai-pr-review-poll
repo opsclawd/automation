@@ -289,7 +289,7 @@ verify_commits_pushed() {
   if [[ -n "$new_commits" ]]; then
     log "  verify_commits: new commits detected on origin/${branch}:"
     echo "$new_commits" | while IFS= read -r line; do log "    $line"; done
-    COMMITS_PUSHED=$((COMMITS_PUSHED + 1))
+    DID_PUSH_COMMITS=$((DID_PUSH_COMMITS + 1))
     return 0
   fi
 
@@ -305,7 +305,7 @@ verify_commits_pushed() {
     new_commits=$(git log "${pre_sha}..origin/${branch}" --oneline 2>/dev/null) || true
     if [[ -n "$new_commits" ]]; then
       log "  verify_commits: push succeeded, commits now on remote"
-      COMMITS_PUSHED=$((COMMITS_PUSHED + 1))
+      DID_PUSH_COMMITS=$((DID_PUSH_COMMITS + 1))
       return 0
     fi
   fi
@@ -917,7 +917,7 @@ BLOCKED_EXIT=false
 ALL_REVIEWS_RESOLVED=false
 LAST_REVIEW_RESULT=""
 AGENT_FAILED=false
-COMMITS_PUSHED=0
+DID_PUSH_COMMITS=0
 CONTRADICTION_FIRED=false
 # Hard ceiling on total iterations regardless of resets — protects against
 # pathological loops where every push attracts a new comment.
