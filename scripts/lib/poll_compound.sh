@@ -16,7 +16,14 @@ should_emit_compound() {
   if [[ "${DID_PUSH_COMMITS:-0}" -gt 0 ]]; then return 0; fi
   if [[ "${BLOCKED_EXIT:-false}" == "true" ]]; then return 0; fi
   if [[ "${CONTRADICTION_FIRED:-false}" == "true" ]]; then return 0; fi
-  if [[ -s "${PROCESSED_IDS_FILE:-/dev/null}" ]]; then return 0; fi
+  # Snapshot-based: only signal if NEW comments were processed this run.
+  # Prevents false positives on quiet re-runs where PROCESSED_IDS_FILE
+  # retains content from a prior poll loop invocation.
+  local current_count=0
+  if [[ -f "${PROCESSED_IDS_FILE:-}" ]]; then
+    current_count=$(wc -l < "$PROCESSED_IDS_FILE" | tr -d ' ')
+  fi
+  if [[ "${current_count}" -gt "${PROCESSED_IDS_COUNT_START:-0}" ]]; then return 0; fi
   return 1
 }
 

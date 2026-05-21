@@ -919,6 +919,7 @@ LAST_REVIEW_RESULT=""
 AGENT_FAILED=false
 DID_PUSH_COMMITS=0
 CONTRADICTION_FIRED=false
+PROCESSED_IDS_COUNT_START=$(wc -l < "$PROCESSED_IDS_FILE" 2>/dev/null || echo 0)
 # Hard ceiling on total iterations regardless of resets — protects against
 # pathological loops where every push attracts a new comment.
 MAX_TOTAL_POLLS="${MAX_TOTAL_POLLS:-30}"

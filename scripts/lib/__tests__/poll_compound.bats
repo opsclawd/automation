@@ -11,6 +11,7 @@ setup() {
   export BLOCKED_EXIT=false
   export DID_PUSH_COMMITS=0
   export CONTRADICTION_FIRED=false
+  export PROCESSED_IDS_COUNT_START=0
   log()  { echo "$*" >&2; }
   warn() { echo "WARN: $*" >&2; }
   export -f log warn
@@ -53,6 +54,14 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
   echo "123456" >> "$PROCESSED_IDS_FILE"
   run should_emit_compound
   [ "$status" -eq 0 ]
+}
+
+@test "should_emit_compound: false when PROCESSED_IDS_FILE has prior content only (quiet re-run)" {
+  echo "123456" >> "$PROCESSED_IDS_FILE"
+  echo "789012" >> "$PROCESSED_IDS_FILE"
+  PROCESSED_IDS_COUNT_START=2
+  run should_emit_compound
+  [ "$status" -ne 0 ]
 }
 
 @test "emit_compound_doc: writes timestamped file under ISSUES_DIR" {
