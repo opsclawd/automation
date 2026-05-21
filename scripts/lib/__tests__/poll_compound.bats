@@ -9,7 +9,7 @@ setup() {
   touch "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE"
   export TOTAL_POLLS=1
   export BLOCKED_EXIT=false
-  export COMMITS_PUSHED=0
+  export DID_PUSH_COMMITS=0
   export CONTRADICTION_FIRED=false
   log()  { echo "$*" >&2; }
   warn() { echo "WARN: $*" >&2; }
@@ -26,7 +26,7 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
 }
 
 @test "should_emit_compound: true when commits were pushed" {
-  COMMITS_PUSHED=1
+  DID_PUSH_COMMITS=1
   run should_emit_compound
   [ "$status" -eq 0 ]
 }
@@ -67,7 +67,7 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
     return 0
   }
   export -f run_agent
-  COMMITS_PUSHED=1
+  DID_PUSH_COMMITS=1
   emit_compound_doc
   local files
   files=$(ls "${ISSUES_DIR}"/compound-*.md 2>/dev/null | wc -l | tr -d ' ')
@@ -84,7 +84,7 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
     return 0
   }
   export -f run_agent
-  COMMITS_PUSHED=1
+  DID_PUSH_COMMITS=1
   emit_compound_doc
   sleep 1  # ensure distinct ISO-second timestamps
   emit_compound_doc
@@ -103,7 +103,7 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
     return 0
   }
   export -f run_agent
-  COMMITS_PUSHED=1
+  DID_PUSH_COMMITS=1
   emit_compound_doc
   local f
   f=$(basename "$(ls "${ISSUES_DIR}"/compound-*.md)")

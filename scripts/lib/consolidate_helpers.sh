@@ -109,5 +109,6 @@ commit_consolidation() {
   git add docs/solutions/
   git commit -m "docs(solutions): consolidate compound artifacts
 
-Curated from ai/issues/*/compound.md and ai/poll-pr-*/compound-*.md."
+Curated from ai/issues/*/compound.md and ai/poll-pr-*/compound-*.md." \
+    -- docs/solutions/
 }
