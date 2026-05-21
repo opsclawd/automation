@@ -119,10 +119,10 @@ run_agent() {
   local prompt="$1"
   case "$AGENT_CLI" in
     claude|claude-minimax)
-      timeout "$TIMEOUT_SEC" bash -c "~/bin/claude-minimax --settings ~/.claude/profiles/minimax.json --print --model $AGENT_MODEL" < "$prompt"
+      timeout "$TIMEOUT_SEC" bash -c 'exec ~/bin/claude-minimax --settings ~/.claude/profiles/minimax.json --print --model "$1"' _ "$AGENT_MODEL" < "$prompt"
       ;;
     opencode)
-      timeout "$TIMEOUT_SEC" bash -c "opencode --model $AGENT_MODEL run" < "$prompt"
+      timeout "$TIMEOUT_SEC" bash -c 'exec opencode --model "$1" run' _ "$AGENT_MODEL" < "$prompt"
       ;;
     *)
       warn "Unsupported AGENT_CLI: $AGENT_CLI"; return 1 ;;
@@ -143,6 +143,10 @@ if $DRY_RUN; then
 fi
 
 if $ASSUME_YES; then
+  if [[ $AGENT_EC -ne 0 ]]; then
+    warn "--yes mode: agent exited non-zero (${AGENT_EC}), skipping commit to avoid committing partial output."
+    exit 1
+  fi
   if git diff --quiet -- docs/solutions/ && [[ -z "$(git status --porcelain -- docs/solutions/)" ]]; then
     log "Nothing to commit under docs/solutions/."
     exit 0

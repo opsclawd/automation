@@ -65,7 +65,10 @@ discover_inputs() {
 
   # filter to files modified after since_ref via mtime comparison
   local since_epoch
-  since_epoch=$(git log -1 --format=%ct "$since_ref" 2>/dev/null || echo 0)
+  since_epoch=$(git log -1 --format=%ct "$since_ref" 2>/dev/null) || {
+    warn "Invalid --since ref: '${since_ref}'. Use a valid commit, tag, or branch name."
+    return 2
+  }
   echo "$all_files" | grep -v '^$' | while IFS= read -r f; do
     local mtime
     mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)

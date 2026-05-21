@@ -14,7 +14,6 @@
 
 should_emit_compound() {
   if [[ "${DID_PUSH_COMMITS:-0}" -gt 0 ]]; then return 0; fi
-  if [[ "${TOTAL_POLLS:-0}" -gt 1 ]]; then return 0; fi
   if [[ "${BLOCKED_EXIT:-false}" == "true" ]]; then return 0; fi
   if [[ "${CONTRADICTION_FIRED:-false}" == "true" ]]; then return 0; fi
   if [[ -s "${PROCESSED_IDS_FILE:-/dev/null}" ]]; then return 0; fi

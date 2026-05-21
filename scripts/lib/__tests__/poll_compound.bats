@@ -31,10 +31,10 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
   [ "$status" -eq 0 ]
 }
 
-@test "should_emit_compound: true when multiple polls ran" {
+@test "should_emit_compound: false when multiple idle polls ran (TOTAL_POLLS alone is not signal)" {
   TOTAL_POLLS=2
   run should_emit_compound
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
 }
 
 @test "should_emit_compound: true when blocked" {
