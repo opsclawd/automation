@@ -45,7 +45,7 @@ const phaseProfileEntrySchema = z.strictObject({
 });
 
 const agentSchema = z
-  .object({
+  .strictObject({
     defaultProfile: z.string().min(1),
     profiles: z.record(z.string().min(1), agentProfileSchema),
     phaseProfiles: z.record(z.string().min(1), phaseProfileEntrySchema),
