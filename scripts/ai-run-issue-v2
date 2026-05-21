@@ -1178,12 +1178,22 @@ Read these files for full context on what was intended:
 - Design: ./design.md
 - Implementation plan: ./plan.md
 
-## SCOPE RESTRICTION
+## SCOPE RESTRICTION — READ THIS TWICE
 You are reviewing ONLY Task ${task_n}: ${task_title}.
-Evaluate ONLY whether this task's requirements have been met. Do NOT flag
-missing features, files, or behaviors that belong to other tasks in the plan.
-The plan is executed task-by-task; tasks not yet implemented are expected to be
-absent. A missing task is NOT a spec failure for the current task.
+
+The plan is executed ONE TASK AT A TIME by separate agent invocations. Tasks
+numbered higher than ${task_n} have NOT been started yet. It is EXPECTED and
+CORRECT that their files, functions, tests, and behaviors do not exist yet.
+
+DO NOT flag any of the following as issues:
+- Missing files, exports, types, or functions that belong to tasks > ${task_n}
+- Missing tests for behavior specified in tasks > ${task_n}
+- Incomplete features that the plan assigns to tasks > ${task_n}
+- Any mention of 'task X not implemented' or 'task Y is missing' where X/Y > ${task_n}
+
+Your review must be ENTIRELY about whether Task ${task_n} alone meets its
+requirements. If Task ${task_n} is complete and correct, the result is
+SPEC_PASS regardless of what other tasks in the plan have not been started.
 
 ## Task Requirements
 ${task_text}
@@ -1253,6 +1263,23 @@ ${SPEC_REVIEWER_PROMPT}"
 Read these files for full context on what was intended:
 - Design: ./design.md
 - Implementation plan: ./plan.md
+
+## SCOPE RESTRICTION — READ THIS TWICE
+You are reviewing ONLY Task ${task_n}: ${task_title}.
+
+The plan is executed ONE TASK AT A TIME by separate agent invocations. Tasks
+numbered higher than ${task_n} have NOT been started yet. It is EXPECTED and
+CORRECT that their files, functions, tests, and behaviors do not exist yet.
+
+DO NOT flag any of the following as issues:
+- Missing files, exports, types, or functions that belong to tasks > ${task_n}
+- Missing tests for behavior specified in tasks > ${task_n}
+- Incomplete features that the plan assigns to tasks > ${task_n}
+- Any mention of 'task X not implemented' or 'task Y is missing' where X/Y > ${task_n}
+
+Your review must be ENTIRELY about the quality of Task ${task_n}'s implementation.
+If Task ${task_n} is complete and correct, the result is QUALITY_PASS regardless
+of what other tasks in the plan have not been started.
 
 ## Task Summary
 ${task_title}
