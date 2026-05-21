@@ -21,6 +21,7 @@ export interface EventInput {
   timestamp: Date;
 }
 
+/** Implements EventRepositoryPort (@ai-sdlc/application). */
 export class EventRepository {
   constructor(private readonly db: Db) {}
 

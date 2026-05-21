@@ -17,6 +17,7 @@ export interface RunBashScriptResult {
   durationMs: number;
 }
 
+/** Implements RunBashScriptFn (@ai-sdlc/application). */
 export async function runBashScript(input: RunBashScriptInput): Promise<RunBashScriptResult> {
   const startedAt = Date.now();
   const stdoutFile = createWriteStream(input.stdoutPath);

@@ -32,6 +32,7 @@ export interface RunRecord extends Run {
   pid?: number;
 }
 
+/** Implements RunRepositoryPort (@ai-sdlc/application). */
 export class RunRepository {
   constructor(private readonly db: Db) {}
 

@@ -11,6 +11,7 @@ interface PhaseRow {
   completed_at: string | null;
 }
 
+/** Used directly by compose.ts — no port type exists in @ai-sdlc/application. */
 export class PhaseRepository {
   constructor(private readonly db: Db) {}
 

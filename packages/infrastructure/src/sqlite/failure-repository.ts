@@ -1,6 +1,7 @@
 import type { Failure } from '@ai-sdlc/domain';
 import type { Db } from './database.js';
 
+/** Implements FailureRepositoryPort (@ai-sdlc/application). */
 export class FailureRepository {
   constructor(private readonly db: Db) {}
 

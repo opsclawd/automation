@@ -1,6 +1,7 @@
 import type { Artifact } from '@ai-sdlc/domain';
 import type { Db } from './database.js';
 
+/** Used directly by compose.ts — no port type exists in @ai-sdlc/application. */
 export class ArtifactRepository {
   constructor(private readonly db: Db) {}
 
