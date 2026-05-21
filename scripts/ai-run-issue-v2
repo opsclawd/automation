@@ -571,15 +571,10 @@ run_agent_raw() {
   prompt_file=$(mktemp)
   cat > "$prompt_file"
 
-  # Use process substitution to avoid PIPESTATUS issues with || true.
-  # Capture agent exit code explicitly via a wrapper that writes to a temp file.
   local ec_file
   ec_file=$(mktemp)
   local ec=0
 
-  # Run agent with timeout; capture exit code via wrapper so it's not lost
-  # through the pipeline. The { ... ; } block writes the real exit code
-  # before any pipeline consumer can obscure it.
   { timeout "$timeout_sec" bash -c "$agent_cmd" < "$prompt_file" 2>&1; echo $? > "$ec_file"; } \
     | tee -a "$output_log" \
     | grep -v "^\[0m$" | grep -v "^$" || true
@@ -588,24 +583,18 @@ run_agent_raw() {
   rm -f "$prompt_file" "$ec_file"
 
   if [[ $ec -eq 124 ]]; then
-    orchestrator_fail "Phase '$phase' timed out after ${timeout_sec}s"
+    warn "Phase '$phase' timed out after ${timeout_sec}s"
+    return 124
   fi
 
   if [[ $ec -ne 0 ]]; then
     warn "Phase '$phase' exited with code $ec"
-    # Blocked detection requires a structured signal, not free-text matching.
-    # The old grep ("waiting|blocked|asking.*question|need.*input", case-
-    # insensitive) hit any agent prose that mentioned those words in passing
-    # (e.g. "I waited for the test to finish") and killed valid runs.
-    #
-    # The contract is now: if the agent wants to block, it writes exactly
-    # `BLOCKED` on its own line (optionally followed by a colon-prefixed
-    # reason). This matches the same convention used by the result-file
-    # mechanism (BLOCKED is one of the allowed result values).
     if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "$output_log" 2>/dev/null; then
       orchestrator_fail "Phase '$phase' is blocked (agent emitted BLOCKED)"
     fi
   fi
+
+  return "$ec"
 }
 
 # ── setup ─────────────────────────────────────────────────────────────────────
@@ -1243,6 +1232,14 @@ ${SPEC_REVIEWER_PROMPT}"
     fi
 
     echo "$SPEC_REVIEWER_PROMPT" | run_agent_raw "spec-review-task-${task_n}" "$TIMEOUT_REVIEW"
+    local _spec_ec=$?
+    if [[ $_spec_ec -eq 124 ]]; then
+      if [[ -f "${WORKTREE_DIR}/spec-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/spec-review-task-${task_n}.md" ]]; then
+        warn "Spec review timed out but both artifacts exist — proceeding"
+      else
+        orchestrator_fail "Spec review timed out and artifacts are missing (result=${WORKTREE_DIR}/spec-review-task-${task_n}.result, md=${WORKTREE_DIR}/spec-review-task-${task_n}.md)"
+      fi
+    fi
     check_branch_after_agent
   }
 
@@ -1339,6 +1336,14 @@ ${QUALITY_REVIEWER_PROMPT}"
     fi
 
     echo "$QUALITY_REVIEWER_PROMPT" | run_agent_raw "quality-review-task-${task_n}" "$TIMEOUT_REVIEW"
+    local _qual_ec=$?
+    if [[ $_qual_ec -eq 124 ]]; then
+      if [[ -f "${WORKTREE_DIR}/quality-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/quality-review-task-${task_n}.md" ]]; then
+        warn "Quality review timed out but both artifacts exist — proceeding"
+      else
+        orchestrator_fail "Quality review timed out and artifacts are missing (result=${WORKTREE_DIR}/quality-review-task-${task_n}.result, md=${WORKTREE_DIR}/quality-review-task-${task_n}.md)"
+      fi
+    fi
     check_branch_after_agent
   }
 
