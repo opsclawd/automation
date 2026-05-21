@@ -45,7 +45,7 @@ export interface Container {
   runsDir: string;
   baseTmpDir: string;
   eventBus: EventBusPort;
-  agentRuntime?: AgentRuntimeRegistry;
+  agentRuntime: AgentRuntimeRegistry | undefined;
 }
 
 export interface ComposeOptions {
