@@ -51,3 +51,58 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
   run should_emit_compound
   [ "$status" -eq 0 ]
 }
+
+@test "emit_compound_doc: writes timestamped file under ISSUES_DIR" {
+  export PR_NUMBER=99
+  export PR_BRANCH=test-branch
+  export OWNER_REPO=owner/repo
+  # stub run_agent so the test doesn't shell out
+  run_agent() {
+    local phase="$1"; local timeout="$2"
+    cat > "${ISSUES_DIR}/${phase}.prompt.txt"
+    echo "stubbed agent output" > "${COMPOUND_OUT}"
+    return 0
+  }
+  export -f run_agent
+  COMMITS_PUSHED=1
+  emit_compound_doc
+  local files
+  files=$(ls "${ISSUES_DIR}"/compound-*.md 2>/dev/null | wc -l | tr -d ' ')
+  [ "$files" -eq 1 ]
+}
+
+@test "emit_compound_doc: two invocations produce two distinct files" {
+  export PR_NUMBER=99
+  export PR_BRANCH=test-branch
+  export OWNER_REPO=owner/repo
+  run_agent() {
+    cat > "${ISSUES_DIR}/$1.prompt.txt"
+    echo "stub" > "${COMPOUND_OUT}"
+    return 0
+  }
+  export -f run_agent
+  COMMITS_PUSHED=1
+  emit_compound_doc
+  sleep 1  # ensure distinct ISO-second timestamps
+  emit_compound_doc
+  local files
+  files=$(ls "${ISSUES_DIR}"/compound-*.md 2>/dev/null | wc -l | tr -d ' ')
+  [ "$files" -eq 2 ]
+}
+
+@test "emit_compound_doc: filename matches compound-<ISO-timestamp>.md pattern" {
+  export PR_NUMBER=99
+  export PR_BRANCH=test-branch
+  export OWNER_REPO=owner/repo
+  run_agent() {
+    cat > "${ISSUES_DIR}/$1.prompt.txt"
+    echo "stub" > "${COMPOUND_OUT}"
+    return 0
+  }
+  export -f run_agent
+  COMMITS_PUSHED=1
+  emit_compound_doc
+  local f
+  f=$(basename "$(ls "${ISSUES_DIR}"/compound-*.md)")
+  [[ "$f" =~ ^compound-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z\.md$ ]]
+}
