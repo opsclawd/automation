@@ -7,6 +7,21 @@ import {
   type AgentProfile,
 } from '../agent/types.js';
 
+describe('AgentProfileName', () => {
+  it('throws for empty string', () => {
+    expect(() => AgentProfileName('')).toThrow('non-empty string');
+  });
+
+  it('throws for whitespace-only string', () => {
+    expect(() => AgentProfileName('   ')).toThrow('non-empty string');
+  });
+
+  it('returns the branded type for a valid string', () => {
+    const name = AgentProfileName('test-profile');
+    expect(name).toBe('test-profile');
+  });
+});
+
 function opencodeProfile(overrides?: Partial<AgentProfile>): AgentProfile {
   return {
     runtime: 'opencode',
@@ -57,6 +72,24 @@ describe('validateAgentProfile', () => {
     expect(() => validateAgentProfile(AgentProfileName('test'), piProfile())).not.toThrow();
   });
 
+  it('rejects empty provider', () => {
+    expect(() =>
+      validateAgentProfile(AgentProfileName('bad'), opencodeProfile({ provider: '' })),
+    ).toThrow('empty provider');
+  });
+
+  it('rejects empty model', () => {
+    expect(() =>
+      validateAgentProfile(AgentProfileName('bad'), opencodeProfile({ model: '' })),
+    ).toThrow('empty model');
+  });
+
+  it.each([0, -1])('rejects timeoutMinutes=%s', (timeoutMinutes) => {
+    expect(() =>
+      validateAgentProfile(AgentProfileName('bad-timeout'), opencodeProfile({ timeoutMinutes })),
+    ).toThrow('non-positive timeoutMinutes');
+  });
+
   it('rejects a Pi profile missing contextLimitTokens', () => {
     expect(() =>
       validateAgentProfile(
@@ -66,18 +99,24 @@ describe('validateAgentProfile', () => {
     ).toThrow('contextLimitTokens');
   });
 
-  it('rejects any profile with non-positive timeoutMinutes', () => {
+  it('accepts Pi profile with contextLimitTokens: 0', () => {
     expect(() =>
-      validateAgentProfile(AgentProfileName('bad-timeout'), opencodeProfile({ timeoutMinutes: 0 })),
-    ).toThrow('non-positive timeoutMinutes');
+      validateAgentProfile(AgentProfileName('pi-zero-ctx'), piProfile({ contextLimitTokens: 0 })),
+    ).not.toThrow();
   });
 
-  it('rejects negative timeoutMinutes', () => {
+  it('accepts Pi profile with negative contextLimitTokens (currently passes, regression guard)', () => {
+    expect(() =>
+      validateAgentProfile(AgentProfileName('pi-neg-ctx'), piProfile({ contextLimitTokens: -1 })),
+    ).not.toThrow();
+  });
+
+  it('accepts Pi profile with NaN contextLimitTokens (currently passes, regression guard)', () => {
     expect(() =>
       validateAgentProfile(
-        AgentProfileName('neg-timeout'),
-        opencodeProfile({ timeoutMinutes: -1 }),
+        AgentProfileName('pi-nan-ctx'),
+        piProfile({ contextLimitTokens: Number.NaN }),
       ),
-    ).toThrow('non-positive timeoutMinutes');
+    ).not.toThrow();
   });
 });

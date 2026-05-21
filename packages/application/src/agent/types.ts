@@ -17,11 +17,6 @@ export interface AgentProfile {
   timeoutMinutes: number;
 }
 
-export interface PhaseRoutingEntry {
-  profile: AgentProfileName;
-  fallbackProfile?: AgentProfileName;
-}
-
 export function isOpencodeProfile(profile: AgentProfile): boolean {
   return profile.runtime === 'opencode';
 }
@@ -31,6 +26,12 @@ export function isPiProfile(profile: AgentProfile): boolean {
 }
 
 export function validateAgentProfile(name: AgentProfileName, profile: AgentProfile): void {
+  if (!profile.provider || profile.provider.trim().length === 0) {
+    throw new Error(`AgentProfile "${name}" has empty provider`);
+  }
+  if (!profile.model || profile.model.trim().length === 0) {
+    throw new Error(`AgentProfile "${name}" has empty model`);
+  }
   if (profile.timeoutMinutes <= 0) {
     throw new Error(
       `AgentProfile "${name}" has non-positive timeoutMinutes: ${profile.timeoutMinutes}`,

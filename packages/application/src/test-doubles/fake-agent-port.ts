@@ -1,9 +1,5 @@
 import type { AgentPort } from '../ports/agent-port.js';
-import type {
-  AgentInvocationRequest,
-  AgentInvocationResult,
-  AgentProfileName,
-} from '../agent/invocation.js';
+import type { AgentInvocationRequest, AgentInvocationResult } from '../agent/invocation.js';
 
 export type FakeAgentResponse =
   | AgentInvocationResult
@@ -13,7 +9,7 @@ export class FakeAgentPort implements AgentPort {
   readonly invocations: AgentInvocationRequest[] = [];
   private readonly queues: Map<string, FakeAgentResponse[]>;
 
-  constructor(responses: Partial<Record<AgentProfileName, FakeAgentResponse[]>> = {}) {
+  constructor(responses: Record<string, FakeAgentResponse[]> = {}) {
     this.queues = new Map();
     for (const [key, arr] of Object.entries(responses)) {
       if (arr !== undefined) {
