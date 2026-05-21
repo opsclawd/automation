@@ -10,6 +10,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./test-doubles": {
+      "development": "./src/test-doubles/index.ts",
+      "types": "./dist/test-doubles/index.d.ts",
+      "import": "./dist/test-doubles/index.js"
     }
   },
   "files": [
