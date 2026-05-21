@@ -1,14 +1,5 @@
-// TEMPORARY INLINE: These types belong to M3-06 (agent/types.ts).
-// Once M3-06 lands, delete these inlines and import from './types.js'.
-export type AgentRuntimeKind = 'opencode' | 'pi';
-
-export type AgentProfileName = string & { readonly __brand: 'AgentProfileName' };
-export function AgentProfileName(v: string): AgentProfileName {
-  if (typeof v !== 'string' || v.trim().length === 0)
-    throw new Error('AgentProfileName must be a non-empty string');
-  return v as AgentProfileName;
-}
-// END INLINE
+import { AgentProfileName, type AgentRuntimeKind } from './types.js';
+export { AgentProfileName, type AgentRuntimeKind };
 
 export type AgentInvocationOutcome = 'success' | 'failed' | 'timeout' | 'contract_violation';
 

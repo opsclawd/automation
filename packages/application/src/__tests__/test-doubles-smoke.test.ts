@@ -8,6 +8,7 @@ import {
   FakeGitPort,
   FakeValidationPort,
   FakeArtifactStore,
+  FakeAgentPort,
 } from '../test-doubles/index.js';
 
 describe('test-doubles barrel', () => {
@@ -20,5 +21,6 @@ describe('test-doubles barrel', () => {
     expect(new FakeGitPort()).toBeDefined();
     expect(new FakeValidationPort()).toBeDefined();
     expect(new FakeArtifactStore()).toBeDefined();
+    expect(new FakeAgentPort()).toBeDefined();
   });
 });
