@@ -114,6 +114,61 @@ describe('AgentRuntimeRouter', () => {
     await expect(router.invoke(req())).rejects.toBeInstanceOf(ConfigError);
   });
 
+  it('records endCommitSha on the invocation row when adapter returns one', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'a',
+      model: 'm',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+      endCommitSha: 'c'.repeat(40),
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-y',
+      readPromptChars: () => 1,
+    });
+    await router.invoke(req({ startCommitSha: 'a'.repeat(40) }));
+    expect(inv.findById(AgentInvocationId('inv-y'))?.endCommitSha).toBe('c'.repeat(40));
+  });
+
+  it('passes abortSignal through to the adapter', async () => {
+    const controller = new AbortController();
+    const adapter = {
+      async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        expect(req.abortSignal).toBe(controller.signal);
+        return {
+          runtime: 'opencode',
+          provider: 'a',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    } satisfies AgentPort;
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-z',
+      readPromptChars: () => 0,
+    });
+    await router.invoke(req({ abortSignal: controller.signal }));
+  });
+
   it('works with only opencode registered (pi is optional)', async () => {
     const inv = new FakeAgentInvocationPort();
     const router = new AgentRuntimeRouter({

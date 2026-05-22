@@ -85,6 +85,9 @@ export class AgentRuntimeRouter implements AgentPort {
     if (result.resultJsonPath) {
       patch.resultJsonPath = result.resultJsonPath;
     }
+    if (result.endCommitSha) {
+      patch.endCommitSha = result.endCommitSha;
+    }
     this.opts.invocationRepository.update(id, patch);
     return result;
   }

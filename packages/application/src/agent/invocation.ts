@@ -28,4 +28,5 @@ export interface AgentInvocationResult {
   resultJsonPath?: string;
   contractViolations: string[];
   outcome: AgentInvocationOutcome;
+  endCommitSha?: string;
 }
