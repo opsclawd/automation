@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { RunId, IssueNumber, PhaseName, RepositoryId, JobId, WorkerId } from '../ids.js';
+import {
+  RunId,
+  IssueNumber,
+  PhaseName,
+  RepositoryId,
+  JobId,
+  WorkerId,
+  AgentInvocationId,
+} from '../ids.js';
 
 describe('branded ids', () => {
   it('constructs and round-trips RunId', () => {
@@ -27,5 +35,16 @@ describe('branded ids', () => {
     expect(() => RepositoryId('')).toThrow();
     expect(() => JobId('')).toThrow();
     expect(() => WorkerId('')).toThrow();
+  });
+});
+
+describe('AgentInvocationId', () => {
+  it('accepts non-empty strings', () => {
+    const id = AgentInvocationId('inv-123');
+    expect(id).toBe('inv-123');
+  });
+  it('rejects empty strings', () => {
+    expect(() => AgentInvocationId('')).toThrow();
+    expect(() => AgentInvocationId('   ')).toThrow();
   });
 });
