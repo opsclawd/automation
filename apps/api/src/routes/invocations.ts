@@ -1,3 +1,7 @@
+// Option (b): separate /api/runs/:uuid/invocations rather than embedding
+// invocations in the runs response. Keeps the runs payload lean for list
+// views — invocations are only fetched when drilling into a specific run.
+
 import type { FastifyInstance } from 'fastify';
 import { RunId } from '@ai-sdlc/domain';
 import type { Container } from '../compose.js';

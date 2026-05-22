@@ -66,4 +66,34 @@ describe('GET /api/runs/:uuid/invocations', () => {
     });
     expect(got.contractViolationsCount).toBe(1);
   });
+
+  it('returns 400 for invalid run UUID format', async () => {
+    const c = composeRoot({
+      repoRoot: process.cwd(),
+      scriptPath: '/bin/true',
+      dbPath: ':memory:',
+      runsDir: '/tmp/runs-test-' + Math.random(),
+    });
+    const app = await buildServer(c);
+    const res = await app.inject({ url: '/api/runs/not-a-uuid/invocations' });
+    expect(res.statusCode).toBe(400);
+    const body = res.json() as { error: string };
+    expect(body.error).toBe('invalid run uuid');
+  });
+
+  it('returns empty invocations for valid UUID with no matching run', async () => {
+    const c = composeRoot({
+      repoRoot: process.cwd(),
+      scriptPath: '/bin/true',
+      dbPath: ':memory:',
+      runsDir: '/tmp/runs-test-' + Math.random(),
+    });
+    const app = await buildServer(c);
+    const res = await app.inject({
+      url: '/api/runs/00000000-0000-0000-0000-000000000999/invocations',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { invocations: unknown[] };
+    expect(body.invocations).toEqual([]);
+  });
 });

@@ -9,6 +9,8 @@ import {
   type AgentRuntimeKind,
 } from '@ai-sdlc/domain';
 
+// Canonical definition in @ai-sdlc/application (packages/application/src/ports/agent-invocation-port.ts).
+// Duplicated here because infra cannot import from application per layer rules.
 interface AgentInvocationUpdatePatch {
   endedAt?: Date;
   endCommitSha?: string;

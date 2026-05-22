@@ -16,8 +16,8 @@ export interface ServerOptions {
   forceCloseAllOnStop?: boolean;
 }
 
-export async function buildServer(container: Container) {
-  const app = Fastify({ logger: false, forceCloseConnections: 'idle' });
+export async function buildServer(container: Container, logger: boolean = false) {
+  const app = Fastify({ logger, forceCloseConnections: 'idle' });
   await app.register(cors, { origin: ['http://127.0.0.1:4310'] });
   await runsRoutes(app, container);
   await artifactsRoutes(app, container);
@@ -29,7 +29,7 @@ export async function buildServer(container: Container) {
 export async function startServer(
   opts: ServerOptions,
 ): Promise<{ stop: () => Promise<void>; address: { port: number } }> {
-  const app = await buildServer(opts.container);
+  const app = await buildServer(opts.container, true);
   await app.listen({ port: opts.port ?? 4319, host: '127.0.0.1' });
   const address = app.server.address() as { port: number };
   return {
