@@ -122,6 +122,10 @@ export type {
 export type { ArtifactStore, WriteArtifactInput, Artifact } from './ports/artifact-store.js';
 
 export type { AgentPort } from './ports/agent-port.js';
+export type {
+  AgentInvocationPort,
+  AgentInvocationUpdatePatch,
+} from './ports/agent-invocation-port.js';
 
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
