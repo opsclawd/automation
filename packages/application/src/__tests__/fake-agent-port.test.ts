@@ -12,6 +12,7 @@ function makeRequest(overrides?: Partial<AgentInvocationRequest>): AgentInvocati
     runId: 'r1',
     repoId: 'repo1',
     phaseId: 'plan',
+    startCommitSha: '0'.repeat(40),
     ...overrides,
   };
 }

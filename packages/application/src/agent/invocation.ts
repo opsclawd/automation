@@ -13,6 +13,7 @@ export interface AgentInvocationRequest {
   workerId?: string;
   phaseId: string;
   stepId?: string;
+  startCommitSha: string;
 }
 
 export interface AgentInvocationResult {
