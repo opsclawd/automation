@@ -14,6 +14,7 @@ export interface AgentInvocationRequest {
   phaseId: string;
   stepId?: string;
   startCommitSha: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface AgentInvocationResult {

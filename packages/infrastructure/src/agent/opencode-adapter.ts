@@ -31,21 +31,41 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let exitCode = 0;
     let stdout = '';
     let stderr = '';
+    let contractViolations: string[] = [];
     try {
+      const timeoutSignal =
+        this.opts.timeoutMsDefault !== undefined
+          ? AbortSignal.timeout(this.opts.timeoutMsDefault)
+          : undefined;
+      const signals: AbortSignal[] = [];
+      if (timeoutSignal) signals.push(timeoutSignal);
+      if (request.abortSignal) signals.push(request.abortSignal);
+      const cancelSignal =
+        signals.length === 1
+          ? signals[0]
+          : signals.length > 1
+            ? AbortSignal.any(signals)
+            : undefined;
       const child = execa(bin, ['run', '--prompt-file', request.promptPath], {
         cwd: request.cwd,
         reject: false,
         all: false,
-        ...(this.opts.timeoutMsDefault !== undefined
-          ? { timeout: this.opts.timeoutMsDefault }
-          : {}),
+        ...(cancelSignal ? { cancelSignal } : {}),
       });
       const r = await child;
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
       exitCode = r.exitCode ?? 0;
-      if (r.timedOut) outcome = 'timeout';
-      else if (exitCode !== 0) outcome = 'failed';
+      if (r.isCanceled) {
+        if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
+          outcome = 'timeout';
+        } else {
+          outcome = 'failed';
+          contractViolations = ['cancelled_by_orchestrator'];
+        }
+      } else if (exitCode !== 0) {
+        outcome = 'failed';
+      }
     } catch (e) {
       outcome = 'failed';
       exitCode = 1;
@@ -64,7 +84,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       durationMs,
       stdoutPath,
       stderrPath,
-      contractViolations: [],
+      contractViolations,
       outcome,
     };
   }

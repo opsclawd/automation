@@ -38,4 +38,68 @@ describe('OpenCodeAgentAdapter', () => {
     expect(readFileSync(result.stdoutPath, 'utf-8')).toContain('fake opencode success');
     expect(readFileSync(result.stderrPath, 'utf-8')).toContain('no errors');
   });
+
+  it('returns failed outcome for non-zero exit', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-fail.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.exitCode).toBe(7);
+  });
+
+  it('returns timeout outcome when child exceeds timeout', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      timeoutMsDefault: 500,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('timeout');
+  }, 15000);
+
+  it('terminates child on cancellation via AbortController', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+    });
+    const controller = new AbortController();
+    const p = adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      abortSignal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 100);
+    const r = await p;
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('cancelled_by_orchestrator');
+  });
 });
