@@ -11,7 +11,45 @@ describe('migrations', () => {
     applyMigrations(db);
     applyMigrations(db);
     const versions = db.prepare('SELECT version FROM schema_version').all();
-    expect(versions).toHaveLength(2);
+    expect(versions).toHaveLength(3);
     db.close();
+  });
+
+  it('creates agent_invocations table with required columns', () => {
+    const db = openDatabase(':memory:');
+    applyMigrations(db);
+    const cols = db.prepare(`PRAGMA table_info('agent_invocations')`).all() as Array<{
+      name: string;
+    }>;
+    const names = cols.map((c) => c.name);
+    for (const required of [
+      'id',
+      'run_uuid',
+      'phase_id',
+      'step_id',
+      'profile',
+      'runtime',
+      'provider',
+      'model',
+      'skill',
+      'prompt_path',
+      'prompt_chars',
+      'prompt_tokens_approx',
+      'stdout_path',
+      'stderr_path',
+      'started_at',
+      'ended_at',
+      'start_commit_sha',
+      'end_commit_sha',
+      'exit_code',
+      'duration_ms',
+      'timeout_ms',
+      'outcome',
+      'contract_violations',
+      'result_json_path',
+      'fallback_of_invocation_id',
+    ]) {
+      expect(names).toContain(required);
+    }
   });
 });

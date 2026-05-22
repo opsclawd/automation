@@ -36,6 +36,12 @@ export function WorkerId(v: string): WorkerId {
   return v as WorkerId;
 }
 
+export type AgentInvocationId = string & { readonly __brand: 'AgentInvocationId' };
+export function AgentInvocationId(v: string): AgentInvocationId {
+  nonEmpty('AgentInvocationId', v);
+  return v as AgentInvocationId;
+}
+
 export function IssueNumber(v: number): IssueNumber {
   if (!Number.isInteger(v) || v <= 0) {
     throw new Error(`IssueNumber must be a positive integer, got ${v}`);

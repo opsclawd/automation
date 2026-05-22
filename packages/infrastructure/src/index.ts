@@ -6,6 +6,7 @@ export * from './sqlite/phase-repository.js';
 export * from './sqlite/event-repository.js';
 export * from './sqlite/artifact-repository.js';
 export * from './sqlite/failure-repository.js';
+export * from './sqlite/agent-invocation-repository.js';
 export * from './failure/classifier.js';
 export * from './bash/run-bash-script.js';
 export * from './events/event-bus.js';
