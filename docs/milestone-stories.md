@@ -427,13 +427,20 @@ Test plan     How acceptance is verified.
 
 - **Labels:** `milestone:M4`, `area:domain`, `area:persistence`
 - **Depends on:** M3-01, M3-07, M1-04
-- **User story:** As a developer, I want an `AgentInvocation` record persisted per agent call so I can audit prompts and outcomes regardless of which runtime executed the call.
-- **Context:** PRD §15.3, §15.7, Q6, Q24, ADR-0007.
+- **User story:** As a developer, I want an `AgentInvocation` record persisted per agent call so I can audit prompts and outcomes regardless of which runtime executed the call — with enough economics data (prompt size, durations, model) to make safe model-routing decisions downstream.
+- **Context:** PRD §15.3, §15.7, Q6, Q24, ADR-0007. **Closes #50** (agent invocation telemetry); the telemetry fields below are load-bearing for #52 (post-M4 phase-specific routing) and must not be deferred.
 - **Scope:**
-  - Domain type `AgentInvocation { id, runId, phaseId, stepId?, profile, runtime, provider, model, skill?, promptPath, stdoutPath, stderrPath, startCommitSha, endCommitSha?, exitCode?, durationMs?, timeoutMs, outcome, contractViolations[], resultJsonPath?, fallbackOfInvocationId? }`.
-  - `agent_invocations` SQLite table + repository. Columns must include `profile`, `runtime`, `provider`, `model`, `fallback_of_invocation_id`.
+  - Domain type `AgentInvocation { id, runId, phaseId, stepId?, profile, runtime, provider, model, skill?, promptPath, promptChars, promptTokensApprox?, stdoutPath, stderrPath, startedAt, endedAt?, startCommitSha, endCommitSha?, exitCode?, durationMs?, timeoutMs, outcome, contractViolations[], resultJsonPath?, fallbackOfInvocationId? }`.
+    - `promptChars`: character count of the rendered prompt at invocation time (required; cheap to compute).
+    - `promptTokensApprox`: optional, populated only when the adapter has a cheap tokenizer in hand. Never block on this.
+    - `startedAt` / `endedAt`: explicit timestamps, distinct from `durationMs` (which is derived); both must round-trip through persistence.
+    - `startCommitSha` / `endCommitSha`: captured by the runtime adapter, not the use case; `endCommitSha` is the only field the adapter writes back after the child exits.
+  - `agent_invocations` SQLite table + repository. Columns must include `profile`, `runtime`, `provider`, `model`, `prompt_chars`, `prompt_tokens_approx`, `started_at`, `ended_at`, `fallback_of_invocation_id`.
   - Index on `(run_id, phase_id)`, plus index on `fallback_of_invocation_id` for escalation analytics.
-- **Acceptance:** CRUD + queries by `runId`, `phaseId`, and `runtime`. Round-trip preserves all fields.
+  - Surface the invocation list through the existing run-detail API response (read-only) so operators can inspect economics without opening SQLite. A dedicated `/api/runs/:uuid/invocations` endpoint is acceptable if cleaner than embedding.
+- **Acceptance:**
+  - CRUD + queries by `runId`, `phaseId`, and `runtime`. Round-trip preserves all fields including `promptChars`, `promptTokensApprox`, `startedAt`, `endedAt`.
+  - A run that executes at least one agent invocation exposes the invocation row(s) via the API; the response includes model, runtime, provider, prompt size, duration, exit code, outcome, and `contractViolations` length.
 
 ## M4-02 — AgentRuntimeRouter + OpenCodeAgentAdapter
 
@@ -530,17 +537,28 @@ Test plan     How acceptance is verified.
   - Violations recorded as `Failure` rows with `kind: agent_contract_violation` and detailed `contractViolations[]` on the invocation.
 - **Acceptance:** Each invariant has a passing and failing unit test using fakes.
 
-## M4-05 — Agent result extractor + `result.json` schema
+## M4-05 — Deterministic result extraction + `result.json` schema
 
 - **Labels:** `milestone:M4`, `area:application`
 - **Depends on:** M4-04
-- **User story:** As the orchestrator, I want a typed `InvocationResult` so policy decisions don't depend on log scraping.
-- **Context:** Q6, Q37. Each phase declares its allowed `result.json` shape.
+- **User story:** As the orchestrator, I want a typed `InvocationResult` resolved deterministically so policy decisions don't depend on a second LLM call or log scraping.
+- **Context:** Q6, Q37. **Closes #51** (deterministic result policy). Supersedes the earlier "fallback to extractor agent" framing in Q6 — that path is now diagnostic-only, not the normal control flow.
+- **Policy (deterministic-first):**
+  1. Parse `result.json` from `invocation.resultJsonPath` (or the documented per-phase sentinel file) against the phase's Zod schema.
+  2. If valid → return typed `InvocationResult`.
+  3. If missing or invalid **and** the phase is marked `retrySafe: true` → rerun the same invocation **once** with a contract-violation reminder prepended to the prompt. The rerun is a new `AgentInvocation` row linked via `fallbackOfInvocationId` to the failing one. Record the original violation details on the failing row.
+  4. If still missing or invalid → emit `Failure { kind: 'invalid_result' | 'agent_contract_violation' }` with the parse error and the offending artifact paths. **No further LLM extraction.**
 - **Scope:**
-  - Per-phase result Zod schemas: `plan-design`, `plan-write`, `implement`, `review`, `fix-review`, `create-pr`, `pr-review-poll`.
-  - `extractResult(invocation)` parses `result.json` if present; falls back to a "extractor agent" invocation as documented in Q6.
-  - Invalid result → `invalid_result` failure.
-- **Acceptance:** Each schema accepts the existing Bash-produced `result.json` files captured from past runs.
+  - Per-phase result Zod schemas: `plan-design`, `plan-write`, `implement`, `review`, `fix-review`, `create-pr`, `pr-review-poll`. Each declares its `retrySafe` flag.
+  - `extractResult(invocation)` implements the policy above. It returns `{ ok: true, result } | { ok: false, reason, detail }` — never throws on missing/invalid input.
+  - Invalid-result details land on the invocation's `contractViolations[]` so they are visible alongside the telemetry from M4-01.
+  - An optional `extractFromArtifacts(invocation)` diagnostic helper may exist for offline inspection (e.g. `apps/cli/src/diagnose-result.ts`). It is **not** wired into the normal phase control flow and must be invoked explicitly by an operator.
+- **Out of scope:**
+  - LLM-based extraction in the hot path. If a future phase genuinely needs inference to recover a result, it must justify a new story — not silently reintroduce the extractor agent here.
+- **Acceptance:**
+  - Each schema accepts the existing Bash-produced `result.json` files captured from past runs.
+  - A test for each phase asserts: (a) valid `result.json` → typed result; (b) missing `result.json` + `retrySafe: true` → one rerun + linked `AgentInvocation`; (c) still-invalid after rerun → `invalid_result` failure with no third LLM call; (d) `retrySafe: false` → fail on first invalid result, no rerun.
+  - Grep confirms no production code path under `packages/application/` or `packages/infrastructure/` invokes `AgentPort.invoke` from inside `extractResult`.
 
 ## M4-06 — Replace agent calls in Bash review/plan/PR phases (incremental)
 
