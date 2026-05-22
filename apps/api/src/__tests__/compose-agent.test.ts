@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError } from '@ai-sdlc/shared';
 import {
   AgentProfileName,
   type AgentPort,
@@ -55,13 +54,6 @@ describe('compose agent wiring', () => {
   it('phaseProfiles resolves a known phase to a profile name', () => {
     const profile = baseConfig.phaseProfiles['plan-design']?.profile;
     expect(profile).toBe('opencode-frontier');
-  });
-
-  it('phaseProfiles throws on unknown phase when validated', () => {
-    expect(() => {
-      const entry = baseConfig.phaseProfiles['mystery'];
-      if (!entry) throw new ConfigError(`unknown phase 'mystery'`);
-    }).toThrow(ConfigError);
   });
 
   it('agentPort.invoke dispatches to the adapter for the requested profile runtime', async () => {
