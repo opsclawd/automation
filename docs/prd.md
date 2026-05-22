@@ -697,12 +697,16 @@ type AgentInvocation = {
   model: string;
   skill?: string;
   promptPath: string;
+  promptChars: number; // character count of the rendered prompt at invocation time
+  promptTokensApprox?: number; // populated only when the adapter has a cheap tokenizer
   stdoutPath: string;
   stderrPath: string;
+  startedAt: string; // ISO-8601, set by the adapter when the child is spawned
+  endedAt?: string; // ISO-8601, set by the adapter after the child exits
   startCommitSha: string;
   endCommitSha?: string;
   exitCode?: number;
-  durationMs?: number;
+  durationMs?: number; // derived from startedAt/endedAt; persisted for indexed queries
   timeoutMs: number;
   outcome?: 'success' | 'failed' | 'timeout' | 'contract_violation';
   contractViolations?: string[];

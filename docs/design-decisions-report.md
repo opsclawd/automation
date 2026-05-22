@@ -37,7 +37,7 @@ Typed `InvocationResult` with:
 1. Outcome enum: SUCCESS | FAILED | PARTIAL (stored in DB)
 2. Payload: optional structured JSON, schema varies by phase (stored as `result.json` artifact on filesystem)
 
-Extractor agent becomes a fallback/migration path for when agent doesn't produce clean result.json.
+Result resolution is **deterministic-first** (see M4-05): parse `result.json` against the phase's Zod schema; if missing/invalid and the phase is marked `retrySafe`, rerun the same invocation once with a contract-violation reminder prepended; otherwise fail with `invalid_result` or `agent_contract_violation`. No LLM extractor in the hot path. An offline extractor helper may exist for operator-driven diagnostics on archived runs, but it is not wired into the normal control flow.
 
 ## Q7 — PARTIAL outcome scope
 
