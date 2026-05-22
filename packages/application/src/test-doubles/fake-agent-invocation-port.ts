@@ -20,7 +20,7 @@ export class FakeAgentInvocationPort implements AgentInvocationPort {
   update(id: AgentInvocationId, patch: AgentInvocationUpdatePatch): void {
     const idx = this.rows.findIndex((r) => r.id === id);
     if (idx < 0) throw new Error(`AgentInvocation ${id} not found`);
-    this.rows[idx] = { ...this.rows[idx], ...patch };
+    this.rows[idx] = { ...this.rows[idx], ...patch } as unknown as AgentInvocation;
   }
 
   findById(id: AgentInvocationId): AgentInvocation | undefined {
