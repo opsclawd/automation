@@ -28,8 +28,7 @@ import {
   type TmpDirectoryFactory,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
-import { FakeAgentPort } from '@ai-sdlc/application/test-doubles';
-import { AgentRuntimeRegistry } from './agent-runtime-registry.js';
+import { AgentRuntimeRouter, OpenCodeAgentAdapter } from '@ai-sdlc/infrastructure';
 
 const classifyExitAdapter: ClassifyExitFn = (input) => {
   return classifyExit(input);
@@ -47,7 +46,7 @@ export interface Container {
   runsDir: string;
   baseTmpDir: string;
   eventBus: EventBusPort;
-  agentRuntime?: AgentRuntimeRegistry;
+  agentRuntime?: AgentRuntimeRouter;
 }
 
 export interface ComposeOptions {
@@ -126,26 +125,23 @@ export function composeRoot(opts: ComposeOptions): Container {
   const startIssueRun = new StartIssueRun(deps);
   const cancelRun = new CancelRun({ runRepository });
 
-  let agentRuntime: AgentRuntimeRegistry | undefined;
+  let agentRuntime: AgentRuntimeRouter | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
-      agentRuntime = new AgentRuntimeRegistry({
+      agentRuntime = new AgentRuntimeRouter({
         agent: config.agent,
         adapters: {
-          // TODO(M4): Replace with real adapters (opencode, pi).
-          opencode: new FakeAgentPort({}),
-          pi: new FakeAgentPort({}),
+          opencode: new OpenCodeAgentAdapter({
+            artifactsDir: join(runsDir, 'agent-artifacts'),
+          }),
         },
+        invocationRepository: agentInvocationRepository,
       });
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
-    // Only suppress ENOENT (config file missing) — invalid JSON, schema
-    // violations, and read errors must surface to the operator.
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
-    // agentRuntime stays undefined. Existing compose callers (tests, CLI
-    // without .ai-orchestrator.json) continue to work.
   }
 
   return {
