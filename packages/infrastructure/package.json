@@ -21,6 +21,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdlc/application": "workspace:*",
     "@ai-sdlc/domain": "workspace:*",
     "@ai-sdlc/shared": "workspace:*",
     "better-sqlite3": "^11.5.0",
