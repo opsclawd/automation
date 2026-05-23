@@ -463,9 +463,15 @@ run_agent() {
   case "${AGENT_CLI:-opencode}" in
     claude|claude-minimax)
       agent_cmd="~/bin/claude-minimax --settings ~/.claude/profiles/minimax.json --print --model $AGENT_MODEL"
+      if [[ "${AGENT_AUTO_EDIT:-0}" == "1" ]]; then
+        agent_cmd="$agent_cmd --permission-mode acceptEdits"
+      fi
       ;;
     opencode)
       agent_cmd="opencode --model $AGENT_MODEL run"
+      if [[ "${AGENT_AUTO_EDIT:-0}" == "1" ]]; then
+        agent_cmd="$agent_cmd --dangerously-skip-permissions"
+      fi
       ;;
     *)
       log "FAIL: Unsupported AGENT_CLI: ${AGENT_CLI:-opencode}"
