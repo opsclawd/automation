@@ -134,6 +134,9 @@ importers:
 
   packages/infrastructure:
     dependencies:
+      '@ai-sdlc/application':
+        specifier: workspace:*
+        version: link:../application
       '@ai-sdlc/domain':
         specifier: workspace:*
         version: link:../domain

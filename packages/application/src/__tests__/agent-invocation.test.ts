@@ -21,6 +21,7 @@ describe('AgentInvocationRequest', () => {
       runId: 'run-abc123',
       repoId: 'repo-42',
       phaseId: 'design',
+      startCommitSha: '0'.repeat(40),
     };
     expect(req.profile).toBe('opencode-frontier');
     expect(req.promptPath).toBe('/tmp/prompts/design-review.md');
@@ -42,6 +43,7 @@ describe('AgentInvocationRequest', () => {
       phaseId: 'review',
       workerId: 'worker-1',
       stepId: 'step-3',
+      startCommitSha: '0'.repeat(40),
     };
     expect(req.workerId).toBe('worker-1');
     expect(req.stepId).toBe('step-3');

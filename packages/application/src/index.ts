@@ -6,3 +6,4 @@ export * from './ports.js';
 export * from './use-cases.js';
 export * from './agent/invocation.js';
 export * from './agent/types.js';
+export * from './agent/contract-violation-codes.js';

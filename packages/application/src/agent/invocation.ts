@@ -13,6 +13,8 @@ export interface AgentInvocationRequest {
   workerId?: string;
   phaseId: string;
   stepId?: string;
+  startCommitSha: string;
+  abortSignal?: AbortSignal;
 }
 
 export interface AgentInvocationResult {
@@ -26,4 +28,5 @@ export interface AgentInvocationResult {
   resultJsonPath?: string;
   contractViolations: string[];
   outcome: AgentInvocationOutcome;
+  endCommitSha?: string;
 }

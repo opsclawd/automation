@@ -27,13 +27,25 @@ import {
   type RunRepositoryPort,
   type TmpDirectoryFactory,
 } from '@ai-sdlc/application';
-import { ConfigError, loadConfig } from '@ai-sdlc/shared';
-import { FakeAgentPort } from '@ai-sdlc/application/test-doubles';
-import { AgentRuntimeRegistry } from './agent-runtime-registry.js';
+import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
+import { AgentProfileName } from '@ai-sdlc/domain';
+import { AgentRuntimeRouter, OpenCodeAgentAdapter } from '@ai-sdlc/infrastructure';
 
 const classifyExitAdapter: ClassifyExitFn = (input) => {
   return classifyExit(input);
 };
+
+/**
+ * Resolve the agent profile name for a given phase.
+ * Throws `ConfigError` if the phase is not configured or agent config is absent.
+ */
+export function resolveProfileForPhase(agent: AgentConfig, phaseName: string): AgentProfileName {
+  const entry = agent.phaseProfiles[phaseName];
+  if (!entry) {
+    throw new ConfigError(`unknown phase '${phaseName}'`);
+  }
+  return AgentProfileName(entry.profile);
+}
 
 export interface Container {
   runRepository: RunRepository;
@@ -47,7 +59,9 @@ export interface Container {
   runsDir: string;
   baseTmpDir: string;
   eventBus: EventBusPort;
-  agentRuntime?: AgentRuntimeRegistry;
+  /** @deprecated Use `resolveProfileForPhase()` instead */
+  agentRuntime?: AgentRuntimeRouter;
+  resolveProfileForPhase: (phaseName: string) => AgentProfileName;
 }
 
 export interface ComposeOptions {
@@ -126,27 +140,31 @@ export function composeRoot(opts: ComposeOptions): Container {
   const startIssueRun = new StartIssueRun(deps);
   const cancelRun = new CancelRun({ runRepository });
 
-  let agentRuntime: AgentRuntimeRegistry | undefined;
+  let agentRuntime: AgentRuntimeRouter | undefined;
+  let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
-      agentRuntime = new AgentRuntimeRegistry({
+      agentRuntime = new AgentRuntimeRouter({
         agent: config.agent,
         adapters: {
-          // TODO(M4): Replace with real adapters (opencode, pi).
-          opencode: new FakeAgentPort({}),
-          pi: new FakeAgentPort({}),
+          opencode: new OpenCodeAgentAdapter({
+            artifactsDir: join(runsDir, 'agent-artifacts'),
+          }),
         },
+        invocationRepository: agentInvocationRepository,
       });
+      const agent = config.agent;
+      resolveProfileForPhaseBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
-    // Only suppress ENOENT (config file missing) — invalid JSON, schema
-    // violations, and read errors must surface to the operator.
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
-    // agentRuntime stays undefined. Existing compose callers (tests, CLI
-    // without .ai-orchestrator.json) continue to work.
   }
+
+  const defaultResolve: (phaseName: string) => AgentProfileName = (_phaseName: string) => {
+    throw new ConfigError('no agent config');
+  };
 
   return {
     runRepository,
@@ -161,6 +179,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     baseTmpDir,
     eventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
+    resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
   };
 }
 
