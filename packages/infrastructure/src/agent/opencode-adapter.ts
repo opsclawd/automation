@@ -79,7 +79,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let endCommitSha: string | undefined;
     try {
       endCommitSha = execSync('git rev-parse HEAD', { cwd: request.cwd }).toString().trim();
-    } catch {}
+    } catch {
+      contractViolations = [...contractViolations, 'missing_commit'];
+    }
 
     const ret: AgentInvocationResult = {
       runtime: 'opencode',

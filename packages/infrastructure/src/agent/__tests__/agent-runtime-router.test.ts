@@ -91,7 +91,7 @@ describe('AgentRuntimeRouter', () => {
   it('throws ConfigError on unknown profile', async () => {
     const router = new AgentRuntimeRouter({
       agent: cfg(),
-      adapters: { opencode: new StubAdapter({} as never) },
+      adapters: { opencode: new StubAdapter({} as unknown as AgentInvocationResult) },
       invocationRepository: new FakeAgentInvocationPort(),
       clock: () => FIXED_NOW,
       idFactory: () => randomUUID(),
@@ -172,6 +172,50 @@ describe('AgentRuntimeRouter', () => {
     expect(capturedSignal!.aborted).toBe(false);
     controller.abort();
     expect(capturedSignal!.aborted).toBe(true);
+  });
+
+  it('reclassifies cancelled_by_orchestrator to timeout when profile timeout fired', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = {
+      async invoke(_req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        await new Promise((r) => setTimeout(r, 10));
+        return {
+          runtime: 'opencode',
+          provider: 'a',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: ['cancelled_by_orchestrator'],
+          outcome: 'failed',
+        };
+      },
+    } satisfies AgentPort;
+    const router = new AgentRuntimeRouter({
+      agent: {
+        defaultProfile: 'opencode-frontier',
+        profiles: {
+          'opencode-frontier': {
+            runtime: 'opencode',
+            provider: 'a',
+            model: 'm',
+            timeoutMinutes: 0.0001,
+          },
+        },
+        phaseProfiles: {},
+      },
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-timeout',
+      readPromptChars: () => 0,
+    });
+    const r = await router.invoke(req());
+    expect(r.outcome).toBe('timeout');
+    expect(r.contractViolations).toEqual([]);
+    const row = inv.findById(AgentInvocationId('inv-timeout'));
+    expect(row?.outcome).toBe('timeout');
   });
 
   it('works with only opencode registered (pi is optional)', async () => {

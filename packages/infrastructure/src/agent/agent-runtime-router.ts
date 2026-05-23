@@ -70,9 +70,11 @@ export class AgentRuntimeRouter implements AgentPort {
     }
     this.opts.invocationRepository.insert(pre);
 
+    let profileTimeoutSignal: AbortSignal | undefined;
     const signals: AbortSignal[] = [];
     if (profile.timeoutMinutes > 0) {
-      signals.push(AbortSignal.timeout(profile.timeoutMinutes * 60_000));
+      profileTimeoutSignal = AbortSignal.timeout(profile.timeoutMinutes * 60_000);
+      signals.push(profileTimeoutSignal);
     }
     if (request.abortSignal) {
       signals.push(request.abortSignal);
@@ -98,6 +100,15 @@ export class AgentRuntimeRouter implements AgentPort {
       throw err;
     }
 
+    if (
+      result.outcome === 'failed' &&
+      result.contractViolations.includes('cancelled_by_orchestrator') &&
+      profileTimeoutSignal?.aborted &&
+      !request.abortSignal?.aborted
+    ) {
+      result = { ...result, outcome: 'timeout', contractViolations: [] };
+    }
+
     const endedAt = this.clock();
     const patch: Parameters<AgentInvocationPort['update']>[1] = {
       endedAt,
@@ -115,7 +126,7 @@ export class AgentRuntimeRouter implements AgentPort {
       patch.endCommitSha = result.endCommitSha;
     }
     this.opts.invocationRepository.update(id, patch);
-    return result;
+    return { ...result, provider: profile.provider, model: profile.model };
   }
 }
 
