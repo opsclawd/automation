@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
@@ -19,7 +19,7 @@ export class PiAgentAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     const bin = this.opts.binaryPath ?? 'pi';
 
-    const promptChars = statSync(request.promptPath).size;
+    const promptChars = readFileSync(request.promptPath, 'utf-8').length;
     const approxTokens = Math.ceil(promptChars / 4);
     if (request.promptBudgetTokens !== undefined && approxTokens > request.promptBudgetTokens) {
       return {
