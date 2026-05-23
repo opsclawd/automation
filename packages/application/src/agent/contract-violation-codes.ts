@@ -1,13 +1,10 @@
-export const CONTRACT_VIOLATION_CODES = [
-  'prompt_budget_exceeded',
-  'missing_required_artifact',
-  'invalid_result_json',
-  'invalid_result_value',
-  'branch_changed',
-  'missing_commit',
-  'not_pushed',
-  'replies_not_posted',
-  'cancelled_by_orchestrator',
-] as const;
+export const CONTRACT_VIOLATION_CODES = {
+  PROMPT_BUDGET_EXCEEDED: 'prompt_budget_exceeded',
+  MISSING_REQUIRED_ARTIFACT: 'missing_required_artifact',
+  INVALID_RESULT_JSON: 'invalid_result_json',
+  BRANCH_CHANGED: 'branch_changed',
+  CANCELLED_BY_ORCHESTRATOR: 'cancelled_by_orchestrator',
+} as const;
 
-export type ContractViolationCode = (typeof CONTRACT_VIOLATION_CODES)[number];
+export type ContractViolationCode =
+  (typeof CONTRACT_VIOLATION_CODES)[keyof typeof CONTRACT_VIOLATION_CODES];
