@@ -70,7 +70,17 @@ export class AgentRuntimeRouter implements AgentPort {
     }
     this.opts.invocationRepository.insert(pre);
 
-    const result = await adapter.invoke(request);
+    let result: AgentInvocationResult;
+    try {
+      result = await adapter.invoke(request);
+    } catch (err) {
+      this.opts.invocationRepository.update(id, {
+        endedAt: this.clock(),
+        outcome: 'failed',
+        contractViolations: [],
+      });
+      throw err;
+    }
 
     const endedAt = this.clock();
     const patch: Parameters<AgentInvocationPort['update']>[1] = {

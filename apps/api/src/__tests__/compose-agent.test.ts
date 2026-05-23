@@ -8,6 +8,8 @@ import {
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import { AgentRuntimeRouter } from '@ai-sdlc/infrastructure';
 import { AgentInvocationId } from '@ai-sdlc/domain';
+import { resolveProfileForPhase } from '../compose.js';
+import { ConfigError } from '@ai-sdlc/shared';
 
 const baseConfig = {
   defaultProfile: 'opencode-frontier' as const,
@@ -49,6 +51,17 @@ function makeRouter(overrides: Partial<ConstructorParameters<typeof AgentRuntime
     ...overrides,
   });
 }
+
+describe('resolveProfileForPhase', () => {
+  it('returns the configured profile for a known phase', () => {
+    const profile = resolveProfileForPhase(baseConfig, 'plan-design');
+    expect(profile).toBe(AgentProfileName('opencode-frontier'));
+  });
+
+  it('throws ConfigError for an unknown phase', () => {
+    expect(() => resolveProfileForPhase(baseConfig, 'mystery')).toThrow(ConfigError);
+  });
+});
 
 describe('compose agent wiring', () => {
   it('phaseProfiles resolves a known phase to a profile name', () => {

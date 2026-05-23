@@ -1,5 +1,6 @@
 import { execa } from 'execa';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   type AgentPort,
@@ -75,8 +76,12 @@ export class OpenCodeAgentAdapter implements AgentPort {
     writeFileSync(stderrPath, stderr);
 
     const durationMs = Date.now() - start;
+    let endCommitSha: string | undefined;
+    try {
+      endCommitSha = execSync('git rev-parse HEAD', { cwd: request.cwd }).toString().trim();
+    } catch {}
 
-    return {
+    const ret: AgentInvocationResult = {
       runtime: 'opencode',
       provider: '',
       model: '',
@@ -87,5 +92,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       contractViolations,
       outcome,
     };
+    if (endCommitSha) ret.endCommitSha = endCommitSha;
+    return ret;
   }
 }
