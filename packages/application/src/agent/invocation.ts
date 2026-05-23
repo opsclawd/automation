@@ -1,3 +1,4 @@
+import type { AgentInvocationId } from '@ai-sdlc/domain';
 import { AgentProfileName, type AgentRuntimeKind } from './types.js';
 export { AgentProfileName, type AgentRuntimeKind };
 
@@ -21,6 +22,8 @@ export interface AgentInvocationRequest {
     contextLimitTokens?: number;
     outputBudgetTokens?: number;
   };
+  fallbackOfInvocationId?: AgentInvocationId;
+  fallbackReason?: string;
 }
 
 export interface AgentInvocationResult {
