@@ -11,7 +11,6 @@ import {
 export interface PiAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
-  timeoutMsDefault?: number;
 }
 
 export class PiAgentAdapter implements AgentPort {
@@ -51,21 +50,7 @@ export class PiAgentAdapter implements AgentPort {
     let stderr = '';
     let contractViolations: string[] = [];
     try {
-      const timeoutSignal =
-        this.opts.timeoutMsDefault !== undefined
-          ? AbortSignal.timeout(this.opts.timeoutMsDefault)
-          : undefined;
-      const signals: AbortSignal[] = [];
-      if (timeoutSignal) signals.push(timeoutSignal);
-      if (request.abortSignal) signals.push(request.abortSignal);
-      const cancelSignal =
-        signals.length === 1
-          ? signals[0]
-          : signals.length > 1
-            ? AbortSignal.any(signals)
-            : undefined;
-
-      const args = ['run', '--model', request.profile];
+      const args = ['run', '--model', request.model ?? request.profile];
       if (request.runtimeHints?.contextLimitTokens !== undefined) {
         args.push('--context-limit', String(request.runtimeHints.contextLimitTokens));
       }
@@ -78,19 +63,15 @@ export class PiAgentAdapter implements AgentPort {
         cwd: request.cwd,
         reject: false,
         all: false,
-        ...(cancelSignal ? { cancelSignal } : {}),
+        ...(request.abortSignal ? { cancelSignal: request.abortSignal } : {}),
       });
       const r = await child;
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
       exitCode = r.exitCode ?? 0;
       if (r.isCanceled) {
-        if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
-          outcome = 'timeout';
-        } else {
-          outcome = 'failed';
-          contractViolations = ['cancelled_by_orchestrator'];
-        }
+        outcome = 'failed';
+        contractViolations = [...contractViolations, 'cancelled_by_orchestrator'];
       } else if (exitCode !== 0) {
         outcome = 'failed';
       }

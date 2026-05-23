@@ -66,8 +66,9 @@ describe('PiAgentAdapter', () => {
     const adapter = new PiAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-pi-slow.sh'),
       artifactsDir: cwd,
-      timeoutMsDefault: 500,
     });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 500);
     const r = await adapter.invoke({
       profile: AgentProfileName('pi-local'),
       promptPath: '/dev/null',
@@ -77,8 +78,11 @@ describe('PiAgentAdapter', () => {
       repoId: 'r',
       phaseId: 'plan-design',
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      abortSignal: controller.signal,
     });
-    expect(r.outcome).toBe('timeout');
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('cancelled_by_orchestrator');
+    expect(readFileSync(r.stdoutPath, 'utf-8')).toContain('starting');
   }, 15000);
 
   it('refuses to spawn when prompt exceeds promptBudgetTokens', async () => {
@@ -124,7 +128,8 @@ describe('PiAgentAdapter', () => {
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
       abortSignal: controller.signal,
     });
-    setTimeout(() => controller.abort(), 100);
+    await new Promise((r) => setTimeout(r, 50));
+    controller.abort();
     const r = await p;
     expect(r.outcome).toBe('failed');
     expect(r.contractViolations).toContain('cancelled_by_orchestrator');
