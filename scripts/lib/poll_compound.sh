@@ -100,7 +100,7 @@ emit_compound_doc() {
   } > "$prompt_file"
 
   log "  Emitting compound doc to ${final_target}"
-  run_agent "compound" 300 < "$prompt_file" || warn "  compound agent exited non-zero"
+  AGENT_AUTO_EDIT=1 run_agent "compound" 300 < "$prompt_file" || warn "  compound agent exited non-zero"
   rm -f "$prompt_file"
 
   # Promote from sandbox (worktree) to ISSUES_DIR
