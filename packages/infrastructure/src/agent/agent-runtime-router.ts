@@ -86,11 +86,30 @@ export class AgentRuntimeRouter implements AgentPort {
           ? signals[0]
           : AbortSignal.any(signals);
 
+    const runtimeHints: AgentInvocationRequest['runtimeHints'] =
+      profile.contextLimitTokens !== undefined || profile.outputBudgetTokens !== undefined
+        ? {
+            ...(profile.contextLimitTokens !== undefined
+              ? { contextLimitTokens: profile.contextLimitTokens }
+              : {}),
+            ...(profile.outputBudgetTokens !== undefined
+              ? { outputBudgetTokens: profile.outputBudgetTokens }
+              : {}),
+          }
+        : undefined;
+
+    const enrichedRequest: AgentInvocationRequest = {
+      ...request,
+      ...(composedSignal ? { abortSignal: composedSignal } : {}),
+      ...(profile.promptBudgetTokens !== undefined
+        ? { promptBudgetTokens: profile.promptBudgetTokens }
+        : {}),
+      ...(runtimeHints !== undefined ? { runtimeHints } : {}),
+    };
+
     let result: AgentInvocationResult;
     try {
-      result = await adapter.invoke(
-        composedSignal ? { ...request, abortSignal: composedSignal } : request,
-      );
+      result = await adapter.invoke(enrichedRequest);
     } catch (err) {
       this.opts.invocationRepository.update(id, {
         endedAt: this.clock(),
