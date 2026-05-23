@@ -246,7 +246,7 @@ describe('AgentRuntimeRouter', () => {
 
   it('passes promptBudgetTokens and runtimeHints from profile to adapter for pi runtime', async () => {
     let captured: AgentInvocationRequest | undefined;
-    const capturingAdapter: AgentPort = {
+    const capturingAdapter = {
       async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
         captured = req;
         return {
@@ -261,7 +261,7 @@ describe('AgentRuntimeRouter', () => {
           outcome: 'success',
         };
       },
-    };
+    } satisfies AgentPort;
     const inv = new FakeAgentInvocationPort();
     const router = new AgentRuntimeRouter({
       agent: {
