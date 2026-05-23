@@ -105,4 +105,28 @@ describe('PiAgentAdapter', () => {
     expect(r.contractViolations).toContain('prompt_budget_exceeded');
     expect(existsSync(sentinel)).toBe(false);
   });
+
+  it('terminates child on cancellation via AbortController', async () => {
+    const cwd = makeWorktree();
+    const adapter = new PiAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-pi-slow.sh'),
+      artifactsDir: cwd,
+    });
+    const controller = new AbortController();
+    const p = adapter.invoke({
+      profile: AgentProfileName('pi-local'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      abortSignal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 100);
+    const r = await p;
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('cancelled_by_orchestrator');
+  });
 });
