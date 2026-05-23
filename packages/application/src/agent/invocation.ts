@@ -15,6 +15,12 @@ export interface AgentInvocationRequest {
   stepId?: string;
   startCommitSha: string;
   abortSignal?: AbortSignal;
+  model?: string;
+  promptBudgetTokens?: number;
+  runtimeHints?: {
+    contextLimitTokens?: number;
+    outputBudgetTokens?: number;
+  };
 }
 
 export interface AgentInvocationResult {

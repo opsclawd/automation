@@ -243,4 +243,54 @@ describe('AgentRuntimeRouter', () => {
     const r = await router.invoke(req());
     expect(r.outcome).toBe('success');
   });
+
+  it('passes promptBudgetTokens and runtimeHints from profile to adapter for pi runtime', async () => {
+    let captured: AgentInvocationRequest | undefined;
+    const capturingAdapter = {
+      async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        captured = req;
+        return {
+          runtime: 'pi',
+          provider: 'local',
+          model: 'q',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    } satisfies AgentPort;
+    const inv = new FakeAgentInvocationPort();
+    const router = new AgentRuntimeRouter({
+      agent: {
+        defaultProfile: 'pi-local',
+        profiles: {
+          'pi-local': {
+            runtime: 'pi',
+            provider: 'local',
+            model: 'q',
+            timeoutMinutes: 1,
+            contextLimitTokens: 64000,
+            promptBudgetTokens: 8000,
+            outputBudgetTokens: 4000,
+          },
+        },
+        phaseProfiles: {},
+      },
+      adapters: { pi: capturingAdapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-hints',
+      readPromptChars: () => 100,
+    });
+    await router.invoke(req({ profile: AgentProfileName('pi-local') }));
+    expect(captured).toBeDefined();
+    expect(captured!.promptBudgetTokens).toBe(8000);
+    expect(captured!.runtimeHints).toEqual({
+      contextLimitTokens: 64000,
+      outputBudgetTokens: 4000,
+    });
+  });
 });

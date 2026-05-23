@@ -29,7 +29,7 @@ import {
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
 import { AgentProfileName } from '@ai-sdlc/domain';
-import { AgentRuntimeRouter, OpenCodeAgentAdapter } from '@ai-sdlc/infrastructure';
+import { AgentRuntimeRouter, OpenCodeAgentAdapter, PiAgentAdapter } from '@ai-sdlc/infrastructure';
 
 const classifyExitAdapter: ClassifyExitFn = (input) => {
   return classifyExit(input);
@@ -145,13 +145,22 @@ export function composeRoot(opts: ComposeOptions): Container {
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
+      const needsPi = Object.values(config.agent.profiles).some((p) => p.runtime === 'pi');
+      const adapters: Partial<
+        Record<import('@ai-sdlc/domain').AgentRuntimeKind, import('@ai-sdlc/application').AgentPort>
+      > = {
+        opencode: new OpenCodeAgentAdapter({
+          artifactsDir: join(runsDir, 'agent-artifacts'),
+        }),
+      };
+      if (needsPi) {
+        adapters.pi = new PiAgentAdapter({
+          artifactsDir: join(runsDir, 'agent-artifacts'),
+        });
+      }
       agentRuntime = new AgentRuntimeRouter({
         agent: config.agent,
-        adapters: {
-          opencode: new OpenCodeAgentAdapter({
-            artifactsDir: join(runsDir, 'agent-artifacts'),
-          }),
-        },
+        adapters,
         invocationRepository: agentInvocationRepository,
       });
       const agent = config.agent;
