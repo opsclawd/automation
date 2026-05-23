@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -80,4 +80,29 @@ describe('PiAgentAdapter', () => {
     });
     expect(r.outcome).toBe('timeout');
   }, 15000);
+
+  it('refuses to spawn when prompt exceeds promptBudgetTokens', async () => {
+    const cwd = makeWorktree();
+    const promptPath = join(cwd, 'big-prompt.md');
+    writeFileSync(promptPath, 'x'.repeat(40_000));
+    const sentinel = join(cwd, 'shim-ran');
+    const shim = join(cwd, 'shim.sh');
+    writeFileSync(shim, `#!/usr/bin/env bash\ntouch "${sentinel}"\nexit 0\n`);
+    execSync(`chmod +x ${shim}`);
+    const adapter = new PiAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('pi-local'),
+      promptPath,
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: 'a'.repeat(40),
+      promptBudgetTokens: 1000,
+    });
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('prompt_budget_exceeded');
+    expect(existsSync(sentinel)).toBe(false);
+  });
 });
