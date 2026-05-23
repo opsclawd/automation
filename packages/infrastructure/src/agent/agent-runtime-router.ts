@@ -70,9 +70,25 @@ export class AgentRuntimeRouter implements AgentPort {
     }
     this.opts.invocationRepository.insert(pre);
 
+    const signals: AbortSignal[] = [];
+    if (profile.timeoutMinutes > 0) {
+      signals.push(AbortSignal.timeout(profile.timeoutMinutes * 60_000));
+    }
+    if (request.abortSignal) {
+      signals.push(request.abortSignal);
+    }
+    const composedSignal =
+      signals.length === 0
+        ? undefined
+        : signals.length === 1
+          ? signals[0]
+          : AbortSignal.any(signals);
+
     let result: AgentInvocationResult;
     try {
-      result = await adapter.invoke(request);
+      result = await adapter.invoke(
+        composedSignal ? { ...request, abortSignal: composedSignal } : request,
+      );
     } catch (err) {
       this.opts.invocationRepository.update(id, {
         endedAt: this.clock(),

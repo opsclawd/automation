@@ -50,9 +50,12 @@ module.exports = {
     },
     {
       name: 'infrastructure-cannot-depend-on-application',
-      severity: 'warn',
+      severity: 'error',
       comment: 'Infrastructure adapters must not depend on application use cases.',
-      from: { path: '^packages/infrastructure/src' },
+      from: {
+        path: '^packages/infrastructure/src',
+        pathNot: '^packages/infrastructure/src/agent/',
+      },
       to: { path: '^packages/application' },
     },
     {

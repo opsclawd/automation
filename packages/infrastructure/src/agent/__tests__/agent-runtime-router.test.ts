@@ -140,11 +140,12 @@ describe('AgentRuntimeRouter', () => {
     expect(inv.findById(AgentInvocationId('inv-y'))?.endCommitSha).toBe('c'.repeat(40));
   });
 
-  it('passes abortSignal through to the adapter', async () => {
+  it('passes abortSignal through to the adapter (composed with profile timeout)', async () => {
     const controller = new AbortController();
+    let capturedSignal: AbortSignal | undefined;
     const adapter = {
       async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
-        expect(req.abortSignal).toBe(controller.signal);
+        capturedSignal = req.abortSignal;
         return {
           runtime: 'opencode',
           provider: 'a',
@@ -167,6 +168,10 @@ describe('AgentRuntimeRouter', () => {
       readPromptChars: () => 0,
     });
     await router.invoke(req({ abortSignal: controller.signal }));
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(false);
+    controller.abort();
+    expect(capturedSignal!.aborted).toBe(true);
   });
 
   it('works with only opencode registered (pi is optional)', async () => {
