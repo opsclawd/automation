@@ -11,6 +11,11 @@ export interface PromptContext {
 // /g flag required for matchAll — do NOT use with .test() or .exec()
 const PLACEHOLDER_RE = /\{\{(var|artifact):([^}]+)\}\}/g;
 
+function isArtifactNotFoundError(err: unknown): boolean {
+  if (err instanceof ArtifactNotFoundError) return true;
+  return err instanceof Error && err.name === 'ArtifactNotFoundError';
+}
+
 export async function renderPrompt(template: string, ctx: PromptContext): Promise<string> {
   const replacements: Array<{ start: number; end: number; value: string }> = [];
 
@@ -30,7 +35,7 @@ export async function renderPrompt(template: string, ctx: PromptContext): Promis
       try {
         value = await ctx.artifacts.read(ctx.runId, key!.trim());
       } catch (err) {
-        if (err instanceof ArtifactNotFoundError) {
+        if (isArtifactNotFoundError(err)) {
           throw new TemplateError(`missing artifact: ${key!}`, key!, { cause: err });
         }
         throw err;

@@ -67,6 +67,33 @@ describe('renderPrompt', () => {
     }
   });
 
+  it('recognizes cross-package ArtifactNotFoundError by name', async () => {
+    const crossPackageStore: ArtifactStore = {
+      async read() {
+        const err = new Error('artifact not found: x.md in run run-1');
+        err.name = 'ArtifactNotFoundError';
+        throw err;
+      },
+      async write() {
+        throw new Error('not in scope');
+      },
+      async list() {
+        return [];
+      },
+    };
+    try {
+      await renderPrompt('{{artifact:x.md}}', {
+        runId: 'run-1',
+        vars: {},
+        artifacts: crossPackageStore,
+      });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TemplateError);
+      expect((err as TemplateError).placeholder).toBe('x.md');
+    }
+  });
+
   it('re-throws non-ArtifactNotFoundError from artifacts.read', async () => {
     const brokenStore: ArtifactStore = {
       async read() {

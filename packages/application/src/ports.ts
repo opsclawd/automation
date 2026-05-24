@@ -120,6 +120,7 @@ export type {
   ValidationCommandResult,
 } from './ports/validation-port.js';
 export type { ArtifactStore, WriteArtifactInput, Artifact } from './ports/artifact-store.js';
+export { ArtifactNotFoundError } from './ports/artifact-store.js';
 
 export type { AgentPort } from './ports/agent-port.js';
 export type {
