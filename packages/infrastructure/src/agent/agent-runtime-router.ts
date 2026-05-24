@@ -169,9 +169,10 @@ export class AgentRuntimeRouter implements AgentPort {
           const fallbackAdapter = this.opts.adapters[fallbackProfile.runtime];
           if (fallbackAdapter) {
             const isCallerSignalled = !!request.fallbackOfInvocationId;
-            const triggerReason = isCallerSignalled
+            const rawReason = isCallerSignalled
               ? (request.fallbackReason ?? 'unknown')
               : this.determineTriggerReason(result);
+            const triggerReason = rawReason.length > 64 ? rawReason.slice(0, 64) : rawReason;
 
             const fallbackRequest: AgentInvocationRequest = {
               ...request,

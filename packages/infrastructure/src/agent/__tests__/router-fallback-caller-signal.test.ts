@@ -115,4 +115,43 @@ describe('AgentRuntimeRouter caller-signalled fallback', () => {
     expect(events[0].metadata.fromProfile).toBe('opencode-frontier');
     expect(events[0].metadata.toProfile).toBe('pi-local');
   });
+
+  it('truncates fallbackReason to 64 characters', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'm',
+      exitCode: 0,
+      durationMs: 1000,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const events: OrchestratorEvent[] = [];
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter, pi: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-truncate',
+      readPromptChars: () => 100,
+      eventBus: {
+        publish(_runId, ev) {
+          events.push(ev);
+        },
+      },
+    });
+
+    const longReason = 'a'.repeat(80);
+    await router.invoke(
+      req({
+        fallbackOfInvocationId: AgentInvocationId('prev-invocation'),
+        fallbackReason: longReason,
+      }),
+    );
+
+    expect(events[0].metadata.triggerReason).toBe('a'.repeat(64));
+  });
 });
