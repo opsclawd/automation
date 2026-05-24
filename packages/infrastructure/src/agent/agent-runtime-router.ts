@@ -181,6 +181,7 @@ export class AgentRuntimeRouter implements AgentPort {
             };
 
             this.emitFallbackEvent(
+              request.runId,
               request.profile,
               fallbackProfileName,
               triggerReason,
@@ -230,6 +231,7 @@ export class AgentRuntimeRouter implements AgentPort {
   }
 
   private emitFallbackEvent(
+    runId: string,
     fromProfile: string,
     toProfile: string,
     triggerReason: string,
@@ -237,7 +239,7 @@ export class AgentRuntimeRouter implements AgentPort {
   ): void {
     if (!this.opts.eventBus) return;
     const event: OrchestratorEvent = {
-      runId: '',
+      runId,
       level: 'warn',
       type: 'phase.fallback.escalated',
       message: `Fallback from '${fromProfile}' to '${toProfile}' (reason: ${triggerReason}, owner: ${triggerOwner})`,
@@ -249,7 +251,7 @@ export class AgentRuntimeRouter implements AgentPort {
         triggerOwner,
       },
     };
-    this.opts.eventBus.publish('', event);
+    this.opts.eventBus.publish(runId, event);
   }
 }
 
