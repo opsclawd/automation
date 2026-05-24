@@ -25,7 +25,10 @@ module.exports = {
         'Do NOT add more I/O to packages/application without a matching entry here.',
       from: {
         path: '^packages/application/src',
-        pathNot: '^packages/application/src/prompts/load-prompt-template\\.ts$',
+        pathNot: [
+          '^packages/application/src/prompts/load-prompt-template\\.ts$',
+          '(^|/)__tests__/',
+        ],
       },
       to: {
         path: '^(node:fs|node:path)$',
