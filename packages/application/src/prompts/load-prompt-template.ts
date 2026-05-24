@@ -8,7 +8,7 @@ export interface LoadPromptTemplateOpts {
 
 function validatePathSegment(segment: string, label: string): void {
   if (segment.includes('/') || segment.includes('\\') || segment.includes('..')) {
-    throw new TemplateNotFoundError(`invalid ${label}: ${segment}`);
+    throw new TypeError(`invalid ${label}: ${segment} must not contain /, \\, or ..`);
   }
 }
 

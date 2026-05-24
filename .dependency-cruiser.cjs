@@ -31,7 +31,7 @@ module.exports = {
         ],
       },
       to: {
-        path: '^(node:fs|node:path)$',
+        path: '^(node:fs|node:fs/promises|node:path|node:path/posix|node:path/win32|fs|path)$',
       },
     },
     {

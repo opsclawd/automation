@@ -29,4 +29,12 @@ describe('loadPromptTemplate', () => {
       expect((err as TemplateNotFoundError).message).toContain('/nonexistent/x/y.md');
     }
   });
+
+  it('throws TypeError for path traversal in phase', () => {
+    expect(() => loadPromptTemplate('../etc', 'step', { promptsRoot: '/tmp' })).toThrow(TypeError);
+  });
+
+  it('throws TypeError for path traversal in step', () => {
+    expect(() => loadPromptTemplate('phase', 'a/b', { promptsRoot: '/tmp' })).toThrow(TypeError);
+  });
 });

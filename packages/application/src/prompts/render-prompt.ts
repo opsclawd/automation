@@ -1,4 +1,5 @@
 import { TemplateError } from './errors.js';
+import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
 export interface PromptContext {
@@ -29,7 +30,10 @@ export async function renderPrompt(template: string, ctx: PromptContext): Promis
       try {
         value = await ctx.artifacts.read(ctx.runId, key!.trim());
       } catch (err) {
-        throw new TemplateError(`missing artifact: ${key!}`, key!, { cause: err });
+        if (err instanceof ArtifactNotFoundError) {
+          throw new TemplateError(`missing artifact: ${key!}`, key!, { cause: err });
+        }
+        throw err;
       }
     }
     replacements.push({ start, end, value });

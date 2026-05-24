@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { renderPrompt } from '../prompts/render-prompt.js';
 import { TemplateError } from '../prompts/errors.js';
+import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
-const fakeArtifacts = (map: Record<string, string>): ArtifactStore => ({
+const fakeArtifacts = (map: Record<string, string>, runId = 'run-1'): ArtifactStore => ({
   async read(_runId: string, relativePath: string) {
-    if (!(relativePath in map)) throw new Error('not found');
+    if (!(relativePath in map)) throw new ArtifactNotFoundError(runId, relativePath);
     return map[relativePath];
   },
   async write() {
@@ -62,7 +63,32 @@ describe('renderPrompt', () => {
       expect(err).toBeInstanceOf(TemplateError);
       expect((err as TemplateError).placeholder).toBe('nope.md');
       expect((err as TemplateError).message).toMatch(/nope\.md/);
-      expect(err as TemplateError).toHaveProperty('cause');
+      expect((err as TemplateError).cause).toBeInstanceOf(ArtifactNotFoundError);
+    }
+  });
+
+  it('re-throws non-ArtifactNotFoundError from artifacts.read', async () => {
+    const brokenStore: ArtifactStore = {
+      async read() {
+        throw new Error('permission denied');
+      },
+      async write() {
+        throw new Error('not in scope');
+      },
+      async list() {
+        return [];
+      },
+    };
+    try {
+      await renderPrompt('{{artifact:x.md}}', {
+        runId: 'run-1',
+        vars: {},
+        artifacts: brokenStore,
+      });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).not.toBeInstanceOf(TemplateError);
+      expect((err as Error).message).toBe('permission denied');
     }
   });
 });
