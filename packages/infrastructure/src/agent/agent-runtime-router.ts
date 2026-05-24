@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import {
   AgentInvocationId,
+  AgentProfileName,
   PhaseName,
   RunId,
   type AgentInvocation,
@@ -12,13 +13,16 @@ import {
   type AgentInvocationRequest,
   type AgentInvocationResult,
   type AgentInvocationPort,
+  CONTRACT_VIOLATION_CODES,
 } from '@ai-sdlc/application';
-import { ConfigError, type AgentConfig } from '@ai-sdlc/shared';
+import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
+import type { EventBusPort } from '@ai-sdlc/application';
 
 export interface AgentRuntimeRouterOptions {
   agent: AgentConfig;
   adapters: Partial<Record<AgentRuntimeKind, AgentPort>>;
   invocationRepository: AgentInvocationPort;
+  eventBus?: EventBusPort;
   clock?: () => Date;
   idFactory?: () => string;
   readPromptChars?: (path: string) => number;
@@ -36,6 +40,13 @@ export class AgentRuntimeRouter implements AgentPort {
   }
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
+    return this.dispatch(request);
+  }
+
+  private async dispatch(
+    request: AgentInvocationRequest,
+    isFallback?: boolean,
+  ): Promise<AgentInvocationResult> {
     const profile = this.opts.agent.profiles[request.profile];
     if (!profile) {
       throw new ConfigError(`unknown profile '${request.profile}'`);
@@ -67,6 +78,9 @@ export class AgentRuntimeRouter implements AgentPort {
     };
     if (request.stepId) {
       pre.stepId = request.stepId;
+    }
+    if (request.fallbackOfInvocationId) {
+      pre.fallbackOfInvocationId = request.fallbackOfInvocationId;
     }
     this.opts.invocationRepository.insert(pre);
 
@@ -144,7 +158,98 @@ export class AgentRuntimeRouter implements AgentPort {
       patch.endCommitSha = result.endCommitSha;
     }
     this.opts.invocationRepository.update(id, patch);
+
+    // --- Fallback logic ---
+    if (!isFallback && this.shouldFallback(request, result)) {
+      const phaseEntry = this.opts.agent.phaseProfiles[request.phaseId];
+      const fallbackProfileName = phaseEntry?.fallbackProfile;
+      if (fallbackProfileName) {
+        const fallbackProfile = this.opts.agent.profiles[fallbackProfileName];
+        if (fallbackProfile) {
+          const fallbackAdapter = this.opts.adapters[fallbackProfile.runtime];
+          if (fallbackAdapter) {
+            const isCallerSignalled = !!request.fallbackOfInvocationId;
+            const triggerReason = isCallerSignalled
+              ? (request.fallbackReason ?? 'unknown')
+              : this.determineTriggerReason(result);
+
+            const fallbackRequest: AgentInvocationRequest = {
+              ...request,
+              profile: AgentProfileName(fallbackProfileName),
+              fallbackOfInvocationId: id,
+              fallbackReason: triggerReason,
+            };
+
+            this.emitFallbackEvent(
+              request.profile,
+              fallbackProfileName,
+              triggerReason,
+              isCallerSignalled ? 'use_case' : 'router',
+            );
+
+            const fallbackResult = await this.dispatch(fallbackRequest, true);
+            return {
+              ...fallbackResult,
+              provider: fallbackProfile.provider,
+              model: fallbackProfile.model,
+            };
+          }
+        }
+      }
+    }
+
     return { ...result, provider: profile.provider, model: profile.model };
+  }
+
+  private shouldFallback(request: AgentInvocationRequest, result: AgentInvocationResult): boolean {
+    // Caller-signalled fallback: request already has fallbackOfInvocationId from the caller
+    if (request.fallbackOfInvocationId) return true;
+
+    // Adapter-level triggers
+    if (result.outcome === 'timeout') return true;
+    if (result.outcome === 'contract_violation') return true;
+
+    return false;
+  }
+
+  private determineTriggerReason(result: AgentInvocationResult): string {
+    if (result.outcome === 'timeout') return 'timeout';
+    if (result.outcome === 'contract_violation') {
+      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROMPT_BUDGET_EXCEEDED)) {
+        return 'prompt_budget_exceeded';
+      }
+      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)) {
+        return 'missing_required_artifact';
+      }
+      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON)) {
+        return 'invalid_result_json';
+      }
+      return 'contract_violation';
+    }
+    return 'unknown';
+  }
+
+  private emitFallbackEvent(
+    fromProfile: string,
+    toProfile: string,
+    triggerReason: string,
+    triggerOwner: string,
+  ): void {
+    if (!this.opts.eventBus) return;
+    const event: OrchestratorEvent = {
+      runId: '',
+      level: 'warn',
+      type: 'phase.fallback.escalated',
+      message: `Fallback from '${fromProfile}' to '${toProfile}' (reason: ${triggerReason}, owner: ${triggerOwner})`,
+      timestamp: this.clock().toISOString(),
+      metadata: {
+        fromProfile,
+        toProfile,
+        triggerReason,
+        triggerOwner,
+      },
+    };
+    this.opts.eventBus.publish('', event);
   }
 }
 

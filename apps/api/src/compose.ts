@@ -162,6 +162,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         agent: config.agent,
         adapters,
         invocationRepository: agentInvocationRepository,
+        eventBus,
       });
       const agent = config.agent;
       resolveProfileForPhaseBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);

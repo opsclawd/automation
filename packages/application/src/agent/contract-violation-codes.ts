@@ -5,6 +5,3 @@ export const CONTRACT_VIOLATION_CODES = {
   BRANCH_CHANGED: 'branch_changed',
   CANCELLED_BY_ORCHESTRATOR: 'cancelled_by_orchestrator',
 } as const;
-
-export type ContractViolationCode =
-  (typeof CONTRACT_VIOLATION_CODES)[keyof typeof CONTRACT_VIOLATION_CODES];
