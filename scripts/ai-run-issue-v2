@@ -46,7 +46,7 @@ TIMEOUT_BRAINSTORM=600
 TIMEOUT_PLAN_WRITE=600
 TIMEOUT_IMPLEMENT=1800
 TIMEOUT_VALIDATE=300
-TIMEOUT_REVIEW=180
+TIMEOUT_REVIEW=600
 TIMEOUT_FIX=900
 TIMEOUT_PR_FIX=1200
 TIMEOUT_COMPOUND=600
@@ -137,17 +137,17 @@ orchestrator_fail() {
 # Verify worktree is on the correct branch; checkout if needed
 ensure_branch() {
   local current
-  current=$(git branch --show-current 2>/dev/null || echo "")
+  current=$(cd "$WORKTREE_DIR" && git branch --show-current 2>/dev/null || echo "")
   if [[ "$current" != "${BRANCH}" ]]; then
     warn "Worktree on '${current}' (expected '${BRANCH}'), checking out..."
-    git checkout "${BRANCH}" 2>/dev/null || orchestrator_fail "Failed to checkout ${BRANCH} in worktree"
+    (cd "$WORKTREE_DIR" && git checkout "${BRANCH}" 2>/dev/null) || orchestrator_fail "Failed to checkout ${BRANCH} in worktree"
   fi
 }
 
 # Verify worktree is still on the correct branch after agent execution
 check_branch_after_agent() {
   local current
-  current=$(git branch --show-current 2>/dev/null || echo "")
+  current=$(cd "$WORKTREE_DIR" && git branch --show-current 2>/dev/null || echo "")
   if [[ "$current" != "${BRANCH}" ]]; then
     orchestrator_fail "Agent switched branch from ${BRANCH} to ${current}"
   fi
@@ -575,7 +575,7 @@ run_agent_raw() {
   ec_file=$(mktemp)
   local ec=0
 
-  { timeout "$timeout_sec" bash -c "$agent_cmd" < "$prompt_file" 2>&1; echo $? > "$ec_file"; } \
+  { timeout "$timeout_sec" bash -c "cd \"$WORKTREE_DIR\" && $agent_cmd" < "$prompt_file" 2>&1; echo $? > "$ec_file"; } \
     | tee -a "$output_log" \
     | grep -v "^\[0m$" | grep -v "^$" || true
   ec=$(cat "$ec_file")
