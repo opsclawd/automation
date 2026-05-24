@@ -6,6 +6,12 @@ export interface LoadPromptTemplateOpts {
   promptsRoot: string;
 }
 
+function validatePathSegment(segment: string, label: string): void {
+  if (segment.includes('/') || segment.includes('\\') || segment.includes('..')) {
+    throw new TemplateNotFoundError(`invalid ${label}: ${segment}`);
+  }
+}
+
 /**
  * Load a prompt template from the prompts directory.
  *
@@ -20,10 +26,15 @@ export function loadPromptTemplate(
   step: string,
   opts: LoadPromptTemplateOpts,
 ): string {
+  validatePathSegment(phase, 'phase');
+  validatePathSegment(step, 'step');
   const path = join(opts.promptsRoot, phase, `${step}.md`);
   try {
     return readFileSync(path, 'utf-8');
-  } catch {
-    throw new TemplateNotFoundError(`prompt template not found: ${path}`);
+  } catch (e) {
+    if (e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new TemplateNotFoundError(`prompt template not found: ${path}`);
+    }
+    throw e;
   }
 }

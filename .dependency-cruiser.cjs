@@ -16,6 +16,22 @@
 module.exports = {
   forbidden: [
     {
+      name: 'application-no-io-except-prompt-template',
+      severity: 'error',
+      comment:
+        'M4-03 boundary leak: packages/application MUST NOT import node:fs/node:path, ' +
+        'except load-prompt-template.ts which reads prompt templates from disk. ' +
+        'This is a deliberate exception per AGENTS.md layer boundary rule. ' +
+        'Do NOT add more I/O to packages/application without a matching entry here.',
+      from: {
+        path: '^packages/application/src',
+        pathNot: '^packages/application/src/prompts/load-prompt-template\\.ts$',
+      },
+      to: {
+        path: '^(node:fs|node:path)$',
+      },
+    },
+    {
       name: 'no-circular',
       severity: 'error',
       comment: 'Circular dependencies are forbidden.',

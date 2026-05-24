@@ -7,6 +7,7 @@ export interface PromptContext {
   artifacts: ArtifactStore;
 }
 
+// /g flag required for matchAll — do NOT use with .test() or .exec()
 const PLACEHOLDER_RE = /\{\{(var|artifact):([^}]+)\}\}/g;
 
 export async function renderPrompt(template: string, ctx: PromptContext): Promise<string> {
