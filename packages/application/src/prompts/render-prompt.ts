@@ -1,7 +1,8 @@
-import { TemplateError, TemplateNotFoundError } from './errors.js';
+import { TemplateError } from './errors.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
 export interface PromptContext {
+  runId: string;
   vars: Record<string, string>;
   artifacts: ArtifactStore;
 }
@@ -18,16 +19,16 @@ export async function renderPrompt(template: string, ctx: PromptContext): Promis
     let value: string;
 
     if (kind === 'var') {
-      const v = ctx.vars[key.trim()];
+      const v = ctx.vars[key!.trim()];
       if (v === undefined) {
-        throw new TemplateError(`unknown var: ${key}`, key);
+        throw new TemplateError(`unknown var: ${key!}`, key!);
       }
       value = v;
     } else {
       try {
-        value = await ctx.artifacts.read(key.trim());
+        value = await ctx.artifacts.read(ctx.runId, key!.trim());
       } catch {
-        throw new TemplateNotFoundError(`missing artifact: ${key}`);
+        throw new TemplateError(`missing artifact: ${key!}`, key!);
       }
     }
     replacements.push({ start, end, value });

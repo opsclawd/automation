@@ -1,11 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { renderPrompt } from '../prompts/render-prompt.js';
+import { TemplateError } from '../prompts/errors.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
 const fakeArtifacts = (map: Record<string, string>): ArtifactStore => ({
-  async read(path) {
-    if (!(path in map)) throw new Error('not found');
-    return map[path];
+  async read(_runId: string, relativePath: string) {
+    if (!(relativePath in map)) throw new Error('not found');
+    return map[relativePath];
   },
   async write() {
     throw new Error('not in scope');
@@ -18,6 +19,7 @@ const fakeArtifacts = (map: Record<string, string>): ArtifactStore => ({
 describe('renderPrompt', () => {
   it('substitutes vars', async () => {
     const out = await renderPrompt('hello {{var:name}}, the answer is {{var:n}}', {
+      runId: 'run-1',
       vars: { name: 'world', n: '42' },
       artifacts: fakeArtifacts({}),
     });
@@ -26,6 +28,7 @@ describe('renderPrompt', () => {
 
   it('substitutes artifacts by path', async () => {
     const out = await renderPrompt('plan:\n{{artifact:plan.md}}', {
+      runId: 'run-1',
       vars: {},
       artifacts: fakeArtifacts({ 'plan.md': 'PLAN BODY' }),
     });
@@ -34,13 +37,21 @@ describe('renderPrompt', () => {
 
   it('throws TemplateError on unknown var', async () => {
     await expect(
-      renderPrompt('{{var:missing}}', { vars: {}, artifacts: fakeArtifacts({}) }),
-    ).rejects.toThrow('unknown var');
+      renderPrompt('{{var:missing}}', {
+        runId: 'run-1',
+        vars: {},
+        artifacts: fakeArtifacts({}),
+      }),
+    ).rejects.toThrow(TemplateError);
   });
 
-  it('throws TemplateNotFoundError on missing artifact', async () => {
+  it('throws TemplateError on missing artifact', async () => {
     await expect(
-      renderPrompt('{{artifact:nope.md}}', { vars: {}, artifacts: fakeArtifacts({}) }),
-    ).rejects.toThrow('missing artifact');
+      renderPrompt('{{artifact:nope.md}}', {
+        runId: 'run-1',
+        vars: {},
+        artifacts: fakeArtifacts({}),
+      }),
+    ).rejects.toThrow(TemplateError);
   });
 });
