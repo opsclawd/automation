@@ -36,22 +36,32 @@ describe('renderPrompt', () => {
   });
 
   it('throws TemplateError on unknown var', async () => {
-    await expect(
-      renderPrompt('{{var:missing}}', {
+    try {
+      await renderPrompt('{{var:missing}}', {
         runId: 'run-1',
         vars: {},
         artifacts: fakeArtifacts({}),
-      }),
-    ).rejects.toThrow(TemplateError);
+      });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TemplateError);
+      expect((err as TemplateError).placeholder).toBe('missing');
+      expect((err as TemplateError).message).toMatch(/missing/);
+    }
   });
 
   it('throws TemplateError on missing artifact', async () => {
-    await expect(
-      renderPrompt('{{artifact:nope.md}}', {
+    try {
+      await renderPrompt('{{artifact:nope.md}}', {
         runId: 'run-1',
         vars: {},
         artifacts: fakeArtifacts({}),
-      }),
-    ).rejects.toThrow(TemplateError);
+      });
+      expect.unreachable('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(TemplateError);
+      expect((err as TemplateError).placeholder).toBe('nope.md');
+      expect((err as TemplateError).message).toMatch(/nope\.md/);
+    }
   });
 });
