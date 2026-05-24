@@ -40,12 +40,30 @@ export class AgentRuntimeRouter implements AgentPort {
   }
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
-    return this.dispatch(request);
+    const isCallerSignalled = !!request.fallbackOfInvocationId;
+
+    if (isCallerSignalled && request.fallbackOfInvocationId) {
+      const reason = request.fallbackReason ?? 'unknown';
+      const triggerReason = reason.length > 64 ? reason.slice(0, 64) : reason;
+      const previous = this.opts.invocationRepository.findById(request.fallbackOfInvocationId);
+      const fromProfile = previous?.profile ?? 'unknown';
+
+      this.emitFallbackEvent(
+        request.runId,
+        fromProfile,
+        request.profile,
+        triggerReason,
+        'use_case',
+      );
+    }
+
+    const result = await this.dispatch(request, isCallerSignalled);
+    return result;
   }
 
   private async dispatch(
     request: AgentInvocationRequest,
-    isFallback?: boolean,
+    isFallbackOrCallerSignalled?: boolean,
   ): Promise<AgentInvocationResult> {
     const profile = this.opts.agent.profiles[request.profile];
     if (!profile) {
@@ -159,8 +177,8 @@ export class AgentRuntimeRouter implements AgentPort {
     }
     this.opts.invocationRepository.update(id, patch);
 
-    // --- Fallback logic ---
-    if (!isFallback && this.shouldFallback(request, result)) {
+    // --- Adapter-level fallback only (caller-signalled is handled in invoke) ---
+    if (!isFallbackOrCallerSignalled && this.shouldFallback(result)) {
       const phaseEntry = this.opts.agent.phaseProfiles[request.phaseId];
       const fallbackProfileName = phaseEntry?.fallbackProfile;
       if (fallbackProfileName) {
@@ -168,11 +186,7 @@ export class AgentRuntimeRouter implements AgentPort {
         if (fallbackProfile) {
           const fallbackAdapter = this.opts.adapters[fallbackProfile.runtime];
           if (fallbackAdapter) {
-            const isCallerSignalled = !!request.fallbackOfInvocationId;
-            const rawReason = isCallerSignalled
-              ? (request.fallbackReason ?? 'unknown')
-              : this.determineTriggerReason(result);
-            const triggerReason = rawReason.length > 64 ? rawReason.slice(0, 64) : rawReason;
+            const triggerReason = this.determineTriggerReason(result);
 
             const fallbackRequest: AgentInvocationRequest = {
               ...request,
@@ -186,7 +200,7 @@ export class AgentRuntimeRouter implements AgentPort {
               request.profile,
               fallbackProfileName,
               triggerReason,
-              isCallerSignalled ? 'use_case' : 'router',
+              'router',
             );
 
             const fallbackResult = await this.dispatch(fallbackRequest, true);
@@ -203,14 +217,9 @@ export class AgentRuntimeRouter implements AgentPort {
     return { ...result, provider: profile.provider, model: profile.model };
   }
 
-  private shouldFallback(request: AgentInvocationRequest, result: AgentInvocationResult): boolean {
-    // Caller-signalled fallback: request already has fallbackOfInvocationId from the caller
-    if (request.fallbackOfInvocationId) return true;
-
-    // Adapter-level triggers
+  private shouldFallback(result: AgentInvocationResult): boolean {
     if (result.outcome === 'timeout') return true;
     if (result.outcome === 'contract_violation') return true;
-
     return false;
   }
 
