@@ -4,9 +4,9 @@ import { TemplateError } from '../prompts/errors.js';
 import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
-const fakeArtifacts = (map: Record<string, string>, runId = 'run-1'): ArtifactStore => ({
+const fakeArtifacts = (map: Record<string, string>): ArtifactStore => ({
   async read(_runId: string, relativePath: string) {
-    if (!(relativePath in map)) throw new ArtifactNotFoundError(runId, relativePath);
+    if (!(relativePath in map)) throw new ArtifactNotFoundError(_runId, relativePath);
     return map[relativePath];
   },
   async write() {

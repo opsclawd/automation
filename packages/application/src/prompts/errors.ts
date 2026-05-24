@@ -10,8 +10,8 @@ export class TemplateError extends Error {
 }
 
 export class TemplateNotFoundError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'TemplateNotFoundError';
   }
 }

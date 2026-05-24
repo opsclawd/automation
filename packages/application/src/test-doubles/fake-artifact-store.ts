@@ -1,3 +1,4 @@
+import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore, WriteArtifactInput, Artifact } from '../ports/artifact-store.js';
 
 export class FakeArtifactStore implements ArtifactStore {
@@ -20,7 +21,7 @@ export class FakeArtifactStore implements ArtifactStore {
 
   async read(runId: string, relativePath: string): Promise<string> {
     const entry = this.files.get(`${runId}/${relativePath}`);
-    if (!entry) throw new Error(`no artifact ${runId}/${relativePath}`);
+    if (!entry) throw new ArtifactNotFoundError(runId, relativePath);
     return entry.contents;
   }
 

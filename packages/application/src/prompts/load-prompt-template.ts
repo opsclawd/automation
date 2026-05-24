@@ -33,7 +33,7 @@ export function loadPromptTemplate(
     return readFileSync(path, 'utf-8');
   } catch (e) {
     if (e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ENOENT') {
-      throw new TemplateNotFoundError(`prompt template not found: ${path}`);
+      throw new TemplateNotFoundError(`prompt template not found: ${path}`, { cause: e });
     }
     throw e;
   }

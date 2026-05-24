@@ -1,12 +1,21 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadPromptTemplate, TemplateNotFoundError } from '../prompts/index.js';
 
 describe('loadPromptTemplate', () => {
+  let root: string | undefined;
+
+  afterEach(() => {
+    if (root) {
+      rmSync(root, { recursive: true, force: true });
+      root = undefined;
+    }
+  });
+
   it('reads prompts/<phase>/<step>.md', () => {
-    const root = mkdtempSync(join(tmpdir(), 'prompts-'));
+    root = mkdtempSync(join(tmpdir(), 'prompts-'));
     mkdirSync(join(root, 'plan-design'), { recursive: true });
     writeFileSync(join(root, 'plan-design', 'plan-design.md'), 'TEMPLATE');
     expect(loadPromptTemplate('plan-design', 'plan-design', { promptsRoot: root })).toBe(
