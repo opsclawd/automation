@@ -2,8 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadPromptTemplate } from '../prompts/load-prompt-template.js';
-import { TemplateNotFoundError } from '../prompts/errors.js';
+import { loadPromptTemplate, TemplateNotFoundError } from '../prompts/index.js';
 
 describe('loadPromptTemplate', () => {
   it('reads prompts/<phase>/<step>.md', () => {
