@@ -28,8 +28,8 @@ export async function renderPrompt(template: string, ctx: PromptContext): Promis
     } else {
       try {
         value = await ctx.artifacts.read(ctx.runId, key!.trim());
-      } catch {
-        throw new TemplateError(`missing artifact: ${key!}`, key!);
+      } catch (err) {
+        throw new TemplateError(`missing artifact: ${key!}`, key!, { cause: err });
       }
     }
     replacements.push({ start, end, value });

@@ -62,6 +62,7 @@ describe('renderPrompt', () => {
       expect(err).toBeInstanceOf(TemplateError);
       expect((err as TemplateError).placeholder).toBe('nope.md');
       expect((err as TemplateError).message).toMatch(/nope\.md/);
+      expect(err as TemplateError).toHaveProperty('cause');
     }
   });
 });

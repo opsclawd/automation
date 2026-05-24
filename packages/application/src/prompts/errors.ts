@@ -2,8 +2,9 @@ export class TemplateError extends Error {
   constructor(
     message: string,
     public readonly placeholder: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = 'TemplateError';
   }
 }
