@@ -294,7 +294,7 @@ describe('extractResult', () => {
       ok: false,
       reason: 'missing',
       detail: 'no resultJsonPath provided',
-      violationCode: 'invalid_result_json',
+      violationCode: 'missing_required_artifact',
     });
     expect(agent.invocations).toHaveLength(0);
   });

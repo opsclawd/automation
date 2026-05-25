@@ -42,7 +42,7 @@ async function readAndValidate(
       ok: false,
       reason: 'missing',
       detail: 'no resultJsonPath provided',
-      violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
+      violationCode: CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
     };
   }
 
