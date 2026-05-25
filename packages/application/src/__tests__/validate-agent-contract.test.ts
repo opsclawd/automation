@@ -110,7 +110,7 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     });
-    it('returns branch_changed when branch name matches but HEAD SHA differs', async () => {
+    it('returns no violations when branch name matches expected but HEAD SHA differs (commit change, not branch change)', async () => {
       const git = new FakeGitPort();
       git.currentBranchByCwd.set('/tmp', 'main');
       git.headByCwd.set('/tmp', 'b'.repeat(40));
@@ -121,7 +121,7 @@ describe('validateAgentContract', () => {
         cwd: '/tmp',
         expectedBranch: 'main',
       });
-      expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+      expect(result).not.toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     });
     it('returns no violations when expectedBranch is not provided and branch name differs but SHA matches startCommitSha', async () => {
       const git = new FakeGitPort();
@@ -369,6 +369,100 @@ describe('validateAgentContract', () => {
         cwd: '/tmp',
       });
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('combined acceptance', () => {
+    it('returns empty violations when all six invariants are satisfied', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({ runId: 'r1', relativePath: 'plan.md', contents: '# Plan' });
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: '{"result":"pass"}',
+      });
+      const git = new FakeGitPort();
+      git.currentBranchByCwd.set('/tmp', 'main');
+      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      git.remoteRefs.set('origin/main', 'b'.repeat(40));
+      const github = new FakeGitHubPort();
+      const comment: import('@ai-sdlc/application').PrReviewComment = {
+        id: 1,
+        prNumber: 42,
+        path: 'file.ts',
+        line: 10,
+        reviewer: 'bot',
+        body: 'done',
+        createdAt: new Date('2026-05-22T10:01:00Z'),
+      };
+      github.comments.set('owner/repo/42', [comment]);
+      const result = await validateAgentContract({
+        contract: {
+          requiredArtifacts: ['plan.md'],
+          allowedResultValues: ['pass'],
+          mustNotChangeBranch: true,
+          mustCreateCommit: true,
+          mustPush: { remote: 'origin', ref: 'main' },
+          mustPostReplies: { prNumber: 42 },
+        },
+        invocation: sampleInv({
+          runId: RunId('r1'),
+          startCommitSha: 'a'.repeat(40),
+          endCommitSha: 'b'.repeat(40),
+          resultJsonPath: 'result.json',
+          startedAt: new Date('2026-05-22T10:00:00Z'),
+        }),
+        ports: { artifacts, git, github },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+        expectedBranch: 'main',
+      });
+      expect(result).toEqual([]);
+    });
+    it('returns all six violation codes when every invariant fails', async () => {
+      const git = new FakeGitPort();
+      git.currentBranchByCwd.set('/tmp', 'other-branch');
+      git.headByCwd.set('/tmp', 'a'.repeat(40));
+      const result = await validateAgentContract({
+        contract: {
+          requiredArtifacts: ['missing.md'],
+          allowedResultValues: ['pass'],
+          mustNotChangeBranch: true,
+          mustCreateCommit: true,
+          mustPush: { remote: 'origin', ref: 'main' },
+          mustPostReplies: { prNumber: 42 },
+        },
+        invocation: sampleInv({
+          startCommitSha: 'a'.repeat(40),
+          endCommitSha: 'a'.repeat(40),
+          resultJsonPath: 'result.json',
+          startedAt: new Date('2026-05-22T10:00:00Z'),
+        }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+        expectedBranch: 'main',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.MISSING_COMMIT);
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.NOT_PUSHED);
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+    });
+    it('does not throw on any input — returns codes instead of exceptions', async () => {
+      const result = await validateAgentContract({
+        contract: { requiredArtifacts: ['nonexistent.md'] },
+        invocation: sampleInv(),
+        ports: {
+          artifacts: new FakeArtifactStore(),
+          git: new FakeGitPort(),
+          github: new FakeGitHubPort(),
+        },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+      expect(Array.isArray(result)).toBe(true);
     });
   });
 });
