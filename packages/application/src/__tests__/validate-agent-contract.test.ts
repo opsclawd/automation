@@ -82,4 +82,63 @@ describe('validateAgentContract', () => {
       expect(artifactViolations).toHaveLength(1);
     });
   });
+
+  describe('allowedResultValues', () => {
+    it('returns no violations when result.json has an allowed value', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: '{"result":"pass"}',
+      });
+      const result = await validateAgentContract({
+        contract: { allowedResultValues: ['pass', 'fail'] },
+        invocation: sampleInv({ runId: RunId('r1'), resultJsonPath: 'result.json' }),
+        ports: { artifacts, git: new FakeGitPort(), github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
+    it('returns invalid_result_value when result.json has a disallowed value', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: '{"result":"maybe"}',
+      });
+      const result = await validateAgentContract({
+        contract: { allowedResultValues: ['pass', 'fail'] },
+        invocation: sampleInv({ runId: RunId('r1'), resultJsonPath: 'result.json' }),
+        ports: { artifacts, git: new FakeGitPort(), github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+    });
+    it('returns invalid_result_value when result.json is missing', async () => {
+      const result = await validateAgentContract({
+        contract: { allowedResultValues: ['pass'] },
+        invocation: sampleInv({ runId: RunId('r1'), resultJsonPath: 'result.json' }),
+        ports: {
+          artifacts: new FakeArtifactStore(),
+          git: new FakeGitPort(),
+          github: new FakeGitHubPort(),
+        },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+    });
+    it('skips result check when invocation has no resultJsonPath', async () => {
+      const result = await validateAgentContract({
+        contract: { allowedResultValues: ['pass'] },
+        invocation: sampleInv(),
+        ports: {
+          artifacts: new FakeArtifactStore(),
+          git: new FakeGitPort(),
+          github: new FakeGitHubPort(),
+        },
+        cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
+  });
 });

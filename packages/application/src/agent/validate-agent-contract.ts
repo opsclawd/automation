@@ -39,5 +39,17 @@ export async function validateAgentContract(
     }
   }
 
+  if (contract.allowedResultValues && invocation.resultJsonPath) {
+    try {
+      const raw = await ports.artifacts.read(invocation.runId, invocation.resultJsonPath);
+      const parsed = JSON.parse(raw) as { result?: string };
+      if (!parsed.result || !contract.allowedResultValues.includes(parsed.result)) {
+        violations.push(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+      }
+    } catch {
+      violations.push(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+    }
+  }
+
   return violations;
 }
