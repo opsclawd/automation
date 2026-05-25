@@ -17,6 +17,10 @@ function walkSourceFiles(dir: string, root: string): string[] {
     if (stat.isDirectory()) {
       results.push(...walkSourceFiles(full, root));
     } else if (SOURCE_EXTS.some((ext) => entry.endsWith(ext))) {
+      // Exclude test files from scan - guard is for production code only
+      if (entry.includes('.test.') || entry.includes('__tests__')) {
+        continue;
+      }
       results.push(relative(root, full));
     }
   }
@@ -29,7 +33,6 @@ describe('diagnose-result.ts is not imported by production code', () => {
     const allFiles = scanDirs.flatMap((d) => walkSourceFiles(d, WORKSPACE_ROOT));
     expect(allFiles.length, 'must find at least one source file to scan').toBeGreaterThan(0);
     const forbidden = allFiles.filter((f) => {
-      if (f.includes('no-diagnose-import.test')) return false;
       if (f.endsWith('diagnose-result.ts')) return false;
       const contents = readFileSync(join(WORKSPACE_ROOT, f), 'utf-8');
       return contents.includes('diagnose-result');

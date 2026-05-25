@@ -122,7 +122,9 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
     return initial;
   }
 
-  if (!rerunContext) {
+  // Skip rerun when initial invocation has no result path - deterministic failure
+  // rather than burning tokens on LLM retry.
+  if (!invocation.resultJsonPath || !rerunContext) {
     return initial;
   }
 
