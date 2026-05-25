@@ -123,6 +123,18 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     });
+    it('returns no violations when expectedBranch is not provided and branch name differs but SHA matches startCommitSha', async () => {
+      const git = new FakeGitPort();
+      git.currentBranchByCwd.set('/tmp', 'other-branch');
+      git.headByCwd.set('/tmp', 'a'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustNotChangeBranch: true },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
     it('returns branch_changed when expectedBranch is not provided and HEAD SHA differs from startCommitSha', async () => {
       const git = new FakeGitPort();
       git.currentBranchByCwd.set('/tmp', 'other-branch');
