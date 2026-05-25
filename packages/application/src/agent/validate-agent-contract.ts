@@ -63,5 +63,12 @@ export async function validateAgentContract(
     }
   }
 
+  if (contract.mustCreateCommit) {
+    const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));
+    if (endSha === invocation.startCommitSha) {
+      violations.push(CONTRACT_VIOLATION_CODES.MISSING_COMMIT);
+    }
+  }
+
   return violations;
 }
