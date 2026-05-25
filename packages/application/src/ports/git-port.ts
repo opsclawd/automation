@@ -20,4 +20,5 @@ export interface GitPort {
   diff(cwd: string, base: string, head?: string): Promise<string>;
   commit(cwd: string, message: string): Promise<string>;
   push(input: PushInput): Promise<void>;
+  remoteRef(input: { cwd: string; remote: string; ref: string }): Promise<string | undefined>;
 }
