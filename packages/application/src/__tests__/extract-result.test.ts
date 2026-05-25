@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { AgentInvocationId, AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
 import type { AgentInvocation } from '@ai-sdlc/domain';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { FakeArtifactStore, FakeAgentPort } from '../test-doubles/index.js';
 import { extractResult } from '../results/extract-result.js';
+import { PHASE_RESULT_REGISTRY } from '../results/phase-registry.js';
 
 function makeInvocation(overrides: Partial<AgentInvocation> = {}): AgentInvocation {
   return {
@@ -150,6 +154,10 @@ describe('extractResult', () => {
         // extractResult calls agent.invoke ONCE for the rerun.
         // The original invocation happened before extractResult was called
         // and is not tracked by FakeAgentPort.
+        // NOTE: The issue AC says "exactly two total" but that counts both the
+        // original invocation (pre-extractResult) and the rerun. FakeAgentPort
+        // only tracks calls made by extractResult, so the count here is 1.
+        // See plan Assumption #7 for the rationale.
         expect(agent.invocations).toHaveLength(1);
         expect(agent.invocations[0].fallbackOfInvocationId).toBe(AgentInvocationId('inv-1'));
       } else {
@@ -254,6 +262,27 @@ describe('extractResult', () => {
     });
   });
 
+  it('retrySafe phase without rerunContext returns initial failure, no rerun attempted', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'r1',
+      relativePath: 'result.json',
+      contents: '{"bad": "shape"}',
+    });
+    const agent = new FakeAgentPort();
+    const outcome = await extractResult({
+      invocation: makeInvocation(),
+      ports: { artifacts, agent },
+    });
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'invalid',
+      detail: expect.any(String),
+      violationCode: 'invalid_result_json',
+    });
+    expect(agent.invocations).toHaveLength(0);
+  });
+
   it('returns missing when resultJsonPath is not set', async () => {
     const artifacts = new FakeArtifactStore();
     const agent = new FakeAgentPort();
@@ -268,6 +297,22 @@ describe('extractResult', () => {
       detail: 'no resultJsonPath provided',
       violationCode: 'invalid_result_json',
     });
+    expect(agent.invocations).toHaveLength(0);
+  });
+
+  it('returns missing with detail when artifact not found in store', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const outcome = await extractResult({
+      invocation: makeInvocation({ phaseId: PhaseName('implement') }),
+      ports: { artifacts, agent },
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('missing');
+      expect(outcome.detail).toBe('artifact not found: result.json in run r1');
+      expect(outcome.violationCode).toBe('invalid_result_json');
+    }
     expect(agent.invocations).toHaveLength(0);
   });
 
@@ -294,4 +339,24 @@ describe('extractResult', () => {
       expect(invocation.contractViolations).toContain('invalid_result_json');
     });
   });
+});
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURE_DIR = join(__dirname, '__fixtures__', 'result-json');
+
+describe('fixture files validate against their phase schemas', () => {
+  const phases = readdirSync(FIXTURE_DIR);
+  for (const phase of phases) {
+    it(`${phase}/valid.json passes its schema`, () => {
+      const raw = readFileSync(join(FIXTURE_DIR, phase, 'valid.json'), 'utf-8');
+      const parsed = JSON.parse(raw);
+      const meta = PHASE_RESULT_REGISTRY[phase];
+      expect(meta, `phase '${phase}' must exist in PHASE_RESULT_REGISTRY`).toBeDefined();
+      const result = meta.schema.safeParse(parsed);
+      expect(
+        result.success,
+        `fixture for '${phase}' must validate: ${result.success ? '' : (result as { error: { message: string } }).error.message}`,
+      ).toBe(true);
+    });
+  }
 });

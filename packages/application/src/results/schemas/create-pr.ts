@@ -4,6 +4,6 @@ import { z } from 'zod';
 export const createPrResultSchema = z.object({
   result: z.literal('created'),
   prNumber: z.number(),
-  prUrl: z.string().min(1),
+  prUrl: z.string().url(),
 });
 export type CreatePrResult = z.infer<typeof createPrResultSchema>;

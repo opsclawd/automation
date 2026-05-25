@@ -2,6 +2,8 @@
 // DIAGNOSTIC ONLY — not wired into production paths.
 // Reads result.json by path, parses against the phase registry, prints the
 // parse result. Operator use only.
+// NOTE: Originally specified at apps/cli/src/diagnose-result.ts per the issue,
+// but apps/cli/ does not exist in this repo. Placed in apps/api/src/ instead.
 import { readFileSync } from 'node:fs';
 import { PHASE_RESULT_REGISTRY } from '@ai-sdlc/application';
 
