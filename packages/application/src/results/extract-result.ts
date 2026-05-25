@@ -99,10 +99,11 @@ function buildRetryRequest(invocation: AgentInvocation, ctx: RerunContext): Agen
 
 export async function extractResult(input: ExtractResultInput): Promise<ExtractResultOutcome> {
   const { invocation, ports, rerunContext } = input;
-  const meta = PHASE_RESULT_REGISTRY[invocation.phaseId as string];
-  if (!meta) {
+  const phase = invocation.phaseId as string;
+  if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
     throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
   }
+  const meta = PHASE_RESULT_REGISTRY[phase]!;
 
   const runId = invocation.runId as unknown as string;
   const initial = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
