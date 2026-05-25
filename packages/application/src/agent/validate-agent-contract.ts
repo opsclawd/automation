@@ -70,5 +70,17 @@ export async function validateAgentContract(
     }
   }
 
+  if (contract.mustPush) {
+    const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));
+    const remoteSha = await ports.git.remoteRef({
+      cwd,
+      remote: contract.mustPush.remote,
+      ref: contract.mustPush.ref,
+    });
+    if (remoteSha !== endSha) {
+      violations.push(CONTRACT_VIOLATION_CODES.NOT_PUSHED);
+    }
+  }
+
   return violations;
 }

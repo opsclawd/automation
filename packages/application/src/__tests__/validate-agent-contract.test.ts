@@ -208,6 +208,56 @@ describe('validateAgentContract', () => {
     });
   });
 
+  describe('mustPush', () => {
+    it('returns no violations when remote ref matches endCommitSha', async () => {
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      git.remoteRefs.set('origin/main', 'b'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustPush: { remote: 'origin', ref: 'main' } },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40), endCommitSha: 'b'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
+    it('returns not_pushed when remote ref differs from endCommitSha', async () => {
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      git.remoteRefs.set('origin/main', 'a'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustPush: { remote: 'origin', ref: 'main' } },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40), endCommitSha: 'b'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.NOT_PUSHED);
+    });
+    it('returns not_pushed when remote ref does not exist', async () => {
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustPush: { remote: 'origin', ref: 'main' } },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40), endCommitSha: 'b'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.NOT_PUSHED);
+    });
+    it('falls back to HEAD sha when endCommitSha is undefined', async () => {
+      const git = new FakeGitPort();
+      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      git.remoteRefs.set('origin/main', 'b'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustPush: { remote: 'origin', ref: 'main' } },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
+  });
+
   describe('mustCreateCommit', () => {
     it('returns no violations when endCommitSha differs from startCommitSha', async () => {
       const result = await validateAgentContract({
