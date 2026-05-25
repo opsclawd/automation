@@ -289,7 +289,6 @@ describe('extractResult', () => {
     const outcome = await extractResult({
       invocation: makeInvocation({ resultJsonPath: undefined }),
       ports: { artifacts, agent },
-      rerunContext: RERUN_CTX,
     });
     expect(outcome).toEqual({
       ok: false,

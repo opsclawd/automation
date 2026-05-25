@@ -118,11 +118,7 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
   const initial = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
   if (initial.ok) return initial;
 
-  if (!meta.retrySafe || !invocation.resultJsonPath) {
-    // If resultJsonPath is missing, skip retry even though the rerun could
-    // produce its own resultJsonPath — invocations without a resultJsonPath
-    // are not expected to benefit from a rerun because the original phase
-    // config didn't produce a result artifact path to begin with.
+  if (!meta.retrySafe) {
     return initial;
   }
 
