@@ -258,6 +258,65 @@ describe('validateAgentContract', () => {
     });
   });
 
+  describe('mustPostReplies', () => {
+    it('returns no violations when bot replies exist after startedAt', async () => {
+      const github = new FakeGitHubPort();
+      const comment: import('@ai-sdlc/application').PrReviewComment = {
+        id: 1,
+        prNumber: 42,
+        path: 'file.ts',
+        line: 10,
+        reviewer: 'bot',
+        body: 'LGTM',
+        createdAt: new Date('2026-05-22T10:01:00Z'),
+      };
+      github.comments.set('owner/repo/42', [comment]);
+      const result = await validateAgentContract({
+        contract: { mustPostReplies: { prNumber: 42 } },
+        invocation: sampleInv({ startedAt: new Date('2026-05-22T10:00:00Z') }),
+        ports: { artifacts: new FakeArtifactStore(), git: new FakeGitPort(), github },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+      });
+      expect(result).toEqual([]);
+    });
+    it('returns replies_not_posted when no comments exist since startedAt', async () => {
+      const result = await validateAgentContract({
+        contract: { mustPostReplies: { prNumber: 42 } },
+        invocation: sampleInv({ startedAt: new Date('2026-05-22T10:00:00Z') }),
+        ports: {
+          artifacts: new FakeArtifactStore(),
+          git: new FakeGitPort(),
+          github: new FakeGitHubPort(),
+        },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+    });
+    it('returns replies_not_posted when comments exist but all before startedAt', async () => {
+      const github = new FakeGitHubPort();
+      const oldComment: import('@ai-sdlc/application').PrReviewComment = {
+        id: 1,
+        prNumber: 42,
+        path: 'file.ts',
+        line: 10,
+        reviewer: 'bot',
+        body: 'old',
+        createdAt: new Date('2026-05-22T09:59:00Z'),
+      };
+      github.comments.set('owner/repo/42', [oldComment]);
+      const result = await validateAgentContract({
+        contract: { mustPostReplies: { prNumber: 42 } },
+        invocation: sampleInv({ startedAt: new Date('2026-05-22T10:00:00Z') }),
+        ports: { artifacts: new FakeArtifactStore(), git: new FakeGitPort(), github },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+    });
+  });
+
   describe('mustCreateCommit', () => {
     it('returns no violations when endCommitSha differs from startCommitSha', async () => {
       const result = await validateAgentContract({

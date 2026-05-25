@@ -22,7 +22,7 @@ export async function validateAgentContract(
   input: ValidateAgentContractInput,
 ): Promise<ContractViolationCode[]> {
   const violations: ContractViolationCode[] = [];
-  const { contract, invocation, ports, cwd, expectedBranch } = input;
+  const { contract, invocation, ports, cwd, expectedBranch, repoFullName } = input;
 
   if (contract.requiredArtifacts) {
     for (const path of contract.requiredArtifacts) {
@@ -79,6 +79,21 @@ export async function validateAgentContract(
     });
     if (remoteSha !== endSha) {
       violations.push(CONTRACT_VIOLATION_CODES.NOT_PUSHED);
+    }
+  }
+
+  if (contract.mustPostReplies) {
+    if (!repoFullName) {
+      violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+    } else {
+      const comments = await ports.github.listPrCommentsSince(
+        repoFullName,
+        contract.mustPostReplies.prNumber,
+        invocation.startedAt.toISOString(),
+      );
+      if (comments.length === 0) {
+        violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+      }
     }
   }
 
