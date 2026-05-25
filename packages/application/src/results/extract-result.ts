@@ -3,7 +3,7 @@ import { PHASE_RESULT_REGISTRY } from './phase-registry.js';
 import type { ArtifactStore, AgentPort } from '../ports.js';
 import { ArtifactNotFoundError } from '../ports.js';
 import { CONTRACT_VIOLATION_CODES } from '../agent/contract-violation-codes.js';
-import type { AgentInvocationRequest } from '../agent/invocation.js';
+import type { AgentInvocationRequest, AgentInvocationResult } from '../agent/invocation.js';
 
 export type ExtractResultOutcome<T = unknown> =
   | { ok: true; result: T }
@@ -130,9 +130,19 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
     return initial;
   }
 
-  const rerunResult = await ports.agent.invoke(
-    buildRetryRequest(invocation, rerunContext, initial.violationCode),
-  );
+  let rerunResult: AgentInvocationResult;
+  try {
+    rerunResult = await ports.agent.invoke(
+      buildRetryRequest(invocation, rerunContext, initial.violationCode),
+    );
+  } catch (e) {
+    return {
+      ok: false,
+      reason: 'invalid',
+      detail: `rerun invoke failed: ${(e as Error)?.message ?? String(e)}`,
+      violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
+    };
+  }
 
   return readAndValidate(runId, rerunResult.resultJsonPath, meta, ports);
 }
