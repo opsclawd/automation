@@ -32,12 +32,15 @@ async function readAndValidate(
   resultJsonPath: string | undefined,
   meta: { schema: import('zod').ZodTypeAny },
   ports: { artifacts: ArtifactStore },
+  invocationId?: string,
 ): Promise<ExtractResultOutcome> {
   if (!resultJsonPath) {
     return {
       ok: false,
       reason: 'missing',
-      detail: `no resultJsonPath provided`,
+      detail: invocationId
+        ? `no resultJsonPath on invocation ${invocationId}`
+        : `no resultJsonPath provided`,
       violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
     };
   }
@@ -102,7 +105,14 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
   }
 
   const runId = invocation.runId as unknown as string;
-  const initial = await readAndValidate(runId, invocation.resultJsonPath, meta, ports);
+  const invocationId = invocation.id as unknown as string;
+  const initial = await readAndValidate(
+    runId,
+    invocation.resultJsonPath,
+    meta,
+    ports,
+    invocationId,
+  );
   if (initial.ok) return initial;
 
   if (!meta.retrySafe) {

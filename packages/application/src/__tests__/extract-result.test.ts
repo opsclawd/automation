@@ -139,6 +139,67 @@ describe('extractResult', () => {
       expect(agent.invocations).toHaveLength(1);
     });
 
+    it('returns invalid without rerun when retrySafe:true and no rerunContext and invalid schema', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: '{"bad": "shape"}',
+      });
+      const agent = new FakeAgentPort();
+      const outcome = await extractResult({
+        invocation: makeInvocation(),
+        ports: { artifacts, agent },
+      });
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) {
+        expect(outcome.reason).toBe('invalid');
+      }
+      expect(agent.invocations).toHaveLength(0);
+    });
+
+    it('invalid schema → rerun → valid result for retrySafe:true', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'r1',
+        relativePath: 'result.json',
+        contents: '{"bad": "shape"}',
+      });
+      const agent = new FakeAgentPort({
+        p: [
+          (_req) => {
+            void artifacts.write({
+              runId: 'r1',
+              relativePath: 'result.json',
+              contents: JSON.stringify({ result: 'ready', summary: 'go' }),
+            });
+            return {
+              runtime: 'opencode' as const,
+              provider: 'a',
+              model: 'm',
+              exitCode: 0,
+              durationMs: 500,
+              stdoutPath: '/s2',
+              stderrPath: '/e2',
+              resultJsonPath: 'result.json',
+              contractViolations: [],
+              outcome: 'success' as const,
+            };
+          },
+        ],
+      });
+      const outcome = await extractResult({
+        invocation: makeInvocation(),
+        ports: { artifacts, agent },
+        rerunContext: RERUN_CTX,
+      });
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) {
+        expect(outcome.result).toEqual({ result: 'ready', summary: 'go' });
+      }
+      expect(agent.invocations).toHaveLength(1);
+    });
+
     it('returns missing when resultJsonPath is not set (no rerunContext)', async () => {
       const artifacts = new FakeArtifactStore();
       const agent = new FakeAgentPort();
@@ -149,7 +210,7 @@ describe('extractResult', () => {
       expect(outcome).toEqual({
         ok: false,
         reason: 'missing',
-        detail: 'no resultJsonPath provided',
+        detail: 'no resultJsonPath on invocation inv-1',
         violationCode: 'invalid_result_json',
       });
       expect(agent.invocations).toHaveLength(0);
