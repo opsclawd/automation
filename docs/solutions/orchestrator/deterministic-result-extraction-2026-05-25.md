@@ -71,9 +71,9 @@ When `retrySafe` is true and the result is invalid, `extractResult` calls `ports
 | `plan-write`     | true        | Same as plan-design                                     |
 | `implement`      | **false**   | File mutations; rerun risks duplicating changes         |
 | `review`         | true        | Simple structured JSON                                  |
-| `fix-review`     | true        | Simple structured JSON                                  |
+| `fix-review`     | **false**   | File mutations (git commits); rerun risks extra commits |
 | `create-pr`      | **false**   | Side-effecting; rerun risks duplicate PRs               |
-| `pr-review-poll` | true        | Simple structured JSON                                  |
+| `pr-review-poll` | **false**   | Posts PR replies; rerun risks duplicate replies         |
 
 ## Key Implementation Details
 
@@ -159,7 +159,7 @@ Reads a `result.json` file by path, parses against the registry, prints result. 
 
 - **Changing a schema shape:** Update the schema file, then update the corresponding fixture in `__fixtures__/result-json/`. If captured `result.json` files from actual runs exist, prefer their shapes over the illustrative ones.
 
-- **Changing `retrySafe` for a phase:** Think carefully. `implement` is `false` because reruns risk duplicating file mutations. `create-pr` is `false` because reruns risk creating duplicate PRs. Only change to `true` if the phase is truly idempotent or safe to retry.
+- **Changing `retrySafe` for a phase:** Think carefully. `implement` is `false` because reruns risk duplicating file mutations. `fix-review` is `false` because the phase commits changes (rerun risks extra commits). `create-pr` is `false` because reruns risk creating duplicate PRs. `pr-review-poll` is `false` because it posts PR replies (rerun risks duplicate replies). Only change to `true` if the phase is truly idempotent or safe to retry.
 
 - **The diagnostic CLI** (`apps/api/src/diagnose-result.ts`) must never be imported by production code. The grep test and PR review process enforce this. If you need programmatic validation in the hot path, use `extractResult` instead.
 

@@ -17,7 +17,7 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'plan-write': { schema: planWriteResultSchema, retrySafe: true },
   implement: { schema: implementResultSchema, retrySafe: false },
   review: { schema: reviewResultSchema, retrySafe: true },
-  'fix-review': { schema: fixReviewResultSchema, retrySafe: true },
+  'fix-review': { schema: fixReviewResultSchema, retrySafe: false },
   'create-pr': { schema: createPrResultSchema, retrySafe: false },
-  'pr-review-poll': { schema: prReviewPollResultSchema, retrySafe: true },
+  'pr-review-poll': { schema: prReviewPollResultSchema, retrySafe: false },
 };
