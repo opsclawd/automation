@@ -90,6 +90,7 @@ function buildRetryRequest(invocation: AgentInvocation, ctx: RerunContext): Agen
     runId: invocation.runId as unknown as string,
     repoId: ctx.repoId,
     phaseId: invocation.phaseId as unknown as string,
+    ...(invocation.stepId ? { stepId: invocation.stepId } : {}),
     startCommitSha: invocation.startCommitSha,
     fallbackOfInvocationId: invocation.id,
     fallbackReason: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
