@@ -15,12 +15,10 @@ function walkSourceFiles(dir: string, root: string): string[] {
     if (entry === 'node_modules' || entry === '.git' || entry === 'dist') continue;
     const stat = statSync(full);
     if (stat.isDirectory()) {
+      if (entry.includes('__tests__')) continue;
       results.push(...walkSourceFiles(full, root));
     } else if (SOURCE_EXTS.some((ext) => entry.endsWith(ext))) {
-      // Exclude test files from scan - guard is for production code only
-      if (entry.includes('.test.') || entry.includes('__tests__')) {
-        continue;
-      }
+      if (entry.includes('.test.')) continue;
       results.push(relative(root, full));
     }
   }
