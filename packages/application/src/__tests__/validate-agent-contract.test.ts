@@ -111,7 +111,7 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     });
-    it('returns no violations when branch name matches expected but HEAD SHA differs (new commits on same branch)', async () => {
+    it('returns branch_changed when branch name matches expected but HEAD SHA differs (new commits on same branch)', async () => {
       const git = new FakeGitPort();
       git.currentBranchByCwd.set('/tmp', 'main');
       git.headByCwd.set('/tmp', 'b'.repeat(40));
@@ -122,7 +122,7 @@ describe('validateAgentContract', () => {
         cwd: '/tmp',
         expectedBranch: 'main',
       });
-      expect(result).not.toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     });
     it('returns no violations when expectedBranch is not provided and branch name differs but SHA matches startCommitSha', async () => {
       const git = new FakeGitPort();
@@ -316,6 +316,19 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
     });
+    it('returns repo_not_provided when repoFullName is missing', async () => {
+      const result = await validateAgentContract({
+        contract: { mustPostReplies: { prNumber: 42 } },
+        invocation: sampleInv({ startedAt: new Date('2026-05-22T10:00:00Z') }),
+        ports: {
+          artifacts: new FakeArtifactStore(),
+          git: new FakeGitPort(),
+          github: new FakeGitHubPort(),
+        },
+        cwd: '/tmp',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.REPO_NOT_PROVIDED);
+    });
   });
 
   describe('mustCreateCommit', () => {
@@ -384,7 +397,7 @@ describe('validateAgentContract', () => {
       });
       const git = new FakeGitPort();
       git.currentBranchByCwd.set('/tmp', 'main');
-      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      git.headByCwd.set('/tmp', 'a'.repeat(40));
       git.remoteRefs.set('origin/main', 'b'.repeat(40));
       const github = new FakeGitHubPort();
       const comment: PrReviewComment = {

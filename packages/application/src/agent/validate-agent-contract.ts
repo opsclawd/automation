@@ -14,7 +14,7 @@ export interface ValidateAgentContractInput {
     github: GitHubPort;
   };
   cwd: string;
-  /** When mustPostReplies is set but repoFullName is omitted, REPLIES_NOT_POSTED is emitted
+  /** When mustPostReplies is set but repoFullName is omitted, REPO_NOT_PROVIDED is emitted
    *  because the validator cannot reach the GitHub API. Provide repoFullName to enable the check. */
   repoFullName?: string;
   expectedBranch?: string;
@@ -62,7 +62,8 @@ export async function validateAgentContract(
       const currentBranch = await ports.git.currentBranch(cwd);
       const branchChanged =
         expectedBranch !== undefined
-          ? currentBranch !== expectedBranch
+          ? currentBranch !== expectedBranch ||
+            (await ports.git.headCommitSha(cwd)) !== invocation.startCommitSha
           : (await ports.git.headCommitSha(cwd)) !== invocation.startCommitSha;
       if (branchChanged) {
         violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
@@ -101,7 +102,7 @@ export async function validateAgentContract(
 
   if (contract.mustPostReplies) {
     if (!repoFullName) {
-      violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+      violations.push(CONTRACT_VIOLATION_CODES.REPO_NOT_PROVIDED);
     } else {
       try {
         const comments = await ports.github.listPrCommentsSince(
