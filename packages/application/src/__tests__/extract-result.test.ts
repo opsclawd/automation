@@ -45,4 +45,57 @@ describe('extractResult', () => {
     });
     expect(agent.invocations).toHaveLength(0);
   });
+
+  it('returns missing when resultJsonPath is not set', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const outcome = await extractResult({
+      invocation: makeInvocation({ resultJsonPath: undefined }),
+      ports: { artifacts, agent },
+      rerunContext: { cwd: '/repo', repoId: 'org/repo' },
+    });
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'missing',
+      detail: 'no resultJsonPath on invocation inv-1',
+      violationCode: 'invalid_result_json',
+    });
+    expect(agent.invocations).toHaveLength(0);
+  });
+
+  it('returns missing when artifact is not in store', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const outcome = await extractResult({
+      invocation: makeInvocation(),
+      ports: { artifacts, agent },
+      rerunContext: { cwd: '/repo', repoId: 'org/repo' },
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('missing');
+      expect(outcome.violationCode).toBe('invalid_result_json');
+    }
+    expect(agent.invocations).toHaveLength(0);
+  });
+
+  it('returns invalid when JSON is valid but schema does not match', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'r1',
+      relativePath: 'result.json',
+      contents: '{"bad": "shape"}',
+    });
+    const agent = new FakeAgentPort();
+    const outcome = await extractResult({
+      invocation: makeInvocation(),
+      ports: { artifacts, agent },
+      rerunContext: { cwd: '/repo', repoId: 'org/repo' },
+    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toBe('invalid');
+      expect(outcome.violationCode).toBe('invalid_result_json');
+    }
+  });
 });
