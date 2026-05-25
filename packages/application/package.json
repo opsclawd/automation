@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@ai-sdlc/domain": "workspace:*",
-    "@ai-sdlc/shared": "workspace:*"
+    "@ai-sdlc/shared": "workspace:*",
+    "zod": "^3.23.8"
   }
 }
