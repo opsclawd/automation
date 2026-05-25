@@ -12,11 +12,11 @@ if (!phase || !filePath) {
   console.error('usage: diagnose-result <phase> <path-to-result.json>');
   process.exit(2);
 }
-const meta = PHASE_RESULT_REGISTRY[phase];
-if (!meta) {
+if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
   console.error(`unknown phase: ${phase}`);
   process.exit(2);
 }
+const meta = PHASE_RESULT_REGISTRY[phase]!;
 const raw = readFileSync(filePath, 'utf-8');
 let parsed: unknown;
 try {

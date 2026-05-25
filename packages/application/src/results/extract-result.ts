@@ -47,11 +47,10 @@ async function readAndValidate(
   try {
     raw = await ports.artifacts.read(runId, resultJsonPath);
   } catch (e) {
-    if (!(e instanceof ArtifactNotFoundError)) throw e;
     return {
       ok: false,
-      reason: 'missing',
-      detail: e.message,
+      reason: e instanceof ArtifactNotFoundError ? 'missing' : 'invalid',
+      detail: (e as Error).message,
       violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
     };
   }
