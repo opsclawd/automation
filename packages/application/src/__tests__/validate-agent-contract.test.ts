@@ -329,6 +329,57 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.REPO_NOT_PROVIDED);
     });
+    it('filters by agentAuthor when provided and returns replies_not_posted when no agent-authored comments exist', async () => {
+      const github = new FakeGitHubPort();
+      const humanComment: PrReviewComment = {
+        id: 1,
+        prNumber: 42,
+        path: 'file.ts',
+        line: 10,
+        reviewer: 'human-reviewer',
+        body: 'looks good',
+        createdAt: new Date('2026-05-22T10:01:00Z'),
+      };
+      github.comments.set('owner/repo/42', [humanComment]);
+      const result = await validateAgentContract({
+        contract: { mustPostReplies: { prNumber: 42, agentAuthor: 'bot' } },
+        invocation: sampleInv({ startedAt: new Date('2026-05-22T10:00:00Z') }),
+        ports: { artifacts: new FakeArtifactStore(), git: new FakeGitPort(), github },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+      });
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+    });
+    it('filters by agentAuthor and passes when agent-authored reply exists', async () => {
+      const github = new FakeGitHubPort();
+      const botComment: PrReviewComment = {
+        id: 2,
+        prNumber: 42,
+        path: 'file.ts',
+        line: 10,
+        reviewer: 'bot',
+        body: 'done',
+        createdAt: new Date('2026-05-22T10:01:00Z'),
+      };
+      const humanComment: PrReviewComment = {
+        id: 1,
+        prNumber: 42,
+        path: 'file.ts',
+        line: 5,
+        reviewer: 'human-reviewer',
+        body: 'question',
+        createdAt: new Date('2026-05-22T10:00:30Z'),
+      };
+      github.comments.set('owner/repo/42', [botComment, humanComment]);
+      const result = await validateAgentContract({
+        contract: { mustPostReplies: { prNumber: 42, agentAuthor: 'bot' } },
+        invocation: sampleInv({ startedAt: new Date('2026-05-22T10:00:00Z') }),
+        ports: { artifacts: new FakeArtifactStore(), git: new FakeGitPort(), github },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+      });
+      expect(result).toEqual([]);
+    });
   });
 
   describe('mustCreateCommit', () => {

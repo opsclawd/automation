@@ -4,5 +4,5 @@ export interface AgentContract {
   mustNotChangeBranch?: boolean;
   mustCreateCommit?: boolean;
   mustPush?: { remote: string; ref: string };
-  mustPostReplies?: { prNumber: number };
+  mustPostReplies?: { prNumber: number; agentAuthor?: string };
 }

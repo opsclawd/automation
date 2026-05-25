@@ -59,14 +59,17 @@ export async function validateAgentContract(
 
   if (contract.mustNotChangeBranch) {
     try {
-      const currentBranch = await ports.git.currentBranch(cwd);
-      const branchChanged =
-        expectedBranch !== undefined
-          ? currentBranch !== expectedBranch ||
-            (await ports.git.headCommitSha(cwd)) !== invocation.startCommitSha
-          : (await ports.git.headCommitSha(cwd)) !== invocation.startCommitSha;
-      if (branchChanged) {
-        violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+      if (expectedBranch !== undefined) {
+        const currentBranch = await ports.git.currentBranch(cwd);
+        const currentSha = await ports.git.headCommitSha(cwd);
+        if (currentBranch !== expectedBranch || currentSha !== invocation.startCommitSha) {
+          violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+        }
+      } else {
+        const currentSha = await ports.git.headCommitSha(cwd);
+        if (currentSha !== invocation.startCommitSha) {
+          violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+        }
       }
     } catch {
       violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
@@ -110,7 +113,10 @@ export async function validateAgentContract(
           contract.mustPostReplies.prNumber,
           invocation.startedAt.toISOString(),
         );
-        if (comments.length === 0) {
+        const relevantComments = contract.mustPostReplies.agentAuthor
+          ? comments.filter((c) => c.reviewer === contract.mustPostReplies!.agentAuthor)
+          : comments;
+        if (relevantComments.length === 0) {
           violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
         }
       } catch {
