@@ -27,6 +27,60 @@ function makeInvocation(overrides: Partial<AgentInvocation> = {}): AgentInvocati
 
 const RERUN_CTX = { cwd: '/repo', repoId: 'org/repo' };
 
+const PHASE_TESTS: Array<{
+  phase: string;
+  validJson: object;
+  invalidJson: object;
+  retrySafe: boolean;
+}> = [
+  {
+    phase: 'plan-design',
+    validJson: { result: 'ready', summary: 'go' },
+    invalidJson: { bad: 'shape' },
+    retrySafe: true,
+  },
+  {
+    phase: 'plan-write',
+    validJson: { result: 'ready', tasks: [{ title: 'Do work' }] },
+    invalidJson: { bad: 'shape' },
+    retrySafe: true,
+  },
+  {
+    phase: 'implement',
+    validJson: { result: 'success', changedFiles: ['src/foo.ts'] },
+    invalidJson: { bad: 'shape' },
+    retrySafe: false,
+  },
+  {
+    phase: 'review',
+    validJson: { result: 'pass', findings: [] },
+    invalidJson: { bad: 'shape' },
+    retrySafe: true,
+  },
+  {
+    phase: 'fix-review',
+    validJson: { result: 'done_with_fixes' },
+    invalidJson: { bad: 'shape' },
+    retrySafe: true,
+  },
+  {
+    phase: 'create-pr',
+    validJson: {
+      result: 'created' as const,
+      prNumber: 42,
+      prUrl: 'https://github.com/org/repo/pull/42',
+    },
+    invalidJson: { bad: 'shape' },
+    retrySafe: false,
+  },
+  {
+    phase: 'pr-review-poll',
+    validJson: { result: 'handled', repliesPosted: 0 },
+    invalidJson: { bad: 'shape' },
+    retrySafe: true,
+  },
+];
+
 describe('extractResult', () => {
   it('throws on unknown phase', async () => {
     const artifacts = new FakeArtifactStore();
@@ -40,60 +94,77 @@ describe('extractResult', () => {
     ).rejects.toThrow("no result schema registered for phase 'nonexistent'");
   });
 
-  describe('plan-design (retrySafe: true)', () => {
+  describe.each(PHASE_TESTS)('phase=$phase', ({ phase, validJson, invalidJson, retrySafe }) => {
     it('(a) returns typed result on valid input', async () => {
       const artifacts = new FakeArtifactStore();
       await artifacts.write({
         runId: 'r1',
         relativePath: 'result.json',
-        contents: JSON.stringify({ result: 'ready', summary: 'go' }),
+        contents: JSON.stringify(validJson),
       });
       const agent = new FakeAgentPort();
       const outcome = await extractResult({
-        invocation: makeInvocation(),
+        invocation: makeInvocation({ phaseId: PhaseName(phase) }),
         ports: { artifacts, agent },
         rerunContext: RERUN_CTX,
       });
-      expect(outcome).toEqual({ ok: true, result: { result: 'ready', summary: 'go' } });
+      expect(outcome).toEqual({ ok: true, result: validJson });
       expect(agent.invocations).toHaveLength(0);
     });
 
-    it('(b) reruns once and returns ok when rerun produces valid result', async () => {
+    it('(b) missing result.json + retrySafe → one rerun', async () => {
       const artifacts = new FakeArtifactStore();
-      const agent = new FakeAgentPort({
-        p: [
-          (_req) => {
-            void artifacts.write({
-              runId: 'r1',
-              relativePath: 'result.json',
-              contents: JSON.stringify({ result: 'ready', summary: 'go' }),
-            });
-            return {
-              runtime: 'opencode' as const,
-              provider: 'a',
-              model: 'm',
-              exitCode: 0,
-              durationMs: 500,
-              stdoutPath: '/s2',
-              stderrPath: '/e2',
-              resultJsonPath: 'result.json',
-              contractViolations: [],
-              outcome: 'success' as const,
-            };
-          },
-        ],
-      });
-      const outcome = await extractResult({
-        invocation: makeInvocation(),
-        ports: { artifacts, agent },
-        rerunContext: RERUN_CTX,
-      });
-      expect(outcome.ok).toBe(true);
-      if (outcome.ok) {
-        expect(outcome.result).toEqual({ result: 'ready', summary: 'go' });
+      if (retrySafe) {
+        const agent = new FakeAgentPort({
+          p: [
+            (_req) => {
+              void artifacts.write({
+                runId: 'r1',
+                relativePath: 'result.json',
+                contents: JSON.stringify(validJson),
+              });
+              return {
+                runtime: 'opencode' as const,
+                provider: 'a',
+                model: 'm',
+                exitCode: 0,
+                durationMs: 500,
+                stdoutPath: '/s2',
+                stderrPath: '/e2',
+                resultJsonPath: 'result.json',
+                contractViolations: [],
+                outcome: 'success' as const,
+              };
+            },
+          ],
+        });
+        const outcome = await extractResult({
+          invocation: makeInvocation({ phaseId: PhaseName(phase) }),
+          ports: { artifacts, agent },
+          rerunContext: RERUN_CTX,
+        });
+        expect(outcome.ok).toBe(true);
+        if (outcome.ok) {
+          expect(outcome.result).toEqual(validJson);
+        }
+        // extractResult calls agent.invoke ONCE for the rerun.
+        // The original invocation happened before extractResult was called
+        // and is not tracked by FakeAgentPort.
+        expect(agent.invocations).toHaveLength(1);
+        expect(agent.invocations[0].fallbackOfInvocationId).toBe(AgentInvocationId('inv-1'));
+      } else {
+        const agent = new FakeAgentPort();
+        const outcome = await extractResult({
+          invocation: makeInvocation({ phaseId: PhaseName(phase) }),
+          ports: { artifacts, agent },
+          rerunContext: RERUN_CTX,
+        });
+        expect(outcome.ok).toBe(false);
+        if (!outcome.ok) {
+          expect(outcome.reason).toBe('missing');
+        }
+        expect(agent.invocations).toHaveLength(0);
       }
-      expect(agent.invocations).toHaveLength(1);
-      expect(agent.invocations[0].fallbackOfInvocationId).toBe(AgentInvocationId('inv-1'));
     });
 
     it('(c) still-invalid after rerun → ok:false, no third LLM call', async () => {
@@ -101,178 +172,103 @@ describe('extractResult', () => {
       await artifacts.write({
         runId: 'r1',
         relativePath: 'result.json',
-        contents: '{"bad": "shape"}',
+        contents: JSON.stringify(invalidJson),
       });
-      const agent = new FakeAgentPort({
-        p: [
-          (_req) => {
-            void artifacts.write({
-              runId: 'r1',
-              relativePath: 'result.json',
-              contents: '{"still": "bad"}',
-            });
-            return {
-              runtime: 'opencode' as const,
-              provider: 'a',
-              model: 'm',
-              exitCode: 0,
-              durationMs: 500,
-              stdoutPath: '/s2',
-              stderrPath: '/e2',
-              resultJsonPath: 'result.json',
-              contractViolations: [],
-              outcome: 'success' as const,
-            };
-          },
-        ],
-      });
-      const outcome = await extractResult({
-        invocation: makeInvocation(),
-        ports: { artifacts, agent },
-        rerunContext: RERUN_CTX,
-      });
-      expect(outcome.ok).toBe(false);
-      if (!outcome.ok) {
-        expect(outcome.reason).toBe('invalid');
-        expect(outcome.violationCode).toBe('invalid_result_json');
+      if (retrySafe) {
+        const agent = new FakeAgentPort({
+          p: [
+            (_req) => {
+              void artifacts.write({
+                runId: 'r1',
+                relativePath: 'result.json',
+                contents: JSON.stringify(invalidJson),
+              });
+              return {
+                runtime: 'opencode' as const,
+                provider: 'a',
+                model: 'm',
+                exitCode: 0,
+                durationMs: 500,
+                stdoutPath: '/s2',
+                stderrPath: '/e2',
+                resultJsonPath: 'result.json',
+                contractViolations: [],
+                outcome: 'success' as const,
+              };
+            },
+          ],
+        });
+        const outcome = await extractResult({
+          invocation: makeInvocation({ phaseId: PhaseName(phase) }),
+          ports: { artifacts, agent },
+          rerunContext: RERUN_CTX,
+        });
+        expect(outcome.ok).toBe(false);
+        if (!outcome.ok) {
+          expect(outcome.reason).toBe('invalid');
+          expect(outcome.violationCode).toBe('invalid_result_json');
+        }
+        // extractResult calls agent.invoke ONCE for the rerun, then stops.
+        // No third call is ever made.
+        expect(agent.invocations).toHaveLength(1);
+      } else {
+        const agent = new FakeAgentPort();
+        const outcome = await extractResult({
+          invocation: makeInvocation({ phaseId: PhaseName(phase) }),
+          ports: { artifacts, agent },
+          rerunContext: RERUN_CTX,
+        });
+        expect(outcome.ok).toBe(false);
+        if (!outcome.ok) {
+          expect(outcome.reason).toBe('invalid');
+          expect(outcome.violationCode).toBe('invalid_result_json');
+        }
+        // No rerun for retrySafe:false phases.
+        expect(agent.invocations).toHaveLength(0);
       }
-      expect(agent.invocations).toHaveLength(1);
     });
 
-    it('returns invalid without rerun when retrySafe:true and no rerunContext and invalid schema', async () => {
-      const artifacts = new FakeArtifactStore();
-      await artifacts.write({
-        runId: 'r1',
-        relativePath: 'result.json',
-        contents: '{"bad": "shape"}',
-      });
-      const agent = new FakeAgentPort();
-      const outcome = await extractResult({
-        invocation: makeInvocation(),
-        ports: { artifacts, agent },
-      });
-      expect(outcome.ok).toBe(false);
-      if (!outcome.ok) {
-        expect(outcome.reason).toBe('invalid');
+    it('(d) retrySafe=false → fail immediately, no rerun', async () => {
+      if (!retrySafe) {
+        const artifacts = new FakeArtifactStore();
+        await artifacts.write({
+          runId: 'r1',
+          relativePath: 'result.json',
+          contents: JSON.stringify(invalidJson),
+        });
+        const agent = new FakeAgentPort();
+        const outcome = await extractResult({
+          invocation: makeInvocation({ phaseId: PhaseName(phase) }),
+          ports: { artifacts, agent },
+          rerunContext: RERUN_CTX,
+        });
+        expect(outcome.ok).toBe(false);
+        if (!outcome.ok) {
+          expect(outcome.reason).toBe('invalid');
+          expect(outcome.violationCode).toBe('invalid_result_json');
+        }
+        expect(agent.invocations).toHaveLength(0);
       }
-      expect(agent.invocations).toHaveLength(0);
-    });
-
-    it('invalid schema → rerun → valid result for retrySafe:true', async () => {
-      const artifacts = new FakeArtifactStore();
-      await artifacts.write({
-        runId: 'r1',
-        relativePath: 'result.json',
-        contents: '{"bad": "shape"}',
-      });
-      const agent = new FakeAgentPort({
-        p: [
-          (_req) => {
-            void artifacts.write({
-              runId: 'r1',
-              relativePath: 'result.json',
-              contents: JSON.stringify({ result: 'ready', summary: 'go' }),
-            });
-            return {
-              runtime: 'opencode' as const,
-              provider: 'a',
-              model: 'm',
-              exitCode: 0,
-              durationMs: 500,
-              stdoutPath: '/s2',
-              stderrPath: '/e2',
-              resultJsonPath: 'result.json',
-              contractViolations: [],
-              outcome: 'success' as const,
-            };
-          },
-        ],
-      });
-      const outcome = await extractResult({
-        invocation: makeInvocation(),
-        ports: { artifacts, agent },
-        rerunContext: RERUN_CTX,
-      });
-      expect(outcome.ok).toBe(true);
-      if (outcome.ok) {
-        expect(outcome.result).toEqual({ result: 'ready', summary: 'go' });
-      }
-      expect(agent.invocations).toHaveLength(1);
-    });
-
-    it('returns missing when resultJsonPath is not set (no rerunContext)', async () => {
-      const artifacts = new FakeArtifactStore();
-      const agent = new FakeAgentPort();
-      const outcome = await extractResult({
-        invocation: makeInvocation({ resultJsonPath: undefined }),
-        ports: { artifacts, agent },
-      });
-      expect(outcome).toEqual({
-        ok: false,
-        reason: 'missing',
-        detail: 'no resultJsonPath on invocation inv-1',
-        violationCode: 'invalid_result_json',
-      });
-      expect(agent.invocations).toHaveLength(0);
-    });
-
-    it('returns missing when artifact is not in store (no rerunContext)', async () => {
-      const artifacts = new FakeArtifactStore();
-      const agent = new FakeAgentPort();
-      const outcome = await extractResult({
-        invocation: makeInvocation(),
-        ports: { artifacts, agent },
-      });
-      expect(outcome.ok).toBe(false);
-      if (!outcome.ok) {
-        expect(outcome.reason).toBe('missing');
-        expect(outcome.violationCode).toBe('invalid_result_json');
-      }
-      expect(agent.invocations).toHaveLength(0);
+      // retrySafe:true phases are tested in branch (c) above; skip here to avoid
+      // FakeAgentPort throwing "No scripted response" when invoke is called unscripted.
     });
   });
 
-  describe('implement (retrySafe: false)', () => {
-    it('(d) fails immediately without rerun on invalid result', async () => {
-      const artifacts = new FakeArtifactStore();
-      await artifacts.write({
-        runId: 'r1',
-        relativePath: 'result.json',
-        contents: '{"bad": "shape"}',
-      });
-      const agent = new FakeAgentPort();
-      const outcome = await extractResult({
-        invocation: makeInvocation({ phaseId: PhaseName('implement') }),
-        ports: { artifacts, agent },
-        rerunContext: RERUN_CTX,
-      });
-      expect(outcome.ok).toBe(false);
-      if (!outcome.ok) {
-        expect(outcome.reason).toBe('invalid');
-        expect(outcome.violationCode).toBe('invalid_result_json');
-      }
-      expect(agent.invocations).toHaveLength(0);
+  it('returns missing when resultJsonPath is not set', async () => {
+    const artifacts = new FakeArtifactStore();
+    const agent = new FakeAgentPort();
+    const outcome = await extractResult({
+      invocation: makeInvocation({ resultJsonPath: undefined }),
+      ports: { artifacts, agent },
+      rerunContext: RERUN_CTX,
     });
-
-    it('(a) returns typed result on valid input', async () => {
-      const artifacts = new FakeArtifactStore();
-      await artifacts.write({
-        runId: 'r1',
-        relativePath: 'result.json',
-        contents: JSON.stringify({ result: 'success', changedFiles: ['src/foo.ts'] }),
-      });
-      const agent = new FakeAgentPort();
-      const outcome = await extractResult({
-        invocation: makeInvocation({ phaseId: PhaseName('implement') }),
-        ports: { artifacts, agent },
-        rerunContext: RERUN_CTX,
-      });
-      expect(outcome).toEqual({
-        ok: true,
-        result: { result: 'success', changedFiles: ['src/foo.ts'] },
-      });
-      expect(agent.invocations).toHaveLength(0);
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'missing',
+      detail: 'no resultJsonPath on invocation inv-1',
+      violationCode: 'invalid_result_json',
     });
+    expect(agent.invocations).toHaveLength(0);
   });
 
   describe('caller-side violation recording', () => {

@@ -1,0 +1,4 @@
+{
+  "result": "pass",
+  "findings": [{ "severity": "P2", "summary": "Minor style issue in extract-result.ts" }]
+}

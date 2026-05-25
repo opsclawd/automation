@@ -1,0 +1,4 @@
+{
+  "result": "ready",
+  "tasks": [{ "title": "Add result extraction", "description": "Implement extractResult function" }]
+}
