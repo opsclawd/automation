@@ -112,8 +112,9 @@ export async function validateAgentContract(
           contract.mustPostReplies.prNumber,
           invocation.startedAt.toISOString(),
         );
-        const relevantComments = contract.mustPostReplies.agentAuthor
-          ? comments.filter((c) => c.reviewer === contract.mustPostReplies!.agentAuthor)
+        const agentAuthor = contract.mustPostReplies.agentAuthor;
+        const relevantComments = agentAuthor
+          ? comments.filter((c) => c.reviewer.toLowerCase() === agentAuthor.toLowerCase())
           : comments;
         if (relevantComments.length === 0) {
           violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);

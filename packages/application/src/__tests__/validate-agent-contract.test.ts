@@ -380,6 +380,27 @@ describe('validateAgentContract', () => {
       });
       expect(result).toEqual([]);
     });
+    it('filters by agentAuthor case-insensitively and passes when agent-authored reply exists with different casing', async () => {
+      const github = new FakeGitHubPort();
+      const botComment: PrReviewComment = {
+        id: 3,
+        prNumber: 42,
+        path: 'file.ts',
+        line: 10,
+        reviewer: 'bot',
+        body: 'done',
+        createdAt: new Date('2026-05-22T10:01:00Z'),
+      };
+      github.comments.set('owner/repo/42', [botComment]);
+      const result = await validateAgentContract({
+        contract: { mustPostReplies: { prNumber: 42, agentAuthor: 'Bot' } },
+        invocation: sampleInv({ startedAt: new Date('2026-05-22T10:00:00Z') }),
+        ports: { artifacts: new FakeArtifactStore(), git: new FakeGitPort(), github },
+        cwd: '/tmp',
+        repoFullName: 'owner/repo',
+      });
+      expect(result).toEqual([]);
+    });
   });
 
   describe('mustCreateCommit', () => {
