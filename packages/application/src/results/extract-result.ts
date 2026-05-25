@@ -13,6 +13,7 @@ export type ExtractResultOutcome<T = unknown> =
       detail: string;
       violationCode:
         | typeof CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON
+        | typeof CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT
         | typeof CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR;
     };
 
@@ -55,7 +56,7 @@ async function readAndValidate(
       detail: (e as Error)?.message ?? String(e),
       violationCode:
         e instanceof ArtifactNotFoundError
-          ? CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON
+          ? CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT
           : CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR,
     };
   }
@@ -85,7 +86,11 @@ async function readAndValidate(
   return { ok: true, result: result.data };
 }
 
-function buildRetryRequest(invocation: AgentInvocation, ctx: RerunContext): AgentInvocationRequest {
+function buildRetryRequest(
+  invocation: AgentInvocation,
+  ctx: RerunContext,
+  fallbackReason: string,
+): AgentInvocationRequest {
   return {
     profile: invocation.profile,
     promptPath: invocation.promptPath,
@@ -97,7 +102,7 @@ function buildRetryRequest(invocation: AgentInvocation, ctx: RerunContext): Agen
     ...(invocation.stepId ? { stepId: invocation.stepId } : {}),
     startCommitSha: invocation.startCommitSha,
     fallbackOfInvocationId: invocation.id,
-    fallbackReason: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
+    fallbackReason,
   };
 }
 
@@ -125,7 +130,9 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
     return initial;
   }
 
-  const rerunResult = await ports.agent.invoke(buildRetryRequest(invocation, rerunContext));
+  const rerunResult = await ports.agent.invoke(
+    buildRetryRequest(invocation, rerunContext, initial.violationCode),
+  );
 
   return readAndValidate(runId, rerunResult.resultJsonPath, meta, ports);
 }

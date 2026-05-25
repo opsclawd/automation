@@ -311,7 +311,7 @@ describe('extractResult', () => {
     if (!outcome.ok) {
       expect(outcome.reason).toBe('missing');
       expect(outcome.detail).toBe('artifact not found: result.json in run r1');
-      expect(outcome.violationCode).toBe('invalid_result_json');
+      expect(outcome.violationCode).toBe('missing_required_artifact');
     }
     expect(agent.invocations).toHaveLength(0);
   });
