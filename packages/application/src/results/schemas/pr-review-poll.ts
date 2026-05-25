@@ -3,6 +3,6 @@ import { z } from 'zod';
 
 export const prReviewPollResultSchema = z.object({
   result: z.enum(['handled', 'nothing_to_handle']),
-  repliesPosted: z.number(),
+  repliesPosted: z.number().int().min(0),
 });
 export type PrReviewPollResult = z.infer<typeof prReviewPollResultSchema>;

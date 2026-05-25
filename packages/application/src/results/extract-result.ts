@@ -1,6 +1,7 @@
 import type { AgentInvocation } from '@ai-sdlc/domain';
 import { PHASE_RESULT_REGISTRY } from './phase-registry.js';
 import type { ArtifactStore, AgentPort } from '../ports.js';
+import { ArtifactNotFoundError } from '../ports.js';
 import { CONTRACT_VIOLATION_CODES } from '../agent/contract-violation-codes.js';
 import type { AgentInvocationRequest } from '../agent/invocation.js';
 
@@ -45,11 +46,12 @@ async function readAndValidate(
   let raw: string;
   try {
     raw = await ports.artifacts.read(runId, resultJsonPath);
-  } catch {
+  } catch (e) {
+    if (!(e instanceof ArtifactNotFoundError)) throw e;
     return {
       ok: false,
       reason: 'missing',
-      detail: `artifact not found: ${resultJsonPath} in run ${runId}`,
+      detail: e.message,
       violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
     };
   }
