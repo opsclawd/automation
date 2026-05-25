@@ -254,41 +254,21 @@ describe('extractResult', () => {
     });
   });
 
-  it('returns missing when resultJsonPath is not set (retrySafe:true → attempts rerun)', async () => {
+  it('returns missing when resultJsonPath is not set', async () => {
     const artifacts = new FakeArtifactStore();
-    const agent = new FakeAgentPort({
-      p: [
-        (_req) => {
-          void artifacts.write({
-            runId: 'r1',
-            relativePath: 'result.json',
-            contents: JSON.stringify({ result: 'ready', summary: 'go' }),
-          });
-          return {
-            runtime: 'opencode' as const,
-            provider: 'a',
-            model: 'm',
-            exitCode: 0,
-            durationMs: 500,
-            stdoutPath: '/s2',
-            stderrPath: '/e2',
-            resultJsonPath: 'result.json',
-            contractViolations: [],
-            outcome: 'success' as const,
-          };
-        },
-      ],
-    });
+    const agent = new FakeAgentPort();
     const outcome = await extractResult({
       invocation: makeInvocation({ resultJsonPath: undefined }),
       ports: { artifacts, agent },
       rerunContext: RERUN_CTX,
     });
-    expect(outcome.ok).toBe(true);
-    if (outcome.ok) {
-      expect(outcome.result).toEqual({ result: 'ready', summary: 'go' });
-    }
-    expect(agent.invocations).toHaveLength(1);
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'missing',
+      detail: 'no resultJsonPath provided',
+      violationCode: 'invalid_result_json',
+    });
+    expect(agent.invocations).toHaveLength(0);
   });
 
   describe('caller-side violation recording', () => {
