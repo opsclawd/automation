@@ -115,7 +115,7 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
   );
   if (initial.ok) return initial;
 
-  if (!meta.retrySafe || !invocation.resultJsonPath) {
+  if (!meta.retrySafe) {
     return initial;
   }
 
