@@ -45,6 +45,16 @@ export class FakeGitHubPort implements GitHubPort {
     return this.comments.get(`${repoFullName}/${prNumber}`) ?? [];
   }
 
+  async listPrCommentsSince(
+    repoFullName: string,
+    prNumber: number,
+    sinceIso: string,
+  ): Promise<PrReviewComment[]> {
+    const all = this.comments.get(`${repoFullName}/${prNumber}`) ?? [];
+    const since = new Date(sinceIso);
+    return all.filter((c) => c.createdAt >= since);
+  }
+
   async replyToReviewComment(
     repoFullName: string,
     prNumber: number,
