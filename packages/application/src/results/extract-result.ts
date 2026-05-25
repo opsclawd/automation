@@ -11,7 +11,9 @@ export type ExtractResultOutcome<T = unknown> =
       ok: false;
       reason: 'missing' | 'invalid';
       detail: string;
-      violationCode: typeof CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON;
+      violationCode:
+        | typeof CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON
+        | typeof CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR;
     };
 
 export interface RerunContext {
@@ -50,8 +52,11 @@ async function readAndValidate(
     return {
       ok: false,
       reason: e instanceof ArtifactNotFoundError ? 'missing' : 'invalid',
-      detail: (e as Error).message,
-      violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
+      detail: (e as Error)?.message ?? String(e),
+      violationCode:
+        e instanceof ArtifactNotFoundError
+          ? CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON
+          : CONTRACT_VIOLATION_CODES.ARTIFACT_READ_ERROR,
     };
   }
 
@@ -62,7 +67,7 @@ async function readAndValidate(
     return {
       ok: false,
       reason: 'invalid',
-      detail: `JSON.parse failed: ${(e as Error).message}`,
+      detail: `JSON.parse failed: ${(e as Error)?.message ?? String(e)}`,
       violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
     };
   }
