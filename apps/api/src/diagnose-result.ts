@@ -16,7 +16,14 @@ if (!meta) {
   process.exit(2);
 }
 const raw = readFileSync(filePath, 'utf-8');
-const result = meta.schema.safeParse(JSON.parse(raw));
+let parsed: unknown;
+try {
+  parsed = JSON.parse(raw);
+} catch (e) {
+  console.error('FAIL JSON parse error:', (e as SyntaxError).message);
+  process.exit(1);
+}
+const result = meta.schema.safeParse(parsed);
 if (result.success) {
   process.stdout.write('OK ' + JSON.stringify(result.data, null, 2) + '\n');
 } else {
