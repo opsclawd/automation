@@ -6,6 +6,7 @@ export class FakeGitPort implements GitPort {
   worktrees: string[] = [];
   commits: Array<{ cwd: string; message: string; sha: string }> = [];
   pushes: PushInput[] = [];
+  remoteRefs = new Map<string, string>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -46,5 +47,14 @@ export class FakeGitPort implements GitPort {
 
   async push(input: PushInput): Promise<void> {
     this.pushes.push(input);
+  }
+
+  async remoteRef(input: {
+    cwd: string;
+    remote: string;
+    ref: string;
+  }): Promise<string | undefined> {
+    const key = `${input.remote}/${input.ref}`;
+    return this.remoteRefs.get(key);
   }
 }

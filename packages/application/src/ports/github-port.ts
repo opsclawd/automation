@@ -34,6 +34,11 @@ export interface GitHubPort {
   getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
   listReviewComments(repoFullName: string, prNumber: number): Promise<PrReviewComment[]>;
+  listPrCommentsSince(
+    repoFullName: string,
+    prNumber: number,
+    sinceIso: string,
+  ): Promise<PrReviewComment[]>;
   replyToReviewComment(
     repoFullName: string,
     prNumber: number,
