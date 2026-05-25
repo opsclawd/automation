@@ -134,7 +134,7 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
   } catch (e) {
     return {
       ok: false,
-      reason: 'invalid',
+      reason: initial.reason,
       detail: `rerun invoke failed: ${(e as Error)?.message ?? String(e)}`,
       violationCode: initial.violationCode,
     };
