@@ -140,7 +140,7 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
       ok: false,
       reason: 'invalid',
       detail: `rerun invoke failed: ${(e as Error)?.message ?? String(e)}`,
-      violationCode: CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON,
+      violationCode: initial.violationCode,
     };
   }
 
