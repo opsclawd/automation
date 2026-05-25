@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { AgentInvocationId, AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
 import type { AgentInvocation } from '@ai-sdlc/domain';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../test-doubles/index.js';
+import type { PrReviewComment } from '../ports/github-port.js';
 import { validateAgentContract } from '../agent/validate-agent-contract.js';
 import { CONTRACT_VIOLATION_CODES } from '../agent/contract-violation-codes.js';
 
@@ -110,7 +111,7 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     });
-    it('returns no violations when branch name matches expected but HEAD SHA differs (commit change, not branch change)', async () => {
+    it('returns no violations when branch name matches expected but HEAD SHA differs (new commits on same branch)', async () => {
       const git = new FakeGitPort();
       git.currentBranchByCwd.set('/tmp', 'main');
       git.headByCwd.set('/tmp', 'b'.repeat(40));
@@ -193,7 +194,7 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
     });
-    it('skips result check when invocation has no resultJsonPath', async () => {
+    it('returns invalid_result_value when contract specifies allowedResultValues but invocation has no resultJsonPath', async () => {
       const result = await validateAgentContract({
         contract: { allowedResultValues: ['pass'] },
         invocation: sampleInv(),
@@ -204,7 +205,7 @@ describe('validateAgentContract', () => {
         },
         cwd: '/tmp',
       });
-      expect(result).toEqual([]);
+      expect(result).toContain(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
     });
   });
 
@@ -261,7 +262,7 @@ describe('validateAgentContract', () => {
   describe('mustPostReplies', () => {
     it('returns no violations when bot replies exist after startedAt', async () => {
       const github = new FakeGitHubPort();
-      const comment: import('@ai-sdlc/application').PrReviewComment = {
+      const comment: PrReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',
@@ -296,7 +297,7 @@ describe('validateAgentContract', () => {
     });
     it('returns replies_not_posted when comments exist but all before startedAt', async () => {
       const github = new FakeGitHubPort();
-      const oldComment: import('@ai-sdlc/application').PrReviewComment = {
+      const oldComment: PrReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',
@@ -386,7 +387,7 @@ describe('validateAgentContract', () => {
       git.headByCwd.set('/tmp', 'b'.repeat(40));
       git.remoteRefs.set('origin/main', 'b'.repeat(40));
       const github = new FakeGitHubPort();
-      const comment: import('@ai-sdlc/application').PrReviewComment = {
+      const comment: PrReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',

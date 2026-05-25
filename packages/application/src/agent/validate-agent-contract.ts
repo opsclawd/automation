@@ -14,6 +14,8 @@ export interface ValidateAgentContractInput {
     github: GitHubPort;
   };
   cwd: string;
+  /** When mustPostReplies is set but repoFullName is omitted, REPLIES_NOT_POSTED is emitted
+   *  because the validator cannot reach the GitHub API. Provide repoFullName to enable the check. */
   repoFullName?: string;
   expectedBranch?: string;
 }
@@ -39,44 +41,60 @@ export async function validateAgentContract(
     }
   }
 
-  if (contract.allowedResultValues && invocation.resultJsonPath) {
-    try {
-      const raw = await ports.artifacts.read(invocation.runId, invocation.resultJsonPath);
-      const parsed = JSON.parse(raw) as { result?: string };
-      if (!parsed.result || !contract.allowedResultValues.includes(parsed.result)) {
+  if (contract.allowedResultValues) {
+    if (!invocation.resultJsonPath) {
+      violations.push(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+    } else {
+      try {
+        const raw = await ports.artifacts.read(invocation.runId, invocation.resultJsonPath);
+        const parsed = JSON.parse(raw) as { result?: string };
+        if (!parsed.result || !contract.allowedResultValues.includes(parsed.result)) {
+          violations.push(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+        }
+      } catch {
         violations.push(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
       }
-    } catch {
-      violations.push(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
     }
   }
 
   if (contract.mustNotChangeBranch) {
-    const currentBranch = await ports.git.currentBranch(cwd);
-    const branchChanged =
-      expectedBranch !== undefined
-        ? currentBranch !== expectedBranch
-        : (await ports.git.headCommitSha(cwd)) !== invocation.startCommitSha;
-    if (branchChanged) {
+    try {
+      const currentBranch = await ports.git.currentBranch(cwd);
+      const branchChanged =
+        expectedBranch !== undefined
+          ? currentBranch !== expectedBranch
+          : (await ports.git.headCommitSha(cwd)) !== invocation.startCommitSha;
+      if (branchChanged) {
+        violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+      }
+    } catch {
       violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     }
   }
 
   if (contract.mustCreateCommit) {
-    const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));
-    if (endSha === invocation.startCommitSha) {
+    try {
+      const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));
+      if (endSha === invocation.startCommitSha) {
+        violations.push(CONTRACT_VIOLATION_CODES.MISSING_COMMIT);
+      }
+    } catch {
       violations.push(CONTRACT_VIOLATION_CODES.MISSING_COMMIT);
     }
   }
 
   if (contract.mustPush) {
-    const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));
-    const remoteSha = await ports.git.remoteRef({
-      cwd,
-      remote: contract.mustPush.remote,
-      ref: contract.mustPush.ref,
-    });
-    if (remoteSha !== endSha) {
+    try {
+      const endSha = invocation.endCommitSha ?? (await ports.git.headCommitSha(cwd));
+      const remoteSha = await ports.git.remoteRef({
+        cwd,
+        remote: contract.mustPush.remote,
+        ref: contract.mustPush.ref,
+      });
+      if (remoteSha !== endSha) {
+        violations.push(CONTRACT_VIOLATION_CODES.NOT_PUSHED);
+      }
+    } catch {
       violations.push(CONTRACT_VIOLATION_CODES.NOT_PUSHED);
     }
   }
@@ -85,12 +103,16 @@ export async function validateAgentContract(
     if (!repoFullName) {
       violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
     } else {
-      const comments = await ports.github.listPrCommentsSince(
-        repoFullName,
-        contract.mustPostReplies.prNumber,
-        invocation.startedAt.toISOString(),
-      );
-      if (comments.length === 0) {
+      try {
+        const comments = await ports.github.listPrCommentsSince(
+          repoFullName,
+          contract.mustPostReplies.prNumber,
+          invocation.startedAt.toISOString(),
+        );
+        if (comments.length === 0) {
+          violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
+        }
+      } catch {
         violations.push(CONTRACT_VIOLATION_CODES.REPLIES_NOT_POSTED);
       }
     }
