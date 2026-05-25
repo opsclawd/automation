@@ -111,7 +111,7 @@ describe('validateAgentContract', () => {
       });
       expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     });
-    it('returns branch_changed when branch name matches expected but HEAD SHA differs (new commits on same branch)', async () => {
+    it('returns no violations when expectedBranch is provided and branch name matches, even if HEAD SHA differs (new commits on same branch)', async () => {
       const git = new FakeGitPort();
       git.currentBranchByCwd.set('/tmp', 'main');
       git.headByCwd.set('/tmp', 'b'.repeat(40));
@@ -122,7 +122,7 @@ describe('validateAgentContract', () => {
         cwd: '/tmp',
         expectedBranch: 'main',
       });
-      expect(result).toContain(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
+      expect(result).toEqual([]);
     });
     it('returns no violations when expectedBranch is not provided and branch name differs but SHA matches startCommitSha', async () => {
       const git = new FakeGitPort();
@@ -432,6 +432,19 @@ describe('validateAgentContract', () => {
         invocation: sampleInv({ startCommitSha: 'a'.repeat(40) }),
         ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
         cwd: '/tmp',
+      });
+      expect(result).toEqual([]);
+    });
+    it('returns no violations when mustNotChangeBranch + mustCreateCommit are both set and agent commits on the expected branch', async () => {
+      const git = new FakeGitPort();
+      git.currentBranchByCwd.set('/tmp', 'feature');
+      git.headByCwd.set('/tmp', 'b'.repeat(40));
+      const result = await validateAgentContract({
+        contract: { mustNotChangeBranch: true, mustCreateCommit: true },
+        invocation: sampleInv({ startCommitSha: 'a'.repeat(40), endCommitSha: 'b'.repeat(40) }),
+        ports: { artifacts: new FakeArtifactStore(), git, github: new FakeGitHubPort() },
+        cwd: '/tmp',
+        expectedBranch: 'feature',
       });
       expect(result).toEqual([]);
     });

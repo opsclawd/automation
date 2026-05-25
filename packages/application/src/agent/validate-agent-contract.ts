@@ -61,8 +61,7 @@ export async function validateAgentContract(
     try {
       if (expectedBranch !== undefined) {
         const currentBranch = await ports.git.currentBranch(cwd);
-        const currentSha = await ports.git.headCommitSha(cwd);
-        if (currentBranch !== expectedBranch || currentSha !== invocation.startCommitSha) {
+        if (currentBranch !== expectedBranch) {
           violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
         }
       } else {
