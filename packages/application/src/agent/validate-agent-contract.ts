@@ -22,7 +22,7 @@ export async function validateAgentContract(
   input: ValidateAgentContractInput,
 ): Promise<ContractViolationCode[]> {
   const violations: ContractViolationCode[] = [];
-  const { contract, invocation, ports } = input;
+  const { contract, invocation, ports, cwd, expectedBranch } = input;
 
   if (contract.requiredArtifacts) {
     for (const path of contract.requiredArtifacts) {
@@ -48,6 +48,18 @@ export async function validateAgentContract(
       }
     } catch {
       violations.push(CONTRACT_VIOLATION_CODES.INVALID_RESULT_VALUE);
+    }
+  }
+
+  if (contract.mustNotChangeBranch) {
+    const currentBranch = await ports.git.currentBranch(cwd);
+    const currentSha = await ports.git.headCommitSha(cwd);
+    const branchChanged =
+      expectedBranch !== undefined
+        ? currentBranch !== expectedBranch || currentSha !== invocation.startCommitSha
+        : currentSha !== invocation.startCommitSha;
+    if (branchChanged) {
+      violations.push(CONTRACT_VIOLATION_CODES.BRANCH_CHANGED);
     }
   }
 
