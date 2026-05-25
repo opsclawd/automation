@@ -6,15 +6,17 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WORKSPACE_ROOT = join(__dirname, '..', '..', '..', '..');
 
-function walkTsFiles(dir: string, root: string): string[] {
+const SOURCE_EXTS = ['.ts', '.tsx', '.mjs'];
+
+function walkSourceFiles(dir: string, root: string): string[] {
   const results: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (entry === 'node_modules' || entry === '.git' || entry === 'dist') continue;
     const stat = statSync(full);
     if (stat.isDirectory()) {
-      results.push(...walkTsFiles(full, root));
-    } else if (entry.endsWith('.ts') || entry.endsWith('.tsx')) {
+      results.push(...walkSourceFiles(full, root));
+    } else if (SOURCE_EXTS.some((ext) => entry.endsWith(ext))) {
       results.push(relative(root, full));
     }
   }
@@ -24,8 +26,8 @@ function walkTsFiles(dir: string, root: string): string[] {
 describe('diagnose-result.ts is not imported by production code', () => {
   it('no production module imports diagnose-result', () => {
     const scanDirs = [join(WORKSPACE_ROOT, 'packages'), join(WORKSPACE_ROOT, 'apps')];
-    const allFiles = scanDirs.flatMap((d) => walkTsFiles(d, WORKSPACE_ROOT));
-    expect(allFiles.length, 'must find at least one .ts file to scan').toBeGreaterThan(0);
+    const allFiles = scanDirs.flatMap((d) => walkSourceFiles(d, WORKSPACE_ROOT));
+    expect(allFiles.length, 'must find at least one source file to scan').toBeGreaterThan(0);
     const forbidden = allFiles.filter((f) => {
       if (f.includes('no-diagnose-import.test')) return false;
       if (f.endsWith('diagnose-result.ts')) return false;
