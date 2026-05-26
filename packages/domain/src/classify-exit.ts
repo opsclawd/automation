@@ -18,11 +18,7 @@ export interface ClassifyExitInput {
    *  log scraping. */
   events?: ClassifierEvent[];
   /** Wall-clock duration of the child process in milliseconds. When provided,
-   *  the classifier skips `timeout` classification when the run was too short
-   *  to plausibly have timed out. */
+   *  the classifier skips `timeout` classification when the run completed in
+   *  under 30 seconds — too fast for any legitimate timeout to have fired. */
   elapsedMs?: number;
-  /** The configured timeout in milliseconds for the invocation. When provided
-   *  alongside `elapsedMs`, prevents false-positive timeout classification
-   *  for fast failures. */
-  timeoutMs?: number;
 }

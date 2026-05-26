@@ -104,52 +104,48 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('timeout');
   });
 
-  it('skips timeout classification when elapsedMs is far below timeoutMs', () => {
+  it('skips timeout classification when elapsedMs is below 30s floor', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'process timed out after 120s',
       runUuid: 'test-uuid',
       elapsedMs: 5_000,
-      timeoutMs: 1_800_000,
     });
     expect(f.kind).not.toBe('timeout');
     expect(f.kind).toBe('command_failed');
   });
 
-  it('skips timeout at boundary (19% of timeoutMs)', () => {
+  it('skips timeout at boundary (29s elapsed)', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail: 'process timed out after 120s',
       runUuid: 'test-uuid',
-      elapsedMs: 340_000,
-      timeoutMs: 1_800_000,
+      elapsedMs: 29_999,
     });
     expect(f.kind).not.toBe('timeout');
   });
 
-  it('classifies timeout just past threshold (21% of timeoutMs)', () => {
+  it('classifies timeout just past floor (31s elapsed)', () => {
     const f = classifyExit({
       exitCode: 124,
       combinedLogTail: 'TIMEOUT after 600s',
       runUuid: 'test-uuid',
-      elapsedMs: 380_000,
-      timeoutMs: 1_800_000,
+      elapsedMs: 31_000,
     });
     expect(f.kind).toBe('timeout');
   });
 
-  it('classifies timeout when elapsedMs is close to timeoutMs', () => {
+  it('classifies timeout at genuine phase timeout duration (300s)', () => {
     const f = classifyExit({
       exitCode: 124,
-      combinedLogTail: 'TIMEOUT after 600s',
+      combinedLogTail: 'TIMEOUT after 300s',
       runUuid: 'test-uuid',
-      elapsedMs: 1_700_000,
-      timeoutMs: 1_800_000,
+      elapsedMs: 300_000,
     });
     expect(f.kind).toBe('timeout');
   });
 
-  it('classifies timeout when elapsedMs/timeoutMs are not provided', () => {
+  it('classifies timeout when elapsedMs is not provided', () => {
     const f = classifyExit({
       exitCode: 124,
       combinedLogTail: 'TIMEOUT after 600s',
@@ -767,11 +763,10 @@ describe('classifyExit with events (M2-06)', () => {
     expect(failure.kind).toBe('timeout');
   });
 
-  it('skips event-driven timeout when elapsedMs is far below timeoutMs', () => {
+  it('skips event-driven timeout when elapsedMs is below 30s floor', () => {
     const failure = classifyExit({
       ...baseInput,
       elapsedMs: 5_000,
-      timeoutMs: 1_800_000,
       events: [
         ev({
           phase: 'implement',
@@ -783,11 +778,10 @@ describe('classifyExit with events (M2-06)', () => {
     expect(failure.kind).not.toBe('timeout');
   });
 
-  it('classifies event-driven timeout when elapsedMs is close to timeoutMs', () => {
+  it('classifies event-driven timeout when elapsedMs exceeds 30s floor', () => {
     const failure = classifyExit({
       ...baseInput,
-      elapsedMs: 1_700_000,
-      timeoutMs: 1_800_000,
+      elapsedMs: 300_000,
       events: [
         ev({
           phase: 'implement',

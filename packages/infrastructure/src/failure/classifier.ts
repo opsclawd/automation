@@ -59,14 +59,17 @@ const PATTERNS: Pattern[] = [
 
 const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
+// Absolute floor: any failure completing in under 30 seconds cannot be a
+// legitimate timeout, regardless of phase or invocation budget.  Phase-level
+// timeouts in scripts/ai-run-issue-v2 start at 300 s (TIMEOUT_VALIDATE); a
+// ratio-based threshold against the global invocationMaxMinutes would suppress
+// genuine phase timeouts, so we use an absolute minimum instead.
+// See opsclawd/automation#107 and PR #110 review discussion.
+const MIN_TIMEOUT_ELAPSED_MS = 30_000;
+
 function timeoutPlausible(input: ClassifyExitInput): boolean {
-  if (input.elapsedMs === undefined || input.timeoutMs === undefined) return true;
-  // A timeout that fires in <20% of the budget is almost certainly not a real
-  // timeout — e.g. a 5-second failure on a 30-minute invocation (opsclawd/automation#107).
-  // The 0.2 threshold is deliberately conservative: it only guards against the
-  // clearly-impossible case, leaving the "ran long but not quite to budget" case
-  // to existing classification logic.
-  return input.elapsedMs >= input.timeoutMs * 0.2;
+  if (input.elapsedMs === undefined) return true;
+  return input.elapsedMs >= MIN_TIMEOUT_ELAPSED_MS;
 }
 
 export function classifyExit(input: ClassifyExitInput): Failure {

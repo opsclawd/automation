@@ -34,7 +34,6 @@ export interface StartIssueRunDeps {
   tee?: boolean;
   now?: () => Date;
   logger?: { error: (msg: string, err?: unknown) => void };
-  invocationTimeoutMs?: number;
 }
 
 export interface StartIssueRunInput {
@@ -260,9 +259,6 @@ export class StartIssueRun {
             detectedAt: completedAt,
             events: collectedEvents,
             elapsedMs: exec.durationMs,
-            ...(this.deps.invocationTimeoutMs !== undefined && {
-              timeoutMs: this.deps.invocationTimeoutMs,
-            }),
           });
           classified = true;
           try {
