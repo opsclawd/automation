@@ -123,6 +123,21 @@ Literal `{{` and `}}` outside a placeholder are not legal in this template langu
 
 7. **Only `ENOENT` is wrapped.** Other filesystem errors from `loadPromptTemplate` (EACCES, EMFILE, etc.) propagate as-is. Don't assume all errors from this function are `TemplateNotFoundError`.
 
+8. **Cross-package `instanceof` is unreliable.** `ArtifactNotFoundError` is defined in a port file in `packages/application`. When `renderPrompt` catches an error and checks `instanceof ArtifactNotFoundError`, the check can fail across package boundaries if duplicate class instances exist (common in monorepos with linked workspace packages). The fix: always provide a duck-type fallback alongside `instanceof`:
+
+   ```typescript
+   export function isArtifactNotFoundError(err: unknown): err is ArtifactNotFoundError {
+     return (
+       err instanceof ArtifactNotFoundError ||
+       (err instanceof Error && err.name === 'ArtifactNotFoundError')
+     );
+   }
+   ```
+
+   Apply this pattern to any custom error type shared across workspace packages.
+
+9. **Depcruise `node:fs`/`node:path` rule must enumerate all import variants.** Node's filesystem/path modules have many import spellings: `node:fs`, `fs`, `node:fs/promises`, `fs/promises`, `node:path/posix`, `node:path/win32`, `path`, etc. The `application-no-io-except-prompt-template` depcruise rule needed four rounds of tightening to cover all variants. A rule that only matches exact specifiers (e.g., `node:fs` but not `fs`) is trivially bypassed. Enumerate all known variants explicitly in the regex alternation.
+
 ## What Someone Modifying This Code Should Know
 
 - **Files to modify:**

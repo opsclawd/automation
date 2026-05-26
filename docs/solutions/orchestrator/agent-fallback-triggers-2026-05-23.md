@@ -43,6 +43,12 @@ The system splits fallback responsibility per ADR-0007/ADR-0008:
 
 The router doesn't second-guess use-case decisions. If `fallbackOfInvocationId` is set by the caller, the router records and emits without applying its own trigger heuristics.
 
+### Important: caller-signalled fallback is handled in `invoke()`, not `dispatch()`
+
+When `fallbackOfInvocationId` is set on the **initial request**, the router handles it in `invoke()` **before** calling `dispatch()`. The router emits the escalation event and dispatches directly to the target profile. `shouldFallback()` inside `dispatch()` is never evaluated for caller-signalled requests.
+
+This separation was introduced after a review caught that the original `shouldFallback()` returned `true` whenever `fallbackOfInvocationId` was set, regardless of the adapter outcome. A **successful** caller-signalled invocation was being discarded and a redundant second fallback dispatched. The fix moved caller-signalled handling out of `shouldFallback()` entirely — the router trusts the caller's escalation decision and does not re-evaluate it.
+
 ## Key Implementation Decisions
 
 ### 1. `invoke()` → `dispatch()` split with `isFallback` flag
@@ -95,33 +101,38 @@ The router doesn't second-guess use-case decisions. If `fallbackOfInvocationId` 
 
 ```
 invoke(request)
-  └─ dispatch(request, isFallback=false)
-       ├─ Build pre-insert invocation row
-       ├─ If request.fallbackOfInvocationId → set on row
-       ├─ Resolve profile → adapter
-       ├─ Call adapter.invoke(enrichedRequest)
-       ├─ Reclassify cancelled_by_orchestrator → timeout if profile signal
-       ├─ Update invocation row with result
-       ├─ If NOT isFallback AND shouldFallback(request, result):
-       │     ├─ Look up phaseProfiles[phaseId].fallbackProfile
-       │     ├─ If fallbackProfile exists and profile+adapter valid:
-       │     │     ├─ Determine triggerOwner ('use_case' if caller-signalled, else 'router')
-       │     │     ├─ Determine triggerReason (from request or result)
-       │     │     ├─ Cap triggerReason at 64 chars
-       │     │     ├─ Build fallbackRequest with fallbackOfInvocationId = id
-       │     │     ├─ Emit phase.fallback.escalated event
-       │     │     └─ dispatch(fallbackRequest, isFallback=true)  ← ONE HOP ONLY
-       │     └─ Else: no fallback available, return failure
-       └─ Return result
+  ├─ If request.fallbackOfInvocationId is set (caller-signalled):
+  │     ├─ Emit phase.fallback.escalated (triggerOwner: 'use_case')
+  │     └─ dispatch(request, isFallback=true)  ← skip shouldFallback()
+  └─ Else (router-triggered path):
+       └─ dispatch(request, isFallback=false)
+            ├─ Build pre-insert invocation row
+            ├─ If request.fallbackOfInvocationId → set on row
+            ├─ Resolve profile → adapter
+            ├─ Call adapter.invoke(enrichedRequest)
+            ├─ Reclassify cancelled_by_orchestrator → timeout if profile signal
+            ├─ Update invocation row with result
+            ├─ If NOT isFallback AND shouldFallback(request, result):
+            │     ├─ Look up phaseProfiles[phaseId].fallbackProfile
+            │     ├─ If fallbackProfile exists and profile+adapter valid:
+            │     │     ├─ Determine triggerOwner ('router')
+            │     │     ├─ Determine triggerReason (from result)
+            │     │     ├─ Cap triggerReason at 64 chars
+            │     │     ├─ Build fallbackRequest with fallbackOfInvocationId = id
+            │     │     ├─ Emit phase.fallback.escalated event
+            │     │     └─ dispatch(fallbackRequest, isFallback=true)  ← ONE HOP ONLY
+            │     └─ Else: no fallback available, return failure
+            └─ Return result
 ```
 
 ## Trigger Detection Logic
 
 `shouldFallback(request, result)` returns `true` when:
 
-1. `request.fallbackOfInvocationId` is set (caller-signalled escalation), OR
-2. `result.outcome === 'timeout'`, OR
-3. `result.outcome === 'contract_violation'` (any violation code)
+1. `result.outcome === 'timeout'`, OR
+2. `result.outcome === 'contract_violation'` (any violation code)
+
+Note: caller-signalled fallback (`fallbackOfInvocationId` set on initial request) is **not** evaluated by `shouldFallback()` — it's handled earlier in `invoke()`.
 
 `determineTriggerReason(result)` provides a human-readable reason:
 
@@ -137,19 +148,21 @@ For caller-signalled fallbacks, the reason comes from `request.fallbackReason ??
 
 1. **Recursive `invoke()` vs `dispatch()`**: Calling `this.invoke()` from within `dispatch()` for the fallback path would cause `fallbackOfInvocationId` on the _new_ request to be misinterpreted as caller-signalled. Always call `dispatch(fallbackRequest, true)` for the fallback hop.
 
-2. **`fallbackOfInvocationId` on the first row**: When a caller signals fallback via `fallbackOfInvocationId`, the _first_ invocation row already has `fallbackOfInvocationId` set (to the ID of the invocation that failed). The _second_ row (the fallback itself) has `fallbackOfInvocationId` set to the first row's ID. This is correct — the first row records _what it fell back from_, and the second row records _what it fell back from_.
+2. **Caller-signalled fallback does not go through `shouldFallback()`**: If a caller sets `fallbackOfInvocationId` on the initial request, the router emits the event and dispatches directly. It does NOT re-evaluate whether escalation is warranted — the router trusts the caller's decision. This was fixed after a review caught that the original `shouldFallback()` returned `true` whenever `fallbackOfInvocationId` was set, causing successful caller-signalled invocations to be discarded.
 
-3. **`fallbackProfile` must reference a valid profile with an adapter**: If the configured `fallbackProfile` string doesn't match a profile key, or no adapter is registered for that profile's runtime, the fallback is silently skipped and the original result is returned. The config schema validates `fallbackProfile` references at load time, but the router also guards at runtime.
+3. **`fallbackOfInvocationId` on the first row**: When a caller signals fallback via `fallbackOfInvocationId`, the _first_ invocation row already has `fallbackOfInvocationId` set (to the ID of the invocation that failed). The _second_ row (the fallback itself) has `fallbackOfInvocationId` set to the first row's ID. This is correct — the first row records _what it fell back from_, and the second row records _what it fell back from_.
 
-4. **Event emission is best-effort**: If `eventBus` is not provided in options, `emitFallbackEvent` returns early. This allows tests and non-event contexts to use the router without events.
+4. **`fallbackProfile` must reference a valid profile with an adapter**: If the configured `fallbackProfile` string doesn't match a profile key, or no adapter is registered for that profile's runtime, the fallback is silently skipped and the original result is returned. The config schema validates `fallbackProfile` references at load time, but the router also guards at runtime.
 
-5. **`AgentInvocationId` import from `@ai-sdlc/domain`**: The `fallbackOfInvocationId` field type uses `AgentInvocationId` from the domain layer, which is a branded type. Import it as `import type { AgentInvocationId } from '@ai-sdlc/domain'` (type-only for layer purity).
+5. **Event emission is best-effort**: If `eventBus` is not provided in options, `emitFallbackEvent` returns early. This allows tests and non-event contexts to use the router without events.
 
-6. **Contract violation codes beyond the initial spec**: The implementation added `invalid_result_value`, `missing_commit`, `not_pushed`, and `replies_not_posted` to `CONTRACT_VIOLATION_CODES` beyond what the original issue specified. These are used by other milestones (M4-04, M4-05) and were added preemptively.
+6. **`AgentInvocationId` import from `@ai-sdlc/domain`**: The `fallbackOfInvocationId` field type uses `AgentInvocationId` from the domain layer, which is a branded type. Import it as `import type { AgentInvocationId } from '@ai-sdlc/domain'` (type-only for layer purity).
 
-7. **The `cancelled_by_orchestrator` → `timeout` reclassification**: Existing logic in `dispatch()` reclassifies `cancelled_by_orchestrator` as `timeout` when the profile's timeout signal fired but the request's abort signal didn't. This reclassification happens _before_ fallback checks, which is correct — it means a timeout-triggered fallback will fire for cancelled orchestrator timeouts.
+7. **Contract violation codes beyond the initial spec**: The implementation added `invalid_result_value`, `missing_commit`, `not_pushed`, and `replies_not_posted` to `CONTRACT_VIOLATION_CODES` beyond what the original issue specified. These are used by other milestones (M4-04, M4-05) and were added preemptively.
 
-8. **Layer boundary**: `EventBusPort` is defined in `@ai-sdlc/application` (ports.ts). The router is in `@ai-sdlc/infrastructure`. This is correct — infrastructure can import application ports (inward dependency). Application never imports from infrastructure.
+8. **The `cancelled_by_orchestrator` → `timeout` reclassification**: Existing logic in `dispatch()` reclassifies `cancelled_by_orchestrator` as `timeout` when the profile's timeout signal fired but the request's abort signal didn't. This reclassification happens _before_ fallback checks, which is correct — it means a timeout-triggered fallback will fire for cancelled orchestrator timeouts.
+
+9. **Layer boundary**: `EventBusPort` is defined in `@ai-sdlc/application` (ports.ts). The router is in `@ai-sdlc/infrastructure`. This is correct — infrastructure can import application ports (inward dependency). Application never imports from infrastructure.
 
 ## What to Know Before Modifying This Code
 

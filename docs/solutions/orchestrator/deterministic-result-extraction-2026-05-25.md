@@ -139,6 +139,16 @@ Reads a `result.json` file by path, parses against the registry, prints result. 
 
 8. **Branch `(b)` test uses `FakeAgentPort` with scripted responses.** The key `'p'` must match the invocation's `profile`. If the profile name changes in the test, the fake won't find the scripted response and will throw "No scripted response for profile."
 
+9. **Plain-object prototype pollution in `PHASE_RESULT_REGISTRY`.** Indexing a `Record<string, PhaseResultMeta>` with keys like `toString` or `constructor` returns inherited properties (truthy), bypassing the unknown-phase guard and crashing at `meta.schema.safeParse`. Use `Object.hasOwn(PHASE_RESULT_REGISTRY, phase)` before accessing the value. TypeScript can't narrow `Record` values after `Object.hasOwn`, so a non-null assertion (`!`) on the subsequent lookup is needed.
+
+10. **`resultJsonPath` retry guard semantics.** The initial implementation skipped rerun when `invocation.resultJsonPath` was absent (no path = no result file to retry for). This guard was removed in a review fix ("missing path = missing artifact = should retry"), then **reinstated** in a second review round: absent `resultJsonPath` means the phase config didn't produce result artifacts at all, so retrying would burn tokens deterministically. The current behavior: skip rerun when `resultJsonPath` is missing, even for `retrySafe: true` phases.
+
+11. **`stepId` forwarding in retry requests.** `buildRetryRequest` must forward `invocation.stepId` to the rerun request. Without it, `AgentRuntimeRouter` can't record step linkage for retries. Use conditional spread `...(invocation.stepId ? { stepId: invocation.stepId } : {})` because `exactOptionalPropertyTypes: true` in tsconfig prevents assigning `string | undefined` to optional `string`.
+
+12. **Violation code semantics matter across all failure paths.** When `extractResult` fails, the violation code must accurately distinguish the failure cause: `MISSING_REQUIRED_ARTIFACT` for missing files (resultJsonPath absent or ArtifactNotFoundError), `INVALID_RESULT_JSON` for schema validation failure, `ARTIFACT_READ_ERROR` for non-not-found I/O errors. Review cycles corrected misaligned codes across 4+ failure paths — each path was chased independently by reviewers.
+
+13. **Catch-all error handling for rerun failures.** `ports.agent.invoke()` can throw (missing profile/adapter, runtime crash). The catch block must return structured failure preserving the initial failure's `reason` and `violationCode`, not hard-code new values. Use `(e as Error)?.message ?? String(e)` since non-Error throws have undefined `.message`.
+
 ## Lessons Learned
 
 1. **Result-type return over throwing.** Never throw on expected business failures (missing file, invalid schema). Return structured failure info so callers can make policy decisions. Throw only on programmer errors (unknown phase).
