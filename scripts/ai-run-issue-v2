@@ -35,6 +35,11 @@ fi
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$REPO_ROOT"
 
+declare -r _TSX_LOADER="${REPO_ROOT}/apps/cli/node_modules/tsx/dist/loader.mjs"
+if [[ ! -f "$_TSX_LOADER" ]]; then
+  echo "FATAL: tsx loader not found at $_TSX_LOADER (run 'pnpm install')" >&2; exit 1
+fi
+
 BASE_BRANCH="${BASE_BRANCH:-main}"
 BRANCH="ai/issue-${ISSUE_NUM}"
 # Derived from current repo; override with OWNER_REPO env var for cross-repo runs.
@@ -890,7 +895,7 @@ Write design.md now."
   # Write prompt to temp file for run-agent CLI
   _plan_prompt_file=$(mktemp)
   printf '%s' "$BRAINSTORM_PROMPT" > "$_plan_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-design \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -906,7 +911,7 @@ Write design.md now."
     case $_agent_ec in
       1) orchestrator_fail "plan-design failed (contract violation)" ;;
       2) orchestrator_fail "plan-design failed (config error or timeout)" ;;
-      3) orchestrator_fail "plan-design failed (adapter spawn failure)" ;;
+      3) orchestrator_fail "plan-design failed (unexpected error)" ;;
       *) orchestrator_fail "plan-design failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -967,7 +972,7 @@ Write plan.md now."
 
   _plan_prompt_file=$(mktemp)
   printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-write \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -983,7 +988,7 @@ Write plan.md now."
     case $_agent_ec in
       1) orchestrator_fail "plan-write failed (contract violation)" ;;
       2) orchestrator_fail "plan-write failed (config error or timeout)" ;;
-      3) orchestrator_fail "plan-write failed (adapter spawn failure)" ;;
+      3) orchestrator_fail "plan-write failed (unexpected error)" ;;
       *) orchestrator_fail "plan-write failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -1832,7 +1837,7 @@ Write code-review.md now."
 
   _review_prompt_file=$(mktemp)
   printf '%s' "$REVIEW_PROMPT" > "$_review_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase review \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -1848,7 +1853,7 @@ Write code-review.md now."
     case $_agent_ec in
       1) orchestrator_fail "review failed (contract violation)" ;;
       2) orchestrator_fail "review failed (config error or timeout)" ;;
-      3) orchestrator_fail "review failed (adapter spawn failure)" ;;
+      3) orchestrator_fail "review failed (unexpected error)" ;;
       *) orchestrator_fail "review failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -1946,7 +1951,7 @@ Start now."
 
   _fix_prompt_file=$(mktemp)
   printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase fix-review \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -1963,7 +1968,7 @@ Start now."
     case $_agent_ec in
       1) orchestrator_fail "fix-review failed (contract violation)" ;;
       2) orchestrator_fail "fix-review failed (config error or timeout)" ;;
-      3) orchestrator_fail "fix-review failed (adapter spawn failure)" ;;
+      3) orchestrator_fail "fix-review failed (unexpected error)" ;;
       *) orchestrator_fail "fix-review failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
