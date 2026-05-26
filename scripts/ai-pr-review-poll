@@ -22,7 +22,7 @@ if [[ -z "$OWNER_REPO" ]]; then
 fi
 
 # Generate a unique run ID for agent invocation plumbing
-RUN_ID="${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}"
+RUN_ID="${AI_RUN_UUID:-${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}}"
 REPO_ID="${REPO_ID:-$OWNER_REPO}"
 
 if [[ -z "$PR_NUMBER" ]]; then
@@ -725,6 +725,7 @@ process_reviews() {
     --cwd "$POLL_WORKTREE" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
     --phase-id "process-review-p${POLL_COUNT}" \
     --step-id "${POLL_COUNT}" \
     --prompt-file "$prompt_file" \

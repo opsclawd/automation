@@ -50,7 +50,7 @@ AGENT_CLI="${AGENT_CLI:-opencode}"
 # Generate a unique run ID for agent invocation plumbing
 # NOTE: The `date +%s%N` fallback is NOT UUID-guaranteed unique; uuidgen or python3
 # should be available in production environments to avoid potential ID collisions.
-RUN_ID="${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}"
+RUN_ID="${AI_RUN_UUID:-${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}}"
 REPO_ID="${REPO_ID:-$OWNER_REPO}"
 
 # Phase timeouts (seconds)
@@ -895,6 +895,7 @@ Write design.md now."
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
     --phase-id plan-design \
     --prompt-file "$_plan_prompt_file" \
     --timeout-minutes $(( TIMEOUT_BRAINSTORM / 60 )) \
@@ -971,6 +972,7 @@ Write plan.md now."
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
     --phase-id plan-write \
     --prompt-file "$_plan_prompt_file" \
     --timeout-minutes $(( TIMEOUT_PLAN_WRITE / 60 )) \
@@ -1835,6 +1837,7 @@ Write code-review.md now."
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
     --phase-id review \
     --prompt-file "$_review_prompt_file" \
     --timeout-minutes $(( TIMEOUT_REVIEW / 60 )) \
@@ -1948,6 +1951,7 @@ Start now."
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
     --phase-id "fix-review-${FIX_LOOP_COUNT}" \
     --step-id "${FIX_LOOP_COUNT}" \
     --prompt-file "$_fix_prompt_file" \

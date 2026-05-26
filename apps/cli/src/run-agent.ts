@@ -13,6 +13,7 @@ interface Flags {
   cwd?: string;
   'run-id'?: string;
   'repo-id'?: string;
+  'repo-root'?: string;
   'phase-id'?: string;
   'step-id'?: string;
   'prompt-file'?: string;
@@ -113,6 +114,7 @@ function findRepoRoot(dir: string): string {
  *   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx apps/cli/src/run-agent.ts \
  *     --phase <phase> \
  *     --cwd <worktree> \
+ *     --repo-root <canonical-repo-root> \
  *     --run-id <uuid> \
  *     --repo-id <owner/repo> \
  *     --phase-id <name> \
@@ -132,6 +134,7 @@ async function main() {
       cwd: { type: 'string' },
       'run-id': { type: 'string' },
       'repo-id': { type: 'string' },
+      'repo-root': { type: 'string' },
       'phase-id': { type: 'string' },
       'step-id': { type: 'string' },
       'prompt-file': { type: 'string' },
@@ -155,8 +158,10 @@ async function main() {
     process.exit(3);
   }
 
-  // Resolve repo root from cwd (cwd is the worktree dir)
-  const repoRoot = findRepoRoot(values.cwd!);
+  // Resolve repo root: explicit flag (canonical main checkout) wins over
+  // walking up from --cwd (which may land inside a worktree that contains
+  // its own pnpm-workspace.yaml, producing the wrong root for DB lookups).
+  const repoRoot = values['repo-root'] ?? findRepoRoot(values.cwd!);
 
   // Load config from repo root
   let config;
