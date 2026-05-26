@@ -11,7 +11,7 @@
 # NOTE: The `implement` loop (phases: implement-task-*, spec-review-task-*,
 # quality-review-task-*, fix-review-task-*) still spawns `opencode` directly
 # via run_agent_raw(). That migration is M8-04. Do not assume all agent calls
-# flow through the Node CLI (apps/cli/dist/run-agent.js).
+# flow through the Node CLI (apps/cli/src/run-agent.ts via tsx).
 #
 set -euo pipefail
 # SIGPIPE gotcha: with `set -e -o pipefail`, a `producer | head -N`
@@ -890,7 +890,7 @@ Write design.md now."
   # Write prompt to temp file for run-agent CLI
   _plan_prompt_file=$(mktemp)
   printf '%s' "$BRAINSTORM_PROMPT" > "$_plan_prompt_file"
-  ! node "$REPO_ROOT/apps/cli/dist/run-agent.js" \
+  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-design \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -964,7 +964,7 @@ Write plan.md now."
 
   _plan_prompt_file=$(mktemp)
   printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
-  ! node "$REPO_ROOT/apps/cli/dist/run-agent.js" \
+  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-write \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -1826,7 +1826,7 @@ Write code-review.md now."
 
   _review_prompt_file=$(mktemp)
   printf '%s' "$REVIEW_PROMPT" > "$_review_prompt_file"
-  ! node "$REPO_ROOT/apps/cli/dist/run-agent.js" \
+  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase review \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -1937,7 +1937,7 @@ Start now."
 
   _fix_prompt_file=$(mktemp)
   printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
-  ! node "$REPO_ROOT/apps/cli/dist/run-agent.js" \
+  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase fix-review \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \

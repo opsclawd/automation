@@ -99,7 +99,7 @@ function findRepoRoot(dir: string): string {
  *   3 — adapter spawn failure (unexpected error)
  *
  * Usage (from Bash):
- *   node apps/cli/dist/run-agent.js \
+ *   NODE_OPTIONS='--conditions=development' pnpm exec tsx apps/cli/src/run-agent.ts \
  *     --phase <phase> \
  *     --cwd <worktree> \
  *     --run-id <uuid> \
@@ -107,6 +107,11 @@ function findRepoRoot(dir: string): string {
  *     --phase-id <name> \
  *     --prompt-file <path> \
  *     --start-sha <sha>
+ *
+ * Runs from TypeScript source via tsx (no build required), matching
+ * the project's existing dev pattern (apps/api uses node --import tsx/esm).
+ * The --conditions=development flag enables workspace package resolution
+ * of src/ rather than dist/ (all packages export a "development" condition).
  */
 async function main() {
   const { values } = parseArgs({
