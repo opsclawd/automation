@@ -51,7 +51,7 @@ discover_inputs() {
 
   # auto: resolve the since-ref from git log on docs/solutions/
   if [[ "$mode" == "auto" ]]; then
-    since_ref=$(git log -1 --format=%H --grep='^docs(solutions): consolidate compound artifacts' -- docs/solutions/ 2>/dev/null || echo "")
+    since_ref=$(git log -1 --format=%H --basic-regexp --grep='^docs(solutions): consolidate compound artifacts' -- docs/solutions/ 2>/dev/null || echo "")
   fi
 
   local all_files
