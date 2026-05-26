@@ -48,6 +48,8 @@ AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
 AGENT_CLI="${AGENT_CLI:-opencode}"
 
 # Generate a unique run ID for agent invocation plumbing
+# NOTE: The `date +%s%N` fallback is NOT UUID-guaranteed unique; uuidgen or python3
+# should be available in production environments to avoid potential ID collisions.
 RUN_ID="${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}"
 REPO_ID="${REPO_ID:-$OWNER_REPO}"
 
@@ -1840,6 +1842,9 @@ Write code-review.md now."
   rm -f "$_review_prompt_file"
   if [[ $_agent_ec -ne 0 ]]; then
     warn "review agent exited with code $_agent_ec"
+    if [[ $_agent_ec -eq 2 ]]; then
+      orchestrator_fail "review failed (config error or timeout)"
+    fi
   fi
 
   # Copy review from worktree
@@ -1950,6 +1955,9 @@ Start now."
   rm -f "$_fix_prompt_file"
   if [[ $_agent_ec -ne 0 ]]; then
     warn "fix-review agent exited with code $_agent_ec"
+    if [[ $_agent_ec -eq 2 ]]; then
+      orchestrator_fail "fix-review failed (config error or timeout)"
+    fi
   fi
   check_branch_after_agent
 

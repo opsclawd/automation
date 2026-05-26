@@ -11,6 +11,7 @@
     "@ai-sdlc/api": "workspace:*",
     "@ai-sdlc/application": "workspace:*",
     "@ai-sdlc/domain": "workspace:*",
+    "@ai-sdlc/infrastructure": "workspace:*",
     "@ai-sdlc/shared": "workspace:*"
   }
 }

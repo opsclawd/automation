@@ -79,6 +79,9 @@ importers:
       '@ai-sdlc/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@ai-sdlc/infrastructure':
+        specifier: workspace:*
+        version: link:../../packages/infrastructure
       '@ai-sdlc/shared':
         specifier: workspace:*
         version: link:../../packages/shared

@@ -63,6 +63,12 @@ export function resolveProfileName(
         error: `unknown phase: ${values.phase} (no entry in agent.phaseProfiles)`,
       };
     }
+    if (!entry.profile) {
+      return {
+        ok: false,
+        error: `phase '${values.phase}' has no profile configured`,
+      };
+    }
     return { ok: true, profileName: entry.profile };
   }
   return { ok: false, error: 'must pass --phase or --profile' };

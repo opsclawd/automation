@@ -732,11 +732,12 @@ process_reviews() {
     --start-sha "$(git -C "$POLL_WORKTREE" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/process-review-p${POLL_COUNT}.log"
   _agent_ec=$?
-  rm -f "$prompt_file"
 
   if [[ $_agent_ec -ne 0 ]]; then
     warn "Agent exited with code ${_agent_ec} (poll ${POLL_COUNT})"
   fi
+
+  rm -f "$prompt_file"
 
   # Promote agent's in-worktree result (where opencode CAN write) to ISSUES_DIR
   # so the existing resolver and artifact archiving keep working unchanged.
