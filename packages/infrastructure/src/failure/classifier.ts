@@ -59,6 +59,11 @@ const PATTERNS: Pattern[] = [
 
 const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
+function timeoutPlausible(input: ClassifyExitInput): boolean {
+  if (input.elapsedMs === undefined || input.timeoutMs === undefined) return true;
+  return input.elapsedMs >= input.timeoutMs * 0.5;
+}
+
 export function classifyExit(input: ClassifyExitInput): Failure {
   if (input.events && input.events.length > 0) {
     // Event-driven classification is attempted first. When the terminal event
@@ -79,6 +84,7 @@ export function classifyExit(input: ClassifyExitInput): Failure {
 
   let best: { pattern: Pattern; matchIndex: number } | undefined;
   for (const p of PATTERNS) {
+    if (p.kind === 'timeout' && !timeoutPlausible(input)) continue;
     const gRegex = new RegExp(p.regex.source, p.regex.flags + 'g');
     let m: RegExpExecArray | null;
     while ((m = gRegex.exec(tail))) {
@@ -225,7 +231,7 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
     kind = 'branch_changed';
     suggestedAction =
       'Reset the worktree branch and retry; verify the agent prompt does not switch branches.';
-  } else if (/timeout|timed out/i.test(reason)) {
+  } else if (/timeout|timed out/i.test(reason) && timeoutPlausible(input)) {
     kind = 'timeout';
     suggestedAction = 'Raise invocationMaxMinutes or investigate why the agent hung.';
   } else if (/blocked/i.test(reason)) {

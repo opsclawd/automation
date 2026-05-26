@@ -104,6 +104,37 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('timeout');
   });
 
+  it('skips timeout classification when elapsedMs is far below timeoutMs', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'process timed out after 120s',
+      runUuid: 'test-uuid',
+      elapsedMs: 5_000,
+      timeoutMs: 1_800_000,
+    });
+    expect(f.kind).not.toBe('timeout');
+  });
+
+  it('classifies timeout when elapsedMs is close to timeoutMs', () => {
+    const f = classifyExit({
+      exitCode: 124,
+      combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid',
+      elapsedMs: 1_700_000,
+      timeoutMs: 1_800_000,
+    });
+    expect(f.kind).toBe('timeout');
+  });
+
+  it('classifies timeout when elapsedMs/timeoutMs are not provided', () => {
+    const f = classifyExit({
+      exitCode: 124,
+      combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid',
+    });
+    expect(f.kind).toBe('timeout');
+  });
+
   it('returns validation_failed for "validate phase failed" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -702,6 +733,38 @@ describe('classifyExit with events (M2-06)', () => {
   it('classifies timeout via metadata.reason matching /timeout|timed out/i', () => {
     const failure = classifyExit({
       ...baseInput,
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'agent timed out after 600s',
+          metadata: { reason: 'timed out' },
+        }),
+      ],
+    });
+    expect(failure.kind).toBe('timeout');
+  });
+
+  it('skips event-driven timeout when elapsedMs is far below timeoutMs', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      elapsedMs: 5_000,
+      timeoutMs: 1_800_000,
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'agent timed out after 600s',
+          metadata: { reason: 'timed out' },
+        }),
+      ],
+    });
+    expect(failure.kind).not.toBe('timeout');
+  });
+
+  it('classifies event-driven timeout when elapsedMs is close to timeoutMs', () => {
+    const failure = classifyExit({
+      ...baseInput,
+      elapsedMs: 1_700_000,
+      timeoutMs: 1_800_000,
       events: [
         ev({
           phase: 'implement',

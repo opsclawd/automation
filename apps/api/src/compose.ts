@@ -78,6 +78,7 @@ export interface ComposeOptions {
    *  composing inside a child process that owns a tmp dir the sweep
    *  would delete out from under it (e.g. run-agent.ts). */
   runStartupSweeps?: boolean;
+  invocationTimeoutMs?: number;
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
@@ -143,6 +144,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.model !== undefined) deps.model = opts.model;
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
+  if (opts.invocationTimeoutMs !== undefined) deps.invocationTimeoutMs = opts.invocationTimeoutMs;
   const startIssueRun = new StartIssueRun(deps);
   const cancelRun = new CancelRun({ runRepository });
 
@@ -172,6 +174,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       });
       const agent = config.agent;
       resolveProfileForPhaseBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+    }
+    if (deps.invocationTimeoutMs === undefined && config.timeouts?.invocationMaxMinutes) {
+      deps.invocationTimeoutMs = config.timeouts.invocationMaxMinutes * 60_000;
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
