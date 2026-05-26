@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { AgentProfileName } from '@ai-sdlc/domain';
+import { AgentProfileName, createRun } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 import { existsSync } from 'node:fs';
@@ -202,6 +202,22 @@ async function main() {
   if (!c.agentRuntime) {
     console.error('agent runtime not configured');
     process.exit(2);
+  }
+
+  // Ensure a runs row exists for the given runId. When invoked via
+  // StartIssueRun (ai-run-issue-v2), the row already exists. When invoked
+  // standalone (e.g. ai-pr-review-poll), no row exists, which would violate
+  // the agent_invocations.run_uuid FK constraint.
+  const runId = values['run-id']!;
+  if (!c.runRepository.findByUuid(runId)) {
+    const run = createRun({
+      uuid: runId,
+      displayId: runId,
+      issueNumber: 0,
+      startedAt: new Date(),
+      type: 'pr_review',
+    });
+    c.runRepository.insert(run);
   }
 
   try {
