@@ -955,7 +955,26 @@ The plan MUST include:
 
 Write plan.md now."
 
-  echo "$PLAN_WRITE_PROMPT" | run_agent_raw "plan-write" "$TIMEOUT_PLAN_WRITE"
+  _plan_prompt_file=$(mktemp)
+  printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
+  node "$REPO_ROOT/apps/cli/dist/run-agent.js" \
+    --phase plan-write \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --phase-id plan-write \
+    --prompt-file "$_plan_prompt_file" \
+    --timeout-minutes $(( TIMEOUT_PLAN_WRITE / 60 )) \
+    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${ISSUES_DIR}/plan-write.log"
+  _agent_ec=$?
+  rm -f "$_plan_prompt_file"
+  if [[ $_agent_ec -ne 0 ]]; then
+    warn "plan-write agent exited with code $_agent_ec"
+    if [[ $_agent_ec -eq 2 ]]; then
+      orchestrator_fail "plan-write failed (config error or timeout)"
+    fi
+  fi
 
   if [[ ! -f "${WORKTREE_DIR}/plan.md" ]]; then
     orchestrator_fail "Plan file not found after plan-write phase"
@@ -1799,7 +1818,23 @@ Categorize findings:
 
 Write code-review.md now."
 
-  echo "$REVIEW_PROMPT" | run_agent_raw "review" "$TIMEOUT_REVIEW"
+  _review_prompt_file=$(mktemp)
+  printf '%s' "$REVIEW_PROMPT" > "$_review_prompt_file"
+  node "$REPO_ROOT/apps/cli/dist/run-agent.js" \
+    --phase review \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --phase-id review \
+    --prompt-file "$_review_prompt_file" \
+    --timeout-minutes $(( TIMEOUT_REVIEW / 60 )) \
+    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${ISSUES_DIR}/review.log"
+  _agent_ec=$?
+  rm -f "$_review_prompt_file"
+  if [[ $_agent_ec -ne 0 ]]; then
+    warn "review agent exited with code $_agent_ec"
+  fi
 
   # Copy review from worktree
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
@@ -1892,7 +1927,24 @@ excluded from git and move on. Do NOT delete or modify these files:
 
 Start now."
 
-  echo "$FIX_PROMPT" | run_agent_raw "fix-review-${FIX_LOOP_COUNT}" "$TIMEOUT_PR_FIX"
+  _fix_prompt_file=$(mktemp)
+  printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
+  node "$REPO_ROOT/apps/cli/dist/run-agent.js" \
+    --phase fix-review \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --phase-id "fix-review-${FIX_LOOP_COUNT}" \
+    --step-id "${FIX_LOOP_COUNT}" \
+    --prompt-file "$_fix_prompt_file" \
+    --timeout-minutes $(( TIMEOUT_PR_FIX / 60 )) \
+    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log"
+  _agent_ec=$?
+  rm -f "$_fix_prompt_file"
+  if [[ $_agent_ec -ne 0 ]]; then
+    warn "fix-review agent exited with code $_agent_ec"
+  fi
   check_branch_after_agent
 
   # ── re-validate ────────────────────────────────────────────────────────────
