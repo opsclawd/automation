@@ -1,0 +1,4 @@
+{
+  "result": "success",
+  "changedFiles": ["src/foo.ts"]
+}
