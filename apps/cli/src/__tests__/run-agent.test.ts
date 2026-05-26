@@ -47,23 +47,40 @@ describe('run-agent CLI logic', () => {
 
   describe('exitCodeForOutcome', () => {
     it('returns 0 for success', () => {
-      expect(exitCodeForOutcome('success')).toBe(0);
+      expect(exitCodeForOutcome({ outcome: 'success', contractViolations: [] })).toBe(0);
     });
 
     it('returns 2 for timeout', () => {
-      expect(exitCodeForOutcome('timeout')).toBe(2);
+      expect(exitCodeForOutcome({ outcome: 'timeout', contractViolations: [] })).toBe(2);
     });
 
     it('returns 1 for contract_violation', () => {
-      expect(exitCodeForOutcome('contract_violation')).toBe(1);
+      expect(exitCodeForOutcome({ outcome: 'contract_violation', contractViolations: [] })).toBe(1);
     });
 
-    it('returns 2 for failed (caller-aborted/timeout)', () => {
-      expect(exitCodeForOutcome('failed')).toBe(2);
+    it('returns 2 for failed with cancelled_by_orchestrator (caller-abort/timeout)', () => {
+      expect(
+        exitCodeForOutcome({
+          outcome: 'failed',
+          contractViolations: ['cancelled_by_orchestrator'],
+        }),
+      ).toBe(2);
+    });
+
+    it('returns 3 for failed without cancelled_by_orchestrator (runtime error)', () => {
+      expect(exitCodeForOutcome({ outcome: 'failed', contractViolations: [] })).toBe(3);
+    });
+
+    it('returns 3 for failed with other contract violations', () => {
+      expect(
+        exitCodeForOutcome({ outcome: 'failed', contractViolations: ['some_other_violation'] }),
+      ).toBe(3);
     });
 
     it('returns 3 for arbitrary unknown outcome', () => {
-      expect(exitCodeForOutcome('nonexistent-outcome')).toBe(3);
+      expect(exitCodeForOutcome({ outcome: 'nonexistent-outcome', contractViolations: [] })).toBe(
+        3,
+      );
     });
   });
 

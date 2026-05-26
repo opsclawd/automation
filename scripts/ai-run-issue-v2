@@ -902,10 +902,12 @@ Write design.md now."
     2>&1 | tee -a "${ISSUES_DIR}/plan-design.log"; _agent_ec=${PIPESTATUS[0]}
   rm -f "$_plan_prompt_file"
   if [[ $_agent_ec -ne 0 ]]; then
-    warn "plan-design agent exited with code $_agent_ec"
-    if [[ $_agent_ec -eq 2 ]]; then
-      orchestrator_fail "plan-design failed (config error or timeout)"
-    fi
+    case $_agent_ec in
+      1) orchestrator_fail "plan-design failed (contract violation)" ;;
+      2) orchestrator_fail "plan-design failed (config error or timeout)" ;;
+      3) orchestrator_fail "plan-design failed (adapter spawn failure)" ;;
+      *) orchestrator_fail "plan-design failed (unknown exit code $_agent_ec)" ;;
+    esac
   fi
 
   if [[ ! -f "${WORKTREE_DIR}/design.md" ]]; then
@@ -976,10 +978,12 @@ Write plan.md now."
     2>&1 | tee -a "${ISSUES_DIR}/plan-write.log"; _agent_ec=${PIPESTATUS[0]}
   rm -f "$_plan_prompt_file"
   if [[ $_agent_ec -ne 0 ]]; then
-    warn "plan-write agent exited with code $_agent_ec"
-    if [[ $_agent_ec -eq 2 ]]; then
-      orchestrator_fail "plan-write failed (config error or timeout)"
-    fi
+    case $_agent_ec in
+      1) orchestrator_fail "plan-write failed (contract violation)" ;;
+      2) orchestrator_fail "plan-write failed (config error or timeout)" ;;
+      3) orchestrator_fail "plan-write failed (adapter spawn failure)" ;;
+      *) orchestrator_fail "plan-write failed (unknown exit code $_agent_ec)" ;;
+    esac
   fi
 
   if [[ ! -f "${WORKTREE_DIR}/plan.md" ]]; then
@@ -1838,10 +1842,12 @@ Write code-review.md now."
     2>&1 | tee -a "${ISSUES_DIR}/review.log"; _agent_ec=${PIPESTATUS[0]}
   rm -f "$_review_prompt_file"
   if [[ $_agent_ec -ne 0 ]]; then
-    warn "review agent exited with code $_agent_ec"
-    if [[ $_agent_ec -eq 2 ]]; then
-      orchestrator_fail "review failed (config error or timeout)"
-    fi
+    case $_agent_ec in
+      1) orchestrator_fail "review failed (contract violation)" ;;
+      2) orchestrator_fail "review failed (config error or timeout)" ;;
+      3) orchestrator_fail "review failed (adapter spawn failure)" ;;
+      *) orchestrator_fail "review failed (unknown exit code $_agent_ec)" ;;
+    esac
   fi
 
   # Copy review from worktree
@@ -1950,10 +1956,12 @@ Start now."
     2>&1 | tee -a "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]}
   rm -f "$_fix_prompt_file"
   if [[ $_agent_ec -ne 0 ]]; then
-    warn "fix-review agent exited with code $_agent_ec"
-    if [[ $_agent_ec -eq 2 ]]; then
-      orchestrator_fail "fix-review failed (config error or timeout)"
-    fi
+    case $_agent_ec in
+      1) orchestrator_fail "fix-review failed (contract violation)" ;;
+      2) orchestrator_fail "fix-review failed (config error or timeout)" ;;
+      3) orchestrator_fail "fix-review failed (adapter spawn failure)" ;;
+      *) orchestrator_fail "fix-review failed (unknown exit code $_agent_ec)" ;;
+    esac
   fi
   check_branch_after_agent
 

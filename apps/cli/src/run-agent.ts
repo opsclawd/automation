@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { AgentProfileName } from '@ai-sdlc/domain';
+import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -38,14 +39,20 @@ export function validateRequiredFlags(values: Flags): string[] {
   return missing;
 }
 
-export function exitCodeForOutcome(outcome: string): number {
-  if (outcome === 'success') return 0;
-  if (outcome === 'timeout') return 2;
-  if (outcome === 'contract_violation') return 1;
-  // 'failed' includes caller-aborted (cancelled_by_orchestrator) from
-  // --timeout-minutes abort signal. Treat as timeout (exit 2) so the
-  // Bash caller's orchestrator_fail path fires as designed.
-  if (outcome === 'failed') return 2;
+export function exitCodeForOutcome(
+  result: Pick<AgentInvocationResult, 'outcome' | 'contractViolations'>,
+): number {
+  if (result.outcome === 'success') return 0;
+  if (result.outcome === 'timeout') return 2;
+  if (result.outcome === 'contract_violation') return 1;
+  if (result.outcome === 'failed') {
+    // Caller-aborted (e.g. --timeout-minutes signal) includes
+    // cancelled_by_orchestrator and maps to exit 2 (timeout) so the
+    // Bash orchestrator_fail path fires as designed.
+    if (result.contractViolations.includes('cancelled_by_orchestrator')) return 2;
+    // All other runtime failures map to exit 3 (unexpected error).
+    return 3;
+  }
   return 3;
 }
 
@@ -206,7 +213,7 @@ async function main() {
       ...(values['step-id'] ? { stepId: values['step-id'] } : {}),
     });
 
-    process.exit(exitCodeForOutcome(result.outcome));
+    process.exit(exitCodeForOutcome(result));
   } catch (e) {
     if (e instanceof ConfigError) {
       console.error(e.message);
