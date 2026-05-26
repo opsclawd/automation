@@ -103,7 +103,7 @@ function findRepoRoot(dir: string): string {
  *   3 — adapter spawn failure (unexpected error)
  *
  * Usage (from Bash):
- *   NODE_OPTIONS='--conditions=development' pnpm exec tsx apps/cli/src/run-agent.ts \
+ *   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx apps/cli/src/run-agent.ts \
  *     --phase <phase> \
  *     --cwd <worktree> \
  *     --run-id <uuid> \

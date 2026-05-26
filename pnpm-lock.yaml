@@ -85,6 +85,9 @@ importers:
       '@ai-sdlc/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.0
 
   apps/web:
     dependencies:

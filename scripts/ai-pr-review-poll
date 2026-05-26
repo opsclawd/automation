@@ -720,7 +720,7 @@ process_reviews() {
   emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
     "invoking agent for poll iteration ${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
 
-  NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase pr-review-poll \
     --cwd "$POLL_WORKTREE" \
     --run-id "$RUN_ID" \

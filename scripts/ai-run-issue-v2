@@ -890,7 +890,7 @@ Write design.md now."
   # Write prompt to temp file for run-agent CLI
   _plan_prompt_file=$(mktemp)
   printf '%s' "$BRAINSTORM_PROMPT" > "$_plan_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-design \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -964,7 +964,7 @@ Write plan.md now."
 
   _plan_prompt_file=$(mktemp)
   printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-write \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -1826,7 +1826,7 @@ Write code-review.md now."
 
   _review_prompt_file=$(mktemp)
   printf '%s' "$REVIEW_PROMPT" > "$_review_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase review \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -1937,7 +1937,7 @@ Start now."
 
   _fix_prompt_file=$(mktemp)
   printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' pnpm exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  ! NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase fix-review \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
