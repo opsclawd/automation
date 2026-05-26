@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -101,5 +101,63 @@ describe('OpenCodeAgentAdapter', () => {
     const r = await p;
     expect(r.outcome).toBe('failed');
     expect(r.contractViolations).toContain('cancelled_by_orchestrator');
+  });
+
+  it('passes --model to opencode when request.model is set', async () => {
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      model: 'claude-opus-4.7',
+    });
+    expect(result.outcome).toBe('success');
+    expect(result.model).toBe('claude-opus-4.7');
+    const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
+    expect(loggedArgs).toContain('--model');
+    expect(loggedArgs).toContain('claude-opus-4.7');
+    expect(loggedArgs).toContain('--prompt-file');
+
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+  });
+
+  it('omits --model when request.model is not set', async () => {
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(result.outcome).toBe('success');
+    expect(result.model).toBe('');
+    const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
+    expect(loggedArgs).not.toContain('--model');
+    expect(loggedArgs).toContain('--prompt-file');
+
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
   });
 });
