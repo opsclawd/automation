@@ -74,6 +74,10 @@ export interface ComposeOptions {
   dbPath?: string;
   runsDir?: string;
   baseTmpDir?: string;
+  /** Run orphan sweeps on compose. Defaults to true. Set to false when
+   *  composing inside a child process that owns a tmp dir the sweep
+   *  would delete out from under it (e.g. run-agent.ts). */
+  runStartupSweeps?: boolean;
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
@@ -86,19 +90,21 @@ export function composeRoot(opts: ComposeOptions): Container {
   applyMigrations(db);
   const runRepository = new RunRepository(db);
 
-  // Sweep orphaned runs before any new run starts
-  const sweep = new SweepOrphanedRuns({
-    runRepository,
-    isProcessAlive: checkPid,
-  });
-  const sweepResult = sweep.execute();
-  if (sweepResult.swept > 0) {
-    console.error(`Recovered ${sweepResult.swept} orphaned run(s)`);
-  }
+  if (opts.runStartupSweeps !== false) {
+    // Sweep orphaned runs before any new run starts
+    const sweep = new SweepOrphanedRuns({
+      runRepository,
+      isProcessAlive: checkPid,
+    });
+    const sweepResult = sweep.execute();
+    if (sweepResult.swept > 0) {
+      console.error(`Recovered ${sweepResult.swept} orphaned run(s)`);
+    }
 
-  // Sweep orphaned tmp dirs: remove .ai-tmp/<runId>/ where the runId
-  // has no active or recent run, or the run is in a terminal state.
-  sweepOrphanedTmpDirs(baseTmpDir, runRepository);
+    // Sweep orphaned tmp dirs: remove .ai-tmp/<runId>/ where the runId
+    // has no active or recent run, or the run is in a terminal state.
+    sweepOrphanedTmpDirs(baseTmpDir, runRepository);
+  }
 
   const phaseRepository = new PhaseRepository(db);
   const eventRepository = new EventRepository(db);
