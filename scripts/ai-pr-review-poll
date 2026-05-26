@@ -21,6 +21,10 @@ if [[ -z "$OWNER_REPO" ]]; then
   exit 1
 fi
 
+# Generate a unique run ID for agent invocation plumbing
+RUN_ID="${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}"
+REPO_ID="${REPO_ID:-$OWNER_REPO}"
+
 if [[ -z "$PR_NUMBER" ]]; then
   echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=3] [interval_sec=300]" >&2
   exit 1

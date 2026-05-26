@@ -41,6 +41,10 @@ PROMPTS_DIR="automation/prompts"
 AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
 AGENT_CLI="${AGENT_CLI:-opencode}"
 
+# Generate a unique run ID for agent invocation plumbing
+RUN_ID="${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}"
+REPO_ID="${REPO_ID:-$OWNER_REPO}"
+
 # Phase timeouts (seconds)
 TIMEOUT_BRAINSTORM=600
 TIMEOUT_PLAN_WRITE=600
