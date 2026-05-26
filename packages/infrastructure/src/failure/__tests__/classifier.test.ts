@@ -113,6 +113,29 @@ describe('classifyExit', () => {
       timeoutMs: 1_800_000,
     });
     expect(f.kind).not.toBe('timeout');
+    expect(f.kind).toBe('command_failed');
+  });
+
+  it('skips timeout at boundary (19% of timeoutMs)', () => {
+    const f = classifyExit({
+      exitCode: 1,
+      combinedLogTail: 'process timed out after 120s',
+      runUuid: 'test-uuid',
+      elapsedMs: 340_000,
+      timeoutMs: 1_800_000,
+    });
+    expect(f.kind).not.toBe('timeout');
+  });
+
+  it('classifies timeout just past threshold (21% of timeoutMs)', () => {
+    const f = classifyExit({
+      exitCode: 124,
+      combinedLogTail: 'TIMEOUT after 600s',
+      runUuid: 'test-uuid',
+      elapsedMs: 380_000,
+      timeoutMs: 1_800_000,
+    });
+    expect(f.kind).toBe('timeout');
   });
 
   it('classifies timeout when elapsedMs is close to timeoutMs', () => {

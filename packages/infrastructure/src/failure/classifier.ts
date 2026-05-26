@@ -61,7 +61,12 @@ const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
 function timeoutPlausible(input: ClassifyExitInput): boolean {
   if (input.elapsedMs === undefined || input.timeoutMs === undefined) return true;
-  return input.elapsedMs >= input.timeoutMs * 0.5;
+  // A timeout that fires in <20% of the budget is almost certainly not a real
+  // timeout — e.g. a 5-second failure on a 30-minute invocation (opsclawd/automation#107).
+  // The 0.2 threshold is deliberately conservative: it only guards against the
+  // clearly-impossible case, leaving the "ran long but not quite to budget" case
+  // to existing classification logic.
+  return input.elapsedMs >= input.timeoutMs * 0.2;
 }
 
 export function classifyExit(input: ClassifyExitInput): Failure {
@@ -112,6 +117,11 @@ export function classifyExit(input: ClassifyExitInput): Failure {
     return result;
   }
 
+  // When timeoutPlausible gates out the timeout pattern and no other pattern
+  // matches, the exit code drives the fallback: exit 1 → command_failed,
+  // anything else → unknown. Both are more honest than a false "timeout" —
+  // the caller (bash orchestrator) already has an accurate exit-code label
+  // from the case statement, and "unknown + inspect logs" is actionable.
   const kind: FailureKind = input.exitCode === 1 ? 'command_failed' : 'unknown';
   const fallback: Failure = {
     runUuid: input.runUuid,
