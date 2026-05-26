@@ -253,6 +253,67 @@ exit 1
     }
   });
 
+  it('skips orphan and tmp-dir sweeps when runStartupSweeps is false', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const origTmpdir = process.env.TMPDIR;
+    delete process.env.TMPDIR;
+    try {
+      const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+      const db = openDatabase(dbPath);
+      applyMigrations(db);
+      db.prepare(
+        `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'dead-pid-uuid',
+        'issue-777-20260513-000000',
+        777,
+        'issue_to_pr',
+        'running',
+        '[]',
+        new Date().toISOString(),
+        999999,
+      );
+      db.prepare(
+        `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'completed-uuid',
+        'issue-888-20260513-000000',
+        888,
+        'issue_to_pr',
+        'passed',
+        '[]',
+        new Date().toISOString(),
+      );
+      db.close();
+
+      const tmpBase = join(root, '.ai-tmp');
+      mkdirSync(tmpBase, { recursive: true });
+      const deadPidTmpDir = join(tmpBase, 'dead-pid-uuid');
+      mkdirSync(deadPidTmpDir, { recursive: true });
+      writeFileSync(join(deadPidTmpDir, 'prompt.md'), 'important prompt');
+      const completedTmpDir = join(tmpBase, 'completed-uuid');
+      mkdirSync(completedTmpDir, { recursive: true });
+      writeFileSync(join(completedTmpDir, 'leftover.tmp'), 'data');
+
+      composeRoot({ repoRoot: root, scriptPath, runStartupSweeps: false });
+
+      expect(existsSync(deadPidTmpDir)).toBe(true);
+      expect(existsSync(join(deadPidTmpDir, 'prompt.md'))).toBe(true);
+      expect(existsSync(completedTmpDir)).toBe(true);
+      expect(existsSync(join(completedTmpDir, 'leftover.tmp'))).toBe(true);
+
+      const container2 = composeRoot({ repoRoot: root, scriptPath });
+      expect(container2.runRepository.findByUuid('dead-pid-uuid')?.status).toBe('cancelled');
+      expect(existsSync(completedTmpDir)).toBe(false);
+    } finally {
+      if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
+      else delete process.env.TMPDIR;
+    }
+  });
+
   it('does not sweep tmp dirs for unknown UUIDs', () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
