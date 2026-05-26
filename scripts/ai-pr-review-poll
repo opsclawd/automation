@@ -737,8 +737,6 @@ process_reviews() {
     warn "Agent exited with code ${_agent_ec} (poll ${POLL_COUNT})"
   fi
 
-  rm -f "$prompt_file"
-
   # Promote agent's in-worktree result (where opencode CAN write) to ISSUES_DIR
   # so the existing resolver and artifact archiving keep working unchanged.
   if [[ -f "$RESULT_IN_WT" ]]; then
@@ -793,6 +791,8 @@ process_reviews() {
       esac
     fi
   fi
+
+  rm -f "$prompt_file"
 
   # ── Verification chain ──────────────────────────────────────────────────
   # Two independent flags:
