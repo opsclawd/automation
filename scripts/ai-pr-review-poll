@@ -21,6 +21,10 @@ if [[ -z "$OWNER_REPO" ]]; then
   exit 1
 fi
 
+# Generate a unique run ID for agent invocation plumbing
+RUN_ID="${AI_RUN_UUID:-${RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || date +%s%N)}}"
+REPO_ID="${REPO_ID:-$OWNER_REPO}"
+
 if [[ -z "$PR_NUMBER" ]]; then
   echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=3] [interval_sec=300]" >&2
   exit 1
@@ -716,12 +720,22 @@ process_reviews() {
   emit_event "pr-review-poll" "info" "pr-review-poll.agent.started" \
     "invoking agent for poll iteration ${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
 
-  run_agent "process-review-p${POLL_COUNT}" 600 < "$prompt_file"
-  local agent_ec=$?
-  rm -f "$prompt_file"
+  NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+    --phase pr-review-poll \
+    --cwd "$POLL_WORKTREE" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
+    --phase-id "process-review-p${POLL_COUNT}" \
+    --step-id "${POLL_COUNT}" \
+    --prompt-file "$prompt_file" \
+    --timeout-minutes 10 \
+    --start-sha "$(git -C "$POLL_WORKTREE" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${ISSUES_DIR}/process-review-p${POLL_COUNT}.log"
+  _agent_ec=${PIPESTATUS[0]}
 
-  if [[ $agent_ec -ne 0 ]]; then
-    warn "Agent exited with code ${agent_ec}"
+  if [[ $_agent_ec -ne 0 ]]; then
+    warn "Agent exited with code ${_agent_ec} (poll ${POLL_COUNT})"
   fi
 
   # Promote agent's in-worktree result (where opencode CAN write) to ISSUES_DIR
@@ -747,17 +761,17 @@ process_reviews() {
   LAST_REVIEW_RESULT="$review_result"
 
   AGENT_DUR=$(( $(_now_ms) - AGENT_START_MS ))
-  if [[ $agent_ec -ne 0 ]]; then
+  if [[ $_agent_ec -ne 0 ]]; then
     AGENT_FAILED=true
     emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
-      "agent for poll iteration ${POLL_COUNT} exited with code ${agent_ec}" \
-      commentId="batch-p${POLL_COUNT}" reason="non_zero_exit" exitCode="$agent_ec" durationMs="$AGENT_DUR"
+      "agent for poll iteration ${POLL_COUNT} exited with code ${_agent_ec}" \
+      commentId="batch-p${POLL_COUNT}" reason="non_zero_exit" exitCode="$_agent_ec" durationMs="$AGENT_DUR"
   else
     if [[ "$_result_was_valid" == "false" ]]; then
       AGENT_FAILED=true
       emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
         "agent for poll iteration ${POLL_COUNT} produced no valid result file" \
-        commentId="batch-p${POLL_COUNT}" reason="no_result_file" exitCode="$agent_ec" durationMs="$AGENT_DUR"
+        commentId="batch-p${POLL_COUNT}" reason="no_result_file" exitCode="$_agent_ec" durationMs="$AGENT_DUR"
     else
       case "$review_result" in
         ALL_DONE|NO_FIXES_NEEDED|PARTIAL)
@@ -768,16 +782,18 @@ process_reviews() {
         BLOCKED)
           emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
             "agent blocked for poll iteration ${POLL_COUNT}" \
-            commentId="batch-p${POLL_COUNT}" reason="BLOCKED" exitCode="$agent_ec"
+            commentId="batch-p${POLL_COUNT}" reason="BLOCKED" exitCode="$_agent_ec"
           ;;
         *)
           emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
             "agent for poll iteration ${POLL_COUNT} produced invalid result: ${review_result}" \
-            commentId="batch-p${POLL_COUNT}" reason="invalid_result" exitCode="$agent_ec"
+            commentId="batch-p${POLL_COUNT}" reason="invalid_result" exitCode="$_agent_ec"
           ;;
       esac
     fi
   fi
+
+  rm -f "$prompt_file"
 
   # ── Verification chain ──────────────────────────────────────────────────
   # Two independent flags:

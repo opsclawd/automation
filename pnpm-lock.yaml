@@ -68,6 +68,27 @@ importers:
         specifier: ^4.19.2
         version: 4.22.0
 
+  apps/cli:
+    dependencies:
+      '@ai-sdlc/api':
+        specifier: workspace:*
+        version: link:../api
+      '@ai-sdlc/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@ai-sdlc/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@ai-sdlc/infrastructure':
+        specifier: workspace:*
+        version: link:../../packages/infrastructure
+      '@ai-sdlc/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.0
+
   apps/web:
     dependencies:
       '@tailwindcss/typography':

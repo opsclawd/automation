@@ -3,6 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "//exports": "Deep imports required by @ai-sdlc/cli run-agent (M4-06). Maps src/ to dist/.",
+  "exports": {
+    "./compose.js": {
+      "development": "./src/compose.ts",
+      "types": "./dist/compose.d.ts",
+      "import": "./dist/compose.js"
+    }
+  },
   "bin": {
     "orchestrator": "./bin/orchestrator.mjs"
   },

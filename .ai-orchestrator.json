@@ -33,9 +33,11 @@
     },
     "phaseProfiles": {
       "plan-design": { "profile": "opencode-frontier" },
+      "plan-write": { "profile": "opencode-frontier" },
       "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
       "review": { "profile": "opencode-frontier" },
-      "fix-review": { "profile": "opencode-frontier" }
+      "fix-review": { "profile": "opencode-frontier" },
+      "pr-review-poll": { "profile": "opencode-frontier" }
     }
   }
 }
