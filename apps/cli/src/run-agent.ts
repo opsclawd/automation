@@ -20,6 +20,54 @@ interface Flags {
   'start-sha'?: string;
 }
 
+export type ConfigForProfileResolution = {
+  profiles: Record<string, unknown>;
+  phaseProfiles: Record<string, { profile: string }>;
+};
+
+export type ProfileResolution = { ok: true; profileName: string } | { ok: false; error: string };
+
+export function validateRequiredFlags(values: Flags): string[] {
+  const missing: string[] = [];
+  if (!values.cwd) missing.push('--cwd');
+  if (!values['run-id']) missing.push('--run-id');
+  if (!values['repo-id']) missing.push('--repo-id');
+  if (!values['phase-id']) missing.push('--phase-id');
+  if (!values['prompt-file']) missing.push('--prompt-file');
+  if (!values['start-sha']) missing.push('--start-sha');
+  return missing;
+}
+
+export function exitCodeForOutcome(outcome: string): number {
+  if (outcome === 'success') return 0;
+  if (outcome === 'timeout') return 2;
+  if (outcome === 'contract_violation') return 1;
+  return 3;
+}
+
+export function resolveProfileName(
+  config: ConfigForProfileResolution,
+  values: { profile?: string; phase?: string },
+): ProfileResolution {
+  if (values.profile) {
+    if (!config.profiles[values.profile]) {
+      return { ok: false, error: `unknown profile: ${values.profile}` };
+    }
+    return { ok: true, profileName: values.profile };
+  }
+  if (values.phase) {
+    const entry = config.phaseProfiles[values.phase];
+    if (!entry) {
+      return {
+        ok: false,
+        error: `unknown phase: ${values.phase} (no entry in agent.phaseProfiles)`,
+      };
+    }
+    return { ok: true, profileName: entry.profile };
+  }
+  return { ok: false, error: 'must pass --phase or --profile' };
+}
+
 /**
  * Walk up from `dir` to find the repo root (containing pnpm-workspace.yaml).
  */
@@ -73,13 +121,7 @@ async function main() {
   }) as { values: Flags };
 
   // Validate required flags
-  const missing: string[] = [];
-  if (!values.cwd) missing.push('--cwd');
-  if (!values['run-id']) missing.push('--run-id');
-  if (!values['repo-id']) missing.push('--repo-id');
-  if (!values['phase-id']) missing.push('--phase-id');
-  if (!values['prompt-file']) missing.push('--prompt-file');
-  if (!values['start-sha']) missing.push('--start-sha');
+  const missing = validateRequiredFlags(values);
   if (missing.length > 0) {
     console.error(`missing required flag(s): ${missing.join(', ')}`);
     process.exit(2);
@@ -111,24 +153,12 @@ async function main() {
     process.exit(2);
   }
 
-  let profileName: string;
-  if (values.profile) {
-    if (!config.agent.profiles[values.profile]) {
-      console.error(`unknown profile: ${values.profile}`);
-      process.exit(2);
-    }
-    profileName = values.profile;
-  } else if (values.phase) {
-    const entry = config.agent.phaseProfiles[values.phase];
-    if (!entry) {
-      console.error(`unknown phase: ${values.phase} (no entry in agent.phaseProfiles)`);
-      process.exit(2);
-    }
-    profileName = entry.profile;
-  } else {
-    console.error('must pass --phase or --profile');
+  const resolution = resolveProfileName(config.agent, values);
+  if (!resolution.ok) {
+    console.error(resolution.error);
     process.exit(2);
   }
+  const profileName = resolution.profileName;
 
   // Build invocation request
   const expectedArtifacts = values['expected-artifacts']?.split(',').filter(Boolean) ?? [];
@@ -161,10 +191,7 @@ async function main() {
       ...(values['step-id'] ? { stepId: values['step-id'] } : {}),
     });
 
-    if (result.outcome === 'success') process.exit(0);
-    if (result.outcome === 'timeout') process.exit(2);
-    if (result.outcome === 'contract_violation') process.exit(1);
-    process.exit(3);
+    process.exit(exitCodeForOutcome(result.outcome));
   } catch (e) {
     if (e instanceof ConfigError) {
       console.error(e.message);
@@ -175,4 +202,7 @@ async function main() {
   }
 }
 
-void main();
+// Avoid auto-executing when imported by tests
+if (!process.env.VITEST) {
+  void main();
+}

@@ -1,27 +1,85 @@
-import { describe, it, expect, vi } from 'vitest';
-
-// We test the constituent logic extracted from main().
-// The main() function is tested via integration; unit tests cover
-// individual concerns that are hard to reach through the integration path.
+import { describe, it, expect } from 'vitest';
+import {
+  validateRequiredFlags,
+  exitCodeForOutcome,
+  resolveProfileName,
+  type ConfigForProfileResolution,
+} from '../run-agent.js';
 
 describe('run-agent CLI logic', () => {
-  describe('profile resolution', () => {
-    const config = {
-      defaultProfile: 'opencode-frontier' as const,
+  describe('validateRequiredFlags', () => {
+    const requiredFlags = [
+      '--cwd',
+      '--run-id',
+      '--repo-id',
+      '--phase-id',
+      '--prompt-file',
+      '--start-sha',
+    ];
+
+    it('returns all six flag names when no values provided', () => {
+      const missing = validateRequiredFlags({});
+      expect(missing).toEqual(requiredFlags);
+    });
+
+    it('returns empty array when all required flags present', () => {
+      const missing = validateRequiredFlags({
+        cwd: '/tmp',
+        'run-id': 'abc-123',
+        'repo-id': 'owner/repo',
+        'phase-id': 'plan-design',
+        'prompt-file': '/tmp/prompt.md',
+        'start-sha': '0'.repeat(40),
+      });
+      expect(missing).toEqual([]);
+    });
+
+    it('returns only missing flags', () => {
+      const missing = validateRequiredFlags({
+        cwd: '/tmp',
+        'run-id': 'abc-123',
+        'repo-id': 'owner/repo',
+        'phase-id': 'plan-design',
+      });
+      expect(missing).toEqual(['--prompt-file', '--start-sha']);
+    });
+  });
+
+  describe('exitCodeForOutcome', () => {
+    it('returns 0 for success', () => {
+      expect(exitCodeForOutcome('success')).toBe(0);
+    });
+
+    it('returns 2 for timeout', () => {
+      expect(exitCodeForOutcome('timeout')).toBe(2);
+    });
+
+    it('returns 1 for contract_violation', () => {
+      expect(exitCodeForOutcome('contract_violation')).toBe(1);
+    });
+
+    it('returns 3 for unknown outcome (failed)', () => {
+      expect(exitCodeForOutcome('failed')).toBe(3);
+    });
+
+    it('returns 3 for arbitrary unknown outcome', () => {
+      expect(exitCodeForOutcome('nonexistent-outcome')).toBe(3);
+    });
+  });
+
+  describe('resolveProfileName', () => {
+    const config: ConfigForProfileResolution = {
       profiles: {
         'opencode-frontier': {
-          runtime: 'opencode' as const,
+          runtime: 'opencode',
           provider: 'anthropic',
           model: 'claude-opus-4.7',
           timeoutMinutes: 60,
         },
         'pi-qwen-local': {
-          runtime: 'pi' as const,
+          runtime: 'pi',
           provider: 'local',
           model: 'qwen3.6-27b',
-          contextLimitTokens: 64000,
-          promptBudgetTokens: 40000,
-          outputBudgetTokens: 8000,
           timeoutMinutes: 30,
         },
       },
@@ -35,85 +93,31 @@ describe('run-agent CLI logic', () => {
     };
 
     it('resolves a known phase to its profile', () => {
-      const entry = config.phaseProfiles['plan-design'];
-      expect(entry?.profile).toBe('opencode-frontier');
+      const result = resolveProfileName(config, { phase: 'plan-design' });
+      expect(result).toEqual({ ok: true, profileName: 'opencode-frontier' });
     });
 
-    it('throws ConfigError for an unknown phase', () => {
-      const entry = config.phaseProfiles['nonexistent-phase'];
-      expect(entry).toBeUndefined();
+    it('returns error for an unknown phase', () => {
+      const result = resolveProfileName(config, { phase: 'nonexistent-phase' });
+      expect(result).toEqual({
+        ok: false,
+        error: 'unknown phase: nonexistent-phase (no entry in agent.phaseProfiles)',
+      });
     });
 
     it('resolves a known --profile directly', () => {
-      const profile = config.profiles['pi-qwen-local'];
-      expect(profile).toBeDefined();
-      expect(profile?.runtime).toBe('pi');
+      const result = resolveProfileName(config, { profile: 'pi-qwen-local' });
+      expect(result).toEqual({ ok: true, profileName: 'pi-qwen-local' });
     });
 
-    it('rejects an unknown --profile', () => {
-      const profile = config.profiles['unknown-profile'];
-      expect(profile).toBeUndefined();
-    });
-  });
-
-  describe('required flag validation', () => {
-    const required = ['cwd', 'run-id', 'repo-id', 'phase-id', 'prompt-file', 'start-sha'];
-
-    it('reports all missing required flags', () => {
-      // Simulate the validation logic from main()
-      const values: Record<string, string | undefined> = {};
-      const missing = required.filter((f) => !values[f]);
-      expect(missing.length).toBe(required.length);
+    it('returns error for an unknown --profile', () => {
+      const result = resolveProfileName(config, { profile: 'unknown-profile' });
+      expect(result).toEqual({ ok: false, error: 'unknown profile: unknown-profile' });
     });
 
-    it('passes when all required flags are present', () => {
-      const values: Record<string, string | undefined> = {
-        cwd: '/tmp',
-        'run-id': 'abc-123',
-        'repo-id': 'owner/repo',
-        'phase-id': 'plan-design',
-        'prompt-file': '/tmp/prompt.md',
-        'start-sha': '0'.repeat(40),
-      };
-      const missing = required.filter((f) => !values[f]);
-      expect(missing.length).toBe(0);
-    });
-  });
-
-  describe('exit codes', () => {
-    it('exits 0 on success outcome', () => {
-      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-      const result: { outcome: string } = { outcome: 'success' };
-      if (result.outcome === 'success') process.exit(0);
-      expect(exit).toHaveBeenCalledWith(0);
-      exit.mockRestore();
-    });
-
-    it('exits 2 on timeout outcome', () => {
-      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-      const result: { outcome: string } = { outcome: 'timeout' };
-      if (result.outcome === 'timeout') process.exit(2);
-      expect(exit).toHaveBeenCalledWith(2);
-      exit.mockRestore();
-    });
-
-    it('exits 1 on contract_violation outcome', () => {
-      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-      const result: { outcome: string } = { outcome: 'contract_violation' };
-      if (result.outcome === 'contract_violation') process.exit(1);
-      expect(exit).toHaveBeenCalledWith(1);
-      exit.mockRestore();
-    });
-
-    it('exits 3 on unknown outcome', () => {
-      const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
-      const result: { outcome: string } = { outcome: 'failed' };
-      if (result.outcome === 'success') process.exit(0);
-      if (result.outcome === 'timeout') process.exit(2);
-      if (result.outcome === 'contract_violation') process.exit(1);
-      process.exit(3);
-      expect(exit).toHaveBeenCalledWith(3);
-      exit.mockRestore();
+    it('returns error when neither --phase nor --profile is provided', () => {
+      const result = resolveProfileName(config, {});
+      expect(result).toEqual({ ok: false, error: 'must pass --phase or --profile' });
     });
   });
 });
