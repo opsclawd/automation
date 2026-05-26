@@ -761,17 +761,17 @@ process_reviews() {
   LAST_REVIEW_RESULT="$review_result"
 
   AGENT_DUR=$(( $(_now_ms) - AGENT_START_MS ))
-  if [[ $agent_ec -ne 0 ]]; then
+  if [[ $_agent_ec -ne 0 ]]; then
     AGENT_FAILED=true
     emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
-      "agent for poll iteration ${POLL_COUNT} exited with code ${agent_ec}" \
-      commentId="batch-p${POLL_COUNT}" reason="non_zero_exit" exitCode="$agent_ec" durationMs="$AGENT_DUR"
+      "agent for poll iteration ${POLL_COUNT} exited with code ${_agent_ec}" \
+      commentId="batch-p${POLL_COUNT}" reason="non_zero_exit" exitCode="$_agent_ec" durationMs="$AGENT_DUR"
   else
     if [[ "$_result_was_valid" == "false" ]]; then
       AGENT_FAILED=true
       emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
         "agent for poll iteration ${POLL_COUNT} produced no valid result file" \
-        commentId="batch-p${POLL_COUNT}" reason="no_result_file" exitCode="$agent_ec" durationMs="$AGENT_DUR"
+        commentId="batch-p${POLL_COUNT}" reason="no_result_file" exitCode="$_agent_ec" durationMs="$AGENT_DUR"
     else
       case "$review_result" in
         ALL_DONE|NO_FIXES_NEEDED|PARTIAL)
@@ -782,12 +782,12 @@ process_reviews() {
         BLOCKED)
           emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
             "agent blocked for poll iteration ${POLL_COUNT}" \
-            commentId="batch-p${POLL_COUNT}" reason="BLOCKED" exitCode="$agent_ec"
+            commentId="batch-p${POLL_COUNT}" reason="BLOCKED" exitCode="$_agent_ec"
           ;;
         *)
           emit_event "pr-review-poll" "error" "pr-review-poll.agent.failed" \
             "agent for poll iteration ${POLL_COUNT} produced invalid result: ${review_result}" \
-            commentId="batch-p${POLL_COUNT}" reason="invalid_result" exitCode="$agent_ec"
+            commentId="batch-p${POLL_COUNT}" reason="invalid_result" exitCode="$_agent_ec"
           ;;
       esac
     fi
