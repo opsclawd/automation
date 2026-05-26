@@ -42,6 +42,10 @@ export function exitCodeForOutcome(outcome: string): number {
   if (outcome === 'success') return 0;
   if (outcome === 'timeout') return 2;
   if (outcome === 'contract_violation') return 1;
+  // 'failed' includes caller-aborted (cancelled_by_orchestrator) from
+  // --timeout-minutes abort signal. Treat as timeout (exit 2) so the
+  // Bash caller's orchestrator_fail path fires as designed.
+  if (outcome === 'failed') return 2;
   return 3;
 }
 

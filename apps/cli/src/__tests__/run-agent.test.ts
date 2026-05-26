@@ -58,8 +58,8 @@ describe('run-agent CLI logic', () => {
       expect(exitCodeForOutcome('contract_violation')).toBe(1);
     });
 
-    it('returns 3 for unknown outcome (failed)', () => {
-      expect(exitCodeForOutcome('failed')).toBe(3);
+    it('returns 2 for failed (caller-aborted/timeout)', () => {
+      expect(exitCodeForOutcome('failed')).toBe(2);
     });
 
     it('returns 3 for arbitrary unknown outcome', () => {
