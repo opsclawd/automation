@@ -7,6 +7,12 @@
 # State labels: ai:blocked | ai:failed | ai:needs-human-review | ai:pr-ready
 # Idempotent: rerunning resumes or safely fails (no duplicate branches/PRs)
 # =============================================================================
+#
+# NOTE: The `implement` loop (phases: implement-task-*, spec-review-task-*,
+# quality-review-task-*, fix-review-task-*) still spawns `opencode` directly
+# via run_agent_raw(). That migration is M8-04. Do not assume all agent calls
+# flow through the Node CLI (apps/cli/dist/run-agent.js).
+#
 set -euo pipefail
 # SIGPIPE gotcha: with `set -e -o pipefail`, a `producer | head -N`
 # pattern inside a command substitution can crash the script silently
