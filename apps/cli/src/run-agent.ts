@@ -198,7 +198,7 @@ async function main() {
   }
 
   // Compose container and invoke agent
-  const c = composeRoot({ repoRoot, scriptPath: '/dev/null' });
+  const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
   if (!c.agentRuntime) {
     console.error('agent runtime not configured');
     process.exit(2);
