@@ -257,7 +257,7 @@ _run_agent() {
 
 @test "_TSX_LOADER error message references ai:run-issue" {
   run grep 'tsx loader not found' scripts/ai-run-issue-v2
-  [ "$output" != *"pnpm install"* ]
+  [[ "$output" != *"pnpm install"* ]]
 }
 
 @test "script requires issue number argument" {
@@ -272,4 +272,11 @@ _run_agent() {
   grep -q 'orchestrator_fail()' scripts/ai-run-issue-v2
   grep -q "^warn()" scripts/ai-run-issue-v2
   grep -q "^log()" scripts/ai-run-issue-v2
+}
+
+@test "all run_* callsites have function definitions" {
+  callees=$(grep -oE '\brun_[a-z_]+\b' scripts/ai-run-issue-v2 | sort -u)
+  defs=$(grep -oE '^[[:space:]]*run_[a-z_]+\(\)' scripts/ai-run-issue-v2 | grep -oE 'run_[a-z_]+' | sort -u)
+  missing=$(comm -23 <(echo "$callees") <(echo "$defs") | grep -v -E '^(run|run_id|run_agent)$' || true)
+  [ -z "$missing" ]
 }
