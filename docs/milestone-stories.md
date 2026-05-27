@@ -572,6 +572,26 @@ Test plan     How acceptance is verified.
   - `implement` loop stays on direct `opencode` for now (covered by M8).
 - **Acceptance:** All previously-Bash-driven agent calls write `agent_invocations` rows with the resolved profile, runtime, provider, and model. End-to-end run still succeeds for both `opencode` and `pi` profiles (where the latter is configured).
 
+## M4-07 — Complete bash → router migration for remaining agent invocations
+
+- **Labels:** `milestone:M4`, `area:bash`, `area:cli`
+- **Depends on:** M4-06, #52 (phase-specific routing config)
+- **User story:** As an automation owner, I want every bash agent invocation to honour `phaseProfiles` and the `AI_AGENT_*` per-run overrides, so model selection and telemetry are uniform across all phases — not just the single-shot ones M4-06 migrated.
+- **Context:** M4-06 intentionally left the `implement` loop and the two off-band scripts (`ai-pr-review-poll`, `ai-consolidate-compound`) on direct `opencode --model $AGENT_MODEL run`. After #52 ships per-phase routing, those bypassed invocations silently ignore the new config — the highest-volume phases (per-task spec/quality/fix reviews) are exactly where the routing wins should land but don't. This story closes that gap as a tactical bridge before M8's full TS rewrite.
+- **Scope:** Three sibling GitHub issues, each migrating one bash callsite to `apps/cli/src/run-agent.ts`:
+  - #118 — `scripts/ai-run-issue-v2` `run_agent_raw` (covers `implement-task-*`, `spec-review-task-*`, `quality-review-task-*`, `fix-review-task-*`, `re-review-*`, `compound`, `extract-*`).
+  - #119 — `scripts/ai-pr-review-poll` (`post-pr-review` phase). Bridge until M6-05 retires the script entirely.
+  - #120 — `scripts/ai-consolidate-compound` (off-band operator utility, no superseding milestone before M8-11).
+- **Out of scope:**
+  - M8-04's full TS rewrite of the implement loop. M4-07 keeps bash control flow; only model resolution + telemetry move.
+  - M6-04 / M6-05's managed in-process poller.
+  - Any prompt content or phase-rename work.
+- **Acceptance:**
+  - `grep -rn 'opencode --model' scripts/` returns zero matches.
+  - `AGENT_MODEL` and `AGENT_CLI` are dead vars across the codebase (deleted from script defaults; removed/updated in `docs/quickstart.md`).
+  - `AI_AGENT_PROVIDER` / `AI_AGENT_MODEL` overrides reach every phase, including the implement loop.
+  - `agent_invocations` rows are written for every per-task phase, the PR-review poller, and consolidation runs (previously invisible to telemetry).
+
 ---
 
 # Milestone M5 — TypeScript Validation Runner
