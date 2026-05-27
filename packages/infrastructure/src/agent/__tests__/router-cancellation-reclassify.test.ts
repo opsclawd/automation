@@ -13,10 +13,11 @@ import { AgentRuntimeRouter } from '../agent-runtime-router.js';
 /**
  * Locks in the semantics around reclassifying cancelled_by_orchestrator → timeout.
  *
- * The reclassification should only fire when the profile timeout signal fired
- * AND the caller signal did NOT. A caller-initiated abort (e.g. user Ctrl-C)
- * that races with a profile timeout should remain classified as a failure so
- * the cancellation signal survives in telemetry / failure.json.
+ * The reclassification fires when EITHER the profile timeout signal or the
+ * caller's AbortSignal.timeout() aborted — but NOT when the caller initiated
+ * a bare abort (e.g. user Ctrl-C). This ensures the fallback path activates
+ * for genuine timeouts while preserving cancellation signal in telemetry when
+ * the user explicitly cancels.
  */
 
 function cfg(): AgentConfig {
@@ -31,7 +32,7 @@ function cfg(): AgentConfig {
       },
     },
     phaseProfiles: {
-      'plan-design': { profile: 'opencode-frontier' },
+      'plan-design': { profile: 'opencode-frontier', fallbackProfile: 'opencode-frontier' },
     },
   };
 }
@@ -50,16 +51,14 @@ function makeReq(abortSignal?: AbortSignal): AgentInvocationRequest {
   };
 }
 
-class TimeoutFiringAdapter implements AgentPort {
+class SignalAwareAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
-    // Simulate the profile timeout firing by waiting until the composed
-    // abort signal aborts, then returning a cancelled outcome.
     await new Promise<void>((resolve) => {
-      const check = (): void => {
-        if (request.abortSignal?.aborted) resolve();
-        else setTimeout(check, 5);
-      };
-      check();
+      if (request.abortSignal?.aborted) {
+        resolve();
+      } else {
+        request.abortSignal?.addEventListener('abort', () => resolve(), { once: true });
+      }
     });
     return {
       runtime: 'opencode',
@@ -76,34 +75,47 @@ class TimeoutFiringAdapter implements AgentPort {
 }
 
 describe('AgentRuntimeRouter cancellation reclassification', () => {
-  it('keeps outcome=failed when caller signal aborted (user Ctrl-C wins over profile timeout)', async () => {
+  it('reclassifies to timeout when caller AbortSignal.timeout() fires (production path)', async () => {
     const inv = new FakeAgentInvocationPort();
     const router = new AgentRuntimeRouter({
       agent: cfg(),
-      adapters: { opencode: new TimeoutFiringAdapter() },
+      adapters: { opencode: new SignalAwareAdapter() },
+      invocationRepository: inv,
+      clock: () => new Date('2026-05-27T12:00:00Z'),
+      idFactory: () => 'inv-timeout-1',
+      readPromptChars: () => 1,
+    });
+
+    const callerSignal = AbortSignal.timeout(50);
+    const result = await router.invoke(makeReq(callerSignal));
+
+    expect(result.outcome).toBe('timeout');
+    expect(result.contractViolations).toEqual([]);
+
+    const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000020'));
+    expect(rows[0].outcome).toBe('timeout');
+  });
+
+  it('keeps outcome=failed when caller abort is bare controller.abort() (user Ctrl-C)', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: new SignalAwareAdapter() },
       invocationRepository: inv,
       clock: () => new Date('2026-05-27T12:00:00Z'),
       idFactory: () => 'inv-cancel-1',
       readPromptChars: () => 1,
     });
 
-    // Caller pre-aborts to simulate a user Ctrl-C before profile timeout window.
     const callerController = new AbortController();
     callerController.abort();
 
     const result = await router.invoke(makeReq(callerController.signal));
 
-    // Reclassification must NOT have fired — outcome stays 'failed'.
     expect(result.outcome).toBe('failed');
     expect(result.contractViolations).toContain(CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR);
 
     const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000020'));
     expect(rows[0].outcome).toBe('failed');
   });
-
-  // NOTE: the inverse case (profile timeout fires, no caller signal → outcome
-  // reclassified to 'timeout') would require waiting for AbortSignal.timeout
-  // to fire on a real interval. The router's existing fallback tests already
-  // exercise the timeout outcome path; the guard restored in this PR is the
-  // only branch this file is responsible for.
 });

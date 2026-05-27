@@ -156,15 +156,21 @@ export class AgentRuntimeRouter implements AgentPort {
       throw err;
     }
 
-    // Only reclassify cancellation as timeout when the profile timeout fired
-    // AND the caller signal did not. Without the caller-signal guard, a user
-    // Ctrl-C that races with a profile timeout gets mislabeled as timeout,
-    // suppressing the cancellation signal in failure.json/telemetry.
+    // Reclassify cancellation as timeout when either the profile timeout
+    // or the caller timeout (AbortSignal.timeout()) fired. Distinguish
+    // caller timeout from a user-initiated abort (Ctrl-C) by checking
+    // the abort reason — AbortSignal.timeout() always produces a
+    // DOMException with name 'TimeoutError', while controller.abort()
+    // without arguments sets reason to undefined.
+    const isCallerTimeout =
+      request.abortSignal?.aborted &&
+      request.abortSignal.reason instanceof DOMException &&
+      request.abortSignal.reason.name === 'TimeoutError';
+
     if (
       result.outcome === 'failed' &&
       result.contractViolations.includes(CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR) &&
-      profileTimeoutSignal?.aborted &&
-      !request.abortSignal?.aborted
+      (profileTimeoutSignal?.aborted || isCallerTimeout)
     ) {
       result = { ...result, outcome: 'timeout', contractViolations: [] };
     }
