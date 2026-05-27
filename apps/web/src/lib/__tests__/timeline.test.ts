@@ -153,7 +153,12 @@ describe('derivePhaseTimeline', () => {
 
   it('keeps phases in canonical order regardless of event arrival order', () => {
     const timeline = derivePhaseTimeline([
-      ev({ id: 1, phase: 'review', type: 'phase.started', timestamp: '2026-05-16T12:00:01.000Z' }),
+      ev({
+        id: 1,
+        phase: 'quality-review',
+        type: 'phase.started',
+        timestamp: '2026-05-16T12:00:01.000Z',
+      }),
       ev({
         id: 2,
         phase: 'plan-design',
@@ -162,7 +167,7 @@ describe('derivePhaseTimeline', () => {
       }),
     ]);
     expect(timeline.map((p) => p.name)).toEqual([...CANONICAL_PHASES]);
-    expect(timeline.find((p) => p.name === 'review')!.status).toBe('running');
+    expect(timeline.find((p) => p.name === 'quality-review')!.status).toBe('running');
     expect(timeline.find((p) => p.name === 'plan-design')!.status).toBe('running');
   });
 
