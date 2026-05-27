@@ -1790,12 +1790,12 @@ if [[ "$PHASE" == "validate" ]]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PHASE: review
+# PHASE: quality-review
 # ═══════════════════════════════════════════════════════════════════════════
-if [[ "$PHASE" == "review" ]]; then
-  log "=== Phase: review ==="
-  _emit_phase_started "review"
-  LAST_PHASE="review"
+if [[ "$PHASE" == "quality-review" ]]; then
+  log "=== Phase: quality-review ==="
+  _emit_phase_started "quality-review"
+  LAST_PHASE="quality-review"
 
   ensure_worktree
 
@@ -1871,7 +1871,7 @@ Write code-review.md now."
     fi
   fi
 
-  _emit_phase_done "review"
+  _emit_phase_done "quality-review"
   PHASE="fix-review"
 fi
 
