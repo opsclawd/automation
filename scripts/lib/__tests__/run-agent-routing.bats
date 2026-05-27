@@ -2,6 +2,23 @@
 
 setup() {
   TMPDIR_TEST="$(mktemp -d)"
+
+  STUB_BIN_DIR="${TMPDIR_TEST}/stub-bin"
+  mkdir -p "$STUB_BIN_DIR"
+
+  cat > "${STUB_BIN_DIR}/opencode" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+  chmod +x "${STUB_BIN_DIR}/opencode"
+
+  cat > "${STUB_BIN_DIR}/pi" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 0
+STUB_EOF
+  chmod +x "${STUB_BIN_DIR}/pi"
+
+  export PATH="${STUB_BIN_DIR}:${PATH}"
   export AI_RUN_EVENTS_FILE="${TMPDIR_TEST}/events.jsonl"
   export AI_RUN_DISPLAY_ID="issue-1-20260516-120000"
   export NODE_OPTIONS='--conditions=development'
