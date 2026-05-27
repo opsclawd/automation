@@ -13,18 +13,36 @@
     "invocationMaxMinutes": 30
   },
   "agent": {
-    "defaultProfile": "opencode-frontier",
+    "defaultProfile": "builder",
     "profiles": {
-      "opencode-frontier": {
+      "architect": {
+        "runtime": "opencode",
+        "provider": "ollama-cloud",
+        "model": "glm-5.1",
+        "timeoutMinutes": 60
+      },
+      "builder": {
         "runtime": "opencode",
         "provider": "minimax-coding-plan",
         "model": "MiniMax-M2.7",
-        "timeoutMinutes": 60
+        "timeoutMinutes": 30
       },
-      "opencode-fast": {
+      "inspector": {
         "runtime": "opencode",
-        "provider": "minimax-coding-plan",
-        "model": "MiniMax-M2.5",
+        "provider": "crofai",
+        "model": "qwen3.6-27b",
+        "timeoutMinutes": 30
+      },
+      "reviewer": {
+        "runtime": "opencode",
+        "provider": "opencode-go",
+        "model": "deepseek-v4-pro",
+        "timeoutMinutes": 30
+      },
+      "compound": {
+        "runtime": "opencode",
+        "provider": "opencode",
+        "model": "deepseek-v4-flash",
         "timeoutMinutes": 30
       },
       "pi-qwen-local": {
@@ -38,16 +56,16 @@
       }
     },
     "phaseProfiles": {
-      "plan-design": { "profile": "opencode-frontier" },
-      "plan-write": { "profile": "opencode-frontier" },
-      "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "quality-review": { "profile": "opencode-frontier" },
-      "spec-review": { "profile": "opencode-frontier" },
-      "fix-review": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "whole-pr-review": { "profile": "opencode-frontier" },
-      "post-pr-review": { "profile": "opencode-frontier" },
-      "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "create-pr": { "profile": "opencode-frontier" }
+      "plan-design": { "profile": "architect" },
+      "plan-write": { "profile": "architect" },
+      "implement": { "profile": "builder", "fallbackProfile": "inspector" },
+      "quality-review": { "profile": "inspector" },
+      "spec-review": { "profile": "reviewer" },
+      "fix-review": { "profile": "builder", "fallbackProfile": "inspector" },
+      "whole-pr-review": { "profile": "reviewer" },
+      "post-pr-review": { "profile": "reviewer" },
+      "compound": { "profile": "compound", "fallbackProfile": "inspector" },
+      "create-pr": { "profile": "architect" }
     }
   }
 }
