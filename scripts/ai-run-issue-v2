@@ -8,10 +8,9 @@
 # Idempotent: rerunning resumes or safely fails (no duplicate branches/PRs)
 # =============================================================================
 #
-# NOTE: The `implement` loop (phases: implement-task-*, spec-review-task-*,
-# quality-review-task-*, fix-review-task-*) still spawns `opencode` directly
-# via run_agent_raw(). That migration is M8-04. Do not assume all agent calls
-# flow through the Node CLI (apps/cli/src/run-agent.ts via tsx).
+# NOTE: All agent invocations now route through run-agent.ts via
+# AgentRuntimeRouter. Profile selection and env-var overrides
+# (AI_AGENT_PROVIDER, AI_AGENT_MODEL) are handled centrally.
 #
 set -euo pipefail
 # SIGPIPE gotcha: with `set -e -o pipefail`, a `producer | head -N`
@@ -49,8 +48,6 @@ if [[ -z "$OWNER_REPO" ]]; then
   exit 1
 fi
 PROMPTS_DIR="automation/prompts"
-AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
-AGENT_CLI="${AGENT_CLI:-opencode}"
 
 # Generate a unique run ID for agent invocation plumbing
 # NOTE: The `date +%s%N` fallback is NOT UUID-guaranteed unique; uuidgen or python3
@@ -584,56 +581,6 @@ resolve_result() {
   echo "$fallback" > "$result_file" 2>/dev/null || true
   echo "$fallback"
   return 0
-}
-
-run_agent_raw() {
-  local phase="$1"
-  local timeout_sec="$2"
-  local output_log="${ISSUES_DIR}/${phase}.log"
-  local agent_cmd
-
-  case "$AGENT_CLI" in
-    claude|claude-minimax)
-      agent_cmd="~/bin/claude-minimax --settings ~/.claude/profiles/minimax.json --print --model $AGENT_MODEL"
-      ;;
-    opencode)
-      agent_cmd="opencode --model $AGENT_MODEL run"
-      ;;
-    *)
-      orchestrator_fail "Unsupported AGENT_CLI: $AGENT_CLI"
-      ;;
-  esac
-
-  log "Running agent for phase '$phase' (timeout=${timeout_sec}s)..."
-
-  local prompt_file
-  prompt_file=$(mktemp)
-  cat > "$prompt_file"
-
-  local ec_file
-  ec_file=$(mktemp)
-  local ec=0
-
-  { timeout "$timeout_sec" bash -c "cd \"$WORKTREE_DIR\" && $agent_cmd" < "$prompt_file" 2>&1; echo $? > "$ec_file"; } \
-    | tee -a "$output_log" \
-    | grep -v "^\[0m$" | grep -v "^$" || true
-  ec=$(cat "$ec_file")
-
-  rm -f "$prompt_file" "$ec_file"
-
-  if [[ $ec -eq 124 ]]; then
-    warn "Phase '$phase' timed out after ${timeout_sec}s"
-    return 124
-  fi
-
-  if [[ $ec -ne 0 ]]; then
-    warn "Phase '$phase' exited with code $ec"
-    if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "$output_log" 2>/dev/null; then
-      orchestrator_fail "Phase '$phase' is blocked (agent emitted BLOCKED)"
-    fi
-  fi
-
-  return "$ec"
 }
 
 # ── setup ─────────────────────────────────────────────────────────────────────
