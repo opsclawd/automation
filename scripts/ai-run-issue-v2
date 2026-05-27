@@ -36,7 +36,7 @@ cd "$REPO_ROOT"
 
 declare -r _TSX_LOADER="${REPO_ROOT}/apps/cli/node_modules/tsx/dist/loader.mjs"
 if [[ ! -f "$_TSX_LOADER" ]]; then
-  echo "FATAL: tsx loader not found at $_TSX_LOADER (run 'pnpm install')" >&2; exit 1
+  echo "FATAL: tsx loader not found at $_TSX_LOADER (run 'cd apps/cli && pnpm install')" >&2; exit 1
 fi
 
 BASE_BRANCH="${BASE_BRANCH:-main}"
@@ -164,6 +164,37 @@ check_branch_after_agent() {
   current=$(cd "$WORKTREE_DIR" && git branch --show-current 2>/dev/null || echo "")
   if [[ "$current" != "${BRANCH}" ]]; then
     orchestrator_fail "Agent switched branch from ${BRANCH} to ${current}"
+  fi
+}
+
+detect_blocked() {
+  local _log="$1"
+  if [[ -f "$_log" ]] && grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "$_log" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+handle_agent_exit() {
+  local _phase_id="$1" _ec="$2" _log="$3" _fatal="${4:-true}"
+  local _blocked=false
+  if [[ -f "$_log" ]] && grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "$_log" 2>/dev/null; then
+    _blocked=true
+  fi
+  case $_ec in
+    1) local _msg="$_phase_id failed (contract violation)" ;;
+    2) local _msg="$_phase_id failed (config error or timeout)" ;;
+    3) local _msg="$_phase_id failed (unexpected error)" ;;
+    4) local _msg="$_phase_id is blocked (agent emitted BLOCKED)" ;;
+    *) local _msg="$_phase_id failed (unknown exit code $_ec)" ;;
+  esac
+  if [[ "$_blocked" == "true" ]]; then
+    _msg="$_phase_id is blocked (agent emitted BLOCKED)"
+  fi
+  if [[ "$_fatal" == "true" ]]; then
+    orchestrator_fail "$_msg"
+  else
+    warn "$_msg"
   fi
 }
 
@@ -509,8 +540,11 @@ Write the result now."
     --prompt-file "$_extract_prompt_file" \
     --timeout-minutes 1 \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/extract-${phase}.log"; _agent_ec=${PIPESTATUS[0]}
+    2>&1 | tee -a "${ISSUES_DIR}/extract-${phase}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_extract_prompt_file"
+  if [[ $_tee_ec -ne 0 ]]; then
+    warn "tee failed writing log for extract-${phase} (exit $_tee_ec)"
+  fi
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) warn "extract-${phase} failed (contract violation)" ;;
@@ -518,7 +552,11 @@ Write the result now."
       3) warn "extract-${phase} failed (unexpected error)" ;;
       *) warn "extract-${phase} failed (unknown exit code $_agent_ec)" ;;
     esac
+    if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/extract-${phase}.log" 2>/dev/null; then
+      warn "extract-${phase} is blocked (agent emitted BLOCKED)"
+    fi
   fi
+  check_branch_after_agent
 
   if validate_result_file "$result_file" "${allowed_values[@]}"; then
     log "  Extractor: successfully resolved ${phase} result"
@@ -1186,140 +1224,25 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --prompt-file "$_impl_prompt_file" \
-      --timeout-minutes $(( TIMEOUT_IMPLEMENT / 60 )) \
+      --timeout-minutes $(( (TIMEOUT_IMPLEMENT + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-      2>&1 | tee -a "${ISSUES_DIR}/implement-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]}
+      2>&1 | tee -a "${ISSUES_DIR}/implement-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_impl_prompt_file"
-    if [[ $_agent_ec -ne 0 ]]; then
-      case $_agent_ec in
-        1) orchestrator_fail "implement-task-${task_n} failed (contract violation)" ;;
-        2) orchestrator_fail "implement-task-${task_n} failed (config error or timeout)" ;;
-        3) orchestrator_fail "implement-task-${task_n} failed (unexpected error)" ;;
-        *) orchestrator_fail "implement-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
-      esac
+    if [[ $_tee_ec -ne 0 ]]; then
+      warn "tee failed writing log for implement-task-${task_n} (exit $_tee_ec)"
     fi
     check_branch_after_agent
-  }
-
-  # Run spec reviewer for a single task; writes result to file (not stdout)
-  run_spec_reviewer() {
-    local task_n="$1"
-    local task_title="$2"
-    local task_text="$3"
-    local impl_report="$4"
-    local output_log="${ISSUES_DIR}/spec-review-task-${task_n}.log"
-
-    log "  Task ${task_n}: spec review..."
-
-    SPEC_REVIEWER_PROMPT="You are reviewing whether an implementation matches its specification.
-
-## Design Context
-Read these files for full context on what was intended:
-- Design: ./design.md
-- Implementation plan: ./plan.md
-
-## SCOPE RESTRICTION — READ THIS TWICE
-You are reviewing ONLY Task ${task_n}: ${task_title}.
-
-The plan is executed ONE TASK AT A TIME by separate agent invocations. Tasks
-numbered higher than ${task_n} have NOT been started yet. It is EXPECTED and
-CORRECT that their files, functions, tests, and behaviors do not exist yet.
-
-DO NOT flag any of the following as issues:
-- Missing files, exports, types, or functions that belong to tasks > ${task_n}
-- Missing tests for behavior specified in tasks > ${task_n}
-- Incomplete features that the plan assigns to tasks > ${task_n}
-- Any mention of 'task X not implemented' or 'task Y is missing' where X/Y > ${task_n}
-
-Your review must be ENTIRELY about whether Task ${task_n} alone meets its
-requirements. If Task ${task_n} is complete and correct, the result is
-SPEC_PASS regardless of what other tasks in the plan have not been started.
-
-## Task Requirements
-${task_text}
-
-## What Implementer Claims They Built
-$(head -n 50 <<< "$impl_report")
-
-## CRITICAL: Do Not Trust the Report
-You MUST read the actual code and verify line by line. Do not take the
-implementer's word for what was built.
-
-## Your Job
-1. Read the design and plan documents first for context on this specific task.
-2. Read the code that was actually committed.
-3. Compare actual implementation to THIS task's requirements only.
-4. Check for missing pieces within this task's scope.
-5. Check for extra work not requested within this task's scope.
-6. Check for misunderstandings.
-
-## Report Format
-- ✅ Spec compliant (if everything matches)
-- ❌ Issues found: [list specifically with file:line references]
-
-## MANDATORY OUTPUT FILES — write BOTH, in this exact order
-
-**Step 1**: Write \`./spec-review-task-${task_n}.md\` — the detailed findings
-the fix-review agent will read. Include every issue with file:line references,
-the spec requirement violated, and what would satisfy it. If everything passes,
-write a single line: 'No findings. Implementation matches the spec.'
-
-**Step 2**: Write \`./spec-review-task-${task_n}.result\` — EXACTLY ONE of:
-SPEC_PASS | SPEC_FAIL. No other content — just the status word.
-
-CRITICAL ORDERING RULE:
-- You MUST write the .md file FIRST, then the .result file LAST.
-- Do NOT write the .result file until you have finalized your verdict.
-- The .result file is your final action before stopping.
-- If you changed your mind during analysis, rewrite BOTH files with the
-  final verdict. The .result file must match the conclusion in the .md file.
-
-STOP RULE — THIS IS THE MOST IMPORTANT RULE:
-After writing BOTH files you are DONE. Do NOT:
-- Re-read any files
-- Re-verify your work
-- Run any commands
-- Start the review over
-- Do anything at all
-
-You MUST emit no further actions after the .result file is written.
-Any action after writing .result is a contract violation.
-
-CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
-
-    if [[ "${SPEC_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
-      SPEC_REVIEWER_PROMPT="WARNING: Your previous attempt wrote the .result file but did not write the .md report file. This is a contract violation. You MUST write BOTH files in order: .md first, then .result last.
-
-${SPEC_REVIEWER_PROMPT}"
-    fi
-
-    local _spec_prompt_file
-    _spec_prompt_file=$(mktemp)
-    printf '%s' "$SPEC_REVIEWER_PROMPT" > "$_spec_prompt_file"
-    ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-      --phase spec-review \
-      --phase-id "spec-review-task-${task_n}" \
-      --cwd "$WORKTREE_DIR" \
-      --run-id "$RUN_ID" \
-      --repo-id "$REPO_ID" \
-      --repo-root "$REPO_ROOT" \
-      --prompt-file "$_spec_prompt_file" \
-      --timeout-minutes $(( TIMEOUT_REVIEW / 60 )) \
-      --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-      2>&1 | tee -a "${ISSUES_DIR}/spec-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]}
-    rm -f "$_spec_prompt_file"
-    if [[ $_agent_ec -eq 2 ]]; then
-      if [[ -f "${WORKTREE_DIR}/spec-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/spec-review-task-${task_n}.md" ]]; then
-        warn "Spec review timed out but both artifacts exist — proceeding"
+    if [[ $_agent_ec -ne 0 ]]; then
+      if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/implement-task-${task_n}.log" 2>/dev/null; then
+        orchestrator_fail "implement-task-${task_n} is blocked (agent emitted BLOCKED)"
       else
-        orchestrator_fail "Spec review timed out and artifacts are missing (result=${WORKTREE_DIR}/spec-review-task-${task_n}.result, md=${WORKTREE_DIR}/spec-review-task-${task_n}.md)"
+        case $_agent_ec in
+          1) orchestrator_fail "implement-task-${task_n} failed (contract violation)" ;;
+          2) orchestrator_fail "implement-task-${task_n} failed (config error or timeout)" ;;
+          3) orchestrator_fail "implement-task-${task_n} failed (unexpected error)" ;;
+          *) orchestrator_fail "implement-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
+        esac
       fi
-    elif [[ $_agent_ec -ne 0 ]]; then
-      case $_agent_ec in
-        1) orchestrator_fail "spec-review-task-${task_n} failed (contract violation)" ;;
-        3) orchestrator_fail "spec-review-task-${task_n} failed (unexpected error)" ;;
-        *) orchestrator_fail "spec-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
-      esac
     fi
     check_branch_after_agent
   }
@@ -1438,7 +1361,7 @@ ${QUALITY_REVIEWER_PROMPT}"
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --prompt-file "$_qual_prompt_file" \
-      --timeout-minutes $(( TIMEOUT_REVIEW / 60 )) \
+      --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
       2>&1 | tee -a "${ISSUES_DIR}/quality-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]}
     rm -f "$_qual_prompt_file"
@@ -1449,11 +1372,15 @@ ${QUALITY_REVIEWER_PROMPT}"
         orchestrator_fail "Quality review timed out and artifacts are missing (result=${WORKTREE_DIR}/quality-review-task-${task_n}.result, md=${WORKTREE_DIR}/quality-review-task-${task_n}.md)"
       fi
     elif [[ $_agent_ec -ne 0 ]]; then
-      case $_agent_ec in
-        1) orchestrator_fail "quality-review-task-${task_n} failed (contract violation)" ;;
-        3) orchestrator_fail "quality-review-task-${task_n} failed (unexpected error)" ;;
-        *) orchestrator_fail "quality-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
-      esac
+      if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
+        orchestrator_fail "quality-review-task-${task_n} is blocked (agent emitted BLOCKED)"
+      else
+        case $_agent_ec in
+          1) orchestrator_fail "quality-review-task-${task_n} failed (contract violation)" ;;
+          3) orchestrator_fail "quality-review-task-${task_n} failed (unexpected error)" ;;
+          *) orchestrator_fail "quality-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
+        esac
+      fi
     fi
     check_branch_after_agent
   }
@@ -1544,17 +1471,21 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --prompt-file "$_fix_prompt_file" \
-      --timeout-minutes $(( TIMEOUT_FIX / 60 )) \
+      --timeout-minutes $(( (TIMEOUT_FIX + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
       2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]}
     rm -f "$_fix_prompt_file"
     if [[ $_agent_ec -ne 0 ]]; then
-      case $_agent_ec in
-        1) orchestrator_fail "fix-review-task-${task_n} failed (contract violation)" ;;
-        2) orchestrator_fail "fix-review-task-${task_n} failed (config error or timeout)" ;;
-        3) orchestrator_fail "fix-review-task-${task_n} failed (unexpected error)" ;;
-        *) orchestrator_fail "fix-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
-      esac
+      if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-task-${task_n}.log" 2>/dev/null; then
+        orchestrator_fail "fix-review-task-${task_n} is blocked (agent emitted BLOCKED)"
+      else
+        case $_agent_ec in
+          1) orchestrator_fail "fix-review-task-${task_n} failed (contract violation)" ;;
+          2) orchestrator_fail "fix-review-task-${task_n} failed (config error or timeout)" ;;
+          3) orchestrator_fail "fix-review-task-${task_n} failed (unexpected error)" ;;
+          *) orchestrator_fail "fix-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
+        esac
+      fi
     fi
     check_branch_after_agent
   }
@@ -1896,7 +1827,7 @@ Write code-review.md now."
     --repo-root "$REPO_ROOT" \
     --phase-id whole-pr-review \
     --prompt-file "$_review_prompt_file" \
-    --timeout-minutes $(( TIMEOUT_REVIEW / 60 )) \
+    --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/review.log"; _agent_ec=${PIPESTATUS[0]}
   rm -f "$_review_prompt_file"
@@ -2015,14 +1946,18 @@ Start now."
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]}
   rm -f "$_fix_prompt_file"
-  if [[ $_agent_ec -ne 0 ]]; then
-    case $_agent_ec in
-      1) orchestrator_fail "fix-review failed (contract violation)" ;;
-      2) orchestrator_fail "fix-review failed (config error or timeout)" ;;
-      3) orchestrator_fail "fix-review failed (unexpected error)" ;;
-      *) orchestrator_fail "fix-review failed (unknown exit code $_agent_ec)" ;;
-    esac
-  fi
+    if [[ $_agent_ec -ne 0 ]]; then
+      if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
+        orchestrator_fail "fix-review failed (agent emitted BLOCKED)"
+      else
+        case $_agent_ec in
+          1) orchestrator_fail "fix-review failed (contract violation)" ;;
+          2) orchestrator_fail "fix-review failed (config error or timeout)" ;;
+          3) orchestrator_fail "fix-review failed (unexpected error)" ;;
+          *) orchestrator_fail "fix-review failed (unknown exit code $_agent_ec)" ;;
+        esac
+      fi
+    fi
   check_branch_after_agent
 
   # ── re-validate ────────────────────────────────────────────────────────────
@@ -2091,18 +2026,22 @@ Write code-review.md and review-findings-status.txt now."
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
     --prompt-file "$_re_review_prompt_file" \
-    --timeout-minutes $(( TIMEOUT_REVIEW / 60 )) \
+    --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]}
   rm -f "$_re_review_prompt_file"
   if [[ $_agent_ec -ne 0 ]]; then
-    case $_agent_ec in
-      1) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (contract violation)" ;;
-      2) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (config error or timeout)" ;;
-      3) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unexpected error)" ;;
-      *) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unknown exit code $_agent_ec)" ;;
-    esac
-  fi
+      if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
+        orchestrator_fail "re-review-${FIX_LOOP_COUNT} is blocked (agent emitted BLOCKED)"
+      else
+        case $_agent_ec in
+          1) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (contract violation)" ;;
+          2) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (config error or timeout)" ;;
+          3) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unexpected error)" ;;
+          *) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unknown exit code $_agent_ec)" ;;
+        esac
+      fi
+    fi
 
   # Copy updated review
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
@@ -2188,17 +2127,21 @@ Start now."
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --prompt-file "$_compound_prompt_file" \
-      --timeout-minutes $(( TIMEOUT_COMPOUND / 60 )) \
+      --timeout-minutes $(( (TIMEOUT_COMPOUND + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
       2>&1 | tee -a "${ISSUES_DIR}/compound.log"; _agent_ec=${PIPESTATUS[0]}
     rm -f "$_compound_prompt_file"
     if [[ $_agent_ec -ne 0 ]]; then
-      case $_agent_ec in
-        1) orchestrator_fail "compound failed (contract violation)" ;;
-        2) orchestrator_fail "compound failed (config error or timeout)" ;;
-        3) orchestrator_fail "compound failed (unexpected error)" ;;
-        *) orchestrator_fail "compound failed (unknown exit code $_agent_ec)" ;;
-      esac
+      if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/compound.log" 2>/dev/null; then
+        orchestrator_fail "compound is blocked (agent emitted BLOCKED)"
+      else
+        case $_agent_ec in
+          1) orchestrator_fail "compound failed (contract violation)" ;;
+          2) orchestrator_fail "compound failed (config error or timeout)" ;;
+          3) orchestrator_fail "compound failed (unexpected error)" ;;
+          *) orchestrator_fail "compound failed (unknown exit code $_agent_ec)" ;;
+        esac
+      fi
     fi
 
     # Copy the generated doc back to issues dir
