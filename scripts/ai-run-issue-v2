@@ -1786,7 +1786,7 @@ if [[ "$PHASE" == "validate" ]]; then
   fi
 
   _emit_phase_done "validate"
-  PHASE="review"
+  PHASE="quality-review"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
