@@ -17,8 +17,8 @@
     "profiles": {
       "opencode-frontier": {
         "runtime": "opencode",
-        "provider": "anthropic",
-        "model": "claude-opus-4.7",
+        "provider": "minimax-coding-plan",
+        "model": "MiniMax-M2.7",
         "timeoutMinutes": 60
       },
       "pi-qwen-local": {

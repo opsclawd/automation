@@ -48,7 +48,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
             ? AbortSignal.any(signals)
             : undefined;
       const args = ['run'];
-      if (request.model) args.push('--model', request.model);
+      if (request.model) {
+        const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
+        args.push('--model', modelArg);
+      }
       args.push('--prompt-file', request.promptPath);
       const child = execa(bin, args, {
         cwd: request.cwd,
