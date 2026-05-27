@@ -36,7 +36,7 @@ cd "$REPO_ROOT"
 
 declare -r _TSX_LOADER="${REPO_ROOT}/apps/cli/node_modules/tsx/dist/loader.mjs"
 if [[ ! -f "$_TSX_LOADER" ]]; then
-  echo "FATAL: tsx loader not found at $_TSX_LOADER (run 'cd apps/cli && pnpm install')" >&2; exit 1
+  echo "FATAL: tsx loader not found at $_TSX_LOADER (run 'pnpm ai:run-issue' to set up)" >&2; exit 1
 fi
 
 BASE_BRANCH="${BASE_BRANCH:-main}"
@@ -173,29 +173,6 @@ detect_blocked() {
     return 0
   fi
   return 1
-}
-
-handle_agent_exit() {
-  local _phase_id="$1" _ec="$2" _log="$3" _fatal="${4:-true}"
-  local _blocked=false
-  if [[ -f "$_log" ]] && grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "$_log" 2>/dev/null; then
-    _blocked=true
-  fi
-  case $_ec in
-    1) local _msg="$_phase_id failed (contract violation)" ;;
-    2) local _msg="$_phase_id failed (config error or timeout)" ;;
-    3) local _msg="$_phase_id failed (unexpected error)" ;;
-    4) local _msg="$_phase_id is blocked (agent emitted BLOCKED)" ;;
-    *) local _msg="$_phase_id failed (unknown exit code $_ec)" ;;
-  esac
-  if [[ "$_blocked" == "true" ]]; then
-    _msg="$_phase_id is blocked (agent emitted BLOCKED)"
-  fi
-  if [[ "$_fatal" == "true" ]]; then
-    orchestrator_fail "$_msg"
-  else
-    warn "$_msg"
-  fi
 }
 
 # Ensure $WORKTREE_DIR exists and is a valid git worktree on $BRANCH. Used by
@@ -910,10 +887,13 @@ Write design.md now."
     --repo-root "$REPO_ROOT" \
     --phase-id plan-design \
     --prompt-file "$_plan_prompt_file" \
-    --timeout-minutes $(( TIMEOUT_BRAINSTORM / 60 )) \
+    --timeout-minutes $(( (TIMEOUT_BRAINSTORM + 59) / 60 )) \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/plan-design.log"; _agent_ec=${PIPESTATUS[0]}
+    2>&1 | tee -a "${ISSUES_DIR}/plan-design.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_plan_prompt_file"
+  if [[ $_tee_ec -ne 0 ]]; then
+    warn "tee failed writing log for plan-design (exit $_tee_ec)"
+  fi
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) orchestrator_fail "plan-design failed (contract violation)" ;;
@@ -987,10 +967,13 @@ Write plan.md now."
     --repo-root "$REPO_ROOT" \
     --phase-id plan-write \
     --prompt-file "$_plan_prompt_file" \
-    --timeout-minutes $(( TIMEOUT_PLAN_WRITE / 60 )) \
+    --timeout-minutes $(( (TIMEOUT_PLAN_WRITE + 59) / 60 )) \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/plan-write.log"; _agent_ec=${PIPESTATUS[0]}
+    2>&1 | tee -a "${ISSUES_DIR}/plan-write.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_plan_prompt_file"
+  if [[ $_tee_ec -ne 0 ]]; then
+    warn "tee failed writing log for plan-write (exit $_tee_ec)"
+  fi
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) orchestrator_fail "plan-write failed (contract violation)" ;;
@@ -1244,7 +1227,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         esac
       fi
     fi
-    check_branch_after_agent
   }
 
   # Run quality reviewer for a single task; writes result to file (not stdout)
@@ -1363,8 +1345,11 @@ ${QUALITY_REVIEWER_PROMPT}"
       --prompt-file "$_qual_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-      2>&1 | tee -a "${ISSUES_DIR}/quality-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]}
+      2>&1 | tee -a "${ISSUES_DIR}/quality-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_qual_prompt_file"
+    if [[ $_tee_ec -ne 0 ]]; then
+      warn "tee failed writing log for quality-review-task-${task_n} (exit $_tee_ec)"
+    fi
     if [[ $_agent_ec -eq 2 ]]; then
       if [[ -f "${WORKTREE_DIR}/quality-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/quality-review-task-${task_n}.md" ]]; then
         warn "Quality review timed out but both artifacts exist — proceeding"
@@ -1473,8 +1458,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       --prompt-file "$_fix_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_FIX + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-      2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]}
+      2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_fix_prompt_file"
+    if [[ $_tee_ec -ne 0 ]]; then
+      warn "tee failed writing log for fix-review-task-${task_n} (exit $_tee_ec)"
+    fi
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "fix-review-task-${task_n} is blocked (agent emitted BLOCKED)"
@@ -1829,8 +1817,11 @@ Write code-review.md now."
     --prompt-file "$_review_prompt_file" \
     --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/review.log"; _agent_ec=${PIPESTATUS[0]}
+    2>&1 | tee -a "${ISSUES_DIR}/review.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_review_prompt_file"
+  if [[ $_tee_ec -ne 0 ]]; then
+    warn "tee failed writing log for review (exit $_tee_ec)"
+  fi
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) orchestrator_fail "review failed (contract violation)" ;;
@@ -1944,8 +1935,11 @@ Start now."
     --prompt-file "$_fix_prompt_file" \
     --timeout-minutes $(( TIMEOUT_PR_FIX / 60 )) \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]}
+    2>&1 | tee -a "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_fix_prompt_file"
+    if [[ $_tee_ec -ne 0 ]]; then
+      warn "tee failed writing log for fix-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
+    fi
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
         orchestrator_fail "fix-review failed (agent emitted BLOCKED)"
@@ -2028,8 +2022,11 @@ Write code-review.md and review-findings-status.txt now."
     --prompt-file "$_re_review_prompt_file" \
     --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]}
+    2>&1 | tee -a "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_re_review_prompt_file"
+  if [[ $_tee_ec -ne 0 ]]; then
+    warn "tee failed writing log for re-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
+  fi
   if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
         orchestrator_fail "re-review-${FIX_LOOP_COUNT} is blocked (agent emitted BLOCKED)"
@@ -2129,8 +2126,11 @@ Start now."
       --prompt-file "$_compound_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_COMPOUND + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-      2>&1 | tee -a "${ISSUES_DIR}/compound.log"; _agent_ec=${PIPESTATUS[0]}
+      2>&1 | tee -a "${ISSUES_DIR}/compound.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_compound_prompt_file"
+    if [[ $_tee_ec -ne 0 ]]; then
+      warn "tee failed writing log for compound (exit $_tee_ec)"
+    fi
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/compound.log" 2>/dev/null; then
         orchestrator_fail "compound is blocked (agent emitted BLOCKED)"

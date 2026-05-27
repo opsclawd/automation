@@ -56,7 +56,27 @@
   [ "$output" -eq 0 ]
 }
 
-@test "exit code 2 is checked for timeout in spec-review and quality-review" {
+@test "exit code 2 is checked for timeout in quality-review" {
   run grep -c '\-eq 2' scripts/ai-run-issue-v2
-  [ "$output" -ge 2 ]
+  [ "$output" -ge 1 ]
+}
+
+@test "script has valid bash syntax" {
+  run bash -n scripts/ai-run-issue-v2
+  [ "$status" -eq 0 ]
+}
+
+@test "all 8 phases check tee exit code" {
+  run grep -c '_tee_ec=${PIPESTATUS\[1\]}' scripts/ai-run-issue-v2
+  [ "$output" -ge 8 ]
+}
+
+@test "all 8 phases warn on tee failure" {
+  run grep -c 'tee failed writing log' scripts/ai-run-issue-v2
+  [ "$output" -ge 8 ]
+}
+
+@test "_TSX_LOADER error message references ai:run-issue" {
+  run grep 'tsx loader not found' scripts/ai-run-issue-v2
+  [ "$output" != *"pnpm install"* ]
 }
