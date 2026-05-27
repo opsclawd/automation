@@ -90,6 +90,13 @@ const agentSchema = z
           message: `phaseProfiles.${phaseName}.fallbackProfile '${entry.fallbackProfile}' is not defined in profiles`,
         });
       }
+      if (entry.fallbackTriggers && !entry.fallbackProfile) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['phaseProfiles', phaseName, 'fallbackTriggers'],
+          message: `phaseProfiles.${phaseName} has fallbackTriggers but no fallbackProfile; triggers require a fallback to be useful`,
+        });
+      }
     }
   });
 

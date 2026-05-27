@@ -734,7 +734,7 @@ detect_phase() {
   elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
     echo "fix-review"
   elif [[ -f "${ISSUES_DIR}/validate.log" ]]; then
-    echo "review"
+    echo "quality-review"
   elif [[ -f "${ISSUES_DIR}/plan.md" ]]; then
     detect_resume_point
   elif [[ -f "${ISSUES_DIR}/design.md" ]]; then
