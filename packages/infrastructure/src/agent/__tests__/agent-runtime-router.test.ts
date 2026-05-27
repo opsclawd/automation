@@ -244,6 +244,177 @@ describe('AgentRuntimeRouter', () => {
     expect(r.outcome).toBe('success');
   });
 
+  it('overrides provider and model from env vars on invocation row', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'm',
+      exitCode: 0,
+      durationMs: 1234,
+      stdoutPath: '/tmp/stdout.log',
+      stderrPath: '/tmp/stderr.log',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-override',
+      readPromptChars: () => 100,
+      env: { AI_AGENT_PROVIDER: 'opencode-go', AI_AGENT_MODEL: 'glm-5.1' },
+    });
+    await router.invoke(req());
+    const row = inv.findById(AgentInvocationId('inv-override'));
+    expect(row?.provider).toBe('opencode-go');
+    expect(row?.model).toBe('glm-5.1');
+  });
+
+  it('adapter receives effective provider and model from env vars', async () => {
+    let captured: AgentInvocationRequest | undefined;
+    const capturingAdapter = {
+      async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        captured = req;
+        return {
+          runtime: 'opencode',
+          provider: 'opencode-go',
+          model: 'glm-5.1',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    } satisfies AgentPort;
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: capturingAdapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-cap',
+      readPromptChars: () => 100,
+      env: { AI_AGENT_PROVIDER: 'opencode-go', AI_AGENT_MODEL: 'glm-5.1' },
+    });
+    await router.invoke(req());
+    expect(captured).toBeDefined();
+    expect(captured!.provider).toBe('opencode-go');
+    expect(captured!.model).toBe('glm-5.1');
+  });
+
+  it('overrides only model when AI_AGENT_MODEL is set (provider from profile)', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'glm-5.1',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-only-model',
+      readPromptChars: () => 1,
+      env: { AI_AGENT_MODEL: 'glm-5.1' },
+    });
+    await router.invoke(req());
+    const row = inv.findById(AgentInvocationId('inv-only-model'));
+    expect(row?.provider).toBe('anthropic');
+    expect(row?.model).toBe('glm-5.1');
+  });
+
+  it('overrides only provider when AI_AGENT_PROVIDER is set (model from profile)', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'opencode-go',
+      model: 'm',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-only-provider',
+      readPromptChars: () => 1,
+      env: { AI_AGENT_PROVIDER: 'opencode-go' },
+    });
+    await router.invoke(req());
+    const row = inv.findById(AgentInvocationId('inv-only-provider'));
+    expect(row?.provider).toBe('opencode-go');
+    expect(row?.model).toBe('m');
+  });
+
+  it('returns effective values from router result when env vars override', async () => {
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'opencode-go',
+      model: 'glm-5.1',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-result',
+      readPromptChars: () => 1,
+      env: { AI_AGENT_PROVIDER: 'opencode-go', AI_AGENT_MODEL: 'glm-5.1' },
+    });
+    const result = await router.invoke(req());
+    expect(result.provider).toBe('opencode-go');
+    expect(result.model).toBe('glm-5.1');
+  });
+
+  it('treats blank AI_AGENT_MODEL as unset (falls through to profile default)', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'm',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-blank',
+      readPromptChars: () => 1,
+      env: { AI_AGENT_PROVIDER: '', AI_AGENT_MODEL: '   ' },
+    });
+    await router.invoke(req());
+    const row = inv.findById(AgentInvocationId('inv-blank'));
+    expect(row?.provider).toBe('anthropic');
+    expect(row?.model).toBe('m');
+  });
+
   it('passes promptBudgetTokens and runtimeHints from profile to adapter for pi runtime', async () => {
     let captured: AgentInvocationRequest | undefined;
     const capturingAdapter = {
