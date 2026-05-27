@@ -55,11 +55,12 @@ export class OpenCodeAgentAdapter implements AgentPort {
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
       }
+      const promptContent = readFileSync(request.promptPath, 'utf-8');
+      args.push(promptContent);
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
         all: false,
-        input: readFileSync(request.promptPath, 'utf-8'),
         ...(cancelSignal ? { cancelSignal } : {}),
       });
       const r = await child;
