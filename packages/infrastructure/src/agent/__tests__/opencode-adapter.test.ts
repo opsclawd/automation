@@ -155,9 +155,40 @@ describe('OpenCodeAgentAdapter', () => {
       model: 'MiniMax-M2.7',
     });
     expect(result.outcome).toBe('success');
+    expect(result.model).toBe('MiniMax-M2.7');
     const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
     expect(loggedArgs).toContain('--model');
     expect(loggedArgs).toContain('minimax-coding-plan/MiniMax-M2.7');
+
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+  });
+
+  it('does not double-prefix when model is already provider-qualified', async () => {
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      provider: 'minimax-coding-plan',
+      model: 'minimax-coding-plan/MiniMax-M2.7',
+    });
+    expect(result.outcome).toBe('success');
+    const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
+    expect(loggedArgs).toContain('--model');
+    expect(loggedArgs).toContain('minimax-coding-plan/MiniMax-M2.7');
+    expect(loggedArgs).not.toContain('minimax-coding-plan/minimax-coding-plan');
 
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
   });

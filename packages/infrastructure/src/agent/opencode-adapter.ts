@@ -49,7 +49,12 @@ export class OpenCodeAgentAdapter implements AgentPort {
             : undefined;
       const args = ['run'];
       if (request.model) {
-        const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
+        // If the model is already provider-qualified (e.g. "provider/name"),
+        // pass it through. Otherwise prepend the provider when configured.
+        const modelArg =
+          request.provider && !request.model.includes('/')
+            ? `${request.provider}/${request.model}`
+            : request.model;
         args.push('--model', modelArg);
       }
       args.push('--prompt-file', request.promptPath);
