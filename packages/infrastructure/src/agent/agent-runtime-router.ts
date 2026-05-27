@@ -156,11 +156,21 @@ export class AgentRuntimeRouter implements AgentPort {
       throw err;
     }
 
+    // Reclassify cancellation as timeout when either the profile timeout
+    // or the caller timeout (AbortSignal.timeout()) fired. Distinguish
+    // caller timeout from a user-initiated abort (Ctrl-C) by checking
+    // the abort reason — AbortSignal.timeout() always produces a
+    // DOMException with name 'TimeoutError', while controller.abort()
+    // without arguments sets reason to undefined.
+    const isCallerTimeout =
+      request.abortSignal?.aborted &&
+      request.abortSignal.reason instanceof DOMException &&
+      request.abortSignal.reason.name === 'TimeoutError';
+
     if (
       result.outcome === 'failed' &&
-      result.contractViolations.includes('cancelled_by_orchestrator') &&
-      profileTimeoutSignal?.aborted &&
-      !request.abortSignal?.aborted
+      result.contractViolations.includes(CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR) &&
+      (profileTimeoutSignal?.aborted || isCallerTimeout)
     ) {
       result = { ...result, outcome: 'timeout', contractViolations: [] };
     }
@@ -184,8 +194,9 @@ export class AgentRuntimeRouter implements AgentPort {
     this.opts.invocationRepository.update(id, patch);
 
     // --- Adapter-level fallback only (caller-signalled is handled in invoke) ---
-    if (!isFallbackOrCallerSignalled && this.shouldFallback(result)) {
-      const phaseEntry = this.opts.agent.phaseProfiles[request.phaseId];
+    const routingPhase = normalizeRoutingPhase(request.phaseId);
+    if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
+      const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
       const fallbackProfileName = phaseEntry?.fallbackProfile;
       if (fallbackProfileName) {
         const fallbackProfile = this.opts.agent.profiles[fallbackProfileName];
@@ -226,9 +237,41 @@ export class AgentRuntimeRouter implements AgentPort {
     return { ...result, provider: effectiveProvider, model: effectiveModel };
   }
 
-  private shouldFallback(result: AgentInvocationResult): boolean {
-    if (result.outcome === 'timeout') return true;
-    if (result.outcome === 'contract_violation') return true;
+  private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
+    const routingPhase = normalizeRoutingPhase(phaseId);
+    const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
+    const triggers = phaseEntry?.fallbackTriggers ?? ['timeout', 'contract_violation'];
+    for (const trigger of triggers) {
+      switch (trigger) {
+        case 'timeout':
+          if (result.outcome === 'timeout') return true;
+          break;
+        case 'contract_violation':
+          if (result.outcome === 'contract_violation') return true;
+          break;
+        case 'missing_required_artifact':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+          )
+            return true;
+          break;
+        case 'prompt_budget_exceeded':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROMPT_BUDGET_EXCEEDED)
+          )
+            return true;
+          break;
+        case 'invalid_result_json':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON)
+          )
+            return true;
+          break;
+      }
+    }
     return false;
   }
 
@@ -282,6 +325,18 @@ export class AgentRuntimeRouter implements AgentPort {
     };
     this.opts.eventBus.publish(runId, event);
   }
+}
+
+/**
+ * Strip per-invocation suffixes from a phase ID to get the key used in
+ * `agent.phaseProfiles`. Bash emits IDs like `fix-review-1` (re-review loop
+ * counter) and `quality-review-task-12` (per-task loop). Both must resolve
+ * to their static config key (`fix-review`, `quality-review`).
+ *
+ * Exported for tests.
+ */
+export function normalizeRoutingPhase(phaseId: string): string {
+  return phaseId.replace(/(-task)?-\d+$/, '');
 }
 
 function defaultReadPromptChars(path: string): number {

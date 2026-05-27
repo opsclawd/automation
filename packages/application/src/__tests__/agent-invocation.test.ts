@@ -40,7 +40,7 @@ describe('AgentInvocationRequest', () => {
       cwd: '/tmp/wt',
       runId: 'run-def456',
       repoId: 'repo-7',
-      phaseId: 'review',
+      phaseId: 'quality-review',
       workerId: 'worker-1',
       stepId: 'step-3',
       startCommitSha: '0'.repeat(40),

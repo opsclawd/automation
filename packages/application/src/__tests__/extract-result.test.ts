@@ -56,7 +56,7 @@ const PHASE_TESTS: Array<{
     retrySafe: false,
   },
   {
-    phase: 'review',
+    phase: 'quality-review',
     validJson: { result: 'pass', findings: [] },
     invalidJson: { bad: 'shape' },
     retrySafe: true,
@@ -78,10 +78,16 @@ const PHASE_TESTS: Array<{
     retrySafe: false,
   },
   {
-    phase: 'pr-review-poll',
+    phase: 'post-pr-review',
     validJson: { result: 'handled', repliesPosted: 0 },
     invalidJson: { bad: 'shape' },
     retrySafe: false,
+  },
+  {
+    phase: 'whole-pr-review',
+    validJson: { result: 'pass', findings: [{ severity: 'low', summary: 'nit' }] },
+    invalidJson: { bad: 'shape' },
+    retrySafe: true,
   },
 ];
 

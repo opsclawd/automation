@@ -8,7 +8,7 @@ const CANONICAL_PHASES: readonly string[] = [
   'plan-write',
   'implement',
   'validate',
-  'review',
+  'whole-pr-review',
   'fix-review',
   'compound',
   'create-pr',
@@ -43,7 +43,7 @@ test('Failed run shows failed phase with failure message (AC9)', async ({ page }
   await expect(page.getByTestId('timeline-loading')).toBeHidden();
   await expect(page.getByTestId('phase-validate')).toHaveAttribute('data-status', 'failed');
   await expect(page.getByTestId('phase-validate-failure')).toContainText('something went wrong');
-  for (const phase of ['review', 'fix-review', 'compound', 'create-pr']) {
+  for (const phase of ['whole-pr-review', 'fix-review', 'compound', 'create-pr']) {
     await expect(page.getByTestId(`phase-${phase}`)).toHaveAttribute('data-status', 'pending');
   }
 });
