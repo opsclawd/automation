@@ -9,6 +9,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import Database from 'better-sqlite3';
 
 interface InvocationRow {
@@ -25,10 +26,23 @@ function pct(v: string): string {
   return v === '—' ? '—' : `${v}%`;
 }
 
+function findRepoRoot(): string {
+  let dir = process.cwd();
+  for (;;) {
+    if (existsSync(join(dir, '.git')) || existsSync(join(dir, 'package.json'))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return process.cwd();
+}
+
 function findDbPath(): string {
-  // Try common locations
   const candidates = [
     process.env.AI_SDLC_DB_PATH,
+    join(findRepoRoot(), '.ai-runs', 'orchestrator.sqlite'),
     './data/orchestrator.db',
     '../data/orchestrator.db',
   ];
