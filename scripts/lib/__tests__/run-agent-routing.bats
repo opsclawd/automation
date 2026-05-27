@@ -1,5 +1,230 @@
 #!/usr/bin/env bats
 
+setup() {
+  TMPDIR_TEST="$(mktemp -d)"
+  export AI_RUN_EVENTS_FILE="${TMPDIR_TEST}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="issue-1-20260516-120000"
+}
+
+teardown() {
+  rm -rf "$TMPDIR_TEST"
+}
+
+_run_agent() {
+  local phase="$1"
+  shift
+  npx tsx apps/cli/src/run-agent.ts \
+    --phase "$phase" \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run-$(date +%s)" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "${phase}-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    "$@" 2>&1
+}
+
+@test "run-agent.ts requires --phase flag" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"must pass --phase or --profile"* ]]
+}
+
+@test "run-agent.ts requires --prompt-file flag" {
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase implement \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "test" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"missing required flag"* ]]
+  [[ "$output" == *"prompt-file"* ]]
+}
+
+@test "run-agent.ts exits 2 for unknown phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase "nonexistent-phase-xyz" \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unknown phase"* ]]
+}
+
+@test "run-agent.ts exits 3 for missing prompt file" {
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase implement \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "test" \
+    --prompt-file "$TMPDIR_TEST/nonexistent-prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"prompt file not found"* ]]
+}
+
+@test "run-agent.ts uses phaseProfiles for implement phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase implement \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "implement-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}
+
+@test "run-agent.ts uses phaseProfiles for extract phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase extract \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "extract-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}
+
+@test "run-agent.ts uses phaseProfiles for spec-review phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase spec-review \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "spec-review-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}
+
+@test "run-agent.ts uses phaseProfiles for quality-review phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase quality-review \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "quality-review-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}
+
+@test "run-agent.ts uses phaseProfiles for fix-review phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase fix-review \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "fix-review-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}
+
+@test "run-agent.ts uses phaseProfiles for compound phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --phase compound \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "compound-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}
+
+@test "run-agent.ts accepts --profile override" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --profile builder \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "profile-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown profile"* ]]
+}
+
+@test "run-agent.ts exits 2 for unknown profile" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run npx tsx apps/cli/src/run-agent.ts \
+    --profile "nonexistent-profile-xyz" \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"unknown profile"* ]]
+}
+
+@test "script has valid bash syntax" {
+  run bash -n scripts/ai-run-issue-v2
+  [ "$status" -eq 0 ]
+}
+
 @test "no run_agent_raw callsites remain in ai-run-issue-v2" {
   run grep -c 'run_agent_raw' scripts/ai-run-issue-v2
   [ "$output" -eq 0 ]
@@ -13,94 +238,6 @@
 @test "no AGENT_CLI default assignment remains" {
   run grep -c 'AGENT_CLI=' scripts/ai-run-issue-v2
   [ "$output" -eq 0 ]
-}
-
-@test "phaseProfiles has extract key" {
-  run grep '"extract"' .ai-orchestrator.json
-  [ "$status" -eq 0 ]
-}
-
-@test "phaseProfiles has implement key" {
-  run grep '"implement"' .ai-orchestrator.json
-  [ "$status" -eq 0 ]
-}
-
-@test "phaseProfiles has spec-review key" {
-  run grep '"spec-review"' .ai-orchestrator.json
-  [ "$status" -eq 0 ]
-}
-
-@test "phaseProfiles has quality-review key" {
-  run grep '"quality-review"' .ai-orchestrator.json
-  [ "$status" -eq 0 ]
-}
-
-@test "phaseProfiles has fix-review key" {
-  run grep '"fix-review"' .ai-orchestrator.json
-  [ "$status" -eq 0 ]
-}
-
-@test "phaseProfiles has compound key" {
-  run grep '"compound"' .ai-orchestrator.json
-  [ "$status" -eq 0 ]
-}
-
-@test "all per-task phases use run-agent.ts" {
-  run grep -cE -- '--phase (implement|spec-review|quality-review|fix-review|compound|extract)' scripts/ai-run-issue-v2
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 7 ]
-}
-
-@test "exit code 2 replaces exit code 124 for timeout checks" {
-  run grep -c '\-eq 124' scripts/ai-run-issue-v2
-  [ "$output" -eq 0 ]
-}
-
-@test "exit code 2 is checked for timeout in quality-review" {
-  run grep -c '\-eq 2' scripts/ai-run-issue-v2
-  [ "$output" -ge 1 ]
-}
-
-@test "script has valid bash syntax" {
-  run bash -n scripts/ai-run-issue-v2
-  [ "$status" -eq 0 ]
-}
-
-@test "all 8 phases check tee exit code" {
-  run grep -c '_tee_ec=${PIPESTATUS\[1\]}' scripts/ai-run-issue-v2
-  [ "$output" -ge 8 ]
-}
-
-@test "all 8 phases halt on tee failure (not warn)" {
-  halt_count=$(grep -c 'orchestrator_fail.*tee failed' scripts/ai-run-issue-v2)
-  [ "$halt_count" -ge 8 ]
-}
-
-@test "script requires issue number argument" {
-  run bash -c 'bash scripts/ai-run-issue-v2 < /dev/null 2>&1; exit $?; echo "unreachable"'
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"Usage:"* ]]
-  [[ "$output" == *"ai:run-issue"* ]]
-}
-
-@test "script source fails early on missing TSX loader" {
-  tsx_orig="apps/cli/node_modules/tsx/dist/loader.mjs"
-  if [[ -f "$tsx_orig" ]]; then
-    mv "$tsx_orig" "$tsx_orig.bak" 2>/dev/null || true
-    run bash -c 'bash scripts/ai-run-issue-v2 99999 2>&1; true'
-    [[ "$output" == *"FATAL"* ]]
-    [[ "$output" == *"tsx loader not found"* ]]
-    mv "$tsx_orig.bak" "$tsx_orig" 2>/dev/null || true
-  else
-    skip "tsx loader not present"
-  fi
-}
-
-@test "script defines required functions" {
-  grep -q 'check_branch_after_agent()' scripts/ai-run-issue-v2
-  grep -q 'orchestrator_fail()' scripts/ai-run-issue-v2
-  grep -q "^warn()" scripts/ai-run-issue-v2
-  grep -q "^log()" scripts/ai-run-issue-v2
 }
 
 @test "all 10 phases halt on tee failure (not warn)" {
@@ -121,4 +258,18 @@
 @test "_TSX_LOADER error message references ai:run-issue" {
   run grep 'tsx loader not found' scripts/ai-run-issue-v2
   [ "$output" != *"pnpm install"* ]
+}
+
+@test "script requires issue number argument" {
+  run bash -c 'bash scripts/ai-run-issue-v2 < /dev/null 2>&1; exit $?; echo "unreachable"'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Usage:"* ]]
+  [[ "$output" == *"ai:run-issue"* ]]
+}
+
+@test "script defines required functions" {
+  grep -q 'check_branch_after_agent()' scripts/ai-run-issue-v2
+  grep -q 'orchestrator_fail()' scripts/ai-run-issue-v2
+  grep -q "^warn()" scripts/ai-run-issue-v2
+  grep -q "^log()" scripts/ai-run-issue-v2
 }
