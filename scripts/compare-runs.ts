@@ -99,13 +99,13 @@ function compareRuns(aId: string, bId: string): void {
 
   const sortedPhases = [...phases].sort();
 
-  // Output
-  console.log(`# Run Comparison: ${aId} vs ${bId}\n`);
-  console.log('## Per-Phase Comparison\n');
-  console.log(
+  const log = (msg: string) => console.error(msg);
+  log(`# Run Comparison: ${aId} vs ${bId}\n`);
+  log('## Per-Phase Comparison\n');
+  log(
     '| Phase | Run A Model | Run B Model | A Prompt Chars | B Prompt Chars | Delta % | A Duration (ms) | B Duration (ms) | Delta % | A Outcome | B Outcome |',
   );
-  console.log(
+  log(
     '|-------|-------------|-------------|---------------|---------------|---------|-----------------|-----------------|---------|-----------|-----------|',
   );
 
@@ -125,12 +125,12 @@ function compareRuns(aId: string, bId: string): void {
     const charDelta = aChars > 0 ? (((bChars - aChars) / aChars) * 100).toFixed(1) : '—';
     const durDelta = aDur > 0 ? (((bDur - aDur) / aDur) * 100).toFixed(1) : '—';
 
-    console.log(
+    log(
       `| ${phase} | ${aModel} | ${bModel} | ${aChars} | ${bChars} | ${pct(charDelta)} | ${aDur} | ${bDur} | ${pct(durDelta)} | ${aOutcome} | ${bOutcome} |`,
     );
   }
 
-  console.log('\n## Totals\n');
+  log('\n## Totals\n');
   const totalCharDelta =
     totalA.promptChars > 0
       ? (((totalB.promptChars - totalA.promptChars) / totalA.promptChars) * 100).toFixed(1)
@@ -140,11 +140,11 @@ function compareRuns(aId: string, bId: string): void {
       ? (((totalB.durationMs - totalA.durationMs) / totalA.durationMs) * 100).toFixed(1)
       : '—';
 
-  console.log(`| Run | Invocations | Total Prompt Chars | Total Duration (ms) |`);
-  console.log(`|-----|-------------|-------------------|---------------------|`);
-  console.log(`| ${aId} | ${totalA.count} | ${totalA.promptChars} | ${totalA.durationMs} |`);
-  console.log(`| ${bId} | ${totalB.count} | ${totalB.promptChars} | ${totalB.durationMs} |`);
-  console.log(
+  log(`| Run | Invocations | Total Prompt Chars | Total Duration (ms) |`);
+  log(`|-----|-------------|-------------------|---------------------|`);
+  log(`| ${aId} | ${totalA.count} | ${totalA.promptChars} | ${totalA.durationMs} |`);
+  log(`| ${bId} | ${totalB.count} | ${totalB.promptChars} | ${totalB.durationMs} |`);
+  log(
     `| Delta | ${(((totalB.count - totalA.count) / Math.max(totalA.count, 1)) * 100).toFixed(1)}% | ${pct(totalCharDelta)} | ${pct(totalDurDelta)} |`,
   );
 }
