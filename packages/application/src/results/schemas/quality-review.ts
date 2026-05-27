@@ -1,7 +1,7 @@
 // No captured result.json available; shape inferred from M4-05 issue spec.
 import { z } from 'zod';
 
-export const reviewResultSchema = z.object({
+export const qualityReviewResultSchema = z.object({
   result: z.enum(['pass', 'fail']),
   findings: z.array(
     z.object({
@@ -10,4 +10,4 @@ export const reviewResultSchema = z.object({
     }),
   ),
 });
-export type ReviewResult = z.infer<typeof reviewResultSchema>;
+export type QualityReviewResult = z.infer<typeof qualityReviewResultSchema>;
