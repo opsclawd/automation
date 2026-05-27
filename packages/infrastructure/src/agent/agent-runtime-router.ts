@@ -184,8 +184,9 @@ export class AgentRuntimeRouter implements AgentPort {
     this.opts.invocationRepository.update(id, patch);
 
     // --- Adapter-level fallback only (caller-signalled is handled in invoke) ---
+    const routingPhase = request.phaseId.replace(/-\d+$/, '');
     if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
-      const phaseEntry = this.opts.agent.phaseProfiles[request.phaseId];
+      const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
       const fallbackProfileName = phaseEntry?.fallbackProfile;
       if (fallbackProfileName) {
         const fallbackProfile = this.opts.agent.profiles[fallbackProfileName];
