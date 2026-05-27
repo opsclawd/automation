@@ -8,7 +8,7 @@
  * comparing per-phase model, prompt characters, duration, and outcome.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import Database from 'better-sqlite3';
 
 interface InvocationRow {
@@ -21,6 +21,10 @@ interface InvocationRow {
   outcome: string | null;
 }
 
+function pct(v: string): string {
+  return v === '—' ? '—' : `${v}%`;
+}
+
 function findDbPath(): string {
   // Try common locations
   const candidates = [
@@ -30,12 +34,7 @@ function findDbPath(): string {
   ];
   for (const c of candidates) {
     if (c) {
-      try {
-        readFileSync(c);
-        return c;
-      } catch {
-        continue;
-      }
+      if (existsSync(c)) return c;
     }
   }
   throw new Error(
@@ -127,7 +126,7 @@ function compareRuns(aId: string, bId: string): void {
     const durDelta = aDur > 0 ? (((bDur - aDur) / aDur) * 100).toFixed(1) : '—';
 
     console.log(
-      `| ${phase} | ${aModel} | ${bModel} | ${aChars} | ${bChars} | ${charDelta}% | ${aDur} | ${bDur} | ${durDelta}% | ${aOutcome} | ${bOutcome} |`,
+      `| ${phase} | ${aModel} | ${bModel} | ${aChars} | ${bChars} | ${pct(charDelta)} | ${aDur} | ${bDur} | ${pct(durDelta)} | ${aOutcome} | ${bOutcome} |`,
     );
   }
 
@@ -146,7 +145,7 @@ function compareRuns(aId: string, bId: string): void {
   console.log(`| ${aId} | ${totalA.count} | ${totalA.promptChars} | ${totalA.durationMs} |`);
   console.log(`| ${bId} | ${totalB.count} | ${totalB.promptChars} | ${totalB.durationMs} |`);
   console.log(
-    `| Delta | ${(((totalB.count - totalA.count) / Math.max(totalA.count, 1)) * 100).toFixed(1)}% | ${totalCharDelta}% | ${totalDurDelta}% |`,
+    `| Delta | ${(((totalB.count - totalA.count) / Math.max(totalA.count, 1)) * 100).toFixed(1)}% | ${pct(totalCharDelta)} | ${pct(totalDurDelta)} |`,
   );
 }
 
