@@ -303,4 +303,197 @@ describe('AgentRuntimeRouter fallback', () => {
     expect(events.length).toBe(1);
     expect(events[0].type).toBe('phase.fallback.escalated');
   });
+
+  describe('fallbackTriggers configuration', () => {
+    it('triggers fallback for missing_required_artifact when configured', async () => {
+      const config: AgentConfig = {
+        defaultProfile: 'opencode-frontier',
+        profiles: {
+          'opencode-frontier': {
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'm',
+            timeoutMinutes: 1,
+          },
+          'pi-local': {
+            runtime: 'pi',
+            provider: 'local',
+            model: 'q',
+            timeoutMinutes: 1,
+            contextLimitTokens: 64000,
+          },
+        },
+        phaseProfiles: {
+          implement: {
+            profile: 'opencode-frontier',
+            fallbackProfile: 'pi-local',
+            fallbackTriggers: ['missing_required_artifact'],
+          },
+        },
+      };
+      const cheap = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT],
+        outcome: 'contract_violation',
+      });
+      const frontier = new StubAdapter({
+        runtime: 'pi',
+        provider: 'local',
+        model: 'q',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'success',
+      });
+      const inv = new FakeAgentInvocationPort();
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: cheap, pi: frontier },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-fbt-1',
+        readPromptChars: () => 100,
+      });
+
+      await router.invoke(req({ phaseId: 'implement' }));
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(2);
+    });
+
+    it('does NOT trigger fallback for timeout when fallbackTriggers only has contract_violation', async () => {
+      const config: AgentConfig = {
+        defaultProfile: 'opencode-frontier',
+        profiles: {
+          'opencode-frontier': {
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'm',
+            timeoutMinutes: 1,
+          },
+          'pi-local': {
+            runtime: 'pi',
+            provider: 'local',
+            model: 'q',
+            timeoutMinutes: 1,
+            contextLimitTokens: 64000,
+          },
+        },
+        phaseProfiles: {
+          implement: {
+            profile: 'opencode-frontier',
+            fallbackProfile: 'pi-local',
+            fallbackTriggers: ['contract_violation'],
+          },
+        },
+      };
+      const cheap = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'timeout',
+      });
+      const frontier = new StubAdapter({
+        runtime: 'pi',
+        provider: 'local',
+        model: 'q',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'success',
+      });
+      const inv = new FakeAgentInvocationPort();
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: cheap, pi: frontier },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-fbt-2',
+        readPromptChars: () => 100,
+      });
+
+      await router.invoke(req({ phaseId: 'implement' }));
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(1);
+    });
+
+    it('defaults to timeout and contract_violation when fallbackTriggers is not set', async () => {
+      const config: AgentConfig = {
+        defaultProfile: 'opencode-frontier',
+        profiles: {
+          'opencode-frontier': {
+            runtime: 'opencode',
+            provider: 'anthropic',
+            model: 'm',
+            timeoutMinutes: 1,
+          },
+          'pi-local': {
+            runtime: 'pi',
+            provider: 'local',
+            model: 'q',
+            timeoutMinutes: 1,
+            contextLimitTokens: 64000,
+          },
+        },
+        phaseProfiles: {
+          implement: {
+            profile: 'opencode-frontier',
+            fallbackProfile: 'pi-local',
+          },
+        },
+      };
+      const cheap = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'timeout',
+      });
+      const frontier = new StubAdapter({
+        runtime: 'pi',
+        provider: 'local',
+        model: 'q',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'success',
+      });
+      const inv = new FakeAgentInvocationPort();
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: cheap, pi: frontier },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-fbt-3',
+        readPromptChars: () => 100,
+      });
+
+      await router.invoke(req({ phaseId: 'implement' }));
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(2);
+    });
+  });
 });
