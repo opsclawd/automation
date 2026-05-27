@@ -1340,7 +1340,9 @@ ${SPEC_REVIEWER_PROMPT}"
       orchestrator_fail "tee failed writing log for spec-review-task-${task_n} (exit $_tee_ec)"
     fi
     if [[ $_agent_ec -eq 2 ]]; then
-      if [[ -f "${WORKTREE_DIR}/spec-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/spec-review-task-${task_n}.md" ]]; then
+      if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/spec-review-task-${task_n}.log" 2>/dev/null; then
+        orchestrator_fail "spec-review-task-${task_n} failed (config error in log)"
+      elif [[ -f "${WORKTREE_DIR}/spec-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/spec-review-task-${task_n}.md" ]]; then
         warn "Spec review timed out but both artifacts exist — proceeding"
       else
         orchestrator_fail "Spec review timed out and artifacts are missing (result=${WORKTREE_DIR}/spec-review-task-${task_n}.result, md=${WORKTREE_DIR}/spec-review-task-${task_n}.md)"
@@ -1481,7 +1483,9 @@ ${QUALITY_REVIEWER_PROMPT}"
       orchestrator_fail "tee failed writing log for quality-review-task-${task_n} (exit $_tee_ec)"
     fi
     if [[ $_agent_ec -eq 2 ]]; then
-      if [[ -f "${WORKTREE_DIR}/quality-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/quality-review-task-${task_n}.md" ]]; then
+      if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
+        orchestrator_fail "quality-review-task-${task_n} failed (config error in log)"
+      elif [[ -f "${WORKTREE_DIR}/quality-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/quality-review-task-${task_n}.md" ]]; then
         warn "Quality review timed out but both artifacts exist — proceeding"
       else
         orchestrator_fail "Quality review timed out and artifacts are missing (result=${WORKTREE_DIR}/quality-review-task-${task_n}.result, md=${WORKTREE_DIR}/quality-review-task-${task_n}.md)"
