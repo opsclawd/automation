@@ -78,16 +78,18 @@ timeouts. Editing `.ai-orchestrator.json` will not affect M1 runs.
 
 CLI flags for the `run` command:
 
-| Flag                     | Wrapper env var  | Script env var   | Purpose                     |
-| ------------------------ | ---------------- | ---------------- | --------------------------- |
-| `--base-branch <branch>` | `AI_BASE_BRANCH` | `BASE_BRANCH`    | Base branch (default: main) |
-| `--model <model>`        | `AI_AGENT_MODEL` | `AI_AGENT_MODEL` | Override the AI model       |
-| `--agent-cli <cli>`      | `AI_RUNTIME`     | —                | Override the agent runtime  |
+| Flag                     | Wrapper env var  | Script env var   | Purpose                                            |
+| ------------------------ | ---------------- | ---------------- | -------------------------------------------------- |
+| `--base-branch <branch>` | `AI_BASE_BRANCH` | `BASE_BRANCH`    | Base branch (default: main)                        |
+| `--model <model>`        | `AI_AGENT_MODEL` | `AI_AGENT_MODEL` | Override the AI model                              |
+| `--agent-cli <cli>`      | `AI_RUNTIME`     | —                | Sets `AI_RUNTIME` (runtime resolved from profiles) |
 
 The wrapper passes CLI flags as `AI_*` env vars to the script's process
 environment. The script reads `BASE_BRANCH` for branch config, and
 `AI_AGENT_MODEL` / `AI_AGENT_PROVIDER` are handled by `run-agent.ts` via
-`AgentRuntimeRouter` (no script-level env vars needed).
+`AgentRuntimeRouter`. `AI_RUNTIME` is set by the wrapper but not consumed
+by the routed agent path (runtime is determined by profiles in
+`.ai-orchestrator.json`).
 
 For the orchestrator's agent runtime, set `AI_AGENT_PROVIDER` and
 `AI_AGENT_MODEL` to override the provider and model from
