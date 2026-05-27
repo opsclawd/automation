@@ -29,7 +29,7 @@ UPDATE runs SET current_phase = 'post-pr-review' WHERE current_phase = 'pr-revie
 -- runs.completed_phases (JSON array field)
 UPDATE runs
 SET completed_phases = REPLACE(
-    REPLACE(completed_phases, '"review"', '"quality-review"'),
+    REPLACE(completed_phases, '"review"', '"whole-pr-review"'),
     '"pr-review-poll"', '"post-pr-review"')
 WHERE completed_phases LIKE '%review%';
 `;
