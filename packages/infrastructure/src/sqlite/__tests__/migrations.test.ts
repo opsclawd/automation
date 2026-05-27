@@ -85,7 +85,7 @@ describe('migrations', () => {
     expect(beforePrpoll.phase_id).toBe('pr-review-poll');
 
     db.exec(`
-      UPDATE agent_invocations SET phase_id = 'quality-review' WHERE phase_id = 'review';
+      UPDATE agent_invocations SET phase_id = 'whole-pr-review' WHERE phase_id = 'review';
       UPDATE agent_invocations SET phase_id = 'post-pr-review' WHERE phase_id = 'pr-review-poll';
     `);
 
@@ -98,7 +98,7 @@ describe('migrations', () => {
     const afterOther = db
       .prepare("SELECT phase_id FROM agent_invocations WHERE id = 'inv-other-1'")
       .get() as { phase_id: string };
-    expect(afterReview.phase_id).toBe('quality-review');
+    expect(afterReview.phase_id).toBe('whole-pr-review');
     expect(afterPrpoll.phase_id).toBe('post-pr-review');
     expect(afterOther.phase_id).toBe('plan-write');
 

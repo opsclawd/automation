@@ -4,7 +4,7 @@ export const CANONICAL_PHASES = [
   'plan-write',
   'implement',
   'validate',
-  'quality-review',
+  'whole-pr-review',
   'fix-review',
   'compound',
   'create-pr',

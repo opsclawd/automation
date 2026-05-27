@@ -10,18 +10,18 @@ Routing is configured via `.ai-orchestrator.json` under the `agent.phaseProfiles
 
 ## Phase-to-Profile Assignment
 
-| Phase             | Default Profile     | Fallback Profile    | Rationale                                            |
-| ----------------- | ------------------- | ------------------- | ---------------------------------------------------- |
-| `plan-design`     | `opencode-frontier` | —                   | Requires strongest reasoning to decompose tasks      |
-| `plan-write`      | `opencode-frontier` | —                   | Plan quality determines implementation success       |
-| `implement`       | `pi-qwen-local`     | `opencode-frontier` | Mechanical task; fallback if local model fails       |
-| `spec-review`     | `opencode-frontier` | —                   | Needs frontier to evaluate spec correctness          |
-| `quality-review`  | `opencode-frontier` | —                   | Needs frontier assessment of quality                 |
-| `fix-review`      | `pi-qwen-local`     | `opencode-frontier` | Mechanical fixes are bounded; fallback for ambiguity |
-| `whole-pr-review` | `opencode-frontier` | —                   | High-stakes review before merge                      |
-| `post-pr-review`  | `opencode-frontier` | —                   | Assessment of PR comments needs frontier reasoning   |
-| `compound`        | `pi-qwen-local`     | `opencode-frontier` | Docs generation; cheap model sufficient              |
-| `create-pr`       | `opencode-frontier` | —                   | PR creation requires correct formatting and content  |
+| Phase             | Default Profile     | Fallback Profile    | Rationale                                              |
+| ----------------- | ------------------- | ------------------- | ------------------------------------------------------ |
+| `plan-design`     | `opencode-frontier` | —                   | Requires strongest reasoning to decompose tasks        |
+| `plan-write`      | `opencode-frontier` | —                   | Plan quality determines implementation success         |
+| `implement`       | `pi-qwen-local`     | `opencode-frontier` | Mechanical task; fallback if local model fails         |
+| `spec-review`     | `opencode-frontier` | —                   | Needs frontier to evaluate spec correctness            |
+| `quality-review`  | `opencode-frontier` | —                   | Per-task code quality review inside the implement loop |
+| `fix-review`      | `pi-qwen-local`     | `opencode-frontier` | Mechanical fixes are bounded; fallback for ambiguity   |
+| `whole-pr-review` | `opencode-frontier` | —                   | Once-per-PR whole-branch diff review before merge      |
+| `post-pr-review`  | `opencode-frontier` | —                   | Assessment of PR comments needs frontier reasoning     |
+| `compound`        | `pi-qwen-local`     | `opencode-frontier` | Docs generation; cheap model sufficient                |
+| `create-pr`       | `opencode-frontier` | —                   | PR creation requires correct formatting and content    |
 
 ## Fallback Triggers
 
