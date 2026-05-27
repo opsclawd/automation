@@ -2230,7 +2230,29 @@ Rules:
 
 Start now."
 
-    echo "$COMPOUND_PROMPT" | run_agent_raw "compound" "$TIMEOUT_COMPOUND"
+    local _compound_prompt_file
+    _compound_prompt_file=$(mktemp)
+    printf '%s' "$COMPOUND_PROMPT" > "$_compound_prompt_file"
+    ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+      --phase compound \
+      --phase-id "compound-${RUN_ID}" \
+      --cwd "$WORKTREE_DIR" \
+      --run-id "$RUN_ID" \
+      --repo-id "$REPO_ID" \
+      --repo-root "$REPO_ROOT" \
+      --prompt-file "$_compound_prompt_file" \
+      --timeout-minutes $(( TIMEOUT_COMPOUND / 60 )) \
+      --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+      2>&1 | tee -a "${ISSUES_DIR}/compound.log"; _agent_ec=${PIPESTATUS[0]}
+    rm -f "$_compound_prompt_file"
+    if [[ $_agent_ec -ne 0 ]]; then
+      case $_agent_ec in
+        1) orchestrator_fail "compound failed (contract violation)" ;;
+        2) orchestrator_fail "compound failed (config error or timeout)" ;;
+        3) orchestrator_fail "compound failed (unexpected error)" ;;
+        *) orchestrator_fail "compound failed (unknown exit code $_agent_ec)" ;;
+      esac
+    fi
 
     # Copy the generated doc back to issues dir
     if [[ -f "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" ]]; then
