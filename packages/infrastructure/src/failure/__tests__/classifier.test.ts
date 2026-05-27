@@ -104,56 +104,6 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('timeout');
   });
 
-  it('skips timeout classification when elapsedMs is below 30s floor', () => {
-    const f = classifyExit({
-      exitCode: 1,
-      combinedLogTail: 'process timed out after 120s',
-      runUuid: 'test-uuid',
-      elapsedMs: 5_000,
-    });
-    expect(f.kind).not.toBe('timeout');
-    expect(f.kind).toBe('command_failed');
-  });
-
-  it('skips timeout at boundary (29s elapsed)', () => {
-    const f = classifyExit({
-      exitCode: 1,
-      combinedLogTail: 'process timed out after 120s',
-      runUuid: 'test-uuid',
-      elapsedMs: 29_999,
-    });
-    expect(f.kind).not.toBe('timeout');
-  });
-
-  it('classifies timeout just past floor (31s elapsed)', () => {
-    const f = classifyExit({
-      exitCode: 124,
-      combinedLogTail: 'TIMEOUT after 600s',
-      runUuid: 'test-uuid',
-      elapsedMs: 31_000,
-    });
-    expect(f.kind).toBe('timeout');
-  });
-
-  it('classifies timeout at genuine phase timeout duration (300s)', () => {
-    const f = classifyExit({
-      exitCode: 124,
-      combinedLogTail: 'TIMEOUT after 300s',
-      runUuid: 'test-uuid',
-      elapsedMs: 300_000,
-    });
-    expect(f.kind).toBe('timeout');
-  });
-
-  it('classifies timeout when elapsedMs is not provided', () => {
-    const f = classifyExit({
-      exitCode: 124,
-      combinedLogTail: 'TIMEOUT after 600s',
-      runUuid: 'test-uuid',
-    });
-    expect(f.kind).toBe('timeout');
-  });
-
   it('returns validation_failed for "validate phase failed" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -763,35 +713,6 @@ describe('classifyExit with events (M2-06)', () => {
     expect(failure.kind).toBe('timeout');
   });
 
-  it('skips event-driven timeout when elapsedMs is below 30s floor', () => {
-    const failure = classifyExit({
-      ...baseInput,
-      elapsedMs: 5_000,
-      events: [
-        ev({
-          phase: 'implement',
-          message: 'agent timed out after 600s',
-          metadata: { reason: 'timed out' },
-        }),
-      ],
-    });
-    expect(failure.kind).not.toBe('timeout');
-  });
-
-  it('classifies event-driven timeout when elapsedMs exceeds 30s floor', () => {
-    const failure = classifyExit({
-      ...baseInput,
-      elapsedMs: 300_000,
-      events: [
-        ev({
-          phase: 'implement',
-          message: 'agent timed out after 600s',
-          metadata: { reason: 'timed out' },
-        }),
-      ],
-    });
-    expect(failure.kind).toBe('timeout');
-  });
   it('classifies agent_blocked from loop.exhausted', () => {
     const failure = classifyExit({
       ...baseInput,

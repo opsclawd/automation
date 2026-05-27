@@ -59,19 +59,6 @@ const PATTERNS: Pattern[] = [
 
 const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
-// Absolute floor: any failure completing in under 30 seconds cannot be a
-// legitimate timeout, regardless of phase or invocation budget.  Phase-level
-// timeouts in scripts/ai-run-issue-v2 start at 300 s (TIMEOUT_VALIDATE); a
-// ratio-based threshold against the global invocationMaxMinutes would suppress
-// genuine phase timeouts, so we use an absolute minimum instead.
-// See opsclawd/automation#107 and PR #110 review discussion.
-const MIN_TIMEOUT_ELAPSED_MS = 30_000;
-
-function timeoutPlausible(input: ClassifyExitInput): boolean {
-  if (input.elapsedMs === undefined) return true;
-  return input.elapsedMs >= MIN_TIMEOUT_ELAPSED_MS;
-}
-
 export function classifyExit(input: ClassifyExitInput): Failure {
   if (input.events && input.events.length > 0) {
     // Event-driven classification is attempted first. When the terminal event
@@ -92,7 +79,6 @@ export function classifyExit(input: ClassifyExitInput): Failure {
 
   let best: { pattern: Pattern; matchIndex: number } | undefined;
   for (const p of PATTERNS) {
-    if (p.kind === 'timeout' && !timeoutPlausible(input)) continue;
     const gRegex = new RegExp(p.regex.source, p.regex.flags + 'g');
     let m: RegExpExecArray | null;
     while ((m = gRegex.exec(tail))) {
@@ -120,11 +106,6 @@ export function classifyExit(input: ClassifyExitInput): Failure {
     return result;
   }
 
-  // When timeoutPlausible gates out the timeout pattern and no other pattern
-  // matches, the exit code drives the fallback: exit 1 → command_failed,
-  // anything else → unknown. Both are more honest than a false "timeout" —
-  // the caller (bash orchestrator) already has an accurate exit-code label
-  // from the case statement, and "unknown + inspect logs" is actionable.
   const kind: FailureKind = input.exitCode === 1 ? 'command_failed' : 'unknown';
   const fallback: Failure = {
     runUuid: input.runUuid,
@@ -244,7 +225,7 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
     kind = 'branch_changed';
     suggestedAction =
       'Reset the worktree branch and retry; verify the agent prompt does not switch branches.';
-  } else if (/timeout|timed out/i.test(reason) && timeoutPlausible(input)) {
+  } else if (/timeout|timed out/i.test(reason)) {
     kind = 'timeout';
     suggestedAction = 'Raise invocationMaxMinutes or investigate why the agent hung.';
   } else if (/blocked/i.test(reason)) {

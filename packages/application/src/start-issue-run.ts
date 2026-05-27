@@ -258,7 +258,6 @@ export class StartIssueRun {
             ],
             detectedAt: completedAt,
             events: collectedEvents,
-            elapsedMs: exec.durationMs,
           });
           classified = true;
           try {

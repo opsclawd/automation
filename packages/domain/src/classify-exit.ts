@@ -17,8 +17,4 @@ export interface ClassifyExitInput {
    *  and a terminal event exists, the classifier prefers events over
    *  log scraping. */
   events?: ClassifierEvent[];
-  /** Wall-clock duration of the child process in milliseconds. When provided,
-   *  the classifier skips `timeout` classification when the run completed in
-   *  under 30 seconds — too fast for any legitimate timeout to have fired. */
-  elapsedMs?: number;
 }
