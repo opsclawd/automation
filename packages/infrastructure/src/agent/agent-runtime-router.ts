@@ -158,9 +158,7 @@ export class AgentRuntimeRouter implements AgentPort {
 
     if (
       result.outcome === 'failed' &&
-      result.contractViolations.includes('cancelled_by_orchestrator') &&
-      profileTimeoutSignal?.aborted &&
-      !request.abortSignal?.aborted
+      result.contractViolations.includes(CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR)
     ) {
       result = { ...result, outcome: 'timeout', contractViolations: [] };
     }
