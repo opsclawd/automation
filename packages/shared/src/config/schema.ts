@@ -46,9 +46,18 @@ const agentProfileSchema = z
     }
   });
 
+const fallbackTriggerSchema = z.enum([
+  'timeout',
+  'contract_violation',
+  'missing_required_artifact',
+  'prompt_budget_exceeded',
+  'invalid_result_json',
+]);
+
 const phaseProfileEntrySchema = z.strictObject({
   profile: nonBlankString,
   fallbackProfile: nonBlankString.optional(),
+  fallbackTriggers: z.array(fallbackTriggerSchema).optional(),
 });
 
 const agentSchema = z
