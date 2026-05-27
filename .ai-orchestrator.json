@@ -65,6 +65,7 @@
       "whole-pr-review": { "profile": "reviewer" },
       "post-pr-review": { "profile": "reviewer" },
       "compound": { "profile": "compound", "fallbackProfile": "inspector" },
+      "extract": { "profile": "builder" },
       "create-pr": { "profile": "architect" }
     }
   }
