@@ -103,7 +103,7 @@ export class StartIssueRun {
       SQLITE_TMPDIR: tmpDirHandle.tmpDir,
     };
     if (this.deps.baseBranch !== undefined) env.AI_BASE_BRANCH = this.deps.baseBranch;
-    if (this.deps.model !== undefined) env.AI_MODEL = this.deps.model;
+    if (this.deps.model !== undefined) env.AI_AGENT_MODEL = this.deps.model;
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
 
     const collectedEvents: ClassifierEvent[] = [];

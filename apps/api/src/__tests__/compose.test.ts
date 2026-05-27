@@ -69,7 +69,7 @@ describe('composeRoot', () => {
     const scriptPath = join(dir, 'env.sh');
     writeFileSync(
       scriptPath,
-      `#!/usr/bin/env bash\necho "BRANCH=$AI_BASE_BRANCH MODEL=$AI_MODEL RUNTIME=$AI_RUNTIME"\nexit 0\n`,
+      `#!/usr/bin/env bash\necho "BRANCH=$AI_BASE_BRANCH MODEL=$AI_AGENT_MODEL RUNTIME=$AI_RUNTIME"\nexit 0\n`,
     );
     chmodSync(scriptPath, 0o755);
 

@@ -293,7 +293,7 @@ describe('StartIssueRun', () => {
     });
     await usecase.execute({ issueNumber: 10 });
     expect(calls[0]!.env.AI_BASE_BRANCH).toBe('develop');
-    expect(calls[0]!.env.AI_MODEL).toBe('gpt-4');
+    expect(calls[0]!.env.AI_AGENT_MODEL).toBe('gpt-4');
     expect(calls[0]!.env.AI_RUNTIME).toBe('codex');
   });
 
@@ -315,7 +315,7 @@ describe('StartIssueRun', () => {
     });
     await usecase.execute({ issueNumber: 1 });
     expect(calls[0]!.env.AI_BASE_BRANCH).toBeUndefined();
-    expect(calls[0]!.env.AI_MODEL).toBeUndefined();
+    expect(calls[0]!.env.AI_AGENT_MODEL).toBeUndefined();
     expect(calls[0]!.env.AI_RUNTIME).toBeUndefined();
   });
 
