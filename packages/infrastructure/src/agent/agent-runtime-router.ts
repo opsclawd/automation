@@ -184,7 +184,7 @@ export class AgentRuntimeRouter implements AgentPort {
     this.opts.invocationRepository.update(id, patch);
 
     // --- Adapter-level fallback only (caller-signalled is handled in invoke) ---
-    if (!isFallbackOrCallerSignalled && this.shouldFallback(result)) {
+    if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
       const phaseEntry = this.opts.agent.phaseProfiles[request.phaseId];
       const fallbackProfileName = phaseEntry?.fallbackProfile;
       if (fallbackProfileName) {
@@ -226,9 +226,40 @@ export class AgentRuntimeRouter implements AgentPort {
     return { ...result, provider: effectiveProvider, model: effectiveModel };
   }
 
-  private shouldFallback(result: AgentInvocationResult): boolean {
-    if (result.outcome === 'timeout') return true;
-    if (result.outcome === 'contract_violation') return true;
+  private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
+    const phaseEntry = this.opts.agent.phaseProfiles[phaseId];
+    const triggers = phaseEntry?.fallbackTriggers ?? ['timeout', 'contract_violation'];
+    for (const trigger of triggers) {
+      switch (trigger) {
+        case 'timeout':
+          if (result.outcome === 'timeout') return true;
+          break;
+        case 'contract_violation':
+          if (result.outcome === 'contract_violation') return true;
+          break;
+        case 'missing_required_artifact':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+          )
+            return true;
+          break;
+        case 'prompt_budget_exceeded':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROMPT_BUDGET_EXCEEDED)
+          )
+            return true;
+          break;
+        case 'invalid_result_json':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON)
+          )
+            return true;
+          break;
+      }
+    }
     return false;
   }
 
