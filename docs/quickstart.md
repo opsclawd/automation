@@ -94,7 +94,8 @@ For the orchestrator's agent runtime, set `AI_AGENT_PROVIDER` and
 `.ai-orchestrator.json` for a single run:
 
 ```bash
-AI_AGENT_PROVIDER=opencode-go AI_AGENT_MODEL=glm-5.1 pnpm orchestrator run --issue 115
+AI_AGENT_PROVIDER=opencode-go AI_AGENT_MODEL=glm-5.1 \
+  pnpm --filter @ai-sdlc/api dev run --issue 115
 ```
 
 These apply to all phases for the run, including fallback profiles.
