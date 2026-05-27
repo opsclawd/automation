@@ -195,6 +195,57 @@ describe('AgentRuntimeRouter fallback', () => {
     });
   });
 
+  it('fallback invocation row records env override values', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new FailingTwiceAdapter(
+      {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 1,
+        durationMs: 500,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'timeout',
+      },
+      {
+        runtime: 'pi',
+        provider: 'local',
+        model: 'glm-5.1',
+        exitCode: 0,
+        durationMs: 600,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'success',
+      },
+    );
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter, pi: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-fb-env',
+      readPromptChars: () => 100,
+      env: { AI_AGENT_MODEL: 'glm-5.1' },
+    });
+
+    await router.invoke(req());
+
+    const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+    expect(rows.length).toBe(2);
+
+    // First row (original) — provider from profile, model overridden
+    expect(rows[0].provider).toBe('anthropic');
+    expect(rows[0].model).toBe('glm-5.1');
+
+    // Second row (fallback) — provider from fallback profile, model overridden
+    expect(rows[1].provider).toBe('local');
+    expect(rows[1].model).toBe('glm-5.1');
+    expect(rows[1].fallbackOfInvocationId).toBeDefined();
+  });
+
   it('bounds fallback to one hop when fallback also fails', async () => {
     const inv = new FakeAgentInvocationPort();
     const events: OrchestratorEvent[] = [];

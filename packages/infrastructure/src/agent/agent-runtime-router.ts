@@ -26,17 +26,20 @@ export interface AgentRuntimeRouterOptions {
   clock?: () => Date;
   idFactory?: () => string;
   readPromptChars?: (path: string) => number;
+  env?: Record<string, string | undefined>;
 }
 
 export class AgentRuntimeRouter implements AgentPort {
   private readonly clock: () => Date;
   private readonly idFactory: () => string;
   private readonly readPromptChars: (path: string) => number;
+  private readonly env: Record<string, string | undefined>;
 
   constructor(private readonly opts: AgentRuntimeRouterOptions) {
     this.clock = opts.clock ?? (() => new Date());
     this.idFactory = opts.idFactory ?? (() => randomUUID());
     this.readPromptChars = opts.readPromptChars ?? defaultReadPromptChars;
+    this.env = opts.env ?? process.env;
   }
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
@@ -74,6 +77,8 @@ export class AgentRuntimeRouter implements AgentPort {
       throw new ConfigError(`no adapter registered for runtime '${profile.runtime}'`);
     }
 
+    const { provider: effectiveProvider, model: effectiveModel } = this.effectiveProfile(profile);
+
     const id = AgentInvocationId(this.idFactory());
     const startedAt = this.clock();
     const promptChars = this.readPromptChars(request.promptPath);
@@ -83,8 +88,8 @@ export class AgentRuntimeRouter implements AgentPort {
       phaseId: PhaseName(request.phaseId),
       profile: request.profile,
       runtime: profile.runtime,
-      provider: profile.provider,
-      model: profile.model,
+      provider: effectiveProvider,
+      model: effectiveModel,
       promptPath: request.promptPath,
       promptChars,
       stdoutPath: '',
@@ -131,8 +136,8 @@ export class AgentRuntimeRouter implements AgentPort {
     const enrichedRequest: AgentInvocationRequest = {
       ...request,
       ...(composedSignal ? { abortSignal: composedSignal } : {}),
-      provider: profile.provider,
-      model: profile.model,
+      provider: effectiveProvider,
+      model: effectiveModel,
       ...(profile.promptBudgetTokens !== undefined
         ? { promptBudgetTokens: profile.promptBudgetTokens }
         : {}),
@@ -204,18 +209,21 @@ export class AgentRuntimeRouter implements AgentPort {
               'router',
             );
 
+            const { provider: fbEffectiveProvider, model: fbEffectiveModel } =
+              this.effectiveProfile(fallbackProfile);
+
             const fallbackResult = await this.dispatch(fallbackRequest, true);
             return {
               ...fallbackResult,
-              provider: fallbackProfile.provider,
-              model: fallbackProfile.model,
+              provider: fbEffectiveProvider,
+              model: fbEffectiveModel,
             };
           }
         }
       }
     }
 
-    return { ...result, provider: profile.provider, model: profile.model };
+    return { ...result, provider: effectiveProvider, model: effectiveModel };
   }
 
   private shouldFallback(result: AgentInvocationResult): boolean {
@@ -239,6 +247,16 @@ export class AgentRuntimeRouter implements AgentPort {
       return 'contract_violation';
     }
     return 'unknown';
+  }
+
+  private effectiveProfile(p: { provider: string; model: string }): {
+    provider: string;
+    model: string;
+  } {
+    return {
+      provider: this.env.AI_AGENT_PROVIDER?.trim() || p.provider,
+      model: this.env.AI_AGENT_MODEL?.trim() || p.model,
+    };
   }
 
   private emitFallbackEvent(

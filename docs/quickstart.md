@@ -89,6 +89,17 @@ environment, but the legacy Bash script reads `BASE_BRANCH`, `AGENT_MODEL`,
 and `AGENT_CLI` instead. Until the script is updated to read the `AI_*` names,
 set the script's env vars directly to override defaults.
 
+For the orchestrator's agent runtime, set `AI_AGENT_PROVIDER` and
+`AI_AGENT_MODEL` to override the provider and model from
+`.ai-orchestrator.json` for a single run:
+
+```bash
+AI_AGENT_PROVIDER=opencode-go AI_AGENT_MODEL=glm-5.1 pnpm orchestrator run --issue 115
+```
+
+These apply to all phases for the run, including fallback profiles.
+Blank values fall through to the profile default.
+
 ## Troubleshooting
 
 **Run row stuck in `running`**
