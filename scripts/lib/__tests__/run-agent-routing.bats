@@ -4,6 +4,7 @@ setup() {
   TMPDIR_TEST="$(mktemp -d)"
   export AI_RUN_EVENTS_FILE="${TMPDIR_TEST}/events.jsonl"
   export AI_RUN_DISPLAY_ID="issue-1-20260516-120000"
+  export NODE_OPTIONS='--conditions=development'
 }
 
 teardown() {
