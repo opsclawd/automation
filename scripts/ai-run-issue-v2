@@ -2143,7 +2143,6 @@ No other content in the file — just the status word.
 
 Write code-review.md and review-findings-status.txt now."
 
-  local _re_review_prompt_file
   _re_review_prompt_file=$(mktemp)
   printf '%s' "$RE_REVIEW_PROMPT" > "$_re_review_prompt_file"
   # NOTE: --phase quality-review is intentional — re-review is a quality-review
@@ -2251,7 +2250,6 @@ Rules:
 
 Start now."
 
-    local _compound_prompt_file
     _compound_prompt_file=$(mktemp)
     printf '%s' "$COMPOUND_PROMPT" > "$_compound_prompt_file"
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
