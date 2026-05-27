@@ -519,10 +519,10 @@ Write the result now."
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/extract-${phase}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_extract_prompt_file"
-  if [[ $_tee_ec -ne 0 ]]; then
-    warn "tee failed writing log for extract-${phase} (exit $_tee_ec)"
-  fi
-  if [[ $_agent_ec -ne 0 ]]; then
+if [[ $_tee_ec -ne 0 ]]; then
+      orchestrator_fail "tee failed writing log for extract-${phase} (exit $_tee_ec)"
+    fi
+    if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) warn "extract-${phase} failed (contract violation)" ;;
       2) warn "extract-${phase} failed (config error or timeout)" ;;
@@ -892,7 +892,7 @@ Write design.md now."
     2>&1 | tee -a "${ISSUES_DIR}/plan-design.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_plan_prompt_file"
   if [[ $_tee_ec -ne 0 ]]; then
-    warn "tee failed writing log for plan-design (exit $_tee_ec)"
+    orchestrator_fail "tee failed writing log for plan-design (exit $_tee_ec)"
   fi
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
@@ -971,12 +971,12 @@ Write plan.md now."
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/plan-write.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_plan_prompt_file"
-  if [[ $_tee_ec -ne 0 ]]; then
-    warn "tee failed writing log for plan-write (exit $_tee_ec)"
-  fi
-  if [[ $_agent_ec -ne 0 ]]; then
-    case $_agent_ec in
-      1) orchestrator_fail "plan-write failed (contract violation)" ;;
+if [[ $_tee_ec -ne 0 ]]; then
+      orchestrator_fail "tee failed writing log for plan-write (exit $_tee_ec)"
+    fi
+    if [[ $_agent_ec -ne 0 ]]; then
+      case $_agent_ec in
+        1) orchestrator_fail "plan-write failed (contract violation)" ;;
       2) orchestrator_fail "plan-write failed (config error or timeout)" ;;
       3) orchestrator_fail "plan-write failed (unexpected error)" ;;
       *) orchestrator_fail "plan-write failed (unknown exit code $_agent_ec)" ;;
@@ -1212,7 +1212,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       2>&1 | tee -a "${ISSUES_DIR}/implement-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_impl_prompt_file"
     if [[ $_tee_ec -ne 0 ]]; then
-      warn "tee failed writing log for implement-task-${task_n} (exit $_tee_ec)"
+      orchestrator_fail "tee failed writing log for implement-task-${task_n} (exit $_tee_ec)"
     fi
     check_branch_after_agent
     if [[ $_agent_ec -ne 0 ]]; then
@@ -1348,7 +1348,7 @@ ${QUALITY_REVIEWER_PROMPT}"
       2>&1 | tee -a "${ISSUES_DIR}/quality-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_qual_prompt_file"
     if [[ $_tee_ec -ne 0 ]]; then
-      warn "tee failed writing log for quality-review-task-${task_n} (exit $_tee_ec)"
+      orchestrator_fail "tee failed writing log for quality-review-task-${task_n} (exit $_tee_ec)"
     fi
     if [[ $_agent_ec -eq 2 ]]; then
       if [[ -f "${WORKTREE_DIR}/quality-review-task-${task_n}.result" && -f "${WORKTREE_DIR}/quality-review-task-${task_n}.md" ]]; then
@@ -1461,7 +1461,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_fix_prompt_file"
     if [[ $_tee_ec -ne 0 ]]; then
-      warn "tee failed writing log for fix-review-task-${task_n} (exit $_tee_ec)"
+      orchestrator_fail "tee failed writing log for fix-review-task-${task_n} (exit $_tee_ec)"
     fi
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-task-${task_n}.log" 2>/dev/null; then
@@ -1820,7 +1820,7 @@ Write code-review.md now."
     2>&1 | tee -a "${ISSUES_DIR}/review.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_review_prompt_file"
   if [[ $_tee_ec -ne 0 ]]; then
-    warn "tee failed writing log for review (exit $_tee_ec)"
+    orchestrator_fail "tee failed writing log for review (exit $_tee_ec)"
   fi
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
@@ -1938,7 +1938,7 @@ Start now."
     2>&1 | tee -a "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_fix_prompt_file"
     if [[ $_tee_ec -ne 0 ]]; then
-      warn "tee failed writing log for fix-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
+      orchestrator_fail "tee failed writing log for fix-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
     fi
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
@@ -2025,7 +2025,7 @@ Write code-review.md and review-findings-status.txt now."
     2>&1 | tee -a "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_re_review_prompt_file"
   if [[ $_tee_ec -ne 0 ]]; then
-    warn "tee failed writing log for re-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
+    orchestrator_fail "tee failed writing log for re-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
   fi
   if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
@@ -2129,7 +2129,7 @@ Start now."
       2>&1 | tee -a "${ISSUES_DIR}/compound.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_compound_prompt_file"
     if [[ $_tee_ec -ne 0 ]]; then
-      warn "tee failed writing log for compound (exit $_tee_ec)"
+      orchestrator_fail "tee failed writing log for compound (exit $_tee_ec)"
     fi
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/compound.log" 2>/dev/null; then
