@@ -4,7 +4,7 @@
     "timeout": 300
   },
   "phases": {
-    "skip": ["compound"],
+    "skip": [],
     "reviewFix": { "maxIterations": 10 },
     "implement": { "maxIterations": 5 }
   },
