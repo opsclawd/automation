@@ -1,17 +1,4 @@
 {
-  "validation": {
-    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
-    "timeout": 300
-  },
-  "phases": {
-    "skip": ["compound"],
-    "reviewFix": { "maxIterations": 10 },
-    "implement": { "maxIterations": 5 }
-  },
-  "timeouts": {
-    "readyMaxDays": 7,
-    "invocationMaxMinutes": 30
-  },
   "agent": {
     "defaultProfile": "opencode-frontier",
     "profiles": {
@@ -20,6 +7,12 @@
         "provider": "minimax-coding-plan",
         "model": "MiniMax-M2.7",
         "timeoutMinutes": 60
+      },
+      "opencode-fast": {
+        "runtime": "opencode",
+        "provider": "minimax",
+        "model": "MiniMax-T1",
+        "timeoutMinutes": 30
       },
       "pi-qwen-local": {
         "runtime": "pi",
@@ -35,9 +28,26 @@
       "plan-design": { "profile": "opencode-frontier" },
       "plan-write": { "profile": "opencode-frontier" },
       "implement": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
-      "review": { "profile": "opencode-frontier" },
-      "fix-review": { "profile": "opencode-frontier" },
-      "pr-review-poll": { "profile": "opencode-frontier" }
+      "quality-review": { "profile": "opencode-frontier" },
+      "spec-review": { "profile": "opencode-frontier" },
+      "fix-review": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "whole-pr-review": { "profile": "opencode-frontier" },
+      "post-pr-review": { "profile": "opencode-frontier" },
+      "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
+      "create-pr": { "profile": "opencode-frontier" }
     }
+  },
+  "phases": {
+    "skip": ["compound"],
+    "reviewFix": { "maxIterations": 3 },
+    "implement": { "maxIterations": 3 }
+  },
+  "validation": {
+    "commands": ["pnpm run build", "pnpm run lint"],
+    "timeout": 120
+  },
+  "timeouts": {
+    "readyMaxDays": 7,
+    "invocationMaxMinutes": 5
   }
 }
