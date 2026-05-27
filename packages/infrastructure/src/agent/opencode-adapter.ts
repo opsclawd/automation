@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
@@ -55,11 +55,11 @@ export class OpenCodeAgentAdapter implements AgentPort {
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
       }
-      args.push('--prompt-file', request.promptPath);
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
         all: false,
+        input: readFileSync(request.promptPath, 'utf-8'),
         ...(cancelSignal ? { cancelSignal } : {}),
       });
       const r = await child;

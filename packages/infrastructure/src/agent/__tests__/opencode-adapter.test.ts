@@ -128,9 +128,12 @@ describe('OpenCodeAgentAdapter', () => {
     const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
     expect(loggedArgs).toContain('--model');
     expect(loggedArgs).toContain('claude-opus-4.7');
-    expect(loggedArgs).toContain('--prompt-file');
+    expect(loggedArgs).not.toContain('--prompt-file');
+    const stdinLogFile = join(__dirname, '..', '__fixtures__', 'last-stdin.txt');
+    expect(readFileSync(stdinLogFile, 'utf-8')).toBe('');
 
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
+    if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
   });
 
   it('composes --model as provider/model when both are set', async () => {
@@ -219,8 +222,82 @@ describe('OpenCodeAgentAdapter', () => {
     expect(result.model).toBe('');
     const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
     expect(loggedArgs).not.toContain('--model');
-    expect(loggedArgs).toContain('--prompt-file');
+    expect(loggedArgs).not.toContain('--prompt-file');
+    const stdinLogFile = join(__dirname, '..', '__fixtures__', 'last-stdin.txt');
+    expect(readFileSync(stdinLogFile, 'utf-8')).toBe('');
 
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
+    if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
+  });
+
+  it('pipes multi-line prompt content unmodified via stdin', async () => {
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    const stdinLogFile = join(__dirname, '..', '__fixtures__', 'last-stdin.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+    if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
+    const promptContent = 'Line one\nLine two with "quotes" and $shell\n\nLine four\n';
+    const promptFile = join(cwd, 'prompt.txt');
+    writeFileSync(promptFile, promptContent);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: promptFile,
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(result.outcome).toBe('success');
+    const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
+    expect(loggedArgs).not.toContain('--prompt-file');
+    expect(loggedArgs).not.toContain(promptFile);
+    const capturedStdin = readFileSync(stdinLogFile, 'utf-8');
+    expect(capturedStdin).toBe(promptContent);
+    expect(capturedStdin).toContain('Line one');
+    expect(capturedStdin).toContain('"quotes"');
+    expect(capturedStdin).toContain('$shell');
+
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+    if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
+  });
+
+  it('handles prompts exceeding 150KB via stdin without E2BIG', async () => {
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    const stdinLogFile = join(__dirname, '..', '__fixtures__', 'last-stdin.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+    if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
+    const promptContent = 'A'.repeat(160_000);
+    const promptFile = join(cwd, 'large-prompt.txt');
+    writeFileSync(promptFile, promptContent);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: promptFile,
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(result.outcome).toBe('success');
+    const capturedStdin = readFileSync(stdinLogFile, 'utf-8');
+    expect(capturedStdin.length).toBe(160_000);
+    expect(capturedStdin).toBe(promptContent);
+
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+    if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
   });
 });
