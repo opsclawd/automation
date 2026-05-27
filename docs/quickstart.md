@@ -89,6 +89,27 @@ environment, but the legacy Bash script reads `BASE_BRANCH`, `AGENT_MODEL`,
 and `AGENT_CLI` instead. Until the script is updated to read the `AI_*` names,
 set the script's env vars directly to override defaults.
 
+### Switching agent profiles without editing the config
+
+When `.ai-orchestrator.json` defines an `agent` block, two env vars override
+profile selection at load time so you don't have to edit the file for one-off
+runs:
+
+| Env var                                | Effect                                          |
+| -------------------------------------- | ----------------------------------------------- |
+| `AI_ORCHESTRATOR_PROFILE=<name>`       | Overrides `agent.defaultProfile`                |
+| `AI_ORCHESTRATOR_PHASE_<PHASE>=<name>` | Overrides `agent.phaseProfiles.<phase>.profile` |
+
+Phase names are converted kebab → screaming snake (`plan-design` →
+`AI_ORCHESTRATOR_PHASE_PLAN_DESIGN`). Overrides go through the same schema
+validation as the file, so an unknown profile name fails fast. Existing
+`fallbackProfile` entries are preserved.
+
+```bash
+AI_ORCHESTRATOR_PROFILE=pi-qwen-local pnpm cli run-agent ...
+AI_ORCHESTRATOR_PHASE_IMPLEMENT=opencode-frontier pnpm cli run-agent ...
+```
+
 ## Troubleshooting
 
 **Run row stuck in `running`**
