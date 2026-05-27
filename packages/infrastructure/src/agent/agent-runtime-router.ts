@@ -131,6 +131,7 @@ export class AgentRuntimeRouter implements AgentPort {
     const enrichedRequest: AgentInvocationRequest = {
       ...request,
       ...(composedSignal ? { abortSignal: composedSignal } : {}),
+      provider: profile.provider,
       model: profile.model,
       ...(profile.promptBudgetTokens !== undefined
         ? { promptBudgetTokens: profile.promptBudgetTokens }

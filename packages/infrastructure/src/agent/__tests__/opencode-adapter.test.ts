@@ -133,6 +133,69 @@ describe('OpenCodeAgentAdapter', () => {
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
   });
 
+  it('composes --model as provider/model when both are set', async () => {
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      provider: 'minimax-coding-plan',
+      model: 'MiniMax-M2.7',
+    });
+    expect(result.outcome).toBe('success');
+    expect(result.model).toBe('MiniMax-M2.7');
+    const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
+    expect(loggedArgs).toContain('--model');
+    expect(loggedArgs).toContain('minimax-coding-plan/MiniMax-M2.7');
+
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+  });
+
+  it('preserves slash-containing model IDs under the configured provider', async () => {
+    // OpenRouter-style models contain a slash in the model name itself
+    // (e.g. moonshotai/kimi-k2 under provider 'openrouter'). The adapter
+    // must compose provider/model verbatim; config supplies the bare model
+    // name without provider prefix.
+    const cwd = makeWorktree();
+    const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      provider: 'openrouter',
+      model: 'moonshotai/kimi-k2',
+    });
+    expect(result.outcome).toBe('success');
+    const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
+    expect(loggedArgs).toContain('--model');
+    expect(loggedArgs).toContain('openrouter/moonshotai/kimi-k2');
+
+    if (existsSync(argsLogFile)) rmSync(argsLogFile);
+  });
+
   it('omits --model when request.model is not set', async () => {
     const cwd = makeWorktree();
     const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
