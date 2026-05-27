@@ -1,4 +1,17 @@
 {
+  "validation": {
+    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
+    "timeout": 300
+  },
+  "phases": {
+    "skip": ["compound"],
+    "reviewFix": { "maxIterations": 10 },
+    "implement": { "maxIterations": 5 }
+  },
+  "timeouts": {
+    "readyMaxDays": 7,
+    "invocationMaxMinutes": 30
+  },
   "agent": {
     "defaultProfile": "opencode-frontier",
     "profiles": {
@@ -10,8 +23,8 @@
       },
       "opencode-fast": {
         "runtime": "opencode",
-        "provider": "minimax",
-        "model": "MiniMax-T1",
+        "provider": "minimax-coding-plan",
+        "model": "MiniMax-M2.5",
         "timeoutMinutes": 30
       },
       "pi-qwen-local": {
@@ -36,18 +49,5 @@
       "compound": { "profile": "pi-qwen-local", "fallbackProfile": "opencode-frontier" },
       "create-pr": { "profile": "opencode-frontier" }
     }
-  },
-  "phases": {
-    "skip": ["compound"],
-    "reviewFix": { "maxIterations": 3 },
-    "implement": { "maxIterations": 3 }
-  },
-  "validation": {
-    "commands": ["pnpm run build", "pnpm run lint"],
-    "timeout": 120
-  },
-  "timeouts": {
-    "readyMaxDays": 7,
-    "invocationMaxMinutes": 5
   }
 }

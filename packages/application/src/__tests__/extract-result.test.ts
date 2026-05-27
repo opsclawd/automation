@@ -83,6 +83,12 @@ const PHASE_TESTS: Array<{
     invalidJson: { bad: 'shape' },
     retrySafe: false,
   },
+  {
+    phase: 'whole-pr-review',
+    validJson: { result: 'pass', findings: [{ severity: 'low', summary: 'nit' }] },
+    invalidJson: { bad: 'shape' },
+    retrySafe: true,
+  },
 ];
 
 describe('extractResult', () => {

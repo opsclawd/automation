@@ -156,10 +156,15 @@ export class AgentRuntimeRouter implements AgentPort {
       throw err;
     }
 
+    // Only reclassify cancellation as timeout when the profile timeout fired
+    // AND the caller signal did not. Without the caller-signal guard, a user
+    // Ctrl-C that races with a profile timeout gets mislabeled as timeout,
+    // suppressing the cancellation signal in failure.json/telemetry.
     if (
       result.outcome === 'failed' &&
       result.contractViolations.includes(CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR) &&
-      profileTimeoutSignal?.aborted
+      profileTimeoutSignal?.aborted &&
+      !request.abortSignal?.aborted
     ) {
       result = { ...result, outcome: 'timeout', contractViolations: [] };
     }
@@ -183,7 +188,7 @@ export class AgentRuntimeRouter implements AgentPort {
     this.opts.invocationRepository.update(id, patch);
 
     // --- Adapter-level fallback only (caller-signalled is handled in invoke) ---
-    const routingPhase = request.phaseId.replace(/-\d+$/, '');
+    const routingPhase = normalizeRoutingPhase(request.phaseId);
     if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
       const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
       const fallbackProfileName = phaseEntry?.fallbackProfile;
@@ -227,7 +232,7 @@ export class AgentRuntimeRouter implements AgentPort {
   }
 
   private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
-    const routingPhase = phaseId.replace(/-\d+$/, '');
+    const routingPhase = normalizeRoutingPhase(phaseId);
     const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
     const triggers = phaseEntry?.fallbackTriggers ?? ['timeout', 'contract_violation'];
     for (const trigger of triggers) {
@@ -314,6 +319,18 @@ export class AgentRuntimeRouter implements AgentPort {
     };
     this.opts.eventBus.publish(runId, event);
   }
+}
+
+/**
+ * Strip per-invocation suffixes from a phase ID to get the key used in
+ * `agent.phaseProfiles`. Bash emits IDs like `fix-review-1` (re-review loop
+ * counter) and `quality-review-task-12` (per-task loop). Both must resolve
+ * to their static config key (`fix-review`, `quality-review`).
+ *
+ * Exported for tests.
+ */
+export function normalizeRoutingPhase(phaseId: string): string {
+  return phaseId.replace(/(-task)?-\d+$/, '');
 }
 
 function defaultReadPromptChars(path: string): number {

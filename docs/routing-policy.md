@@ -45,7 +45,7 @@ Additional opt-in triggers (recommended for cheap-model phases):
 | Tier               | Profiles                           | Use Case                                                              |
 | ------------------ | ---------------------------------- | --------------------------------------------------------------------- |
 | Frontier reasoning | `opencode-frontier` (Minimax-M2.7) | Planning, design, high-stakes review                                  |
-| Frontier fast      | `opencode-fast` (MiniMax-T1)       | Review tasks needing frontier reliability but not strongest reasoning |
+| Frontier fast      | `opencode-fast` (MiniMax-M2.5)     | Review tasks needing frontier reliability but not strongest reasoning |
 | Local bounded      | `pi-qwen-local` (Qwen 3.6-27B)     | Mechanical implementation, fixes, docs generation                     |
 
 ## Customizing Routing
