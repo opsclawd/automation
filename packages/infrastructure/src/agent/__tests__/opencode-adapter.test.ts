@@ -163,7 +163,11 @@ describe('OpenCodeAgentAdapter', () => {
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
   });
 
-  it('does not double-prefix when model is already provider-qualified', async () => {
+  it('preserves slash-containing model IDs under the configured provider', async () => {
+    // OpenRouter-style models contain a slash in the model name itself
+    // (e.g. moonshotai/kimi-k2 under provider 'openrouter'). The adapter
+    // must compose provider/model verbatim; config supplies the bare model
+    // name without provider prefix.
     const cwd = makeWorktree();
     const argsLogFile = join(__dirname, '..', '__fixtures__', 'last-args.txt');
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
@@ -181,14 +185,13 @@ describe('OpenCodeAgentAdapter', () => {
       repoId: 'r',
       phaseId: 'plan-design',
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
-      provider: 'minimax-coding-plan',
-      model: 'minimax-coding-plan/MiniMax-M2.7',
+      provider: 'openrouter',
+      model: 'moonshotai/kimi-k2',
     });
     expect(result.outcome).toBe('success');
     const loggedArgs = readFileSync(argsLogFile, 'utf-8').trim();
     expect(loggedArgs).toContain('--model');
-    expect(loggedArgs).toContain('minimax-coding-plan/MiniMax-M2.7');
-    expect(loggedArgs).not.toContain('minimax-coding-plan/minimax-coding-plan');
+    expect(loggedArgs).toContain('openrouter/moonshotai/kimi-k2');
 
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
   });
