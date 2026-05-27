@@ -1886,10 +1886,18 @@ PREV_UNRESOLVED_FP=""
 
 # Fingerprint the set of unresolved findings in code-review.md so we can detect
 # when iterations stop making progress (same findings flagged loop after loop).
+# Pairs each NOT FIXED / PARTIALLY FIXED status with the most recent finding
+# heading (`### N. [severity] ...`) so two different unresolved findings with
+# identical status text don't collide into the same fingerprint.
 _unresolved_fingerprint() {
   local file=$1
   [[ -f "$file" ]] || { echo "missing"; return; }
-  grep -E -i 'not fixed|partially fixed' "$file" 2>/dev/null \
+  awk '
+    /^###[[:space:]]/ { heading = $0; next }
+    /(NOT FIXED|PARTIALLY FIXED|not fixed|partially fixed)/ {
+      if (heading != "") print heading "|" $0
+    }
+  ' "$file" 2>/dev/null \
     | sort -u \
     | sha256sum \
     | awk '{print $1}'
@@ -2039,7 +2047,9 @@ Start now."
   FIX_STATUS_FILE="${WORKTREE_DIR}/fix-status.txt"
   FIX_AGENT_STATUS=""
   if [[ -f "$FIX_STATUS_FILE" ]]; then
-    FIX_AGENT_STATUS=$(tr -d '[:space:]' < "$FIX_STATUS_FILE" | head -c 64)
+    # Read file directly with head (bounded read, no upstream producer that
+    # could SIGPIPE under pipefail) — see SIGPIPE gotcha note at top of file.
+    FIX_AGENT_STATUS=$(head -c 64 "$FIX_STATUS_FILE" 2>/dev/null | tr -d '[:space:]')
   fi
   if [[ "$FIX_AGENT_STATUS" == "ALL_RESOLVED" ]] \
      && _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
