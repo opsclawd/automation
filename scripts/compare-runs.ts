@@ -99,7 +99,9 @@ function compareRuns(aId: string, bId: string): void {
 
   const sortedPhases = [...phases].sort();
 
-  const log = (msg: string) => console.log(msg);
+  const log = (msg: string): void => {
+    process.stdout.write(msg + '\n');
+  };
   log(`# Run Comparison: ${aId} vs ${bId}\n`);
   log('## Per-Phase Comparison\n');
   log(
