@@ -1862,12 +1862,12 @@ Write code-review.md now."
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
     info "Review saved to ${ISSUES_DIR}/review.md"
-    _emit_artifact "review" "${ISSUES_DIR}/review.md" "review"
+    _emit_artifact "quality-review" "${ISSUES_DIR}/review.md" "review"
   else
     REVIEW_FILE=$(find "${WORKTREE_DIR}" -name "code-review.md" 2>/dev/null | head -1 || true)
     if [[ -n "$REVIEW_FILE" && -f "$REVIEW_FILE" ]]; then
       cp "$REVIEW_FILE" "${ISSUES_DIR}/review.md"
-      _emit_artifact "review" "${ISSUES_DIR}/review.md" "review"
+      _emit_artifact "quality-review" "${ISSUES_DIR}/review.md" "review"
     fi
   fi
 
