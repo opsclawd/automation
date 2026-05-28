@@ -68,17 +68,76 @@
       }
     },
     "phaseProfiles": {
-      "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
-      "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
-      "implement": { "profile": "builder", "fallbackProfile": "junior" },
-      "quality-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
-      "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
-      "fix-review": { "profile": "architect", "fallbackProfile": "senior" },
-      "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "senior" },
-      "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
-      "compound": { "profile": "junior", "fallbackProfile": "builder" },
-      "extract": { "profile": "pi-qwen-local", "fallbackProfile": "junior" },
-      "create-pr": { "profile": "architect", "fallbackProfile": "senior" }
+      "plan-design": {
+        "profile": "architect",
+        "fallbackProfile": "senior",
+        "fallbackTriggers": [
+          "timeout",
+          "contract_violation",
+          "runtime_error",
+          "token_limit_exceeded"
+        ]
+      },
+      "plan-write": {
+        "profile": "architect",
+        "fallbackProfile": "senior",
+        "fallbackTriggers": [
+          "timeout",
+          "contract_violation",
+          "runtime_error",
+          "token_limit_exceeded"
+        ]
+      },
+      "implement": {
+        "profile": "builder",
+        "fallbackProfile": "junior",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      },
+      "quality-review": {
+        "profile": "task-reviewer",
+        "fallbackProfile": "senior",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      },
+      "spec-review": {
+        "profile": "task-reviewer",
+        "fallbackProfile": "senior",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      },
+      "fix-review": {
+        "profile": "architect",
+        "fallbackProfile": "senior",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      },
+      "whole-pr-review": {
+        "profile": "reviewer",
+        "fallbackProfile": "senior",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      },
+      "post-pr-review": {
+        "profile": "senior",
+        "fallbackProfile": "senior-fallback",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      },
+      "compound": {
+        "profile": "junior",
+        "fallbackProfile": "builder",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      },
+      "extract": {
+        "profile": "pi-qwen-local",
+        "fallbackProfile": "junior",
+        "fallbackTriggers": [
+          "timeout",
+          "contract_violation",
+          "runtime_error",
+          "token_limit_exceeded"
+        ]
+      },
+      "create-pr": {
+        "profile": "architect",
+        "fallbackProfile": "senior",
+        "fallbackTriggers": ["timeout", "contract_violation", "runtime_error"]
+      }
     }
   }
 }
