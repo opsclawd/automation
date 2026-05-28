@@ -62,4 +62,9 @@ describe('Run state machine', () => {
     expect(() => passRun(passed, new Date())).toThrow(RunStateError);
     expect(() => failRun(passed, 'late failure')).toThrow(RunStateError);
   });
+
+  it('createRun accepts consolidate type', () => {
+    const r = createRun({ ...base, type: 'consolidate' });
+    expect(r.type).toBe('consolidate');
+  });
 });
