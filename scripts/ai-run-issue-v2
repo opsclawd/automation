@@ -1898,18 +1898,21 @@ _unresolved_fingerprint() {
   awk '
     BEGIN { rsize = 5 }
     /^[[:space:]]*$/ { next }
-    /(NOT FIXED|PARTIALLY FIXED|not fixed|partially fixed)/ {
-      out = ""
-      for (i = rsize; i >= 1; i--) {
-        if (ring[i] != "") {
-          if (out != "") out = out "||"
-          out = out ring[i]
-        }
-      }
-      if (out != "") out = out "||"
-      print out $0
-    }
     {
+      # Case-insensitive match via tolower so "Not Fixed", "NOT FIXED",
+      # "Partially Fixed", etc. all qualify. The reviewer is not constrained
+      # to a single casing in the prompt.
+      if (tolower($0) ~ /not fixed|partially fixed/) {
+        out = ""
+        for (i = rsize; i >= 1; i--) {
+          if (ring[i] != "") {
+            if (out != "") out = out "||"
+            out = out ring[i]
+          }
+        }
+        if (out != "") out = out "||"
+        print out $0
+      }
       for (i = rsize; i > 1; i--) ring[i] = ring[i-1]
       ring[1] = $0
     }
