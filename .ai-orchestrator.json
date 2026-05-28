@@ -27,6 +27,12 @@
         "model": "glm-5.1",
         "timeoutMinutes": 60
       },
+      "senior-fallback": {
+        "runtime": "opencode",
+        "provider": "ollama-cloud",
+        "model": "glm-5.1",
+        "timeoutMinutes": 60
+      },
       "builder": {
         "runtime": "opencode",
         "provider": "minimax-coding-plan",
@@ -36,13 +42,19 @@
       "junior": {
         "runtime": "opencode",
         "provider": "opencode",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-v4-flash-free",
         "timeoutMinutes": 30
       },
       "reviewer": {
         "runtime": "opencode",
         "provider": "ollama-cloud",
         "model": "deepseek-v4-pro",
+        "timeoutMinutes": 30
+      },
+      "task-reviewer": {
+        "runtime": "opencode",
+        "provider": "ollama-cloud",
+        "model": "kimi-k2.6",
         "timeoutMinutes": 30
       },
       "pi-qwen-local": {
@@ -59,11 +71,11 @@
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
       "implement": { "profile": "builder", "fallbackProfile": "junior" },
-      "quality-review": { "profile": "reviewer", "fallbackProfile": "senior" },
-      "spec-review": { "profile": "reviewer", "fallbackProfile": "senior" },
-      "fix-review": { "profile": "builder", "fallbackProfile": "junior" },
+      "quality-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
+      "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
+      "fix-review": { "profile": "architect", "fallbackProfile": "senior" },
       "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "senior" },
-      "post-pr-review": { "profile": "reviewer", "fallbackProfile": "senior" },
+      "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
       "extract": { "profile": "pi-qwen-local", "fallbackProfile": "junior" },
       "create-pr": { "profile": "architect", "fallbackProfile": "senior" }
