@@ -473,6 +473,9 @@ run_agent() {
 
   log "Running agent for '${phase}' (timeout=${timeout_sec}s)..."
   local _agent_ec=0
+  local _pnpm_ec_file
+  _pnpm_ec_file=$(mktemp)
+  pushd "$REPO_ROOT" > /dev/null 2>&1
   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase "$routing_phase" \
     --phase-id "$routing_phase" \
@@ -484,7 +487,10 @@ run_agent() {
     --timeout-minutes "$timeout_min" \
     --start-sha "$(git -C "${POLL_WORKTREE:-$REPO_ROOT}" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "$output_log"
-  _agent_ec=${PIPESTATUS[0]}
+  echo ${PIPESTATUS[0]} > "$_pnpm_ec_file"
+  popd > /dev/null 2>&1
+  _agent_ec=$(cat "$_pnpm_ec_file")
+  rm -f "$_pnpm_ec_file"
   rm -f "$prompt_file"
   if [[ $_agent_ec -eq 2 ]]; then
     log "FAIL: '${phase}' timed out or had config error"
@@ -708,6 +714,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   emit_event "post-pr-review" "info" "post-pr-review.agent.started" \
     "invoking agent for poll iteration ${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
 
+  pushd "$REPO_ROOT" > /dev/null 2>&1
   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase post-pr-review \
     --cwd "$POLL_WORKTREE" \
@@ -721,6 +728,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     --start-sha "$(git -C "$POLL_WORKTREE" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/process-review-p${POLL_COUNT}.log"
   _agent_ec=${PIPESTATUS[0]}
+  popd > /dev/null 2>&1
 
   if [[ $_agent_ec -ne 0 ]]; then
     warn "Agent exited with code ${_agent_ec} (poll ${POLL_COUNT})"
