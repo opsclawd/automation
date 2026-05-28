@@ -101,32 +101,72 @@ PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || echo "unk
 log "PR #${PR_NUMBER}: ${PR_URL} (branch: ${PR_BRANCH})"
 
 # ── Checkout branch in isolated worktree ────────────────────────────────────
+# Safety contract: when this block exits, $(pwd) MUST be a worktree whose HEAD
+# is $PR_BRANCH. If we can't guarantee that, abort — running a merge against
+# the wrong branch (e.g. main, when the orchestrator worktree silently kept
+# its initial HEAD) corrupts the shared index across all worktrees.
 ORCHESTRATOR_WORKTREE="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
 POLL_WORKTREE="${REPO_ROOT}/.ai-worktrees/poll-pr-${PR_NUMBER}"
 cd "$REPO_ROOT"
-git fetch origin "$PR_BRANCH" 2>/dev/null || true
+git fetch origin "$PR_BRANCH" || warn "git fetch origin ${PR_BRANCH} failed (continuing with local refs)"
+
+# Sync a worktree to $PR_BRANCH. Fails loudly if anything goes wrong.
+# Refuses to proceed unless HEAD ends up exactly on $PR_BRANCH.
+sync_worktree_to_pr_branch() {
+  local wt="$1"
+  cd "$wt" || { warn "cd ${wt} failed"; return 1; }
+  if ! git checkout "$PR_BRANCH"; then
+    warn "git checkout ${PR_BRANCH} failed in ${wt} (branch may be checked out in another worktree)"
+    return 1
+  fi
+  local head_branch
+  head_branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+  if [[ "$head_branch" != "$PR_BRANCH" ]]; then
+    warn "worktree HEAD is '${head_branch}', expected '${PR_BRANCH}'. Refusing to merge."
+    return 1
+  fi
+  if ! git pull --ff-only origin "$PR_BRANCH"; then
+    warn "fast-forward pull failed; attempting merge of origin/${PR_BRANCH} into ${PR_BRANCH}"
+    if ! git merge --no-edit "origin/$PR_BRANCH"; then
+      warn "merge of origin/${PR_BRANCH} failed in ${wt}; aborting merge"
+      git merge --abort 2>/dev/null || true
+      return 1
+    fi
+  fi
+  return 0
+}
 
 if [[ -n "$ISSUE_NUM" && -d "$ORCHESTRATOR_WORKTREE" ]]; then
   POLL_WORKTREE="$ORCHESTRATOR_WORKTREE"
   log "Reusing orchestrator worktree at ${POLL_WORKTREE}"
-  cd "$POLL_WORKTREE"
-  git checkout "$PR_BRANCH" 2>/dev/null || true
-  git pull --ff-only origin "$PR_BRANCH" 2>/dev/null || git merge "origin/$PR_BRANCH" 2>/dev/null || true
+  sync_worktree_to_pr_branch "$POLL_WORKTREE" || {
+    warn "Could not put orchestrator worktree on ${PR_BRANCH}; aborting to avoid corrupting shared index"
+    exit 2
+  }
 elif [[ -d "$POLL_WORKTREE" ]]; then
   log "Reusing existing poll worktree at ${POLL_WORKTREE}"
-  cd "$POLL_WORKTREE"
-  git checkout "$PR_BRANCH" 2>/dev/null || true
-  git pull --ff-only origin "$PR_BRANCH" 2>/dev/null || git merge "origin/$PR_BRANCH" 2>/dev/null || true
+  sync_worktree_to_pr_branch "$POLL_WORKTREE" || {
+    warn "Could not put poll worktree on ${PR_BRANCH}; aborting"
+    exit 2
+  }
 else
   log "Creating worktree at ${POLL_WORKTREE}"
   if git rev-parse --verify "$PR_BRANCH" 2>/dev/null; then
-    git worktree add "$POLL_WORKTREE" "$PR_BRANCH"
+    git worktree add "$POLL_WORKTREE" "$PR_BRANCH" || { warn "git worktree add failed"; exit 2; }
   else
-    git worktree add "$POLL_WORKTREE" -b "$PR_BRANCH" "origin/$PR_BRANCH"
+    git worktree add "$POLL_WORKTREE" -b "$PR_BRANCH" "origin/$PR_BRANCH" || { warn "git worktree add failed"; exit 2; }
   fi
   cd "$POLL_WORKTREE"
 fi
-log "Working directory: $(pwd)"
+
+# Final safety assertion: we must be in a worktree on $PR_BRANCH before
+# anything downstream (agent invocations, commits, pushes) runs.
+_actual_branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [[ "$_actual_branch" != "$PR_BRANCH" ]]; then
+  warn "Bootstrap finished but HEAD is '${_actual_branch}', not '${PR_BRANCH}'. Refusing to continue."
+  exit 2
+fi
+log "Working directory: $(pwd) (HEAD: ${_actual_branch})"
 
 # ── Result resolution (three-tier: .result file → extractor agent → fallback) ──
 
