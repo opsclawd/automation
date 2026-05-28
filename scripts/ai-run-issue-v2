@@ -215,9 +215,11 @@ seed_excludes() {
   common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
   exclude_file="${common_dir}/info/exclude"
   mkdir -p "${common_dir}/info"
-  # Sentinel check: .review-context/ is the last pattern in the block, so its
-  # presence means a previous seed_excludes call already wrote the full set.
-  if [[ -f "$exclude_file" ]] && grep -qxF '.review-context/' "$exclude_file"; then
+  # Sentinel check: fix-status.txt is unique to the current block version, so
+  # its presence means a previous seed_excludes call already wrote the full set.
+  # Bumping the sentinel when the block changes causes a one-time re-seed in
+  # existing worktrees (duplicate patterns in info/exclude are harmless).
+  if [[ -f "$exclude_file" ]] && grep -qxF 'fix-status.txt' "$exclude_file"; then
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -242,6 +244,7 @@ tsconfig.tsbuildinfo
 spec-review-task-*.md
 quality-review-task-*.md
 review-findings-status.txt
+fix-status.txt
 implement-task-*.md
 fix-review-task-*.md
 fix-review-task-*.log
@@ -1977,6 +1980,54 @@ fi
 # PHASE: fix-review (with loop)
 # ═══════════════════════════════════════════════════════════════════════════
 FIX_LOOP_COUNT=0
+PREV_UNRESOLVED_FP=""
+
+# Fingerprint the set of unresolved findings in code-review.md so we can detect
+# when iterations stop making progress (same findings flagged loop after loop).
+# Builds each finding's identity from a 5-line ring buffer of preceding
+# non-empty lines plus the status line, joined with `||` into one record so
+# `sort -u` can dedupe whole-record. The ring is wide enough to capture unique
+# context (file paths, line refs, severity, finding header) even when the
+# re-reviewer uses repeated generic metadata lines like `- severity: high`.
+# The re-review prompt does not mandate any particular heading format.
+_unresolved_fingerprint() {
+  local file=$1
+  [[ -f "$file" ]] || { echo "missing"; return; }
+  awk '
+    BEGIN { rsize = 5 }
+    /^[[:space:]]*$/ { next }
+    {
+      # Case-insensitive match via tolower so "Not Fixed", "NOT FIXED",
+      # "Partially Fixed", etc. all qualify. The reviewer is not constrained
+      # to a single casing in the prompt.
+      if (tolower($0) ~ /not fixed|partially fixed/) {
+        out = ""
+        for (i = rsize; i >= 1; i--) {
+          if (ring[i] != "") {
+            if (out != "") out = out "||"
+            out = out ring[i]
+          }
+        }
+        if (out != "") out = out "||"
+        print out $0
+      }
+      for (i = rsize; i > 1; i--) ring[i] = ring[i-1]
+      ring[1] = $0
+    }
+  ' "$file" 2>/dev/null \
+    | sort -u \
+    | sha256sum \
+    | awk '{print $1}'
+}
+
+# True if revalidate-N.log shows all four checks (build/lint/typecheck/test) passed.
+# The revalidate block in this script emits "[<step> failed]" on non-zero exit,
+# so the absence of any "[* failed]" marker means green.
+_revalidate_is_green() {
+  local file=$1
+  [[ -f "$file" ]] || return 1
+  ! grep -qE '\[(build|lint|typecheck|test) failed\]' "$file"
+}
 
 if [[ "$PHASE" == "fix-review" ]]; then
 _emit_phase_started "fix-review"
@@ -2008,6 +2059,10 @@ while [[ "$PHASE" == "fix-review" ]]; do
     break
   fi
 
+  # Clear any stale self-report from a prior iteration so a missing write
+  # this iteration falls back to running the re-review agent (fail-safe).
+  rm -f "${WORKTREE_DIR}/fix-status.txt"
+
   FIX_PROMPT="You are fixing code review findings.
 
 ## CONTEXT
@@ -2025,6 +2080,13 @@ Rules:
 - Do not rewrite working code for style preference.
 - If a finding is invalid, note it in ./review-fix-log.md and skip it.
 - If a finding is fixed, document the fix in ./review-fix-log.md.
+
+## MANDATORY RESULT FILE
+After fixing (or deciding nothing needs fixing), write EXACTLY ONE of these values to ./fix-status.txt:
+- ALL_FIXED      (every finding from this iteration's review was fixed in code, or was already carried-forward from a prior loop's fix. Use this ONLY when no findings this iteration were marked invalid/skip/out-of-scope by you. This is the strictest value — choose it only when you are claiming you actually changed the code to address every legitimate finding.)
+- NEEDS_REVIEW   (any other case: you skipped a finding as invalid/out-of-scope, you are uncertain a fix landed correctly, or one or more findings still need work. The orchestrator will run an independent re-reviewer to verify.)
+No other content in the file — just the status word.
+This is your self-report. The orchestrator skips the expensive re-review pass only when you write ALL_FIXED, so do not use it as a shortcut for skipped findings — write NEEDS_REVIEW whenever any claim of yours needs verification.
 
 ## ORCHESTRATOR ARTIFACTS — DO NOT DELETE
 The following files are orchestrator working artifacts. They are excluded
@@ -2100,6 +2162,47 @@ Start now."
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
 
+  # Propagate revalidate state into validation.result so the create-pr phase
+  # (which labels ai:pr-ready vs ai:needs-human-review based on this file)
+  # reflects the current build/lint/typecheck/test status — not the stale
+  # result from the pre-loop validate phase.
+  if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
+    echo "passed" > "${ISSUES_DIR}/validation.result"
+  else
+    echo "failed" > "${ISSUES_DIR}/validation.result"
+    warn "Revalidate after fix loop ${FIX_LOOP_COUNT} did not pass — validation.result set to failed."
+  fi
+
+  # ── deterministic gate: skip re-review agent on the happy path ────────────
+  # The re-review agent is the heaviest step in this loop (full agent + skill
+  # load + re-reads source). Skip it ONLY when:
+  #   (a) the fix agent self-reports ALL_FIXED (the strict value — no
+  #       invalid/skip/out-of-scope claims this iteration; every finding was
+  #       actually fixed in code), AND
+  #   (b) revalidate is green.
+  # Any NEEDS_REVIEW value (including all skip/invalid claims) falls through
+  # to the independent re-reviewer, so the fix agent cannot self-approve
+  # findings it decided to skip.
+  FIX_STATUS_FILE="${WORKTREE_DIR}/fix-status.txt"
+  FIX_AGENT_STATUS=""
+  if [[ -f "$FIX_STATUS_FILE" ]]; then
+    # Read file directly with head (bounded read, no upstream producer that
+    # could SIGPIPE under pipefail) — see SIGPIPE gotcha note at top of file.
+    FIX_AGENT_STATUS=$(head -c 64 "$FIX_STATUS_FILE" 2>/dev/null | tr -d '[:space:]')
+  fi
+  if [[ "$FIX_AGENT_STATUS" == "ALL_FIXED" ]] \
+     && _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
+    info "Fix agent reports ALL_FIXED and revalidate is green — skipping re-review agent (loop ${FIX_LOOP_COUNT})."
+    echo "ALL_RESOLVED" > "${WORKTREE_DIR}/review-findings-status.txt"
+    emit_event "fix-review" "info" "loop.reagent_skipped" \
+      "skipped re-review agent: fix-status=ALL_FIXED and revalidate green" \
+      iteration="${FIX_LOOP_COUNT}"
+    emit_event "fix-review" "info" "loop.iteration.completed" \
+      "fix-review loop ${FIX_LOOP_COUNT} completed (deterministic resolve)" \
+      iteration="${FIX_LOOP_COUNT}" status="ALL_RESOLVED"
+    break
+  fi
+
   # ── re-review ──────────────────────────────────────────────────────────────
   log "=== Re-reviewing after fix (loop $FIX_LOOP_COUNT) ==="
 
@@ -2109,16 +2212,24 @@ Start now."
 You are reviewing branch: ${BRANCH} against base: ${BASE_BRANCH}
 Your working directory: ${WORKTREE_DIR}
 Original review: ./review.md
+Fix agent's notes: ./review-fix-log.md  (READ THIS — it records which findings the fix agent fixed, skipped as invalid, or deemed out-of-scope, with reasoning)
 Revalidation log: ./revalidate-${FIX_LOOP_COUNT}.log
 
 ## TASK
 Load the requesting-code-review skill first.
+Read ./review-fix-log.md first to see what the fix agent did for each finding.
 Read the actual source files that had findings. Verify each finding by reading the file on disk.
 Check the revalidation log for build/lint/test results.
 For each original finding, note whether it is: **fixed** | **partially fixed** | **not fixed** | **invalid**
 If a finding was pre-existing (not introduced by this branch), note it as **CARRIED FORWARD** (pre-existing).
 Write an updated review to ./code-review.md.
 Verify your assertions by reading actual file contents.
+
+## HONORING THE FIX AGENT'S SKIP/INVALID CLAIMS
+If review-fix-log.md marks a finding as **invalid**, **skip**, **out-of-scope**, or **no code change possible**:
+- Default to **invalid** in your status unless you can point to a concrete, in-scope code defect on disk that contradicts the fix agent's reasoning.
+- A test-design critique, a request for more tests, or 'this could be better refactored' is NOT a code defect — accept the fix agent's invalid/skip verdict.
+- Do NOT re-litigate the same finding across loops. If you marked a finding **not fixed** in a prior loop and the fix agent has documented why no fix is possible, flip it to **invalid** this loop.
 
 ## MANDATORY RESULT FILE
 After writing code-review.md, write EXACTLY ONE of these values to ./review-findings-status.txt:
@@ -2187,11 +2298,54 @@ Write code-review.md and review-findings-status.txt now."
       iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
     break
   fi
+
+  # No-progress detector: if the unresolved finding set is identical to the
+  # previous iteration, the loop is stuck (typically on a finding the fix agent
+  # cannot or will not address). Break instead of churning to the iteration cap.
+  # But only break when revalidate is GREEN — if it's red, there's still
+  # something objectively broken (build/lint/typecheck/test failed) and we
+  # should keep trying until MAX_ITERATIONS rather than ship a broken branch.
+  NEW_UNRESOLVED_FP=$(_unresolved_fingerprint "${ISSUES_DIR}/review.md")
+  if [[ -n "$PREV_UNRESOLVED_FP" && "$NEW_UNRESOLVED_FP" == "$PREV_UNRESOLVED_FP" ]]; then
+    if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
+      info "Unresolved finding set unchanged since loop $((FIX_LOOP_COUNT - 1)) and revalidate green — breaking to avoid churn."
+      emit_event "fix-review" "warn" "loop.no_progress" \
+        "fix-review unresolved set unchanged across iterations" \
+        iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}" fingerprint="${NEW_UNRESOLVED_FP}"
+      emit_event "fix-review" "info" "loop.iteration.completed" \
+        "fix-review loop ${FIX_LOOP_COUNT} completed (no progress)" \
+        iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
+      break
+    fi
+    info "Unresolved set unchanged but revalidate is red — continuing loop (refusing to early-exit with broken build/tests)."
+    emit_event "fix-review" "warn" "loop.no_progress_blocked_red" \
+      "no-progress break suppressed because revalidate is red" \
+      iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}" fingerprint="${NEW_UNRESOLVED_FP}"
+  fi
+  PREV_UNRESOLVED_FP="$NEW_UNRESOLVED_FP"
+
   info "Review status: ${REVIEW_STATUS}. Continuing fix loop."
   emit_event "fix-review" "info" "loop.iteration.completed" \
     "fix-review loop ${FIX_LOOP_COUNT} completed (has unresolved)" \
     iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
 done
+
+# Post-loop guard: refuse to let create-pr label this PR as ai:pr-ready when
+# the fix loop exited with unresolved findings. Covers ALL exit paths from
+# the while loop — no-progress break, MAX_ITERATIONS exhaustion, or any other
+# future early-break that leaves review-findings-status.txt as HAS_UNRESOLVED.
+# Without this, a finding the fix agent cannot resolve would still ship as
+# pr-ready as long as build/lint/typecheck/test are green.
+if [[ -f "${WORKTREE_DIR}/review-findings-status.txt" ]]; then
+  FINAL_REVIEW_STATUS=$(head -c 64 "${WORKTREE_DIR}/review-findings-status.txt" 2>/dev/null | tr -d '[:space:]')
+  if [[ "$FINAL_REVIEW_STATUS" == "HAS_UNRESOLVED" ]]; then
+    warn "fix-review exited with unresolved findings — overriding validation.result to block ai:pr-ready."
+    echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
+    emit_event "fix-review" "warn" "phase.unresolved_findings" \
+      "fix-review exited with unresolved findings; validation.result overridden to block ai:pr-ready" \
+      status="$FINAL_REVIEW_STATUS"
+  fi
+fi
 
 _emit_phase_done "fix-review"
 PHASE="compound"
@@ -2474,7 +2628,7 @@ if [[ "$PHASE" == "done" ]]; then
     implementation-log.md \
     compound.md \
     validation.md validation.result validate.log revalidate-*.log validation-*.md \
-    review.md review-fix-log.md code-review.md review-findings-status.txt \
+    review.md review-fix-log.md code-review.md review-findings-status.txt fix-status.txt \
     pr-summary.md pr-url.txt pr-number.txt \
     poll-pr.log \
     install-worktree.log \
