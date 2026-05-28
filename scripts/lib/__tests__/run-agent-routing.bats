@@ -324,4 +324,6 @@ _run_agent() {
   [ "$status" -eq 0 ]
   run grep -q '\-\-phase extract' scripts/ai-pr-review-poll
   [ "$status" -eq 0 ]
+  run grep -q '\-\-phase-id extract' scripts/ai-pr-review-poll
+  [ "$status" -eq 0 ]
 }
