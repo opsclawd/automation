@@ -17,4 +17,9 @@ export interface ClassifyExitInput {
    *  and a terminal event exists, the classifier prefers events over
    *  log scraping. */
   events?: ClassifierEvent[];
+  invocation?: {
+    outcome: 'success' | 'failed' | 'timeout' | 'contract_violation';
+    stderrContent?: string;
+    contractViolations?: string[];
+  };
 }
