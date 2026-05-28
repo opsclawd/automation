@@ -134,9 +134,8 @@ PROMPT_FILE=$(mktemp)
 
 log "Invoking agent via run-agent.ts (timeout ${TIMEOUT_SEC}s, phase compound)..."
 
-run_agent() {
+timeout "$TIMEOUT_SEC" bash -c '
   local prompt="$1"
-  local timeout_sec="$TIMEOUT_SEC"
   local timeout_min=$(( (TIMEOUT_SEC + 59) / 60 ))
   if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
 
@@ -150,22 +149,22 @@ run_agent() {
   fi
 
   local run_id
-  run_id="${CONSOLIDATE_RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo 'fallback-uuid-'$(date +%s))}"
+  run_id="${CONSOLIDATE_RUN_ID:-$(uuidgen 2>/dev/null || python3 -c '"'"'import uuid; print(uuid.uuid4())'"'"' 2>/dev/null || echo '"'"'fallback-uuid-'"'"'$(date +%s))}"
 
   local owner_repo
-  owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'local/local')}"
+  owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '"'"'local/local'"'"')}"
 
   local start_sha
   if [[ -n "$SINCE" ]]; then
-    start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha="0%.0s" {1..40}
+    start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '"'"'0%.0s'"'"' {1..40})
   else
-    start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha="0%.0s" {1..40}
+    start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '"'"'0%.0s'"'"' {1..40})
   fi
 
-  NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx \
+  NODE_OPTIONS='"'"'--conditions=development'"'"' pnpm --filter @ai-sdlc/cli exec tsx \
     "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase compound \
-    --phase-id "compound" \
+    --phase-id "$phase_id" \
     --cwd "$REPO_ROOT" \
     --run-id "$run_id" \
     --repo-id "$owner_repo" \
@@ -173,15 +172,7 @@ run_agent() {
     --prompt-file "$prompt" \
     --timeout-minutes "$timeout_min" \
     --start-sha "$start_sha"
-}
-
-
-
-# PIPESTATUS[0] reliably captures run_agent's exit code: bash evaluates both
-# sides of the pipe before PIPESTATUS is read, and tee is a simple consumer
-# that does not affect the producer's exit status.  The 2>&1 redirect merges
-# run-agent.ts stderr (progress, diagnostics) into the same log stream.
-run_agent "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
+' "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
 AGENT_EC=${PIPESTATUS[0]}
 rm -f "$PROMPT_FILE"
 

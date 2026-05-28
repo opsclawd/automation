@@ -227,7 +227,7 @@ async function main() {
       displayId: runId,
       issueNumber: 0,
       startedAt: new Date(),
-      type: values.phase === 'compound' ? 'consolidate' : 'pr_review',
+      type: phaseToRunType(values.phase),
     });
     c.runRepository.insert(run);
   }
