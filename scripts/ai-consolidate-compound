@@ -139,9 +139,36 @@ run_agent() {
   local timeout_sec="$TIMEOUT_SEC"
   local timeout_min=$(( (TIMEOUT_SEC + 59) / 60 ))
   if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
-  # Preserve second-level granularity: wrap CLI with timeout at seconds level
-  # The outer timeout enforces the exact seconds-level deadline; inner timeout-minutes is for run-agent.ts
-  timeout "$timeout_sec" bash -c 'exec run_agent "$@"' _ <<< "$(cat < "$prompt")"
+
+  local run_agent_process
+  run_agent_process() {
+    local phase_id
+    if [[ -n "$ISSUES" ]]; then
+      phase_id="consolidate-issues-${ISSUES//,/-}"
+    elif [[ -n "$SINCE" ]]; then
+      phase_id="consolidate-since-${SINCE//\//-}"
+    else
+      phase_id="consolidate-$(date -u +%Y%m%dT%H%M%SZ)"
+    fi
+
+    local run_id
+    run_id="${CONSOLIDATE_RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo 'fallback-uuid-'$(date +%s))}"
+
+    local owner_repo
+    owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'local/local')}"
+
+    NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx \
+      "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+      --phase compound \
+      --phase-id "$phase_id" \
+      --cwd "$REPO_ROOT" \
+      --run-id "$run_id" \
+      --repo-id "$owner_repo" \
+      --repo-root "$REPO_ROOT" \
+      --prompt-file "$prompt" \
+      --timeout-minutes "$timeout_min" \
+      --start-sha "$start_sha"
+  }
 
   local phase_id
   if [[ -n "$ISSUES" ]]; then
@@ -153,7 +180,7 @@ run_agent() {
   fi
 
   local run_id
-  run_id="${CONSOLIDATE_RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')}"
+  run_id="${CONSOLIDATE_RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo 'fallback-uuid-'$(date +%s))}"
 
   local owner_repo
   owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'local/local')}"
