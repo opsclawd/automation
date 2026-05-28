@@ -270,6 +270,12 @@ export class AgentRuntimeRouter implements AgentPort {
           )
             return true;
           break;
+        case 'runtime_error':
+          if (result.outcome === 'failed') return true;
+          break;
+        case 'token_limit_exceeded':
+          if (result.outcome === 'failed' && isTokenLimitError(result)) return true;
+          break;
       }
     }
     return false;
@@ -288,6 +294,10 @@ export class AgentRuntimeRouter implements AgentPort {
         return 'invalid_result_json';
       }
       return 'contract_violation';
+    }
+    if (result.outcome === 'failed') {
+      if (isTokenLimitError(result)) return 'token_limit_exceeded';
+      return 'runtime_error';
     }
     return 'unknown';
   }
@@ -337,6 +347,23 @@ export class AgentRuntimeRouter implements AgentPort {
  */
 export function normalizeRoutingPhase(phaseId: string): string {
   return phaseId.replace(/(-task)?-\d+$/, '');
+}
+
+const TOKEN_LIMIT_PATTERNS = [
+  /context_length_exceeded/i,
+  /prompt is too long/i,
+  /token.*limit.*exceed/i,
+  /maximum context length/i,
+  /request too large/i,
+];
+
+function isTokenLimitError(result: AgentInvocationResult): boolean {
+  try {
+    const stderr = readFileSync(result.stderrPath, 'utf-8');
+    return TOKEN_LIMIT_PATTERNS.some((p) => p.test(stderr));
+  } catch {
+    return false;
+  }
 }
 
 function defaultReadPromptChars(path: string): number {
