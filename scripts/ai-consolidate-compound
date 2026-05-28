@@ -156,9 +156,9 @@ timeout "$TIMEOUT_SEC" bash -c '
 
   local start_sha
   if [[ -n "$SINCE" ]]; then
-    start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '"'"'0%.0s'"'"' {1..40})
+    start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(printf '0%.0s' {1..40})
   else
-    start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '"'"'0%.0s'"'"' {1..40})
+    start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '0%.0s' {1..40})
   fi
 
   NODE_OPTIONS='"'"'--conditions=development'"'"' pnpm --filter @ai-sdlc/cli exec tsx \
