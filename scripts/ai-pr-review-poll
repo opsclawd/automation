@@ -475,7 +475,7 @@ run_agent() {
   local _agent_ec=0
   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase "$routing_phase" \
-    --phase-id "${phase}" \
+    --phase-id "$routing_phase" \
     --cwd "${POLL_WORKTREE:-$REPO_ROOT}" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \

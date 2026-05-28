@@ -324,6 +324,6 @@ _run_agent() {
   [ "$status" -eq 0 ]
   run grep -q '\-\-phase "\$routing_phase"' scripts/ai-pr-review-poll
   [ "$status" -eq 0 ]
-  run grep -q '\-\-phase-id "\${phase}"' scripts/ai-pr-review-poll
+  run grep -q '\-\-phase-id "\$routing_phase"' scripts/ai-pr-review-poll
   [ "$status" -eq 0 ]
 }
