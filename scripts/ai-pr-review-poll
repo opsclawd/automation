@@ -12,7 +12,6 @@ PR_NUMBER="${1:-}"
 ISSUE_NUM="${2:-}"
 MAX_POLLS="${3:-3}"
 POLL_INTERVAL="${4:-300}"
-AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
 # OWNER_REPO defaults to the current repo (where this checkout was cloned from).
 # Override with the OWNER_REPO env var when running against a different repo.
 OWNER_REPO="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")}"
