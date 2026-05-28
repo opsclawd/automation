@@ -57,7 +57,9 @@ const classifyExitAdapter = (
           },
         };
       }
-    } catch {}
+    } catch (err) {
+      console.error(`Failed to enrich classifyExit with invocation data:`, err);
+    }
     return classifyExit(enriched);
   };
 };

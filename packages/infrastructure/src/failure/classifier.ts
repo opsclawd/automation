@@ -80,7 +80,7 @@ function buildFailureFromInvocation(input: ClassifyExitInput): Failure | null {
       break;
     case 'contract_violation':
       if (inv.contractViolations?.includes('prompt_budget_exceeded')) {
-        kind = 'missing_artifact';
+        kind = 'command_failed';
         message = 'Prompt budget exceeded';
         suggestedAction = 'Reduce prompt size or use a profile with a larger context window.';
       } else if (inv.contractViolations?.includes('missing_required_artifact')) {
