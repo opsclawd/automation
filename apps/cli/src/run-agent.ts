@@ -234,6 +234,22 @@ async function main() {
     createdSynthetic = true;
   }
 
+  // When the bash wrapper wraps this process with GNU timeout(1) and the
+  // timeout fires, the process receives SIGTERM. If a synthetic run was
+  // inserted, mark it terminal before exiting so the dashboard doesn't show
+  // a perpetually-running row. runRepository.update() is synchronous, so
+  // this runs reliably in the signal handler.
+  process.on('SIGTERM', () => {
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: 'failed',
+        completedAt: new Date(),
+        failureReason: 'process timed out',
+      });
+    }
+    process.exit(124);
+  });
+
   try {
     const result = await c.agentRuntime.invoke({
       profile: AgentProfileName(profileName),
