@@ -40,23 +40,39 @@ const classifyExitAdapter = (
       const invocations = agentInvocationRepository.listByRun(RunId(input.runUuid));
       const latest = invocations[invocations.length - 1];
       if (latest && latest.outcome && latest.outcome !== 'success') {
-        let stderrContent: string | undefined;
-        if (latest.stderrPath) {
-          try {
-            stderrContent = readFileSync(latest.stderrPath, 'utf-8');
-          } catch {}
+        // Derive the terminal phase from events, if present. Only enrich when
+        // the invocation's phase matches — otherwise a non-fatal phase (e.g.
+        // extract) that failed earlier would misclassify a later non-agent
+        // terminal failure (e.g. bash-level consistency guard).
+        let terminalPhase: string | undefined;
+        if (input.events) {
+          for (let i = input.events.length - 1; i >= 0; i--) {
+            const ev = input.events[i];
+            if (ev && (ev.type === 'phase.failed' || ev.type.startsWith('phase.'))) {
+              terminalPhase = ev.phase;
+              break;
+            }
+          }
         }
-        enriched = {
-          ...input,
-          invocation: {
-            outcome: latest.outcome,
-            phaseId: latest.phaseId,
-            ...(stderrContent !== undefined ? { stderrContent } : {}),
-            ...(latest.contractViolations !== undefined
-              ? { contractViolations: latest.contractViolations }
-              : {}),
-          },
-        };
+        if (!terminalPhase || terminalPhase === latest.phaseId) {
+          let stderrContent: string | undefined;
+          if (latest.stderrPath) {
+            try {
+              stderrContent = readFileSync(latest.stderrPath, 'utf-8');
+            } catch {}
+          }
+          enriched = {
+            ...input,
+            invocation: {
+              outcome: latest.outcome,
+              phaseId: latest.phaseId,
+              ...(stderrContent !== undefined ? { stderrContent } : {}),
+              ...(latest.contractViolations !== undefined
+                ? { contractViolations: latest.contractViolations }
+                : {}),
+            },
+          };
+        }
       }
     } catch (err) {
       console.error(`Failed to enrich classifyExit with invocation data:`, err);
