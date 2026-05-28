@@ -45,7 +45,7 @@ export function buildProgram(): Command {
       return n;
     })
     .option('--base-branch <branch>', 'Base branch (legacy default: main)')
-    .option('--model <model>', 'AI_MODEL env var')
+    .option('--model <model>', 'AI_AGENT_MODEL env var')
     .option('--agent-cli <cli>', 'AI_RUNTIME env var')
     .option('--script <path>', 'Path to Bash script to wrap')
     .option('--verbose', 'Stream script stdout/stderr to terminal (default: auto when TTY)')
