@@ -1,3 +1,4 @@
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
@@ -349,10 +350,7 @@ describe('AgentRuntimeRouter fallback', () => {
   describe('token_limit_exceeded trigger', () => {
     it('escalates to fallback profile on token_limit_exceeded when stderr matches', async () => {
       const stderrPath = '/tmp/test-stderr-tle.log';
-      require('node:fs').writeFileSync(
-        stderrPath,
-        'Error: context_length_exceeded: prompt is too long',
-      );
+      writeFileSync(stderrPath, 'Error: context_length_exceeded: prompt is too long');
       const inv = new FakeAgentInvocationPort();
       const adapter = new StubAdapter({
         runtime: 'opencode',
@@ -388,15 +386,12 @@ describe('AgentRuntimeRouter fallback', () => {
       expect(rows.length).toBe(2);
       expect(events[0].metadata.triggerReason).toBe('token_limit_exceeded');
 
-      require('node:fs').unlinkSync(stderrPath);
+      unlinkSync(stderrPath);
     });
 
     it('does not trigger token_limit_exceeded when stderr has no token-limit pattern', async () => {
       const stderrPath = '/tmp/test-stderr-no-tle.log';
-      require('node:fs').writeFileSync(
-        stderrPath,
-        'Error: Model not found: opencode/deepseek-v4-flash',
-      );
+      writeFileSync(stderrPath, 'Error: Model not found: opencode/deepseek-v4-flash');
       const inv = new FakeAgentInvocationPort();
       const adapter = new StubAdapter({
         runtime: 'opencode',
@@ -432,7 +427,7 @@ describe('AgentRuntimeRouter fallback', () => {
       expect(rows.length).toBe(1);
       expect(events.length).toBe(0);
 
-      require('node:fs').unlinkSync(stderrPath);
+      unlinkSync(stderrPath);
     });
   });
 
