@@ -42,9 +42,7 @@ const classifyExitAdapter = (
       if (latest && latest.outcome && latest.outcome !== 'success' && latest.stderrPath) {
         let stderrContent: string | undefined;
         try {
-          if (existsSync(latest.stderrPath)) {
-            stderrContent = readFileSync(latest.stderrPath, 'utf-8');
-          }
+          stderrContent = readFileSync(latest.stderrPath, 'utf-8');
         } catch {}
         enriched = {
           ...input,

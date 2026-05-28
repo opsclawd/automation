@@ -281,6 +281,11 @@ export class AgentRuntimeRouter implements AgentPort {
     return false;
   }
 
+  /** Determine the trigger reason for a fallback escalation.
+   *  MUST only be called when `shouldFallback` has already returned `true`,
+   *  because this function returns trigger reasons unconditionally for
+   *  `outcome='failed'` without checking whether the trigger is actually
+   *  configured in the phase's `fallbackTriggers` set. */
   private determineTriggerReason(result: AgentInvocationResult): string {
     if (result.outcome === 'timeout') return 'timeout';
     if (result.outcome === 'contract_violation') {
