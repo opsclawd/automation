@@ -327,3 +327,48 @@ _run_agent() {
   run grep -q '\-\-phase-id "\$routing_phase"' scripts/ai-pr-review-poll
   [ "$status" -eq 0 ]
 }
+
+@test "ai-consolidate-compound has valid bash syntax" {
+  run bash -n scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+}
+@test "no 'opencode --model' callsites remain in ai-consolidate-compound" {
+  run grep -c 'opencode --model' scripts/ai-consolidate-compound
+  [ "$output" -eq 0 ]
+}
+@test "no AGENT_MODEL default remains in ai-consolidate-compound" {
+  run grep -c 'AGENT_MODEL=' scripts/ai-consolidate-compound
+  [ "$output" -eq 0 ]
+}
+@test "no AGENT_CLI reference remains in ai-consolidate-compound" {
+  run grep -c 'AGENT_CLI' scripts/ai-consolidate-compound
+  [ "$output" -eq 0 ]
+}
+@test "run_agent in ai-consolidate-compound routes through run-agent.ts" {
+  run grep -q 'run-agent.ts' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+  run grep -q '\-\-phase compound' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+}
+@test "ai-consolidate-compound generates phase-id from input mode" {
+  run grep -q 'consolidate-issues-' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+  run grep -q 'consolidate-since-' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+}
+@test "ai-consolidate-compound supports CONSOLIDATE_RUN_ID env var" {
+  run grep -q 'CONSOLIDATE_RUN_ID' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+}
+@test "ai-consolidate-compound supports OWNER_REPO env var" {
+  run grep -q 'OWNER_REPO' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+}
+@test "ai-consolidate-compound usage mentions AI_AGENT_MODEL" {
+  run grep -q 'AI_AGENT_MODEL' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+}
+@test "ai-consolidate-compound usage mentions AI_AGENT_PROVIDER" {
+  run grep -q 'AI_AGENT_PROVIDER' scripts/ai-consolidate-compound
+  [ "$status" -eq 0 ]
+}
