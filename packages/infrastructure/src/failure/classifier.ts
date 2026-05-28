@@ -108,6 +108,7 @@ function buildFailureFromInvocation(input: ClassifyExitInput): Failure | null {
     artifacts: input.artifacts ?? [],
     detectedAt: input.detectedAt ?? new Date(),
   };
+  if (inv.phaseId !== undefined) failure.phase = inv.phaseId;
   return failure;
 }
 

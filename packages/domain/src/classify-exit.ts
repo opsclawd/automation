@@ -21,6 +21,7 @@ export interface ClassifyExitInput {
   events?: ClassifierEvent[];
   invocation?: {
     outcome: AgentInvocationOutcome;
+    phaseId?: string;
     stderrContent?: string;
     contractViolations?: string[];
   };

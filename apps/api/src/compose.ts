@@ -50,6 +50,7 @@ const classifyExitAdapter = (
           ...input,
           invocation: {
             outcome: latest.outcome,
+            phaseId: latest.phaseId,
             ...(stderrContent !== undefined ? { stderrContent } : {}),
             ...(latest.contractViolations !== undefined
               ? { contractViolations: latest.contractViolations }
