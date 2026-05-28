@@ -17,7 +17,13 @@
     "profiles": {
       "architect": {
         "runtime": "opencode",
-        "provider": "ollama-cloud",
+        "provider": "zai-coding-plan",
+        "model": "glm-5.1",
+        "timeoutMinutes": 60
+      },
+      "senior": {
+        "runtime": "opencode",
+        "provider": "crofai",
         "model": "glm-5.1",
         "timeoutMinutes": 60
       },
@@ -27,27 +33,21 @@
         "model": "MiniMax-M2.7",
         "timeoutMinutes": 30
       },
-      "inspector": {
-        "runtime": "opencode",
-        "provider": "crofai",
-        "model": "qwen3.6-27b",
-        "timeoutMinutes": 30
-      },
-      "reviewer": {
-        "runtime": "opencode",
-        "provider": "opencode-go",
-        "model": "deepseek-v4-pro",
-        "timeoutMinutes": 30
-      },
-      "compound": {
+      "junior": {
         "runtime": "opencode",
         "provider": "opencode",
         "model": "deepseek-v4-flash",
         "timeoutMinutes": 30
       },
+      "reviewer": {
+        "runtime": "opencode",
+        "provider": "ollama-cloud",
+        "model": "deepseek-v4-pro",
+        "timeoutMinutes": 30
+      },
       "pi-qwen-local": {
         "runtime": "pi",
-        "provider": "local",
+        "provider": "crofai",
         "model": "qwen3.6-27b",
         "contextLimitTokens": 64000,
         "promptBudgetTokens": 40000,
@@ -56,17 +56,17 @@
       }
     },
     "phaseProfiles": {
-      "plan-design": { "profile": "architect" },
-      "plan-write": { "profile": "architect" },
-      "implement": { "profile": "builder", "fallbackProfile": "inspector" },
-      "quality-review": { "profile": "inspector" },
-      "spec-review": { "profile": "reviewer" },
-      "fix-review": { "profile": "builder", "fallbackProfile": "inspector" },
-      "whole-pr-review": { "profile": "reviewer" },
-      "post-pr-review": { "profile": "reviewer" },
-      "compound": { "profile": "compound", "fallbackProfile": "inspector" },
-      "extract": { "profile": "builder" },
-      "create-pr": { "profile": "architect" }
+      "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
+      "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
+      "implement": { "profile": "builder", "fallbackProfile": "junior" },
+      "quality-review": { "profile": "reviewer", "fallbackProfile": "senior" },
+      "spec-review": { "profile": "reviewer", "fallbackProfile": "senior" },
+      "fix-review": { "profile": "builder", "fallbackProfile": "junior" },
+      "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "senior" },
+      "post-pr-review": { "profile": "reviewer", "fallbackProfile": "senior" },
+      "compound": { "profile": "junior", "fallbackProfile": "builder" },
+      "extract": { "profile": "pi-qwen-local", "fallbackProfile": "junior" },
+      "create-pr": { "profile": "architect", "fallbackProfile": "senior" }
     }
   }
 }
