@@ -59,6 +59,58 @@ const PATTERNS: Pattern[] = [
 
 const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
 
+function buildFailureFromInvocation(input: ClassifyExitInput): Failure | null {
+  const inv = input.invocation;
+  if (!inv || inv.outcome === 'success') return null;
+
+  let kind: FailureKind;
+  let message: string;
+  let suggestedAction: string;
+
+  switch (inv.outcome) {
+    case 'timeout':
+      kind = 'timeout';
+      message = inv.stderrContent?.trim() || 'Agent invocation timed out';
+      suggestedAction = 'Raise invocationMaxMinutes or investigate why the agent hung.';
+      break;
+    case 'failed':
+      kind = 'command_failed';
+      message = inv.stderrContent?.trim() || 'Agent invocation failed';
+      suggestedAction = 'Inspect stderr.log for the cause.';
+      break;
+    case 'contract_violation':
+      if (inv.contractViolations?.includes('prompt_budget_exceeded')) {
+        kind = 'missing_artifact';
+        message = 'Prompt budget exceeded';
+        suggestedAction = 'Reduce prompt size or use a profile with a larger context window.';
+      } else if (inv.contractViolations?.includes('missing_required_artifact')) {
+        kind = 'missing_artifact';
+        message = inv.stderrContent?.trim() || 'Missing required artifact';
+        suggestedAction =
+          'Inspect the phase prompt and stdout; the agent did not produce the expected file.';
+      } else {
+        kind = 'command_failed';
+        message = inv.stderrContent?.trim() || 'Contract violation';
+        suggestedAction = 'Inspect stderr.log and result.json for the cause.';
+      }
+      break;
+    default:
+      return null;
+  }
+
+  const failure: Failure = {
+    runUuid: input.runUuid,
+    kind,
+    message,
+    exitCode: input.exitCode,
+    canRetry: false,
+    suggestedAction,
+    artifacts: input.artifacts ?? [],
+    detectedAt: input.detectedAt ?? new Date(),
+  };
+  return failure;
+}
+
 export function classifyExit(input: ClassifyExitInput): Failure {
   if (input.events && input.events.length > 0) {
     // Event-driven classification is attempted first. When the terminal event
@@ -72,6 +124,11 @@ export function classifyExit(input: ClassifyExitInput): Failure {
       const fromEvent = buildFailureFromEvent(terminal, input);
       if (fromEvent !== null) return fromEvent;
     }
+  }
+
+  if (input.invocation && input.invocation.outcome !== 'success') {
+    const fromInvocation = buildFailureFromInvocation(input);
+    if (fromInvocation !== null) return fromInvocation;
   }
 
   const tail = input.combinedLogTail.slice(-8000);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classifyExit } from '../classifier.js';
-import type { ClassifierEvent } from '../classifier.js';
+import type { ClassifierEvent, ClassifyExitInput } from '../classifier.js';
 
 describe('classifyExit', () => {
   it('returns missing_artifact when log contains MISSING ARTIFACT sentinel', () => {
@@ -622,6 +622,104 @@ describe('classifyExit', () => {
     });
     expect(f.kind).toBe('github_failed');
     expect(f.message).toContain('Failed to create PR');
+  });
+});
+
+describe('classifyExit with invocation data', () => {
+  it('prefers invocation outcome over regex scraping when events fall through', () => {
+    const input: ClassifyExitInput = {
+      exitCode: 1,
+      combinedLogTail:
+        'some log\n' +
+        '✓ PiAgentAdapter > returns timeout when child exceeds timeout 573ms\n' +
+        'Error: Model not found: opencode/deepseek-v4-flash\n',
+      runUuid: 'run-1',
+      invocation: {
+        outcome: 'failed',
+        stderrContent: 'Error: Model not found: opencode/deepseek-v4-flash',
+      },
+    };
+    const failure = classifyExit(input);
+    expect(failure.kind).toBe('command_failed');
+    expect(failure.message).toContain('Model not found');
+    expect(failure.message).not.toContain('PiAgentAdapter');
+  });
+
+  it('classifies invocation timeout correctly, ignoring timeout regex in log', () => {
+    const input: ClassifyExitInput = {
+      exitCode: 1,
+      combinedLogTail: '✓ PiAgentAdapter > returns timeout when child exceeds timeout 573ms\n',
+      runUuid: 'run-2',
+      invocation: {
+        outcome: 'timeout',
+        stderrContent: 'Agent invocation timed out after 30 minutes',
+      },
+    };
+    const failure = classifyExit(input);
+    expect(failure.kind).toBe('timeout');
+    expect(failure.message).toContain('timed out after 30 minutes');
+    expect(failure.message).not.toContain('PiAgentAdapter');
+  });
+
+  it('still falls through to regex scraping when no invocation data', () => {
+    const input: ClassifyExitInput = {
+      exitCode: 1,
+      combinedLogTail: 'some output\nfatal: could not read from remote\n',
+      runUuid: 'run-3',
+    };
+    const failure = classifyExit(input);
+    expect(failure.kind).toBe('git_failed');
+  });
+
+  it('prefers event-based classification over invocation when both present', () => {
+    const input: ClassifyExitInput = {
+      exitCode: 1,
+      combinedLogTail: 'some log\n',
+      runUuid: 'run-4',
+      events: [
+        {
+          phase: 'compound',
+          level: 'error',
+          type: 'phase.failed',
+          message: 'compound failed',
+          timestamp: new Date().toISOString(),
+          metadata: { missingArtifact: 'plan.md' },
+        },
+      ],
+      invocation: {
+        outcome: 'failed',
+        stderrContent: 'some error',
+      },
+    };
+    const failure = classifyExit(input);
+    expect(failure.kind).toBe('missing_artifact');
+  });
+
+  it('invocation with success outcome is ignored', () => {
+    const input: ClassifyExitInput = {
+      exitCode: 1,
+      combinedLogTail: 'some output\nfatal: could not read from remote\n',
+      runUuid: 'run-5',
+      invocation: {
+        outcome: 'success',
+      },
+    };
+    const failure = classifyExit(input);
+    expect(failure.kind).toBe('git_failed');
+  });
+
+  it('invocation without stderrContent uses fallback message', () => {
+    const input: ClassifyExitInput = {
+      exitCode: 1,
+      combinedLogTail: 'noise\n',
+      runUuid: 'run-6',
+      invocation: {
+        outcome: 'failed',
+      },
+    };
+    const failure = classifyExit(input);
+    expect(failure.kind).toBe('command_failed');
+    expect(failure.message).toBe('Agent invocation failed');
   });
 });
 
