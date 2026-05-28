@@ -463,12 +463,19 @@ run_agent() {
   cat > "$prompt_file"
   local timeout_min=$(( (timeout_sec + 59) / 60 ))
   if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
+
+  local routing_phase
+  if [[ "$phase" == extract-* ]]; then
+    routing_phase="extract"
+  else
+    routing_phase="$phase"
+  fi
+
   log "Running agent for '${phase}' (timeout=${timeout_sec}s)..."
   local _agent_ec=0
   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-    --phase extract \
-    --phase-id extract \
-    --step-id "${phase}" \
+    --phase "$routing_phase" \
+    --phase-id "${phase}" \
     --cwd "${POLL_WORKTREE:-$REPO_ROOT}" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
