@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   openDatabase,
@@ -28,11 +28,38 @@ import {
   type TmpDirectoryFactory,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName } from '@ai-sdlc/domain';
+import { AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { AgentRuntimeRouter, OpenCodeAgentAdapter, PiAgentAdapter } from '@ai-sdlc/infrastructure';
 
-const classifyExitAdapter: ClassifyExitFn = (input) => {
-  return classifyExit(input);
+const classifyExitAdapter = (
+  agentInvocationRepository: AgentInvocationRepository,
+): ClassifyExitFn => {
+  return (input) => {
+    let enriched = input;
+    try {
+      const invocations = agentInvocationRepository.listByRun(RunId(input.runUuid));
+      const latest = invocations[invocations.length - 1];
+      if (latest && latest.outcome && latest.outcome !== 'success' && latest.stderrPath) {
+        let stderrContent: string | undefined;
+        try {
+          if (existsSync(latest.stderrPath)) {
+            stderrContent = readFileSync(latest.stderrPath, 'utf-8');
+          }
+        } catch {}
+        enriched = {
+          ...input,
+          invocation: {
+            outcome: latest.outcome,
+            ...(stderrContent !== undefined ? { stderrContent } : {}),
+            ...(latest.contractViolations !== undefined
+              ? { contractViolations: latest.contractViolations }
+              : {}),
+          },
+        };
+      }
+    } catch {}
+    return classifyExit(enriched);
+  };
 };
 
 /**
@@ -128,7 +155,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const deps: StartIssueRunDeps = {
     runRepository,
     failureRepository,
-    classifyExit: classifyExitAdapter,
+    classifyExit: classifyExitAdapter(agentInvocationRepository),
     runDirectoryFactory: ({ rootDir, run }) => RunDirectory.create({ rootDir, run }),
     runBashScript,
     runsDir,
