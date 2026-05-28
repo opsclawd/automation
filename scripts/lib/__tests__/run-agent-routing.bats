@@ -298,3 +298,32 @@ _run_agent() {
   missing=$(comm -23 <(echo "$callees") <(echo "$defs") | grep -v -E '^(run|run_id|run_agent)$' || true)
   [ -z "$missing" ]
 }
+
+@test "ai-pr-review-poll has valid bash syntax" {
+  run bash -n scripts/ai-pr-review-poll
+  [ "$status" -eq 0 ]
+}
+
+@test "no 'opencode --model' callsites remain in ai-pr-review-poll" {
+  run grep -c 'opencode --model' scripts/ai-pr-review-poll
+  [ "$output" -eq 0 ]
+}
+
+@test "no AGENT_MODEL default remains in ai-pr-review-poll" {
+  run grep -c 'AGENT_MODEL=' scripts/ai-pr-review-poll
+  [ "$output" -eq 0 ]
+}
+
+@test "no AGENT_CLI reference remains in ai-pr-review-poll" {
+  run grep -c 'AGENT_CLI' scripts/ai-pr-review-poll
+  [ "$output" -eq 0 ]
+}
+
+@test "run_agent in ai-pr-review-poll routes through run-agent.ts" {
+  run grep -q 'run-agent.ts' scripts/ai-pr-review-poll
+  [ "$status" -eq 0 ]
+  run grep -q '\-\-phase "\$routing_phase"' scripts/ai-pr-review-poll
+  [ "$status" -eq 0 ]
+  run grep -q '\-\-phase-id "\$routing_phase"' scripts/ai-pr-review-poll
+  [ "$status" -eq 0 ]
+}

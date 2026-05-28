@@ -12,7 +12,6 @@ PR_NUMBER="${1:-}"
 ISSUE_NUM="${2:-}"
 MAX_POLLS="${3:-3}"
 POLL_INTERVAL="${4:-300}"
-AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
 # OWNER_REPO defaults to the current repo (where this checkout was cloned from).
 # Override with the OWNER_REPO env var when running against a different repo.
 OWNER_REPO="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")}"
@@ -459,53 +458,48 @@ run_agent() {
   local phase="$1"
   local timeout_sec="$2"
   local output_log="${ISSUES_DIR}/${phase}.log"
-  local agent_cmd
   local prompt_file
   prompt_file=$(mktemp)
   cat > "$prompt_file"
+  local timeout_min=$(( (timeout_sec + 59) / 60 ))
+  if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
 
-  case "${AGENT_CLI:-opencode}" in
-    claude|claude-minimax)
-      agent_cmd="~/bin/claude-minimax --settings ~/.claude/profiles/minimax.json --print --model $AGENT_MODEL"
-      if [[ "${AGENT_AUTO_EDIT:-0}" == "1" ]]; then
-        agent_cmd="$agent_cmd --permission-mode acceptEdits"
-      fi
-      ;;
-    opencode)
-      agent_cmd="opencode --model $AGENT_MODEL run"
-      if [[ "${AGENT_AUTO_EDIT:-0}" == "1" ]]; then
-        agent_cmd="$agent_cmd --dangerously-skip-permissions"
-      fi
-      ;;
-    *)
-      log "FAIL: Unsupported AGENT_CLI: ${AGENT_CLI:-opencode}"
-      rm -f "$prompt_file"
-      return 1
-      ;;
-  esac
+  local routing_phase
+  if [[ "$phase" == extract-* ]]; then
+    routing_phase="extract"
+  else
+    routing_phase="$phase"
+  fi
 
-  log "Running agent for '$phase' (timeout=${timeout_sec}s)..."
-
-  # Capture agent exit code via temp file to avoid PIPESTATUS loss through pipeline.
-  local ec_file
-  ec_file=$(mktemp)
-  local ec=0
-
-  { timeout "$timeout_sec" bash -c "$agent_cmd" < "$prompt_file" 2>&1; echo $? > "$ec_file"; } \
-    | tee -a "$output_log" \
-    | grep -v "^\[0m$" | grep -v "^$" || true
-  ec=$(cat "$ec_file")
-
-  rm -f "$prompt_file" "$ec_file"
-
-  if [[ $ec -eq 124 ]]; then
-    log "FAIL: '$phase' timed out after ${timeout_sec}s"
+  log "Running agent for '${phase}' (timeout=${timeout_sec}s)..."
+  local _agent_ec=0
+  local _pnpm_ec_file
+  _pnpm_ec_file=$(mktemp)
+  pushd "$REPO_ROOT" > /dev/null 2>&1
+  NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+    --phase "$routing_phase" \
+    --phase-id "$routing_phase" \
+    --cwd "${POLL_WORKTREE:-$REPO_ROOT}" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
+    --prompt-file "$prompt_file" \
+    --timeout-minutes "$timeout_min" \
+    --start-sha "$(git -C "${POLL_WORKTREE:-$REPO_ROOT}" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "$output_log"
+  echo ${PIPESTATUS[0]} > "$_pnpm_ec_file"
+  popd > /dev/null 2>&1
+  _agent_ec=$(cat "$_pnpm_ec_file")
+  rm -f "$_pnpm_ec_file"
+  rm -f "$prompt_file"
+  if [[ $_agent_ec -eq 2 ]]; then
+    log "FAIL: '${phase}' timed out or had config error"
     return 1
   fi
-  if [[ $ec -ne 0 ]]; then
-    log "WARN: '$phase' exited with code $ec"
+  if [[ $_agent_ec -ne 0 ]]; then
+    log "WARN: '${phase}' exited with code $_agent_ec"
   fi
-  return $ec
+  return $_agent_ec
 }
 
 # ── Process reviews ────────────────────────────────────────────────────────
@@ -720,6 +714,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   emit_event "post-pr-review" "info" "post-pr-review.agent.started" \
     "invoking agent for poll iteration ${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
 
+  pushd "$REPO_ROOT" > /dev/null 2>&1
   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase post-pr-review \
     --cwd "$POLL_WORKTREE" \
@@ -733,6 +728,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     --start-sha "$(git -C "$POLL_WORKTREE" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/process-review-p${POLL_COUNT}.log"
   _agent_ec=${PIPESTATUS[0]}
+  popd > /dev/null 2>&1
 
   if [[ $_agent_ec -ne 0 ]]; then
     warn "Agent exited with code ${_agent_ec} (poll ${POLL_COUNT})"
