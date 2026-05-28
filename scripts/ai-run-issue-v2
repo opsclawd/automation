@@ -2057,6 +2057,17 @@ Start now."
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
 
+  # Propagate revalidate state into validation.result so the create-pr phase
+  # (which labels ai:pr-ready vs ai:needs-human-review based on this file)
+  # reflects the current build/lint/typecheck/test status — not the stale
+  # result from the pre-loop validate phase.
+  if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
+    echo "passed" > "${ISSUES_DIR}/validation.result"
+  else
+    echo "failed" > "${ISSUES_DIR}/validation.result"
+    warn "Revalidate after fix loop ${FIX_LOOP_COUNT} did not pass — validation.result set to failed."
+  fi
+
   # ── deterministic gate: skip re-review agent on the happy path ────────────
   # The re-review agent is the heaviest step in this loop (full agent + skill
   # load + re-reads source). When the fix agent self-reports ALL_RESOLVED in
@@ -2150,16 +2161,25 @@ Write code-review.md and review-findings-status.txt now."
   # No-progress detector: if the unresolved finding set is identical to the
   # previous iteration, the loop is stuck (typically on a finding the fix agent
   # cannot or will not address). Break instead of churning to the iteration cap.
+  # But only break when revalidate is GREEN — if it's red, there's still
+  # something objectively broken (build/lint/typecheck/test failed) and we
+  # should keep trying until MAX_ITERATIONS rather than ship a broken branch.
   NEW_UNRESOLVED_FP=$(_unresolved_fingerprint "${ISSUES_DIR}/review.md")
   if [[ -n "$PREV_UNRESOLVED_FP" && "$NEW_UNRESOLVED_FP" == "$PREV_UNRESOLVED_FP" ]]; then
-    info "Unresolved finding set unchanged since loop $((FIX_LOOP_COUNT - 1)) — breaking to avoid churn."
-    emit_event "fix-review" "warn" "loop.no_progress" \
-      "fix-review unresolved set unchanged across iterations" \
+    if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
+      info "Unresolved finding set unchanged since loop $((FIX_LOOP_COUNT - 1)) and revalidate green — breaking to avoid churn."
+      emit_event "fix-review" "warn" "loop.no_progress" \
+        "fix-review unresolved set unchanged across iterations" \
+        iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}" fingerprint="${NEW_UNRESOLVED_FP}"
+      emit_event "fix-review" "info" "loop.iteration.completed" \
+        "fix-review loop ${FIX_LOOP_COUNT} completed (no progress)" \
+        iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
+      break
+    fi
+    info "Unresolved set unchanged but revalidate is red — continuing loop (refusing to early-exit with broken build/tests)."
+    emit_event "fix-review" "warn" "loop.no_progress_blocked_red" \
+      "no-progress break suppressed because revalidate is red" \
       iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}" fingerprint="${NEW_UNRESOLVED_FP}"
-    emit_event "fix-review" "info" "loop.iteration.completed" \
-      "fix-review loop ${FIX_LOOP_COUNT} completed (no progress)" \
-      iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
-    break
   fi
   PREV_UNRESOLVED_FP="$NEW_UNRESOLVED_FP"
 
