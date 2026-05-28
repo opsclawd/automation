@@ -1985,10 +1985,10 @@ Rules:
 
 ## MANDATORY RESULT FILE
 After fixing (or deciding nothing needs fixing), write EXACTLY ONE of these values to ./fix-status.txt:
-- ALL_RESOLVED   (every finding is fixed, carried-forward, invalid, or out-of-scope/skip — nothing further to do)
-- HAS_UNRESOLVED (one or more findings still need work)
+- ALL_FIXED      (every finding from this iteration's review was fixed in code, or was already carried-forward from a prior loop's fix. Use this ONLY when no findings this iteration were marked invalid/skip/out-of-scope by you. This is the strictest value — choose it only when you are claiming you actually changed the code to address every legitimate finding.)
+- NEEDS_REVIEW   (any other case: you skipped a finding as invalid/out-of-scope, you are uncertain a fix landed correctly, or one or more findings still need work. The orchestrator will run an independent re-reviewer to verify.)
 No other content in the file — just the status word.
-This is your self-report. The orchestrator uses it to decide whether to skip the expensive re-review pass.
+This is your self-report. The orchestrator skips the expensive re-review pass only when you write ALL_FIXED, so do not use it as a shortcut for skipped findings — write NEEDS_REVIEW whenever any claim of yours needs verification.
 
 ## ORCHESTRATOR ARTIFACTS — DO NOT DELETE
 The following files are orchestrator working artifacts. They are excluded
@@ -2070,10 +2070,14 @@ Start now."
 
   # ── deterministic gate: skip re-review agent on the happy path ────────────
   # The re-review agent is the heaviest step in this loop (full agent + skill
-  # load + re-reads source). When the fix agent self-reports ALL_RESOLVED in
-  # fix-status.txt AND revalidate is green, the agent almost always confirms
-  # the same conclusion. Skip it deterministically and trust whole-pr CI /
-  # human review to catch any semantic miss.
+  # load + re-reads source). Skip it ONLY when:
+  #   (a) the fix agent self-reports ALL_FIXED (the strict value — no
+  #       invalid/skip/out-of-scope claims this iteration; every finding was
+  #       actually fixed in code), AND
+  #   (b) revalidate is green.
+  # Any NEEDS_REVIEW value (including all skip/invalid claims) falls through
+  # to the independent re-reviewer, so the fix agent cannot self-approve
+  # findings it decided to skip.
   FIX_STATUS_FILE="${WORKTREE_DIR}/fix-status.txt"
   FIX_AGENT_STATUS=""
   if [[ -f "$FIX_STATUS_FILE" ]]; then
@@ -2081,12 +2085,12 @@ Start now."
     # could SIGPIPE under pipefail) — see SIGPIPE gotcha note at top of file.
     FIX_AGENT_STATUS=$(head -c 64 "$FIX_STATUS_FILE" 2>/dev/null | tr -d '[:space:]')
   fi
-  if [[ "$FIX_AGENT_STATUS" == "ALL_RESOLVED" ]] \
+  if [[ "$FIX_AGENT_STATUS" == "ALL_FIXED" ]] \
      && _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
-    info "Fix agent reports ALL_RESOLVED and revalidate is green — skipping re-review agent (loop ${FIX_LOOP_COUNT})."
+    info "Fix agent reports ALL_FIXED and revalidate is green — skipping re-review agent (loop ${FIX_LOOP_COUNT})."
     echo "ALL_RESOLVED" > "${WORKTREE_DIR}/review-findings-status.txt"
     emit_event "fix-review" "info" "loop.reagent_skipped" \
-      "skipped re-review agent: fix-status=ALL_RESOLVED and revalidate green" \
+      "skipped re-review agent: fix-status=ALL_FIXED and revalidate green" \
       iteration="${FIX_LOOP_COUNT}"
     emit_event "fix-review" "info" "loop.iteration.completed" \
       "fix-review loop ${FIX_LOOP_COUNT} completed (deterministic resolve)" \
