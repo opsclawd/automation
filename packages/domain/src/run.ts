@@ -14,7 +14,7 @@ export interface Run {
   uuid: string;
   displayId: string;
   issueNumber: number;
-  type: 'issue_to_pr' | 'pr_review';
+  type: 'issue_to_pr' | 'pr_review' | 'consolidate';
   status: RunStatus;
   currentPhase?: string;
   completedPhases: string[];
@@ -28,7 +28,7 @@ export interface CreateRunInput {
   displayId: string;
   issueNumber: number;
   startedAt: Date;
-  type?: 'issue_to_pr' | 'pr_review';
+  type?: 'issue_to_pr' | 'pr_review' | 'consolidate';
 }
 
 export class RunStateError extends Error {

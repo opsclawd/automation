@@ -10,8 +10,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 export REPO_ROOT
 
-AGENT_MODEL="${AGENT_MODEL:-minimax-coding-plan/MiniMax-M2.7}"
-AGENT_CLI="${AGENT_CLI:-opencode}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-900}"
 LOG_FILE="${LOG_FILE:-${REPO_ROOT}/ai/consolidate-$(date -u +%Y%m%dT%H%M%SZ).log}"
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -29,6 +27,13 @@ Usage: $0 [--since <git-ref>] [--issues <n,m,...>] [--dry-run] [--yes]
   --issues LIST  Consolidate only the listed issue numbers, poll-pr files excluded (mutually exclusive with --since).
   --dry-run      Run the agent but do not stage or commit anything.
   --yes          Skip the interactive confirmation prompt.
+
+Environment:
+  AI_AGENT_MODEL    Override the model (routed via phaseProfiles.compound).
+  AI_AGENT_PROVIDER Override the provider.
+  TIMEOUT_SEC       Agent timeout in seconds (default: 900).
+  CONSOLIDATE_RUN_ID  Custom run UUID (default: auto-generated).
+  OWNER_REPO        Custom repo identifier (default: auto-detected via gh, falls back to 'local/local').
 EOF
   exit 2
 }
@@ -127,23 +132,43 @@ PROMPT_FILE=$(mktemp)
   echo "- Do not run git commands. Do not commit. The wrapping script handles that."
 } > "$PROMPT_FILE"
 
-log "Invoking agent (timeout ${TIMEOUT_SEC}s, model ${AGENT_MODEL})..."
+log "Invoking agent via run-agent.ts (timeout ${TIMEOUT_SEC}s, phase compound)..."
 
-run_agent() {
-  local prompt="$1"
-  case "$AGENT_CLI" in
-    claude|claude-minimax)
-      timeout "$TIMEOUT_SEC" bash -c 'exec ~/bin/claude-minimax --settings ~/.claude/profiles/minimax.json --print --model "$1"' _ "$AGENT_MODEL" < "$prompt"
-      ;;
-    opencode)
-      timeout "$TIMEOUT_SEC" bash -c 'exec opencode --model "$1" run' _ "$AGENT_MODEL" < "$prompt"
-      ;;
-    *)
-      warn "Unsupported AGENT_CLI: $AGENT_CLI"; return 1 ;;
-  esac
-}
+timeout_min=$(( (TIMEOUT_SEC + 59) / 60 ))
+if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
 
-run_agent "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
+phase_id=""
+if [[ -n "$ISSUES" ]]; then
+  phase_id="consolidate-issues-${ISSUES//,/-}"
+elif [[ -n "$SINCE" ]]; then
+  phase_id="consolidate-since-${SINCE//\//-}"
+else
+  phase_id="consolidate-$(date -u +%Y%m%dT%H%M%SZ)"
+fi
+
+run_id="${CONSOLIDATE_RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo "fallback-uuid-$(date +%s)")}"
+
+owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'local/local')}"
+
+start_sha=""
+if [[ -n "$SINCE" ]]; then
+  start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(printf '0%.0s' {1..40})
+else
+  start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '0%.0s' {1..40})
+fi
+
+NODE_OPTIONS='--conditions=development' timeout "$TIMEOUT_SEC" pnpm --filter @ai-sdlc/cli exec tsx \
+  "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  --phase compound \
+  --phase-id "$phase_id" \
+  --cwd "$REPO_ROOT" \
+  --run-id "$run_id" \
+  --repo-id "$owner_repo" \
+  --repo-root "$REPO_ROOT" \
+  --prompt-file "$PROMPT_FILE" \
+  --timeout-minutes "$timeout_min" \
+  --start-sha "$start_sha" \
+  2>&1 | tee -a "$LOG_FILE"
 AGENT_EC=${PIPESTATUS[0]}
 rm -f "$PROMPT_FILE"
 

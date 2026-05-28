@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { AgentProfileName, createRun } from '@ai-sdlc/domain';
+import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 import { existsSync } from 'node:fs';
@@ -84,6 +84,18 @@ export function resolveProfileName(
     return { ok: true, profileName: entry.profile };
   }
   return { ok: false, error: 'must pass --phase or --profile' };
+}
+
+const PHASE_RUN_TYPE_MAP: Record<string, Run['type']> = {
+  compound: 'consolidate',
+};
+
+export function phaseToRunType(phase: string | undefined): Run['type'] {
+  if (phase) {
+    const mapped = PHASE_RUN_TYPE_MAP[phase];
+    if (mapped !== undefined) return mapped;
+  }
+  return 'pr_review';
 }
 
 /**
@@ -208,6 +220,7 @@ async function main() {
   // StartIssueRun (ai-run-issue-v2), the row already exists. When invoked
   // standalone (e.g. ai-pr-review-poll), no row exists, which would violate
   // the agent_invocations.run_uuid FK constraint.
+  let createdSynthetic = false;
   const runId = values['run-id']!;
   if (!c.runRepository.findByUuid(runId)) {
     const run = createRun({
@@ -215,9 +228,47 @@ async function main() {
       displayId: runId,
       issueNumber: 0,
       startedAt: new Date(),
-      type: 'pr_review',
+      type: phaseToRunType(values.phase),
     });
     c.runRepository.insert(run);
+    createdSynthetic = true;
+  }
+
+  // When the bash wrapper wraps this process with GNU timeout(1) and the
+  // timeout fires, the process receives SIGTERM. If a synthetic run was
+  // inserted, mark it terminal before exiting so the dashboard doesn't show
+  // a perpetually-running row. runRepository.update() is synchronous, so
+  // this runs reliably in the signal handler.
+  const onSigterm = () => {
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: 'failed',
+        completedAt: new Date(),
+        failureReason: 'process timed out',
+      });
+      // Close any open agent_invocations rows that
+      // AgentRuntimeRouter.dispatch() may have inserted before the
+      // timeout signal arrived, so the dashboard doesn't show
+      // perpetually-running invocations.
+      const invocations = c.agentInvocationRepository.listByRun(RunId(runId));
+      for (const inv of invocations) {
+        if (!inv.endedAt) {
+          c.agentInvocationRepository.update(inv.id, {
+            endedAt: new Date(),
+            outcome: 'timeout',
+            contractViolations: [],
+          });
+        }
+      }
+    }
+    process.exit(124);
+  };
+
+  process.on('SIGTERM', onSigterm);
+
+  function safeExit(code: number): never {
+    process.removeListener('SIGTERM', onSigterm);
+    process.exit(code);
   }
 
   try {
@@ -234,14 +285,30 @@ async function main() {
       ...(values['step-id'] ? { stepId: values['step-id'] } : {}),
     });
 
-    process.exit(exitCodeForOutcome(result));
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: result.outcome === 'success' ? 'passed' : 'failed',
+        completedAt: new Date(),
+        ...(result.outcome !== 'success' ? { failureReason: `agent exit: ${result.outcome}` } : {}),
+      });
+    }
+
+    safeExit(exitCodeForOutcome(result));
   } catch (e) {
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: 'failed',
+        completedAt: new Date(),
+        failureReason: e instanceof Error ? e.message : String(e),
+      });
+    }
+
     if (e instanceof ConfigError) {
       console.error(e.message);
-      process.exit(2);
+      safeExit(2);
     }
     console.error(e);
-    process.exit(3);
+    safeExit(3);
   }
 }
 

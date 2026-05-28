@@ -3,6 +3,7 @@ import {
   validateRequiredFlags,
   exitCodeForOutcome,
   resolveProfileName,
+  phaseToRunType,
   type ConfigForProfileResolution,
 } from '../run-agent.js';
 
@@ -106,6 +107,7 @@ describe('run-agent CLI logic', () => {
         review: { profile: 'opencode-frontier' },
         'fix-review': { profile: 'opencode-frontier' },
         'pr-review-poll': { profile: 'opencode-frontier' },
+        compound: { profile: 'opencode-frontier' },
       },
     };
 
@@ -135,6 +137,26 @@ describe('run-agent CLI logic', () => {
     it('returns error when neither --phase nor --profile is provided', () => {
       const result = resolveProfileName(config, {});
       expect(result).toEqual({ ok: false, error: 'must pass --phase or --profile' });
+    });
+
+    it('resolves compound phase to its profile', () => {
+      const result = resolveProfileName(config, { phase: 'compound' });
+      expect(result).toEqual({ ok: true, profileName: 'opencode-frontier' });
+    });
+  });
+
+  describe('phaseToRunType', () => {
+    it('returns consolidate for compound phase', () => {
+      expect(phaseToRunType('compound')).toBe('consolidate');
+    });
+
+    it('returns pr_review as default fallback', () => {
+      expect(phaseToRunType(undefined)).toBe('pr_review');
+    });
+
+    it('returns pr_review for unknown phases', () => {
+      expect(phaseToRunType('implement')).toBe('pr_review');
+      expect(phaseToRunType('review')).toBe('pr_review');
     });
   });
 });
