@@ -33,7 +33,7 @@ Environment:
   AI_AGENT_PROVIDER Override the provider.
   TIMEOUT_SEC       Agent timeout in seconds (default: 900).
   CONSOLIDATE_RUN_ID  Custom run UUID (default: auto-generated).
-  OWNER_REPO        Custom repo identifier (default: auto-detected via gh).
+  OWNER_REPO        Custom repo identifier (default: auto-detected via gh, falls back to 'local/local').
 EOF
   exit 2
 }
@@ -164,9 +164,13 @@ run_agent() {
     --repo-root "$REPO_ROOT" \
     --prompt-file "$prompt" \
     --timeout-minutes "$timeout_min" \
-    --start-sha "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})"
+    --start-sha "$(if [[ -n "$SINCE" ]]; then git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null || git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40}; else git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40}; fi)"
 }
 
+# PIPESTATUS[0] reliably captures run_agent's exit code: bash evaluates both
+# sides of the pipe before PIPESTATUS is read, and tee is a simple consumer
+# that does not affect the producer's exit status.  The 2>&1 redirect merges
+# run-agent.ts stderr (progress, diagnostics) into the same log stream.
 run_agent "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
 AGENT_EC=${PIPESTATUS[0]}
 rm -f "$PROMPT_FILE"

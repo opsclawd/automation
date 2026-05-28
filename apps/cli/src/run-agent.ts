@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { AgentProfileName, createRun } from '@ai-sdlc/domain';
+import { AgentProfileName, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 import { existsSync } from 'node:fs';
@@ -84,6 +84,18 @@ export function resolveProfileName(
     return { ok: true, profileName: entry.profile };
   }
   return { ok: false, error: 'must pass --phase or --profile' };
+}
+
+const PHASE_RUN_TYPE_MAP: Record<string, Run['type']> = {
+  compound: 'consolidate',
+};
+
+export function phaseToRunType(phase: string | undefined): Run['type'] {
+  if (phase) {
+    const mapped = PHASE_RUN_TYPE_MAP[phase];
+    if (mapped !== undefined) return mapped;
+  }
+  return 'pr_review';
 }
 
 /**
@@ -215,7 +227,7 @@ async function main() {
       displayId: runId,
       issueNumber: 0,
       startedAt: new Date(),
-      type: values.phase === 'compound' ? 'consolidate' : 'pr_review',
+      type: phaseToRunType(values.phase),
     });
     c.runRepository.insert(run);
   }

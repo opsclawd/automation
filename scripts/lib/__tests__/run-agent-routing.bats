@@ -372,3 +372,32 @@ _run_agent() {
   run grep -q 'AI_AGENT_PROVIDER' scripts/ai-consolidate-compound
   [ "$status" -eq 0 ]
 }
+
+@test "ai-consolidate-compound exits 0 when no compound inputs found" {
+  run bash scripts/ai-consolidate-compound --issues 99999 --yes 2>&1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No compound inputs to consolidate"* ]]
+}
+
+@test ".ai-orchestrator.json has compound phase profile with valid profile" {
+  run python3 -c "
+import json, sys
+with open('.ai-orchestrator.json') as f:
+    cfg = json.load(f)
+phases = cfg.get('agent', {}).get('phaseProfiles', {})
+profiles = cfg.get('agent', {}).get('profiles', {})
+if 'compound' not in phases:
+    print('MISSING: compound not in phaseProfiles')
+    sys.exit(1)
+prof = phases['compound'].get('profile')
+if not prof:
+    print('MISSING: compound phase has no profile')
+    sys.exit(1)
+if prof not in profiles:
+    print(f'MISSING: profile {prof!r} not found in agent.profiles')
+    sys.exit(1)
+print(f'OK: compound -> {prof}')
+"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OK: compound"* ]]
+}
