@@ -320,6 +320,8 @@ _run_agent() {
 }
 
 @test "run_agent in ai-pr-review-poll routes through run-agent.ts" {
-  grep -q 'run-agent.ts' scripts/ai-pr-review-poll
-  grep -q '\-\-phase extract' scripts/ai-pr-review-poll
+  run grep -q 'run-agent.ts' scripts/ai-pr-review-poll
+  [ "$status" -eq 0 ]
+  run grep -q '\-\-phase extract' scripts/ai-pr-review-poll
+  [ "$status" -eq 0 ]
 }
