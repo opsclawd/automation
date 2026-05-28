@@ -39,11 +39,13 @@ const classifyExitAdapter = (
     try {
       const invocations = agentInvocationRepository.listByRun(RunId(input.runUuid));
       const latest = invocations[invocations.length - 1];
-      if (latest && latest.outcome && latest.outcome !== 'success' && latest.stderrPath) {
+      if (latest && latest.outcome && latest.outcome !== 'success') {
         let stderrContent: string | undefined;
-        try {
-          stderrContent = readFileSync(latest.stderrPath, 'utf-8');
-        } catch {}
+        if (latest.stderrPath) {
+          try {
+            stderrContent = readFileSync(latest.stderrPath, 'utf-8');
+          } catch {}
+        }
         enriched = {
           ...input,
           invocation: {
