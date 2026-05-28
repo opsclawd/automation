@@ -560,7 +560,7 @@ describe('AgentRuntimeRouter fallback', () => {
       expect(rows.length).toBe(1);
     });
 
-    it('defaults to timeout and contract_violation when fallbackTriggers is not set', async () => {
+    it('defaults to timeout, contract_violation, runtime_error, and token_limit_exceeded when fallbackTriggers is not set', async () => {
       const config: AgentConfig = {
         defaultProfile: 'opencode-frontier',
         profiles: {

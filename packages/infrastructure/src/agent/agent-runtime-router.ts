@@ -240,7 +240,12 @@ export class AgentRuntimeRouter implements AgentPort {
   private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
     const routingPhase = normalizeRoutingPhase(phaseId);
     const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
-    const triggers = phaseEntry?.fallbackTriggers ?? ['timeout', 'contract_violation'];
+    const triggers = phaseEntry?.fallbackTriggers ?? [
+      'timeout',
+      'contract_violation',
+      'runtime_error',
+      'token_limit_exceeded',
+    ];
     for (const trigger of triggers) {
       switch (trigger) {
         case 'timeout':
