@@ -328,6 +328,21 @@ _run_agent() {
   [ "$status" -eq 0 ]
 }
 
+@test "ai-pr-review-poll has no pushd callsites" {
+  run grep -c 'pushd' scripts/ai-pr-review-poll
+  [ "$output" -eq 0 ]
+}
+
+@test "ai-pr-review-poll has no popd callsites" {
+  run grep -c 'popd' scripts/ai-pr-review-poll
+  [ "$output" -eq 0 ]
+}
+
+@test "ai-pr-review-poll uses pnpm -C instead of pushd" {
+  run grep -c 'pnpm -C' scripts/ai-pr-review-poll
+  [ "$output" -ge 2 ]
+}
+
 @test "ai-consolidate-compound has valid bash syntax" {
   run bash -n scripts/ai-consolidate-compound
   [ "$status" -eq 0 ]

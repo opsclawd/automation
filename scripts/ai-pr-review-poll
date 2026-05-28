@@ -528,6 +528,7 @@ run_agent() {
     2>&1 | tee -a "$output_log"
   echo ${PIPESTATUS[0]} > "$_pnpm_ec_file"
   _agent_ec=$(cat "$_pnpm_ec_file")
+  _guard_main_checkout "$phase"
   rm -f "$_pnpm_ec_file"
   rm -f "$prompt_file"
   if [[ $_agent_ec -eq 2 ]]; then
@@ -538,6 +539,20 @@ run_agent() {
     log "WARN: '${phase}' exited with code $_agent_ec"
   fi
   return $_agent_ec
+}
+
+_guard_main_checkout() {
+  local guard_label="${1:-agent}"
+  if [[ "${POLL_WORKTREE:-}" == "$REPO_ROOT" ]]; then
+    return 0
+  fi
+  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then
+    warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
+    git -C "$REPO_ROOT" checkout -- .
+    emit_event "post-pr-review" "warn" "post-pr-review.main_leak_detected" \
+      "Agent leaked changes into main checkout; auto-reset" \
+      pollIteration="${POLL_COUNT:-0}"
+  fi
 }
 
 # ── Process reviews ────────────────────────────────────────────────────────
@@ -713,7 +728,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     echo '```'
     echo 'git add -A'
     echo "git commit -m 'fix: address PR review feedback'"
-    echo "git push origin ${PR_BRANCH}"
+    echo "git push origin ${PR_BRANCH}   # Do NOT change this branch name"
     echo '```'
     echo ''
     echo '### Step 4: Reply to all threads'
@@ -746,6 +761,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     echo '- Do NOT expand scope beyond comments.'
     echo '- Do NOT create a new PR.'
     echo '- Do NOT merge the PR (no gh pr merge). Only commit, push, and reply.'
+    echo "- CRITICAL: Only push to ${PR_BRANCH}. Never push to main, master, or any other branch. Always use: git push origin ${PR_BRANCH}"
   } > "$prompt_file"
 
   AGENT_START_MS=$(_now_ms)
@@ -762,8 +778,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   if (( _timeout_min < 5 )); then _timeout_min=5; fi
   log "  Agent timeout: ${_timeout_min}m (for ${_comment_count} comment(s))"
 
-  pushd "$REPO_ROOT" > /dev/null 2>&1
-  NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+  NODE_OPTIONS='--conditions=development' pnpm -C "$REPO_ROOT" --filter @ai-sdlc/cli exec tsx "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase post-pr-review \
     --cwd "$POLL_WORKTREE" \
     --run-id "$RUN_ID" \
@@ -776,7 +791,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     --start-sha "$(git -C "$POLL_WORKTREE" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/process-review-p${POLL_COUNT}.log"
   _agent_ec=${PIPESTATUS[0]}
-  popd > /dev/null 2>&1
+  _guard_main_checkout "post-pr-review"
 
   if [[ $_agent_ec -ne 0 ]]; then
     warn "Agent exited with code ${_agent_ec} (poll ${POLL_COUNT})"
