@@ -2189,6 +2189,23 @@ Write code-review.md and review-findings-status.txt now."
     iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
 done
 
+# Post-loop guard: refuse to let create-pr label this PR as ai:pr-ready when
+# the fix loop exited with unresolved findings. Covers ALL exit paths from
+# the while loop — no-progress break, MAX_ITERATIONS exhaustion, or any other
+# future early-break that leaves review-findings-status.txt as HAS_UNRESOLVED.
+# Without this, a finding the fix agent cannot resolve would still ship as
+# pr-ready as long as build/lint/typecheck/test are green.
+if [[ -f "${WORKTREE_DIR}/review-findings-status.txt" ]]; then
+  FINAL_REVIEW_STATUS=$(head -c 64 "${WORKTREE_DIR}/review-findings-status.txt" 2>/dev/null | tr -d '[:space:]')
+  if [[ "$FINAL_REVIEW_STATUS" == "HAS_UNRESOLVED" ]]; then
+    warn "fix-review exited with unresolved findings — overriding validation.result to block ai:pr-ready."
+    echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
+    emit_event "fix-review" "warn" "phase.unresolved_findings" \
+      "fix-review exited with unresolved findings; validation.result overridden to block ai:pr-ready" \
+      status="$FINAL_REVIEW_STATUS"
+  fi
+fi
+
 _emit_phase_done "fix-review"
 PHASE="compound"
 fi
