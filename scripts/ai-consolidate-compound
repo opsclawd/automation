@@ -169,10 +169,10 @@ timeout "$TIMEOUT_SEC" bash -c '
     --run-id "$run_id" \
     --repo-id "$owner_repo" \
     --repo-root "$REPO_ROOT" \
-    --prompt-file "$prompt" _ \
+    --prompt-file "$prompt" \
     --timeout-minutes "$timeout_min" \
     --start-sha "$start_sha"
-' "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
+' _ "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
 AGENT_EC=${PIPESTATUS[0]}
 rm -f "$PROMPT_FILE"
 
