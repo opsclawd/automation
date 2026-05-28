@@ -140,9 +140,9 @@ timeout "$TIMEOUT_SEC" bash -c '
   if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
 
   local phase_id
-  if [[ -n "$ISSUES" ]]; then
+  if [[ -n "${ISSUES+x}" ]]; then
     phase_id="consolidate-issues-${ISSUES//,/-}"
-  elif [[ -n "$SINCE" ]]; then
+  elif [[ -n "${SINCE+x}" ]]; then
     phase_id="consolidate-since-${SINCE//\//-}"
   else
     phase_id="consolidate-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -155,10 +155,10 @@ timeout "$TIMEOUT_SEC" bash -c '
   owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '"'"'local/local'"'"')}"
 
   local start_sha
-  if [[ -n "$SINCE" ]]; then
-    start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(printf '0%.0s' {1..40})
+  if [[ -n "${SINCE+x}" ]]; then
+    start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(printf '"'"'0%.0s'"'"' {1..40})
   else
-    start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '0%.0s' {1..40})
+    start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha=$(printf '"'"'0%.0s'"'"' {1..40})
   fi
 
   NODE_OPTIONS='"'"'--conditions=development'"'"' pnpm --filter @ai-sdlc/cli exec tsx \
@@ -169,7 +169,7 @@ timeout "$TIMEOUT_SEC" bash -c '
     --run-id "$run_id" \
     --repo-id "$owner_repo" \
     --repo-root "$REPO_ROOT" \
-    --prompt-file "$prompt" \
+    --prompt-file "$prompt" _ \
     --timeout-minutes "$timeout_min" \
     --start-sha "$start_sha"
 ' "$PROMPT_FILE" 2>&1 | tee -a "$LOG_FILE"
