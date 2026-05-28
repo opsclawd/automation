@@ -577,7 +577,7 @@ Test plan     How acceptance is verified.
 - **Labels:** `milestone:M4`, `area:bash`, `area:cli`
 - **Depends on:** M4-06, #52 (phase-specific routing config)
 - **User story:** As an automation owner, I want every bash agent invocation to honour `phaseProfiles` and the `AI_AGENT_*` per-run overrides, so model selection and telemetry are uniform across all phases — not just the single-shot ones M4-06 migrated.
-- **Context:** M4-06 intentionally left the `implement` loop and the two off-band scripts (`ai-pr-review-poll`, `ai-consolidate-compound`) on direct `opencode --model $AGENT_MODEL run`. After #52 ships per-phase routing, those bypassed invocations silently ignore the new config — the highest-volume phases (per-task spec/quality/fix reviews) are exactly where the routing wins should land but don't. This story closes that gap as a tactical bridge before M8's full TS rewrite.
+- **Context:** M4-06 intentionally left the `implement` loop and two off-band scripts on direct `opencode --model $AGENT_MODEL run`. After #118 migrated `ai-run-issue-v2` and #119 migrated `ai-pr-review-poll` (both extract and post-pr-review phases now route through `run-agent.ts`), only `ai-consolidate-compound` remains as a direct callsite (#120). This story closes that gap as a tactical bridge before M8's full TS rewrite.
 - **Scope:** Three sibling GitHub issues, each migrating one bash callsite to `apps/cli/src/run-agent.ts`:
   - #118 — `scripts/ai-run-issue-v2` `run_agent_raw` (covers `implement-task-*`, `spec-review-task-*`, `quality-review-task-*`, `fix-review-task-*`, `re-review-*`, `compound`, `extract-*`).
   - #119 — `scripts/ai-pr-review-poll` (`post-pr-review` phase). Bridge until M6-05 retires the script entirely.
