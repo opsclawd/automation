@@ -140,36 +140,6 @@ run_agent() {
   local timeout_min=$(( (TIMEOUT_SEC + 59) / 60 ))
   if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
 
-  local run_agent_process
-  run_agent_process() {
-    local phase_id
-    if [[ -n "$ISSUES" ]]; then
-      phase_id="consolidate-issues-${ISSUES//,/-}"
-    elif [[ -n "$SINCE" ]]; then
-      phase_id="consolidate-since-${SINCE//\//-}"
-    else
-      phase_id="consolidate-$(date -u +%Y%m%dT%H%M%SZ)"
-    fi
-
-    local run_id
-    run_id="${CONSOLIDATE_RUN_ID:-$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || echo 'fallback-uuid-'$(date +%s))}"
-
-    local owner_repo
-    owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'local/local')}"
-
-    NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx \
-      "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-      --phase compound \
-      --phase-id "$phase_id" \
-      --cwd "$REPO_ROOT" \
-      --run-id "$run_id" \
-      --repo-id "$owner_repo" \
-      --repo-root "$REPO_ROOT" \
-      --prompt-file "$prompt" \
-      --timeout-minutes "$timeout_min" \
-      --start-sha "$start_sha"
-  }
-
   local phase_id
   if [[ -n "$ISSUES" ]]; then
     phase_id="consolidate-issues-${ISSUES//,/-}"
@@ -185,18 +155,27 @@ run_agent() {
   local owner_repo
   owner_repo="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo 'local/local')}"
 
+  local start_sha
+  if [[ -n "$SINCE" ]]; then
+    start_sha=$(git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null) || start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha="0%.0s" {1..40}
+  else
+    start_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || start_sha="0%.0s" {1..40}
+  fi
+
   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx \
     "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase compound \
-    --phase-id "$phase_id" \
+    --phase-id "compound" \
     --cwd "$REPO_ROOT" \
     --run-id "$run_id" \
     --repo-id "$owner_repo" \
     --repo-root "$REPO_ROOT" \
     --prompt-file "$prompt" \
     --timeout-minutes "$timeout_min" \
-    --start-sha "$(if [[ -n "$SINCE" ]]; then git -C "$REPO_ROOT" rev-parse "$SINCE" 2>/dev/null || git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40}; else git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40}; fi)"
+    --start-sha "$start_sha"
 }
+
+
 
 # PIPESTATUS[0] reliably captures run_agent's exit code: bash evaluates both
 # sides of the pipe before PIPESTATUS is read, and tee is a simple consumer
