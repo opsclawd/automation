@@ -152,6 +152,12 @@ async function main() {
     process.exit(2);
   }
 
+  // Validate prompt file exists
+  if (!existsSync(values['prompt-file']!)) {
+    console.error(`prompt file not found: ${values['prompt-file']}`);
+    process.exit(3);
+  }
+
   // Resolve repo root: explicit flag (canonical main checkout) wins over
   // walking up from --cwd (which may land inside a worktree that contains
   // its own pnpm-workspace.yaml, producing the wrong root for DB lookups).
