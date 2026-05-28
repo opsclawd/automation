@@ -80,7 +80,7 @@ function buildFailureFromInvocation(input: ClassifyExitInput): Failure | null {
       break;
     case 'contract_violation':
       if (inv.contractViolations?.includes('prompt_budget_exceeded')) {
-        kind = 'command_failed';
+        kind = 'agent_contract_violation';
         message = 'Prompt budget exceeded';
         suggestedAction = 'Reduce prompt size or use a profile with a larger context window.';
       } else if (inv.contractViolations?.includes('missing_required_artifact')) {
@@ -88,8 +88,12 @@ function buildFailureFromInvocation(input: ClassifyExitInput): Failure | null {
         message = inv.stderrContent?.trim() || 'Missing required artifact';
         suggestedAction =
           'Inspect the phase prompt and stdout; the agent did not produce the expected file.';
+      } else if (inv.contractViolations?.includes('invalid_result_json')) {
+        kind = 'invalid_result';
+        message = inv.stderrContent?.trim() || 'Invalid result JSON';
+        suggestedAction = 'Inspect the agent result.json and prompt template.';
       } else {
-        kind = 'command_failed';
+        kind = 'agent_contract_violation';
         message = inv.stderrContent?.trim() || 'Contract violation';
         suggestedAction = 'Inspect stderr.log and result.json for the cause.';
       }
