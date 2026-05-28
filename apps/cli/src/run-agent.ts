@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { AgentProfileName, createRun, type Run } from '@ai-sdlc/domain';
+import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 import { existsSync } from 'node:fs';
@@ -239,16 +239,37 @@ async function main() {
   // inserted, mark it terminal before exiting so the dashboard doesn't show
   // a perpetually-running row. runRepository.update() is synchronous, so
   // this runs reliably in the signal handler.
-  process.on('SIGTERM', () => {
+  const onSigterm = () => {
     if (createdSynthetic) {
       c.runRepository.update(runId, {
         status: 'failed',
         completedAt: new Date(),
         failureReason: 'process timed out',
       });
+      // Close any open agent_invocations rows that
+      // AgentRuntimeRouter.dispatch() may have inserted before the
+      // timeout signal arrived, so the dashboard doesn't show
+      // perpetually-running invocations.
+      const invocations = c.agentInvocationRepository.listByRun(RunId(runId));
+      for (const inv of invocations) {
+        if (!inv.endedAt) {
+          c.agentInvocationRepository.update(inv.id, {
+            endedAt: new Date(),
+            outcome: 'timeout',
+            contractViolations: [],
+          });
+        }
+      }
     }
     process.exit(124);
-  });
+  };
+
+  process.on('SIGTERM', onSigterm);
+
+  function safeExit(code: number): never {
+    process.removeListener('SIGTERM', onSigterm);
+    process.exit(code);
+  }
 
   try {
     const result = await c.agentRuntime.invoke({
@@ -272,7 +293,7 @@ async function main() {
       });
     }
 
-    process.exit(exitCodeForOutcome(result));
+    safeExit(exitCodeForOutcome(result));
   } catch (e) {
     if (createdSynthetic) {
       c.runRepository.update(runId, {
@@ -284,10 +305,10 @@ async function main() {
 
     if (e instanceof ConfigError) {
       console.error(e.message);
-      process.exit(2);
+      safeExit(2);
     }
     console.error(e);
-    process.exit(3);
+    safeExit(3);
   }
 }
 
