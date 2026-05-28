@@ -24,7 +24,7 @@
       "senior": {
         "runtime": "opencode",
         "provider": "crofai",
-        "model": "glm-5.1",
+        "model": "glm-5.1-precision",
         "timeoutMinutes": 60
       },
       "senior-fallback": {
