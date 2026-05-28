@@ -220,6 +220,7 @@ async function main() {
   // StartIssueRun (ai-run-issue-v2), the row already exists. When invoked
   // standalone (e.g. ai-pr-review-poll), no row exists, which would violate
   // the agent_invocations.run_uuid FK constraint.
+  let createdSynthetic = false;
   const runId = values['run-id']!;
   if (!c.runRepository.findByUuid(runId)) {
     const run = createRun({
@@ -230,6 +231,7 @@ async function main() {
       type: phaseToRunType(values.phase),
     });
     c.runRepository.insert(run);
+    createdSynthetic = true;
   }
 
   try {
@@ -246,8 +248,24 @@ async function main() {
       ...(values['step-id'] ? { stepId: values['step-id'] } : {}),
     });
 
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: result.outcome === 'success' ? 'passed' : 'failed',
+        completedAt: new Date(),
+        ...(result.outcome !== 'success' ? { failureReason: `agent exit: ${result.outcome}` } : {}),
+      });
+    }
+
     process.exit(exitCodeForOutcome(result));
   } catch (e) {
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: 'failed',
+        completedAt: new Date(),
+        failureReason: e instanceof Error ? e.message : String(e),
+      });
+    }
+
     if (e instanceof ConfigError) {
       console.error(e.message);
       process.exit(2);
