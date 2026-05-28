@@ -136,8 +136,12 @@ log "Invoking agent via run-agent.ts (timeout ${TIMEOUT_SEC}s, phase compound)..
 
 run_agent() {
   local prompt="$1"
+  local timeout_sec="$TIMEOUT_SEC"
   local timeout_min=$(( (TIMEOUT_SEC + 59) / 60 ))
   if [[ $timeout_min -lt 1 ]]; then timeout_min=1; fi
+  # Preserve second-level granularity: wrap CLI with timeout at seconds level
+  # The outer timeout enforces the exact seconds-level deadline; inner timeout-minutes is for run-agent.ts
+  timeout "$timeout_sec" bash -c 'exec run_agent "$@"' _ <<< "$(cat < "$prompt")"
 
   local phase_id
   if [[ -n "$ISSUES" ]]; then
