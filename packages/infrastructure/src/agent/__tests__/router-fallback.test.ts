@@ -1,3 +1,4 @@
+import { unlinkSync, writeFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
@@ -304,6 +305,132 @@ describe('AgentRuntimeRouter fallback', () => {
     expect(events[0].type).toBe('phase.fallback.escalated');
   });
 
+  describe('runtime_error trigger', () => {
+    it('escalates to fallback profile on runtime_error when configured', async () => {
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'opencode',
+        model: 'deepseek-v4-flash',
+        exitCode: 1,
+        durationMs: 2000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const events: OrchestratorEvent[] = [];
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['runtime_error'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-runtime-error',
+        readPromptChars: () => 100,
+        eventBus: {
+          publish(_runId, ev) {
+            events.push(ev);
+          },
+        },
+      });
+
+      await router.invoke(req());
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(2);
+      expect(rows[0].outcome).toBe('failed');
+      expect(rows[1].fallbackOfInvocationId).toBeDefined();
+      expect(events.length).toBe(1);
+      expect(events[0].metadata.triggerReason).toBe('runtime_error');
+    });
+  });
+
+  describe('token_limit_exceeded trigger', () => {
+    it('escalates to fallback profile on token_limit_exceeded when stderr matches', async () => {
+      const stderrPath = '/tmp/test-stderr-tle.log';
+      writeFileSync(stderrPath, 'Error: context_length_exceeded: prompt is too long');
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 1,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const events: OrchestratorEvent[] = [];
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['token_limit_exceeded'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-tle',
+        readPromptChars: () => 100,
+        eventBus: {
+          publish(_runId, ev) {
+            events.push(ev);
+          },
+        },
+      });
+
+      await router.invoke(req());
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(2);
+      expect(events[0].metadata.triggerReason).toBe('token_limit_exceeded');
+
+      unlinkSync(stderrPath);
+    });
+
+    it('does not trigger token_limit_exceeded when stderr has no token-limit pattern', async () => {
+      const stderrPath = '/tmp/test-stderr-no-tle.log';
+      writeFileSync(stderrPath, 'Error: Model not found: opencode/deepseek-v4-flash');
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'opencode',
+        model: 'deepseek-v4-flash',
+        exitCode: 1,
+        durationMs: 2000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const events: OrchestratorEvent[] = [];
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['token_limit_exceeded'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-no-tle',
+        readPromptChars: () => 100,
+        eventBus: {
+          publish(_runId, ev) {
+            events.push(ev);
+          },
+        },
+      });
+
+      await router.invoke(req());
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(1);
+      expect(events.length).toBe(0);
+
+      unlinkSync(stderrPath);
+    });
+  });
+
   describe('fallbackTriggers configuration', () => {
     it('triggers fallback for missing_required_artifact when configured', async () => {
       const config: AgentConfig = {
@@ -433,7 +560,7 @@ describe('AgentRuntimeRouter fallback', () => {
       expect(rows.length).toBe(1);
     });
 
-    it('defaults to timeout and contract_violation when fallbackTriggers is not set', async () => {
+    it('defaults to timeout, contract_violation, runtime_error, and token_limit_exceeded when fallbackTriggers is not set', async () => {
       const config: AgentConfig = {
         defaultProfile: 'opencode-frontier',
         profiles: {

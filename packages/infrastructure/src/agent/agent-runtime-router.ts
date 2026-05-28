@@ -240,7 +240,12 @@ export class AgentRuntimeRouter implements AgentPort {
   private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
     const routingPhase = normalizeRoutingPhase(phaseId);
     const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
-    const triggers = phaseEntry?.fallbackTriggers ?? ['timeout', 'contract_violation'];
+    const triggers = phaseEntry?.fallbackTriggers ?? [
+      'timeout',
+      'contract_violation',
+      'runtime_error',
+      'token_limit_exceeded',
+    ];
     for (const trigger of triggers) {
       switch (trigger) {
         case 'timeout':
@@ -270,11 +275,22 @@ export class AgentRuntimeRouter implements AgentPort {
           )
             return true;
           break;
+        case 'runtime_error':
+          if (result.outcome === 'failed') return true;
+          break;
+        case 'token_limit_exceeded':
+          if (result.outcome === 'failed' && isTokenLimitError(result)) return true;
+          break;
       }
     }
     return false;
   }
 
+  /** Determine the trigger reason for a fallback escalation.
+   *  MUST only be called when `shouldFallback` has already returned `true`,
+   *  because this function returns trigger reasons unconditionally for
+   *  `outcome='failed'` without checking whether the trigger is actually
+   *  configured in the phase's `fallbackTriggers` set. */
   private determineTriggerReason(result: AgentInvocationResult): string {
     if (result.outcome === 'timeout') return 'timeout';
     if (result.outcome === 'contract_violation') {
@@ -288,6 +304,10 @@ export class AgentRuntimeRouter implements AgentPort {
         return 'invalid_result_json';
       }
       return 'contract_violation';
+    }
+    if (result.outcome === 'failed') {
+      if (isTokenLimitError(result)) return 'token_limit_exceeded';
+      return 'runtime_error';
     }
     return 'unknown';
   }
@@ -337,6 +357,23 @@ export class AgentRuntimeRouter implements AgentPort {
  */
 export function normalizeRoutingPhase(phaseId: string): string {
   return phaseId.replace(/(-task)?-\d+$/, '');
+}
+
+const TOKEN_LIMIT_PATTERNS = [
+  /context_length_exceeded/i,
+  /prompt is too long/i,
+  /token.*limit.*exceed/i,
+  /maximum context length/i,
+  /request too large/i,
+];
+
+function isTokenLimitError(result: AgentInvocationResult): boolean {
+  try {
+    const stderr = readFileSync(result.stderrPath, 'utf-8');
+    return TOKEN_LIMIT_PATTERNS.some((p) => p.test(stderr));
+  } catch {
+    return false;
+  }
 }
 
 function defaultReadPromptChars(path: string): number {

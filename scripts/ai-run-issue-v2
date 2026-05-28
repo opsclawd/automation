@@ -503,7 +503,7 @@ Write the result now."
   printf '%s' "$EXTRACTOR_PROMPT" > "$_extract_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase extract \
-    --phase-id "extract-${phase}" \
+    --phase-id "extract" \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \

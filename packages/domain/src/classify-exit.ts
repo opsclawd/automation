@@ -1,3 +1,5 @@
+import type { AgentInvocationOutcome } from './agent-invocation.js';
+
 export interface ClassifierEvent {
   phase?: string;
   level: 'info' | 'warn' | 'error';
@@ -17,4 +19,10 @@ export interface ClassifyExitInput {
    *  and a terminal event exists, the classifier prefers events over
    *  log scraping. */
   events?: ClassifierEvent[];
+  invocation?: {
+    outcome: AgentInvocationOutcome;
+    phaseId?: string;
+    stderrContent?: string;
+    contractViolations?: string[];
+  };
 }
