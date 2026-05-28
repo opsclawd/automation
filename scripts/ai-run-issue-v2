@@ -1886,19 +1886,33 @@ PREV_UNRESOLVED_FP=""
 
 # Fingerprint the set of unresolved findings in code-review.md so we can detect
 # when iterations stop making progress (same findings flagged loop after loop).
-# Pairs each NOT FIXED / PARTIALLY FIXED status with the preceding non-empty
-# line so two different findings can never collide on identical status text,
-# regardless of whether the reviewer used ### headings, ## headings, bullets,
-# or an inline format. The re-review prompt does not mandate a heading style.
+# Builds each finding's identity from a 5-line ring buffer of preceding
+# non-empty lines plus the status line, joined with `||` into one record so
+# `sort -u` can dedupe whole-record. The ring is wide enough to capture unique
+# context (file paths, line refs, severity, finding header) even when the
+# re-reviewer uses repeated generic metadata lines like `- severity: high`.
+# The re-review prompt does not mandate any particular heading format.
 _unresolved_fingerprint() {
   local file=$1
   [[ -f "$file" ]] || { echo "missing"; return; }
   awk '
+    BEGIN { rsize = 5 }
     /^[[:space:]]*$/ { next }
     /(NOT FIXED|PARTIALLY FIXED|not fixed|partially fixed)/ {
-      print prev "|" $0
+      out = ""
+      for (i = rsize; i >= 1; i--) {
+        if (ring[i] != "") {
+          if (out != "") out = out "||"
+          out = out ring[i]
+        }
+      }
+      if (out != "") out = out "||"
+      print out $0
     }
-    { prev = $0 }
+    {
+      for (i = rsize; i > 1; i--) ring[i] = ring[i-1]
+      ring[1] = $0
+    }
   ' "$file" 2>/dev/null \
     | sort -u \
     | sha256sum \
