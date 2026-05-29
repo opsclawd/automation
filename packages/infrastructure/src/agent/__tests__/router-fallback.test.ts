@@ -351,6 +351,7 @@ describe('AgentRuntimeRouter fallback', () => {
     it('escalates to fallback profile on token_limit_exceeded when stderr matches', async () => {
       const stderrPath = '/tmp/test-stderr-tle.log';
       writeFileSync(stderrPath, 'Error: context_length_exceeded: prompt is too long');
+      let cleanup = true;
       const inv = new FakeAgentInvocationPort();
       const adapter = new StubAdapter({
         runtime: 'opencode',
@@ -380,18 +381,21 @@ describe('AgentRuntimeRouter fallback', () => {
         },
       });
 
-      await router.invoke(req());
+      try {
+        await router.invoke(req());
 
-      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-      expect(rows.length).toBe(2);
-      expect(events[0].metadata.triggerReason).toBe('token_limit_exceeded');
-
-      unlinkSync(stderrPath);
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        expect(rows.length).toBe(2);
+        expect(events[0].metadata.triggerReason).toBe('token_limit_exceeded');
+      } finally {
+        if (cleanup) unlinkSync(stderrPath);
+      }
     });
 
     it('does not trigger token_limit_exceeded when stderr has no token-limit pattern', async () => {
       const stderrPath = '/tmp/test-stderr-no-tle.log';
       writeFileSync(stderrPath, 'Error: Model not found: opencode/deepseek-v4-flash');
+      let cleanup = true;
       const inv = new FakeAgentInvocationPort();
       const adapter = new StubAdapter({
         runtime: 'opencode',
@@ -421,13 +425,150 @@ describe('AgentRuntimeRouter fallback', () => {
         },
       });
 
-      await router.invoke(req());
+      try {
+        await router.invoke(req());
 
-      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-      expect(rows.length).toBe(1);
-      expect(events.length).toBe(0);
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        expect(rows.length).toBe(1);
+        expect(events.length).toBe(0);
+      } finally {
+        if (cleanup) unlinkSync(stderrPath);
+      }
+    });
+  });
 
-      unlinkSync(stderrPath);
+  describe('quota_exceeded trigger', () => {
+    it('escalates to fallback profile on quota_exceeded when stderr matches', async () => {
+      const stderrPath = '/tmp/test-stderr-qe.log';
+      writeFileSync(
+        stderrPath,
+        'Error: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54',
+      );
+      let cleanup = true;
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 1,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const events: OrchestratorEvent[] = [];
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['quota_exceeded'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-qe',
+        readPromptChars: () => 100,
+        eventBus: {
+          publish(_runId, ev) {
+            events.push(ev);
+          },
+        },
+      });
+
+      try {
+        await router.invoke(req());
+
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        expect(rows.length).toBe(2);
+        expect(events[0].metadata.triggerReason).toBe('quota_exceeded');
+      } finally {
+        if (cleanup) unlinkSync(stderrPath);
+      }
+    });
+
+    it('does not trigger quota_exceeded when stderr has no quota pattern', async () => {
+      const stderrPath = '/tmp/test-stderr-no-qe.log';
+      writeFileSync(stderrPath, 'Error: Model not found: opencode/deepseek-v4-flash');
+      let cleanup = true;
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'opencode',
+        model: 'deepseek-v4-flash',
+        exitCode: 1,
+        durationMs: 2000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const events: OrchestratorEvent[] = [];
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['quota_exceeded'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-no-qe',
+        readPromptChars: () => 100,
+        eventBus: {
+          publish(_runId, ev) {
+            events.push(ev);
+          },
+        },
+      });
+
+      try {
+        await router.invoke(req());
+
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        expect(rows.length).toBe(1);
+        expect(events.length).toBe(0);
+      } finally {
+        if (cleanup) unlinkSync(stderrPath);
+      }
+    });
+
+    it('triggers quota_exceeded as a default trigger when fallbackTriggers is not set', async () => {
+      const stderrPath = '/tmp/test-stderr-qe-default.log';
+      writeFileSync(stderrPath, 'rate_limit_exceeded: too many requests');
+      let cleanup = true;
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 1,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const events: OrchestratorEvent[] = [];
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-qe-default',
+        readPromptChars: () => 100,
+        eventBus: {
+          publish(_runId, ev) {
+            events.push(ev);
+          },
+        },
+      });
+
+      try {
+        await router.invoke(req());
+
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        expect(rows.length).toBe(2);
+        expect(events[0].metadata.triggerReason).toBe('quota_exceeded');
+      } finally {
+        if (cleanup) unlinkSync(stderrPath);
+      }
     });
   });
 
@@ -560,7 +701,7 @@ describe('AgentRuntimeRouter fallback', () => {
       expect(rows.length).toBe(1);
     });
 
-    it('defaults to timeout, contract_violation, runtime_error, and token_limit_exceeded when fallbackTriggers is not set', async () => {
+    it('defaults to timeout, contract_violation, runtime_error, token_limit_exceeded, and quota_exceeded when fallbackTriggers is not set', async () => {
       const config: AgentConfig = {
         defaultProfile: 'opencode-frontier',
         profiles: {

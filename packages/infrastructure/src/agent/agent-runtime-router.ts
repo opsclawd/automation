@@ -17,6 +17,7 @@ import {
 } from '@ai-sdlc/application';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import type { EventBusPort } from '@ai-sdlc/application';
+import { testQuotaPatterns } from './quota-patterns.js';
 
 export interface AgentRuntimeRouterOptions {
   agent: AgentConfig;
@@ -245,6 +246,7 @@ export class AgentRuntimeRouter implements AgentPort {
       'contract_violation',
       'runtime_error',
       'token_limit_exceeded',
+      'quota_exceeded',
     ];
     for (const trigger of triggers) {
       switch (trigger) {
@@ -281,6 +283,9 @@ export class AgentRuntimeRouter implements AgentPort {
         case 'token_limit_exceeded':
           if (result.outcome === 'failed' && isTokenLimitError(result)) return true;
           break;
+        case 'quota_exceeded':
+          if (result.outcome === 'failed' && isQuotaError(result)) return true;
+          break;
       }
     }
     return false;
@@ -307,6 +312,7 @@ export class AgentRuntimeRouter implements AgentPort {
     }
     if (result.outcome === 'failed') {
       if (isTokenLimitError(result)) return 'token_limit_exceeded';
+      if (isQuotaError(result)) return 'quota_exceeded';
       return 'runtime_error';
     }
     return 'unknown';
@@ -371,6 +377,15 @@ function isTokenLimitError(result: AgentInvocationResult): boolean {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
     return TOKEN_LIMIT_PATTERNS.some((p) => p.test(stderr));
+  } catch {
+    return false;
+  }
+}
+
+function isQuotaError(result: AgentInvocationResult): boolean {
+  try {
+    const stderr = readFileSync(result.stderrPath, 'utf-8');
+    return testQuotaPatterns(stderr) !== null;
   } catch {
     return false;
   }
