@@ -79,11 +79,7 @@ module.exports = {
       },
       to: {
         path: '^packages/application/src',
-        pathNot: [
-          '^packages/application/src/ports/',
-          '^packages/application/src/index\\.ts$',
-          '^packages/application/src/ports\\.ts$',
-        ],
+        pathNot: ['^packages/application/src/ports/'],
       },
     },
     {
@@ -109,12 +105,7 @@ module.exports = {
       from: { path: '^packages/infrastructure/src/.*/__tests__/' },
       to: {
         path: '^packages/application/src',
-        pathNot: [
-          '^packages/application/src/ports/',
-          '^packages/application/src/test-doubles/',
-          '^packages/application/src/index\\.ts$',
-          '^packages/application/src/ports\\.ts$',
-        ],
+        pathNot: ['^packages/application/src/ports/', '^packages/application/src/test-doubles/'],
       },
     },
     {
