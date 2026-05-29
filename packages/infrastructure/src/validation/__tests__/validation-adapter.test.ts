@@ -79,17 +79,26 @@ describe('ProcessValidationAdapter', () => {
     expect(readFileSync(stderrAbs, 'utf-8')).toContain('err');
   });
 
-  it('marks a command that exceeds the timeout as timed_out', async () => {
-    const logDir = freshDir();
-    const adapter = new ProcessValidationAdapter();
-    const results = await adapter.run({
-      cwd: process.cwd(),
-      commands: ['sleep 5'],
-      timeoutSeconds: 1,
-      logDir,
-    });
-    expect(results[0].outcome).toBe('timed_out');
-  });
+  // POSIX-only: the adapter kills by process group, and the command uses
+  // POSIX shell syntax (`sleep`, `;`) that does not run under cmd.exe.
+  it.skipIf(process.platform === 'win32')(
+    'marks a command that exceeds the timeout as timed_out',
+    async () => {
+      const logDir = freshDir();
+      const adapter = new ProcessValidationAdapter();
+      const started = Date.now();
+      const results = await adapter.run({
+        cwd: process.cwd(),
+        commands: ['sleep 5; echo done'],
+        timeoutSeconds: 1,
+        logDir,
+      });
+      expect(results[0].outcome).toBe('timed_out');
+      // Proves the process-group kill actually freed us at the 1s timeout
+      // rather than blocking until the 5s sleep finished on its own.
+      expect(Date.now() - started).toBeLessThan(3000);
+    },
+  );
 
   it('writes a validation-result.json summary', async () => {
     const logDir = freshDir();
