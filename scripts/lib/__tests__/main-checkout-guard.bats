@@ -46,6 +46,11 @@ setup() {
     /^_guard_main_checkout\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
+
+  eval "$(awk '
+    /^_capture_main_state\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
 }
 
 teardown() {
@@ -123,8 +128,9 @@ teardown() {
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
   mkdir -p "$POLL_WORKTREE"
 
-  local pre_sha
-  pre_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  local pre_state
+  pre_state=$(_capture_main_state)
+  local pre_sha="${pre_state%%|*}"
 
   # Simulate agent running `git add -A && git commit` in main: HEAD advances
   # to a clean leaked commit. Dirty checks alone won't catch this.
@@ -136,7 +142,7 @@ teardown() {
   leaked_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
   [ "$leaked_sha" != "$pre_sha" ]
 
-  run _guard_main_checkout "test" "$pre_sha"
+  run _guard_main_checkout "test" "$pre_state"
   [ "$status" -eq 0 ]
 
   # HEAD must be back at pre_sha and the leaked file must be gone.
@@ -144,6 +150,64 @@ teardown() {
   final_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
   [ "$final_sha" = "$pre_sha" ]
   [ ! -f "$FIXTURE_REPO/leaked.txt" ]
+}
+
+@test "_guard_main_checkout preserves pre-existing dirty work (regression: PR #132 comment 3322133613)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
+  mkdir -p "$POLL_WORKTREE"
+
+  # Developer has unstaged local work BEFORE the agent runs.
+  echo "developer edit" >> "$FIXTURE_REPO/.gitignore"
+  echo "dev untracked" > "$FIXTURE_REPO/dev-scratch.txt"
+
+  # Capture state AFTER the dirty edits (simulating pre-agent baseline).
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  # Agent runs (in this scenario, doesn't add to the dirty state).
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  # Developer's work must be preserved: both the tracked edit and the
+  # untracked file must still be present.
+  run grep -q "developer edit" "$FIXTURE_REPO/.gitignore"
+  [ "$status" -eq 0 ]
+  [ -f "$FIXTURE_REPO/dev-scratch.txt" ]
+
+  # Event log should record the skip rather than a leak.
+  run jq -e '.type == "post-pr-review.main_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout rewinds HEAD but preserves untracked when pre-agent was dirty" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
+  mkdir -p "$POLL_WORKTREE"
+
+  # Developer has untracked file before agent runs.
+  echo "dev work" > "$FIXTURE_REPO/dev-untracked.txt"
+  local pre_state
+  pre_state=$(_capture_main_state)
+  local pre_sha="${pre_state%%|*}"
+
+  # Agent commits a leak (HEAD moves).
+  echo "leaked" > "$FIXTURE_REPO/leaked.txt"
+  git -C "$FIXTURE_REPO" add leaked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leak"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  # HEAD is rewound (always safe — HEAD move is unambiguous leak).
+  local final_sha
+  final_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$final_sha" = "$pre_sha" ]
+
+  # Developer's untracked file must NOT have been cleaned, because the
+  # pre-agent state was already dirty and we can't tell pre-existing
+  # untracked from new untracked without extra bookkeeping.
+  [ -f "$FIXTURE_REPO/dev-untracked.txt" ]
 }
 
 @test "_guard_main_checkout does not rewind HEAD when no expected_sha is passed (back-compat)" {
@@ -197,8 +261,10 @@ teardown() {
 }
 
 @test "ai-pr-review-poll has two _guard_main_checkout callsites" {
-  callsite_count=$(grep -c '_guard_main_checkout' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")
-  [ "$callsite_count" -eq 3 ]
+  # Match callsites only (function invocation at start of indentation),
+  # excluding the function definition itself and any references in comments.
+  callsite_count=$(grep -cE '^[[:space:]]+_guard_main_checkout\b' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")
+  [ "$callsite_count" -eq 2 ]
 }
 
 @test "ai-pr-review-poll prompt forbids pushing to main" {
