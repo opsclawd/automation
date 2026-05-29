@@ -22,6 +22,7 @@ STUB_EOF
   export AI_RUN_EVENTS_FILE="${TMPDIR_TEST}/events.jsonl"
   export AI_RUN_DISPLAY_ID="issue-1-20260516-120000"
   export NODE_OPTIONS='--conditions=development'
+  export TSX_LOADER="${PWD}/apps/cli/node_modules/tsx/dist/loader.mjs"
 }
 
 teardown() {
@@ -31,7 +32,7 @@ teardown() {
 _run_agent() {
   local phase="$1"
   shift
-  npx tsx apps/cli/src/run-agent.ts \
+  node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase "$phase" \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run-$(date +%s)" \
@@ -45,7 +46,7 @@ _run_agent() {
 
 @test "run-agent.ts requires --phase flag" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
     --repo-id "test/repo" \
@@ -59,7 +60,7 @@ _run_agent() {
 }
 
 @test "run-agent.ts requires --prompt-file flag" {
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase implement \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -75,7 +76,7 @@ _run_agent() {
 
 @test "run-agent.ts exits 2 for unknown phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase "nonexistent-phase-xyz" \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -90,7 +91,7 @@ _run_agent() {
 }
 
 @test "run-agent.ts exits 3 for missing prompt file" {
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase implement \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -106,7 +107,7 @@ _run_agent() {
 
 @test "run-agent.ts uses phaseProfiles for implement phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase implement \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -123,7 +124,7 @@ _run_agent() {
 
 @test "run-agent.ts uses phaseProfiles for extract phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase extract \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -140,7 +141,7 @@ _run_agent() {
 
 @test "run-agent.ts uses phaseProfiles for spec-review phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase spec-review \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -157,7 +158,7 @@ _run_agent() {
 
 @test "run-agent.ts uses phaseProfiles for quality-review phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase quality-review \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -174,7 +175,7 @@ _run_agent() {
 
 @test "run-agent.ts uses phaseProfiles for fix-review phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase fix-review \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -191,7 +192,7 @@ _run_agent() {
 
 @test "run-agent.ts uses phaseProfiles for compound phase" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --phase compound \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -208,7 +209,7 @@ _run_agent() {
 
 @test "run-agent.ts accepts --profile override" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --profile builder \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \
@@ -224,7 +225,7 @@ _run_agent() {
 
 @test "run-agent.ts exits 2 for unknown profile" {
   echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
-  run npx tsx apps/cli/src/run-agent.ts \
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
     --profile "nonexistent-profile-xyz" \
     --cwd "$TMPDIR_TEST" \
     --run-id "test-run" \

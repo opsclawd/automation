@@ -1856,10 +1856,13 @@ if [[ "$PHASE" == "validate" ]]; then
     echo ""
     echo "=== pnpm test ==="
     timeout 120 pnpm test 2>&1 || echo "[test failed]"
+    echo ""
+    echo "=== pnpm test:bash ==="
+    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
   } > >(tee "${ISSUES_DIR}/validate.log") 2>&1
 
   VALIDATE_EXIT=0
-  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]|\[install completed with warnings\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
+  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]|\[test:bash failed\]|\[install completed with warnings\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
@@ -2026,7 +2029,7 @@ _unresolved_fingerprint() {
 _revalidate_is_green() {
   local file=$1
   [[ -f "$file" ]] || return 1
-  ! grep -qE '\[(build|lint|typecheck|test) failed\]' "$file"
+  ! grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "$file"
 }
 
 if [[ "$PHASE" == "fix-review" ]]; then
@@ -2103,7 +2106,7 @@ excluded from git and move on. Do NOT delete or modify these files:
 - Do NOT rely on agent memory.
 - Do NOT create a PR.
 - Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
-- Load the requesting-code-review skill first.
+- Load the receiving-code-review skill first.
 - After fixing, run: git add -A && git commit -m 'fix: review findings for issue #${ISSUE_NUM} (loop ${FIX_LOOP_COUNT})'
 - Stop after fixing and committing.
 
@@ -2158,6 +2161,9 @@ Start now."
     echo ""
     echo "=== pnpm test ==="
     timeout 120 pnpm test 2>&1 || echo "[test failed]"
+    echo ""
+    echo "=== pnpm test:bash ==="
+    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
   } > >(tee "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log") 2>&1
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
@@ -2216,7 +2222,7 @@ Fix agent's notes: ./review-fix-log.md  (READ THIS — it records which findings
 Revalidation log: ./revalidate-${FIX_LOOP_COUNT}.log
 
 ## TASK
-Load the requesting-code-review skill first.
+Load the receiving-code-review skill first.
 Read ./review-fix-log.md first to see what the fix agent did for each finding.
 Read the actual source files that had findings. Verify each finding by reading the file on disk.
 Check the revalidation log for build/lint/test results.
