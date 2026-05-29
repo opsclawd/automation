@@ -65,6 +65,12 @@
         "promptBudgetTokens": 40000,
         "outputBudgetTokens": 8000,
         "timeoutMinutes": 30
+      },
+      "antigravity-reviewer": {
+        "runtime": "antigravity",
+        "provider": "google",
+        "model": "default",
+        "timeoutMinutes": 45
       }
     },
     "phaseProfiles": {
@@ -74,7 +80,11 @@
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "builder", "fallbackProfile": "senior-fallback" },
-      "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "senior" },
+      "whole-pr-review": {
+        "profile": "reviewer",
+        "fallbackProfile": "antigravity-reviewer",
+        "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
+      },
       "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
       "extract": { "profile": "pi-qwen-local", "fallbackProfile": "junior" },
