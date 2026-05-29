@@ -1,7 +1,8 @@
 import { execa } from 'execa';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { testQuotaPatterns } from './quota-patterns.js';
 import {
   type AgentPort,
   type AgentInvocationRequest,
@@ -12,12 +13,20 @@ export interface OpenCodeAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
   timeoutMsDefault?: number;
+  sessionLogDir?: string;
+  quotaPollMs?: number;
 }
 
 export class OpenCodeAgentAdapter implements AgentPort {
+  private watchdogKilled = false;
+  private watchdogMatch = '';
+
   constructor(private readonly opts: OpenCodeAdapterOptions) {}
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
+    this.watchdogKilled = false;
+    this.watchdogMatch = '';
+
     const bin = this.opts.binaryPath ?? 'opencode';
     const invocationDir = join(
       this.opts.artifactsDir,
@@ -33,6 +42,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let stdout = '';
     let stderr = '';
     let contractViolations: string[] = [];
+    let watchdogInterval: NodeJS.Timeout | null = null;
     try {
       const timeoutSignal =
         this.opts.timeoutMsDefault !== undefined
@@ -49,9 +59,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
             : undefined;
       const args = ['run'];
       if (request.model) {
-        // opencode's --model expects "provider/model". The router supplies
-        // both from the profile; the model field must be the bare model name
-        // (no provider prefix) — config is responsible for that contract.
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
       }
@@ -62,11 +69,19 @@ export class OpenCodeAgentAdapter implements AgentPort {
         input: readFileSync(request.promptPath, 'utf-8'),
         ...(cancelSignal ? { cancelSignal } : {}),
       });
+
+      watchdogInterval = this.startWatchdog(child as ReturnType<typeof execa>, start);
+
       const r = await child;
+      if (watchdogInterval !== null) clearInterval(watchdogInterval);
+
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
       exitCode = r.exitCode ?? 0;
-      if (r.isCanceled) {
+      if (this.watchdogKilled) {
+        outcome = 'failed';
+        stderr = `QUOTA_EXCEEDED: ${this.watchdogMatch}`;
+      } else if (r.isCanceled) {
         if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
           outcome = 'timeout';
         } else {
@@ -77,6 +92,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
         outcome = 'failed';
       }
     } catch (e) {
+      if (watchdogInterval !== null) clearInterval(watchdogInterval);
       outcome = 'failed';
       exitCode = 1;
       stderr = String((e as Error).message);
@@ -105,5 +121,55 @@ export class OpenCodeAgentAdapter implements AgentPort {
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     return ret;
+  }
+
+  private startWatchdog(child: ReturnType<typeof execa>, startTime: number): NodeJS.Timeout | null {
+    const sessionLogDir = this.opts.sessionLogDir;
+    if (!sessionLogDir) return null;
+
+    try {
+      if (!statSync(sessionLogDir).isDirectory()) return null;
+    } catch {
+      return null;
+    }
+
+    const pollMs = this.opts.quotaPollMs ?? 2000;
+    let lastOffset = 0;
+    const startTimeSec = startTime / 1000;
+
+    return setInterval(() => {
+      try {
+        const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
+        if (files.length === 0) return;
+
+        let latest = '';
+        let latestMtime = 0;
+        for (const f of files) {
+          const mtime = statSync(join(sessionLogDir, f)).mtimeMs / 1000;
+          if (mtime >= startTimeSec && mtime > latestMtime) {
+            latestMtime = mtime;
+            latest = f;
+          }
+        }
+        if (!latest) return;
+
+        const logPath = join(sessionLogDir, latest);
+        const size = statSync(logPath).size;
+        if (size <= lastOffset) return;
+
+        const content = readFileSync(logPath, 'utf-8');
+        const newContent = content.slice(lastOffset);
+        lastOffset = content.length;
+
+        const match = testQuotaPatterns(newContent);
+        if (match) {
+          this.watchdogMatch = match;
+          this.watchdogKilled = true;
+          child.kill('SIGKILL');
+        }
+      } catch {
+        // File might be deleted between stat and read — ignore
+      }
+    }, pollMs);
   }
 }

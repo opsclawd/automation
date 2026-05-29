@@ -300,4 +300,98 @@ describe('OpenCodeAgentAdapter', () => {
     if (existsSync(argsLogFile)) rmSync(argsLogFile);
     if (existsSync(stdinLogFile)) rmSync(stdinLogFile);
   });
+
+  it('kills child process on quota pattern in session log', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      sessionLogDir,
+      quotaPollMs: 500,
+    });
+
+    setTimeout(() => {
+      writeFileSync(
+        join(sessionLogDir, '2026-05-28T225115.log'),
+        'Normal entry\nError: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
+      );
+    }, 800);
+
+    const start = Date.now();
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    const elapsed = Date.now() - start;
+
+    expect(r.outcome).toBe('failed');
+    expect(elapsed).toBeLessThan(10000);
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+
+    rmSync(sessionLogDir, { recursive: true });
+  }, 15000);
+
+  it('does not start watchdog when sessionLogDir is not configured', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      timeoutMsDefault: 500,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('timeout');
+  }, 15000);
+
+  it('detects quota pattern appended to existing log file', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const logFile = join(sessionLogDir, '2026-05-28T230000.log');
+    writeFileSync(logFile, 'Previous session content\nNothing relevant here\n');
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      sessionLogDir,
+      quotaPollMs: 500,
+    });
+
+    setTimeout(() => {
+      writeFileSync(
+        logFile,
+        'Previous session content\nNothing relevant here\nNew: "statusCode": 429 Too Many Requests\n',
+      );
+    }, 800);
+
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('failed');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+
+    rmSync(sessionLogDir, { recursive: true });
+  }, 15000);
 });
