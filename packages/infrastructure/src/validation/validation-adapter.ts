@@ -1,7 +1,6 @@
 import { execa } from 'execa';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { validationRunPassed } from '@ai-sdlc/domain';
 import type {
   ValidationPort,
   RunValidationInput,
@@ -53,8 +52,9 @@ export class ProcessValidationAdapter implements ValidationPort {
         if (r.isCanceled) {
           outcome = 'timed_out';
           exitCode = r.exitCode ?? 124;
-        } else if (exitCode !== 0) {
+        } else if (r.failed) {
           outcome = 'failed';
+          exitCode = r.exitCode ?? 1;
         }
       } catch (e) {
         outcome = 'failed';
@@ -78,9 +78,7 @@ export class ProcessValidationAdapter implements ValidationPort {
       });
     }
 
-    const passed = validationRunPassed({
-      commands: results.map((r) => ({ outcome: r.outcome })),
-    } as Parameters<typeof validationRunPassed>[0]);
+    const passed = results.length > 0 && results.every((r) => r.outcome === 'passed');
     writeFileSync(
       join(input.logDir, 'validation-result.json'),
       JSON.stringify(
