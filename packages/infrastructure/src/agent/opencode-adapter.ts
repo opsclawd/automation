@@ -59,6 +59,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
             : undefined;
       const args = ['run'];
       if (request.model) {
+        // opencode's --model expects "provider/model". The router supplies
+        // both from the profile; the model field must be the bare model name
+        // (no provider prefix) — config is responsible for that contract.
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
       }
