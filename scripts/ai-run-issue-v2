@@ -876,6 +876,8 @@ Write design.md now."
   # Write prompt to temp file for run-agent CLI
   _plan_prompt_file=$(mktemp)
   printf '%s' "$BRAINSTORM_PROMPT" > "$_plan_prompt_file"
+  local _main_state_before
+  _main_state_before=$(_capture_main_state)
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-design \
     --cwd "$WORKTREE_DIR" \
@@ -905,6 +907,8 @@ Write design.md now."
   fi
   info "Design doc saved to ${WORKTREE_DIR}/design.md"
   _emit_artifact "plan-design" "${WORKTREE_DIR}/design.md" "design"
+
+  _guard_main_checkout "plan-design" "$_main_state_before"
 
   _emit_phase_done "plan-design"
   PHASE="plan-write"
