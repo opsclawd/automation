@@ -311,31 +311,33 @@ describe('OpenCodeAgentAdapter', () => {
       quotaPollMs: 500,
     });
 
-    setTimeout(() => {
-      writeFileSync(
-        join(sessionLogDir, '2026-05-28T225115.log'),
-        'Normal entry\nError: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
-      );
-    }, 800);
+    try {
+      setTimeout(() => {
+        writeFileSync(
+          join(sessionLogDir, '2026-05-28T225115.log'),
+          'Normal entry\nError: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
+        );
+      }, 800);
 
-    const start = Date.now();
-    const r = await adapter.invoke({
-      profile: AgentProfileName('opencode-frontier'),
-      promptPath: '/dev/null',
-      expectedArtifacts: [],
-      cwd,
-      runId: '00000000-0000-0000-0000-000000000001',
-      repoId: 'r',
-      phaseId: 'plan-design',
-      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
-    });
-    const elapsed = Date.now() - start;
+      const start = Date.now();
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'plan-design',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+      const elapsed = Date.now() - start;
 
-    expect(r.outcome).toBe('failed');
-    expect(elapsed).toBeLessThan(10000);
-    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
-
-    rmSync(sessionLogDir, { recursive: true });
+      expect(r.outcome).toBe('failed');
+      expect(elapsed).toBeLessThan(10000);
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+    } finally {
+      rmSync(sessionLogDir, { recursive: true });
+    }
   }, 15000);
 
   it('does not start watchdog when sessionLogDir is not configured', async () => {
@@ -371,27 +373,29 @@ describe('OpenCodeAgentAdapter', () => {
       quotaPollMs: 500,
     });
 
-    setTimeout(() => {
-      writeFileSync(
-        logFile,
-        'Previous session content\nNothing relevant here\nNew: "statusCode": 429 Too Many Requests\n',
-      );
-    }, 800);
+    try {
+      setTimeout(() => {
+        writeFileSync(
+          logFile,
+          'Previous session content\nNothing relevant here\nNew: "statusCode": 429 Too Many Requests\n',
+        );
+      }, 800);
 
-    const r = await adapter.invoke({
-      profile: AgentProfileName('opencode-frontier'),
-      promptPath: '/dev/null',
-      expectedArtifacts: [],
-      cwd,
-      runId: '00000000-0000-0000-0000-000000000001',
-      repoId: 'r',
-      phaseId: 'plan-design',
-      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
-    });
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'plan-design',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
 
-    expect(r.outcome).toBe('failed');
-    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
-
-    rmSync(sessionLogDir, { recursive: true });
+      expect(r.outcome).toBe('failed');
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+    } finally {
+      rmSync(sessionLogDir, { recursive: true });
+    }
   }, 15000);
 });
