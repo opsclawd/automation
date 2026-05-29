@@ -1856,10 +1856,13 @@ if [[ "$PHASE" == "validate" ]]; then
     echo ""
     echo "=== pnpm test ==="
     timeout 120 pnpm test 2>&1 || echo "[test failed]"
+    echo ""
+    echo "=== pnpm test:bash ==="
+    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
   } > >(tee "${ISSUES_DIR}/validate.log") 2>&1
 
   VALIDATE_EXIT=0
-  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]|\[install completed with warnings\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
+  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]|\[test:bash failed\]|\[install completed with warnings\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
@@ -2026,7 +2029,7 @@ _unresolved_fingerprint() {
 _revalidate_is_green() {
   local file=$1
   [[ -f "$file" ]] || return 1
-  ! grep -qE '\[(build|lint|typecheck|test) failed\]' "$file"
+  ! grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "$file"
 }
 
 if [[ "$PHASE" == "fix-review" ]]; then
@@ -2158,6 +2161,9 @@ Start now."
     echo ""
     echo "=== pnpm test ==="
     timeout 120 pnpm test 2>&1 || echo "[test failed]"
+    echo ""
+    echo "=== pnpm test:bash ==="
+    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
   } > >(tee "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log") 2>&1
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
