@@ -86,6 +86,7 @@ describe('ProcessValidationAdapter', () => {
     async () => {
       const logDir = freshDir();
       const adapter = new ProcessValidationAdapter();
+      const started = Date.now();
       const results = await adapter.run({
         cwd: process.cwd(),
         commands: ['sleep 5; echo done'],
@@ -93,6 +94,9 @@ describe('ProcessValidationAdapter', () => {
         logDir,
       });
       expect(results[0].outcome).toBe('timed_out');
+      // Proves the process-group kill actually freed us at the 1s timeout
+      // rather than blocking until the 5s sleep finished on its own.
+      expect(Date.now() - started).toBeLessThan(3000);
     },
   );
 
