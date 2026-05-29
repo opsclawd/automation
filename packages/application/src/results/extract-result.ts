@@ -2,8 +2,11 @@ import type { AgentInvocation } from '@ai-sdlc/domain';
 import { PHASE_RESULT_REGISTRY } from './phase-registry.js';
 import type { ArtifactStore, AgentPort } from '../ports.js';
 import { ArtifactNotFoundError } from '../ports.js';
-import { CONTRACT_VIOLATION_CODES } from '../agent/contract-violation-codes.js';
-import type { AgentInvocationRequest, AgentInvocationResult } from '../agent/invocation.js';
+import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
+import type {
+  AgentInvocationRequest,
+  AgentInvocationResult,
+} from '../ports/agent-invocation-types.js';
 
 export type ExtractResultOutcome<T = unknown> =
   | { ok: true; result: T }

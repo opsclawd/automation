@@ -125,6 +125,13 @@ export { ArtifactNotFoundError } from './ports/artifact-store.js';
 
 export type { AgentPort } from './ports/agent-port.js';
 export type {
+  AgentInvocationOutcome,
+  AgentInvocationRequest,
+  AgentInvocationResult,
+} from './ports/agent-invocation-types.js';
+export { AgentProfileName } from './ports/agent-invocation-types.js';
+export { CONTRACT_VIOLATION_CODES } from './ports/contract-violation-codes.js';
+export type {
   AgentInvocationPort,
   AgentInvocationUpdatePatch,
 } from './ports/agent-invocation-port.js';
@@ -163,10 +170,7 @@ export interface EventRepositoryPort {
   }>;
 }
 
-export interface EventBusPort {
-  subscribe(runUuid: string, listener: (event: OrchestratorEvent) => void): () => void;
-  publish(runUuid: string, event: OrchestratorEvent): void;
-}
+export type { EventBusPort } from './ports/event-bus-port.js';
 
 export type EventTailerFactory = (input: {
   path: string;

@@ -5,7 +5,7 @@ import type {
   ValidationPort,
   RunValidationInput,
   ValidationCommandResult,
-} from '@ai-sdlc/application';
+} from '@ai-sdlc/application/ports';
 
 export function commandSlug(command: string): string {
   return (

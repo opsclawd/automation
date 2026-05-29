@@ -4,7 +4,7 @@ import {
   type AgentInvocationResult,
   type AgentInvocationOutcome,
   AgentProfileName,
-} from '../agent/invocation.js';
+} from '../ports/agent-invocation-types.js';
 // Smoke check: types are re-exported from the package entry point
 import {
   type AgentInvocationOutcome as EntryOutcome,

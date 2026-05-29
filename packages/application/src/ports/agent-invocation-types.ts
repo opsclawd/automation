@@ -1,6 +1,7 @@
-import type { AgentInvocationId } from '@ai-sdlc/domain';
-import { AgentProfileName, type AgentRuntimeKind } from './types.js';
-export { AgentProfileName, type AgentRuntimeKind };
+import type { AgentInvocationId, AgentProfileName } from '@ai-sdlc/domain';
+import { type AgentRuntimeKind } from '@ai-sdlc/domain';
+export { AgentProfileName } from '@ai-sdlc/domain';
+export type { AgentRuntimeKind };
 
 export type AgentInvocationOutcome = 'success' | 'failed' | 'timeout' | 'contract_violation';
 

@@ -8,15 +8,12 @@ import {
   type AgentInvocation,
   type AgentRuntimeKind,
 } from '@ai-sdlc/domain';
-import {
-  type AgentPort,
-  type AgentInvocationRequest,
-  type AgentInvocationResult,
-  type AgentInvocationPort,
-  CONTRACT_VIOLATION_CODES,
-} from '@ai-sdlc/application';
+import type { AgentPort } from '@ai-sdlc/application/ports';
+import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
+import type { AgentInvocationPort } from '@ai-sdlc/application/ports';
+import type { EventBusPort } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
-import type { EventBusPort } from '@ai-sdlc/application';
 import { testQuotaPatterns } from './quota-patterns.js';
 
 export interface AgentRuntimeRouterOptions {

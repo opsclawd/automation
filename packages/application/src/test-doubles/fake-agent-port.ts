@@ -1,5 +1,8 @@
 import type { AgentPort } from '../ports/agent-port.js';
-import type { AgentInvocationRequest, AgentInvocationResult } from '../agent/invocation.js';
+import type {
+  AgentInvocationRequest,
+  AgentInvocationResult,
+} from '../ports/agent-invocation-types.js';
 
 export type FakeAgentResponse =
   | AgentInvocationResult

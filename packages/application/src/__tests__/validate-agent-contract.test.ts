@@ -4,7 +4,7 @@ import type { AgentInvocation } from '@ai-sdlc/domain';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../test-doubles/index.js';
 import type { PrReviewComment } from '../ports/github-port.js';
 import { validateAgentContract } from '../agent/validate-agent-contract.js';
-import { CONTRACT_VIOLATION_CODES } from '../agent/contract-violation-codes.js';
+import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
 
 function sampleInv(overrides: Partial<AgentInvocation> = {}): AgentInvocation {
   return {
