@@ -546,10 +546,15 @@ _guard_main_checkout() {
   if [[ "${POLL_WORKTREE:-}" == "$REPO_ROOT" ]]; then
     return 0
   fi
-  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then
+  local _dirty=0
+  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then _dirty=1; fi
+  if ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then _dirty=1; fi
+  if git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -q '^??'; then _dirty=1; fi
+  if [[ $_dirty -eq 1 ]]; then
     warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
-    git -C "$REPO_ROOT" checkout -- .
-    git -C "$REPO_ROOT" clean -fd
+    if git -C "$REPO_ROOT" checkout -- . 2>/dev/null; then
+      git -C "$REPO_ROOT" clean -fd
+    fi
     # emit_event is telemetry-only; its failure does not affect the core guard
     # function (checkout reset). We intentionally do not check its exit status.
     emit_event "post-pr-review" "warn" "post-pr-review.main_leak_detected" \
