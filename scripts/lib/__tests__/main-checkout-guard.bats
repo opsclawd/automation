@@ -23,6 +23,9 @@ setup() {
 }
 
 teardown() {
+  git -C "$REPO_ROOT" checkout -- .gitignore 2>/dev/null || true
+  rm -rf "$TMPDIR_TEST"
+}
   rm -rf "$TMPDIR_TEST"
 }
 
