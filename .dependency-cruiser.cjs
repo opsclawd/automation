@@ -87,6 +87,20 @@ module.exports = {
       },
     },
     {
+      name: 'infrastructure-cannot-import-use-cases-via-barrel',
+      severity: 'error',
+      comment:
+        'Infrastructure must not import use cases or orchestration services via the barrel. ' +
+        'Port types are re-exported from ports/ — import from those directly.',
+      from: {
+        path: '^packages/infrastructure/src',
+        pathNot: ['(^|/)__tests__/'],
+      },
+      to: {
+        path: '^packages/application/src/(start-issue-run|cancel-run|sweep-orphaned-runs|use-cases|run-validation|prompts|results|agent/validate-agent-contract)\\.ts$',
+      },
+    },
+    {
       name: 'infrastructure-tests-may-use-application-ports-and-test-doubles',
       severity: 'error',
       comment:
