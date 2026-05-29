@@ -110,8 +110,13 @@ commit_consolidation() {
     return 0
   fi
   git add docs/solutions/
+  # NOTE: plain commit (no `-- <pathspec>`). A pathspec turns this into a
+  # partial commit, which freezes the working-tree snapshot BEFORE the
+  # husky/lint-staged pre-commit hook runs — so any formatting the hook
+  # applies lands in the index/worktree but never in the commit, leaving
+  # stranded uncommitted changes. `git add docs/solutions/` above already
+  # scopes what gets committed.
   git commit -m "docs(solutions): consolidate compound artifacts
 
-Curated from ai/issues/*/compound.md and ai/poll-pr-*/compound-*.md." \
-    -- docs/solutions/
+Curated from ai/issues/*/compound.md and ai/poll-pr-*/compound-*.md."
 }

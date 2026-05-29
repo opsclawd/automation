@@ -1,0 +1,15 @@
+# Agent-generated / agent-consumed Markdown trees.
+# Prettier's GFM table alignment (which has no off switch) produces large,
+# blame-noisy diffs on these mostly-machine-written docs for ~zero reader
+# benefit, and formatting them in the automated-commit path is fragile.
+# Markdown is also no longer in the lint-staged glob (see package.json);
+# this keeps a manual `pnpm format` from re-touching these trees too.
+docs/solutions/
+docs/superpowers/plans/
+ai/
+
+# Build artifacts / deps (defensive; usually already untracked)
+**/dist/
+**/.next/
+**/node_modules/
+pnpm-lock.yaml
