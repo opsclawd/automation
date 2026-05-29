@@ -1353,6 +1353,7 @@ ${SPEC_REVIEWER_PROMPT}"
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
       2>&1 | tee -a "${ISSUES_DIR}/spec-review-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_spec_prompt_file"
+    _guard_main_checkout "spec-review-task-${task_n}" "$_main_state_before"
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for spec-review-task-${task_n} (exit $_tee_ec)"
     fi
