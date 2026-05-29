@@ -37,20 +37,11 @@ setup() {
   # shellcheck source=../emit_event.sh
   source "${BATS_TEST_DIRNAME}/../emit_event.sh"
 
-  eval "$(awk '
-    /^(warn|log)\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
+  log() { :; }
+  warn() { log "WARN: $*" >&2; }
 
-  eval "$(awk '
-    /^_guard_main_checkout\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
-
-  eval "$(awk '
-    /^_capture_main_state\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
+  # shellcheck source=../guard-main-checkout.sh
+  source "${BATS_TEST_DIRNAME}/../guard-main-checkout.sh"
 }
 
 teardown() {
@@ -86,7 +77,7 @@ teardown() {
   run git -C "$FIXTURE_REPO" diff --quiet
   [ "$status" -eq 0 ]
 
-  run jq -e '.type == "post-pr-review.main_leak_detected"' "$AI_RUN_EVENTS_FILE"
+  run jq -e '.type == "test.main_leak_detected"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
 
@@ -176,7 +167,7 @@ teardown() {
   [ -f "$FIXTURE_REPO/dev-scratch.txt" ]
 
   # Event log should record the skip rather than a leak.
-  run jq -e '.type == "post-pr-review.main_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
+  run jq -e '.type == "test.main_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
 
@@ -213,7 +204,7 @@ teardown() {
   [ -f "$FIXTURE_REPO/dev-untracked.txt" ]
 
   # Event log records the unsafe-recovery decision so it's auditable.
-  run jq -e '.type == "post-pr-review.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  run jq -e '.type == "test.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
 
@@ -262,8 +253,8 @@ teardown() {
   [ "$output" -eq 0 ]
 }
 
-@test "ai-pr-review-poll has _guard_main_checkout function" {
-  run grep -q '_guard_main_checkout()' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
+@test "ai-pr-review-poll sources shared guard library" {
+  run grep -q 'source.*guard-main-checkout.sh' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
   [ "$status" -eq 0 ]
 }
 
