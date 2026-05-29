@@ -588,16 +588,36 @@ _guard_main_checkout() {
   if ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then _dirty=1; fi
   if git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -q '^??'; then _dirty=1; fi
 
-  # HEAD-moved: unambiguous agent leak (a commit landed). Always rewind to the
-  # pre-agent SHA. Only run `git clean -fd` when the pre-agent state was clean
-  # — otherwise untracked files we'd remove could be pre-existing developer
-  # work the agent never touched.
+  # HEAD-moved: agent committed something to the main checkout.
+  #
+  # When pre-agent was CLEAN: a hard reset to the pre-agent SHA is safe —
+  # the only diff between pre_sha and actual_sha is the agent's leaked
+  # commit, so reset --hard removes exactly that. Run clean -fd to remove
+  # any untracked files the commit dropped on disk.
+  #
+  # When pre-agent was DIRTY: the agent likely ran `git add -A` which
+  # staged the developer's pre-existing tracked edits along with the leak,
+  # then committed them all together. Hard-resetting to pre_sha would
+  # discard those edits (they live in the leaked commit, not on disk).
+  # We can't recover them automatically without parsing the diff. Refuse
+  # to act and leave both the leaked commit and the dirty state for
+  # manual cleanup. The dev can inspect `git log` to see the leaked commit
+  # and decide what to do.
   if [[ $_moved -eq 1 ]]; then
+    if [[ $pre_was_dirty -eq 1 ]]; then
+      warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) AND was dirty pre-agent — refusing to auto-reset; manual cleanup required"
+      warn "  pre-agent SHA: ${expected_sha}"
+      warn "  leaked SHA:    ${actual_sha}"
+      warn "  inspect with:  git -C ${REPO_ROOT} log --oneline ${expected_sha}..${actual_sha}"
+      emit_event "post-pr-review" "error" "post-pr-review.main_leak_unsafe_recovery" \
+        "Agent committed to main while pre-agent state was dirty; manual cleanup required" \
+        pollIteration="${POLL_COUNT:-0}" \
+        expectedSha="$expected_sha" actualSha="$actual_sha"
+      return 0
+    fi
     warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
     git -C "$REPO_ROOT" reset --hard "$expected_sha" 2>/dev/null || true
-    if [[ $pre_was_dirty -eq 0 ]]; then
-      git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
-    fi
+    git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
     emit_event "post-pr-review" "warn" "post-pr-review.main_leak_detected" \
       "Agent leaked commit into main checkout; auto-reset to pre-agent SHA" \
       pollIteration="${POLL_COUNT:-0}" \

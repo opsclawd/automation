@@ -180,34 +180,41 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "_guard_main_checkout rewinds HEAD but preserves untracked when pre-agent was dirty" {
+@test "_guard_main_checkout refuses to auto-reset when pre-agent dirty AND HEAD moved (regression: PR #132 comment 3322160882)" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
   mkdir -p "$POLL_WORKTREE"
 
-  # Developer has untracked file before agent runs.
-  echo "dev work" > "$FIXTURE_REPO/dev-untracked.txt"
+  # Developer has unstaged tracked edit + untracked file before agent runs.
+  echo "developer tracked edit" >> "$FIXTURE_REPO/.gitignore"
+  echo "dev untracked" > "$FIXTURE_REPO/dev-untracked.txt"
   local pre_state
   pre_state=$(_capture_main_state)
   local pre_sha="${pre_state%%|*}"
 
-  # Agent commits a leak (HEAD moves).
-  echo "leaked" > "$FIXTURE_REPO/leaked.txt"
-  git -C "$FIXTURE_REPO" add leaked.txt
-  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leak"
+  # Agent runs `git add -A && git commit`, sweeping the developer's tracked
+  # edit into a leaked commit. HEAD moves.
+  git -C "$FIXTURE_REPO" add -A
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leak-with-dev-work"
+  local leaked_sha
+  leaked_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$leaked_sha" != "$pre_sha" ]
 
   run _guard_main_checkout "test" "$pre_state"
   [ "$status" -eq 0 ]
 
-  # HEAD is rewound (always safe — HEAD move is unambiguous leak).
+  # Guard must NOT have reset — that would discard the developer's tracked
+  # edit (it lives in the leaked commit, not on disk after a reset).
   local final_sha
   final_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
-  [ "$final_sha" = "$pre_sha" ]
+  [ "$final_sha" = "$leaked_sha" ]
 
-  # Developer's untracked file must NOT have been cleaned, because the
-  # pre-agent state was already dirty and we can't tell pre-existing
-  # untracked from new untracked without extra bookkeeping.
+  # Untracked file must also be preserved.
   [ -f "$FIXTURE_REPO/dev-untracked.txt" ]
+
+  # Event log records the unsafe-recovery decision so it's auditable.
+  run jq -e '.type == "post-pr-review.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
 }
 
 @test "_guard_main_checkout does not rewind HEAD when no expected_sha is passed (back-compat)" {
