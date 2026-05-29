@@ -1,13 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
 import { AntigravityAgentAdapter } from '../antigravity-adapter.js';
 
+const dirs: string[] = [];
+
 function makeWorktree(): string {
   const dir = mkdtempSync(join(tmpdir(), 'agy-test-'));
+  dirs.push(dir);
   execSync('git init -q', { cwd: dir });
   execSync('git config user.email t@test', { cwd: dir });
   execSync('git config user.name t', { cwd: dir });
@@ -32,6 +35,13 @@ function req(cwd: string, overrides = {}) {
     ...overrides,
   };
 }
+
+afterEach(() => {
+  for (const d of dirs) {
+    rmSync(d, { recursive: true, force: true });
+  }
+  dirs.length = 0;
+});
 
 describe('AntigravityAgentAdapter', () => {
   it('returns success and runtime "antigravity" for a 0-exit child', async () => {
@@ -87,5 +97,16 @@ describe('AntigravityAgentAdapter', () => {
     const r = await p;
     expect(r.outcome).toBe('failed');
     expect(r.contractViolations).toContain('cancelled_by_orchestrator');
+  });
+
+  it('returns timeout outcome when child exceeds timeoutMsDefault', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-slow.sh'),
+      artifactsDir: cwd,
+      timeoutMsDefault: 50,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('timeout');
   });
 });

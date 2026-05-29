@@ -15,6 +15,8 @@ export class AntigravityAgentAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
+
+    // agy has its own budget enforcement; no pre-flight token budget check needed
     const args = ['--print', prompt];
     return runExternalCli({
       runtime: 'antigravity',
@@ -23,6 +25,7 @@ export class AntigravityAgentAdapter implements AgentPort {
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
       model: request.model ?? '',
+      ...(request.provider !== undefined ? { provider: request.provider } : {}),
       ...(this.opts.timeoutMsDefault !== undefined
         ? { timeoutMsDefault: this.opts.timeoutMsDefault }
         : {}),

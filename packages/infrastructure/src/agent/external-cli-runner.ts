@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationResult } from '@ai-sdlc/application/ports';
 
 export interface ExternalCliRunInput {
@@ -13,6 +14,7 @@ export interface ExternalCliRunInput {
   cwd: string;
   artifactsDir: string;
   model: string;
+  provider?: string;
   timeoutMsDefault?: number;
   abortSignal?: AbortSignal;
 }
@@ -60,7 +62,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         outcome = 'timeout';
       } else {
         outcome = 'failed';
-        contractViolations = ['cancelled_by_orchestrator'];
+        contractViolations = [CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR];
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
@@ -78,12 +80,12 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   try {
     endCommitSha = execSync('git rev-parse HEAD', { cwd: input.cwd }).toString().trim();
   } catch {
-    contractViolations = [...contractViolations, 'missing_commit'];
+    contractViolations = [...contractViolations, CONTRACT_VIOLATION_CODES.MISSING_COMMIT];
   }
 
   const ret: AgentInvocationResult = {
     runtime: input.runtime,
-    provider: '',
+    provider: input.provider ?? '',
     model: input.model,
     exitCode,
     durationMs,
