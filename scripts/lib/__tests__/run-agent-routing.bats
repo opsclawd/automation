@@ -329,6 +329,7 @@ _run_agent() {
   [ "$status" -eq 0 ]
 }
 
+
 @test "ai-consolidate-compound has valid bash syntax" {
   run bash -n scripts/ai-consolidate-compound
   [ "$status" -eq 0 ]
