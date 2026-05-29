@@ -36,10 +36,10 @@ When an agent invocation fails at the adapter level (timeout, contract violation
 
 The system splits fallback responsibility per ADR-0007/ADR-0008:
 
-| Owner                   | Triggers                                                                                                            | How                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| **Router** (mechanical) | `timeout`, `contract_violation` (any), `prompt_budget_exceeded`, `missing_required_artifact`, `invalid_result_json` | Detected from `AgentInvocationResult` after adapter returns                         |
-| **Use case** (semantic) | Two consecutive failures, touched-file budget, validation category change, architectural ambiguity                  | Caller sets `fallbackOfInvocationId` + `fallbackReason` on `AgentInvocationRequest` |
+| Owner                   | Triggers                                                                                                                                                                       | How                                                                                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Router** (mechanical) | `timeout`, `contract_violation` (any), `runtime_error`, `token_limit_exceeded`, `quota_exceeded`, `prompt_budget_exceeded`, `missing_required_artifact`, `invalid_result_json` | Detected from `AgentInvocationResult` after adapter returns; `runtime_error` fires on any `outcome='failed'`; `token_limit_exceeded`/`quota_exceeded` additionally require stderr pattern matching via `isTokenLimitError()`/`isQuotaError()` |
+| **Use case** (semantic) | Two consecutive failures, touched-file budget, validation category change, architectural ambiguity                                                                             | Caller sets `fallbackOfInvocationId` + `fallbackReason` on `AgentInvocationRequest`                                                                                                                                                           |
 
 The router doesn't second-guess use-case decisions. If `fallbackOfInvocationId` is set by the caller, the router records and emits without applying its own trigger heuristics.
 
@@ -93,7 +93,11 @@ This separation was introduced after a review caught that the original `shouldFa
 | `packages/application/src/agent/contract-violation-codes.ts`                        | Shared `CONTRACT_VIOLATION_CODES` const (also references `invalid_result_value`, `missing_commit`, `not_pushed`, `replies_not_posted` added during implementation) |
 | `packages/infrastructure/src/agent/agent-runtime-router.ts`                         | `AgentRuntimeRouter` with `invoke()` → `dispatch()` split, `shouldFallback()`, `determineTriggerReason()`, `emitFallbackEvent()`, and `EventBusPort` wiring        |
 | `apps/api/src/compose.ts`                                                           | Passes existing `InMemoryEventBus` (line 108) as `eventBus` to router options                                                                                      |
-| `packages/infrastructure/src/agent/__tests__/router-fallback.test.ts`               | 5 adapter-level trigger variants + bounded-chain test                                                                                                              |
+| `packages/infrastructure/src/agent/agent-runtime-router.ts`                         | `isTokenLimitError()`, `isQuotaError()`, extended switch cases in `shouldFallback()` + `determineTriggerReason()`                                                  |
+| `packages/infrastructure/src/agent/quota-patterns.ts`                               | Shared `QUOTA_PATTERNS` regex array + `testQuotaPatterns()` used by both adapter and router                                                                        |
+| `packages/shared/src/config/schema.ts`                                              | `fallbackTriggerSchema` enum extended with `runtime_error`, `token_limit_exceeded`, `quota_exceeded`                                                               |
+| `.ai-orchestrator.json`                                                             | `runtime_error`/`token_limit_exceeded` added to default triggers; `fallbackTriggers` cleaned up to `{ profile, fallbackProfile }` only                             |
+| `packages/infrastructure/src/agent/__tests__/router-fallback.test.ts`               | 5 adapter-level trigger variants + bounded-chain test + `runtime_error`/`token_limit_exceeded`/`quota_exceeded` trigger tests                                      |
 | `packages/infrastructure/src/agent/__tests__/router-fallback-caller-signal.test.ts` | Caller-signalled fallback + 64-char truncation test                                                                                                                |
 | `packages/infrastructure/src/agent/__tests__/router-fallback-none.test.ts`          | No fallbackProfile configured → original failure surfaces                                                                                                          |
 
@@ -125,24 +129,115 @@ invoke(request)
             └─ Return result
 ```
 
+## Config Schema: Configurable Triggers
+
+`packages/shared/src/config/schema.ts` — `fallbackTriggerSchema` is a `z.enum()` with all supported trigger values:
+
+```typescript
+const fallbackTriggerSchema = z.enum([
+  'timeout',
+  'contract_violation',
+  'missing_required_artifact',
+  'prompt_budget_exceeded',
+  'invalid_result_json',
+  'runtime_error',
+  'token_limit_exceeded',
+  'quota_exceeded',
+]);
+```
+
+New triggers start as opt-in when added. After proving stable, they may be promoted to the default set.
+
 ## Trigger Detection Logic
 
-`shouldFallback(request, result)` returns `true` when:
+`shouldFallback(request, result)` is a `switch` over each trigger in the phase's `fallbackTriggers` array (defaulting to the system-wide default when unset):
 
-1. `result.outcome === 'timeout'`, OR
-2. `result.outcome === 'contract_violation'` (any violation code)
+| Trigger                     | When it fires                                                          |
+| --------------------------- | ---------------------------------------------------------------------- |
+| `timeout`                   | `result.outcome === 'timeout'`                                         |
+| `contract_violation`        | `result.outcome === 'contract_violation`' (any code)                   |
+| `runtime_error`             | `result.outcome === 'failed'`                                          |
+| `token_limit_exceeded`      | `result.outcome === 'failed'` AND `isTokenLimitError(result) === true` |
+| `quota_exceeded`            | `result.outcome === 'failed'` AND `isQuotaError(result) === true`      |
+| `missing_required_artifact` | (checked via contract violation codes)                                 |
+| `prompt_budget_exceeded`    | (checked via contract violation codes)                                 |
+| `invalid_result_json`       | (checked via contract violation codes)                                 |
 
 Note: caller-signalled fallback (`fallbackOfInvocationId` set on initial request) is **not** evaluated by `shouldFallback()` — it's handled earlier in `invoke()`.
 
-`determineTriggerReason(result)` provides a human-readable reason:
+### Default triggers extension
 
-- `timeout` → `'timeout'`
-- `contract_violation` with `prompt_budget_exceeded` → `'prompt_budget_exceeded'`
-- `contract_violation` with `missing_required_artifact` → `'missing_required_artifact'`
-- `contract_violation` with `invalid_result_json` → `'invalid_result_json'`
-- Any other `contract_violation` → `'contract_violation'`
+The default trigger set (used when no phase overrides `fallbackTriggers`) was extended from `['timeout', 'contract_violation']` to include `runtime_error`, `token_limit_exceeded`, and `quota_exceeded`. This is safe because:
+
+- `runtime_error` only fires on `outcome='failed'`, which was always a serious error
+- `token_limit_exceeded` requires stderr pattern matching — false positives are rare
+- `quota_exceeded` is always transient and provider-specific — switching providers is always correct
+
+Pre-existing configs without `fallbackTriggers` pick up the new defaults automatically. Phases that explicitly set `fallbackTriggers` must opt in to individual triggers.
+
+### `determineTriggerReason(result)` — asymmetry warning
+
+`determineTriggerReason(result)` provides a human-readable reason. It is **asymmetric** with `shouldFallback`: it returns `'runtime_error'` for ALL `outcome='failed'` outcomes, even when the specific trigger that matched was `token_limit_exceeded` or `quota_exceeded`. This is safe because `determineTriggerReason` is only called after `shouldFallback` already returned `true`, so the reason is always consistent with the trigger that matched.
+
+```typescript
+switch (result.outcome) {
+  case 'timeout':
+    return 'timeout';
+  case 'contract_violation':
+    if (codes.has('prompt_budget_exceeded')) return 'prompt_budget_exceeded';
+    if (codes.has('missing_required_artifact')) return 'missing_required_artifact';
+    if (codes.has('invalid_result_json')) return 'invalid_result_json';
+    return 'contract_violation';
+  case 'failed':
+    if (isTokenLimitError(result)) return 'token_limit_exceeded';
+    if (isQuotaError(result)) return 'quota_exceeded';
+    return 'runtime_error';
+}
+```
 
 For caller-signalled fallbacks, the reason comes from `request.fallbackReason ?? 'unknown'`.
+
+### Stderr pattern matching: `isTokenLimitError()` and `isQuotaError()`
+
+Both functions read the result's `stderrPath` via `readFileSync` and test against known regex patterns. They catch ENOENT and other read errors by returning `false`.
+
+```typescript
+// agent-runtime-router.ts
+const TOKEN_LIMIT_PATTERNS = [
+  /context_length_exceeded/i, // Anthropic-style
+  /prompt is too long/i, // OpenAI-style
+  /token.*limit.*exceed/i, // generic
+  /maximum context length/i, // OpenAI-style
+  /request too large/i, // generic provider
+];
+
+function isTokenLimitError(result: AgentInvocationResult): boolean {
+  try {
+    const stderr = readFileSync(result.stderrPath, 'utf-8');
+    return TOKEN_LIMIT_PATTERNS.some((p) => p.test(stderr));
+  } catch {
+    return false;
+  }
+}
+```
+
+Both adapters (opencode and pi) write stderr synchronously (`writeFileSync`) before returning, so stderr is always available when the router reads it.
+
+### `isQuotaError()` uses `testQuotaPatterns()` from a shared module
+
+Unlike `isTokenLimitError`, `isQuotaError` delegates to `testQuotaPatterns()` in `packages/infrastructure/src/agent/quota-patterns.ts`, which is also imported by the opencode adapter's watchdog. The patterns are defined in one place:
+
+```typescript
+export const QUOTA_PATTERNS = [
+  /Usage limit reached/i,
+  /"statusCode":\s*429/,
+  /rate_limit_exceeded/i,
+  /quota.*exceed/i,
+  /\b429\b/,
+] as const;
+```
+
+`testQuotaPatterns` iterates patterns first, then lines. It returns the matching line or `null`. The `\b429\b` pattern matches `429` as a word-boundary-anchored token (avoiding false positives from arbitrary numbers in log content).
 
 ## Gotchas and Pitfalls
 
@@ -164,9 +259,21 @@ For caller-signalled fallbacks, the reason comes from `request.fallbackReason ??
 
 9. **Layer boundary**: `EventBusPort` is defined in `@ai-sdlc/application` (ports.ts). The router is in `@ai-sdlc/infrastructure`. This is correct — infrastructure can import application ports (inward dependency). Application never imports from infrastructure.
 
+10. **`determineTriggerReason` is asymmetric with `shouldFallback`** — it returns `'runtime_error'` unconditionally for `outcome='failed'`, even when `shouldFallback` would return `false` because `token_limit_exceeded` isn't configured and stderr doesn't match. Safe because `determineTriggerReason` is only called after `shouldFallback` returned `true`. The JSDoc explicitly warns about this.
+
+11. **Stderr scraping is synchronous** — `isTokenLimitError` and `isQuotaError` use `readFileSync`. The stderr file is typically <1KB for error messages, so blocking is negligible. If the stderr file doesn't exist (edge case), the `try/catch` returns `false` — the trigger won't fire, but `runtime_error` catches the failure as a safety net.
+
+12. **Default trigger extension was safe but unobservable** — When `runtime_error` and `token_limit_exceeded` were added to the default set, existing phases without explicit `fallbackTriggers` automatically picked up the new triggers. This is correct because `runtime_error` fires on any `outcome='failed'` (which was always a fail-stop condition), and `token_limit_exceeded` requires stderr pattern matching. But there was no config validation that explicitly acknowledged the change — if an operator explicitly didn't want runtime fallback, they must now set `fallbackTriggers: ['timeout', 'contract_violation']` to opt out.
+
+13. **Router-level trigger detection via stderr scraping is a design choice** — token-limit and quota errors could be detected in the adapter (with structured `contractViolations`) instead of the router (stderr scraping). Router-level detection was chosen because it doesn't change the `AgentPort` / `AgentInvocationResult` interface. Revisit adapter-level detection if stderr scraping proves fragile.
+
+14. **Default triggers test name must stay synchronized** — When `quota_exceeded` was added to the default triggers, the existing test name `'defaults to timeout, contract_violation, runtime_error, and token_limit_exceeded when fallbackTriggers is not set'` needed its name updated. The test still passes because it uses a `timeout` outcome, which is matched before `quota_exceeded` in the switch. The name update matters for maintainers reading test output.
+
 ## What to Know Before Modifying This Code
 
-- **Adding a new trigger**: Add the check in `shouldFallback()` and the reason mapping in `determineTriggerReason()`. Add a test variant in `router-fallback.test.ts`.
+- **Adding a new trigger**: Add the value to `fallbackTriggerSchema` in `packages/shared/src/config/schema.ts`, add a `case` to `shouldFallback()` and `determineTriggerReason()`, and add a test variant in `router-fallback.test.ts`. If the trigger requires stderr pattern matching, add a helper function (`isXxxError()`) following the `isTokenLimitError` pattern.
 - **Adding use-case-level triggers**: Set `fallbackOfInvocationId` and `fallbackReason` on the request. No router changes needed — the protocol already supports it.
 - **Increasing fallback chain depth**: This would require changing the `isFallback` boolean to a hop counter and is explicitly out of scope (ADR-0007 bounds to one hop). The current one-hop design is intentional.
 - **Profile validation at dispatch time**: If `fallbackProfile` references an invalid profile or missing adapter, the fallback is silently skipped. The config schema validates at load time, but if you're dynamically generating configs, validate before dispatch.
+- **Adding a new token-limit pattern**: Add a regex to `TOKEN_LIMIT_PATTERNS` in `agent-runtime-router.ts`.
+- **Adding a new quota pattern**: Add a regex to `QUOTA_PATTERNS` in `quota-patterns.ts` (used by both adapter and router).

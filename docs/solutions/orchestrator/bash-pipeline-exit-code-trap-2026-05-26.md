@@ -77,17 +77,69 @@ esac
 
 Every non-zero exit must trigger `orchestrator_fail`. Without the `case` statement, stale artifacts from previous runs (e.g., `design.md`, `plan.md`) could cause the phase to progress on bad output.
 
+## Problem 3: `PIPESTATUS[0]` Is Unreliable When the Left Side Involves a Subshell
+
+When the left side of a pipeline involves a subshell (pushd/popd, command substitution), `PIPESTATUS[0]` carries the exit code of the subshell wrapper, not the actual command:
+
+```bash
+# WRONG — PIPESTATUS[0] carries exit code of pushd wrapper, not tsx
+pushd "$REPO_ROOT" > /dev/null
+pnpm exec tsx run-agent.ts ... 2>&1 | tee -a "$output_log"
+_agent_ec=${PIPESTATUS[0]}   # always 0 (pushd succeeded)
+popd > /dev/null
+```
+
+### Why This Happens
+
+`pushd` and `popd` execute in a subshell context when part of a pipeline. Bash evaluates the left side of a pipe in a subshell; `PIPESTATUS[0]` returns the exit code of that subshell, not the last command within it. If `pushd` succeeds (always 0 unless dir missing), `PIPESTATUS[0]` is 0 even if the `pnpm` command fails.
+
+### Fix: Temp File for Exit Code
+
+```bash
+pnpm exec tsx run-agent.ts ... 2>&1 | tee -a "$output_log"
+echo ${PIPESTATUS[0]} > "$_pnpm_ec_file"
+...
+_agent_ec=$(cat "$_pnpm_ec_file")
+```
+
+The `PIPESTATUS[0]` capture and `echo` to temp file happen in the same process context — no subshell wrapper. The `_agent_ec` is read later from the file.
+
+### Why This Is a Systematic Footgun
+
+1. The `pushd/popd` pattern is common when running `pnpm --filter` from a worktree that lacks its own `node_modules` — the worktree has the source but not the dependencies, so the command must run from `$REPO_ROOT`.
+2. `PIPESTATUS[0]` works correctly in simple pipes (`cmd | tee`). It breaks silently when the left side involves command substitution, `pushd`/`popd`, or any construct that creates a subshell.
+3. Shellcheck does not reliably catch this pattern.
+
+### Detection
+
+```bash
+grep -n 'PIPESTATUS\[0\]' scripts/*.sh | grep -B1 'pushd\|popd'
+```
+
+Lines where `PIPESTATUS[0]` is used inside a `pushd`/`popd` or similar subshell-wrapping construct are likely broken. The fix is to use a temp file for exit code capture.
+
 ## Rules
 
 1. **Any command piped to `tee` or any multi-stage pipeline must use `PIPESTATUS[0]`**, never `$?`.
 2. **When a called tool defines exit code semantics, the Bash caller must handle every documented code.** Partial handling is a regression — the old pattern (`run_agent_raw` with `$?` directly) caught all non-zero exits by default.
 3. **When adding `| tee` to an existing command, update the exit code capture in the same commit.** This is the most common way to introduce this bug.
-4. **Search all call sites** when fixing a `$?` vs `PIPESTATUS[0]` issue. The same pipeline pattern may exist in multiple scripts.
+4. **`PIPESTATUS[0]` is unreliable when the left side of a pipe involves a subshell** — always use a temp file for exit code capture in that case.
+5. **Search all call sites** when fixing a `$?` vs `PIPESTATUS[0]` issue. The same pipeline pattern may exist in multiple scripts.
 
 ## Detection
+
+### `$?` vs `PIPESTATUS[0]` after `| tee`
 
 ```bash
 grep -n '| tee' scripts/*.sh | grep -v 'PIPESTATUS'
 ```
 
 Lines that pipe to `tee` but don't use `PIPESTATUS` are likely broken.
+
+### Subshell-masked `PIPESTATUS[0]`
+
+```bash
+grep -n 'PIPESTATUS\[0\]' scripts/*.sh | grep -B1 'pushd\|popd'
+```
+
+Lines where `PIPESTATUS[0]` appears inside a pushd/popd or similar subshell context — these need the temp-file workaround.
