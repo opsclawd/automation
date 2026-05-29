@@ -358,6 +358,14 @@ exit 1
     }
   });
 
+  it('exposes runValidation use case', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    expect(c.runValidation).toBeDefined();
+    expect(typeof c.runValidation.execute).toBe('function');
+  });
+
   it('removes per-run tmp dir after a failed run completes', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(1);

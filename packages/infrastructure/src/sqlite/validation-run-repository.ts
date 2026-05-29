@@ -7,6 +7,7 @@ import {
   type ValidationCommandOutcome,
   type ValidationCommandKind,
 } from '@ai-sdlc/domain';
+import type { ValidationRunRepositoryPort } from '@ai-sdlc/application';
 
 interface RunRow {
   id: string;
@@ -42,7 +43,7 @@ function rowToCommand(r: CmdRow): ValidationCommandRecord {
   };
 }
 
-export class ValidationRunRepository {
+export class ValidationRunRepository implements ValidationRunRepositoryPort {
   constructor(private readonly db: Db) {}
 
   save(run: ValidationRun): void {

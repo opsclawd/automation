@@ -13,3 +13,4 @@ export * from './bash/run-bash-script.js';
 export * from './events/event-bus.js';
 export * from './events/tailer.js';
 export * from './agent/index.js';
+export * from './validation/validation-adapter.js';

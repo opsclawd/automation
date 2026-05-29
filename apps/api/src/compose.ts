@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
@@ -15,12 +16,14 @@ import {
   classifyExit,
   InMemoryEventBus,
   EventTailer,
+  ProcessValidationAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
   CancelRun,
   SweepOrphanedRuns,
   checkPid,
+  RunValidation,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
@@ -86,6 +89,7 @@ export interface Container {
   failureRepository: FailureRepository;
   agentInvocationRepository: AgentInvocationRepository;
   validationRunRepository: ValidationRunRepository;
+  runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
   runsDir: string;
@@ -144,6 +148,13 @@ export function composeRoot(opts: ComposeOptions): Container {
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
+  const validationAdapter = new ProcessValidationAdapter();
+  const runValidation = new RunValidation({
+    validation: validationAdapter,
+    validationRunRepository,
+    idFactory: () => randomUUID(),
+    now: () => new Date(),
+  });
   const eventBus = new InMemoryEventBus();
   const createEventTailer: EventTailerFactory = (input) => new EventTailer(input);
 
@@ -223,6 +234,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     failureRepository,
     agentInvocationRepository,
     validationRunRepository,
+    runValidation,
     startIssueRun,
     cancelRun,
     runsDir,

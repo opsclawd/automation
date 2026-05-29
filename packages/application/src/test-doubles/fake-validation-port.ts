@@ -3,11 +3,11 @@ import type {
   RunValidationInput,
   ValidationCommandResult,
 } from '../ports/validation-port.js';
-
 export class FakeValidationPort implements ValidationPort {
   result: ValidationCommandResult[] = [];
-
-  async run(_input: RunValidationInput): Promise<ValidationCommandResult[]> {
+  lastInput?: RunValidationInput;
+  async run(input: RunValidationInput): Promise<ValidationCommandResult[]> {
+    this.lastInput = input;
     return this.result;
   }
 }

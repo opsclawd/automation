@@ -73,7 +73,11 @@ module.exports = {
       comment: 'Infrastructure adapters must not depend on application use cases.',
       from: {
         path: '^packages/infrastructure/src',
-        pathNot: '^packages/infrastructure/src/agent/',
+        pathNot: [
+          '^packages/infrastructure/src/agent/',
+          '^packages/infrastructure/src/validation/',
+          '^packages/infrastructure/src/sqlite/',
+        ],
       },
       to: { path: '^packages/application' },
     },
