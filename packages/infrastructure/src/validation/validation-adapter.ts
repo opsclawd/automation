@@ -42,23 +42,24 @@ export class ProcessValidationAdapter implements ValidationPort {
       let timeoutId: NodeJS.Timeout | undefined;
 
       try {
+        // POSIX-only: `detached` makes the shell a process-group leader so we
+        // can kill the whole group (shell + descendants) on timeout. Without
+        // this, a grandchild left running holds the stdout/stderr pipes open
+        // and execa won't resolve until it exits on its own.
         const subprocess = execa(command, {
           shell: true,
           cwd: input.cwd,
           reject: false,
           all: false,
-          detached: process.platform !== 'win32',
+          detached: true,
         });
 
         timeoutId = setTimeout(() => {
           isTimedOut = true;
           try {
             if (subprocess.pid) {
-              if (process.platform === 'win32') {
-                subprocess.kill('SIGKILL');
-              } else {
-                process.kill(-subprocess.pid, 'SIGKILL');
-              }
+              // Negative PID targets the whole process group.
+              process.kill(-subprocess.pid, 'SIGKILL');
             }
           } catch {
             // ignore
