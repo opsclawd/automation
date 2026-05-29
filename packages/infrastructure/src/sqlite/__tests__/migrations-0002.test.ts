@@ -20,7 +20,10 @@ describe('migration 0002: add pid column', () => {
     const db = openDatabase(join(dir, 'db.sqlite'));
     applyMigrations(db);
     applyMigrations(db);
-    // Idempotent — no error on second apply.
+    const versions = db
+      .prepare('SELECT version FROM schema_version ORDER BY version')
+      .all() as Array<{ version: number }>;
+    expect(versions.map((v) => v.version)).toEqual([1, 2, 3, 4, 5]);
     db.close();
   });
 });
