@@ -79,6 +79,9 @@ warn() { log "WARN: $*" >&2; }
 # shellcheck source=lib/emit_event.sh
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 
+# shellcheck source=lib/guard-main-checkout.sh
+source "${REPO_ROOT}/scripts/lib/guard-main-checkout.sh"
+
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
 # Invariant: _emit_phase_started must always be called before _emit_phase_done
 # in the same phase block. orchestrator_fail always exits the script, so a
