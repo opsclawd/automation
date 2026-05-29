@@ -45,6 +45,7 @@ export class ProcessValidationAdapter implements ValidationPort {
           reject: false,
           all: false,
           cancelSignal: AbortSignal.timeout(input.timeoutSeconds * 1000),
+          forceKillAfterDelay: 1000,
         });
         stdout = r.stdout ?? '';
         stderr = r.stderr ?? '';
