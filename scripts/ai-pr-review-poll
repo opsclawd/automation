@@ -549,6 +549,9 @@ _guard_main_checkout() {
   if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then
     warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
     git -C "$REPO_ROOT" checkout -- .
+    git -C "$REPO_ROOT" clean -fd
+    # emit_event is telemetry-only; its failure does not affect the core guard
+    # function (checkout reset). We intentionally do not check its exit status.
     emit_event "post-pr-review" "warn" "post-pr-review.main_leak_detected" \
       "Agent leaked changes into main checkout; auto-reset" \
       pollIteration="${POLL_COUNT:-0}"
