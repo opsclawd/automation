@@ -33,7 +33,12 @@ import {
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
 import { AgentProfileName, RunId } from '@ai-sdlc/domain';
-import { AgentRuntimeRouter, OpenCodeAgentAdapter, PiAgentAdapter } from '@ai-sdlc/infrastructure';
+import {
+  AgentRuntimeRouter,
+  OpenCodeAgentAdapter,
+  PiAgentAdapter,
+  AntigravityAgentAdapter,
+} from '@ai-sdlc/infrastructure';
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -205,6 +210,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
       if (needsPi) {
         adapters.pi = new PiAgentAdapter({
+          artifactsDir: join(runsDir, 'agent-artifacts'),
+        });
+      }
+      const needsAntigravity = Object.values(config.agent.profiles).some(
+        (p) => p.runtime === 'antigravity',
+      );
+      if (needsAntigravity) {
+        adapters.antigravity = new AntigravityAgentAdapter({
           artifactsDir: join(runsDir, 'agent-artifacts'),
         });
       }
