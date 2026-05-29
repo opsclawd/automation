@@ -88,7 +88,7 @@ module.exports = {
       comment:
         'Infrastructure tests may import port types and test doubles from application, ' +
         'but must not import use cases or orchestration services.',
-      from: { path: '^packages/infrastructure/src/.*/__tests__/' },
+      from: { path: '^packages/infrastructure/src/(__tests__/|.*/__tests__/)' },
       to: {
         path: '^packages/application/src',
         pathNot: ['^packages/application/src/ports/', '^packages/application/src/test-doubles/'],
