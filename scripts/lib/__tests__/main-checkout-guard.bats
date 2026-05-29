@@ -36,12 +36,11 @@ setup() {
   # FIXTURE_REPO before invoking.
   # shellcheck source=../emit_event.sh
   source "${BATS_TEST_DIRNAME}/../emit_event.sh"
+  # shellcheck source=../guard-main-checkout.sh
+  source "${BATS_TEST_DIRNAME}/../guard-main-checkout.sh"
 
   log() { :; }
   warn() { log "WARN: $*" >&2; }
-
-  # shellcheck source=../guard-main-checkout.sh
-  source "${BATS_TEST_DIRNAME}/../guard-main-checkout.sh"
 }
 
 teardown() {
