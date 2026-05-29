@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { testQuotaPatterns } from './quota-patterns.js';
 import {
@@ -127,8 +128,8 @@ export class OpenCodeAgentAdapter implements AgentPort {
   }
 
   private startWatchdog(child: ReturnType<typeof execa>, startTime: number): NodeJS.Timeout | null {
-    const sessionLogDir = this.opts.sessionLogDir;
-    if (!sessionLogDir) return null;
+    const sessionLogDir =
+      this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
 
     try {
       if (!statSync(sessionLogDir).isDirectory()) return null;
@@ -137,7 +138,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     }
 
     const pollMs = this.opts.quotaPollMs ?? 2000;
-    let lastOffset = 0;
+    const logOffsets = new Map<string, number>();
     const startTimeSec = startTime / 1000;
 
     return setInterval(() => {
@@ -157,12 +158,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
         if (!latest) return;
 
         const logPath = join(sessionLogDir, latest);
+        const prevOffset = logOffsets.get(logPath) ?? 0;
         const size = statSync(logPath).size;
-        if (size <= lastOffset) return;
+        if (size <= prevOffset) return;
 
         const content = readFileSync(logPath, 'utf-8');
-        const newContent = content.slice(lastOffset);
-        lastOffset = content.length;
+        const newContent = content.slice(prevOffset);
+        logOffsets.set(logPath, content.length);
 
         const match = testQuotaPatterns(newContent);
         if (match) {
