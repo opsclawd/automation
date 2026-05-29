@@ -552,9 +552,11 @@ _guard_main_checkout() {
   if git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -q '^??'; then _dirty=1; fi
   if [[ $_dirty -eq 1 ]]; then
     warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
-    if git -C "$REPO_ROOT" checkout -- . 2>/dev/null; then
-      git -C "$REPO_ROOT" clean -fd
-    fi
+    # reset --hard clears both the index and working tree, so a leak that
+    # was already staged (e.g. by the agent running `git add -A`) is fully
+    # reverted. `checkout -- .` alone would leave staged entries behind.
+    git -C "$REPO_ROOT" reset --hard HEAD 2>/dev/null || true
+    git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
     # emit_event is telemetry-only; its failure does not affect the core guard
     # function (checkout reset). We intentionally do not check its exit status.
     emit_event "post-pr-review" "warn" "post-pr-review.main_leak_detected" \

@@ -26,8 +26,6 @@ teardown() {
   git -C "$REPO_ROOT" checkout -- .gitignore 2>/dev/null || true
   rm -rf "$TMPDIR_TEST"
 }
-  rm -rf "$TMPDIR_TEST"
-}
 
 @test "_guard_main_checkout is a no-op when POLL_WORKTREE equals REPO_ROOT" {
   export POLL_WORKTREE="$REPO_ROOT"
