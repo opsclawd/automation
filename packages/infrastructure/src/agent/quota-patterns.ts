@@ -3,7 +3,7 @@ export const QUOTA_PATTERNS = [
   /"statusCode":\s*429/,
   /rate_limit_exceeded/i,
   /quota.*exceed/i,
-  /\b429\s/,
+  /\b429\b/,
 ] as const;
 
 export function testQuotaPatterns(text: string): string | null {

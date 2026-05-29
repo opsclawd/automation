@@ -19,14 +19,11 @@ export interface OpenCodeAdapterOptions {
 }
 
 export class OpenCodeAgentAdapter implements AgentPort {
-  private watchdogKilled = false;
-  private watchdogMatch = '';
-
   constructor(private readonly opts: OpenCodeAdapterOptions) {}
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
-    this.watchdogKilled = false;
-    this.watchdogMatch = '';
+    let watchdogKilled = false;
+    let watchdogMatch = '';
 
     const bin = this.opts.binaryPath ?? 'opencode';
     const invocationDir = join(
@@ -74,7 +71,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
         ...(cancelSignal ? { cancelSignal } : {}),
       });
 
-      watchdogInterval = this.startWatchdog(child as ReturnType<typeof execa>, start);
+      watchdogInterval = this.startWatchdog(
+        child as ReturnType<typeof execa>,
+        start,
+        (match: string) => {
+          watchdogKilled = true;
+          watchdogMatch = match;
+        },
+      );
 
       const r = await child;
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
@@ -82,9 +86,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
       exitCode = r.exitCode ?? 0;
-      if (this.watchdogKilled) {
+      if (watchdogKilled) {
         outcome = 'failed';
-        stderr = `QUOTA_EXCEEDED: ${this.watchdogMatch}`;
+        stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
       } else if (r.isCanceled) {
         if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
           outcome = 'timeout';
@@ -127,7 +131,11 @@ export class OpenCodeAgentAdapter implements AgentPort {
     return ret;
   }
 
-  private startWatchdog(child: ReturnType<typeof execa>, startTime: number): NodeJS.Timeout | null {
+  private startWatchdog(
+    child: ReturnType<typeof execa>,
+    startTime: number,
+    onQuota: (match: string) => void,
+  ): NodeJS.Timeout | null {
     const sessionLogDir =
       this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
 
@@ -146,31 +154,25 @@ export class OpenCodeAgentAdapter implements AgentPort {
         const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
         if (files.length === 0) return;
 
-        let latest = '';
-        let latestMtime = 0;
         for (const f of files) {
           const mtime = statSync(join(sessionLogDir, f)).mtimeMs / 1000;
-          if (mtime >= startTimeSec && mtime > latestMtime) {
-            latestMtime = mtime;
-            latest = f;
+          if (mtime < startTimeSec) continue;
+
+          const logPath = join(sessionLogDir, f);
+          const prevOffset = logOffsets.get(logPath) ?? 0;
+          const size = statSync(logPath).size;
+          if (size <= prevOffset) continue;
+
+          const content = readFileSync(logPath, 'utf-8');
+          const newContent = content.slice(prevOffset);
+          logOffsets.set(logPath, content.length);
+
+          const match = testQuotaPatterns(newContent);
+          if (match) {
+            onQuota(match);
+            child.kill('SIGKILL');
+            return;
           }
-        }
-        if (!latest) return;
-
-        const logPath = join(sessionLogDir, latest);
-        const prevOffset = logOffsets.get(logPath) ?? 0;
-        const size = statSync(logPath).size;
-        if (size <= prevOffset) return;
-
-        const content = readFileSync(logPath, 'utf-8');
-        const newContent = content.slice(prevOffset);
-        logOffsets.set(logPath, content.length);
-
-        const match = testQuotaPatterns(newContent);
-        if (match) {
-          this.watchdogMatch = match;
-          this.watchdogKilled = true;
-          child.kill('SIGKILL');
         }
       } catch {
         // File might be deleted between stat and read — ignore

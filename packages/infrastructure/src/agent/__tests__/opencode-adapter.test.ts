@@ -311,14 +311,14 @@ describe('OpenCodeAgentAdapter', () => {
       quotaPollMs: 500,
     });
 
-    try {
-      setTimeout(() => {
-        writeFileSync(
-          join(sessionLogDir, '2026-05-28T225115.log'),
-          'Normal entry\nError: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
-        );
-      }, 800);
+    const timer = setTimeout(() => {
+      writeFileSync(
+        join(sessionLogDir, '2026-05-28T225115.log'),
+        'Normal entry\nError: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
+      );
+    }, 800);
 
+    try {
       const start = Date.now();
       const r = await adapter.invoke({
         profile: AgentProfileName('opencode-frontier'),
@@ -336,6 +336,7 @@ describe('OpenCodeAgentAdapter', () => {
       expect(elapsed).toBeLessThan(10000);
       expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
     } finally {
+      clearTimeout(timer);
       rmSync(sessionLogDir, { recursive: true });
     }
   }, 15000);
@@ -373,14 +374,14 @@ describe('OpenCodeAgentAdapter', () => {
       quotaPollMs: 500,
     });
 
-    try {
-      setTimeout(() => {
-        writeFileSync(
-          logFile,
-          'Previous session content\nNothing relevant here\nNew: "statusCode": 429 Too Many Requests\n',
-        );
-      }, 800);
+    const timer = setTimeout(() => {
+      writeFileSync(
+        logFile,
+        'Previous session content\nNothing relevant here\nNew: "statusCode": 429 Too Many Requests\n',
+      );
+    }, 800);
 
+    try {
       const r = await adapter.invoke({
         profile: AgentProfileName('opencode-frontier'),
         promptPath: '/dev/null',
@@ -395,6 +396,7 @@ describe('OpenCodeAgentAdapter', () => {
       expect(r.outcome).toBe('failed');
       expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
     } finally {
+      clearTimeout(timer);
       rmSync(sessionLogDir, { recursive: true });
     }
   }, 15000);
