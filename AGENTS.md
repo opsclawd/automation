@@ -35,7 +35,8 @@ shared  <--  domain  <--  application  <--  apps/api (composition root)
     a parameter to the use case's `Deps`. The infra adapter is injected from
     `apps/api/src/compose.ts` — the only legal cross-layer wiring point.
 - `packages/domain/**` may only import `@ai-sdlc/shared`. Domain is pure.
-- `packages/infrastructure/**` MUST NOT import `@ai-sdlc/application`.
+- `packages/infrastructure/**` may import application **port contracts only** (types and constants in `packages/application/src/ports/`). Infrastructure must not import application use cases, orchestration services, test doubles, or runtime implementation modules. All runtime wiring remains in `apps/api/src/compose.ts`.
+  - Infrastructure **tests** may import `@ai-sdlc/application/test-doubles` for port fakes.
 - `packages/shared/**` has no workspace dependencies.
 - `apps/web/**` is a browser bundle; it MUST NOT import `apps/api`,
   `@ai-sdlc/application`, or `@ai-sdlc/infrastructure`.
