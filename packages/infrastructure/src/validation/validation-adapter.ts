@@ -26,7 +26,7 @@ export class ProcessValidationAdapter implements ValidationPort {
 
     const results: ValidationCommandResult[] = [];
     for (let i = 0; i < input.commands.length; i++) {
-      const command = input.commands[i];
+      const command = input.commands[i]!;
       const slug = commandSlug(command);
       const stdoutRel = `${prefix}/${i}-${slug}.stdout.log`;
       const stderrRel = `${prefix}/${i}-${slug}.stderr.log`;
