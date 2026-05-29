@@ -7,8 +7,8 @@ export const QUOTA_PATTERNS = [
 ] as const;
 
 export function testQuotaPatterns(text: string): string | null {
+  const lines = text.split('\n');
   for (const pattern of QUOTA_PATTERNS) {
-    const lines = text.split('\n');
     for (const line of lines) {
       if (pattern.test(line)) return line.trim();
     }
