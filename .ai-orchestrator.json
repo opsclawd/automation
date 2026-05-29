@@ -1,6 +1,6 @@
 {
   "validation": {
-    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test"],
+    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm test:bash"],
     "timeout": 300
   },
   "phases": {
@@ -24,7 +24,7 @@
       "senior": {
         "runtime": "opencode",
         "provider": "crofai",
-        "model": "glm-5.1-precision",
+        "model": "glm-5.1",
         "timeoutMinutes": 60
       },
       "senior-fallback": {
@@ -73,7 +73,7 @@
       "implement": { "profile": "builder", "fallbackProfile": "junior" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
-      "fix-review": { "profile": "architect", "fallbackProfile": "senior" },
+      "fix-review": { "profile": "builder", "fallbackProfile": "senior-fallback" },
       "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "senior" },
       "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
