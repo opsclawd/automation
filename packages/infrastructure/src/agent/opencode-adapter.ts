@@ -159,7 +159,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
 
         const content = readFileSync(logPath, 'utf-8');
         const newContent = content.slice(lastOffset);
-        lastOffset = Buffer.byteLength(content, 'utf-8');
+        lastOffset = content.length;
 
         const match = testQuotaPatterns(newContent);
         if (match) {
