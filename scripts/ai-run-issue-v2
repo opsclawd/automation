@@ -1211,6 +1211,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     local _impl_prompt_file
     _impl_prompt_file=$(mktemp)
     printf '%s' "$IMPLEMENTER_PROMPT" > "$_impl_prompt_file"
+    local _main_state_before
+    _main_state_before=$(_capture_main_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase implement \
       --phase-id "implement-task-${task_n}" \
@@ -1227,6 +1229,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       orchestrator_fail "tee failed writing log for implement-task-${task_n} (exit $_tee_ec)"
     fi
     check_branch_after_agent
+    _guard_main_checkout "implement-task-${task_n}" "$_main_state_before"
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/implement-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "implement-task-${task_n} is blocked (agent emitted BLOCKED)"
