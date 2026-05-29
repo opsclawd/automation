@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { FakeAgentPort } from '../test-doubles/fake-agent-port.js';
-import { AgentProfileName } from '../agent/invocation.js';
-import type { AgentInvocationRequest, AgentInvocationResult } from '../agent/invocation.js';
+import { AgentProfileName } from '../ports/agent-invocation-types.js';
+import type {
+  AgentInvocationRequest,
+  AgentInvocationResult,
+} from '../ports/agent-invocation-types.js';
 
 function makeRequest(overrides?: Partial<AgentInvocationRequest>): AgentInvocationRequest {
   return {

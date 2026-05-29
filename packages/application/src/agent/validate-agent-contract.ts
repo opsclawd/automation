@@ -1,6 +1,6 @@
 import type { AgentContract, AgentInvocation } from '@ai-sdlc/domain';
 import type { ArtifactStore, GitPort, GitHubPort } from '../ports.js';
-import { CONTRACT_VIOLATION_CODES } from './contract-violation-codes.js';
+import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
 
 export type ContractViolationCode =
   (typeof CONTRACT_VIOLATION_CODES)[keyof typeof CONTRACT_VIOLATION_CODES];
