@@ -9,6 +9,7 @@ import {
   ArtifactRepository,
   FailureRepository,
   AgentInvocationRepository,
+  ValidationRunRepository,
   RunDirectory,
   runBashScript,
   classifyExit,
@@ -84,6 +85,7 @@ export interface Container {
   artifactRepository: ArtifactRepository;
   failureRepository: FailureRepository;
   agentInvocationRepository: AgentInvocationRepository;
+  validationRunRepository: ValidationRunRepository;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
   runsDir: string;
@@ -141,6 +143,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const artifactRepository = new ArtifactRepository(db);
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
+  const validationRunRepository = new ValidationRunRepository(db);
   const eventBus = new InMemoryEventBus();
   const createEventTailer: EventTailerFactory = (input) => new EventTailer(input);
 
@@ -219,6 +222,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     artifactRepository,
     failureRepository,
     agentInvocationRepository,
+    validationRunRepository,
     startIssueRun,
     cancelRun,
     runsDir,
