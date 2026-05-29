@@ -125,6 +125,13 @@ export { ArtifactNotFoundError } from './ports/artifact-store.js';
 
 export type { AgentPort } from './ports/agent-port.js';
 export type {
+  AgentInvocationOutcome,
+  AgentInvocationRequest,
+  AgentInvocationResult,
+} from './ports/agent-invocation-types.js';
+export { AgentProfileName } from './ports/agent-invocation-types.js';
+export { CONTRACT_VIOLATION_CODES } from './ports/contract-violation-codes.js';
+export type {
   AgentInvocationPort,
   AgentInvocationUpdatePatch,
 } from './ports/agent-invocation-port.js';
