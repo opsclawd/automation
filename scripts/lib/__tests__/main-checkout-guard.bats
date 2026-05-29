@@ -118,6 +118,56 @@ teardown() {
   [ ! -f "$FIXTURE_REPO/leaked-untracked.txt" ]
 }
 
+@test "_guard_main_checkout rewinds HEAD when agent committed a leak (regression: PR #132 comment 3322104761)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
+  mkdir -p "$POLL_WORKTREE"
+
+  local pre_sha
+  pre_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+
+  # Simulate agent running `git add -A && git commit` in main: HEAD advances
+  # to a clean leaked commit. Dirty checks alone won't catch this.
+  echo "leaked content" > "$FIXTURE_REPO/leaked.txt"
+  git -C "$FIXTURE_REPO" add leaked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leaked"
+
+  local leaked_sha
+  leaked_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$leaked_sha" != "$pre_sha" ]
+
+  run _guard_main_checkout "test" "$pre_sha"
+  [ "$status" -eq 0 ]
+
+  # HEAD must be back at pre_sha and the leaked file must be gone.
+  local final_sha
+  final_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$final_sha" = "$pre_sha" ]
+  [ ! -f "$FIXTURE_REPO/leaked.txt" ]
+}
+
+@test "_guard_main_checkout does not rewind HEAD when no expected_sha is passed (back-compat)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
+  mkdir -p "$POLL_WORKTREE"
+
+  # Move HEAD forward; without expected_sha the guard must not rewind it,
+  # because it has no way to know the move was a leak.
+  echo "advance" > "$FIXTURE_REPO/x.txt"
+  git -C "$FIXTURE_REPO" add x.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "advance"
+
+  local after_sha
+  after_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+
+  run _guard_main_checkout "test"
+  [ "$status" -eq 0 ]
+
+  local final_sha
+  final_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$final_sha" = "$after_sha" ]
+}
+
 @test "_guard_main_checkout emits event with pollIteration metadata" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
