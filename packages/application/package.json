@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./ports": {
+      "development": "./src/ports/index.ts",
+      "types": "./dist/ports/index.d.ts",
+      "import": "./dist/ports/index.js"
+    },
     "./test-doubles": {
       "development": "./src/test-doubles/index.ts",
       "types": "./dist/test-doubles/index.d.ts",

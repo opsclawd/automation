@@ -170,10 +170,7 @@ export interface EventRepositoryPort {
   }>;
 }
 
-export interface EventBusPort {
-  subscribe(runUuid: string, listener: (event: OrchestratorEvent) => void): () => void;
-  publish(runUuid: string, event: OrchestratorEvent): void;
-}
+export type { EventBusPort } from './ports/event-bus-port.js';
 
 export type EventTailerFactory = (input: {
   path: string;

@@ -4,11 +4,8 @@ import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { testQuotaPatterns } from './quota-patterns.js';
-import {
-  type AgentPort,
-  type AgentInvocationRequest,
-  type AgentInvocationResult,
-} from '@ai-sdlc/application';
+import type { AgentPort } from '@ai-sdlc/application/ports';
+import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 
 export interface OpenCodeAdapterOptions {
   binaryPath?: string;

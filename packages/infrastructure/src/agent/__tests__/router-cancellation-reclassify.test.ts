@@ -1,12 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
-import {
-  type AgentPort,
-  type AgentInvocationRequest,
-  type AgentInvocationResult,
-  CONTRACT_VIOLATION_CODES,
-} from '@ai-sdlc/application';
+import type { AgentPort } from '@ai-sdlc/application/ports';
+import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import { type AgentConfig } from '@ai-sdlc/shared';
 import { AgentRuntimeRouter } from '../agent-runtime-router.js';
 

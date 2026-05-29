@@ -7,7 +7,7 @@ import {
   type ValidationCommandOutcome,
   type ValidationCommandKind,
 } from '@ai-sdlc/domain';
-import type { ValidationRunRepositoryPort } from '@ai-sdlc/application';
+import type { ValidationRunRepositoryPort } from '@ai-sdlc/application/ports';
 
 interface RunRow {
   id: string;

@@ -1,11 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { AgentInvocationId, AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
-import {
-  type AgentPort,
-  type AgentInvocationRequest,
-  type AgentInvocationResult,
-} from '@ai-sdlc/application';
+import type { AgentPort } from '@ai-sdlc/application/ports';
+import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { AgentRuntimeRouter } from '../agent-runtime-router.js';
 
