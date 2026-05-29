@@ -76,6 +76,7 @@ module.exports = {
         pathNot: [
           '^packages/infrastructure/src/agent/',
           '^packages/infrastructure/src/validation/',
+          '^packages/infrastructure/src/sqlite/',
         ],
       },
       to: { path: '^packages/application' },

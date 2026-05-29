@@ -1,11 +1,22 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { afterEach, describe, it, expect } from 'vitest';
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProcessValidationAdapter, commandSlug } from '../validation-adapter.js';
 
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function freshDir(): string {
-  return mkdtempSync(join(tmpdir(), 'val-adapter-'));
+  const dir = mkdtempSync(join(tmpdir(), 'val-adapter-'));
+  tempDirs.push(dir);
+  return dir;
 }
 
 describe('commandSlug', () => {
@@ -19,6 +30,15 @@ describe('commandSlug', () => {
 
   it('falls back to cmd for empty results', () => {
     expect(commandSlug('!!!')).toBe('cmd');
+  });
+
+  it('truncates at 40 characters; collisions are resolved by index prefix', () => {
+    expect(commandSlug('pnpm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(commandSlug('pnpm aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe(
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
   });
 });
 
