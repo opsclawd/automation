@@ -99,4 +99,16 @@ describe('ValidationRunRepository', () => {
     expect(repo.findById('nope')).toBeNull();
     db.close();
   });
+
+  it('save round-trips a run with zero commands', () => {
+    const db = openDatabase(':memory:');
+    applyMigrations(db);
+    seedRun(db);
+    const repo = new ValidationRunRepository(db);
+    const empty = { ...sampleRun(), commands: [] };
+    repo.save(empty);
+    const got = repo.findById('vrun-1');
+    expect(got!.commands).toHaveLength(0);
+    db.close();
+  });
 });

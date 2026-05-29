@@ -34,6 +34,8 @@ function rowToCommand(r: CmdRow): ValidationCommandRecord {
     durationMs: r.duration_ms,
     stdoutPath: r.stdout_path,
     stderrPath: r.stderr_path,
+    // Casts are unchecked: DB schema constrains these to valid enum values.
+    // Matches pattern in agent-invocation-repository.ts:61.
     outcome: r.outcome as ValidationCommandOutcome,
     ...(r.kind !== null ? { kind: r.kind as ValidationCommandKind } : {}),
     ...(r.classifier !== null ? { classifier: r.classifier } : {}),
@@ -45,23 +47,22 @@ export class ValidationRunRepository {
 
   save(run: ValidationRun): void {
     const tx = this.db.transaction((v: ValidationRun) => {
-      this.db
-        .prepare(
-          `INSERT INTO validation_runs (id, run_uuid, phase_id, started_at, completed_at)
-           VALUES (@id, @runUuid, @phaseId, @startedAt, @completedAt)
-           ON CONFLICT(id) DO UPDATE SET
-             run_uuid = excluded.run_uuid,
-             phase_id = excluded.phase_id,
-             started_at = excluded.started_at,
-             completed_at = excluded.completed_at`,
-        )
-        .run({
-          id: v.id,
-          runUuid: v.runId,
-          phaseId: v.phaseId,
-          startedAt: v.startedAt.toISOString(),
-          completedAt: v.completedAt?.toISOString() ?? null,
-        });
+      const upsertRun = this.db.prepare(
+        `INSERT INTO validation_runs (id, run_uuid, phase_id, started_at, completed_at)
+         VALUES (@id, @runUuid, @phaseId, @startedAt, @completedAt)
+         ON CONFLICT(id) DO UPDATE SET
+           run_uuid = excluded.run_uuid,
+           phase_id = excluded.phase_id,
+           started_at = excluded.started_at,
+           completed_at = excluded.completed_at`,
+      );
+      upsertRun.run({
+        id: v.id,
+        runUuid: v.runId,
+        phaseId: v.phaseId,
+        startedAt: v.startedAt.toISOString(),
+        completedAt: v.completedAt?.toISOString() ?? null,
+      });
 
       this.db
         .prepare(`DELETE FROM validation_command_results WHERE validation_run_id = ?`)
