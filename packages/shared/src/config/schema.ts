@@ -16,8 +16,8 @@ const timeoutsSchema = z.object({
   invocationMaxMinutes: z.number().int().positive(),
 });
 
-// Keep in sync with AgentRuntimeKind in @ai-sdlc/application/agent/types.ts
-const agentRuntime = z.enum(['opencode', 'pi']);
+// Keep in sync with AgentRuntimeKind in @ai-sdlc/domain/agent-types.ts
+const agentRuntime = z.enum(['opencode', 'pi', 'antigravity']);
 
 const nonBlankString = z.string().trim().min(1);
 

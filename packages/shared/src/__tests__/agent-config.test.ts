@@ -142,6 +142,17 @@ describe('agent config schema', () => {
     delete bad.agent.phaseProfiles['plan-design'];
     expect(() => orchestratorConfigSchema.parse(bad)).toThrow(/whitespace/);
   });
+
+  it('accepts an antigravity runtime profile', () => {
+    const cfg = structuredClone(baseValid);
+    cfg.agent.profiles['antigravity-reviewer'] = {
+      runtime: 'antigravity',
+      provider: 'google',
+      model: 'default',
+      timeoutMinutes: 45,
+    } as (typeof cfg.agent.profiles)['opencode-frontier'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
 });
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
