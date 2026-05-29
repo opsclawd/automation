@@ -38,19 +38,41 @@ export class ProcessValidationAdapter implements ValidationPort {
       let stderr = '';
       let exitCode = 0;
       let outcome: ValidationCommandResult['outcome'] = 'passed';
+      let isTimedOut = false;
+      let timeoutId: NodeJS.Timeout | undefined;
+
       try {
-        const r = await execa(command, {
+        const subprocess = execa(command, {
           shell: true,
           cwd: input.cwd,
           reject: false,
           all: false,
-          cancelSignal: AbortSignal.timeout(input.timeoutSeconds * 1000),
-          forceKillAfterDelay: 1000,
+          detached: process.platform !== 'win32',
         });
+
+        timeoutId = setTimeout(() => {
+          isTimedOut = true;
+          try {
+            if (subprocess.pid) {
+              if (process.platform === 'win32') {
+                subprocess.kill('SIGKILL');
+              } else {
+                process.kill(-subprocess.pid, 'SIGKILL');
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }, input.timeoutSeconds * 1000);
+
+        const r = await subprocess;
+        if (timeoutId) clearTimeout(timeoutId);
+
         stdout = r.stdout ?? '';
         stderr = r.stderr ?? '';
         exitCode = r.exitCode ?? 0;
-        if (r.isCanceled) {
+
+        if (isTimedOut) {
           outcome = 'timed_out';
           exitCode = r.exitCode ?? 124;
         } else if (r.failed) {
@@ -58,6 +80,7 @@ export class ProcessValidationAdapter implements ValidationPort {
           exitCode = r.exitCode ?? 1;
         }
       } catch (e) {
+        if (timeoutId) clearTimeout(timeoutId);
         outcome = 'failed';
         exitCode = 1;
         stderr = String((e as Error).message);

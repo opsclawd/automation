@@ -84,7 +84,7 @@ describe('ProcessValidationAdapter', () => {
     const adapter = new ProcessValidationAdapter();
     const results = await adapter.run({
       cwd: process.cwd(),
-      commands: ['sleep 5'],
+      commands: ['sleep 5; echo done'],
       timeoutSeconds: 1,
       logDir,
     });
