@@ -979,11 +979,19 @@ Write plan.md now."
     orchestrator_fail "tee failed writing log for plan-write (exit $_tee_ec)"
   fi
 
-  _main_checkout_violations=$({
-    git -C "$REPO_ROOT" diff --name-only 2>/dev/null
-    git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
-    git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
-  } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+  local _pre_was_dirty=0
+  if [[ -n "$_main_state_before" ]]; then
+    IFS='|' read -r _ _pre_was_dirty _ <<< "$_main_state_before"
+  fi
+
+  _main_checkout_violations=""
+  if [[ $_pre_was_dirty -eq 0 ]]; then
+    _main_checkout_violations=$({
+      git -C "$REPO_ROOT" diff --name-only 2>/dev/null
+      git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
+      git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+    } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+  fi
 
   _guard_main_checkout "plan-write" "$_main_state_before"
 
