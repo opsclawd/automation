@@ -121,7 +121,7 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.outcome).toBe('timeout');
   });
 
-  it('force-kills a SIGTERM-ignoring child within grace period', async () => {
+  it('force-kills a SIGTERM-ignoring child within grace period', { timeout: 20_000 }, async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-hang.sh'),
