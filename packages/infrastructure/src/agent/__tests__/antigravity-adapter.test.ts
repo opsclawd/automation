@@ -69,19 +69,19 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(5);
   });
 
-  it('passes the prompt file contents as the --print argument', async () => {
+  it('passes the prompt via stdin, not argv', async () => {
     const cwd = makeWorktree();
     const promptPath = join(cwd, 'prompt.md');
-    writeFileSync(promptPath, 'REVIEW THIS PR');
-    const argLog = join(cwd, 'args.txt');
-    const shim = join(cwd, 'shim.sh');
-    writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argLog}"\nexit 0\n`);
-    execSync(`chmod +x ${shim}`);
-    const adapter = new AntigravityAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
+    writeFileSync(promptPath, 'REVIEW THIS PR DIFF');
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+      artifactsDir: cwd,
+    });
     await adapter.invoke(req(cwd, { promptPath }));
-    const args = readFileSync(argLog, 'utf-8');
-    expect(args).toContain('--print');
-    expect(args).toContain('REVIEW THIS PR');
+    const args = readFileSync(join(FIXTURES, 'agy-last-args.txt'), 'utf-8');
+    const stdin = readFileSync(join(FIXTURES, 'agy-last-stdin.txt'), 'utf-8');
+    expect(args).not.toContain('REVIEW THIS PR DIFF');
+    expect(stdin).toBe('REVIEW THIS PR DIFF');
   });
 
   it('marks cancellation via AbortController as failed/cancelled_by_orchestrator', async () => {
