@@ -1966,6 +1966,7 @@ Categorize findings:
 
 Write code-review.md now."
 
+  _main_state_before=$(_capture_main_state)
   _review_prompt_file=$(mktemp)
   printf '%s' "$REVIEW_PROMPT" > "$_review_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
@@ -1991,6 +1992,8 @@ Write code-review.md now."
       *) orchestrator_fail "review failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
+
+  _guard_main_checkout "whole-pr-review" "$_main_state_before"
 
   # Copy review from worktree
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
