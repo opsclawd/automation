@@ -980,9 +980,9 @@ Write plan.md now."
   fi
 
   _guard_main_checkout "plan-write" "$_main_state_before"
-  if git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null | grep -qvE '^(plan\.md|design\.md|\.gitignore)$'; then
+  if { git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null; git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null; } | grep -qvE '^(plan\.md|design\.md|\.gitignore)$'; then
     local _contract_violations
-    _contract_violations=$(git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null | grep -vE '^(plan\.md|design\.md|\.gitignore)$' || true)
+    _contract_violations=$({ git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null; git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null; } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
     orchestrator_fail "plan-write agent modified source files (contract violation): ${_contract_violations}"
   fi
 
