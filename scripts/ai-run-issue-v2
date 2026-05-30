@@ -2442,6 +2442,7 @@ Start now."
 
     _compound_prompt_file=$(mktemp)
     printf '%s' "$COMPOUND_PROMPT" > "$_compound_prompt_file"
+    _main_state_before=$(_capture_main_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase compound \
       --phase-id "compound" \
@@ -2469,6 +2470,8 @@ Start now."
         esac
       fi
     fi
+
+    _guard_main_checkout "compound" "$_main_state_before"
 
     # Copy the generated doc back to issues dir
     if [[ -f "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" ]]; then
