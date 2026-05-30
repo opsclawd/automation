@@ -963,6 +963,7 @@ Write plan.md now."
   _plan_prompt_file=$(mktemp)
   printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
   _main_state_before=$(_capture_main_state)
+  _worktree_sha_before=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-write \
     --cwd "$WORKTREE_DIR" \
@@ -1002,6 +1003,9 @@ Write plan.md now."
   _worktree_violations=$({
     git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null
     git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    if [[ -n "$_worktree_sha_before" ]]; then
+      git -C "$WORKTREE_DIR" diff --name-only "$_worktree_sha_before"..HEAD 2>/dev/null
+    fi
   } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
 
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
