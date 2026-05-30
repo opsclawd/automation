@@ -71,28 +71,42 @@ describe('AntigravityAgentAdapter', () => {
 
   it('passes the prompt via stdin, not argv', async () => {
     const cwd = makeWorktree();
-    const promptPath = join(cwd, 'prompt.md');
-    writeFileSync(promptPath, 'REVIEW THIS PR DIFF');
-    const adapter = new AntigravityAgentAdapter({
-      binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
-      artifactsDir: cwd,
-    });
-    await adapter.invoke(req(cwd, { promptPath }));
-    const args = readFileSync(join(FIXTURES, 'agy-last-args.txt'), 'utf-8');
-    const stdin = readFileSync(join(FIXTURES, 'agy-last-stdin.txt'), 'utf-8');
-    expect(args).not.toContain('REVIEW THIS PR DIFF');
-    expect(stdin).toBe('REVIEW THIS PR DIFF');
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      process.env.AGY_LOG_DIR = logDir;
+      const promptPath = join(cwd, 'prompt.md');
+      writeFileSync(promptPath, 'REVIEW THIS PR DIFF');
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+      });
+      await adapter.invoke(req(cwd, { promptPath }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
+      expect(args).not.toContain('REVIEW THIS PR DIFF');
+      expect(stdin).toBe('REVIEW THIS PR DIFF');
+    } finally {
+      delete process.env.AGY_LOG_DIR;
+      rmSync(logDir, { recursive: true, force: true });
+    }
   });
 
   it('includes --dangerously-skip-permissions in args', async () => {
     const cwd = makeWorktree();
-    const adapter = new AntigravityAgentAdapter({
-      binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
-      artifactsDir: cwd,
-    });
-    await adapter.invoke(req(cwd));
-    const args = readFileSync(join(FIXTURES, 'agy-last-args.txt'), 'utf-8');
-    expect(args).toContain('--dangerously-skip-permissions');
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      process.env.AGY_LOG_DIR = logDir;
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+      });
+      await adapter.invoke(req(cwd));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('--dangerously-skip-permissions');
+    } finally {
+      delete process.env.AGY_LOG_DIR;
+      rmSync(logDir, { recursive: true, force: true });
+    }
   });
 
   it('marks cancellation via AbortController as failed/cancelled_by_orchestrator', async () => {

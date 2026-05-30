@@ -17,6 +17,7 @@ export interface ExternalCliRunInput {
   provider?: string;
   timeoutMsDefault?: number;
   abortSignal?: AbortSignal;
+  forceKillAfterDelayMs?: number;
 }
 
 export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentInvocationResult> {
@@ -50,7 +51,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     detached: true,
     ...(input.input !== undefined ? { input: input.input } : {}),
     ...(cancelSignal ? { cancelSignal } : {}),
-    forceKillAfterDelay: 5_000,
+    forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
   });
   try {
     const r = await child;
@@ -72,10 +73,12 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     exitCode = 1;
     stderr = String((e as Error).message);
   } finally {
-    try {
-      if (child.pid) process.kill(-child.pid, 'SIGKILL');
-    } catch {
-      // ESRCH = process already dead, ignore
+    if (outcome !== 'success') {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // ESRCH = process already dead, ignore
+      }
     }
   }
   writeFileSync(stdoutPath, stdout);
