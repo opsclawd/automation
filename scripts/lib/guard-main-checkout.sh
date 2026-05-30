@@ -25,14 +25,15 @@ _guard_worktree_dir() {
 }
 
 _capture_main_state() {
-  local sha was_dirty=0
+  local sha was_dirty=0 branch
   sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+  branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
   if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null \
      || ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null \
      || git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -q '^??'; then
     was_dirty=1
   fi
-  printf '%s|%s' "$sha" "$was_dirty"
+  printf '%s|%s|%s' "$sha" "$was_dirty" "$branch"
 }
 
 _guard_main_checkout() {
@@ -44,9 +45,9 @@ _guard_main_checkout() {
     return 0
   fi
 
-  local expected_sha="" pre_was_dirty=0
+  local expected_sha="" pre_was_dirty=0 pre_branch=""
   if [[ -n "$pre_state" ]]; then
-    IFS='|' read -r expected_sha pre_was_dirty <<< "$pre_state"
+    IFS='|' read -r expected_sha pre_was_dirty pre_branch <<< "$pre_state"
   fi
 
   local actual_sha=""
@@ -75,6 +76,9 @@ _guard_main_checkout() {
       return 0
     fi
     warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
+    if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
+      git -C "$REPO_ROOT" checkout -q "$pre_branch" 2>/dev/null || true
+    fi
     git -C "$REPO_ROOT" reset --hard "$expected_sha" 2>/dev/null || true
     git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
     emit_event "${guard_label}" "warn" "${guard_label}.main_leak_detected" \

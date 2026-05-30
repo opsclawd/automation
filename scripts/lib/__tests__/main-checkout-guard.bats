@@ -229,6 +229,39 @@ teardown() {
   [ "$final_sha" = "$after_sha" ]
 }
 
+@test "_guard_main_checkout switches back to original branch before resetting HEAD (regression: PR #152 comment 3328041429)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" checkout -q -b other-branch
+  echo "other-content" > "$FIXTURE_REPO/other.txt"
+  git -C "$FIXTURE_REPO" add other.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "other"
+  git -C "$FIXTURE_REPO" checkout -q "$_default_branch"
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$FIXTURE_REPO" checkout -q other-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" = "$pre_sha" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse other-branch
+  [ "$output" != "$pre_sha" ]
+}
+
 @test "_guard_main_checkout emits event with pollIteration metadata" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
