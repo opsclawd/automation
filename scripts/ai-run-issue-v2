@@ -2146,6 +2146,7 @@ excluded from git and move on. Do NOT delete or modify these files:
 Start now."
 
   _fix_prompt_file=$(mktemp)
+  _main_state_before=$(_capture_main_state)
   printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase fix-review \
@@ -2176,6 +2177,7 @@ Start now."
     fi
   fi
   check_branch_after_agent
+  _guard_main_checkout "fix-review-loop-${FIX_LOOP_COUNT}" "$_main_state_before"
 
   # ── re-validate ────────────────────────────────────────────────────────────
   log "=== Re-validating after fix (loop $FIX_LOOP_COUNT) ==="
