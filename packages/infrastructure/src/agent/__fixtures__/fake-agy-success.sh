@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-echo "fake agy success: OK" >&1
+stdin_content=$(cat)
+echo "fake agy success: OK (stdin ${#stdin_content} chars)" >&1
 echo "no errors" >&2
 exit 0
