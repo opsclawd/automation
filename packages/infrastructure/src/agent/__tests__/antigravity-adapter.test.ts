@@ -84,6 +84,17 @@ describe('AntigravityAgentAdapter', () => {
     expect(stdin).toBe('REVIEW THIS PR DIFF');
   });
 
+  it('includes --dangerously-skip-permissions in args', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    await adapter.invoke(req(cwd));
+    const args = readFileSync(join(FIXTURES, 'agy-last-args.txt'), 'utf-8');
+    expect(args).toContain('--dangerously-skip-permissions');
+  });
+
   it('marks cancellation via AbortController as failed/cancelled_by_orchestrator', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
