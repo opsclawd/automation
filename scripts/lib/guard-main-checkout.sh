@@ -116,14 +116,14 @@ _guard_main_checkout() {
       emit_event "${guard_label}" "info" "${guard_label}.main_dirty_preexisting" \
         "Main checkout dirty pre-agent; guard skipped to preserve local work" \
         pollIteration="${POLL_COUNT:-0}"
-      return 0
+    else
+      warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
+      git -C "$REPO_ROOT" reset --hard HEAD 2>/dev/null || true
+      git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
+      emit_event "${guard_label}" "warn" "${guard_label}.main_leak_detected" \
+        "Agent leaked changes into main checkout; auto-reset" \
+        pollIteration="${POLL_COUNT:-0}"
     fi
-    warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
-    git -C "$REPO_ROOT" reset --hard HEAD 2>/dev/null || true
-    git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
-    emit_event "${guard_label}" "warn" "${guard_label}.main_leak_detected" \
-      "Agent leaked changes into main checkout; auto-reset" \
-      pollIteration="${POLL_COUNT:-0}"
   fi
 
   if [[ -n "$pre_branch" ]]; then

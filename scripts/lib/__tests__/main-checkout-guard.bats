@@ -170,6 +170,41 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "_guard_main_checkout restores branch after same-SHA switch despite pre-existing dirty work (regression: PR #152 comment 3328202153)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" branch same-sha-branch
+
+  echo "developer edit" >> "$FIXTURE_REPO/.gitignore"
+  echo "dev untracked" > "$FIXTURE_REPO/dev-scratch.txt"
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q same-sha-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" = "${pre_state%%|*}" ]
+
+  run grep -q "developer edit" "$FIXTURE_REPO/.gitignore"
+  [ "$status" -eq 0 ]
+  [ -f "$FIXTURE_REPO/dev-scratch.txt" ]
+
+  grep -q '"test.main_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
+  grep -q '"test.main_branch_restored"' "$AI_RUN_EVENTS_FILE"
+}
+
 @test "_guard_main_checkout refuses to auto-reset when pre-agent dirty AND HEAD moved (regression: PR #132 comment 3322160882)" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
