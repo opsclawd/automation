@@ -17,11 +17,12 @@ export class AntigravityAgentAdapter implements AgentPort {
     const prompt = readFileSync(request.promptPath, 'utf-8');
 
     // agy has its own budget enforcement; no pre-flight token budget check needed
-    const args = ['--print', prompt];
+    const args = ['--dangerously-skip-permissions', '--print', '-'];
     return runExternalCli({
       runtime: 'antigravity',
       bin,
       args,
+      input: prompt,
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
       model: request.model ?? '',
