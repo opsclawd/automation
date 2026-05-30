@@ -78,6 +78,16 @@ _guard_main_checkout() {
     warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
     if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
       git -C "$REPO_ROOT" checkout -q "$pre_branch" 2>/dev/null || true
+      local _current_branch
+      _current_branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+      if [[ "$_current_branch" != "$pre_branch" ]]; then
+        warn "Checkout of ${pre_branch} failed after ${guard_label} — refusing to reset to avoid corrupting current branch; manual cleanup required"
+        emit_event "${guard_label}" "error" "${guard_label}.main_leak_unsafe_recovery" \
+          "Agent committed to main; failed to restore branch ${pre_branch}; manual cleanup required" \
+          pollIteration="${POLL_COUNT:-0}" \
+          expectedSha="$expected_sha" actualSha="$actual_sha"
+        return 0
+      fi
     fi
     git -C "$REPO_ROOT" reset --hard "$expected_sha" 2>/dev/null || true
     git -C "$REPO_ROOT" clean -fd 2>/dev/null || true

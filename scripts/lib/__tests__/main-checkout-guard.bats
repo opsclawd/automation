@@ -262,6 +262,41 @@ teardown() {
   [ "$output" != "$pre_sha" ]
 }
 
+@test "_guard_main_checkout refuses reset when checkout of pre_branch fails (regression: PR #152 comment 3328061467)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  echo "main-content" > "$FIXTURE_REPO/tracked.txt"
+  git -C "$FIXTURE_REPO" add tracked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "add tracked"
+
+  git -C "$FIXTURE_REPO" checkout -q -b other-branch
+  echo "other-content" > "$FIXTURE_REPO/tracked.txt"
+  git -C "$FIXTURE_REPO" add tracked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "other branch content"
+  git -C "$FIXTURE_REPO" checkout -q -
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q other-branch
+  echo "dirty-on-other" > "$FIXTURE_REPO/tracked.txt"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "other-branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" != "${pre_state%%|*}" ]
+
+  run jq -e '.type == "test.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
 @test "_guard_main_checkout emits event with pollIteration metadata" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
