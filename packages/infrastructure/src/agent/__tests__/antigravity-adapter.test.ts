@@ -85,7 +85,7 @@ describe('AntigravityAgentAdapter', () => {
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
       expect(args).toContain('--print');
-      expect(args).toContain('REVIEW THIS PR DIFF');
+      expect(args).not.toContain('REVIEW THIS PR DIFF');
       expect(stdin).toBe('REVIEW THIS PR DIFF');
     } finally {
       delete process.env.AGY_LOG_DIR;

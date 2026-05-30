@@ -52,7 +52,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     detached: input.detached ?? false,
     ...(input.input !== undefined ? { input: input.input } : {}),
     ...(cancelSignal ? { cancelSignal } : {}),
-    forceKillAfterDelay: input.forceKillAfterDelayMs ?? 500,
+    forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
   });
   try {
     const r = await child;
