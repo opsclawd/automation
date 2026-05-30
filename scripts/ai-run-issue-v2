@@ -980,8 +980,9 @@ Write plan.md now."
   fi
 
   _pre_was_dirty=0
+  _expected_sha=""
   if [[ -n "$_main_state_before" ]]; then
-    IFS='|' read -r _ _pre_was_dirty _ <<< "$_main_state_before"
+    IFS='|' read -r _expected_sha _pre_was_dirty _ <<< "$_main_state_before"
   fi
 
   _main_checkout_violations=""
@@ -990,6 +991,9 @@ Write plan.md now."
       git -C "$REPO_ROOT" diff --name-only 2>/dev/null
       git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
       git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+      if [[ -n "$_expected_sha" ]]; then
+        git -C "$REPO_ROOT" diff --name-only "$_expected_sha"..HEAD 2>/dev/null
+      fi
     } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
   fi
 

@@ -88,6 +88,18 @@ _guard_main_checkout() {
           expectedSha="$expected_sha" actualSha="$actual_sha"
         return 0
       fi
+    elif [[ "$pre_branch" == "HEAD" ]]; then
+      local _current_branch
+      _current_branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+      if [[ "$_current_branch" != "HEAD" ]]; then
+        warn "Pre-agent was detached (HEAD) but agent left checkout on branch ${_current_branch} after ${guard_label} — refusing to reset to avoid corrupting local branch state; manual cleanup required"
+        warn "  inspect with:  git -C ${REPO_ROOT} log --oneline ${expected_sha}..${actual_sha}"
+        emit_event "${guard_label}" "error" "${guard_label}.main_leak_unsafe_recovery" \
+          "Agent committed to main from detached HEAD; agent left on branch ${_current_branch}; refusing to reset to avoid branch corruption" \
+          pollIteration="${POLL_COUNT:-0}" \
+          expectedSha="$expected_sha" actualSha="$actual_sha"
+        return 0
+      fi
     fi
     git -C "$REPO_ROOT" reset --hard "$expected_sha" 2>/dev/null || true
     git -C "$REPO_ROOT" clean -fd 2>/dev/null || true

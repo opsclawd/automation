@@ -297,6 +297,35 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "_guard_main_checkout refuses reset when pre-agent was detached and agent left on a branch (regression: PR #152 comment 3328139630)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  git -C "$FIXTURE_REPO" checkout -q --detach HEAD
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q -b agent-branch
+  echo "agent-leak" > "$FIXTURE_REPO/leaked.txt"
+  git -C "$FIXTURE_REPO" add leaked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "agent leak on branch"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "agent-branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" != "${pre_state%%|*}" ]
+
+  run jq -e '.type == "test.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
 @test "_guard_main_checkout emits event with pollIteration metadata" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
