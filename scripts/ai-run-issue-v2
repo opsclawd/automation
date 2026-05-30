@@ -2286,6 +2286,8 @@ No other content in the file — just the status word.
 
 Write code-review.md and review-findings-status.txt now."
 
+  _main_state_before=$(_capture_main_state)
+
   _re_review_prompt_file=$(mktemp)
   printf '%s' "$RE_REVIEW_PROMPT" > "$_re_review_prompt_file"
   # NOTE: --phase quality-review is intentional — re-review is a quality-review
@@ -2319,6 +2321,8 @@ Write code-review.md and review-findings-status.txt now."
       esac
     fi
   fi
+
+  _guard_main_checkout "re-review-${FIX_LOOP_COUNT}" "$_main_state_before"
 
   # Copy updated review
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
