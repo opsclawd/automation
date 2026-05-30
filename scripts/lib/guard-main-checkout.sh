@@ -4,6 +4,10 @@
 # Shared main-checkout leak guard. Source this from orchestrator scripts
 # that invoke agents which might write into the main checkout.
 #
+# Required dependencies (must be defined by caller before sourcing):
+#   warn()     — log a warning message to stderr
+#   emit_event() — emit a structured event for telemetry (guard_label + event_type)
+#
 # Required env vars (set by caller before sourcing):
 #   REPO_ROOT  — absolute path to the main git checkout
 #

@@ -534,7 +534,7 @@ run_agent() {
     2>&1 | tee -a "$output_log"
   echo ${PIPESTATUS[0]} > "$_pnpm_ec_file"
   _agent_ec=$(cat "$_pnpm_ec_file")
-  _guard_main_checkout "$phase" "$_main_state_before"
+  _guard_main_checkout "post-pr-review" "$_main_state_before"
   rm -f "$_pnpm_ec_file"
   rm -f "$prompt_file"
   if [[ $_agent_ec -eq 2 ]]; then

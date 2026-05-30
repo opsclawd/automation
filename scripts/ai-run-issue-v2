@@ -876,7 +876,6 @@ Write design.md now."
   # Write prompt to temp file for run-agent CLI
   _plan_prompt_file=$(mktemp)
   printf '%s' "$BRAINSTORM_PROMPT" > "$_plan_prompt_file"
-  local _main_state_before
   _main_state_before=$(_capture_main_state)
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-design \
@@ -893,6 +892,9 @@ Write design.md now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for plan-design (exit $_tee_ec)"
   fi
+
+  _guard_main_checkout "plan-design" "$_main_state_before"
+
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) orchestrator_fail "plan-design failed (contract violation)" ;;
@@ -907,8 +909,6 @@ Write design.md now."
   fi
   info "Design doc saved to ${WORKTREE_DIR}/design.md"
   _emit_artifact "plan-design" "${WORKTREE_DIR}/design.md" "design"
-
-  _guard_main_checkout "plan-design" "$_main_state_before"
 
   _emit_phase_done "plan-design"
   PHASE="plan-write"
@@ -962,7 +962,6 @@ Write plan.md now."
 
   _plan_prompt_file=$(mktemp)
   printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
-  local _main_state_before
   _main_state_before=$(_capture_main_state)
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-write \
@@ -979,6 +978,14 @@ Write plan.md now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for plan-write (exit $_tee_ec)"
   fi
+
+  _guard_main_checkout "plan-write" "$_main_state_before"
+  if git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null | grep -qvE '^(plan\.md|design\.md|\.gitignore)$'; then
+    local _contract_violations
+    _contract_violations=$(git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null | grep -vE '^(plan\.md|design\.md|\.gitignore)$' || true)
+    orchestrator_fail "plan-write agent modified source files (contract violation): ${_contract_violations}"
+  fi
+
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) orchestrator_fail "plan-write failed (contract violation)" ;;
@@ -986,13 +993,6 @@ Write plan.md now."
       3) orchestrator_fail "plan-write failed (unexpected error)" ;;
       *) orchestrator_fail "plan-write failed (unknown exit code $_agent_ec)" ;;
     esac
-  fi
-
-  _guard_main_checkout "plan-write" "$_main_state_before"
-  if git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null | grep -qvE '^(plan\.md|design\.md|\.gitignore)$'; then
-    local _contract_violations
-    _contract_violations=$(git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null | grep -vE '^(plan\.md|design\.md|\.gitignore)$' || true)
-    orchestrator_fail "plan-write agent modified source files (contract violation): ${_contract_violations}"
   fi
 
   if [[ ! -f "${WORKTREE_DIR}/plan.md" ]]; then
@@ -1228,8 +1228,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for implement-task-${task_n} (exit $_tee_ec)"
     fi
-    check_branch_after_agent
     _guard_main_checkout "implement-task-${task_n}" "$_main_state_before"
+    check_branch_after_agent
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/implement-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "implement-task-${task_n} is blocked (agent emitted BLOCKED)"
@@ -1356,6 +1356,8 @@ ${SPEC_REVIEWER_PROMPT}"
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for spec-review-task-${task_n} (exit $_tee_ec)"
     fi
+    _guard_main_checkout "spec-review-task-${task_n}" "$_main_state_before"
+    check_branch_after_agent
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/spec-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "spec-review-task-${task_n} failed (config error in log)"
@@ -1375,8 +1377,6 @@ ${SPEC_REVIEWER_PROMPT}"
         esac
       fi
     fi
-    check_branch_after_agent
-    _guard_main_checkout "spec-review-task-${task_n}" "$_main_state_before"
   }
 
   # Run quality reviewer for a single task; writes result to file (not stdout)
@@ -1502,6 +1502,8 @@ ${QUALITY_REVIEWER_PROMPT}"
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for quality-review-task-${task_n} (exit $_tee_ec)"
     fi
+    _guard_main_checkout "quality-review-task-${task_n}" "$_main_state_before"
+    check_branch_after_agent
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "quality-review-task-${task_n} failed (config error in log)"
@@ -1521,8 +1523,6 @@ ${QUALITY_REVIEWER_PROMPT}"
         esac
       fi
     fi
-    check_branch_after_agent
-    _guard_main_checkout "quality-review-task-${task_n}" "$_main_state_before"
   }
 
   # Run fix-review: agent reads both review reports and fixes findings
@@ -1620,6 +1620,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for fix-review-task-${task_n} (exit $_tee_ec)"
     fi
+    _guard_main_checkout "fix-review-task-${task_n}" "$_main_state_before"
+    check_branch_after_agent
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "fix-review-task-${task_n} is blocked (agent emitted BLOCKED)"
@@ -1632,8 +1634,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         esac
       fi
     fi
-    check_branch_after_agent
-    _guard_main_checkout "fix-review-task-${task_n}" "$_main_state_before"
   }
 
   # ── main task loop ─────────────────────────────────────────────────────────
@@ -1984,6 +1984,9 @@ Write code-review.md now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review (exit $_tee_ec)"
   fi
+
+  _guard_main_checkout "whole-pr-review" "$_main_state_before"
+
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
       1) orchestrator_fail "review failed (contract violation)" ;;
@@ -1992,8 +1995,6 @@ Write code-review.md now."
       *) orchestrator_fail "review failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
-
-  _guard_main_checkout "whole-pr-review" "$_main_state_before"
 
   # Copy review from worktree
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
@@ -2164,6 +2165,8 @@ Start now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for fix-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
   fi
+  _guard_main_checkout "fix-review-loop-${FIX_LOOP_COUNT}" "$_main_state_before"
+  check_branch_after_agent
   if [[ $_agent_ec -ne 0 ]]; then
     if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
       orchestrator_fail "fix-review failed (agent emitted BLOCKED)"
@@ -2176,8 +2179,6 @@ Start now."
       esac
     fi
   fi
-  check_branch_after_agent
-  _guard_main_checkout "fix-review-loop-${FIX_LOOP_COUNT}" "$_main_state_before"
 
   # ── re-validate ────────────────────────────────────────────────────────────
   log "=== Re-validating after fix (loop $FIX_LOOP_COUNT) ==="
@@ -2309,6 +2310,9 @@ Write code-review.md and review-findings-status.txt now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for re-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
   fi
+
+  _guard_main_checkout "re-review-${FIX_LOOP_COUNT}" "$_main_state_before"
+
   if [[ $_agent_ec -ne 0 ]]; then
     if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
       orchestrator_fail "re-review-${FIX_LOOP_COUNT} is blocked (agent emitted BLOCKED)"
@@ -2321,8 +2325,6 @@ Write code-review.md and review-findings-status.txt now."
       esac
     fi
   fi
-
-  _guard_main_checkout "re-review-${FIX_LOOP_COUNT}" "$_main_state_before"
 
   # Copy updated review
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
@@ -2458,6 +2460,9 @@ Start now."
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for compound (exit $_tee_ec)"
     fi
+
+    _guard_main_checkout "compound" "$_main_state_before"
+
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/compound.log" 2>/dev/null; then
         orchestrator_fail "compound is blocked (agent emitted BLOCKED)"
@@ -2470,8 +2475,6 @@ Start now."
         esac
       fi
     fi
-
-    _guard_main_checkout "compound" "$_main_state_before"
 
     # Copy the generated doc back to issues dir
     if [[ -f "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" ]]; then
