@@ -1603,6 +1603,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     local _fix_prompt_file
     _fix_prompt_file=$(mktemp)
     printf '%s' "$FIX_REVIEW_PROMPT" > "$_fix_prompt_file"
+    local _main_state_before
+    _main_state_before=$(_capture_main_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase fix-review \
       --phase-id "fix-review-task-${task_n}" \
@@ -1631,6 +1633,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       fi
     fi
     check_branch_after_agent
+    _guard_main_checkout "fix-review-task-${task_n}" "$_main_state_before"
   }
 
   # ── main task loop ─────────────────────────────────────────────────────────
