@@ -125,4 +125,26 @@ _guard_main_checkout() {
       "Agent leaked changes into main checkout; auto-reset" \
       pollIteration="${POLL_COUNT:-0}"
   fi
+
+  if [[ -n "$pre_branch" ]]; then
+    local _current_branch
+    _current_branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+    if [[ "$_current_branch" != "$pre_branch" ]]; then
+      if [[ "$pre_branch" == "HEAD" ]]; then
+        warn "Main checkout switched from detached HEAD to ${_current_branch} after ${guard_label} — restoring detached HEAD"
+        git -C "$REPO_ROOT" checkout -q --detach HEAD 2>/dev/null || true
+      else
+        warn "Main checkout switched from ${pre_branch} to ${_current_branch} after ${guard_label} — restoring ${pre_branch}"
+        git -C "$REPO_ROOT" checkout -q "$pre_branch" 2>/dev/null || true
+        local _post_restore_branch
+        _post_restore_branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+        if [[ "$_post_restore_branch" != "$pre_branch" ]]; then
+          warn "Checkout of ${pre_branch} failed after ${guard_label} — manual cleanup may be needed"
+        fi
+      fi
+      emit_event "${guard_label}" "warn" "${guard_label}.main_branch_restored" \
+        "Restored main checkout branch from ${_current_branch} to ${pre_branch}" \
+        pollIteration="${POLL_COUNT:-0}"
+    fi
+  fi
 }

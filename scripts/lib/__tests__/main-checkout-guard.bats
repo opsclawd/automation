@@ -326,6 +326,58 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "_guard_main_checkout restores branch after same-SHA branch switch (regression: PR #152 comment 3328169899)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" branch same-sha-branch
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$FIXTURE_REPO" checkout -q same-sha-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" = "$pre_sha" ]
+
+  run jq -e '.type == "test.main_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout restores detached HEAD after same-SHA branch switch from detached" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  git -C "$FIXTURE_REPO" checkout -q --detach HEAD
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q -b agent-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "HEAD" ]
+
+  run jq -e '.type == "test.main_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
 @test "_guard_main_checkout emits event with pollIteration metadata" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
