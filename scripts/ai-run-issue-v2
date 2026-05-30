@@ -979,10 +979,22 @@ Write plan.md now."
     orchestrator_fail "tee failed writing log for plan-write (exit $_tee_ec)"
   fi
 
+  _main_checkout_violations=$({
+    git -C "$REPO_ROOT" diff --name-only 2>/dev/null
+    git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
+    git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+  } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+
   _guard_main_checkout "plan-write" "$_main_state_before"
-  if { git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null; git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null; } | grep -qvE '^(plan\.md|design\.md|\.gitignore)$'; then
-    _contract_violations=$({ git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null; git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null; } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
-    orchestrator_fail "plan-write agent modified source files (contract violation): ${_contract_violations}"
+
+  _worktree_violations=$({
+    git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null
+    git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+  } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+
+  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  if [[ -n "$_all_violations" ]]; then
+    orchestrator_fail "plan-write agent modified source files (contract violation): ${_all_violations}"
   fi
 
   if [[ $_agent_ec -ne 0 ]]; then
