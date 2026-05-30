@@ -979,7 +979,7 @@ Write plan.md now."
     orchestrator_fail "tee failed writing log for plan-write (exit $_tee_ec)"
   fi
 
-  local _pre_was_dirty=0
+  _pre_was_dirty=0
   if [[ -n "$_main_state_before" ]]; then
     IFS='|' read -r _ _pre_was_dirty _ <<< "$_main_state_before"
   fi
