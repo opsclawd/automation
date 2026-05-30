@@ -27,6 +27,7 @@ export class AntigravityAgentAdapter implements AgentPort {
       bin,
       args,
       input: prompt,
+      detached: true,
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
       model: request.model ?? '',

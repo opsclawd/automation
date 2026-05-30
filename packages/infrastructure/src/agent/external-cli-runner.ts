@@ -18,6 +18,7 @@ export interface ExternalCliRunInput {
   timeoutMsDefault?: number;
   abortSignal?: AbortSignal;
   forceKillAfterDelayMs?: number;
+  detached?: boolean;
 }
 
 export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentInvocationResult> {
@@ -48,10 +49,10 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     cwd: input.cwd,
     reject: false,
     all: false,
-    detached: true,
+    detached: input.detached ?? false,
     ...(input.input !== undefined ? { input: input.input } : {}),
     ...(cancelSignal ? { cancelSignal } : {}),
-    forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
+    forceKillAfterDelay: input.forceKillAfterDelayMs ?? 500,
   });
   try {
     const r = await child;
@@ -76,8 +77,8 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     if (outcome !== 'success') {
       try {
         if (child.pid) process.kill(-child.pid, 'SIGKILL');
-      } catch {
-        // ESRCH = process already dead, ignore
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e;
       }
     }
   }
