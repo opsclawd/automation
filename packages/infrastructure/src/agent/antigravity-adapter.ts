@@ -21,7 +21,7 @@ export class AntigravityAgentAdapter implements AgentPort {
     if (this.opts.skipPermissions) {
       args.push('--dangerously-skip-permissions');
     }
-    args.push('--print', '-');
+    args.push('--print', prompt);
     return runExternalCli({
       runtime: 'antigravity',
       bin,

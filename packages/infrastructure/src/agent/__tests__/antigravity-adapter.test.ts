@@ -69,7 +69,7 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(5);
   });
 
-  it('passes the prompt via stdin, not argv', async () => {
+  it('passes the prompt via --print and stdin', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
@@ -84,7 +84,8 @@ describe('AntigravityAgentAdapter', () => {
       await adapter.invoke(req(cwd, { promptPath }));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
-      expect(args).not.toContain('REVIEW THIS PR DIFF');
+      expect(args).toContain('--print');
+      expect(args).toContain('REVIEW THIS PR DIFF');
       expect(stdin).toBe('REVIEW THIS PR DIFF');
     } finally {
       delete process.env.AGY_LOG_DIR;
