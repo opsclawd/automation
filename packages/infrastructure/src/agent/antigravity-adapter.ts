@@ -7,6 +7,7 @@ export interface AntigravityAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
   timeoutMsDefault?: number;
+  skipPermissions?: boolean;
 }
 
 export class AntigravityAgentAdapter implements AgentPort {
@@ -16,11 +17,11 @@ export class AntigravityAgentAdapter implements AgentPort {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
 
-    // agy has its own budget enforcement; no pre-flight token budget check needed
-    // Risk: --dangerously-skip-permissions may not exist or differ in real agy binary.
-    // Unverifiable in CI — tested only against fake fixtures. If wrong, agy will hang
-    // in production but force-kill prevents orphaned processes.
-    const args = ['--dangerously-skip-permissions', '--print', '-'];
+    const args: string[] = [];
+    if (this.opts.skipPermissions) {
+      args.push('--dangerously-skip-permissions');
+    }
+    args.push('--print', '-');
     return runExternalCli({
       runtime: 'antigravity',
       bin,
