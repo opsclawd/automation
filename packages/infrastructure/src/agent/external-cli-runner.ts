@@ -35,24 +35,24 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   let stderr = '';
   let contractViolations: string[] = [];
 
-  try {
-    const timeoutSignal =
-      input.timeoutMsDefault !== undefined
-        ? AbortSignal.timeout(input.timeoutMsDefault)
-        : undefined;
-    const signals: AbortSignal[] = [];
-    if (timeoutSignal) signals.push(timeoutSignal);
-    if (input.abortSignal) signals.push(input.abortSignal);
-    const cancelSignal =
-      signals.length === 1 ? signals[0] : signals.length > 1 ? AbortSignal.any(signals) : undefined;
+  const timeoutSignal =
+    input.timeoutMsDefault !== undefined ? AbortSignal.timeout(input.timeoutMsDefault) : undefined;
+  const signals: AbortSignal[] = [];
+  if (timeoutSignal) signals.push(timeoutSignal);
+  if (input.abortSignal) signals.push(input.abortSignal);
+  const cancelSignal =
+    signals.length === 1 ? signals[0] : signals.length > 1 ? AbortSignal.any(signals) : undefined;
 
-    const child = execa(input.bin, input.args, {
-      cwd: input.cwd,
-      reject: false,
-      all: false,
-      ...(input.input !== undefined ? { input: input.input } : {}),
-      ...(cancelSignal ? { cancelSignal } : {}),
-    });
+  const child = execa(input.bin, input.args, {
+    cwd: input.cwd,
+    reject: false,
+    all: false,
+    detached: true,
+    ...(input.input !== undefined ? { input: input.input } : {}),
+    ...(cancelSignal ? { cancelSignal } : {}),
+    forceKillAfterDelay: 5_000,
+  });
+  try {
     const r = await child;
     stdout = r.stdout ?? '';
     stderr = r.stderr ?? '';
@@ -71,6 +71,12 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     outcome = 'failed';
     exitCode = 1;
     stderr = String((e as Error).message);
+  } finally {
+    try {
+      if (child.pid) process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      // ESRCH = process already dead, ignore
+    }
   }
   writeFileSync(stdoutPath, stdout);
   writeFileSync(stderrPath, stderr);
