@@ -242,6 +242,48 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "_guard_main_checkout works with WORKTREE_DIR instead of POLL_WORKTREE" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  echo "# __test_guard_worktree_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  run _guard_main_checkout "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" diff --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout emits event with guard_label as prefix" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  echo "# __test_guard_prefix_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  _guard_main_checkout "plan-write"
+
+  run jq -e '.type == "plan-write.main_leak_detected"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout is a no-op when WORKTREE_DIR equals REPO_ROOT" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$FIXTURE_REPO"
+
+  echo "# should_not_be_reset_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  run _guard_main_checkout "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" diff --quiet
+  [ "$status" -ne 0 ]
+}
+
 @test "ai-pr-review-poll has no pushd callsites" {
   run grep -c 'pushd' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
   [ "$output" -eq 0 ]
