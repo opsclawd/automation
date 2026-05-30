@@ -534,7 +534,7 @@ run_agent() {
     2>&1 | tee -a "$output_log"
   echo ${PIPESTATUS[0]} > "$_pnpm_ec_file"
   _agent_ec=$(cat "$_pnpm_ec_file")
-  _guard_main_checkout "$phase" "$_main_state_before"
+  _guard_main_checkout "post-pr-review" "$_main_state_before"
   rm -f "$_pnpm_ec_file"
   rm -f "$prompt_file"
   if [[ $_agent_ec -eq 2 ]]; then
@@ -547,106 +547,8 @@ run_agent() {
   return $_agent_ec
 }
 
-# Capture the main checkout's pre-agent state as a `<sha>|<was_dirty>` token
-# the guard can compare against. was_dirty=1 if the working tree, index, or
-# any untracked file was non-clean before the agent ran. Callers should
-# pass this token to _guard_main_checkout via its second argument so the
-# guard can distinguish "agent leak" from "pre-existing developer state."
-_capture_main_state() {
-  local sha was_dirty=0
-  sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null \
-     || ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null \
-     || git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -q '^??'; then
-    was_dirty=1
-  fi
-  printf '%s|%s' "$sha" "$was_dirty"
-}
-
-_guard_main_checkout() {
-  local guard_label="${1:-agent}"
-  local pre_state="${2:-}"
-  if [[ "${POLL_WORKTREE:-}" == "$REPO_ROOT" ]]; then
-    return 0
-  fi
-
-  local expected_sha="" pre_was_dirty=0
-  if [[ -n "$pre_state" ]]; then
-    IFS='|' read -r expected_sha pre_was_dirty <<< "$pre_state"
-  fi
-
-  local actual_sha=""
-  actual_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
-
-  local _moved=0
-  if [[ -n "$expected_sha" && -n "$actual_sha" && "$actual_sha" != "$expected_sha" ]]; then
-    _moved=1
-  fi
-
-  local _dirty=0
-  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null; then _dirty=1; fi
-  if ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then _dirty=1; fi
-  if git -C "$REPO_ROOT" status --porcelain 2>/dev/null | grep -q '^??'; then _dirty=1; fi
-
-  # HEAD-moved: agent committed something to the main checkout.
-  #
-  # When pre-agent was CLEAN: a hard reset to the pre-agent SHA is safe —
-  # the only diff between pre_sha and actual_sha is the agent's leaked
-  # commit, so reset --hard removes exactly that. Run clean -fd to remove
-  # any untracked files the commit dropped on disk.
-  #
-  # When pre-agent was DIRTY: the agent likely ran `git add -A` which
-  # staged the developer's pre-existing tracked edits along with the leak,
-  # then committed them all together. Hard-resetting to pre_sha would
-  # discard those edits (they live in the leaked commit, not on disk).
-  # We can't recover them automatically without parsing the diff. Refuse
-  # to act and leave both the leaked commit and the dirty state for
-  # manual cleanup. The dev can inspect `git log` to see the leaked commit
-  # and decide what to do.
-  if [[ $_moved -eq 1 ]]; then
-    if [[ $pre_was_dirty -eq 1 ]]; then
-      warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) AND was dirty pre-agent — refusing to auto-reset; manual cleanup required"
-      warn "  pre-agent SHA: ${expected_sha}"
-      warn "  leaked SHA:    ${actual_sha}"
-      warn "  inspect with:  git -C ${REPO_ROOT} log --oneline ${expected_sha}..${actual_sha}"
-      emit_event "post-pr-review" "error" "post-pr-review.main_leak_unsafe_recovery" \
-        "Agent committed to main while pre-agent state was dirty; manual cleanup required" \
-        pollIteration="${POLL_COUNT:-0}" \
-        expectedSha="$expected_sha" actualSha="$actual_sha"
-      return 0
-    fi
-    warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
-    git -C "$REPO_ROOT" reset --hard "$expected_sha" 2>/dev/null || true
-    git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
-    emit_event "post-pr-review" "warn" "post-pr-review.main_leak_detected" \
-      "Agent leaked commit into main checkout; auto-reset to pre-agent SHA" \
-      pollIteration="${POLL_COUNT:-0}" \
-      expectedSha="$expected_sha" actualSha="$actual_sha"
-    return 0
-  fi
-
-  # Dirty-but-HEAD-unchanged: only treat as a leak when the pre-agent state
-  # was clean. If the developer had local edits before the agent ran, those
-  # edits are not our business — log and skip rather than discarding them.
-  if [[ $_dirty -eq 1 ]]; then
-    if [[ $pre_was_dirty -eq 1 ]]; then
-      warn "Main checkout still dirty after ${guard_label} but was already dirty pre-agent — skipping reset to preserve unrelated local work"
-      emit_event "post-pr-review" "info" "post-pr-review.main_dirty_preexisting" \
-        "Main checkout dirty pre-agent; guard skipped to preserve local work" \
-        pollIteration="${POLL_COUNT:-0}"
-      return 0
-    fi
-    warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
-    # reset --hard clears both the index and working tree, so a leak that
-    # was already staged (e.g. by the agent running `git add -A`) is fully
-    # reverted. `checkout -- .` alone would leave staged entries behind.
-    git -C "$REPO_ROOT" reset --hard HEAD 2>/dev/null || true
-    git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
-    emit_event "post-pr-review" "warn" "post-pr-review.main_leak_detected" \
-      "Agent leaked changes into main checkout; auto-reset" \
-      pollIteration="${POLL_COUNT:-0}"
-  fi
-}
+# shellcheck source=lib/guard-main-checkout.sh
+source "${REPO_ROOT}/scripts/lib/guard-main-checkout.sh"
 
 # ── Process reviews ────────────────────────────────────────────────────────
 process_reviews() {

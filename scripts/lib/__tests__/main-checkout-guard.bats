@@ -36,21 +36,11 @@ setup() {
   # FIXTURE_REPO before invoking.
   # shellcheck source=../emit_event.sh
   source "${BATS_TEST_DIRNAME}/../emit_event.sh"
+  # shellcheck source=../guard-main-checkout.sh
+  source "${BATS_TEST_DIRNAME}/../guard-main-checkout.sh"
 
-  eval "$(awk '
-    /^(warn|log)\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
-
-  eval "$(awk '
-    /^_guard_main_checkout\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
-
-  eval "$(awk '
-    /^_capture_main_state\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")"
+  log() { :; }
+  warn() { log "WARN: $*" >&2; }
 }
 
 teardown() {
@@ -86,7 +76,7 @@ teardown() {
   run git -C "$FIXTURE_REPO" diff --quiet
   [ "$status" -eq 0 ]
 
-  run jq -e '.type == "post-pr-review.main_leak_detected"' "$AI_RUN_EVENTS_FILE"
+  run jq -e '.type == "test.main_leak_detected"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
 
@@ -176,8 +166,43 @@ teardown() {
   [ -f "$FIXTURE_REPO/dev-scratch.txt" ]
 
   # Event log should record the skip rather than a leak.
-  run jq -e '.type == "post-pr-review.main_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
+  run jq -e '.type == "test.main_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout restores branch after same-SHA switch despite pre-existing dirty work (regression: PR #152 comment 3328202153)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" branch same-sha-branch
+
+  echo "developer edit" >> "$FIXTURE_REPO/.gitignore"
+  echo "dev untracked" > "$FIXTURE_REPO/dev-scratch.txt"
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q same-sha-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" = "${pre_state%%|*}" ]
+
+  run grep -q "developer edit" "$FIXTURE_REPO/.gitignore"
+  [ "$status" -eq 0 ]
+  [ -f "$FIXTURE_REPO/dev-scratch.txt" ]
+
+  grep -q '"test.main_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
+  grep -q '"test.main_branch_restored"' "$AI_RUN_EVENTS_FILE"
 }
 
 @test "_guard_main_checkout refuses to auto-reset when pre-agent dirty AND HEAD moved (regression: PR #132 comment 3322160882)" {
@@ -213,7 +238,7 @@ teardown() {
   [ -f "$FIXTURE_REPO/dev-untracked.txt" ]
 
   # Event log records the unsafe-recovery decision so it's auditable.
-  run jq -e '.type == "post-pr-review.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  run jq -e '.type == "test.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
 
@@ -239,6 +264,155 @@ teardown() {
   [ "$final_sha" = "$after_sha" ]
 }
 
+@test "_guard_main_checkout switches back to original branch before resetting HEAD (regression: PR #152 comment 3328041429)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" checkout -q -b other-branch
+  echo "other-content" > "$FIXTURE_REPO/other.txt"
+  git -C "$FIXTURE_REPO" add other.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "other"
+  git -C "$FIXTURE_REPO" checkout -q "$_default_branch"
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$FIXTURE_REPO" checkout -q other-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" = "$pre_sha" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse other-branch
+  [ "$output" != "$pre_sha" ]
+}
+
+@test "_guard_main_checkout refuses reset when checkout of pre_branch fails (regression: PR #152 comment 3328061467)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  echo "main-content" > "$FIXTURE_REPO/tracked.txt"
+  git -C "$FIXTURE_REPO" add tracked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "add tracked"
+
+  git -C "$FIXTURE_REPO" checkout -q -b other-branch
+  echo "other-content" > "$FIXTURE_REPO/tracked.txt"
+  git -C "$FIXTURE_REPO" add tracked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "other branch content"
+  git -C "$FIXTURE_REPO" checkout -q -
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q other-branch
+  echo "dirty-on-other" > "$FIXTURE_REPO/tracked.txt"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "other-branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" != "${pre_state%%|*}" ]
+
+  run jq -e '.type == "test.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout refuses reset when pre-agent was detached and agent left on a branch (regression: PR #152 comment 3328139630)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  git -C "$FIXTURE_REPO" checkout -q --detach HEAD
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q -b agent-branch
+  echo "agent-leak" > "$FIXTURE_REPO/leaked.txt"
+  git -C "$FIXTURE_REPO" add leaked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "agent leak on branch"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "agent-branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" != "${pre_state%%|*}" ]
+
+  run jq -e '.type == "test.main_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout restores branch after same-SHA branch switch (regression: PR #152 comment 3328169899)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" branch same-sha-branch
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$FIXTURE_REPO" checkout -q same-sha-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse HEAD
+  [ "$output" = "$pre_sha" ]
+
+  run jq -e '.type == "test.main_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout restores detached HEAD after same-SHA branch switch from detached" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  git -C "$FIXTURE_REPO" checkout -q --detach HEAD
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q -b agent-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "HEAD" ]
+
+  run jq -e '.type == "test.main_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
 @test "_guard_main_checkout emits event with pollIteration metadata" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
@@ -252,6 +426,48 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "_guard_main_checkout works with WORKTREE_DIR instead of POLL_WORKTREE" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  echo "# __test_guard_worktree_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  run _guard_main_checkout "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" diff --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout emits event with guard_label as prefix" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  echo "# __test_guard_prefix_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  _guard_main_checkout "plan-write"
+
+  run jq -e '.type == "plan-write.main_leak_detected"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout is a no-op when WORKTREE_DIR equals REPO_ROOT" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$FIXTURE_REPO"
+
+  echo "# should_not_be_reset_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  run _guard_main_checkout "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" diff --quiet
+  [ "$status" -ne 0 ]
+}
+
 @test "ai-pr-review-poll has no pushd callsites" {
   run grep -c 'pushd' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
   [ "$output" -eq 0 ]
@@ -262,8 +478,8 @@ teardown() {
   [ "$output" -eq 0 ]
 }
 
-@test "ai-pr-review-poll has _guard_main_checkout function" {
-  run grep -q '_guard_main_checkout()' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
+@test "ai-pr-review-poll sources shared guard library" {
+  run grep -q 'source.*guard-main-checkout.sh' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
   [ "$status" -eq 0 ]
 }
 
