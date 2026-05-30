@@ -120,4 +120,18 @@ describe('AntigravityAgentAdapter', () => {
     const r = await adapter.invoke(req(cwd));
     expect(r.outcome).toBe('timeout');
   });
+
+  it('force-kills a SIGTERM-ignoring child within grace period', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-hang.sh'),
+      artifactsDir: cwd,
+      timeoutMsDefault: 200,
+    });
+    const start = Date.now();
+    const r = await adapter.invoke(req(cwd));
+    const elapsed = Date.now() - start;
+    expect(r.outcome).toBe('timeout');
+    expect(elapsed).toBeLessThan(15_000);
+  });
 });
