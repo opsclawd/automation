@@ -300,14 +300,18 @@ validate_result_file() {
   fi
 }
 
-# validate_review_artifacts: checks that .result and .md artifacts are a valid pair.
-# Returns 0 if the pair is valid (both present, both absent, or md-without-result).
-# Returns 1 if .result exists but .md is missing — an impossible combination
-# under the agent contract, indicating a stale or partial write.
+# validate_review_artifacts: checks that review artifacts are a valid pair.
+# Returns 0 if the pair is valid (both present with non-empty .md, or .md
+# present without .result — handled by resolve_result elsewhere).
+# Returns 1 if neither file was written, or if .result exists without a
+# non-empty .md — indicating a broken agent contract.
 validate_review_artifacts() {
   local result_file="$1"
   local md_file="$2"
-  if [[ -f "$result_file" && ! -f "$md_file" ]]; then
+  if [[ ! -f "$result_file" && ! -f "$md_file" ]]; then
+    return 1
+  fi
+  if [[ -f "$result_file" && ! -s "$md_file" ]]; then
     return 1
   fi
   return 0

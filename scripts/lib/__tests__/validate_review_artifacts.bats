@@ -17,15 +17,16 @@ teardown() {
   rm -rf "$TMPDIR_TEST"
 }
 
-@test "both files present → valid" {
-  touch "$TMPDIR_TEST/test.result" "$TMPDIR_TEST/test.md"
+@test "both files present, .md non-empty → valid" {
+  echo "SPEC_PASS" > "$TMPDIR_TEST/test.result"
+  echo "No findings." > "$TMPDIR_TEST/test.md"
   run validate_review_artifacts "$TMPDIR_TEST/test.result" "$TMPDIR_TEST/test.md"
   [ "$status" -eq 0 ]
 }
 
-@test "neither file present → valid (orchestrator handles no-result elsewhere)" {
+@test "neither file present → invalid" {
   run validate_review_artifacts "$TMPDIR_TEST/missing.result" "$TMPDIR_TEST/missing.md"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
 }
 
 @test ".result present, .md missing → invalid" {
@@ -43,5 +44,18 @@ teardown() {
 @test ".result says FAIL, .md missing → invalid" {
   echo "QUALITY_FAIL" > "$TMPDIR_TEST/test.result"
   run validate_review_artifacts "$TMPDIR_TEST/test.result" "$TMPDIR_TEST/missing.md"
+  [ "$status" -eq 1 ]
+}
+
+@test ".result present, .md empty → invalid" {
+  touch "$TMPDIR_TEST/test.result"
+  touch "$TMPDIR_TEST/test.md"
+  run validate_review_artifacts "$TMPDIR_TEST/test.result" "$TMPDIR_TEST/test.md"
+  [ "$status" -eq 1 ]
+}
+@test ".result present with content, .md empty → invalid" {
+  echo "SPEC_FAIL" > "$TMPDIR_TEST/test.result"
+  touch "$TMPDIR_TEST/test.md"
+  run validate_review_artifacts "$TMPDIR_TEST/test.result" "$TMPDIR_TEST/test.md"
   [ "$status" -eq 1 ]
 }
