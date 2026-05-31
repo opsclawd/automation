@@ -59,8 +59,8 @@ export function ValidationPanel({ runUuid }: { runUuid: string }) {
       )}
 
       <ul className="space-y-2">
-        {commands.map((c) => (
-          <li key={c.command} className="rounded border p-3 text-sm">
+        {commands.map((c, index) => (
+          <li key={`${c.command}-${index}`} className="rounded border p-3 text-sm">
             <div className="flex items-center gap-2">
               <span className={`rounded px-2 py-0.5 text-xs font-medium ${PILL[c.outcome] ?? ''}`}>
                 {c.outcome}
