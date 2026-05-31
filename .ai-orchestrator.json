@@ -74,8 +74,8 @@
       }
     },
     "phaseProfiles": {
-      "plan-design": { "profile": "claude", "fallbackProfile": "senior" },
-      "plan-write": { "profile": "claude", "fallbackProfile": "senior" },
+      "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
+      "plan-write": { "profile": "claude", "fallbackProfile": "architect" },
       "implement": { "profile": "builder", "fallbackProfile": "junior" },
       "quality-review": {
         "profile": "task-reviewer",
