@@ -57,12 +57,13 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
   });
 
-  // Kill process group on cancel/abort while the PID is still provably alive.
-  // This avoids the PID-reuse race that exists in the finally-block kill below.
+  // Send SIGTERM to the process group on cancel/abort while the PID is still
+  // provably alive (avoids the PID-reuse race in finally). SIGKILL escalation
+  // is handled by execa's forceKillAfterDelay after the grace period.
   cancelSignal?.addEventListener('abort', () => {
     if (input.detached) {
       try {
-        if (child.pid) process.kill(-child.pid, 'SIGKILL');
+        if (child.pid) process.kill(-child.pid, 'SIGTERM');
       } catch {
         // ESRCH = already dead, ignore
       }
