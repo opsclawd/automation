@@ -11,3 +11,5 @@ export * from './prompts/index.js';
 export * from './agent/validate-agent-contract.js';
 export * from './results/index.js';
 export * from './run-validation.js';
+export * from './validation/classify-validation.js';
+export * from './validation/validation-run-to-failure.js';
