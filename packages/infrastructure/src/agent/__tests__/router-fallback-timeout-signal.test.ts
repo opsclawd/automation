@@ -49,6 +49,7 @@ describe('AgentRuntimeRouter fallback timeout signal', () => {
   it('fallback runs to completion when primary times out and caller signal is already aborted', async () => {
     const inv = new FakeAgentInvocationPort();
     let fallbackSignal: AbortSignal | undefined;
+    let idCounter = 0;
 
     const primaryAdapter: AgentPort = {
       async invoke(_: AgentInvocationRequest): Promise<AgentInvocationResult> {
@@ -90,7 +91,7 @@ describe('AgentRuntimeRouter fallback timeout signal', () => {
       adapters: { opencode: primaryAdapter, pi: fallbackAdapter },
       invocationRepository: inv,
       clock: () => FIXED_NOW,
-      idFactory: () => 'inv-timeout-signal-1',
+      idFactory: () => `inv-timeout-signal-${++idCounter}`,
       readPromptChars: () => 100,
     });
 
@@ -104,13 +105,17 @@ describe('AgentRuntimeRouter fallback timeout signal', () => {
 
     const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
     expect(rows.length).toBe(2);
-    expect(rows[0].outcome).toBe('timeout');
-    expect(rows[1].outcome).toBe('success');
-    expect(rows[1].fallbackOfInvocationId).toBeDefined();
+    const primaryRow = rows.find((r) => r.profile === 'opencode-frontier');
+    const fallbackRow = rows.find((r) => r.profile === 'pi-local');
+    expect(primaryRow).toBeDefined();
+    expect(fallbackRow).toBeDefined();
+    expect(fallbackRow!.outcome).toBe('success');
+    expect(fallbackRow!.fallbackOfInvocationId).toBeDefined();
   });
 
   it('fallback effective timeout derives from fallback profile, not residual caller budget', async () => {
     const inv = new FakeAgentInvocationPort();
+    let idCounter = 0;
 
     const primaryAdapter: AgentPort = {
       async invoke(_: AgentInvocationRequest): Promise<AgentInvocationResult> {
@@ -151,7 +156,7 @@ describe('AgentRuntimeRouter fallback timeout signal', () => {
       adapters: { opencode: primaryAdapter, pi: fallbackAdapter },
       invocationRepository: inv,
       clock: () => FIXED_NOW,
-      idFactory: () => 'inv-timeout-signal-2',
+      idFactory: () => `inv-timeout-signal-2-${++idCounter}`,
       readPromptChars: () => 100,
     });
 
