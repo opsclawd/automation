@@ -79,8 +79,7 @@
       "implement": { "profile": "builder", "fallbackProfile": "junior" },
       "quality-review": {
         "profile": "task-reviewer",
-        "fallbackProfile": "claude-reviewer",
-        "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
+        "fallbackProfile": "junior"
       },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "builder", "fallbackProfile": "senior-fallback" },
