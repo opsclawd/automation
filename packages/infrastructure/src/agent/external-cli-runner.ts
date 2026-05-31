@@ -11,12 +11,15 @@ export interface ExternalCliRunInput {
   bin: string;
   args: string[];
   input?: string;
+  env?: Record<string, string>;
   cwd: string;
   artifactsDir: string;
   model: string;
   provider?: string;
   timeoutMsDefault?: number;
   abortSignal?: AbortSignal;
+  forceKillAfterDelayMs?: number;
+  detached?: boolean;
 }
 
 export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentInvocationResult> {
@@ -35,24 +38,43 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   let stderr = '';
   let contractViolations: string[] = [];
 
-  try {
-    const timeoutSignal =
-      input.timeoutMsDefault !== undefined
-        ? AbortSignal.timeout(input.timeoutMsDefault)
-        : undefined;
-    const signals: AbortSignal[] = [];
-    if (timeoutSignal) signals.push(timeoutSignal);
-    if (input.abortSignal) signals.push(input.abortSignal);
-    const cancelSignal =
-      signals.length === 1 ? signals[0] : signals.length > 1 ? AbortSignal.any(signals) : undefined;
+  const timeoutSignal =
+    input.timeoutMsDefault !== undefined ? AbortSignal.timeout(input.timeoutMsDefault) : undefined;
+  const signals: AbortSignal[] = [];
+  if (timeoutSignal) signals.push(timeoutSignal);
+  if (input.abortSignal) signals.push(input.abortSignal);
+  const cancelSignal =
+    signals.length === 1 ? signals[0] : signals.length > 1 ? AbortSignal.any(signals) : undefined;
 
-    const child = execa(input.bin, input.args, {
-      cwd: input.cwd,
-      reject: false,
-      all: false,
-      ...(input.input !== undefined ? { input: input.input } : {}),
-      ...(cancelSignal ? { cancelSignal } : {}),
-    });
+  const child = execa(input.bin, input.args, {
+    cwd: input.cwd,
+    reject: false,
+    all: false,
+    detached: input.detached ?? false,
+    ...(input.input !== undefined ? { input: input.input } : {}),
+    ...(input.env !== undefined ? { env: input.env } : {}),
+    ...(cancelSignal ? { cancelSignal } : {}),
+    forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
+  });
+
+  // Send SIGTERM to the process group on cancel/abort while the PID is still
+  // provably alive (avoids the PID-reuse race in finally). SIGKILL escalation
+  // is handled by execa's forceKillAfterDelay after the grace period.
+  // Must remove the listener once the child settles — if the child exits before
+  // the timeout fires, the listener persists on AbortSignal.timeout() (held by
+  // Node.js internally) and could signal a recycled PID group.
+  const onAbort = () => {
+    if (input.detached) {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        // ESRCH = already dead, ignore
+      }
+    }
+  };
+  cancelSignal?.addEventListener('abort', onAbort);
+
+  try {
     const r = await child;
     stdout = r.stdout ?? '';
     stderr = r.stderr ?? '';
@@ -71,6 +93,18 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     outcome = 'failed';
     exitCode = 1;
     stderr = String((e as Error).message);
+  } finally {
+    cancelSignal?.removeEventListener('abort', onAbort);
+    // Safety net: only meaningful for detached children (process-group leaders).
+    // Non-detached children are not PGIDs, so kill(-pid) would be ESRCH or
+    // worse, could hit a recycled PID's group. Guard with input.detached.
+    if (outcome !== 'success' && input.detached) {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e;
+      }
+    }
   }
   writeFileSync(stdoutPath, stdout);
   writeFileSync(stderrPath, stderr);

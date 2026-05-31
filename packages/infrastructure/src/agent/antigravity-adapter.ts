@@ -7,6 +7,7 @@ export interface AntigravityAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
   timeoutMsDefault?: number;
+  env?: Record<string, string>;
 }
 
 export class AntigravityAgentAdapter implements AgentPort {
@@ -16,15 +17,17 @@ export class AntigravityAgentAdapter implements AgentPort {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
 
-    // agy has its own budget enforcement; no pre-flight token budget check needed
-    const args = ['--print', prompt];
+    const args = ['--dangerously-skip-permissions', '--print', '-'];
     return runExternalCli({
       runtime: 'antigravity',
       bin,
       args,
+      input: prompt,
+      detached: true,
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
       model: request.model ?? '',
+      ...(this.opts.env !== undefined ? { env: this.opts.env } : {}),
       ...(request.provider !== undefined ? { provider: request.provider } : {}),
       ...(this.opts.timeoutMsDefault !== undefined
         ? { timeoutMsDefault: this.opts.timeoutMsDefault }

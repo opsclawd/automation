@@ -69,19 +69,43 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(5);
   });
 
-  it('passes the prompt file contents as the --print argument', async () => {
+  it('passes the prompt via --print and stdin', async () => {
     const cwd = makeWorktree();
-    const promptPath = join(cwd, 'prompt.md');
-    writeFileSync(promptPath, 'REVIEW THIS PR');
-    const argLog = join(cwd, 'args.txt');
-    const shim = join(cwd, 'shim.sh');
-    writeFileSync(shim, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argLog}"\nexit 0\n`);
-    execSync(`chmod +x ${shim}`);
-    const adapter = new AntigravityAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
-    await adapter.invoke(req(cwd, { promptPath }));
-    const args = readFileSync(argLog, 'utf-8');
-    expect(args).toContain('--print');
-    expect(args).toContain('REVIEW THIS PR');
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      const promptPath = join(cwd, 'prompt.md');
+      writeFileSync(promptPath, 'REVIEW THIS PR DIFF');
+      await adapter.invoke(req(cwd, { promptPath }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
+      expect(args).toContain('--print');
+      expect(args).not.toContain('REVIEW THIS PR DIFF');
+      expect(stdin).toBe('REVIEW THIS PR DIFF');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('includes --dangerously-skip-permissions in args', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('--dangerously-skip-permissions');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
   });
 
   it('marks cancellation via AbortController as failed/cancelled_by_orchestrator', async () => {
@@ -108,5 +132,20 @@ describe('AntigravityAgentAdapter', () => {
     });
     const r = await adapter.invoke(req(cwd));
     expect(r.outcome).toBe('timeout');
+  });
+
+  it('force-kills a SIGTERM-ignoring child within grace period', { timeout: 15_000 }, async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-hang.sh'),
+      artifactsDir: cwd,
+      timeoutMsDefault: 200,
+    });
+    const start = Date.now();
+    const r = await adapter.invoke(req(cwd));
+    const elapsed = Date.now() - start;
+    expect(r.outcome).toBe('timeout');
+    expect(elapsed).toBeGreaterThan(4_000);
+    expect(elapsed).toBeLessThan(10_000);
   });
 });
