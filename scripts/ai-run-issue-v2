@@ -1814,6 +1814,20 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
       run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
 
+      # Validate re-review artifacts (same pattern as initial reviews above)
+      if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+        rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
+        if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} wrote .result but not .md after re-review"
+        fi
+      fi
+      if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+        rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
+        if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} wrote .result but not .md after re-review"
+        fi
+      fi
+
       # Check if reviews now pass — resolve from result files
       SPEC_STATUS=$(resolve_result \
         "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result" \
