@@ -300,18 +300,14 @@ validate_result_file() {
   fi
 }
 
-# validate_review_artifacts: checks that review artifacts are a valid pair.
-# Returns 0 if the pair is valid (both present with non-empty .md, or .md
-# present without .result — handled by resolve_result elsewhere).
-# Returns 1 if neither file was written, or if .result exists without a
-# non-empty .md — indicating a broken agent contract.
+# validate_review_artifacts: checks that review artifacts satisfy the
+# agent contract. An agent must always produce a non-empty .md findings
+# file. The .result file is optional but, if present, must coexist with
+# a non-empty .md. Returns 1 if the contract is broken, 0 if valid.
 validate_review_artifacts() {
   local result_file="$1"
   local md_file="$2"
-  if [[ ! -f "$result_file" && ! -f "$md_file" ]]; then
-    return 1
-  fi
-  if [[ -f "$result_file" && ! -s "$md_file" ]]; then
+  if [[ ! -s "$md_file" ]]; then
     return 1
   fi
   return 0
@@ -330,7 +326,7 @@ rerun_reviewer_once() {
   local base_sha="$5"
   local head_sha="$6"
 
-  log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} wrote .result but not .md — re-running once"
+  log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} failed to write valid review artifacts (missing/empty .md or missing both) — re-running once"
 
   # Clean up orphaned artifacts from both directories so the re-run starts fresh
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
@@ -1772,7 +1768,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if ! validate_review_artifacts "$spec_result" "$spec_md"; then
       rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
       if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-        orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} wrote .result but not .md after re-run"
+        orchestrator_fail "invalid_agent_contract: ${reviewer_type}-review-task-${TASK_NUM} failed to write valid review artifacts after re-run (missing/empty .md or missing both)"
       fi
     fi
 
@@ -1780,7 +1776,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if ! validate_review_artifacts "$quality_result" "$quality_md"; then
       rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
       if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-        orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} wrote .result but not .md after re-run"
+        orchestrator_fail "invalid_agent_contract: ${reviewer_type}-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
       fi
     fi
 
@@ -1824,7 +1820,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       if ! validate_review_artifacts "$quality_result" "$quality_md"; then
         rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
         if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} wrote .result but not .md after re-review"
+          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
         fi
       fi
 

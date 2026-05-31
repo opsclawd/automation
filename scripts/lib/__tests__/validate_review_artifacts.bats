@@ -35,10 +35,16 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
-@test ".md present, .result missing → valid (extractor handles)" {
-  touch "$TMPDIR_TEST/test.md"
+@test ".md present and non-empty, .result missing → valid (extractor handles)" {
+  echo "No findings." > "$TMPDIR_TEST/test.md"
   run validate_review_artifacts "$TMPDIR_TEST/missing.result" "$TMPDIR_TEST/test.md"
   [ "$status" -eq 0 ]
+}
+
+@test ".md present but empty, .result missing → invalid" {
+  touch "$TMPDIR_TEST/test.md"
+  run validate_review_artifacts "$TMPDIR_TEST/missing.result" "$TMPDIR_TEST/test.md"
+  [ "$status" -eq 1 ]
 }
 
 @test ".result says FAIL, .md missing → invalid" {
