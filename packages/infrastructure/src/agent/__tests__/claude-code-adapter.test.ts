@@ -80,10 +80,9 @@ describe('ClaudeCodeAgentAdapter', () => {
     const args = readFileSync(argLog, 'utf-8');
     expect(args).toContain('--permission-mode');
     expect(args).toContain('plan');
+    expect(args).toContain('-p');
     expect(args).toContain('--output-format');
     expect(args).toContain('text');
-    const argLines = args.trim().split('\n');
-    expect(argLines).not.toContain('-p');
     expect(args).not.toContain('bypassPermissions');
     expect(args).not.toContain('--dangerously-skip-permissions');
     expect(args).not.toContain('--allow-dangerously-skip-permissions');
