@@ -1329,12 +1329,15 @@ implementer's word for what was built.
 
 ## MANDATORY OUTPUT FILES — write BOTH, in this exact order
 
-**Step 1**: Write \`./spec-review-task-${task_n}.md\` — the detailed findings
-the fix-review agent will read. Include every issue with file:line references,
-the spec requirement violated, and what would satisfy it. If everything passes,
-write a single line: 'No findings. Implementation matches the spec.'
+Write both files to these EXACT absolute paths (not relative — a relative
+path resolves against the wrong workspace and the orchestrator never sees it):
 
-**Step 2**: Write \`./spec-review-task-${task_n}.result\` — EXACTLY ONE of:
+**Step 1**: Write \`${WORKTREE_DIR}/spec-review-task-${task_n}.md\` — the detailed
+findings the fix-review agent will read. Include every issue with file:line
+references, the spec requirement violated, and what would satisfy it. If
+everything passes, write a single line: 'No findings. Implementation matches the spec.'
+
+**Step 2**: Write \`${WORKTREE_DIR}/spec-review-task-${task_n}.result\` — EXACTLY ONE of:
 SPEC_PASS | SPEC_FAIL. No other content — just the status word.
 
 CRITICAL ORDERING RULE:
@@ -1476,13 +1479,16 @@ Do NOT fail a documentation-only change for lacking tests, code patterns, or cod
 
 ## MANDATORY OUTPUT FILES — write BOTH
 
-1. ./quality-review-task-${task_n}.md
+Write both files to these EXACT absolute paths (not relative — a relative
+path resolves against the wrong workspace and the orchestrator never sees it):
+
+1. ${WORKTREE_DIR}/quality-review-task-${task_n}.md
    The detailed findings the fix-review agent will read. Include every
    issue with file:line references, severity, and what would resolve it.
    If everything passes, write a single line:
    'No findings. Implementation meets the quality bar.'
 
-2. ./quality-review-task-${task_n}.result
+2. ${WORKTREE_DIR}/quality-review-task-${task_n}.result
    EXACTLY ONE of: QUALITY_PASS | QUALITY_FAIL
    No other content in the file — just the status word.
 

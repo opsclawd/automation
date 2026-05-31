@@ -108,6 +108,24 @@ describe('AntigravityAgentAdapter', () => {
     }
   });
 
+  it('registers the worktree as a workspace via --add-dir <cwd>', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('--add-dir');
+      expect(args).toContain(cwd);
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
   it('marks cancellation via AbortController as failed/cancelled_by_orchestrator', async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
