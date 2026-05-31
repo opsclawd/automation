@@ -17,7 +17,7 @@ const timeoutsSchema = z.object({
 });
 
 // Keep in sync with AgentRuntimeKind in @ai-sdlc/domain/agent-types.ts
-const agentRuntime = z.enum(['opencode', 'pi', 'antigravity']);
+const agentRuntime = z.enum(['opencode', 'pi', 'antigravity', 'claude-code']);
 
 const nonBlankString = z.string().trim().min(1);
 

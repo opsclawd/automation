@@ -153,6 +153,17 @@ describe('agent config schema', () => {
     } as (typeof cfg.agent.profiles)['opencode-frontier'];
     expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
   });
+
+  it('accepts a claude-code runtime profile', () => {
+    const cfg = structuredClone(baseValid);
+    cfg.agent.profiles['claude-reviewer'] = {
+      runtime: 'claude-code',
+      provider: 'anthropic',
+      model: 'default',
+      timeoutMinutes: 45,
+    } as (typeof cfg.agent.profiles)['opencode-frontier'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
 });
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
