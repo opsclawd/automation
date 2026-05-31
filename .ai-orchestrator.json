@@ -46,15 +46,15 @@
         "timeoutMinutes": 30
       },
       "reviewer": {
-        "runtime": "opencode",
-        "provider": "ollama-cloud",
-        "model": "deepseek-v4-pro",
+        "runtime": "antigravity",
+        "provider": "google",
+        "model": "gemini-3.1-pro-high",
         "timeoutMinutes": 30
       },
       "task-reviewer": {
-        "runtime": "opencode",
-        "provider": "ollama-cloud",
-        "model": "kimi-k2.6",
+        "runtime": "antigravity",
+        "provider": "google",
+        "model": "gemini-3.1-pro",
         "timeoutMinutes": 30
       },
       "pi-qwen-local": {
@@ -65,12 +65,6 @@
         "promptBudgetTokens": 40000,
         "outputBudgetTokens": 8000,
         "timeoutMinutes": 30
-      },
-      "antigravity-reviewer": {
-        "runtime": "antigravity",
-        "provider": "google",
-        "model": "default",
-        "timeoutMinutes": 45
       }
     },
     "phaseProfiles": {
@@ -80,11 +74,7 @@
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "builder", "fallbackProfile": "senior-fallback" },
-      "whole-pr-review": {
-        "profile": "reviewer",
-        "fallbackProfile": "antigravity-reviewer",
-        "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
-      },
+      "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "junior" },
       "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
       "extract": { "profile": "pi-qwen-local", "fallbackProfile": "junior" },
