@@ -11,6 +11,7 @@ export interface ExternalCliRunInput {
   bin: string;
   args: string[];
   input?: string;
+  env?: Record<string, string>;
   cwd: string;
   artifactsDir: string;
   model: string;
@@ -51,9 +52,23 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     all: false,
     detached: input.detached ?? false,
     ...(input.input !== undefined ? { input: input.input } : {}),
+    ...(input.env !== undefined ? { env: input.env } : {}),
     ...(cancelSignal ? { cancelSignal } : {}),
     forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
   });
+
+  // Kill process group on cancel/abort while the PID is still provably alive.
+  // This avoids the PID-reuse race that exists in the finally-block kill below.
+  cancelSignal?.addEventListener('abort', () => {
+    if (input.detached) {
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // ESRCH = already dead, ignore
+      }
+    }
+  });
+
   try {
     const r = await child;
     stdout = r.stdout ?? '';
@@ -74,7 +89,10 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     exitCode = 1;
     stderr = String((e as Error).message);
   } finally {
-    if (outcome !== 'success') {
+    // Safety net: only meaningful for detached children (process-group leaders).
+    // Non-detached children are not PGIDs, so kill(-pid) would be ESRCH or
+    // worse, could hit a recycled PID's group. Guard with input.detached.
+    if (outcome !== 'success' && input.detached) {
       try {
         if (child.pid) process.kill(-child.pid, 'SIGKILL');
       } catch (e) {

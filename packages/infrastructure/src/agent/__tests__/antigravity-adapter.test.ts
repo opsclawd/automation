@@ -73,14 +73,13 @@ describe('AntigravityAgentAdapter', () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
-      process.env.AGY_LOG_DIR = logDir;
-      const promptPath = join(cwd, 'prompt.md');
-      writeFileSync(promptPath, 'REVIEW THIS PR DIFF');
       const adapter = new AntigravityAgentAdapter({
         binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
         artifactsDir: cwd,
-        skipPermissions: true,
+        env: { AGY_LOG_DIR: logDir },
       });
+      const promptPath = join(cwd, 'prompt.md');
+      writeFileSync(promptPath, 'REVIEW THIS PR DIFF');
       await adapter.invoke(req(cwd, { promptPath }));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
@@ -88,44 +87,23 @@ describe('AntigravityAgentAdapter', () => {
       expect(args).not.toContain('REVIEW THIS PR DIFF');
       expect(stdin).toBe('REVIEW THIS PR DIFF');
     } finally {
-      delete process.env.AGY_LOG_DIR;
       rmSync(logDir, { recursive: true, force: true });
     }
   });
 
-  it('includes --dangerously-skip-permissions when skipPermissions is true', async () => {
+  it('includes --dangerously-skip-permissions in args', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
-      process.env.AGY_LOG_DIR = logDir;
       const adapter = new AntigravityAgentAdapter({
         binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
         artifactsDir: cwd,
-        skipPermissions: true,
+        env: { AGY_LOG_DIR: logDir },
       });
       await adapter.invoke(req(cwd));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       expect(args).toContain('--dangerously-skip-permissions');
     } finally {
-      delete process.env.AGY_LOG_DIR;
-      rmSync(logDir, { recursive: true, force: true });
-    }
-  });
-
-  it('omits --dangerously-skip-permissions by default', async () => {
-    const cwd = makeWorktree();
-    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
-    try {
-      process.env.AGY_LOG_DIR = logDir;
-      const adapter = new AntigravityAgentAdapter({
-        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
-        artifactsDir: cwd,
-      });
-      await adapter.invoke(req(cwd));
-      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
-      expect(args).not.toContain('--dangerously-skip-permissions');
-    } finally {
-      delete process.env.AGY_LOG_DIR;
       rmSync(logDir, { recursive: true, force: true });
     }
   });
@@ -156,7 +134,7 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.outcome).toBe('timeout');
   });
 
-  it('force-kills a SIGTERM-ignoring child within grace period', { timeout: 20_000 }, async () => {
+  it('force-kills a SIGTERM-ignoring child within grace period', { timeout: 15_000 }, async () => {
     const cwd = makeWorktree();
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-hang.sh'),
@@ -167,6 +145,7 @@ describe('AntigravityAgentAdapter', () => {
     const r = await adapter.invoke(req(cwd));
     const elapsed = Date.now() - start;
     expect(r.outcome).toBe('timeout');
-    expect(elapsed).toBeLessThan(15_000);
+    expect(elapsed).toBeGreaterThan(4_000);
+    expect(elapsed).toBeLessThan(10_000);
   });
 });

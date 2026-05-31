@@ -7,7 +7,7 @@ export interface AntigravityAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
   timeoutMsDefault?: number;
-  skipPermissions?: boolean;
+  env?: Record<string, string>;
 }
 
 export class AntigravityAgentAdapter implements AgentPort {
@@ -17,11 +17,7 @@ export class AntigravityAgentAdapter implements AgentPort {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
 
-    const args: string[] = [];
-    if (this.opts.skipPermissions) {
-      args.push('--dangerously-skip-permissions');
-    }
-    args.push('--print', '-');
+    const args = ['--dangerously-skip-permissions', '--print', '-'];
     return runExternalCli({
       runtime: 'antigravity',
       bin,
@@ -31,6 +27,7 @@ export class AntigravityAgentAdapter implements AgentPort {
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
       model: request.model ?? '',
+      ...(this.opts.env !== undefined ? { env: this.opts.env } : {}),
       ...(request.provider !== undefined ? { provider: request.provider } : {}),
       ...(this.opts.timeoutMsDefault !== undefined
         ? { timeoutMsDefault: this.opts.timeoutMsDefault }

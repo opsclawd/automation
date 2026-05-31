@@ -40,13 +40,13 @@ A compounding factor: the timeout-triggered fallback mechanism (#150) inherits t
 ## Files Changed
 
 | File | Change |
-|---|---|
-| `packages/infrastructure/src/agent/external-cli-runner.ts` | Added `forceKillAfterDelay: 5_000`, `detached: true`, process-group cleanup in `finally` block + `forceKillAfterDelayMs` config option |
-| `packages/infrastructure/src/agent/antigravity-adapter.ts` | Changed args to `['--dangerously-skip-permissions', '--print', '-']`, added `input: prompt` for stdin delivery |
+|---|---|---|
+| `packages/infrastructure/src/agent/external-cli-runner.ts` | Added `forceKillAfterDelay: 5_000`, `detached: true`, abort-event-listener group kill (avoids PID-reuse race), `finally` block guarded by `input.detached`, `env` passthrough, `forceKillAfterDelayMs` config option |
+| `packages/infrastructure/src/agent/antigravity-adapter.ts` | Changed args to unconditional `['--dangerously-skip-permissions', '--print', '-']`, added `input: prompt` for stdin delivery, added `env` option passthrough |
 | `packages/infrastructure/src/agent/__fixtures__/fake-agy-success.sh` | Updated to consume stdin and report character count |
 | `packages/infrastructure/src/agent/__fixtures__/fake-agy-hang.sh` | **New** — ignores SIGTERM, sleeps 300s, for force-kill test |
 | `packages/infrastructure/src/agent/__fixtures__/fake-agy-args-logger.sh` | **New** — captures args and stdin to files, for content-level test assertions |
-| `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts` | Rewrote prompt-via-argv test to prompt-via-stdin, added `--dangerously-skip-permissions` test, added force-kill test, fixture output uses per-test tmpdirs |
+| `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts` | Rewrote prompt-via-argv test to prompt-via-stdin, added `--dangerously-skip-permissions` test, added force-kill test (tightened bounds), fixture output uses per-test tmpdirs via `env` option (no `process.env` mutation) |
 
 ## Decisions and Trade-offs
 
@@ -62,15 +62,15 @@ The process-leak fix could have gone in the adapter alone (bypassing `runExterna
 
 ### Decision 2: `detached: true` + process-group `kill(-pid)` as safety net
 
-Two layers of cleanup:
+Three layers of cleanup:
 
 1. **execa's `forceKillAfterDelay: 5_000`** — sends SIGTERM on cancel, escalates to SIGKILL after 5s if the child hasn't exited. Handles the main process.
 
-2. **`process.kill(-child.pid, 'SIGKILL')` in `finally`** — kills the entire process group. Handles sub-processes that `agy` may have spawned.
+2. **Abort event listener** — when the cancel signal fires (timeout or orchestration abort), kills the process group via `process.kill(-child.pid, 'SIGKILL')`. Runs while the child PID is still provably alive (before `await child` resolves), avoiding the PID-reuse race that exists in the `finally`-block kill.
 
-The `finally` block is the safety net: even if something unexpected happens (execa bug, promise rejection path), no process group survives. The `try/catch` handles `ESRCH` (process already exited).
+3. **`process.kill(-child.pid, 'SIGKILL')` in `finally`** — safety net for non-cancel failure paths. Guarded by `outcome !== 'success' && input.detached` to avoid hitting non-existent or recycled process groups on non-detached callers.
 
-**Important nuance:** The `finally` block runs on *every* invocation, including success. Early review feedback flagged this as potentially aggressive (theoretical PID reuse race). The guard `if (outcome !== 'success')` was added to limit it to failed/timeout/cancelled paths only. On the success path, the child has already exited cleanly, so the kill is a no-op (ESRCH caught).
+**Important nuance:** The `finally` block is guarded by `input.detached` because only detached children are process-group leaders. For non-detached callers, `kill(-pid)` targets a non-existent group → ESRCH no-op. The guard makes this dependency explicit. The abort event listener runs *before* the child is reaped, so the PID is valid — this eliminates the PID-reuse race for the cancel path. The `finally` block remains as a safety net for other failure modes (execa throws, non-cancel errors).
 
 ### Decision 3: 5-second grace period between SIGTERM and SIGKILL
 
@@ -83,7 +83,9 @@ The `finally` block is the safety net: even if something unexpected happens (exe
 
 ### Decision 4: `--dangerously-skip-permissions` and `--print -` (unverifiable in CI)
 
-The adapter now passes `['--dangerously-skip-permissions', '--print', '-']` and pipes the prompt via `input`. These flags were identified in issue comment investigation but **cannot be verified against the real `agy` binary in CI** — tests use fake shims that accept any arguments.
+The adapter unconditionally passes `['--dangerously-skip-permissions', '--print', '-']` and pipes the prompt via `input`. These flags were identified in issue comment investigation but **cannot be verified against the real `agy` binary in CI** — tests use fake shims that accept any arguments.
+
+The flag is unconditional (not gated by an option) because defaulting to `false` would make the fix inert in production — the production caller (`compose.ts`) does not pass any permissions option. If `agy` doesn't support the flag, the force-kill fix at least prevents orphan accumulation.
 
 **Risk mitigation:** Even if these flags are wrong and `agy` still hangs in production, the force-kill fix prevents orphaned processes. The run will still fail (timeout out) but won't leak processes.
 
@@ -97,18 +99,32 @@ Review feedback identified that the original fixture wrote output files to the s
 
 ### `external-cli-runner.ts` — the force-kill + process-group cleanup
 
-The `runExternalCli` function now spawns the child process with `detached: true` and `forceKillAfterDelay`:
+The `runExternalCli` function now spawns the child process with `detached: true`, `forceKillAfterDelay`, and an abort event listener that kills the process group while the PID is still valid:
 
 ```typescript
 const child = execa(input.bin, input.args, {
   cwd: input.cwd,
   reject: false,
   all: false,
-  detached: true,
+  detached: input.detached ?? false,
   ...(input.input !== undefined ? { input: input.input } : {}),
+  ...(input.env !== undefined ? { env: input.env } : {}),
   ...(cancelSignal ? { cancelSignal } : {}),
   forceKillAfterDelay: input.forceKillAfterDelayMs ?? 5_000,
 });
+
+// Kill process group on cancel/abort while PID is still provably alive.
+// Avoids the PID-reuse race that would exist if we only killed in finally.
+cancelSignal?.addEventListener('abort', () => {
+  if (input.detached) {
+    try {
+      if (child.pid) process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      // ESRCH = already dead, ignore
+    }
+  }
+});
+
 try {
   const r = await child;
   // ... process result (stdout, stderr, exitCode, isCanceled) ...
@@ -117,11 +133,14 @@ try {
   exitCode = 1;
   stderr = String((e as Error).message);
 } finally {
-  if (outcome !== 'success') {
+  // Safety net: only for detached children (process-group leaders).
+  // The abort listener handles the cancel path while PID is valid;
+  // this catches non-cancel failures where PID reuse is a concern.
+  if (outcome !== 'success' && input.detached) {
     try {
       if (child.pid) process.kill(-child.pid, 'SIGKILL');
-    } catch {
-      // ESRCH = process already dead, ignore
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ESRCH') throw e;
     }
   }
 }
@@ -130,7 +149,8 @@ try {
 Key behaviors:
 - `detached: true` puts the child in its own process group, allowing `kill(-pid)` to target the entire group
 - `forceKillAfterDelay: 5_000` escalates SIGTERM → SIGKILL after 5 seconds
-- The `finally` block only runs on non-success paths (thanks to review feedback)
+- Abort event listener kills the process group immediately on cancel, while PID is still valid (no PID-reuse race)
+- The `finally` block only runs on non-success paths AND only for detached callers
 - `kill(-child.pid)` targets the process group (negative PID sends signal to the group)
 - ESRCH errors are silently swallowed (process already dead = desired state)
 
@@ -146,6 +166,7 @@ return runExternalCli({
   cwd: request.cwd,
   artifactsDir: this.opts.artifactsDir,
   model: request.model ?? '',
+  ...(this.opts.env !== undefined ? { env: this.opts.env } : {}),
   ...(request.provider !== undefined ? { provider: request.provider } : {}),
   ...(this.opts.timeoutMsDefault !== undefined
     ? { timeoutMsDefault: this.opts.timeoutMsDefault }
@@ -154,7 +175,7 @@ return runExternalCli({
 });
 ```
 
-The `input` field is passed through to execa's options, which writes it to the child's stdin pipe synchronously at spawn time. The `ExternalCliRunInput` interface already had `input?: string` — the runner already passed it through.
+The `input` field is passed through to execa's options, which writes it to the child's stdin pipe synchronously at spawn time. The `ExternalCliRunInput` interface already had `input?: string` — the runner already passed it through. The `env` option is passed for per-test environment configuration (e.g., `AGY_LOG_DIR`), avoiding global `process.env` mutation.
 
 ### Test fixtures
 
@@ -238,6 +259,26 @@ The original implementation sent `process.kill(-child.pid, 'SIGKILL')` in the `f
 
 Originally `forceKillAfterDelay: 5_000` was hardcoded. Review feedback requested configurable grace period. Added `forceKillAfterDelayMs?: number` to `ExternalCliRunInput` with `input.forceKillAfterDelayMs ?? 5_000` as the default.
 
+### 8. PID-reuse race in the `finally`-block group kill
+
+The `process.kill(-child.pid, 'SIGKILL')` in `finally` fires *after* `await child` resolves. On failed/timeout/cancelled paths, execa has already reaped the child PID, so the PID/PGID can be recycled before the line executes — potentially signaling an unrelated process group.
+
+**Fix:** Two layers of mitigation:
+1. **Abort event listener** — `cancelSignal?.addEventListener('abort', ...)` kills the process group while the child PID is still provably alive (before `await child` resolves). This eliminates the race for the cancel path.
+2. **`input.detached` guard** — the `finally` block group kill is now guarded by `outcome !== 'success' && input.detached`. For non-detached callers, `kill(-child.pid)` is always ESRCH (not a group leader) so the guard removes that class of issue entirely. The `finally` block still fires for non-cancel failures (execa throws, unexpected errors).
+
+### 9. `forceKillAfterDelay` and group-kill only benefit detached callers
+
+`forceKillAfterDelay` and the process-group kill apply to all `runExternalCli` callers, but the group-kill is only meaningful for detached children (process-group leaders). For non-detached callers:
+- `forceKillAfterDelay` still works — the main process gets SIGTERM → SIGKILL
+- But `kill(-child.pid)` targets a non-existent group → ESRCH no-op
+
+The abort event listener and `finally` block are both guarded by `input.detached`. The "fixes the bug class universally" claim is accurate for `forceKillAfterDelay` (main process cleanup) but the grandchild-reaping benefit requires opting into `detached: true`.
+
+### 10. `env` passthrough for test environment isolation
+
+Tests that use `fake-agy-args-logger.sh` previously mutated `process.env.AGY_LOG_DIR` and cleaned up in `finally`. This is a latent footgun if tests ever run concurrently. Fix: plumbed an `env` passthrough through `AntigravityAdapterOptions` → `ExternalCliRunInput` → execa's `env` option. Tests now pass `env: { AGY_LOG_DIR: logDir }` instead of mutating the global environment.
+
 ## Modifying This Code
 
 ### Adding a new adapter that uses `runExternalCli`
@@ -250,7 +291,7 @@ Originally `forceKillAfterDelay: 5_000` was hardcoded. Review feedback requested
 
 ### Changing the force-kill behavior
 
-The grace period is configurable per-invocation via `ExternalCliRunInput.forceKillAfterDelayMs`. To disable the process-group kill in `finally`, remove or guard the `process.kill(-child.pid, 'SIGKILL')` block. Note that `forceKillAfterDelay` is an execa feature — if you remove `detached: true`, the process-group kill via `kill(-pid)` will no longer work (it requires the child to be in its own process group).
+The grace period is configurable per-invocation via `ExternalCliRunInput.forceKillAfterDelayMs`. The process-group kill in `finally` is guarded by `input.detached` — it only fires for detached callers. If you remove `detached: true`, the group-kill is a no-op (ESRCH), and only the main-process `forceKillAfterDelay` applies. The abort event listener also requires `detached: true` to fire.
 
 ### If `agy` still hangs in production
 
