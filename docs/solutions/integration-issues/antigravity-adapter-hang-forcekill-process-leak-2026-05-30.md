@@ -66,7 +66,7 @@ Three layers of cleanup:
 
 1. **execa's `forceKillAfterDelay: 5_000`** — sends SIGTERM on cancel, escalates to SIGKILL after 5s if the child hasn't exited. Handles the main process.
 
-2. **Abort event listener** — when the cancel signal fires (timeout or orchestration abort), kills the process group via `process.kill(-child.pid, 'SIGKILL')`. Runs while the child PID is still provably alive (before `await child` resolves), avoiding the PID-reuse race that exists in the `finally`-block kill.
+2. **Abort event listener** — when the cancel signal fires (timeout or orchestration abort), sends SIGTERM to the process group via `process.kill(-child.pid, 'SIGTERM')`. Runs while the child PID is still provably alive (before `await child` resolves), avoiding the PID-reuse race that exists in the `finally`-block kill. SIGKILL escalation is handled by execa's `forceKillAfterDelay` after the grace period.
 
 3. **`process.kill(-child.pid, 'SIGKILL')` in `finally`** — safety net for non-cancel failure paths. Guarded by `outcome !== 'success' && input.detached` to avoid hitting non-existent or recycled process groups on non-detached callers.
 
@@ -118,7 +118,7 @@ const child = execa(input.bin, input.args, {
 cancelSignal?.addEventListener('abort', () => {
   if (input.detached) {
     try {
-      if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      if (child.pid) process.kill(-child.pid, 'SIGTERM');
     } catch {
       // ESRCH = already dead, ignore
     }
