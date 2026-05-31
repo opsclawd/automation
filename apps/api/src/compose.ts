@@ -38,6 +38,7 @@ import {
   OpenCodeAgentAdapter,
   PiAgentAdapter,
   AntigravityAgentAdapter,
+  ClaudeCodeAgentAdapter,
 } from '@ai-sdlc/infrastructure';
 
 const classifyExitAdapter = (
@@ -218,6 +219,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       );
       if (needsAntigravity) {
         adapters.antigravity = new AntigravityAgentAdapter({
+          artifactsDir: join(runsDir, 'agent-artifacts'),
+        });
+      }
+      const needsClaudeCode = Object.values(config.agent.profiles).some(
+        (p) => p.runtime === 'claude-code',
+      );
+      if (needsClaudeCode) {
+        adapters['claude-code'] = new ClaudeCodeAgentAdapter({
           artifactsDir: join(runsDir, 'agent-artifacts'),
         });
       }

@@ -8,3 +8,4 @@ export { PiAgentAdapter, type PiAdapterOptions } from './pi-adapter.js';
 export { testQuotaPatterns, QUOTA_PATTERNS } from './quota-patterns.js';
 export { runExternalCli, type ExternalCliRunInput } from './external-cli-runner.js';
 export { AntigravityAgentAdapter, type AntigravityAdapterOptions } from './antigravity-adapter.js';
+export { ClaudeCodeAgentAdapter, type ClaudeCodeAdapterOptions } from './claude-code-adapter.js';

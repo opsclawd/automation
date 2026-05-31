@@ -1,4 +1,4 @@
-export type AgentRuntimeKind = 'opencode' | 'pi' | 'antigravity';
+export type AgentRuntimeKind = 'opencode' | 'pi' | 'antigravity' | 'claude-code';
 
 export type AgentProfileName = string & { readonly __brand: 'AgentProfileName' };
 export function AgentProfileName(v: string): AgentProfileName {

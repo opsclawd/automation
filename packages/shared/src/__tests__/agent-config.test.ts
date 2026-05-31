@@ -150,7 +150,18 @@ describe('agent config schema', () => {
       provider: 'google',
       model: 'default',
       timeoutMinutes: 45,
-    } as (typeof cfg.agent.profiles)['opencode-frontier'];
+    };
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('accepts a claude-code runtime profile', () => {
+    const cfg = structuredClone(baseValid);
+    cfg.agent.profiles['claude-reviewer'] = {
+      runtime: 'claude-code',
+      provider: 'anthropic',
+      model: 'default',
+      timeoutMinutes: 45,
+    };
     expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
   });
 });

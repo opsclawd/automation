@@ -65,13 +65,23 @@
         "promptBudgetTokens": 40000,
         "outputBudgetTokens": 8000,
         "timeoutMinutes": 30
+      },
+      "claude-reviewer": {
+        "runtime": "claude-code",
+        "provider": "anthropic",
+        "model": "default",
+        "timeoutMinutes": 45
       }
     },
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
       "implement": { "profile": "builder", "fallbackProfile": "junior" },
-      "quality-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
+      "quality-review": {
+        "profile": "task-reviewer",
+        "fallbackProfile": "claude-reviewer",
+        "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
+      },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "builder", "fallbackProfile": "senior-fallback" },
       "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "junior" },
