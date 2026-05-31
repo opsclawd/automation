@@ -15,7 +15,7 @@ export class ClaudeCodeAgentAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     const bin = this.opts.binaryPath ?? 'claude';
     const prompt = readFileSync(request.promptPath, 'utf-8');
-    const args = ['-p', '--permission-mode', 'plan', '--output-format', 'text'];
+    const args = ['-p', '--permission-mode', 'bypassPermissions', '--output-format', 'text'];
     if (request.model && request.model !== 'default') {
       args.push('--model', request.model);
     }

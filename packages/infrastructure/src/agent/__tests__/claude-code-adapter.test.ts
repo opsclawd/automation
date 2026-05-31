@@ -69,7 +69,12 @@ describe('ClaudeCodeAgentAdapter', () => {
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('Invalid API key');
   });
 
-  it('uses read-only plan permission mode and never bypasses permissions', async () => {
+  it('uses bypassPermissions mode so headless runs can write artifacts', async () => {
+    // The plan-design/plan-write phases must write files (e.g. design.md) and
+    // explore the repo with Bash. In non-interactive `-p` mode there is nobody
+    // to answer a permission prompt, so any tool that isn't pre-approved is
+    // auto-denied. Plan mode is read-only and acceptEdits still blocks Bash,
+    // so bypassPermissions is required for parity with the other adapters.
     const cwd = makeWorktree();
     const argLog = join(cwd, 'args.txt');
     const shim = join(cwd, 'shim.sh');
@@ -79,13 +84,11 @@ describe('ClaudeCodeAgentAdapter', () => {
     await adapter.invoke(req(cwd));
     const args = readFileSync(argLog, 'utf-8');
     expect(args).toContain('--permission-mode');
-    expect(args).toContain('plan');
+    expect(args).toContain('bypassPermissions');
     expect(args).toContain('-p');
     expect(args).toContain('--output-format');
     expect(args).toContain('text');
-    expect(args).not.toContain('bypassPermissions');
-    expect(args).not.toContain('--dangerously-skip-permissions');
-    expect(args).not.toContain('--allow-dangerously-skip-permissions');
+    expect(args).not.toContain('plan');
   });
 
   it('passes prompt content via stdin, not as a CLI argument', async () => {
