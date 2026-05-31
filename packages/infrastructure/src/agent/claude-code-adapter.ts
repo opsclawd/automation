@@ -23,6 +23,7 @@ export class ClaudeCodeAgentAdapter implements AgentPort {
       runtime: 'claude-code',
       bin,
       args,
+      input: '',
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
       model: request.model ?? '',

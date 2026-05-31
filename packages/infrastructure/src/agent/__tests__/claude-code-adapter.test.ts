@@ -99,7 +99,7 @@ describe('ClaudeCodeAgentAdapter', () => {
       shim,
       `#!/usr/bin/env bash
 printf '%s\\n' "$@" > "${argLog}"
-cat > "${stdinLog}" < /dev/null
+cat > "${stdinLog}"
 exit 0
 `,
     );
