@@ -9,3 +9,4 @@ export * from './fake-validation-run-repository.js';
 export * from './fake-artifact-store.js';
 export * from './fake-agent-port.js';
 export * from './fake-agent-invocation-port.js';
+export * from './fake-failure-repository.js';
