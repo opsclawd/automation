@@ -150,7 +150,7 @@ describe('agent config schema', () => {
       provider: 'google',
       model: 'default',
       timeoutMinutes: 45,
-    } as (typeof cfg.agent.profiles)['opencode-frontier'];
+    };
     expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
   });
 
@@ -161,7 +161,7 @@ describe('agent config schema', () => {
       provider: 'anthropic',
       model: 'default',
       timeoutMinutes: 45,
-    } as (typeof cfg.agent.profiles)['opencode-frontier'];
+    };
     expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
   });
 });
