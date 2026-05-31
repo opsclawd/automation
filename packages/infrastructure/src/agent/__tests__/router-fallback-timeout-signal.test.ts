@@ -109,6 +109,7 @@ describe('AgentRuntimeRouter fallback timeout signal', () => {
     const fallbackRow = rows.find((r) => r.profile === 'pi-local');
     expect(primaryRow).toBeDefined();
     expect(fallbackRow).toBeDefined();
+    expect(primaryRow!.outcome).toBe('timeout');
     expect(fallbackRow!.outcome).toBe('success');
     expect(fallbackRow!.fallbackOfInvocationId).toBeDefined();
   });
