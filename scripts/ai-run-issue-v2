@@ -1570,31 +1570,18 @@ ${QUALITY_REVIEWER_PROMPT}"
 
     log "  Task ${task_n}: fix review..."
 
-    # Read findings from .md if present (preferred), else fall back to the
-    # .log (the agent's full transcript). Without this fallback, the missing
-    # .md silently produces empty findings and the fix-review agent reports
-    # 'no fixes needed' against real review failures (observed on issue #4
-    # task 1 where SPEC_FAIL + QUALITY_FAIL still produced DONE_NO_FIXES_NEEDED).
     local spec_findings="" quality_findings=""
     local spec_md="${WORKTREE_DIR}/spec-review-task-${task_n}.md"
     local quality_md="${WORKTREE_DIR}/quality-review-task-${task_n}.md"
-    local spec_log="${ISSUES_DIR}/spec-review-task-${task_n}.log"
-    local quality_log="${ISSUES_DIR}/quality-review-task-${task_n}.log"
-
     if [[ -s "$spec_md" ]]; then
       spec_findings=$(cat "$spec_md")
-    elif [[ -s "$spec_log" ]]; then
-      # Strip ANSI escapes (\033[...m) so the agent reads clean prose.
-      spec_findings=$(sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$spec_log")
     fi
     if [[ -s "$quality_md" ]]; then
       quality_findings=$(cat "$quality_md")
-    elif [[ -s "$quality_log" ]]; then
-      quality_findings=$(sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$quality_log")
     fi
 
     if [[ -z "$spec_findings" && -z "$quality_findings" ]]; then
-      orchestrator_fail "Task ${task_n} fix-review has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings."
+      orchestrator_fail "Task ${task_n} fix-review has no findings to act on. Reviewer agents must write detailed findings."
     fi
 
     FIX_REVIEW_PROMPT="You are fixing review findings for Task ${task_n}: ${task_title}
