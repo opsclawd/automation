@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { classifyCommandKind, summarizeValidationFailure } from '../classify-validation.js';
+
+const FIXTURES = join(__dirname, '__fixtures__');
 
 describe('classifyCommandKind', () => {
   it.each([
@@ -81,5 +85,38 @@ describe('summarizeValidationFailure', () => {
       stdout: '',
     });
     expect(s).not.toMatch(/\s+$/m);
+  });
+
+  it('produces stable summary for real pnpm typecheck output', () => {
+    const stderr = readFileSync(join(FIXTURES, 'pnpm-typecheck-error.stderr'), 'utf-8');
+    const s = summarizeValidationFailure({
+      outcome: 'failed',
+      durationMs: 3200,
+      stderr,
+      stdout: '',
+    });
+    expect(s).toMatchSnapshot();
+  });
+
+  it('produces stable summary for real pnpm test output', () => {
+    const stdout = readFileSync(join(FIXTURES, 'pnpm-test-failure.stdout'), 'utf-8');
+    const s = summarizeValidationFailure({
+      outcome: 'failed',
+      durationMs: 2431,
+      stderr: '',
+      stdout,
+    });
+    expect(s).toMatchSnapshot();
+  });
+
+  it('produces stable summary for real pnpm lint output', () => {
+    const stderr = readFileSync(join(FIXTURES, 'pnpm-lint-error.stderr'), 'utf-8');
+    const s = summarizeValidationFailure({
+      outcome: 'failed',
+      durationMs: 1800,
+      stderr,
+      stdout: '',
+    });
+    expect(s).toMatchSnapshot();
   });
 });

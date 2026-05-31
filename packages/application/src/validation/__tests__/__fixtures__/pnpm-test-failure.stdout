@@ -1,0 +1,32 @@
+> project@1.0.0 test /home/user/project
+> vitest run
+
+ RUN  v1.3.1 /home/user/project
+
+ FAIL  src/__tests__/user.test.ts > createUser > should hash password
+
+Error: expect(received).toBe(expected)
+
+Expected: "hashed_password_value"
+Received: "plain_text_password"
+
+    at Object.<anonymous> (src/__tests__/user.test.ts:45:18)
+
+ FAIL  src/__tests__/auth.test.ts > login > should reject invalid credentials
+
+Error: expect(received).toBe(expected) // Object.is equality
+
+Expected: false
+Received: true
+
+    at auth.test.ts:62:24
+
+ FAIL  src/__tests__/user.test.ts > createUser > should handle null email
+
+Error: Cannot read properties of null (reading 'trim')
+
+    at createUser (src/models/user.ts:23:15)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Tests:       3 failed, 45 passed, 48 total
+Time:        2.431s

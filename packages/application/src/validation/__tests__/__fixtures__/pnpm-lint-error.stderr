@@ -1,0 +1,18 @@
+> project@1.0.0 lint /home/user/project
+> eslint . --ext .ts,.tsx
+
+/home/user/project/src/controllers/admin.ts
+  12:10  error  Unexpected var, use let or const  no-var
+  28:35  error  Missing semicolon              semi
+  41:2   error  'admin' is assigned a value but never used  no-unused-vars
+
+/home/user/project/src/utils/helpers.ts
+  55:14  error  Arrow function should not mutate variable  mutate-param
+  68:9   error  Unexpected use of +=                      prefer-assign-operator
+
+/home/user/project/src/services/legacy.ts
+  3:8    error  'deprecated' is defined but never used      no-unused-vars
+  19:22  error  Use ES modules import syntax                 import/prefer-default-export
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✖ 7 problems (7 errors, 0 warnings)

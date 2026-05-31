@@ -122,7 +122,30 @@ describe('validationRunToFailure', () => {
       ]),
       AT,
     );
-    expect(f!.artifacts).toEqual(['a.stdout', 'a.stderr', 'b.stdout', 'b.stderr']);
+    expect(f!.artifacts).toEqual([
+      'a.stdout',
+      'a.stderr',
+      'b.stdout',
+      'b.stderr',
+      'validation-result.json',
+    ]);
+  });
+
+  it('includes validation-result.json in artifacts', () => {
+    const f = validationRunToFailure(
+      run([
+        cmd({
+          command: 'pnpm build',
+          kind: 'build',
+          outcome: 'failed',
+          exitCode: 1,
+          stdoutPath: 'validate/0-build.stdout.log',
+          stderrPath: 'validate/0-build.stderr.log',
+        }),
+      ]),
+      AT,
+    );
+    expect(f!.artifacts).toContain('validation-result.json');
   });
 
   it('uses exit code in message when classifier is absent', () => {

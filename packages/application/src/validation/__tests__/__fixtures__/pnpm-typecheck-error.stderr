@@ -1,0 +1,17 @@
+src/controllers/user.ts:15:20 - error TS2345: Argument of type 'string | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+
+src/services/auth.ts:42:7 - error TS2322: Type 'User' is not assignable to type 'AuthUser'.
+  Property 'permissions' is missing in type 'User'.
+
+src/routes/index.ts:7:38 - error TS7006: Generic type 'Request' requires 1 type argument(s).
+
+src/middleware/logger.ts:3:25 - error TS7010: 'req', which lacks a return-type annotation, implicitly has an 'any' type.
+
+src/utils/format.ts:18:12 - error TS2575: No overload expects 2 arguments, but 1 were provided.
+
+src/validators/user.ts:29:5 - error TS2737: 'T' has a circular reference.
+
+src/app.ts:55:4 - error TS2564: 'CONFIG' is declared but never read.
+
+Found 7 errors in 5 files

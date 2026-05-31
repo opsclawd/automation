@@ -27,7 +27,10 @@ export function validationRunToFailure(run: ValidationRun, detectedAt: Date): Fa
   });
   const message = `${bad.length} validation command(s) failed: ${parts.join(', ')}. See validate/ logs.`;
 
-  const artifacts = bad.flatMap((c) => [c.stdoutPath, c.stderrPath]);
+  const artifacts = [
+    ...bad.flatMap((c) => [c.stdoutPath, c.stderrPath]).filter(Boolean),
+    'validation-result.json',
+  ];
 
   return {
     runUuid: run.runId,

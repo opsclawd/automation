@@ -1,0 +1,53 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`summarizeValidationFailure > produces stable summary for real pnpm lint output 1`] = `
+"> project@1.0.0 lint /home/user/project
+> eslint . --ext .ts,.tsx
+/home/user/project/src/controllers/admin.ts
+  12:10  error  Unexpected var, use let or const  no-var
+  28:35  error  Missing semicolon              semi
+  41:2   error  'admin' is assigned a value but never used  no-unused-vars
+/home/user/project/src/utils/helpers.ts
+  55:14  error  Arrow function should not mutate variable  mutate-param
+  68:9   error  Unexpected use of +=                      prefer-assign-operator
+/home/user/project/src/services/legacy.ts
+  3:8    error  'deprecated' is defined but never used      no-unused-vars
+  19:22  error  Use ES modules import syntax                 import/prefer-default-export
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✖ 7 problems (7 errors, 0 warnings)"
+`;
+
+exports[`summarizeValidationFailure > produces stable summary for real pnpm test output 1`] = `
+"> project@1.0.0 test /home/user/project
+> vitest run
+ RUN  v1.3.1 /home/user/project
+ FAIL  src/__tests__/user.test.ts > createUser > should hash password
+Error: expect(received).toBe(expected)
+Expected: "hashed_password_value"
+Received: "plain_text_password"
+    at Object.<anonymous> (src/__tests__/user.test.ts:45:18)
+ FAIL  src/__tests__/auth.test.ts > login > should reject invalid credentials
+Error: expect(received).toBe(expected) // Object.is equality
+Expected: false
+Received: true
+    at auth.test.ts:62:24
+ FAIL  src/__tests__/user.test.ts > createUser > should handle null email
+Error: Cannot read properties of null (reading 'trim')
+    at createUser (src/models/user.ts:23:15)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Tests:       3 failed, 45 passed, 48 total
+Time:        2.431s"
+`;
+
+exports[`summarizeValidationFailure > produces stable summary for real pnpm typecheck output 1`] = `
+"src/controllers/user.ts:15:20 - error TS2345: Argument of type 'string | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+src/services/auth.ts:42:7 - error TS2322: Type 'User' is not assignable to type 'AuthUser'.
+  Property 'permissions' is missing in type 'User'.
+src/routes/index.ts:7:38 - error TS7006: Generic type 'Request' requires 1 type argument(s).
+src/middleware/logger.ts:3:25 - error TS7010: 'req', which lacks a return-type annotation, implicitly has an 'any' type.
+src/utils/format.ts:18:12 - error TS2575: No overload expects 2 arguments, but 1 were provided.
+src/validators/user.ts:29:5 - error TS2737: 'T' has a circular reference.
+src/app.ts:55:4 - error TS2564: 'CONFIG' is declared but never read.
+Found 7 errors in 5 files"
+`;

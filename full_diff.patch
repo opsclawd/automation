@@ -1,0 +1,601 @@
+diff --git a/apps/api/src/compose.ts b/apps/api/src/compose.ts
+index 9009508..742e33f 100644
+--- a/apps/api/src/compose.ts
++++ b/apps/api/src/compose.ts
+@@ -158,6 +158,7 @@ export function composeRoot(opts: ComposeOptions): Container {
+   const runValidation = new RunValidation({
+     validation: validationAdapter,
+     validationRunRepository,
++    failureRepository,
+     idFactory: () => randomUUID(),
+     now: () => new Date(),
+   });
+diff --git a/packages/application/src/__tests__/run-validation.test.ts b/packages/application/src/__tests__/run-validation.test.ts
+index a52bcab..4ffca30 100644
+--- a/packages/application/src/__tests__/run-validation.test.ts
++++ b/packages/application/src/__tests__/run-validation.test.ts
+@@ -3,17 +3,21 @@ import { RunId, PhaseName } from '@ai-sdlc/domain';
+ import { RunValidation } from '../run-validation.js';
+ import { FakeValidationPort } from '../test-doubles/fake-validation-port.js';
+ import { FakeValidationRunRepository } from '../test-doubles/fake-validation-run-repository.js';
++import { FakeFailureRepository } from '../test-doubles/fake-failure-repository.js';
+ 
+ const RUN = RunId('44444444-4444-4444-4444-444444444444');
+ 
+ function makeUseCase(port: FakeValidationPort, repo: FakeValidationRunRepository) {
+   let n = 0;
+-  return new RunValidation({
++  const failureRepository = new FakeFailureRepository();
++  const useCase = new RunValidation({
+     validation: port,
+     validationRunRepository: repo,
++    failureRepository,
+     idFactory: () => `vrun-${++n}`,
+     now: () => new Date('2026-05-28T12:00:00Z'),
+   });
++  return { useCase, failureRepository };
+ }
+ 
+ function passResult(i: number, command: string) {
+@@ -49,7 +53,7 @@ describe('RunValidation', () => {
+     const port = new FakeValidationPort();
+     port.result = [passResult(0, 'pnpm build'), failResult(1, 'pnpm typecheck', 2)];
+     const repo = new FakeValidationRunRepository();
+-    const useCase = makeUseCase(port, repo);
++    const { useCase } = makeUseCase(port, repo);
+ 
+     const out = await useCase.execute({
+       runId: RUN,
+@@ -66,7 +70,7 @@ describe('RunValidation', () => {
+       'pnpm typecheck',
+     ]);
+     expect(out.validationRun.commands[1].outcome).toBe('failed');
+-    expect(out.validationRun.commands[0].kind).toBeUndefined();
++    expect(out.validationRun.commands[0].kind).toBe('build');
+     const persisted = repo.findById('vrun-1');
+     expect(persisted).not.toBeNull();
+     expect(persisted!.commands).toHaveLength(2);
+@@ -77,7 +81,8 @@ describe('RunValidation', () => {
+     const port = new FakeValidationPort();
+     port.result = [passResult(0, 'pnpm build')];
+     const repo = new FakeValidationRunRepository();
+-    const out = await makeUseCase(port, repo).execute({
++    const { useCase } = makeUseCase(port, repo);
++    const out = await useCase.execute({
+       runId: RUN,
+       phaseId: PhaseName('validate'),
+       cwd: '/work',
+@@ -91,8 +96,9 @@ describe('RunValidation', () => {
+   it('throws on an empty command list', async () => {
+     const port = new FakeValidationPort();
+     const repo = new FakeValidationRunRepository();
++    const { useCase } = makeUseCase(port, repo);
+     await expect(
+-      makeUseCase(port, repo).execute({
++      useCase.execute({
+         runId: RUN,
+         phaseId: PhaseName('validate'),
+         cwd: '/work',
+@@ -107,7 +113,8 @@ describe('RunValidation', () => {
+     const port = new FakeValidationPort();
+     port.result = [passResult(0, 'pnpm build')];
+     const repo = new FakeValidationRunRepository();
+-    await makeUseCase(port, repo).execute({
++    const { useCase } = makeUseCase(port, repo);
++    await useCase.execute({
+       runId: RUN,
+       phaseId: PhaseName('validate'),
+       cwd: '/work',
+@@ -121,4 +128,71 @@ describe('RunValidation', () => {
+       timeoutSeconds: 120,
+     });
+   });
++
++  it('classifies command kinds and emits a validation_failed Failure', async () => {
++    const port = new FakeValidationPort();
++    port.result = [
++      {
++        command: 'pnpm build',
++        exitCode: 0,
++        durationMs: 5,
++        stdout: 'ok',
++        stderr: '',
++        stdoutPath: 'validate/0-build.stdout.log',
++        stderrPath: 'validate/0-build.stderr.log',
++        outcome: 'passed',
++      },
++      {
++        command: 'pnpm typecheck',
++        exitCode: 2,
++        durationMs: 9,
++        stdout: '',
++        stderr: 'error TS2345',
++        stdoutPath: 'validate/1-typecheck.stdout.log',
++        stderrPath: 'validate/1-typecheck.stderr.log',
++        outcome: 'failed',
++      },
++    ];
++    const repo = new FakeValidationRunRepository();
++    const { useCase, failureRepository } = makeUseCase(port, repo);
++    const out = await useCase.execute({
++      runId: RUN,
++      phaseId: PhaseName('validate'),
++      cwd: '/work',
++      logDir: '/d',
++      commands: ['pnpm build', 'pnpm typecheck'],
++      timeoutSeconds: 300,
++    });
++    expect(out.validationRun.commands[0].kind).toBe('build');
++    expect(out.validationRun.commands[1].kind).toBe('typecheck');
++    expect(out.validationRun.commands[1].classifier).toContain('error TS2345');
++    expect(failureRepository.inserted).toHaveLength(1);
++    expect(failureRepository.inserted[0].kind).toBe('validation_failed');
++  });
++  it('emits no Failure when validation passes', async () => {
++    const port = new FakeValidationPort();
++    port.result = [
++      {
++        command: 'pnpm build',
++        exitCode: 0,
++        durationMs: 5,
++        stdout: '',
++        stderr: '',
++        stdoutPath: 'validate/0-build.stdout.log',
++        stderrPath: 'validate/0-build.stderr.log',
++        outcome: 'passed',
++      },
++    ];
++    const repo = new FakeValidationRunRepository();
++    const { useCase, failureRepository } = makeUseCase(port, repo);
++    await useCase.execute({
++      runId: RUN,
++      phaseId: PhaseName('validate'),
++      cwd: '/w',
++      logDir: '/d',
++      commands: ['pnpm build'],
++      timeoutSeconds: 300,
++    });
++    expect(failureRepository.inserted).toHaveLength(0);
++  });
+ });
+diff --git a/packages/application/src/index.ts b/packages/application/src/index.ts
+index 398f116..e572a07 100644
+--- a/packages/application/src/index.ts
++++ b/packages/application/src/index.ts
+@@ -11,3 +11,5 @@ export * from './prompts/index.js';
+ export * from './agent/validate-agent-contract.js';
+ export * from './results/index.js';
+ export * from './run-validation.js';
++export * from './validation/classify-validation.js';
++export * from './validation/validation-run-to-failure.js';
+diff --git a/packages/application/src/run-validation.ts b/packages/application/src/run-validation.ts
+index 72d0858..d5617cf 100644
+--- a/packages/application/src/run-validation.ts
++++ b/packages/application/src/run-validation.ts
+@@ -7,10 +7,15 @@ import {
+ } from '@ai-sdlc/domain';
+ import type { ValidationPort } from './ports/validation-port.js';
+ import type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
++import type { FailureRepositoryPort } from './ports.js';
++import { classifyCommandKind } from './validation/classify-validation.js';
++import { summarizeValidationFailure } from './validation/classify-validation.js';
++import { validationRunToFailure } from './validation/validation-run-to-failure.js';
+ 
+ export interface RunValidationDeps {
+   validation: ValidationPort;
+   validationRunRepository: ValidationRunRepositoryPort;
++  failureRepository: FailureRepositoryPort;
+   idFactory: () => string;
+   now: () => Date;
+ }
+@@ -71,6 +76,17 @@ export class RunValidation {
+       stdoutPath: r.stdoutPath,
+       stderrPath: r.stderrPath,
+       outcome: r.outcome,
++      kind: classifyCommandKind(r.command),
++      ...(r.outcome !== 'passed'
++        ? {
++            classifier: summarizeValidationFailure({
++              outcome: r.outcome,
++              durationMs: r.durationMs,
++              stderr: r.stderr,
++              stdout: r.stdout,
++            }),
++          }
++        : {}),
+     }));
+ 
+     const validationRun: ValidationRun = {
+@@ -83,6 +99,9 @@ export class RunValidation {
+     };
+     this.deps.validationRunRepository.save(validationRun);
+ 
++    const failure = validationRunToFailure(validationRun, this.deps.now());
++    if (failure) this.deps.failureRepository.insert(failure);
++
+     return { validationRun, passed: validationRunPassed(validationRun) };
+   }
+ }
+diff --git a/packages/application/src/test-doubles/fake-failure-repository.ts b/packages/application/src/test-doubles/fake-failure-repository.ts
+new file mode 100644
+index 0000000..e1e1f5e
+--- /dev/null
++++ b/packages/application/src/test-doubles/fake-failure-repository.ts
+@@ -0,0 +1,14 @@
++import type { Failure } from '@ai-sdlc/domain';
++import type { FailureRepositoryPort } from '../ports.js';
++
++export class FakeFailureRepository implements FailureRepositoryPort {
++  inserted: Failure[] = [];
++
++  insert(failure: Failure): void {
++    this.inserted.push(failure);
++  }
++
++  findLatestByRun(runUuid: string): Failure | undefined {
++    return [...this.inserted].reverse().find((f) => f.runUuid === runUuid);
++  }
++}
+diff --git a/packages/application/src/test-doubles/index.ts b/packages/application/src/test-doubles/index.ts
+index cebd5ff..dd657e3 100644
+--- a/packages/application/src/test-doubles/index.ts
++++ b/packages/application/src/test-doubles/index.ts
+@@ -9,3 +9,4 @@ export * from './fake-validation-run-repository.js';
+ export * from './fake-artifact-store.js';
+ export * from './fake-agent-port.js';
+ export * from './fake-agent-invocation-port.js';
++export * from './fake-failure-repository.js';
+diff --git a/packages/application/src/validation/__tests__/classify-validation.test.ts b/packages/application/src/validation/__tests__/classify-validation.test.ts
+new file mode 100644
+index 0000000..f3bf33f
+--- /dev/null
++++ b/packages/application/src/validation/__tests__/classify-validation.test.ts
+@@ -0,0 +1,85 @@
++import { describe, it, expect } from 'vitest';
++import { classifyCommandKind, summarizeValidationFailure } from '../classify-validation.js';
++
++describe('classifyCommandKind', () => {
++  it.each([
++    ['pnpm build', 'build'],
++    ['pnpm lint', 'lint'],
++    ['pnpm typecheck', 'typecheck'],
++    ['pnpm test', 'test'],
++    ['pnpm test:bash', 'test'],
++    ['tsc -p .', 'typecheck'],
++    ['eslint .', 'lint'],
++    ['echo hi', 'other'],
++  ] as const)('maps %s -> %s', (command, expected) => {
++    expect(classifyCommandKind(command)).toBe(expected);
++  });
++
++  it('matches typecheck before test/build to avoid substring collisions', () => {
++    expect(classifyCommandKind('pnpm typecheck:test')).toBe('typecheck');
++  });
++
++  it('matches vitest alias to test', () => {
++    expect(classifyCommandKind('npx vitest run')).toBe('test');
++  });
++
++  it('matches jest alias to test', () => {
++    expect(classifyCommandKind('npx jest')).toBe('test');
++  });
++
++  it('returns other for empty string', () => {
++    expect(classifyCommandKind('')).toBe('other');
++  });
++});
++
++describe('summarizeValidationFailure', () => {
++  it('summarizes a timeout from duration', () => {
++    const s = summarizeValidationFailure({
++      outcome: 'timed_out',
++      durationMs: 1500,
++      stderr: '',
++      stdout: '',
++    });
++    expect(s).toMatch(/timed out after 1500ms/i);
++  });
++
++  it('uses the tail of stderr for a failure', () => {
++    const s = summarizeValidationFailure({
++      outcome: 'failed',
++      durationMs: 10,
++      stderr: 'line1\nline2\nerror TS2345: bad\n',
++      stdout: '',
++    });
++    expect(s).toContain('error TS2345: bad');
++  });
++
++  it('falls back to stdout when stderr is empty', () => {
++    const s = summarizeValidationFailure({
++      outcome: 'failed',
++      durationMs: 10,
++      stderr: '',
++      stdout: 'FAIL src/x.test.ts',
++    });
++    expect(s).toContain('FAIL src/x.test.ts');
++  });
++
++  it('returns fallback message when both stderr and stdout are empty', () => {
++    const s = summarizeValidationFailure({
++      outcome: 'failed',
++      durationMs: 10,
++      stderr: '',
++      stdout: '',
++    });
++    expect(s).toBe('command failed with no captured output');
++  });
++
++  it('trims trailing whitespace from tail lines', () => {
++    const s = summarizeValidationFailure({
++      outcome: 'failed',
++      durationMs: 10,
++      stderr: '  error TS1  \n  error TS2  \n',
++      stdout: '',
++    });
++    expect(s).not.toMatch(/\s+$/m);
++  });
++});
+diff --git a/packages/application/src/validation/__tests__/validation-run-to-failure.test.ts b/packages/application/src/validation/__tests__/validation-run-to-failure.test.ts
+new file mode 100644
+index 0000000..e5a463a
+--- /dev/null
++++ b/packages/application/src/validation/__tests__/validation-run-to-failure.test.ts
+@@ -0,0 +1,135 @@
++import { describe, it, expect } from 'vitest';
++import {
++  RunId,
++  PhaseName,
++  type ValidationRun,
++  type ValidationCommandRecord,
++} from '@ai-sdlc/domain';
++import { validationRunToFailure } from '../validation-run-to-failure.js';
++
++const RUN = '55555555-5555-5555-5555-555555555555';
++const AT = new Date('2026-05-28T09:00:00Z');
++
++function cmd(o: Partial<ValidationCommandRecord> = {}): ValidationCommandRecord {
++  return {
++    command: 'pnpm build',
++    exitCode: 0,
++    durationMs: 10,
++    stdoutPath: 'validate/0-build.stdout.log',
++    stderrPath: 'validate/0-build.stderr.log',
++    outcome: 'passed',
++    kind: 'build',
++    ...o,
++  };
++}
++
++function run(commands: ValidationCommandRecord[]): ValidationRun {
++  return { id: 'v', runId: RunId(RUN), phaseId: PhaseName('validate'), startedAt: AT, commands };
++}
++
++describe('validationRunToFailure', () => {
++  it('returns null when the run passed', () => {
++    expect(validationRunToFailure(run([cmd()]), AT)).toBeNull();
++  });
++
++  it('returns validation_failed naming the failing command kinds', () => {
++    const f = validationRunToFailure(
++      run([
++        cmd(),
++        cmd({
++          command: 'pnpm typecheck',
++          kind: 'typecheck',
++          outcome: 'failed',
++          exitCode: 2,
++          classifier: '12 errors',
++          stdoutPath: 'validate/1-typecheck.stdout.log',
++          stderrPath: 'validate/1-typecheck.stderr.log',
++        }),
++      ]),
++      AT,
++    );
++    expect(f).not.toBeNull();
++    expect(f!.kind).toBe('validation_failed');
++    expect(f!.phase).toBe('validate');
++    expect(f!.message).toMatch(/typecheck/);
++    expect(f!.canRetry).toBe(true);
++    expect(f!.artifacts).toContain('validate/1-typecheck.stderr.log');
++    expect(f!.runUuid).toBe(RUN);
++    expect(f!.detectedAt).toBe(AT);
++  });
++
++  it('returns timeout when the only failures are timeouts', () => {
++    const f = validationRunToFailure(
++      run([
++        cmd({
++          command: 'pnpm test',
++          kind: 'test',
++          outcome: 'timed_out',
++          classifier: 'timed out after 1000ms',
++        }),
++      ]),
++      AT,
++    );
++    expect(f).not.toBeNull();
++    expect(f!.kind).toBe('timeout');
++  });
++
++  it('prefers validation_failed when both failures and timeouts exist', () => {
++    const f = validationRunToFailure(
++      run([
++        cmd({
++          command: 'pnpm typecheck',
++          kind: 'typecheck',
++          outcome: 'failed',
++          exitCode: 1,
++          classifier: '1 error',
++        }),
++        cmd({ command: 'pnpm test', kind: 'test', outcome: 'timed_out', classifier: 'timed out' }),
++      ]),
++      AT,
++    );
++    expect(f!.kind).toBe('validation_failed');
++    expect(f!.message).toMatch(/timed out|timeout/i);
++  });
++
++  it('includes suggestedAction text', () => {
++    const f = validationRunToFailure(
++      run([cmd({ command: 'pnpm build', kind: 'build', outcome: 'failed', exitCode: 1 })]),
++      AT,
++    );
++    expect(f!.suggestedAction).toContain('validate phase logs');
++  });
++
++  it('includes stdout and stderr paths from all failing commands in artifacts', () => {
++    const f = validationRunToFailure(
++      run([
++        cmd({
++          command: 'pnpm build',
++          kind: 'build',
++          outcome: 'failed',
++          exitCode: 1,
++          stdoutPath: 'a.stdout',
++          stderrPath: 'a.stderr',
++        }),
++        cmd({
++          command: 'pnpm test',
++          kind: 'test',
++          outcome: 'failed',
++          exitCode: 1,
++          stdoutPath: 'b.stdout',
++          stderrPath: 'b.stderr',
++        }),
++      ]),
++      AT,
++    );
++    expect(f!.artifacts).toEqual(['a.stdout', 'a.stderr', 'b.stdout', 'b.stderr']);
++  });
++
++  it('uses exit code in message when classifier is absent', () => {
++    const f = validationRunToFailure(
++      run([cmd({ command: 'pnpm build', kind: 'build', outcome: 'failed', exitCode: 137 })]),
++      AT,
++    );
++    expect(f!.message).toContain('exit 137');
++  });
++});
+diff --git a/packages/application/src/validation/classify-validation.ts b/packages/application/src/validation/classify-validation.ts
+new file mode 100644
+index 0000000..8760416
+--- /dev/null
++++ b/packages/application/src/validation/classify-validation.ts
+@@ -0,0 +1,52 @@
++import type { ValidationCommandKind, ValidationCommandOutcome } from '@ai-sdlc/domain';
++
++/**
++ * Classifies a command string into a `ValidationCommandKind`.
++ *
++ * Matching order (first match wins):
++ *   1. `typecheck` – command contains "typecheck" or word-boundary `tsc`
++ *   2. `lint`      – command contains "lint" or "eslint"
++ *   3. `build`     – command contains "build"
++ *   4. `test`      – command contains "test", "vitest", or "jest"
++ *   5. `other`     – fallback when none of the above match
++ */
++export function classifyCommandKind(command: string): ValidationCommandKind {
++  const c = command.toLowerCase();
++  if (c.includes('typecheck') || /\btsc\b/.test(c)) return 'typecheck';
++  if (c.includes('lint') || c.includes('eslint')) return 'lint';
++  if (c.includes('build')) return 'build';
++  if (c.includes('test') || c.includes('vitest') || c.includes('jest')) return 'test';
++  return 'other';
++}
++
++const MAX_TAIL_LINES = 20;
++
++function tail(text: string): string {
++  const lines = text
++    .split('\n')
++    .map((l) => l.trimEnd())
++    .filter((l) => l.trim().length > 0);
++  return lines.slice(-MAX_TAIL_LINES).join('\n');
++}
++
++/**
++ * Summarises a validation failure for storage in a `Failure`.
++ *
++ * - If the command timed out, returns a deterministic `"timed out after {durationMs}ms"` message.
++ * - Otherwise, returns the last at most `MAX_TAIL_LINES` (20) non-empty lines of `stderr`,
++ *   falling back to `stdout` when `stderr` is empty.
++ * - When neither stream produced output, returns `"command failed with no captured output"`.
++ */
++export function summarizeValidationFailure(input: {
++  outcome: ValidationCommandOutcome;
++  durationMs: number;
++  stderr: string;
++  stdout: string;
++}): string {
++  if (input.outcome === 'timed_out') {
++    return `timed out after ${input.durationMs}ms`;
++  }
++  const body = input.stderr.trim().length > 0 ? input.stderr : input.stdout;
++  const t = tail(body);
++  return t.length > 0 ? t : 'command failed with no captured output';
++}
+diff --git a/packages/application/src/validation/validation-run-to-failure.ts b/packages/application/src/validation/validation-run-to-failure.ts
+new file mode 100644
+index 0000000..afd7d68
+--- /dev/null
++++ b/packages/application/src/validation/validation-run-to-failure.ts
+@@ -0,0 +1,42 @@
++import { validationRunPassed, type Failure, type ValidationRun } from '@ai-sdlc/domain';
++
++/**
++ * Build a run-level Failure from a ValidationRun. Returns null when the run
++ * passed. Uses 'validation_failed' when any command failed; 'timeout' only when
++ * the sole failures are timeouts. Validation is deterministic, so canRetry=true.
++ */
++export function validationRunToFailure(run: ValidationRun, detectedAt: Date): Failure | null {
++  if (validationRunPassed(run)) return null;
++
++  const failed = run.commands.filter((c) => c.outcome === 'failed');
++  const timedOut = run.commands.filter((c) => c.outcome === 'timed_out');
++  const bad = [...failed, ...timedOut];
++  if (bad.length === 0) return null;
++
++  const kind: Failure['kind'] = failed.length > 0 ? 'validation_failed' : 'timeout';
++
++  const parts = bad.map((c) => {
++    const label = c.kind ?? 'other';
++    const detail =
++      c.outcome === 'timed_out'
++        ? 'timed out'
++        : c.classifier
++          ? c.classifier.split('\n').slice(-1)[0]
++          : `exit ${c.exitCode}`;
++    return `${label} (${detail})`;
++  });
++  const message = `${bad.length} validation command(s) failed: ${parts.join(', ')}. See validate/ logs.`;
++
++  const artifacts = bad.flatMap((c) => [c.stdoutPath, c.stderrPath]);
++
++  return {
++    runUuid: run.runId,
++    phase: run.phaseId,
++    kind,
++    message,
++    canRetry: true,
++    suggestedAction: 'Open the validate phase logs and rerun the failing command(s) locally.',
++    artifacts,
++    detectedAt,
++  };
++}
+diff --git a/packages/infrastructure/src/failure/classifier.ts b/packages/infrastructure/src/failure/classifier.ts
+index 1cfce5d..03539cc 100644
+--- a/packages/infrastructure/src/failure/classifier.ts
++++ b/packages/infrastructure/src/failure/classifier.ts
+@@ -32,6 +32,11 @@ const PATTERNS: Pattern[] = [
+     regex: /timed? out|TIMEOUT/i,
+     suggestedAction: 'Raise invocationMaxMinutes or investigate why the agent hung.',
+   },
++  // Legacy/Bash fallback only. When the TypeScript validation runner records a
++  // structured ValidationRun (M5-02/M5-03), RunValidation already inserts a
++  // typed validation_failed/timeout Failure; this regex covers runs that did
++  // not produce structured validation data (older runs, pre-cutover Bash).
++  // See issue #111 (prefer exit codes / structured signals over log patterns).
+   {
+     kind: 'validation_failed',
+     regex:
