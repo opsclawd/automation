@@ -32,6 +32,11 @@ const PATTERNS: Pattern[] = [
     regex: /timed? out|TIMEOUT/i,
     suggestedAction: 'Raise invocationMaxMinutes or investigate why the agent hung.',
   },
+  // Legacy/Bash fallback only. When the TypeScript validation runner records a
+  // structured ValidationRun (M5-02/M5-03), RunValidation already inserts a
+  // typed validation_failed/timeout Failure; this regex covers runs that did
+  // not produce structured validation data (older runs, pre-cutover Bash).
+  // See issue #111 (prefer exit codes / structured signals over log patterns).
   {
     kind: 'validation_failed',
     regex:

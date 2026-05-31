@@ -7,10 +7,17 @@ import {
 } from '@ai-sdlc/domain';
 import type { ValidationPort } from './ports/validation-port.js';
 import type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
+import type { FailureRepositoryPort } from './ports.js';
+import {
+  classifyCommandKind,
+  summarizeValidationFailure,
+} from './validation/classify-validation.js';
+import { validationRunToFailure } from './validation/validation-run-to-failure.js';
 
 export interface RunValidationDeps {
   validation: ValidationPort;
   validationRunRepository: ValidationRunRepositoryPort;
+  failureRepository: FailureRepositoryPort;
   idFactory: () => string;
   now: () => Date;
 }
@@ -71,6 +78,17 @@ export class RunValidation {
       stdoutPath: r.stdoutPath,
       stderrPath: r.stderrPath,
       outcome: r.outcome,
+      kind: classifyCommandKind(r.command),
+      ...(r.outcome !== 'passed'
+        ? {
+            classifier: summarizeValidationFailure({
+              outcome: r.outcome,
+              durationMs: r.durationMs,
+              stderr: r.stderr,
+              stdout: r.stdout,
+            }),
+          }
+        : {}),
     }));
 
     const validationRun: ValidationRun = {
@@ -82,6 +100,9 @@ export class RunValidation {
       commands,
     };
     this.deps.validationRunRepository.save(validationRun);
+
+    const failure = validationRunToFailure(validationRun, this.deps.now());
+    if (failure) this.deps.failureRepository.insert(failure);
 
     return { validationRun, passed: validationRunPassed(validationRun) };
   }
