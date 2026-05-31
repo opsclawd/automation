@@ -66,16 +66,16 @@
         "outputBudgetTokens": 8000,
         "timeoutMinutes": 30
       },
-      "claude-reviewer": {
+      "claude": {
         "runtime": "claude-code",
         "provider": "anthropic",
-        "model": "default",
+        "model": "opus",
         "timeoutMinutes": 45
       }
     },
     "phaseProfiles": {
-      "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
-      "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
+      "plan-design": { "profile": "claude", "fallbackProfile": "senior" },
+      "plan-write": { "profile": "claude", "fallbackProfile": "senior" },
       "implement": { "profile": "builder", "fallbackProfile": "junior" },
       "quality-review": {
         "profile": "task-reviewer",
