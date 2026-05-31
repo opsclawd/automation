@@ -1,5 +1,15 @@
 import type { ValidationCommandKind, ValidationCommandOutcome } from '@ai-sdlc/domain';
 
+/**
+ * Classifies a command string into a `ValidationCommandKind`.
+ *
+ * Matching order (first match wins):
+ *   1. `typecheck` – command contains "typecheck" or word-boundary `tsc`
+ *   2. `lint`      – command contains "lint" or "eslint"
+ *   3. `build`     – command contains "build"
+ *   4. `test`      – command contains "test", "vitest", or "jest"
+ *   5. `other`     – fallback when none of the above match
+ */
 export function classifyCommandKind(command: string): ValidationCommandKind {
   const c = command.toLowerCase();
   if (c.includes('typecheck') || /\btsc\b/.test(c)) return 'typecheck';
@@ -19,6 +29,14 @@ function tail(text: string): string {
   return lines.slice(-MAX_TAIL_LINES).join('\n');
 }
 
+/**
+ * Summarises a validation failure for storage in a `Failure`.
+ *
+ * - If the command timed out, returns a deterministic `"timed out after {durationMs}ms"` message.
+ * - Otherwise, returns the last at most `MAX_TAIL_LINES` (20) non-empty lines of `stderr`,
+ *   falling back to `stdout` when `stderr` is empty.
+ * - When neither stream produced output, returns `"command failed with no captured output"`.
+ */
 export function summarizeValidationFailure(input: {
   outcome: ValidationCommandOutcome;
   durationMs: number;
