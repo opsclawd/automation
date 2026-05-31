@@ -127,7 +127,7 @@ describe('validationRunToFailure', () => {
       'a.stderr',
       'b.stdout',
       'b.stderr',
-      'validation-result.json',
+      'validate/validation-result.json',
     ]);
   });
 
@@ -145,7 +145,7 @@ describe('validationRunToFailure', () => {
       ]),
       AT,
     );
-    expect(f!.artifacts).toContain('validation-result.json');
+    expect(f!.artifacts).toContain('validate/validation-result.json');
   });
 
   it('uses exit code in message when classifier is absent', () => {

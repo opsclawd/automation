@@ -8,8 +8,10 @@ import {
 import type { ValidationPort } from './ports/validation-port.js';
 import type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
 import type { FailureRepositoryPort } from './ports.js';
-import { classifyCommandKind } from './validation/classify-validation.js';
-import { summarizeValidationFailure } from './validation/classify-validation.js';
+import {
+  classifyCommandKind,
+  summarizeValidationFailure,
+} from './validation/classify-validation.js';
 import { validationRunToFailure } from './validation/validation-run-to-failure.js';
 
 export interface RunValidationDeps {

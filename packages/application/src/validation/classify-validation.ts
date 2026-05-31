@@ -5,7 +5,7 @@ import type { ValidationCommandKind, ValidationCommandOutcome } from '@ai-sdlc/d
  *
  * Matching order (first match wins):
  *   1. `typecheck` – command contains "typecheck" or word-boundary `tsc`
- *   2. `lint`      – command contains "lint" or "eslint"
+ *   2. `lint`      – command contains "lint"
  *   3. `build`     – command contains "build"
  *   4. `test`      – command contains "test", "vitest", or "jest"
  *   5. `other`     – fallback when none of the above match
@@ -13,7 +13,7 @@ import type { ValidationCommandKind, ValidationCommandOutcome } from '@ai-sdlc/d
 export function classifyCommandKind(command: string): ValidationCommandKind {
   const c = command.toLowerCase();
   if (c.includes('typecheck') || /\btsc\b/.test(c)) return 'typecheck';
-  if (c.includes('lint') || c.includes('eslint')) return 'lint';
+  if (c.includes('lint')) return 'lint';
   if (c.includes('build')) return 'build';
   if (c.includes('test') || c.includes('vitest') || c.includes('jest')) return 'test';
   return 'other';

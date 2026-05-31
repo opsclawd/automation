@@ -29,7 +29,7 @@ export function validationRunToFailure(run: ValidationRun, detectedAt: Date): Fa
 
   const artifacts = [
     ...bad.flatMap((c) => [c.stdoutPath, c.stderrPath]).filter(Boolean),
-    'validation-result.json',
+    'validate/validation-result.json',
   ];
 
   return {
