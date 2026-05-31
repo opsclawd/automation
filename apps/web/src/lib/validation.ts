@@ -18,6 +18,7 @@ export interface ValidationRunDto {
   commands: ValidationCommandDto[];
 }
 
+/** Failing/timed-out commands first; stable within each group; never mutates input. */
 export function sortCommandsFailingFirst(commands: ValidationCommandDto[]): ValidationCommandDto[] {
   const bad = commands.filter((c) => c.outcome !== 'passed');
   const good = commands.filter((c) => c.outcome === 'passed');
