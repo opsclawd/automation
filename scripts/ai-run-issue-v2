@@ -300,14 +300,14 @@ validate_result_file() {
   fi
 }
 
-# validate_review_artifacts: checks that .result and .md artifacts are a valid pair.
-# Returns 0 if the pair is valid (both present, both absent, or md-without-result).
-# Returns 1 if .result exists but .md is missing — an impossible combination
-# under the agent contract, indicating a stale or partial write.
+# validate_review_artifacts: checks that review artifacts satisfy the
+# agent contract. An agent must always produce a non-empty .md findings
+# file. The .result file is optional but, if present, must coexist with
+# a non-empty .md. Returns 1 if the contract is broken, 0 if valid.
 validate_review_artifacts() {
   local result_file="$1"
   local md_file="$2"
-  if [[ -f "$result_file" && ! -f "$md_file" ]]; then
+  if [[ ! -s "$md_file" ]]; then
     return 1
   fi
   return 0
@@ -326,7 +326,7 @@ rerun_reviewer_once() {
   local base_sha="$5"
   local head_sha="$6"
 
-  log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} wrote .result but not .md — re-running once"
+  log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} failed to write valid review artifacts (missing/empty .md or missing both) — re-running once"
 
   # Clean up orphaned artifacts from both directories so the re-run starts fresh
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
@@ -1566,31 +1566,18 @@ ${QUALITY_REVIEWER_PROMPT}"
 
     log "  Task ${task_n}: fix review..."
 
-    # Read findings from .md if present (preferred), else fall back to the
-    # .log (the agent's full transcript). Without this fallback, the missing
-    # .md silently produces empty findings and the fix-review agent reports
-    # 'no fixes needed' against real review failures (observed on issue #4
-    # task 1 where SPEC_FAIL + QUALITY_FAIL still produced DONE_NO_FIXES_NEEDED).
     local spec_findings="" quality_findings=""
     local spec_md="${WORKTREE_DIR}/spec-review-task-${task_n}.md"
     local quality_md="${WORKTREE_DIR}/quality-review-task-${task_n}.md"
-    local spec_log="${ISSUES_DIR}/spec-review-task-${task_n}.log"
-    local quality_log="${ISSUES_DIR}/quality-review-task-${task_n}.log"
-
     if [[ -s "$spec_md" ]]; then
       spec_findings=$(cat "$spec_md")
-    elif [[ -s "$spec_log" ]]; then
-      # Strip ANSI escapes (\033[...m) so the agent reads clean prose.
-      spec_findings=$(sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$spec_log")
     fi
     if [[ -s "$quality_md" ]]; then
       quality_findings=$(cat "$quality_md")
-    elif [[ -s "$quality_log" ]]; then
-      quality_findings=$(sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$quality_log")
     fi
 
     if [[ -z "$spec_findings" && -z "$quality_findings" ]]; then
-      orchestrator_fail "Task ${task_n} fix-review has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings."
+      orchestrator_fail "Task ${task_n} fix-review has no findings to act on. Reviewer agents must write detailed findings."
     fi
 
     FIX_REVIEW_PROMPT="You are fixing review findings for Task ${task_n}: ${task_title}
@@ -1781,7 +1768,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if ! validate_review_artifacts "$spec_result" "$spec_md"; then
       rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
       if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-        orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} wrote .result but not .md after re-run"
+        orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run (missing/empty .md or missing both)"
       fi
     fi
 
@@ -1789,7 +1776,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if ! validate_review_artifacts "$quality_result" "$quality_md"; then
       rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
       if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-        orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} wrote .result but not .md after re-run"
+        orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
       fi
     fi
 
@@ -1822,6 +1809,20 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       IMPL_REPORT=$(cat "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.log" 2>/dev/null || echo "")
       run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
       run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
+
+      # Validate re-review artifacts (same pattern as initial reviews above)
+      if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+        rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
+        if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
+        fi
+      fi
+      if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+        rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
+        if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
+        fi
+      fi
 
       # Check if reviews now pass — resolve from result files
       SPEC_STATUS=$(resolve_result \
