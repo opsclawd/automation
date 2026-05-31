@@ -158,6 +158,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const runValidation = new RunValidation({
     validation: validationAdapter,
     validationRunRepository,
+    failureRepository,
     idFactory: () => randomUUID(),
     now: () => new Date(),
   });
