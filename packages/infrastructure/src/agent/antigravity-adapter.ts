@@ -17,7 +17,13 @@ export class AntigravityAgentAdapter implements AgentPort {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
 
-    const args = ['--dangerously-skip-permissions', '--print', '-'];
+    // --add-dir registers the worktree as an agy workspace. Without it, agy
+    // resolves relative artifact paths (e.g. ./spec-review-task-2.md) against
+    // its own default workspace/scratch dir instead of request.cwd, so review
+    // findings get written outside the worktree and the orchestrator never
+    // sees them (observed on issue #146: the .md landed in ~/projects and
+    // ~/.gemini/.../scratch instead of the worktree).
+    const args = ['--dangerously-skip-permissions', '--add-dir', request.cwd, '--print', '-'];
     return runExternalCli({
       runtime: 'antigravity',
       bin,
