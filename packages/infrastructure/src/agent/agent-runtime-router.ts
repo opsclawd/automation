@@ -203,8 +203,10 @@ export class AgentRuntimeRouter implements AgentPort {
           if (fallbackAdapter) {
             const triggerReason = this.determineTriggerReason(result);
 
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            const { abortSignal: _spent, ...rest } = request;
             const fallbackRequest: AgentInvocationRequest = {
-              ...request,
+              ...rest,
               profile: AgentProfileName(fallbackProfileName),
               fallbackOfInvocationId: id,
               fallbackReason: triggerReason,
