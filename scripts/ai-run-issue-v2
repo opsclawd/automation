@@ -1768,7 +1768,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if ! validate_review_artifacts "$spec_result" "$spec_md"; then
       rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
       if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-        orchestrator_fail "invalid_agent_contract: ${reviewer_type}-review-task-${TASK_NUM} failed to write valid review artifacts after re-run (missing/empty .md or missing both)"
+        orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run (missing/empty .md or missing both)"
       fi
     fi
 
@@ -1776,7 +1776,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if ! validate_review_artifacts "$quality_result" "$quality_md"; then
       rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
       if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-        orchestrator_fail "invalid_agent_contract: ${reviewer_type}-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
+        orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
       fi
     fi
 
@@ -1814,7 +1814,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       if ! validate_review_artifacts "$spec_result" "$spec_md"; then
         rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
         if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} wrote .result but not .md after re-review"
+          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
         fi
       fi
       if ! validate_review_artifacts "$quality_result" "$quality_md"; then
