@@ -60,7 +60,10 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   // Send SIGTERM to the process group on cancel/abort while the PID is still
   // provably alive (avoids the PID-reuse race in finally). SIGKILL escalation
   // is handled by execa's forceKillAfterDelay after the grace period.
-  cancelSignal?.addEventListener('abort', () => {
+  // Must remove the listener once the child settles — if the child exits before
+  // the timeout fires, the listener persists on AbortSignal.timeout() (held by
+  // Node.js internally) and could signal a recycled PID group.
+  const onAbort = () => {
     if (input.detached) {
       try {
         if (child.pid) process.kill(-child.pid, 'SIGTERM');
@@ -68,7 +71,8 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         // ESRCH = already dead, ignore
       }
     }
-  });
+  };
+  cancelSignal?.addEventListener('abort', onAbort);
 
   try {
     const r = await child;
@@ -90,6 +94,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     exitCode = 1;
     stderr = String((e as Error).message);
   } finally {
+    cancelSignal?.removeEventListener('abort', onAbort);
     // Safety net: only meaningful for detached children (process-group leaders).
     // Non-detached children are not PGIDs, so kill(-pid) would be ESRCH or
     // worse, could hit a recycled PID's group. Guard with input.detached.
