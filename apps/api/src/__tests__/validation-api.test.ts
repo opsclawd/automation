@@ -67,7 +67,7 @@ describe('GET /api/runs/:uuid/validation', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as { validationRuns: Array<Record<string, unknown>> };
     expect(body.validationRuns).toHaveLength(1);
-    const vr = body.validationRuns[0] as Record<string, unknown>;
+    const vr = body.validationRuns[0] as any; // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(vr.id).toBe('vr-aa');
     expect(vr.phaseId).toBe('validate');
     expect(vr.passed).toBe(false);
