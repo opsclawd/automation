@@ -29,7 +29,7 @@ function cfg(): AgentConfig {
       },
     },
     phaseProfiles: {
-      'plan-design': { profile: 'opencode-frontier', fallbackProfile: 'opencode-frontier' },
+      'plan-design': { profile: 'opencode-frontier' },
     },
   };
 }
