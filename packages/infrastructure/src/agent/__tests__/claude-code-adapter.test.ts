@@ -78,17 +78,18 @@ describe('ClaudeCodeAgentAdapter', () => {
     const adapter = new ClaudeCodeAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
     await adapter.invoke(req(cwd));
     const args = readFileSync(argLog, 'utf-8');
-    expect(args).toContain('-p');
     expect(args).toContain('--permission-mode');
     expect(args).toContain('plan');
     expect(args).toContain('--output-format');
     expect(args).toContain('text');
+    const argLines = args.trim().split('\n');
+    expect(argLines).not.toContain('-p');
     expect(args).not.toContain('bypassPermissions');
     expect(args).not.toContain('--dangerously-skip-permissions');
     expect(args).not.toContain('--allow-dangerously-skip-permissions');
   });
 
-  it('passes prompt content as positional arg to -p, not via stdin', async () => {
+  it('passes prompt content via stdin, not as a CLI argument', async () => {
     const cwd = makeWorktree();
     const promptPath = join(cwd, 'prompt.md');
     writeFileSync(promptPath, 'REVIEW THIS PR DIFF CAREFULLY');
@@ -99,7 +100,7 @@ describe('ClaudeCodeAgentAdapter', () => {
       shim,
       `#!/usr/bin/env bash
 printf '%s\\n' "$@" > "${argLog}"
-cat < /dev/null > "${stdinLog}"
+cat > "${stdinLog}"
 exit 0
 `,
     );
@@ -107,9 +108,9 @@ exit 0
     const adapter = new ClaudeCodeAgentAdapter({ binaryPath: shim, artifactsDir: cwd });
     await adapter.invoke(req(cwd, { promptPath }));
     const args = readFileSync(argLog, 'utf-8');
-    expect(args).toContain('REVIEW THIS PR DIFF CAREFULLY');
+    expect(args).not.toContain('REVIEW THIS PR DIFF CAREFULLY');
     const stdin = readFileSync(stdinLog, 'utf-8');
-    expect(stdin).toBe('');
+    expect(stdin).toContain('REVIEW THIS PR DIFF CAREFULLY');
   });
 
   it('appends --model only when model is not "default"', async () => {
