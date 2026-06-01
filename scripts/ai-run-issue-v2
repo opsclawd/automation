@@ -822,7 +822,13 @@ LAST_PHASE="start"
     if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
       echo "complete"
     elif [[ -f "${ISSUES_DIR}/deviation-record-${task_n}.json" ]]; then
-      echo "complete"
+      local dev_outcome
+      dev_outcome=$(jq -r '.outcome // ""' "${ISSUES_DIR}/deviation-record-${task_n}.json" 2>/dev/null || echo "")
+      if [[ "$dev_outcome" == "DEVIATION_PROCEED" || "$dev_outcome" == "RESOLVED_TIEBREAK" ]]; then
+        echo "complete"
+      else
+        echo "review-needed"
+      fi
     else
       echo "review-needed"
     fi
@@ -2301,6 +2307,10 @@ with open(path, 'w') as f:
               plan_after=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
               if [[ "$plan_before" == "$plan_after" ]]; then
                 warn "plan amendment: str.replace did not change plan.md — original_verification not found verbatim"
+                _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+                  "Arbiter amendment failed: original_verification not found verbatim in plan.md" \
+                  "${ARBITER_RATIONALE}"
+                break
               else
                 log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
                 TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" 2>/dev/null || echo "$TASK_TEXT")
