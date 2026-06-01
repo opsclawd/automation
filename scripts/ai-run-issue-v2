@@ -2098,7 +2098,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
-    ARBITER_INVOKED_FOR_TASK=""
+    if [[ -f "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json" ]]; then
+      ARBITER_INVOKED_FOR_TASK=1
+    else
+      ARBITER_INVOKED_FOR_TASK=""
+    fi
 
     # Step 1: Implement
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
@@ -2299,11 +2303,24 @@ import sys, os
 worktree = os.environ.get('WORKTREE_DIR', '.')
 path = os.path.join(worktree, 'plan.md')
 with open(path) as f:
-    c = f.read()
-c = c.replace(sys.argv[1], sys.argv[2])
+    lines = f.readlines()
+task_num = int(sys.argv[3])
+task_start = -1
+task_end = -1
+for i, line in enumerate(lines):
+    if line.startswith('## Task ' + str(task_num) + ':'):
+        task_start = i
+    elif line.startswith('## Task ') and task_start >= 0 and task_end < 0:
+        task_end = i
+        break
+if task_end < 0:
+    task_end = len(lines)
+if task_start >= 0:
+    for i in range(task_start, task_end):
+        lines[i] = lines[i].replace(sys.argv[1], sys.argv[2])
 with open(path, 'w') as f:
-    f.write(c)
-" "$ARBITER_ORIGINAL_VERIFICATION" "$ARBITER_AMENDED_VERIFICATION"
+    f.writelines(lines)
+" "$ARBITER_ORIGINAL_VERIFICATION" "$ARBITER_AMENDED_VERIFICATION" "$TASK_NUM"
               plan_after=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
               if [[ "$plan_before" == "$plan_after" ]]; then
                 warn "plan amendment: str.replace did not change plan.md — original_verification not found verbatim"
