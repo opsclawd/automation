@@ -2243,8 +2243,9 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           break
         fi
         ARBITER_INVOKED_FOR_TASK=1
+        rm -f "${WORKTREE_DIR}/arbiter-result.json"
         run_arbiter "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$SPEC_STATUS" "$QUALITY_STATUS"
-        _validate_arbiter_result
+        _validate_arbiter_result || true
         emit_event "arbitrate" "info" "arbiter.resolved" \
           "Arbiter resolved for task ${TASK_NUM}: ${ARBITER_OUTCOME}" \
           task="${TASK_NUM}" outcome="${ARBITER_OUTCOME}" valid="${ARBITER_VALID}"
