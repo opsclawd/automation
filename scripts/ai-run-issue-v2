@@ -3082,19 +3082,19 @@ if [[ "$PHASE" == "create-pr" ]]; then
   fi
 
   PR_AUTONOMOUS_ACTIONS=""
-  local arb_file
+  arb_file=""
   for arb_file in "${WORKTREE_DIR}"/arbiter-rationale-*.md; do
     [[ -f "$arb_file" ]] || continue
-    local task_ref
+    task_ref=""
     task_ref=$(basename "$arb_file" | sed 's/arbiter-rationale-//;s/\.md$//')
     PR_AUTONOMOUS_ACTIONS="${PR_AUTONOMOUS_ACTIONS}### Arbiter Rationale (Task ${task_ref})
 $(cat "$arb_file")
 "
   done
-  local dev_file
+  dev_file=""
   for dev_file in "${WORKTREE_DIR}"/deviation-record-*.md; do
     [[ -f "$dev_file" ]] || continue
-    local task_ref
+    task_ref=""
     task_ref=$(basename "$dev_file" | sed 's/deviation-record-//;s/\.md$//')
     PR_AUTONOMOUS_ACTIONS="${PR_AUTONOMOUS_ACTIONS}### Deviation Record (Task ${task_ref})
 $(cat "$dev_file")
