@@ -76,7 +76,7 @@
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
-      "implement": { "profile": "junior", "fallbackProfile": "builderr" },
+      "implement": { "profile": "junior", "fallbackProfile": "builder" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
