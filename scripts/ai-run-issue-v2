@@ -185,6 +185,36 @@ _append_loop_history() {
   fi
 }
 
+_detect_loop_stall() {
+  LOOP_STALL_TYPE="STALL_NONE"
+  REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+  [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]] || return 0
+  local count
+  count=$(jq '. | length' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo 0)
+  [[ "$count" -ge 3 ]] || return 0
+  local spec_hist qual_hist
+  spec_hist=$(jq -r '.[].spec_status' "$REVIEW_LOOP_HISTORY_FILE" | tail -3 | tr '\n' ' ')
+  qual_hist=$(jq -r '.[].quality_status' "$REVIEW_LOOP_HISTORY_FILE" | tail -3 | tr '\n' ' ')
+  local last3_spec last3_qual
+  last3_spec=$(jq -r '.[-3:] | .[].spec_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
+  last3_qual=$(jq -r '.[-3:] | .[].quality_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
+  local s1 s2 s3 q1 q2 q3
+  s1=$(echo "$last3_spec" | sed -n '1p')
+  s2=$(echo "$last3_spec" | sed -n '2p')
+  s3=$(echo "$last3_spec" | sed -n '3p')
+  q1=$(echo "$last3_qual" | sed -n '1p')
+  q2=$(echo "$last3_qual" | sed -n '2p')
+  q3=$(echo "$last3_qual" | sed -n '3p')
+  if [[ "$s1" == "$s3" && "$s1" != "$s2" ]] || [[ "$q1" == "$q3" && "$q1" != "$q2" ]]; then
+    LOOP_STALL_TYPE="STALL_OSCILLATION"
+    return 0
+  fi
+  if [[ "$s1" == "$s2" && "$s2" == "$s3" && "$q1" == "$q2" && "$q2" == "$q3" ]]; then
+    LOOP_STALL_TYPE="STALL_NO_PROGRESS"
+    return 0
+  fi
+}
+
 # Verify worktree is on the correct branch; checkout if needed
 ensure_branch() {
   local current
