@@ -946,6 +946,17 @@ _lint_plan_verification() {
       fi
     done <<< "$grep_cmds"
   fi
+
+  local validation_tasks
+  validation_tasks=$(grep -iP '##+ .*Task \d+.*(?:validation suite|full validation|run validation|make.*green|make.*pass|fix failing test)' "$plan_file" 2>/dev/null || true)
+  if [[ -n "$validation_tasks" ]]; then
+    while IFS= read -r task_line; do
+      warn "plan.lint: validation-suite task detected — validation runs automatically after all implement tasks: ${task_line}"
+      emit_event "plan-write" "warn" "plan.lint.validation_task" \
+        "Validation-suite task detected in plan — should not be a standalone task" \
+        task="${task_line}"
+    done <<< "$validation_tasks"
+  fi
 }
 
 PHASE="$(detect_phase)"
@@ -1173,6 +1184,7 @@ The plan MUST include:
 - stop conditions (what would cause you to abort instead of continue)
 - Verification commands must be scoped to the files/paths explicitly changed by each task. Do NOT use whole-file grep/rg on files where the task only changes a subset — scope to specific line ranges or file sections.
 - Prefer making verification an acceptance criterion of implementing tasks rather than a standalone \"Full verification\" task. If a standalone verification task is necessary, its verification commands must reference only files/paths explicitly in scope for that task.
+- HARD RULE: DO NOT create standalone tasks whose purpose is \"run the validation suite\", \"make CI green\", \"fix failing tests\", \"run full validation\", or any variant thereof. Validation runs automatically after ALL implement tasks complete (dedicated validate phase). If a test file needs updating, that is its own implementation task with the test file explicitly in scope — NOT a validation task.
 
 ## TASK MANIFEST SCHEMA
 
@@ -1213,6 +1225,7 @@ The manifest is the machine-readable source of truth for task boundaries. plan.m
 - If you find yourself wanting to edit source code, STOP — that is for the implement phase.
 - The <!-- task-count: N --> HTML comment is not required when task-manifest.json is valid. If the manifest is missing or invalid, the comment serves as a fallback count check — without either, validation will fail.
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code.
+- Do NOT create standalone \"run validation suite\" or \"make CI green\" tasks. If a test needs updating, that is a separate implementation task. The validate phase runs automatically after all tasks complete.
 
 Write plan.md and task-manifest.json now."
 
@@ -2530,6 +2543,11 @@ if [[ "$PHASE" == "validate" ]]; then
   else
     echo "passed" > "${ISSUES_DIR}/validation.result"
     info "Validation passed"
+  fi
+
+  # Mutation guard: validate phase must not produce any file changes
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
   fi
 
   _emit_phase_done "validate"
