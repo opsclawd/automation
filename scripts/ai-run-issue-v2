@@ -215,6 +215,182 @@ _detect_loop_stall() {
   fi
 }
 
+_validate_arbiter_result() {
+  ARBITER_VALID="false"
+  ARBITER_OUTCOME=""
+  ARBITER_DEFECT_CLASSIFICATION=""
+  ARBITER_EVIDENCE=""
+  ARBITER_RATIONALE=""
+  ARBITER_AMENDED_VERIFICATION=""
+  ARBITER_ORIGINAL_VERIFICATION=""
+  local result_file="${WORKTREE_DIR}/arbiter-result.json"
+  if [[ ! -f "$result_file" ]]; then
+    warn "Arbiter result file not found: $result_file"
+    return 1
+  fi
+  if ! jq -e '.' "$result_file" > /dev/null 2>&1; then
+    warn "Arbiter result is not valid JSON: $result_file"
+    return 1
+  fi
+  local outcome defect_class evidence
+  outcome=$(jq -r '.outcome // ""' "$result_file")
+  defect_class=$(jq -r '.defect_classification // ""' "$result_file")
+  evidence=$(jq -r '.evidence // ""' "$result_file")
+  local valid_outcomes="RESOLVED_TIEBREAK RESOLVED_AMENDED DEVIATION_PROCEED BLOCKED_IMPL_DEFECT"
+  local found=0
+  for vo in $valid_outcomes; do
+    [[ "$outcome" == "$vo" ]] && found=1 && break
+  done
+  if [[ "$found" -eq 0 ]]; then
+    warn "Arbiter outcome '${outcome}' is not a recognized value"
+    return 1
+  fi
+  if [[ -z "$evidence" ]]; then
+    warn "Arbiter evidence field is empty — treating as BLOCKED_IMPL_DEFECT (guardrail G1)"
+    ARBITER_OUTCOME="BLOCKED_IMPL_DEFECT"
+    ARBITER_DEFECT_CLASSIFICATION="implementation_defect"
+    return 1
+  fi
+  if [[ "$defect_class" != "verification_spec_defect" && "$defect_class" != "implementation_defect" ]]; then
+    warn "Arbiter defect_classification '${defect_class}' is invalid"
+    return 1
+  fi
+  if [[ "$outcome" == "DEVIATION_PROCEED" && "$defect_class" == "implementation_defect" ]]; then
+    warn "Arbiter DEVIATION_PROCEED with implementation_defect — auto-proceed forbidden (guardrail G4)"
+    return 1
+  fi
+  if [[ "$outcome" == "RESOLVED_AMENDED" ]]; then
+    local amended original
+    amended=$(jq -r '.amended_verification // ""' "$result_file")
+    original=$(jq -r '.original_verification // ""' "$result_file")
+    if [[ -z "$amended" ]]; then
+      warn "Arbiter RESOLVED_AMENDED but amendment is empty — deleting a check is forbidden (guardrail G2)"
+      return 1
+    fi
+    if [[ -z "$original" ]]; then
+      warn "Arbiter RESOLVED_AMENDED but original command is empty — cannot validate narrowing"
+      return 1
+    fi
+  fi
+  ARBITER_OUTCOME="$outcome"
+  ARBITER_DEFECT_CLASSIFICATION="$defect_class"
+  ARBITER_EVIDENCE="$evidence"
+  ARBITER_RATIONALE=$(jq -r '.rationale // ""' "$result_file")
+  ARBITER_AMENDED_VERIFICATION=$(jq -r '.amended_verification // ""' "$result_file")
+  ARBITER_ORIGINAL_VERIFICATION=$(jq -r '.original_verification // ""' "$result_file")
+  ARBITER_VALID="true"
+  return 0
+}
+
+_record_deviation() {
+  local task_num="$1"
+  local defect_classification="$2"
+  local outcome="$3"
+  local evidence="$4"
+  local rationale="$5"
+  local deviation_md="${WORKTREE_DIR}/deviation-record.md"
+  local deviation_json="${WORKTREE_DIR}/deviation-record.json"
+  log "Recording deviation for task ${task_num}: ${outcome} (${defect_classification})"
+  cat > "$deviation_md" << EOF
+# Deviation Record — Issue #${ISSUE_NUM:-unknown}
+
+## Deviation Details
+- Task: ${task_num}
+- Defect Classification: ${defect_classification}
+- Outcome: ${outcome}
+- Evidence: ${evidence}
+- Rationale: ${rationale}
+
+## Context
+You are working in: /home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-165
+Issue: issue.md
+Design: design.md
+Plan: plan.md
+Branch: ai/issue-165
+
+You are using Subagent-Driven Development. Follow the process below exactly.
+
+## SCOPE RESTRICTION
+You are implementing ONLY Task 5: Arbiter outcome validation (`_validate_arbiter_result`).
+
+Tasks numbered higher than 5 in plan.md are EXPLICITLY OUT OF SCOPE
+for this run. They will be implemented by separate later runs of this
+orchestrator. You must NOT:
+- create files, types, schemas, tests, exports, or migrations that belong
+  to a later task, even if you have all the context to do so;
+- 'finish the plan' because tasks N+1..M look small or related;
+- pre-stage scaffolding for later tasks 'to save time later'.
+
+A commit that includes any later-task work is a scope violation, not
+helpfulness — it breaks per-task review, makes resume undecidable, and
+forces the operator to revert and re-run. The plan's per-task commit
+boundary is load-bearing: respect it.
+
+If you finish Task 5 quickly: STOP, run the self-review, and
+report DONE. Do not 'continue' into the next task.
+
+You may READ files associated with later tasks for context, but you must
+not write, modify, stage, or commit them in this run.
+
+## Your Job
+
+1. Read issue.md, design.md, and plan.md for context. Identify the
+   boundaries of Task 5 specifically.
+2. Implement exactly what Task 5 specifies — nothing more.
+3. Write tests following TDD where applicable, scoped to Task 5.
+4. Verify Task 5's implementation works.
+5. Run: git add -A && git commit -m 'feat(arbiter): add arbiter outcome validation with guardrails G1-G4'
+6. Self-review before reporting back, including the scope check below.
+
+## Questions?
+If you have clarifications or concerns BEFORE implementing, note them in your report
+and proceed with a reasonable assumption. Do not ask questions — make decisions
+and document them.
+
+## Self-Review Checklist (before reporting back)
+- Scope: Run `git diff --stat HEAD~1` mentally — does every changed
+  file belong to Task 5 alone? If any file is for a later task,
+  REMOVE it from the commit before reporting DONE.
+- Completeness: Did I implement everything Task 5 specifies?
+- Quality: Is the code clean and maintainable?
+- Discipline: Did I avoid overbuilding?
+- Testing: Do tests verify actual behavior?
+
+## Report Format
+Report back with:
+- Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
+- What you implemented
+- What you tested and results
+- Files changed
+- Self-review findings
+- Any questions or concerns
+
+## MANDATORY RESULT FILE
+After reporting, write EXACTLY ONE of these values to ./implement-task-5.result:
+- DONE
+- DONE_WITH_CONCERNS
+- BLOCKED
+- NEEDS_CONTEXT
+No other content in the file — just the status word.
+
+Stop after writing the result file.
+
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ai/issue-165.
+
+EOF
+  cat > "$deviation_json" << EOF
+{
+  "task": "${task_num}",
+  "defect_classification": "${defect_classification}",
+  "outcome": "${outcome}",
+  "evidence": "${evidence}",
+  "rationale": "${rationale}",
+  "issue_number": "${ISSUE_NUM:-null}"
+}
+EOF
+  emit_event "arbiter.deviation_recorded task=${task_num} outcome=${outcome} classification=${defect_classification}"
+}
+
 # Verify worktree is on the correct branch; checkout if needed
 ensure_branch() {
   local current
