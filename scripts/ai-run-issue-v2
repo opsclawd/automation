@@ -398,7 +398,7 @@ seed_excludes() {
   # its presence means a previous seed_excludes call already wrote the full set.
   # Bumping the sentinel when the block changes causes a one-time re-seed in
   # existing worktrees (duplicate patterns in info/exclude are harmless).
-  if [[ -f "$exclude_file" ]] && grep -qxF 'fix-status.txt' "$exclude_file"; then
+  if [[ -f "$exclude_file" ]] && grep -qxF 'arbiter-result.json' "$exclude_file"; then
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
