@@ -259,13 +259,16 @@ _run_agent() {
   [ "$output" -eq 0 ]
 }
 
-@test "all 10 phases halt on tee failure (not warn)" {
+@test "all primary phases halt on tee failure (arbitrate exempt: soft intervention)" {
   halt_count=$(grep -c 'orchestrator_fail.*tee failed' scripts/ai-run-issue-v2)
   [[ "$halt_count" =~ ^[0-9]+$ ]]
   [ "$halt_count" -ge 10 ]
+  # The arbiter is a soft intervention and is the ONLY phase allowed to warn
+  # (not halt) on tee failure. Any warn-on-tee handler must be the arbiter's.
   if grep -q 'warn.*tee failed' scripts/ai-run-issue-v2; then
     warn_count=$(grep -c 'warn.*tee failed' scripts/ai-run-issue-v2)
-    [ "$warn_count" -eq 0 ]
+    arbiter_warn_count=$(grep -c 'warn.*tee failed writing log for arbiter' scripts/ai-run-issue-v2)
+    [ "$warn_count" -eq "$arbiter_warn_count" ]
   fi
 }
 

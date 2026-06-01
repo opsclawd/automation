@@ -151,6 +151,182 @@ orchestrator_fail() {
   exit 1
 }
 
+# Record an arbiter deviation — writes both a human-readable markdown file
+# and a machine-parseable JSON file to the worktree, plus emits an event.
+_record_deviation() {
+  local task_num="$1"
+  local defect_classification="$2"
+  local outcome="$3"
+  local evidence="$4"
+  local rationale="$5"
+  local deviation_md="${WORKTREE_DIR}/deviation-record-${task_num}.md"
+  local deviation_json="${WORKTREE_DIR}/deviation-record-${task_num}.json"
+  log "Recording deviation for task ${task_num}: ${outcome} (${defect_classification})"
+  cat > "$deviation_md" << EOF
+# Deviation Record — Issue #${ISSUE_NUM:-unknown}
+
+## Task
+Task ${task_num}
+
+## Defect Classification
+${defect_classification}
+
+## Arbiter Outcome
+${outcome}
+
+## Evidence
+${evidence}
+
+## Rationale
+${rationale}
+
+## Timestamp
+$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+  jq -nc \
+    --arg task "$task_num" \
+    --arg defect_classification "$defect_classification" \
+    --arg outcome "$outcome" \
+    --arg evidence "$evidence" \
+    --arg rationale "$rationale" \
+    --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg issue "${ISSUE_NUM:-unknown}" \
+    '{task: $task, defect_classification: $defect_classification, outcome: $outcome, evidence: $evidence, rationale: $rationale, timestamp: $timestamp, issue: $issue}' \
+    > "$deviation_json"
+  emit_event "arbitrate" "info" "arbiter.deviation_recorded" \
+    "Deviation recorded for task ${task_num}: ${outcome}" \
+    task="${task_num}" outcome="${outcome}" defect="${defect_classification}"
+}
+
+# ── review loop history ─────────────────────────────────────────────
+
+_append_loop_history() {
+  local iteration="$1"
+  local spec_status="$2"
+  local quality_status="$3"
+  local fix_status="$4"
+  local diff_summary="$5"
+  local spec_review_excerpt="$6"
+  local quality_review_excerpt="$7"
+  REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+  local truncated_diff truncated_spec truncated_qual
+  truncated_diff=$(head -20 <<< "$diff_summary")
+  truncated_spec=$(head -30 <<< "$spec_review_excerpt")
+  truncated_qual=$(head -30 <<< "$quality_review_excerpt")
+  local new_entry
+  new_entry=$(jq -nc \
+    --arg iteration "$iteration" \
+    --arg spec_status "$spec_status" \
+    --arg quality_status "$quality_status" \
+    --arg fix_status "$fix_status" \
+    --arg fix_diff_summary "$truncated_diff" \
+    --arg spec_review_excerpt "$truncated_spec" \
+    --arg quality_review_excerpt "$truncated_qual" \
+    '{iteration: ($iteration | tonumber), spec_status: $spec_status, quality_status: $quality_status, fix_status: $fix_status, fix_diff_summary: $fix_diff_summary, spec_review_excerpt: $spec_review_excerpt, quality_review_excerpt: $quality_review_excerpt}')
+  if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+    local current
+    current=$(cat "$REVIEW_LOOP_HISTORY_FILE")
+    echo "$current" | jq --argjson entry "$new_entry" '. + [$entry]' > "$REVIEW_LOOP_HISTORY_FILE"
+  else
+    echo "[$new_entry]" > "$REVIEW_LOOP_HISTORY_FILE"
+  fi
+}
+
+_detect_loop_stall() {
+  LOOP_STALL_TYPE="STALL_NONE"
+  REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+  [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]] || return 0
+  local count
+  count=$(jq '. | length' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo 0)
+  [[ "$count" -ge 3 ]] || return 0
+  local last3_spec last3_qual
+  last3_spec=$(jq -r '.[-3:] | .[].spec_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
+  last3_qual=$(jq -r '.[-3:] | .[].quality_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
+  local s1 s2 s3 q1 q2 q3
+  s1=$(echo "$last3_spec" | sed -n '1p')
+  s2=$(echo "$last3_spec" | sed -n '2p')
+  s3=$(echo "$last3_spec" | sed -n '3p')
+  q1=$(echo "$last3_qual" | sed -n '1p')
+  q2=$(echo "$last3_qual" | sed -n '2p')
+  q3=$(echo "$last3_qual" | sed -n '3p')
+  if [[ "$s1" == "$s3" && "$s1" != "$s2" ]] || [[ "$q1" == "$q3" && "$q1" != "$q2" ]]; then
+    LOOP_STALL_TYPE="STALL_OSCILLATION"
+    return 0
+  fi
+  if [[ "$s1" == "$s2" && "$s2" == "$s3" && "$q1" == "$q2" && "$q2" == "$q3" ]]; then
+    LOOP_STALL_TYPE="STALL_NO_PROGRESS"
+    return 0
+  fi
+  return 0
+}
+
+_validate_arbiter_result() {
+  ARBITER_VALID="false"
+  ARBITER_OUTCOME=""
+  ARBITER_DEFECT_CLASSIFICATION=""
+  ARBITER_EVIDENCE=""
+  ARBITER_RATIONALE=""
+  ARBITER_AMENDED_VERIFICATION=""
+  ARBITER_ORIGINAL_VERIFICATION=""
+  local result_file="${WORKTREE_DIR}/arbiter-result.json"
+  if [[ ! -f "$result_file" ]]; then
+    warn "Arbiter result file not found: $result_file"
+    return 1
+  fi
+  if ! jq -e '.' "$result_file" > /dev/null 2>&1; then
+    warn "Arbiter result is not valid JSON: $result_file"
+    return 1
+  fi
+  local outcome defect_class evidence
+  outcome=$(jq -r '.outcome // ""' "$result_file")
+  defect_class=$(jq -r '.defect_classification // ""' "$result_file")
+  evidence=$(jq -r '.evidence // ""' "$result_file")
+  local valid_outcomes="RESOLVED_TIEBREAK RESOLVED_AMENDED DEVIATION_PROCEED BLOCKED_IMPL_DEFECT"
+  local found=0
+  for vo in $valid_outcomes; do
+    [[ "$outcome" == "$vo" ]] && found=1 && break
+  done
+  if [[ "$found" -eq 0 ]]; then
+    warn "Arbiter outcome '${outcome}' is not a recognized value"
+    return 1
+  fi
+  if [[ -z "$evidence" ]]; then
+    warn "Arbiter evidence field is empty — treating as BLOCKED_IMPL_DEFECT (guardrail G1)"
+    ARBITER_OUTCOME="BLOCKED_IMPL_DEFECT"
+    ARBITER_DEFECT_CLASSIFICATION="implementation_defect"
+    return 1
+  fi
+  if [[ "$defect_class" != "verification_spec_defect" && "$defect_class" != "implementation_defect" ]]; then
+    warn "Arbiter defect_classification '${defect_class}' is invalid"
+    return 1
+  fi
+  if [[ "$defect_class" == "implementation_defect" && "$outcome" != "BLOCKED_IMPL_DEFECT" ]]; then
+    warn "Arbiter ${outcome} with implementation_defect — auto-proceed forbidden (guardrail G4)"
+    return 1
+  fi
+  if [[ "$outcome" == "RESOLVED_AMENDED" ]]; then
+    local amended original
+    amended=$(jq -r '.amended_verification // ""' "$result_file")
+    original=$(jq -r '.original_verification // ""' "$result_file")
+    if [[ -z "$amended" ]]; then
+      warn "Arbiter RESOLVED_AMENDED but amendment is empty — deleting a check is forbidden (guardrail G2)"
+      return 1
+    fi
+    if [[ -z "$original" ]]; then
+      warn "Arbiter RESOLVED_AMENDED but original command is empty — cannot validate narrowing"
+      return 1
+    fi
+  fi
+  ARBITER_OUTCOME="$outcome"
+  ARBITER_DEFECT_CLASSIFICATION="$defect_class"
+  ARBITER_EVIDENCE="$evidence"
+  ARBITER_RATIONALE=$(jq -r '.rationale // ""' "$result_file")
+  ARBITER_AMENDED_VERIFICATION=$(jq -r '.amended_verification // ""' "$result_file")
+  ARBITER_ORIGINAL_VERIFICATION=$(jq -r '.original_verification // ""' "$result_file")
+  ARBITER_VALID="true"
+  return 0
+}
+
 # Verify worktree is on the correct branch; checkout if needed
 ensure_branch() {
   local current
@@ -222,7 +398,7 @@ seed_excludes() {
   # its presence means a previous seed_excludes call already wrote the full set.
   # Bumping the sentinel when the block changes causes a one-time re-seed in
   # existing worktrees (duplicate patterns in info/exclude are harmless).
-  if [[ -f "$exclude_file" ]] && grep -qxF 'fix-status.txt' "$exclude_file"; then
+  if [[ -f "$exclude_file" ]] && grep -qxF 'arbiter-result.json' "$exclude_file"; then
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -255,6 +431,12 @@ next-env.d.ts
 node_modules/
 .next/
 .review-context/
+arbiter-result.json
+arbiter-task-*.log
+arbiter-rationale-*.md
+deviation-record-*.md
+deviation-record-*.json
+review-loop-history.json
 EOF
 }
 
@@ -639,6 +821,14 @@ LAST_PHASE="start"
 
     if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
       echo "complete"
+    elif [[ -f "${ISSUES_DIR}/deviation-record-${task_n}.json" ]]; then
+      local dev_outcome
+      dev_outcome=$(jq -r '.outcome // ""' "${ISSUES_DIR}/deviation-record-${task_n}.json" 2>/dev/null || echo "")
+      if [[ "$dev_outcome" == "DEVIATION_PROCEED" || "$dev_outcome" == "RESOLVED_TIEBREAK" ]]; then
+        echo "complete"
+      else
+        echo "review-needed"
+      fi
     else
       echo "review-needed"
     fi
@@ -724,6 +914,28 @@ detect_phase() {
     echo "plan-design"
   else
     echo "read_issue"
+  fi
+}
+
+# _lint_plan_verification: heuristic pre-check of plan verification commands
+# after plan-write. Catches whole-file greps without line-range scoping that
+# tend to produce unsatisfiable verification commands in the implement loop.
+_lint_plan_verification() {
+  local plan_file="${WORKTREE_DIR}/plan.md"
+  [[ -f "$plan_file" ]] || return 0
+
+  local grep_cmds
+  grep_cmds=$(grep -oP '`(?:grep|rg)\s+[^`]+`' "$plan_file" 2>/dev/null || true)
+
+  if [[ -n "$grep_cmds" ]]; then
+    while IFS= read -r cmd; do
+      if [[ "$cmd" =~ ^\`(grep|rg)[[:space:]]+-[a-zA-Z] ]] && ! [[ "$cmd" =~ awk|sed|head|tail|NR ]]; then
+        warn "plan.lint: whole-file grep without line-range restriction in plan: ${cmd}"
+        emit_event "plan-write" "warn" "plan.lint.warning" \
+          "Whole-file grep without line-range restriction detected in plan" \
+          command="${cmd}"
+      fi
+    done <<< "$grep_cmds"
   fi
 }
 
@@ -948,6 +1160,8 @@ The plan MUST include:
 - validation commands (exact commands to verify correctness)
 - risk areas
 - stop conditions (what would cause you to abort instead of continue)
+- Verification commands must be scoped to the files/paths explicitly changed by each task. Do NOT use whole-file grep/rg on files where the task only changes a subset — scope to specific line ranges or file sections.
+- Prefer making verification an acceptance criterion of implementing tasks rather than a standalone "Full verification" task. If a standalone verification task is necessary, its verification commands must reference only files/paths explicitly in scope for that task.
 
 ## CRITICAL RULES
 - Do NOT ask questions. Make reasonable assumptions and document them.
@@ -1029,6 +1243,9 @@ Write plan.md now."
   _emit_artifact "plan-write" "${WORKTREE_DIR}/plan.md" "plan"
 
   _emit_phase_done "plan-write"
+
+  _lint_plan_verification
+
   PHASE="implement"
 fi
 
@@ -1366,6 +1583,19 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 ${SPEC_REVIEWER_PROMPT}"
     fi
 
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      local history_excerpt _hist_tmp
+      _hist_tmp=$(mktemp)
+      jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.spec_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" > "$_hist_tmp" 2>/dev/null || true
+      history_excerpt=$(head -60 "$_hist_tmp")
+      rm -f "$_hist_tmp"
+      SPEC_REVIEWER_PROMPT="${SPEC_REVIEWER_PROMPT}
+
+## Prior Iteration History (for context — DO NOT repeat failed approaches)
+${history_excerpt}"
+    fi
+
     local _spec_prompt_file
     _spec_prompt_file=$(mktemp)
     printf '%s' "$SPEC_REVIEWER_PROMPT" > "$_spec_prompt_file"
@@ -1515,6 +1745,19 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 ${QUALITY_REVIEWER_PROMPT}"
     fi
 
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      local history_excerpt _hist_tmp
+      _hist_tmp=$(mktemp)
+      jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.quality_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" > "$_hist_tmp" 2>/dev/null || true
+      history_excerpt=$(head -60 "$_hist_tmp")
+      rm -f "$_hist_tmp"
+      QUALITY_REVIEWER_PROMPT="${QUALITY_REVIEWER_PROMPT}
+
+## Prior Iteration History (for context — DO NOT repeat failed approaches)
+${history_excerpt}"
+    fi
+
     local _qual_prompt_file
     _qual_prompt_file=$(mktemp)
     printf '%s' "$QUALITY_REVIEWER_PROMPT" > "$_qual_prompt_file"
@@ -1620,6 +1863,19 @@ Stop after writing the result file.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      local history_excerpt _hist_tmp
+      _hist_tmp=$(mktemp)
+      jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\nDiff summary:\n\(.fix_diff_summary)"' "$REVIEW_LOOP_HISTORY_FILE" > "$_hist_tmp" 2>/dev/null || true
+      history_excerpt=$(head -80 "$_hist_tmp")
+      rm -f "$_hist_tmp"
+      FIX_REVIEW_PROMPT="${FIX_REVIEW_PROMPT}
+
+## Prior Iteration History (DO NOT repeat approaches that already failed)
+${history_excerpt}"
+    fi
+
     local _fix_prompt_file
     _fix_prompt_file=$(mktemp)
     printf '%s' "$FIX_REVIEW_PROMPT" > "$_fix_prompt_file"
@@ -1654,6 +1910,128 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         esac
       fi
     fi
+  }
+
+  # Run arbiter: when the review/fix loop is stuck (oscillation or no-progress),
+  # invoke an arbiter agent to diagnose the deadlock and pick exactly one
+  # corrective action. Writes arbiter-result.json and arbiter-rationale.md
+  # to the worktree. Non-zero agent exit does NOT halt the run — the caller
+  # (Task 8) decides what to do with the result.
+  run_arbiter() {
+    local task_n="$1"
+    local task_title="$2"
+    local task_text="$3"
+    local base_sha="$4"
+    local head_sha="$5"
+    local spec_status="$6"
+    local quality_status="$7"
+
+    log "  Task ${task_n}: invoking arbiter (oscillation/stall detected)..."
+
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    local history_content=""
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      history_content=$(cat "$REVIEW_LOOP_HISTORY_FILE")
+    fi
+
+    local spec_findings="" quality_findings=""
+    local spec_md="${WORKTREE_DIR}/spec-review-task-${task_n}.md"
+    local quality_md="${WORKTREE_DIR}/quality-review-task-${task_n}.md"
+    [[ -s "$spec_md" ]] && spec_findings=$(cat "$spec_md")
+    [[ -s "$quality_md" ]] && quality_findings=$(cat "$quality_md")
+
+    local issue_text=""
+    [[ -f "${WORKTREE_DIR}/issue.md" ]] && issue_text=$(head -100 "${WORKTREE_DIR}/issue.md")
+
+    ARBITER_PROMPT="You are an arbiter diagnosing a stuck review/fix loop for Task ${task_n}: ${task_title}.
+
+## Your Role
+You do NOT write feature code. You diagnose the deadlock and pick exactly ONE corrective action.
+
+## Context — Original Issue (excerpt)
+${issue_text}
+
+## Context — Plan Task Requirements
+${task_text}
+
+## Context — Review Verdicts
+- Spec review: ${spec_status}
+- Quality review: ${quality_status}
+
+## Context — Spec Review Findings
+${spec_findings}
+
+## Context — Quality Review Findings
+${quality_findings}
+
+## Context — Iteration History
+${history_content}
+
+## Your Job
+Diagnose why the loop is stuck and output exactly ONE action.
+
+## Output Format
+Write EXACTLY ONE JSON object to ${WORKTREE_DIR}/arbiter-result.json with this schema:
+
+{
+  \"outcome\": \"RESOLVED_TIEBREAK | RESOLVED_AMENDED | DEVIATION_PROCEED | BLOCKED_IMPL_DEFECT\",
+  \"defect_classification\": \"verification_spec_defect | implementation_defect\",
+  \"evidence\": \"file:line and/or issue/plan clause that justifies this outcome (REQUIRED — must not be empty)\",
+  \"rationale\": \"human-readable explanation of why this outcome is correct\",
+  \"amended_verification\": \"(only for RESOLVED_AMENDED) the corrected verification command, strictly narrower than original\",
+  \"original_verification\": \"(only for RESOLVED_AMENDED) the original verification command that was wrong\"
+}
+
+## Rules
+1. RESOLVED_TIEBREAK: Override with a binding PASS verdict. Evidence must cite what makes the failure spurious.
+2. RESOLVED_AMENDED: Rewrite a demonstrably-wrong verification command to match the task's declared scope. The amendment MUST be strictly narrower — you cannot remove a check entirely.
+3. DEVIATION_PROCEED: The blocker is a verification/spec defect that cannot be auto-fixed. Proceed to PR with a deviation flag.
+4. BLOCKED_IMPL_DEFECT: The blocker is a genuine implementation defect. The run must stop.
+5. Evidence field is MANDATORY. If you cannot cite evidence, output BLOCKED_IMPL_DEFECT.
+6. Only verification_spec_defect classification may auto-proceed. implementation_defect must stop the run.
+
+## MANDATORY OUTPUT FILE
+Write the JSON to: ${WORKTREE_DIR}/arbiter-result.json
+
+Also write a human-readable rationale to: ${WORKTREE_DIR}/arbiter-rationale-${task_n}.md
+
+Stop after writing both files.
+
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+
+    local _arbiter_prompt_file
+    _arbiter_prompt_file=$(mktemp)
+    printf '%s' "$ARBITER_PROMPT" > "$_arbiter_prompt_file"
+    local _main_state_before
+    _main_state_before=$(_capture_main_state)
+    ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+      --phase arbitrate \
+      --phase-id "arbitrate-task-${task_n}" \
+      --cwd "$WORKTREE_DIR" \
+      --run-id "$RUN_ID" \
+      --repo-id "$REPO_ID" \
+      --repo-root "$REPO_ROOT" \
+      --prompt-file "$_arbiter_prompt_file" \
+      --timeout-minutes 10 \
+      --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+      2>&1 | tee -a "${ISSUES_DIR}/arbiter-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+    rm -f "$_arbiter_prompt_file"
+    if [[ $_tee_ec -ne 0 ]]; then
+      # Arbiter is a soft intervention (see plan): a log-tee hiccup must not
+      # abort the run. Warn and continue, consistent with the non-zero
+      # agent-exit handling below. The arbitrate phase is the documented
+      # exception to the "all phases halt on tee failure" rule.
+      warn "tee failed writing log for arbiter-task-${task_n} (exit $_tee_ec)"
+    fi
+    _guard_main_checkout "arbiter-task-${task_n}" "$_main_state_before"
+    check_branch_after_agent
+    if [[ $_agent_ec -ne 0 ]]; then
+      warn "Arbiter agent exited with code $_agent_ec — attempting to read result if present"
+    fi
+
+    emit_event "arbitrate" "info" "arbiter.invoked" \
+      "Arbiter invoked for task ${task_n}" \
+      task="${task_n}" spec="${spec_status}" quality="${quality_status}" exit_code="${_agent_ec:-0}"
   }
 
   # ── main task loop ─────────────────────────────────────────────────────────
@@ -1729,6 +2107,13 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
+    if [[ -f "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json" ]]; then
+      ARBITER_INVOKED_FOR_TASK=1
+      ARBITER_OUTCOME=$(jq -r '.outcome // ""' "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json")
+    else
+      ARBITER_INVOKED_FOR_TASK=""
+      ARBITER_OUTCOME=""
+    fi
 
     # Step 1: Implement
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
@@ -1753,6 +2138,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     # because its status is "review-needed" (i.e. reviews are NOT both passing
     # yet). Skipping reviews in that state would silently mark the task
     # complete with no review evidence, as happened on the issue #4 run.
+    # Reset loop history BEFORE initial reviewers so Task 2+ does not read
+    # stale iteration data from the previous task's review-loop-history.json.
+    REVIEW_LOOP_HISTORY_FILE="${WORKTREE_DIR}/review-loop-history.json"
+    rm -f "$REVIEW_LOOP_HISTORY_FILE"
     IMPL_REPORT=$(cat "${ISSUES_DIR}/implement-task-${TASK_NUM}.log" 2>/dev/null || echo "")
     run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
     run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
@@ -1780,6 +2169,24 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       fi
     fi
 
+    # Resolve initial review statuses
+    SPEC_STATUS=$(resolve_result \
+      "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result" \
+      "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" \
+      SPEC_PASS SPEC_FAIL "SPEC_FAIL")
+    QUALITY_STATUS=$(resolve_result \
+      "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result" \
+      "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" \
+      QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
+
+    # Record initial review statuses as iteration 0
+    _append_loop_history \
+      0 "$SPEC_STATUS" "$QUALITY_STATUS" "INITIAL" \
+      "" "" ""
+
+    if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
+      log "  Task ${TASK_NUM}: both initial reviews pass — skipping fix loop"
+    else
     # Fix-review loop: agent fixes findings, then re-reviews, up to 5 times
     while [[ $REVIEW_LOOPS -lt 5 ]]; do
       REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
@@ -1841,6 +2248,126 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" \
         spec="${SPEC_STATUS:-unknown}" quality="${QUALITY_STATUS:-unknown}"
 
+      _append_loop_history \
+        "$REVIEW_LOOPS" "$SPEC_STATUS" "$QUALITY_STATUS" "$FIX_STATUS" \
+        "$(git -C "$WORKTREE_DIR" diff HEAD~1 2>/dev/null | head -20 || echo "")" \
+        "$(head -30 "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" 2>/dev/null || echo "")" \
+        "$(head -30 "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" 2>/dev/null || echo "")"
+
+      _detect_loop_stall
+      if [[ "$LOOP_STALL_TYPE" != "STALL_NONE" ]]; then
+        log "  Task ${TASK_NUM}: stall detected (${LOOP_STALL_TYPE}) — invoking arbiter"
+        emit_event "arbitrate" "warn" "arbiter.stall_detected" \
+          "Stall detected for task ${TASK_NUM}: ${LOOP_STALL_TYPE}" \
+          task="${TASK_NUM}" stall_type="${LOOP_STALL_TYPE}" iteration="${REVIEW_LOOPS}"
+        ARBITER_INVOKED_FOR_TASK="${ARBITER_INVOKED_FOR_TASK:-}"
+        if [[ -n "$ARBITER_INVOKED_FOR_TASK" ]]; then
+          if [[ "${ARBITER_OUTCOME}" == "RESOLVED_AMENDED" ]]; then
+            log "  Task ${TASK_NUM}: arbiter already invoked (RESOLVED_AMENDED), amendment did not resolve — halting as implementation defect"
+            _record_deviation "$TASK_NUM" "implementation_defect" "BLOCKED_IMPL_DEFECT" \
+              "Arbiter invoked once (RESOLVED_AMENDED) but loop still stalled — amendment did not resolve" \
+              "Post-amendment stall indicates genuine implementation defect (guardrail G3/G4)"
+            orchestrator_fail "Task ${TASK_NUM}: post-arbiter stall after RESOLVED_AMENDED — classified as implementation defect"
+          fi
+          if [[ "${ARBITER_OUTCOME}" == "BLOCKED_IMPL_DEFECT" ]]; then
+            log "  Task ${TASK_NUM}: previous arbiter classified BLOCKED_IMPL_DEFECT — halting (guardrail G4 preserves stop condition)"
+            orchestrator_fail "Task ${TASK_NUM}: previous arbiter classification was BLOCKED_IMPL_DEFECT — G4 prevents auto-proceed on resume"
+          fi
+          log "  Task ${TASK_NUM}: arbiter already invoked for this task — recording deviation and proceeding (guardrail G3)"
+          _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+            "Arbiter already invoked once (cap 1 per task), loop still stalled" \
+            "Loop stalled after arbiter attempt; proceeding with deviation"
+          break
+        fi
+        ARBITER_INVOKED_FOR_TASK=1
+        rm -f "${WORKTREE_DIR}/arbiter-result.json"
+        run_arbiter "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$SPEC_STATUS" "$QUALITY_STATUS"
+        _validate_arbiter_result || true
+        emit_event "arbitrate" "info" "arbiter.resolved" \
+          "Arbiter resolved for task ${TASK_NUM}: ${ARBITER_OUTCOME}" \
+          task="${TASK_NUM}" outcome="${ARBITER_OUTCOME}" valid="${ARBITER_VALID}"
+        if [[ "$ARBITER_VALID" != "true" ]]; then
+          if [[ "${ARBITER_DEFECT_CLASSIFICATION:-implementation_defect}" == "implementation_defect" || "$ARBITER_OUTCOME" == "BLOCKED_IMPL_DEFECT" ]]; then
+            _record_deviation "$TASK_NUM" "implementation_defect" "BLOCKED_IMPL_DEFECT" \
+              "${ARBITER_EVIDENCE:-validation failed}" "${ARBITER_RATIONALE:-no rationale}"
+            orchestrator_fail "Task ${TASK_NUM}: arbiter classified as implementation defect. Stopping run."
+          fi
+          _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+            "Arbiter result invalid but defect is verification-related" \
+            "${ARBITER_RATIONALE:-no rationale}"
+          log "  Task ${TASK_NUM}: arbiter result invalid, proceeding with deviation"
+          break
+        fi
+        case "$ARBITER_OUTCOME" in
+          RESOLVED_TIEBREAK)
+            SPEC_STATUS="SPEC_PASS"
+            QUALITY_STATUS="QUALITY_PASS"
+            log "  Task ${TASK_NUM}: arbiter tiebreak — overriding to PASS"
+            _record_deviation "$TASK_NUM" "$ARBITER_DEFECT_CLASSIFICATION" "RESOLVED_TIEBREAK" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            break
+            ;;
+          RESOLVED_AMENDED)
+            log "  Task ${TASK_NUM}: arbiter amended verification — re-running reviews once"
+            _record_deviation "$TASK_NUM" "$ARBITER_DEFECT_CLASSIFICATION" "RESOLVED_AMENDED" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            if [[ -n "$ARBITER_ORIGINAL_VERIFICATION" && -n "$ARBITER_AMENDED_VERIFICATION" ]]; then
+              plan_before=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
+              python3 -c "
+import sys, os, re
+worktree = os.environ.get('WORKTREE_DIR', '.')
+path = os.path.join(worktree, 'plan.md')
+with open(path) as f:
+    lines = f.readlines()
+task_num = int(sys.argv[3])
+task_pattern = re.compile(r'^#{2,3} Task ' + str(task_num) + ':')
+task_boundary = re.compile(r'^#{2,3} Task ')
+task_start = -1
+task_end = -1
+for i, line in enumerate(lines):
+    if task_pattern.match(line):
+        task_start = i
+    elif task_boundary.match(line) and task_start >= 0 and task_end < 0:
+        task_end = i
+        break
+if task_end < 0:
+    task_end = len(lines)
+if task_start >= 0:
+    for i in range(task_start, task_end):
+        lines[i] = lines[i].replace(sys.argv[1], sys.argv[2])
+with open(path, 'w') as f:
+    f.writelines(lines)
+" "$ARBITER_ORIGINAL_VERIFICATION" "$ARBITER_AMENDED_VERIFICATION" "$TASK_NUM"
+              plan_after=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
+              if [[ "$plan_before" == "$plan_after" ]]; then
+                warn "plan amendment: str.replace did not change plan.md — original_verification not found verbatim"
+                _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+                  "Arbiter amendment failed: original_verification not found verbatim in plan.md" \
+                  "${ARBITER_RATIONALE}"
+                break
+              else
+                log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
+                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" 2>/dev/null || echo "$TASK_TEXT")
+                if [[ -z "$TASK_TEXT" ]]; then
+                  TASK_TEXT="$task_title"
+                fi
+              fi
+            fi
+            ;;
+          DEVIATION_PROCEED)
+            _record_deviation "$TASK_NUM" "$ARBITER_DEFECT_CLASSIFICATION" "DEVIATION_PROCEED" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            log "  Task ${TASK_NUM}: arbiter deviation/proceed — continuing to PR"
+            break
+            ;;
+          BLOCKED_IMPL_DEFECT)
+            _record_deviation "$TASK_NUM" "implementation_defect" "BLOCKED_IMPL_DEFECT" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            orchestrator_fail "Task ${TASK_NUM}: arbiter classified as implementation defect. Stopping run."
+            ;;
+        esac
+      fi
+
       if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
         log "  Task ${TASK_NUM}: both reviews pass"
         break
@@ -1856,18 +2383,36 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         orchestrator_fail "reviews_inconsistent: Task ${TASK_NUM} — review says FAIL (spec=${SPEC_STATUS}, quality=${QUALITY_STATUS}) but fix-review says DONE_NO_FIXES_NEEDED. Spec review: ${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result / .md — Quality review: ${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result / .md"
       fi
     done
+    fi
 
-    if [[ $REVIEW_LOOPS -eq 5 ]]; then
+    if [[ $REVIEW_LOOPS -ge 5 ]]; then
       emit_event "fix-review" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
-      orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})."
+      _exh_defect="implementation_defect"
+      _exh_outcome="BLOCKED_IMPL_DEFECT"
+      _exh_spec=$(jq -r '[.[].spec_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "SPEC_FAIL")
+      _exh_qual=$(jq -r '[.[].quality_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "QUALITY_FAIL")
+      if [[ "$_exh_qual" != "QUALITY_FAIL" && "$_exh_spec" != "SPEC_FAIL" ]]; then
+        _exh_defect="verification_spec_defect"
+        _exh_outcome="DEVIATION_PROCEED"
+      fi
+      _record_deviation "$TASK_NUM" "$_exh_defect" "$_exh_outcome" \
+        "Review loop exhausted ${REVIEW_LOOPS} iterations (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})" \
+        "Loop exhaustion — $_exh_defect based on review history"
+      if [[ "$_exh_outcome" == "BLOCKED_IMPL_DEFECT" ]]; then
+        orchestrator_fail "Task ${TASK_NUM}: review loop exhausted with consistently failing reviews — classified as implementation defect"
+      fi
+      log "  Task ${TASK_NUM}: loop exhausted, proceeding with deviation"
     fi
 
     # Defense in depth: even if a future code path adds a `break` that
     # isn't gated on PASS, fail before declaring the task complete.
     if [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
-      orchestrator_fail "Task ${TASK_NUM}: exited review loop with spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?}. Refusing to mark complete."
+      if [[ ! -f "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json" ]]; then
+        orchestrator_fail "Task ${TASK_NUM}: exited review loop with spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?}. Refusing to mark complete."
+      fi
+      log "  Task ${TASK_NUM}: reviews not passing but deviation recorded — proceeding"
     fi
 
     {
@@ -2620,6 +3165,30 @@ if [[ "$PHASE" == "create-pr" ]]; then
     PR_REVIEW="No code review performed"
   fi
 
+  PR_AUTONOMOUS_ACTIONS=""
+  arb_file=""
+  for arb_file in "${WORKTREE_DIR}"/arbiter-rationale-*.md; do
+    [[ -f "$arb_file" ]] || continue
+    task_ref=""
+    task_ref=$(basename "$arb_file" | sed 's/arbiter-rationale-//;s/\.md$//')
+    PR_AUTONOMOUS_ACTIONS="${PR_AUTONOMOUS_ACTIONS}### Arbiter Rationale (Task ${task_ref})
+$(cat "$arb_file")
+"
+  done
+  dev_file=""
+  for dev_file in "${WORKTREE_DIR}"/deviation-record-*.md; do
+    [[ -f "$dev_file" ]] || continue
+    task_ref=""
+    task_ref=$(basename "$dev_file" | sed 's/deviation-record-//;s/\.md$//')
+    PR_AUTONOMOUS_ACTIONS="${PR_AUTONOMOUS_ACTIONS}### Deviation Record (Task ${task_ref})
+$(cat "$dev_file")
+"
+  done
+  if [[ -n "$PR_AUTONOMOUS_ACTIONS" ]]; then
+    PR_AUTONOMOUS_ACTIONS="## Autonomous Actions
+${PR_AUTONOMOUS_ACTIONS}"
+  fi
+
   cat > "${ISSUES_DIR}/pr-summary.md" << EOF
 # ${ISSUE_TITLE}
 
@@ -2639,6 +3208,7 @@ ${PR_VALIDATION_STEPS}
 ## Review Findings
 ${PR_REVIEW}
 
+${PR_AUTONOMOUS_ACTIONS}
 ## Artifacts
 Run logs and artifacts: \`ai/issues/${ISSUE_NUM}/\`
 EOF
@@ -2722,7 +3292,9 @@ if [[ "$PHASE" == "done" ]]; then
     spec-review-task-*.log spec-review-task-*.result \
     quality-review-task-*.log quality-review-task-*.result \
     fix-review-task-*.log fix-review-task-*.result \
-    fix-review-*.log fix-review-*.result; do
+    fix-review-*.log fix-review-*.result \
+    arbiter-task-*.log arbiter-result.json arbiter-rationale-*.md \
+    deviation-record-*.md deviation-record-*.json review-loop-history.json; do
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"
