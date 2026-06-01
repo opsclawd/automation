@@ -75,14 +75,11 @@
     },
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
-      "plan-write": { "profile": "claude", "fallbackProfile": "architect" },
+      "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
       "implement": { "profile": "builder", "fallbackProfile": "junior" },
-      "quality-review": {
-        "profile": "task-reviewer",
-        "fallbackProfile": "junior"
-      },
+      "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
-      "fix-review": { "profile": "builder", "fallbackProfile": "senior-fallback" },
+      "fix-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
       "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "junior" },
       "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
