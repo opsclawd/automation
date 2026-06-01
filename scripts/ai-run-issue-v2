@@ -1585,8 +1585,11 @@ ${SPEC_REVIEWER_PROMPT}"
 
     REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
     if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
-      local history_excerpt
-      history_excerpt=$(jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.spec_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null | head -60)
+      local history_excerpt _hist_tmp
+      _hist_tmp=$(mktemp)
+      jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.spec_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" > "$_hist_tmp" 2>/dev/null || true
+      history_excerpt=$(head -60 "$_hist_tmp")
+      rm -f "$_hist_tmp"
       SPEC_REVIEWER_PROMPT="${SPEC_REVIEWER_PROMPT}
 
 ## Prior Iteration History (for context — DO NOT repeat failed approaches)
@@ -1744,8 +1747,11 @@ ${QUALITY_REVIEWER_PROMPT}"
 
     REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
     if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
-      local history_excerpt
-      history_excerpt=$(jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.quality_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null | head -60)
+      local history_excerpt _hist_tmp
+      _hist_tmp=$(mktemp)
+      jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.quality_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" > "$_hist_tmp" 2>/dev/null || true
+      history_excerpt=$(head -60 "$_hist_tmp")
+      rm -f "$_hist_tmp"
       QUALITY_REVIEWER_PROMPT="${QUALITY_REVIEWER_PROMPT}
 
 ## Prior Iteration History (for context — DO NOT repeat failed approaches)
@@ -1859,8 +1865,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
     if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
-      local history_excerpt
-      history_excerpt=$(jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\nDiff summary:\n\(.fix_diff_summary)"' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null | head -80)
+      local history_excerpt _hist_tmp
+      _hist_tmp=$(mktemp)
+      jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\nDiff summary:\n\(.fix_diff_summary)"' "$REVIEW_LOOP_HISTORY_FILE" > "$_hist_tmp" 2>/dev/null || true
+      history_excerpt=$(head -80 "$_hist_tmp")
+      rm -f "$_hist_tmp"
       FIX_REVIEW_PROMPT="${FIX_REVIEW_PROMPT}
 
 ## Prior Iteration History (DO NOT repeat approaches that already failed)
