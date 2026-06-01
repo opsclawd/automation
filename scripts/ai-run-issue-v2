@@ -1720,6 +1720,124 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     fi
   }
 
+  # Run arbiter: when the review/fix loop is stuck (oscillation or no-progress),
+  # invoke an arbiter agent to diagnose the deadlock and pick exactly one
+  # corrective action. Writes arbiter-result.json and arbiter-rationale.md
+  # to the worktree. Non-zero agent exit does NOT halt the run — the caller
+  # (Task 8) decides what to do with the result.
+  run_arbiter() {
+    local task_n="$1"
+    local task_title="$2"
+    local task_text="$3"
+    local base_sha="$4"
+    local head_sha="$5"
+    local spec_status="$6"
+    local quality_status="$7"
+
+    log "  Task ${task_n}: invoking arbiter (oscillation/stall detected)..."
+
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    local history_content=""
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      history_content=$(cat "$REVIEW_LOOP_HISTORY_FILE")
+    fi
+
+    local spec_findings="" quality_findings=""
+    local spec_md="${WORKTREE_DIR}/spec-review-task-${task_n}.md"
+    local quality_md="${WORKTREE_DIR}/quality-review-task-${task_n}.md"
+    [[ -s "$spec_md" ]] && spec_findings=$(cat "$spec_md")
+    [[ -s "$quality_md" ]] && quality_findings=$(cat "$quality_md")
+
+    local issue_text=""
+    [[ -f "${WORKTREE_DIR}/issue.md" ]] && issue_text=$(head -100 "${WORKTREE_DIR}/issue.md")
+
+    ARBITER_PROMPT="You are an arbiter diagnosing a stuck review/fix loop for Task ${task_n}: ${task_title}.
+
+## Your Role
+You do NOT write feature code. You diagnose the deadlock and pick exactly ONE corrective action.
+
+## Context — Original Issue (excerpt)
+${issue_text}
+
+## Context — Plan Task Requirements
+${task_text}
+
+## Context — Review Verdicts
+- Spec review: ${spec_status}
+- Quality review: ${quality_status}
+
+## Context — Spec Review Findings
+${spec_findings}
+
+## Context — Quality Review Findings
+${quality_findings}
+
+## Context — Iteration History
+${history_content}
+
+## Your Job
+Diagnose why the loop is stuck and output exactly ONE action.
+
+## Output Format
+Write EXACTLY ONE JSON object to ${WORKTREE_DIR}/arbiter-result.json with this schema:
+
+{
+  \"outcome\": \"RESOLVED_TIEBREAK | RESOLVED_AMENDED | DEVIATION_PROCEED | BLOCKED_IMPL_DEFECT\",
+  \"defect_classification\": \"verification_spec_defect | implementation_defect\",
+  \"evidence\": \"file:line and/or issue/plan clause that justifies this outcome (REQUIRED — must not be empty)\",
+  \"rationale\": \"human-readable explanation of why this outcome is correct\",
+  \"amended_verification\": \"(only for RESOLVED_AMENDED) the corrected verification command, strictly narrower than original\",
+  \"original_verification\": \"(only for RESOLVED_AMENDED) the original verification command that was wrong\"
+}
+
+## Rules
+1. RESOLVED_TIEBREAK: Override with a binding PASS verdict. Evidence must cite what makes the failure spurious.
+2. RESOLVED_AMENDED: Rewrite a demonstrably-wrong verification command to match the task's declared scope. The amendment MUST be strictly narrower — you cannot remove a check entirely.
+3. DEVIATION_PROCEED: The blocker is a verification/spec defect that cannot be auto-fixed. Proceed to PR with a deviation flag.
+4. BLOCKED_IMPL_DEFECT: The blocker is a genuine implementation defect. The run must stop.
+5. Evidence field is MANDATORY. If you cannot cite evidence, output BLOCKED_IMPL_DEFECT.
+6. Only verification_spec_defect classification may auto-proceed. implementation_defect must stop the run.
+
+## MANDATORY OUTPUT FILES
+Write the JSON to: ${WORKTREE_DIR}/arbiter-result.json
+Also write a human-readable rationale to: ${WORKTREE_DIR}/arbiter-rationale.md
+
+Stop after writing both files.
+
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+
+    local _arbiter_prompt_file
+    _arbiter_prompt_file=$(mktemp)
+    printf '%s' "$ARBITER_PROMPT" > "$_arbiter_prompt_file"
+    local _main_state_before
+    _main_state_before=$(_capture_main_state)
+    ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+      --phase arbitrate \
+      --phase-id "arbiter-task-${task_n}" \
+      --cwd "$WORKTREE_DIR" \
+      --run-id "$RUN_ID" \
+      --repo-id "$REPO_ID" \
+      --repo-root "$REPO_ROOT" \
+      --prompt-file "$_arbiter_prompt_file" \
+      --expected-artifacts "${WORKTREE_DIR}/arbiter-result.json,${WORKTREE_DIR}/arbiter-rationale.md" \
+      --timeout-minutes 10 \
+      --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+      2>&1 | tee -a "${ISSUES_DIR}/arbiter-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+    rm -f "$_arbiter_prompt_file"
+    if [[ $_tee_ec -ne 0 ]]; then
+      warn "tee failed writing log for arbiter-task-${task_n} (exit $_tee_ec)"
+    fi
+    _guard_main_checkout "arbiter-task-${task_n}" "$_main_state_before"
+    check_branch_after_agent
+    if [[ $_agent_ec -ne 0 ]]; then
+      warn "Arbiter agent exited with code $_agent_ec — attempting to read result if present"
+    fi
+
+    emit_event "arbitrate" "info" "arbiter.invoked" \
+      "Arbiter invoked for task ${task_n}" \
+      task="${task_n}" spec="${spec_status}" quality="${quality_status}" exit_code="${_agent_ec:-0}"
+  }
+
   # ── main task loop ─────────────────────────────────────────────────────────
   cd "${WORKTREE_DIR}"
   ensure_branch
