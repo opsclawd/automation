@@ -151,6 +151,53 @@ orchestrator_fail() {
   exit 1
 }
 
+# Record an arbiter deviation — writes both a human-readable markdown file
+# and a machine-parseable JSON file to the worktree, plus emits an event.
+_record_deviation() {
+  local task_num="$1"
+  local defect_classification="$2"
+  local outcome="$3"
+  local evidence="$4"
+  local rationale="$5"
+  local deviation_md="${WORKTREE_DIR}/deviation-record.md"
+  local deviation_json="${WORKTREE_DIR}/deviation-record.json"
+  log "Recording deviation for task ${task_num}: ${outcome} (${defect_classification})"
+  cat > "$deviation_md" << EOF
+# Deviation Record — Issue #${ISSUE_NUM:-unknown}
+
+## Task
+Task ${task_num}
+
+## Defect Classification
+${defect_classification}
+
+## Arbiter Outcome
+${outcome}
+
+## Evidence
+${evidence}
+
+## Rationale
+${rationale}
+
+## Timestamp
+$(date -u +%Y-%m-%dT%H:%M:%SZ)
+EOF
+  jq -nc \
+    --arg task "$task_num" \
+    --arg defect_classification "$defect_classification" \
+    --arg outcome "$outcome" \
+    --arg evidence "$evidence" \
+    --arg rationale "$rationale" \
+    --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg issue "${ISSUE_NUM:-unknown}" \
+    '{task: $task, defect_classification: $defect_classification, outcome: $outcome, evidence: $evidence, rationale: $rationale, timestamp: $timestamp, issue: $issue}' \
+    > "$deviation_json"
+  emit_event "arbitrate" "info" "arbiter.deviation_recorded" \
+    "Deviation recorded for task ${task_num}: ${outcome}" \
+    task="${task_num}" outcome="${outcome}" defect="${defect_classification}"
+}
+
 # ── review loop history ─────────────────────────────────────────────
 
 _append_loop_history() {
