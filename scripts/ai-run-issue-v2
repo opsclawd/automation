@@ -2731,7 +2731,7 @@ _unresolved_fingerprint() {
 _revalidate_is_green() {
   local file=$1
   [[ -f "$file" ]] || return 1
-  ! grep -qE '(BUILD_FAILED|LINT_FAILED|TYPECHECK_FAILED|TEST_FAILED|BASH_TEST_FAILED)' "$file"
+  ! grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "$file"
 }
 
 if [[ "$PHASE" == "fix-review" ]]; then
@@ -2855,19 +2855,19 @@ Start now."
 
   {
     echo "=== pnpm build ==="
-    timeout 120 pnpm build 2>&1 || echo "BUILD_FAILED"
+    timeout 120 pnpm build 2>&1 || echo "[build failed]"
     echo ""
     echo "=== pnpm lint ==="
-    timeout 120 pnpm lint 2>&1 || echo "LINT_FAILED"
+    timeout 120 pnpm lint 2>&1 || echo "[lint failed]"
     echo ""
     echo "=== pnpm typecheck ==="
-    timeout 120 pnpm typecheck 2>&1 || echo "TYPECHECK_FAILED"
+    timeout 120 pnpm typecheck 2>&1 || echo "[typecheck failed]"
     echo ""
     echo "=== pnpm test ==="
-    timeout 120 pnpm test 2>&1 || echo "TEST_FAILED"
+    timeout 120 pnpm test 2>&1 || echo "[test failed]"
     echo ""
     echo "=== pnpm test:bash ==="
-    timeout 180 pnpm test:bash 2>&1 || echo "BASH_TEST_FAILED"
+    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
   } > >(tee "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log") 2>&1
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
