@@ -73,3 +73,13 @@ HIST
   _detect_loop_stall
   [ "$LOOP_STALL_TYPE" = "STALL_NONE" ]
 }
+
+@test "review-fix loop: both-pass break precedes _detect_loop_stall (converged result wins)" {
+  # Regression guard for the post-#169 ordering bug: a converged
+  # SPEC_PASS/QUALITY_PASS must complete the task BEFORE stall detection runs,
+  # otherwise an oscillating verdict history (e.g. quality PASS->FAIL->PASS)
+  # sends a task that just succeeded to the arbiter. Assert the both-pass break
+  # appears in the lines immediately preceding the _detect_loop_stall call.
+  before="$(grep -B8 -E '^[[:space:]]+_detect_loop_stall$' "$SCRIPT_PATH")"
+  echo "$before" | grep -qE 'SPEC_PASS.*&&.*QUALITY_PASS'
+}

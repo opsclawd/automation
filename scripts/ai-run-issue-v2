@@ -2335,6 +2335,16 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         "$(head -30 "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" 2>/dev/null || echo "")" \
         "$(head -30 "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" 2>/dev/null || echo "")"
 
+      # A converged result wins over the verdict history. If both reviews pass
+      # this iteration, the task is done — complete it BEFORE stall detection.
+      # _detect_loop_stall keys on the oscillation *pattern* (e.g. quality
+      # PASS->FAIL->PASS), which would otherwise fire STALL_OSCILLATION and invoke
+      # the arbiter on a task that just succeeded.
+      if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
+        log "  Task ${TASK_NUM}: both reviews pass"
+        break
+      fi
+
       _detect_loop_stall
       if [[ "$LOOP_STALL_TYPE" != "STALL_NONE" ]]; then
         log "  Task ${TASK_NUM}: stall detected (${LOOP_STALL_TYPE}) — invoking arbiter"
