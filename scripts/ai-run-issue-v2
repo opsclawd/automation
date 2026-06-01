@@ -613,6 +613,8 @@ LAST_PHASE="start"
     local impl_result_file="${ISSUES_DIR}/implement-task-${task_n}.result"
     local spec_result_file="${ISSUES_DIR}/spec-review-task-${task_n}.result"
     local quality_result_file="${ISSUES_DIR}/quality-review-task-${task_n}.result"
+    local spec_md_file="${ISSUES_DIR}/spec-review-task-${task_n}.md"
+    local quality_md_file="${ISSUES_DIR}/quality-review-task-${task_n}.md"
 
     local impl_result="PENDING"
     if [[ -f "$impl_result_file" ]]; then
@@ -637,6 +639,17 @@ LAST_PHASE="start"
 
     # Implementation succeeded — completion is then decided by the reviews.
     if [[ ! -f "$spec_result_file" || ! -f "$quality_result_file" ]]; then
+      echo "review-needed"
+      return
+    fi
+
+    # A passing .result is only trustworthy alongside a valid (non-empty) review
+    # report. If the reviewer wrote .result but not a real .md (killed mid-write,
+    # or a contract violation), treat the task as review-needed so resume re-runs
+    # the review — find_first_incomplete_task must not skip it on a bare .result.
+    # Reuse the same check the in-loop path uses so the two cannot drift.
+    if ! validate_review_artifacts "$spec_result_file" "$spec_md_file" \
+      || ! validate_review_artifacts "$quality_result_file" "$quality_md_file"; then
       echo "review-needed"
       return
     fi
