@@ -2276,6 +2276,19 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         HEAD_SHA="$_head_after_fix"
         if [[ $DID_IMPLEMENT -eq 1 ]]; then
           echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+        else
+          # Resume-into-review AND the fix committed. If later tasks are stacked
+          # (this task's scoped head is an ancestor of, but not equal to, the
+          # pre-fix tip), the fix lands above them and base..HEAD_SHA now spans
+          # the later tasks too. There is no single contiguous range that isolates
+          # this task plus its fix, so we surface it rather than silently
+          # mis-scoping the re-review. Root prevention is not entering this state
+          # (completion-gating) — see issue #170.
+          _scoped_head=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" 2>/dev/null || echo "")
+          if [[ -n "$_scoped_head" && "$_scoped_head" != "$_head_before_fix" ]] \
+            && git merge-base --is-ancestor "$_scoped_head" "$_head_before_fix" 2>/dev/null; then
+            warn "Task ${TASK_NUM}: fix committed during a resume with later tasks stacked on top; re-review diff (${BASE_SHA}..${HEAD_SHA}) may include unrelated later-task commits (non-contiguous range, see #170)."
+          fi
         fi
       fi
 
