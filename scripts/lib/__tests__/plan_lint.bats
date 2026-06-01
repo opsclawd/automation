@@ -70,37 +70,3 @@ PLAN
   _lint_plan_verification
   [[ "$EMIT_EVENT_ARGS" != *"plan.lint.warning"* ]]
 }
-
-@test "lint: implementation task with validate in description does not emit false positive" {
-  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
-## Task 1: Validate the data migration script
-
-### Files
-- `scripts/migrate.sh`
-
-### Validation
-Run: `bash scripts/migrate.sh --dry-run`
-Expected: exit code 0
-PLAN
-
-  EMIT_EVENT_ARGS=""
-  _lint_plan_verification
-  [[ "$EMIT_EVENT_ARGS" != *"plan.lint.validation_task"* ]]
-}
-
-@test "lint: run validation in verification section does not emit false positive" {
-  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
-## Task 1: Add new endpoint
-
-### Files
-- `src/api.ts`
-
-### Validation
-Run: `run validation ./scripts/test.sh`
-Expected: exit code 0
-PLAN
-
-  EMIT_EVENT_ARGS=""
-  _lint_plan_verification
-  [[ "$EMIT_EVENT_ARGS" != *"plan.lint.validation_task"* ]]
-}

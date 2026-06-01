@@ -946,7 +946,6 @@ _lint_plan_verification() {
       fi
     done <<< "$grep_cmds"
   fi
-
 }
 
 PHASE="$(detect_phase)"
