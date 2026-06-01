@@ -41,7 +41,7 @@ EOF
 This is a test issue
 EOF
 
-  touch "$WORKTREE_DIR/arbiter-task-3.log"
+  touch "$WORKTREE_DIR/arbitrate-task-3.log"
 
   export AI_RUN_EVENTS_FILE="$TMPDIR_TEST/events.jsonl"
   export AI_RUN_DISPLAY_ID="test-arbiter-$(date +%s)"
@@ -103,10 +103,10 @@ _extract_run_arbiter_body() {
   echo "$body" | grep -q -- "--phase arbitrate"
 }
 
-@test "run_arbiter: uses --phase-id arbiter-task-N" {
+@test "run_arbiter: uses --phase-id arbitrate-task-N" {
   local body
   body=$(_extract_run_arbiter_body)
-  echo "$body" | grep -qE -- '--phase-id[[:space:]]+"arbiter-task-\$\{task_n\}"'
+  echo "$body" | grep -qE -- '--phase-id[[:space:]]+"arbitrate-task-\$\{task_n\}"'
 }
 
 @test "run_arbiter: uses --timeout-minutes 10" {
@@ -226,7 +226,7 @@ _extract_run_arbiter_body() {
   args=$(cat "$STUB_NODE_ARGS_FILE")
   echo "$args" | grep -q -- "--phase"
   echo "$args" | grep -q "arbitrate"
-  echo "$args" | grep -q "arbiter-task-3"
+  echo "$args" | grep -q "arbitrate-task-3"
 }
 
 @test "run_arbiter: behavioral — creates a prompt file with task context" {

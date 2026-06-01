@@ -1983,7 +1983,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     _main_state_before=$(_capture_main_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase arbitrate \
-      --phase-id "arbiter-task-${task_n}" \
+      --phase-id "arbitrate-task-${task_n}" \
       --cwd "$WORKTREE_DIR" \
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
@@ -2295,6 +2295,10 @@ with open(path, 'w') as f:
                 warn "plan amendment: str.replace did not change plan.md — original_verification not found verbatim"
               else
                 log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
+                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" 2>/dev/null || echo "$TASK_TEXT")
+                if [[ -z "$TASK_TEXT" ]]; then
+                  TASK_TEXT="$task_title"
+                fi
               fi
             fi
             ;;
