@@ -946,6 +946,17 @@ _lint_plan_verification() {
       fi
     done <<< "$grep_cmds"
   fi
+
+  local validation_tasks
+  validation_tasks=$(grep -iP '##+ .*Task \d+.*(?:validation suite|full validation|run validation|make.*green|make.*pass|fix failing test)' "$plan_file" 2>/dev/null || true)
+  if [[ -n "$validation_tasks" ]]; then
+    while IFS= read -r task_line; do
+      warn "plan.lint: validation-suite task detected — validation runs automatically after all implement tasks: ${task_line}"
+      emit_event "plan-write" "warn" "plan.lint.validation_task" \
+        "Validation-suite task detected in plan — should not be a standalone task" \
+        task="${task_line}"
+    done <<< "$validation_tasks"
+  fi
 }
 
 PHASE="$(detect_phase)"
