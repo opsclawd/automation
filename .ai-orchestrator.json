@@ -84,7 +84,8 @@
       "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
       "extract": { "profile": "pi-qwen-local", "fallbackProfile": "junior" },
-      "create-pr": { "profile": "architect", "fallbackProfile": "senior" }
+      "create-pr": { "profile": "architect", "fallbackProfile": "senior" },
+      "arbitrate": { "profile": "architect", "fallbackProfile": "claude" }
     }
   }
 }
