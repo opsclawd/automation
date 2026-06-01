@@ -300,8 +300,8 @@ _validate_arbiter_result() {
     warn "Arbiter defect_classification '${defect_class}' is invalid"
     return 1
   fi
-  if [[ "$outcome" == "DEVIATION_PROCEED" && "$defect_class" == "implementation_defect" ]]; then
-    warn "Arbiter DEVIATION_PROCEED with implementation_defect — auto-proceed forbidden (guardrail G4)"
+  if [[ "$defect_class" == "implementation_defect" && "$outcome" != "BLOCKED_IMPL_DEFECT" ]]; then
+    warn "Arbiter ${outcome} with implementation_defect — auto-proceed forbidden (guardrail G4)"
     return 1
   fi
   if [[ "$outcome" == "RESOLVED_AMENDED" ]]; then
@@ -2270,13 +2270,13 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
             SPEC_STATUS="SPEC_PASS"
             QUALITY_STATUS="QUALITY_PASS"
             log "  Task ${TASK_NUM}: arbiter tiebreak — overriding to PASS"
-            _record_deviation "$TASK_NUM" "verification_spec_defect" "RESOLVED_TIEBREAK" \
+            _record_deviation "$TASK_NUM" "$ARBITER_DEFECT_CLASSIFICATION" "RESOLVED_TIEBREAK" \
               "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
             break
             ;;
           RESOLVED_AMENDED)
             log "  Task ${TASK_NUM}: arbiter amended verification — re-running reviews once"
-            _record_deviation "$TASK_NUM" "verification_spec_defect" "RESOLVED_AMENDED" \
+            _record_deviation "$TASK_NUM" "$ARBITER_DEFECT_CLASSIFICATION" "RESOLVED_AMENDED" \
               "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
             if [[ -n "$ARBITER_ORIGINAL_VERIFICATION" && -n "$ARBITER_AMENDED_VERIFICATION" ]]; then
               plan_before=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
@@ -2299,7 +2299,7 @@ with open(path, 'w') as f:
             fi
             ;;
           DEVIATION_PROCEED)
-            _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+            _record_deviation "$TASK_NUM" "$ARBITER_DEFECT_CLASSIFICATION" "DEVIATION_PROCEED" \
               "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
             log "  Task ${TASK_NUM}: arbiter deviation/proceed — continuing to PR"
             break

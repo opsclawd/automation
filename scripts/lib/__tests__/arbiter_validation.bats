@@ -121,6 +121,34 @@ JSON
   _validate_arbiter_result || true
   [ "$ARBITER_VALID" = "false" ]
 }
+@test "validation: implementation_defect with RESOLVED_TIEBREAK is rejected" {
+  cat > "$TMPDIR_TEST/arbiter-result.json" << 'JSON'
+{
+  "outcome": "RESOLVED_TIEBREAK",
+  "defect_classification": "implementation_defect",
+  "evidence": "some evidence",
+  "rationale": "Tiebreaking despite implementation defect",
+  "amended_verification": "",
+  "original_verification": ""
+}
+JSON
+  _validate_arbiter_result || true
+  [ "$ARBITER_VALID" = "false" ]
+}
+@test "validation: implementation_defect with RESOLVED_AMENDED is rejected" {
+  cat > "$TMPDIR_TEST/arbiter-result.json" << 'JSON'
+{
+  "outcome": "RESOLVED_AMENDED",
+  "defect_classification": "implementation_defect",
+  "evidence": "some evidence",
+  "rationale": "Amending despite implementation defect",
+  "amended_verification": "narrower command",
+  "original_verification": "original command"
+}
+JSON
+  _validate_arbiter_result || true
+  [ "$ARBITER_VALID" = "false" ]
+}
 @test "validation: missing result file is rejected" {
   _validate_arbiter_result || true
   [ "$ARBITER_VALID" = "false" ]
