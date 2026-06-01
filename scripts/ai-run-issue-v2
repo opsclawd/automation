@@ -239,9 +239,6 @@ _detect_loop_stall() {
   local count
   count=$(jq '. | length' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo 0)
   [[ "$count" -ge 3 ]] || return 0
-  local spec_hist qual_hist
-  spec_hist=$(jq -r '.[].spec_status' "$REVIEW_LOOP_HISTORY_FILE" | tail -3 | tr '\n' ' ')
-  qual_hist=$(jq -r '.[].quality_status' "$REVIEW_LOOP_HISTORY_FILE" | tail -3 | tr '\n' ' ')
   local last3_spec last3_qual
   last3_spec=$(jq -r '.[-3:] | .[].spec_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
   last3_qual=$(jq -r '.[-3:] | .[].quality_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
@@ -913,11 +910,11 @@ _lint_plan_verification() {
   [[ -f "$plan_file" ]] || return 0
 
   local grep_cmds
-  grep_cmds=$(grep -oP '`grep\s+[^`]+`' "$plan_file" 2>/dev/null || true)
+  grep_cmds=$(grep -oP '`(?:grep|rg)\s+[^`]+`' "$plan_file" 2>/dev/null || true)
 
   if [[ -n "$grep_cmds" ]]; then
     while IFS= read -r cmd; do
-      if [[ "$cmd" =~ ^\`grep[[:space:]]+-[a-zA-Z] ]] && ! [[ "$cmd" =~ awk|sed|head|tail|NR ]]; then
+      if [[ "$cmd" =~ ^\`(grep|rg)[[:space:]]+-[a-zA-Z] ]] && ! [[ "$cmd" =~ awk|sed|head|tail|NR ]]; then
         warn "plan.lint: whole-file grep without line-range restriction in plan: ${cmd}"
         emit_event "plan-write" "warn" "plan.lint.warning" \
           "Whole-file grep without line-range restriction detected in plan" \
@@ -2087,9 +2084,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
     ARBITER_INVOKED_FOR_TASK=""
-    STALL_COUNT=0
-    PREV_SPEC_STATUS=""
-    PREV_QUALITY_STATUS=""
 
     # Step 1: Implement
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
@@ -2236,6 +2230,13 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           task="${TASK_NUM}" stall_type="${LOOP_STALL_TYPE}" iteration="${REVIEW_LOOPS}"
         ARBITER_INVOKED_FOR_TASK="${ARBITER_INVOKED_FOR_TASK:-}"
         if [[ -n "$ARBITER_INVOKED_FOR_TASK" ]]; then
+          if [[ "${ARBITER_OUTCOME}" == "RESOLVED_AMENDED" ]]; then
+            log "  Task ${TASK_NUM}: arbiter already invoked (RESOLVED_AMENDED), amendment did not resolve — halting as implementation defect"
+            _record_deviation "$TASK_NUM" "implementation_defect" "BLOCKED_IMPL_DEFECT" \
+              "Arbiter invoked once (RESOLVED_AMENDED) but loop still stalled — amendment did not resolve" \
+              "Post-amendment stall indicates genuine implementation defect (guardrail G3/G4)"
+            orchestrator_fail "Task ${TASK_NUM}: post-arbiter stall after RESOLVED_AMENDED — classified as implementation defect"
+          fi
           log "  Task ${TASK_NUM}: arbiter already invoked for this task — recording deviation and proceeding (guardrail G3)"
           _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
             "Arbiter already invoked once (cap 1 per task), loop still stalled" \
@@ -2275,6 +2276,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
             _record_deviation "$TASK_NUM" "verification_spec_defect" "RESOLVED_AMENDED" \
               "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
             if [[ -n "$ARBITER_ORIGINAL_VERIFICATION" && -n "$ARBITER_AMENDED_VERIFICATION" ]]; then
+              local plan_before
+              plan_before=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
               python3 -c "
 import sys, os
 worktree = os.environ.get('WORKTREE_DIR', '.')
@@ -2285,7 +2288,13 @@ c = c.replace(sys.argv[1], sys.argv[2])
 with open(path, 'w') as f:
     f.write(c)
 " "$ARBITER_ORIGINAL_VERIFICATION" "$ARBITER_AMENDED_VERIFICATION"
-              log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
+              local plan_after
+              plan_after=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
+              if [[ "$plan_before" == "$plan_after" ]]; then
+                warn "plan amendment: str.replace did not change plan.md — original_verification not found verbatim"
+              else
+                log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
+              fi
             fi
             ;;
           DEVIATION_PROCEED)
