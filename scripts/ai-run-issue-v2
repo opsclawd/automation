@@ -185,36 +185,6 @@ _append_loop_history() {
   fi
 }
 
-_detect_loop_stall() {
-  LOOP_STALL_TYPE="STALL_NONE"
-  REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
-  [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]] || return 0
-  local count
-  count=$(jq '. | length' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo 0)
-  [[ "$count" -ge 3 ]] || return 0
-  local spec_hist qual_hist
-  spec_hist=$(jq -r '.[].spec_status' "$REVIEW_LOOP_HISTORY_FILE" | tail -3 | tr '\n' ' ')
-  qual_hist=$(jq -r '.[].quality_status' "$REVIEW_LOOP_HISTORY_FILE" | tail -3 | tr '\n' ' ')
-  local last3_spec last3_qual
-  last3_spec=$(jq -r '.[-3:] | .[].spec_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
-  last3_qual=$(jq -r '.[-3:] | .[].quality_status' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null)
-  local s1 s2 s3 q1 q2 q3
-  s1=$(echo "$last3_spec" | sed -n '1p')
-  s2=$(echo "$last3_spec" | sed -n '2p')
-  s3=$(echo "$last3_spec" | sed -n '3p')
-  q1=$(echo "$last3_qual" | sed -n '1p')
-  q2=$(echo "$last3_qual" | sed -n '2p')
-  q3=$(echo "$last3_qual" | sed -n '3p')
-  if [[ "$s1" == "$s3" && "$s1" != "$s2" ]] || [[ "$q1" == "$q3" && "$q1" != "$q2" ]]; then
-    LOOP_STALL_TYPE="STALL_OSCILLATION"
-    return 0
-  fi
-  if [[ "$s1" == "$s2" && "$s2" == "$s3" && "$q1" == "$q2" && "$q2" == "$q3" ]]; then
-    LOOP_STALL_TYPE="STALL_NO_PROGRESS"
-    return 0
-  fi
-}
-
 # Verify worktree is on the correct branch; checkout if needed
 ensure_branch() {
   local current
@@ -1717,78 +1687,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           *) orchestrator_fail "fix-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
-    fi
-  }
-
-  run_arbiter() {
-    local task_n="$1"
-    local task_title="$2"
-    local task_text="$3"
-    local base_sha="$4"
-    local head_sha="$5"
-    local spec_status="$6"
-    local quality_status="$7"
-    log "  Task ${task_n}: invoking arbiter (oscillation/stall detected)..."
-    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
-    local history_content=""
-    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
-      history_content=$(cat "$REVIEW_LOOP_HISTORY_FILE")
-    fi
-    local spec_findings="" quality_findings=""
-    local spec_md="${WORKTREE_DIR}/spec-review-task-${task_n}.md"
-    local quality_md="${WORKTREE_DIR}/quality-review-task-${task_n}.md"
-    [[ -s "$spec_md" ]] && spec_findings=$(cat "$spec_md")
-    [[ -s "$quality_md" ]] && quality_findings=$(cat "$quality_md")
-    local issue_text=""
-    [[ -f "${WORKTREE_DIR}/issue.md" ]] && issue_text=$(head -100 "${WORKTREE_DIR}/issue.md")
-    ARBITER_PROMPT="You are an arbiter diagnosing a stuck review/fix loop for Task ${task_n}: ${task_title}.
-
-## Spec Review Findings
-No findings. Implementation matches the spec.
-
-## Quality Review Findings
-No findings. Implementation meets the quality bar.
-
-## Your Job
-1. Read both review reports above carefully.
-2. Read the actual source files referenced in the reviews.
-3. Fix ALL legitimate findings. Skip findings that are:
-   - Invalid (the reviewer was wrong)
-   - Pre-existing (not introduced by this task)
-   - Nitpicks that don't affect correctness
-4. If neither review has actionable findings, write 'Status: DONE_NO_FIXES_NEEDED' and stop.
-5. If you made fixes, run: git add -A && git commit -m 'fix: task 1 review findings'
-6. Self-verify your fixes address the actual findings.
-
-## Report Format
-Report back with:
-- Status: DONE | DONE_NO_FIXES_NEEDED | BLOCKED
-- What you fixed (with file references)
-- What you intentionally skipped and why
-- Any remaining concerns
-
-## MANDATORY RESULT FILE
-After reporting, write EXACTLY ONE of these values to ./fix-review-task-1.result:
-- DONE
-- DONE_NO_FIXES_NEEDED
-- BLOCKED
-No other content in the file — just the status word.
-
-Stop after writing the result file.
-
-CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ai/issue-165."
-    local agent_result
-    agent_result=$(run-agent.ts --phase arbitrate --prompt "$ARBITER_PROMPT" 2>&1) || true
-    echo "$agent_result"
-    local result_file="${WORKTREE_DIR}/fix-review-task-${task_n}.result"
-    if [[ -f "$result_file" ]]; then
-      local status
-      status=$(head -1 "$result_file" | tr -d '[:space:]')
-      log "  Arbiter result: ${status}"
-      ARBITER_STATUS="$status"
-    else
-      log "  Arbiter did not write result file"
-      ARBITER_STATUS="BLOCKED"
     fi
   }
 
