@@ -41,7 +41,6 @@ EOF
 This is a test issue
 EOF
 
-  cat > "$WORKTREE_DIR/arbiter-task-3.log" || true
   touch "$WORKTREE_DIR/arbiter-task-3.log"
 
   export AI_RUN_EVENTS_FILE="$TMPDIR_TEST/events.jsonl"
