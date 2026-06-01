@@ -145,7 +145,12 @@ _extract_run_arbiter_body() {
 @test "run_arbiter: does NOT call orchestrator_fail on agent non-zero exit (only warns)" {
   local body
   body=$(_extract_run_arbiter_body)
-  ! echo "$body" | grep -q 'orchestrator_fail'
+  echo "$body" | grep -q 'Arbiter agent exited with code.*attempting to read result'
+  echo "$body" | grep -q 'warn "Arbiter agent exited'
+  # Verify the agent-exit path uses warn, not orchestrator_fail
+  local agent_exit_block
+  agent_exit_block=$(echo "$body" | sed -n '/Arbiter agent exited/,/^    fi/p')
+  ! echo "$agent_exit_block" | grep -q 'orchestrator_fail'
 }
 
 @test "run_arbiter: emits arbiter.invoked event" {

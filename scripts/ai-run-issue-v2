@@ -1996,7 +1996,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       2>&1 | tee -a "${ISSUES_DIR}/arbiter-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_arbiter_prompt_file"
     if [[ $_tee_ec -ne 0 ]]; then
-      warn "tee failed writing log for arbiter-task-${task_n} (exit $_tee_ec)"
+      orchestrator_fail "tee failed writing log for arbiter-task-${task_n} (exit $_tee_ec)"
     fi
     _guard_main_checkout "arbiter-task-${task_n}" "$_main_state_before"
     check_branch_after_agent
