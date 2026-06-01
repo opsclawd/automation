@@ -2725,13 +2725,13 @@ _unresolved_fingerprint() {
     | awk '{print $1}'
 }
 
-# True if revalidate-N.log shows all four checks (build/lint/typecheck/test) passed.
+# True if revalidate-N.log shows all five checks (build/lint/typecheck/test/test:bash) passed.
 # The revalidate block in this script emits "[<step> failed]" on non-zero exit,
 # so the absence of any "[* failed]" marker means green.
 _revalidate_is_green() {
   local file=$1
   [[ -f "$file" ]] || return 1
-  ! grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "$file"
+  ! grep -qE '(BUILD_FAILED|LINT_FAILED|TYPECHECK_FAILED|TEST_FAILED|BASH_TEST_FAILED)' "$file"
 }
 
 if [[ "$PHASE" == "fix-review" ]]; then
@@ -2855,19 +2855,19 @@ Start now."
 
   {
     echo "=== pnpm build ==="
-    timeout 120 pnpm build 2>&1 || echo "[build failed]"
+    timeout 120 pnpm build 2>&1
     echo ""
     echo "=== pnpm lint ==="
-    timeout 120 pnpm lint 2>&1 || echo "[lint failed]"
+    timeout 120 pnpm lint 2>&1 || echo "LINT_FAILED"
     echo ""
     echo "=== pnpm typecheck ==="
-    timeout 120 pnpm typecheck 2>&1 || echo "[typecheck failed]"
+    timeout 120 pnpm typecheck 2>&1 || echo "TYPECHECK_FAILED"
     echo ""
     echo "=== pnpm test ==="
-    timeout 120 pnpm test 2>&1 || echo "[test failed]"
+    timeout 120 pnpm test 2>&1 || echo "TEST_FAILED"
     echo ""
     echo "=== pnpm test:bash ==="
-    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
+    timeout 180 pnpm test:bash 2>&1 || echo "BASH_TEST_FAILED"
   } > >(tee "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log") 2>&1
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
