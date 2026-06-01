@@ -21,20 +21,20 @@ teardown() {
 
 @test "deviation: creates deviation-record.md with required fields" {
   _record_deviation "1" "verification_spec_defect" "RESOLVED_TIEBREAK" "file:line evidence" "rationale text"
-  [ -f "$TMPDIR_TEST/deviation-record.md" ]
-  grep -q "verification_spec_defect" "$TMPDIR_TEST/deviation-record.md"
-  grep -q "RESOLVED_TIEBREAK" "$TMPDIR_TEST/deviation-record.md"
-  grep -q "file:line evidence" "$TMPDIR_TEST/deviation-record.md"
+  [ -f "$TMPDIR_TEST/deviation-record-1.md" ]
+  grep -q "verification_spec_defect" "$TMPDIR_TEST/deviation-record-1.md"
+  grep -q "RESOLVED_TIEBREAK" "$TMPDIR_TEST/deviation-record-1.md"
+  grep -q "file:line evidence" "$TMPDIR_TEST/deviation-record-1.md"
 }
 
 @test "deviation: creates deviation-record.json for machine consumption" {
   _record_deviation "2" "implementation_defect" "BLOCKED_IMPL_DEFECT" "some evidence" "some rationale"
-  [ -f "$TMPDIR_TEST/deviation-record.json" ]
-  run jq -r '.task' "$TMPDIR_TEST/deviation-record.json"
+  [ -f "$TMPDIR_TEST/deviation-record-2.json" ]
+  run jq -r '.task' "$TMPDIR_TEST/deviation-record-2.json"
   [ "$output" = "2" ]
-  run jq -r '.defect_classification' "$TMPDIR_TEST/deviation-record.json"
+  run jq -r '.defect_classification' "$TMPDIR_TEST/deviation-record-2.json"
   [ "$output" = "implementation_defect" ]
-  run jq -r '.outcome' "$TMPDIR_TEST/deviation-record.json"
+  run jq -r '.outcome' "$TMPDIR_TEST/deviation-record-2.json"
   [ "$output" = "BLOCKED_IMPL_DEFECT" ]
 }
 
@@ -46,5 +46,5 @@ teardown() {
 @test "deviation: includes issue number when ISSUE_NUM is set" {
   ISSUE_NUM=165
   _record_deviation "1" "verification_spec_defect" "DEVIATION_PROCEED" "ev" "rat"
-  grep -q "165" "$TMPDIR_TEST/deviation-record.md"
+  grep -q "165" "$TMPDIR_TEST/deviation-record-1.md"
 }
