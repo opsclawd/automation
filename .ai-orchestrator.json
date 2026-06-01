@@ -42,7 +42,7 @@
       "junior": {
         "runtime": "opencode",
         "provider": "opencode",
-        "model": "minimax-m3-free",
+        "model": "deepseek-v4-flash-free",
         "timeoutMinutes": 30
       },
       "reviewer": {
@@ -57,7 +57,7 @@
         "model": "gemini-3.1-pro",
         "timeoutMinutes": 30
       },
-      "pi-qwen-local": {
+      "local": {
         "runtime": "pi",
         "provider": "crofai",
         "model": "qwen3.6-27b",
@@ -76,7 +76,7 @@
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
-      "implement": { "profile": "junior", "fallbackProfile": "builder" },
+      "implement": { "profile": "local", "fallbackProfile": "builder" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
