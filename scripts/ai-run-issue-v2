@@ -905,6 +905,28 @@ detect_phase() {
   fi
 }
 
+# _lint_plan_verification: heuristic pre-check of plan verification commands
+# after plan-write. Catches whole-file greps without line-range scoping that
+# tend to produce unsatisfiable verification commands in the implement loop.
+_lint_plan_verification() {
+  local plan_file="${WORKTREE_DIR}/plan.md"
+  [[ -f "$plan_file" ]] || return 0
+
+  local grep_cmds
+  grep_cmds=$(grep -oP '`grep\s+[^`]+`' "$plan_file" 2>/dev/null || true)
+
+  if [[ -n "$grep_cmds" ]]; then
+    while IFS= read -r cmd; do
+      if [[ "$cmd" =~ grep.*ai-run-issue-v2 ]] && ! [[ "$cmd" =~ awk|sed|head|tail|NR ]]; then
+        warn "plan.lint: whole-file grep without line-range restriction in plan: ${cmd}"
+        emit_event "plan-write" "warn" "plan.lint.warning" \
+          "Whole-file grep without line-range restriction detected in plan" \
+          command="${cmd}"
+      fi
+    done <<< "$grep_cmds"
+  fi
+}
+
 PHASE="$(detect_phase)"
 _INITIAL_PHASE="$PHASE"
 
@@ -1207,6 +1229,9 @@ Write plan.md now."
   _emit_artifact "plan-write" "${WORKTREE_DIR}/plan.md" "plan"
 
   _emit_phase_done "plan-write"
+
+  _lint_plan_verification
+
   PHASE="implement"
 fi
 
