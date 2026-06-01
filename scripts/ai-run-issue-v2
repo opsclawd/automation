@@ -2100,8 +2100,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     CONTRADICTION_RETRIED=0
     if [[ -f "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json" ]]; then
       ARBITER_INVOKED_FOR_TASK=1
+      ARBITER_OUTCOME=$(jq -r '.outcome // ""' "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json")
     else
       ARBITER_INVOKED_FOR_TASK=""
+      ARBITER_OUTCOME=""
     fi
 
     # Step 1: Implement
@@ -2299,18 +2301,20 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
             if [[ -n "$ARBITER_ORIGINAL_VERIFICATION" && -n "$ARBITER_AMENDED_VERIFICATION" ]]; then
               plan_before=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
               python3 -c "
-import sys, os
+import sys, os, re
 worktree = os.environ.get('WORKTREE_DIR', '.')
 path = os.path.join(worktree, 'plan.md')
 with open(path) as f:
     lines = f.readlines()
 task_num = int(sys.argv[3])
+task_pattern = re.compile(r'^#{2,3} Task ' + str(task_num) + ':')
+task_boundary = re.compile(r'^#{2,3} Task ')
 task_start = -1
 task_end = -1
 for i, line in enumerate(lines):
-    if line.startswith('## Task ' + str(task_num) + ':'):
+    if task_pattern.match(line):
         task_start = i
-    elif line.startswith('## Task ') and task_start >= 0 and task_end < 0:
+    elif task_boundary.match(line) and task_start >= 0 and task_end < 0:
         task_end = i
         break
 if task_end < 0:
