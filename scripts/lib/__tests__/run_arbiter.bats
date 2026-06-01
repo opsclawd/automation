@@ -173,10 +173,10 @@ _extract_run_arbiter_body() {
   echo "$body" | grep -q 'arbiter-result.json'
 }
 
-@test "run_arbiter: ARBITER_PROMPT requires arbiter-rationale.md output" {
+@test "run_arbiter: ARBITER_PROMPT requires arbiter-rationale-N.md output" {
   local body
   body=$(_extract_run_arbiter_body)
-  echo "$body" | grep -q 'arbiter-rationale.md'
+  echo "$body" | grep -q 'arbiter-rationale-${task_n}.md'
 }
 
 @test "run_arbiter: ARBITER_PROMPT contains evidence field requirement" {
