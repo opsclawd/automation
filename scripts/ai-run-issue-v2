@@ -1182,7 +1182,7 @@ The plan MUST include:
 - risk areas
 - stop conditions (what would cause you to abort instead of continue)
 - Verification commands must be scoped to the files/paths explicitly changed by each task. Do NOT use whole-file grep/rg on files where the task only changes a subset — scope to specific line ranges or file sections.
-- Prefer making verification an acceptance criterion of implementing tasks rather than a standalone "Full verification" task. If a standalone verification task is necessary, its verification commands must reference only files/paths explicitly in scope for that task.
+- Prefer making verification an acceptance criterion of implementing tasks rather than a standalone \"Full verification\" task. If a standalone verification task is necessary, its verification commands must reference only files/paths explicitly in scope for that task.
 
 ## CRITICAL RULES
 - Do NOT ask questions. Make reasonable assumptions and document them.
