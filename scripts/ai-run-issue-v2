@@ -1738,8 +1738,12 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
 
-    # Step 1: Implement
+    # Step 1: Implement (skipped when resuming directly into the review stage)
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
+      # Persist the pre-implementation base SHA so a later resume into the review
+      # stage can still compute this task's real diff. BASE_SHA above is the
+      # pre-impl HEAD on a fresh run, but on resume it is the *post*-impl HEAD.
+      echo "$BASE_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log"
       run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
       IMPL_STATUS=$(resolve_result \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
@@ -1752,6 +1756,20 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
       fi
 
+      HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+    else
+      # Resuming directly into review: the implement step ran in a prior session.
+      # BASE_SHA above is the *post*-impl HEAD here, so a naive base..head range
+      # would be empty and the quality reviewer would see no changes. Recover the
+      # real range: base = persisted pre-impl SHA, head = current HEAD.
+      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" ]]; then
+        BASE_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" 2>/dev/null || echo "$BASE_SHA")
+      else
+        # No marker (task implemented before this was added) — best-effort to the
+        # parent commit so the reviewer still sees a diff rather than nothing.
+        BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "$BASE_SHA")
+        warn "No persisted base SHA for task ${TASK_NUM}; using HEAD~1 for the review diff range"
+      fi
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
     fi
 
