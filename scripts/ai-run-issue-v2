@@ -1750,6 +1750,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
+    # Track whether we implemented this session. On a resume directly into review
+    # (DID_IMPLEMENT=0) later tasks may be stacked on the branch tip, so we must
+    # not refresh the persisted head marker with that tip after fixes.
+    DID_IMPLEMENT=0
 
     # Step 1: Implement (skipped when resuming directly into the review stage)
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
@@ -1774,6 +1778,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       # uses THIS task's tip — not the branch tip, which may already carry later
       # tasks' commits and would pollute the review diff with unrelated changes.
       echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+      DID_IMPLEMENT=1
     else
       # Resuming directly into review: the implement step ran in a prior session.
       # BASE_SHA above is the *post*-impl HEAD here, so a naive base..head range
@@ -1852,10 +1857,15 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         orchestrator_fail "Task ${TASK_NUM} fix review is blocked. Fix the blocker and re-run."
       fi
 
-      # Update HEAD_SHA after potential fixes, and refresh the persisted marker
-      # so a mid-fix-loop resume sees the fixes already applied to this task.
+      # Update HEAD_SHA after potential fixes. Only refresh the persisted marker
+      # when we implemented this session: on a resume-into-review, later tasks may
+      # be stacked on the branch tip, so writing that tip back would re-pollute the
+      # marker (and future resumes) with unrelated commits. Keeping the original
+      # scoped post-impl head is safer than persisting a stacked tip.
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+      if [[ $DID_IMPLEMENT -eq 1 ]]; then
+        echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+      fi
 
       # Check current review status after fix attempt
       log "  Task ${TASK_NUM}: re-running reviews after fix loop..."
