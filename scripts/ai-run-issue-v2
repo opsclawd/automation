@@ -104,6 +104,8 @@ source "${REPO_ROOT}/scripts/lib/guard-main-checkout.sh"
 
 # shellcheck source=lib/parse_tasks_helpers.sh
 source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+# shellcheck source=lib/validation_result.sh
+source "${REPO_ROOT}/scripts/lib/validation_result.sh"
 
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
 # Invariant: _emit_phase_started must always be called before _emit_phase_done
@@ -2528,34 +2530,23 @@ if [[ "$PHASE" == "validate" ]]; then
 
   ensure_worktree
 
-  log "Running pnpm build && pnpm lint && pnpm typecheck && pnpm test..."
+  log "Running validation suite via run-validation.ts ..."
   cd "${WORKTREE_DIR}"
   ensure_branch
-
   mkdir -p "${ISSUES_DIR}"
 
-  {
-    echo "=== pnpm install ==="
-    timeout 120 pnpm install --frozen-lockfile 2>&1 | tail -5 || echo "[install completed with warnings]"
-    echo ""
-    echo "=== pnpm build ==="
-    timeout 120 pnpm build 2>&1 || echo "[build failed]"
-    echo ""
-    echo "=== pnpm lint ==="
-    timeout 120 pnpm lint 2>&1 || echo "[lint failed]"
-    echo ""
-    echo "=== pnpm typecheck ==="
-    timeout 120 pnpm typecheck 2>&1 || echo "[typecheck failed]"
-    echo ""
-    echo "=== pnpm test ==="
-    timeout 120 pnpm test 2>&1 || echo "[test failed]"
-    echo ""
-    echo "=== pnpm test:bash ==="
-    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
-  } > >(tee "${ISSUES_DIR}/validate.log") 2>&1
+  # Dependencies must be installed before the configured validation commands run.
+  timeout 120 pnpm install --frozen-lockfile 2>&1 | tail -5 || echo "[install completed with warnings]"
 
-  VALIDATE_EXIT=0
-  grep -qE "\[build failed\]|\[lint failed\]|\[typecheck failed\]|\[test failed\]|\[test:bash failed\]|\[install completed with warnings\]" "${ISSUES_DIR}/validate.log" && VALIDATE_EXIT=1
+  NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+    "$REPO_ROOT/apps/cli/src/run-validation.ts" \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
+    --phase-id validate \
+    2>&1 | tee "${ISSUES_DIR}/validate.log"
+  VALIDATE_EXIT=${PIPESTATUS[0]}
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
@@ -2584,12 +2575,12 @@ if [[ "$PHASE" == "validate" ]]; then
   fi
 
   # Record validation status for downstream phases (after mutation guard —
-  # this file is the resume marker checked by detect_phase)
+  # this file is the resume marker checked by detect_phase).
+  # Derived from the CLI exit code via the sourced helper.
+  validation_result_from_exit "$VALIDATE_EXIT" > "${ISSUES_DIR}/validation.result"
   if [[ $VALIDATE_EXIT -ne 0 ]]; then
-    echo "failed" > "${ISSUES_DIR}/validation.result"
-    warn "Validation had failures (check validation.md for details)"
+    warn "Validation had failures (check validation.md / .ai-runs/<run>/validate/ for details)"
   else
-    echo "passed" > "${ISSUES_DIR}/validation.result"
     info "Validation passed"
   fi
 

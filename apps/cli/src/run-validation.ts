@@ -107,8 +107,10 @@ async function main() {
     });
 
     for (const cmd of validationRun.commands) {
+      // eslint-disable-next-line no-console
       console.log(`[${cmd.outcome}] ${cmd.command} (${cmd.durationMs}ms, exit ${cmd.exitCode})`);
     }
+    // eslint-disable-next-line no-console
     console.log(passed ? 'validation: PASSED' : 'validation: FAILED');
     process.exit(exitCodeForValidation(passed));
   } catch (e) {
