@@ -2260,6 +2260,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
               "Post-amendment stall indicates genuine implementation defect (guardrail G3/G4)"
             orchestrator_fail "Task ${TASK_NUM}: post-arbiter stall after RESOLVED_AMENDED — classified as implementation defect"
           fi
+          if [[ "${ARBITER_OUTCOME}" == "BLOCKED_IMPL_DEFECT" ]]; then
+            log "  Task ${TASK_NUM}: previous arbiter classified BLOCKED_IMPL_DEFECT — halting (guardrail G4 preserves stop condition)"
+            orchestrator_fail "Task ${TASK_NUM}: previous arbiter classification was BLOCKED_IMPL_DEFECT — G4 prevents auto-proceed on resume"
+          fi
           log "  Task ${TASK_NUM}: arbiter already invoked for this task — recording deviation and proceeding (guardrail G3)"
           _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
             "Arbiter already invoked once (cap 1 per task), loop still stalled" \
@@ -2380,7 +2384,7 @@ with open(path, 'w') as f:
       _exh_outcome="BLOCKED_IMPL_DEFECT"
       _exh_spec=$(jq -r '[.[].spec_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "SPEC_FAIL")
       _exh_qual=$(jq -r '[.[].quality_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "QUALITY_FAIL")
-      if [[ "$_exh_spec" != "SPEC_FAIL" || "$_exh_qual" != "QUALITY_FAIL" ]]; then
+      if [[ "$_exh_qual" != "QUALITY_FAIL" && "$_exh_spec" != "SPEC_FAIL" ]]; then
         _exh_defect="verification_spec_defect"
         _exh_outcome="DEVIATION_PROCEED"
       fi
