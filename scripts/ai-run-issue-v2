@@ -257,6 +257,7 @@ _detect_loop_stall() {
     LOOP_STALL_TYPE="STALL_NO_PROGRESS"
     return 0
   fi
+  return 0
 }
 
 _validate_arbiter_result() {
@@ -2278,7 +2279,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
             _record_deviation "$TASK_NUM" "verification_spec_defect" "RESOLVED_AMENDED" \
               "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
             if [[ -n "$ARBITER_ORIGINAL_VERIFICATION" && -n "$ARBITER_AMENDED_VERIFICATION" ]]; then
-              local plan_before
               plan_before=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
               python3 -c "
 import sys, os
@@ -2290,7 +2290,6 @@ c = c.replace(sys.argv[1], sys.argv[2])
 with open(path, 'w') as f:
     f.write(c)
 " "$ARBITER_ORIGINAL_VERIFICATION" "$ARBITER_AMENDED_VERIFICATION"
-              local plan_after
               plan_after=$(cat "${WORKTREE_DIR}/plan.md" 2>/dev/null || echo "")
               if [[ "$plan_before" == "$plan_after" ]]; then
                 warn "plan amendment: str.replace did not change plan.md — original_verification not found verbatim"
@@ -2334,11 +2333,9 @@ with open(path, 'w') as f:
       emit_event "fix-review" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
-      local _exh_defect="implementation_defect"
-      local _exh_outcome="BLOCKED_IMPL_DEFECT"
-      local _exh_spec
+      _exh_defect="implementation_defect"
+      _exh_outcome="BLOCKED_IMPL_DEFECT"
       _exh_spec=$(jq -r '[.[].spec_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "SPEC_FAIL")
-      local _exh_qual
       _exh_qual=$(jq -r '[.[].quality_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "QUALITY_FAIL")
       if [[ "$_exh_spec" != "SPEC_FAIL" || "$_exh_qual" != "QUALITY_FAIL" ]]; then
         _exh_defect="verification_spec_defect"
