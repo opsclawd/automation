@@ -42,7 +42,7 @@
       "junior": {
         "runtime": "opencode",
         "provider": "opencode",
-        "model": "deepseek-v4-flash-free",
+        "model": "minimax-m3-free",
         "timeoutMinutes": 30
       },
       "reviewer": {
@@ -76,7 +76,7 @@
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
-      "implement": { "profile": "builder", "fallbackProfile": "junior" },
+      "implement": { "profile": "junior", "fallbackProfile": "builderr" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
