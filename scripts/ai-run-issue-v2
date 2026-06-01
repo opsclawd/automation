@@ -2275,10 +2275,16 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
             _record_deviation "$TASK_NUM" "verification_spec_defect" "RESOLVED_AMENDED" \
               "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
             if [[ -n "$ARBITER_ORIGINAL_VERIFICATION" && -n "$ARBITER_AMENDED_VERIFICATION" ]]; then
-              (
-                cd "$WORKTREE_DIR" && \
-                sed -i "s|${ARBITER_ORIGINAL_VERIFICATION}|${ARBITER_AMENDED_VERIFICATION}|g" plan.md
-              )
+              python3 -c "
+import sys, os
+worktree = os.environ.get('WORKTREE_DIR', '.')
+path = os.path.join(worktree, 'plan.md')
+with open(path) as f:
+    c = f.read()
+c = c.replace(sys.argv[1], sys.argv[2])
+with open(path, 'w') as f:
+    f.write(c)
+" "$ARBITER_ORIGINAL_VERIFICATION" "$ARBITER_AMENDED_VERIFICATION"
               log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
             fi
             ;;
@@ -2317,9 +2323,22 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       emit_event "fix-review" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
-      _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
-        "Review loop exhausted ${REVIEW_LOOPS} iterations without arbiter resolution (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})" \
-        "Loop exhaustion — proceeding with deviation as safety net"
+      local _exh_defect="implementation_defect"
+      local _exh_outcome="BLOCKED_IMPL_DEFECT"
+      local _exh_spec
+      _exh_spec=$(jq -r '[.[].spec_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "SPEC_FAIL")
+      local _exh_qual
+      _exh_qual=$(jq -r '[.[].quality_status] | unique | join(",")' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null || echo "QUALITY_FAIL")
+      if [[ "$_exh_spec" != "SPEC_FAIL" || "$_exh_qual" != "QUALITY_FAIL" ]]; then
+        _exh_defect="verification_spec_defect"
+        _exh_outcome="DEVIATION_PROCEED"
+      fi
+      _record_deviation "$TASK_NUM" "$_exh_defect" "$_exh_outcome" \
+        "Review loop exhausted ${REVIEW_LOOPS} iterations (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})" \
+        "Loop exhaustion — $_exh_defect based on review history"
+      if [[ "$_exh_outcome" == "BLOCKED_IMPL_DEFECT" ]]; then
+        orchestrator_fail "Task ${TASK_NUM}: review loop exhausted with consistently failing reviews — classified as implementation defect"
+      fi
       log "  Task ${TASK_NUM}: loop exhausted, proceeding with deviation"
     fi
 
