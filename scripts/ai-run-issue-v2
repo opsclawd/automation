@@ -1996,7 +1996,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       2>&1 | tee -a "${ISSUES_DIR}/arbiter-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     rm -f "$_arbiter_prompt_file"
     if [[ $_tee_ec -ne 0 ]]; then
-      orchestrator_fail "tee failed writing log for arbiter-task-${task_n} (exit $_tee_ec)"
+      # Arbiter is a soft intervention (see plan): a log-tee hiccup must not
+      # abort the run. Warn and continue, consistent with the non-zero
+      # agent-exit handling below. The arbitrate phase is the documented
+      # exception to the "all phases halt on tee failure" rule.
+      warn "tee failed writing log for arbiter-task-${task_n} (exit $_tee_ec)"
     fi
     _guard_main_checkout "arbiter-task-${task_n}" "$_main_state_before"
     check_branch_after_agent
