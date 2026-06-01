@@ -795,13 +795,22 @@ LAST_PHASE="start"
     local impl_result_file="${ISSUES_DIR}/implement-task-${task_n}.result"
     local spec_result_file="${ISSUES_DIR}/spec-review-task-${task_n}.result"
     local quality_result_file="${ISSUES_DIR}/quality-review-task-${task_n}.result"
+    local spec_md_file="${ISSUES_DIR}/spec-review-task-${task_n}.md"
+    local quality_md_file="${ISSUES_DIR}/quality-review-task-${task_n}.md"
 
     local impl_result="PENDING"
     if [[ -f "$impl_result_file" ]]; then
       impl_result=$(cat "$impl_result_file" 2>/dev/null || echo "PENDING")
     fi
 
-    if [[ "$impl_result" != "DONE" ]]; then
+    # A task can only be complete if its implementation finished successfully.
+    # DONE and DONE_WITH_CONCERNS are both treated as success — the original bug
+    # was requiring exactly "DONE", which rewound resume past a
+    # DONE_WITH_CONCERNS task whose reviews had already passed. Any other status
+    # (BLOCKED / NEEDS_CONTEXT / PENDING / absent) is NOT complete, even if stale
+    # SPEC_PASS/QUALITY_PASS artifacts are present: reviews alone must never let a
+    # task skip a successful implementation.
+    if [[ "$impl_result" != "DONE" && "$impl_result" != "DONE_WITH_CONCERNS" ]]; then
       if [[ -f "${ISSUES_DIR}/implement-task-${task_n}.log" ]]; then
         echo "implementing"
       else
@@ -810,7 +819,19 @@ LAST_PHASE="start"
       return
     fi
 
+    # Implementation succeeded — completion is then decided by the reviews.
     if [[ ! -f "$spec_result_file" || ! -f "$quality_result_file" ]]; then
+      echo "review-needed"
+      return
+    fi
+
+    # A passing .result is only trustworthy alongside a valid (non-empty) review
+    # report. If the reviewer wrote .result but not a real .md (killed mid-write,
+    # or a contract violation), treat the task as review-needed so resume re-runs
+    # the review — find_first_incomplete_task must not skip it on a bare .result.
+    # Reuse the same check the in-loop path uses so the two cannot drift.
+    if ! validate_review_artifacts "$spec_result_file" "$spec_md_file" \
+      || ! validate_review_artifacts "$quality_result_file" "$quality_md_file"; then
       echo "review-needed"
       return
     fi
@@ -2107,6 +2128,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
+    # Track whether we implemented this session. On a resume directly into review
+    # (DID_IMPLEMENT=0) later tasks may be stacked on the branch tip, so we must
+    # not refresh the persisted head marker with that tip after fixes.
+    DID_IMPLEMENT=0
     if [[ -f "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json" ]]; then
       ARBITER_INVOKED_FOR_TASK=1
       ARBITER_OUTCOME=$(jq -r '.outcome // ""' "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json")
@@ -2115,8 +2140,12 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       ARBITER_OUTCOME=""
     fi
 
-    # Step 1: Implement
+    # Step 1: Implement (skipped when resuming directly into the review stage)
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
+      # Persist the pre-implementation base SHA so a later resume into the review
+      # stage can still compute this task's real diff. BASE_SHA above is the
+      # pre-impl HEAD on a fresh run, but on resume it is the *post*-impl HEAD.
+      echo "$BASE_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log"
       run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
       IMPL_STATUS=$(resolve_result \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
@@ -2130,6 +2159,33 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       fi
 
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+      # Persist the post-impl head too, so a later resume into this task's review
+      # uses THIS task's tip — not the branch tip, which may already carry later
+      # tasks' commits and would pollute the review diff with unrelated changes.
+      echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+      DID_IMPLEMENT=1
+    else
+      # Resuming directly into review: the implement step ran in a prior session.
+      # BASE_SHA above is the *post*-impl HEAD here, so a naive base..head range
+      # would be empty and the quality reviewer would see no changes. Recover the
+      # real range: base = persisted pre-impl SHA, head = current HEAD.
+      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" ]]; then
+        BASE_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" 2>/dev/null || echo "$BASE_SHA")
+      else
+        # No marker (task implemented before this was added) — best-effort to the
+        # parent commit so the reviewer still sees a diff rather than nothing.
+        BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "$BASE_SHA")
+        warn "No persisted base SHA for task ${TASK_NUM}; using HEAD~1 for the review diff range"
+      fi
+      # Use the task's own post-impl head, not the branch tip: later tasks may
+      # already be committed on top, and reviewing base..tip would span them and
+      # pass/fail the resumed task on unrelated changes.
+      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" ]]; then
+        HEAD_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" 2>/dev/null || echo "")
+      else
+        HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+        warn "No persisted head SHA for task ${TASK_NUM}; review diff may include later tasks' commits"
+      fi
     fi
 
     # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations).
@@ -2197,6 +2253,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       log "  Cancel window: press Ctrl+C within 10s to abort..."
       sleep 10
 
+      _head_before_fix=$(git rev-parse HEAD 2>/dev/null || echo "")
       run_fix_review "$TASK_NUM" "$task_title" "$TASK_TEXT"
       FIX_STATUS=$(resolve_result \
         "${WORKTREE_DIR}/fix-review-task-${TASK_NUM}.result" \
@@ -2208,8 +2265,32 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         orchestrator_fail "Task ${TASK_NUM} fix review is blocked. Fix the blocker and re-run."
       fi
 
-      # Update HEAD_SHA after potential fixes
-      HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+      # Only advance HEAD_SHA if the fix actually committed something. If it did
+      # not (e.g. DONE_NO_FIXES_NEEDED), keep the current scoped head so the
+      # re-review range stays base..task-N-head rather than expanding to the
+      # branch tip — which, on a resume with later tasks stacked, would re-review
+      # unrelated commits. Refresh the persisted marker only in normal flow
+      # (DID_IMPLEMENT=1), where the new tip is genuinely this task's head.
+      _head_after_fix=$(git rev-parse HEAD 2>/dev/null || echo "")
+      if [[ -n "$_head_after_fix" && "$_head_after_fix" != "$_head_before_fix" ]]; then
+        HEAD_SHA="$_head_after_fix"
+        if [[ $DID_IMPLEMENT -eq 1 ]]; then
+          echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+        else
+          # Resume-into-review AND the fix committed. If later tasks are stacked
+          # (this task's scoped head is an ancestor of, but not equal to, the
+          # pre-fix tip), the fix lands above them and base..HEAD_SHA now spans
+          # the later tasks too. There is no single contiguous range that isolates
+          # this task plus its fix, so we surface it rather than silently
+          # mis-scoping the re-review. Root prevention is not entering this state
+          # (completion-gating) — see issue #170.
+          _scoped_head=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" 2>/dev/null || echo "")
+          if [[ -n "$_scoped_head" && "$_scoped_head" != "$_head_before_fix" ]] \
+            && git merge-base --is-ancestor "$_scoped_head" "$_head_before_fix" 2>/dev/null; then
+            warn "Task ${TASK_NUM}: fix committed during a resume with later tasks stacked on top; re-review diff (${BASE_SHA}..${HEAD_SHA}) may include unrelated later-task commits (non-contiguous range, see #170)."
+          fi
+        fi
+      fi
 
       # Check current review status after fix attempt
       log "  Task ${TASK_NUM}: re-running reviews after fix loop..."
