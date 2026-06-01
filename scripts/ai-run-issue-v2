@@ -1798,8 +1798,9 @@ Write EXACTLY ONE JSON object to ${WORKTREE_DIR}/arbiter-result.json with this s
 5. Evidence field is MANDATORY. If you cannot cite evidence, output BLOCKED_IMPL_DEFECT.
 6. Only verification_spec_defect classification may auto-proceed. implementation_defect must stop the run.
 
-## MANDATORY OUTPUT FILES
+## MANDATORY OUTPUT FILE
 Write the JSON to: ${WORKTREE_DIR}/arbiter-result.json
+
 Also write a human-readable rationale to: ${WORKTREE_DIR}/arbiter-rationale.md
 
 Stop after writing both files.
@@ -1819,7 +1820,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --prompt-file "$_arbiter_prompt_file" \
-      --expected-artifacts "${WORKTREE_DIR}/arbiter-result.json,${WORKTREE_DIR}/arbiter-rationale.md" \
       --timeout-minutes 10 \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
       2>&1 | tee -a "${ISSUES_DIR}/arbiter-task-${task_n}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
@@ -1911,6 +1911,9 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
+    STALL_COUNT=0
+    PREV_SPEC_STATUS=""
+    PREV_QUALITY_STATUS=""
 
     # Step 1: Implement
     if [[ $TASK_NUM -gt $RESUME_TASK_NUM || "$RESUME_STAGE" == "implement" || -z "$RESUME_STAGE" ]]; then
@@ -2023,6 +2026,48 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" \
         spec="${SPEC_STATUS:-unknown}" quality="${QUALITY_STATUS:-unknown}"
 
+      # Detect oscillation/stall: same failing status across consecutive loops
+      if [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
+        if [[ "$SPEC_STATUS" == "$PREV_SPEC_STATUS" && "$QUALITY_STATUS" == "$PREV_QUALITY_STATUS" ]]; then
+          STALL_COUNT=$((STALL_COUNT + 1))
+        else
+          STALL_COUNT=0
+        fi
+        PREV_SPEC_STATUS="$SPEC_STATUS"
+        PREV_QUALITY_STATUS="$QUALITY_STATUS"
+
+        if [[ $STALL_COUNT -ge 2 ]]; then
+          log "  Task ${TASK_NUM}: stalled ${STALL_COUNT}+ consecutive loops — invoking arbiter"
+          run_arbiter "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$SPEC_STATUS" "$QUALITY_STATUS"
+
+          local _arb_result_file="${WORKTREE_DIR}/arbiter-result.json"
+          if [[ -f "$_arb_result_file" ]]; then
+            local _arb_outcome
+            _arb_outcome=$(grep -oP '"outcome"\s*:\s*"\K[^"]+' "$_arb_result_file" 2>/dev/null || echo "")
+            case "$_arb_outcome" in
+              RESOLVED_TIEBREAK|RESOLVED_AMENDED|DEVIATION_PROCEED)
+                log "  Arbiter: $_arb_outcome — resetting stall counter and continuing review loop"
+                STALL_COUNT=0
+                ;;
+              BLOCKED_IMPL_DEFECT)
+                local _arb_rationale
+                _arb_rationale=$(cat "${WORKTREE_DIR}/arbiter-rationale.md" 2>/dev/null | head -10)
+                orchestrator_fail "Task ${TASK_NUM}: arbiter blocked (${_arb_outcome}) — ${_arb_rationale}"
+                ;;
+              *)
+                warn "Arbiter returned unknown outcome '${_arb_outcome}' — continuing review loop"
+                ;;
+            esac
+          else
+            warn "Arbiter ran but did not produce arbiter-result.json — continuing review loop"
+          fi
+        fi
+      else
+        STALL_COUNT=0
+        PREV_SPEC_STATUS=""
+        PREV_QUALITY_STATUS=""
+      fi
+
       if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
         log "  Task ${TASK_NUM}: both reviews pass"
         break
@@ -2043,6 +2088,27 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       emit_event "fix-review" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
+      # Invoke arbiter as final escalation before hard failure
+      run_arbiter "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "${SPEC_STATUS:-FAIL}" "${QUALITY_STATUS:-FAIL}"
+      local _final_arb_result="${WORKTREE_DIR}/arbiter-result.json"
+      if [[ -f "$_final_arb_result" ]]; then
+        local _final_outcome
+        _final_outcome=$(grep -oP '"outcome"\s*:\s*"\K[^"]+' "$_final_arb_result" 2>/dev/null || echo "")
+        case "$_final_outcome" in
+          RESOLVED_TIEBREAK|RESOLVED_AMENDED|DEVIATION_PROCEED)
+            log "  Arbiter: $_final_outcome at max iterations — resetting stall counter and continuing review loop"
+            STALL_COUNT=0
+            ;;
+          BLOCKED_IMPL_DEFECT)
+            local _final_rationale
+            _final_rationale=$(cat "${WORKTREE_DIR}/arbiter-rationale.md" 2>/dev/null | head -10)
+            orchestrator_fail "Task ${TASK_NUM}: arbiter blocked at max iterations (${_final_outcome}) — ${_final_rationale}"
+            ;;
+          *)
+            warn "Arbiter returned unknown outcome '${_final_outcome}' at max iterations — proceeding to hard fail"
+            ;;
+        esac
+      fi
       orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})."
     fi
 
