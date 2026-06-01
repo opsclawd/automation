@@ -66,6 +66,12 @@
         "outputBudgetTokens": 8000,
         "timeoutMinutes": 30
       },
+      "qwen": {
+        "runtime": "opencode",
+        "provider": "crofai",
+        "model": "qwen3.6-27b",
+        "timeoutMinutes": 30
+      },
       "claude": {
         "runtime": "claude-code",
         "provider": "anthropic",
@@ -76,7 +82,7 @@
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
-      "implement": { "profile": "local", "fallbackProfile": "builder" },
+      "implement": { "profile": "qwen", "fallbackProfile": "builder" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
