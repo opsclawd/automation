@@ -2855,7 +2855,7 @@ Start now."
 
   {
     echo "=== pnpm build ==="
-    timeout 120 pnpm build 2>&1
+    timeout 120 pnpm build 2>&1 || echo "BUILD_FAILED"
     echo ""
     echo "=== pnpm lint ==="
     timeout 120 pnpm lint 2>&1 || echo "LINT_FAILED"
