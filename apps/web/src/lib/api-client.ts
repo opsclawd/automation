@@ -1,4 +1,5 @@
 import type { ApiEvent } from './timeline';
+import type { ValidationRunDto } from './validation';
 
 export interface RunDto {
   uuid: string;
@@ -79,4 +80,11 @@ export async function listRunEvents(runUuid: string, since?: string): Promise<Ap
   const r = await fetch(`${base}/api/runs/${runUuid}/events${qs}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load run events: ${r.status}`);
   return ((await r.json()) as { events: ApiEvent[] }).events;
+}
+
+export async function listValidation(runUuid: string): Promise<ValidationRunDto[]> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const r = await fetch(`${base}/api/runs/${runUuid}/validation`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to load validation: ${r.status}`);
+  return ((await r.json()) as { validationRuns: ValidationRunDto[] }).validationRuns;
 }

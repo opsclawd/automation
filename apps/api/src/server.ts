@@ -5,6 +5,7 @@ import { runsRoutes } from './routes/runs.js';
 import { artifactsRoutes } from './routes/artifacts.js';
 import { eventsRoutes } from './routes/events.js';
 import { registerInvocationsRoutes } from './routes/invocations.js';
+import { registerValidationRoutes } from './routes/validation.js';
 
 export interface ServerOptions {
   container: Container;
@@ -23,6 +24,7 @@ export async function buildServer(container: Container, logger: boolean = false)
   await artifactsRoutes(app, container);
   await eventsRoutes(app, container);
   registerInvocationsRoutes(app, container);
+  registerValidationRoutes(app, container);
   return app;
 }
 
