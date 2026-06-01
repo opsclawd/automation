@@ -2108,6 +2108,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     # because its status is "review-needed" (i.e. reviews are NOT both passing
     # yet). Skipping reviews in that state would silently mark the task
     # complete with no review evidence, as happened on the issue #4 run.
+    # Reset loop history BEFORE initial reviewers so Task 2+ does not read
+    # stale iteration data from the previous task's review-loop-history.json.
+    REVIEW_LOOP_HISTORY_FILE="${WORKTREE_DIR}/review-loop-history.json"
+    rm -f "$REVIEW_LOOP_HISTORY_FILE"
     IMPL_REPORT=$(cat "${ISSUES_DIR}/implement-task-${TASK_NUM}.log" 2>/dev/null || echo "")
     run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
     run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
@@ -2145,9 +2149,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" \
       QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
 
-    # Initialize review loop history for this task
-    REVIEW_LOOP_HISTORY_FILE="${WORKTREE_DIR}/review-loop-history.json"
-    rm -f "$REVIEW_LOOP_HISTORY_FILE"
+    # Record initial review statuses as iteration 0
     _append_loop_history \
       0 "$SPEC_STATUS" "$QUALITY_STATUS" "INITIAL" \
       "" "" ""
