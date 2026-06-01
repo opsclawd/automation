@@ -2534,6 +2534,11 @@ if [[ "$PHASE" == "validate" ]]; then
     info "Validation passed"
   fi
 
+  # Mutation guard: validate phase must not produce any file changes
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
+  fi
+
   _emit_phase_done "validate"
   PHASE="whole-pr-review"
 fi
