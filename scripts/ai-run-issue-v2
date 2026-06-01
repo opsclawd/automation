@@ -1544,6 +1544,16 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 ${SPEC_REVIEWER_PROMPT}"
     fi
 
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      local history_excerpt
+      history_excerpt=$(jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.spec_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null | head -60)
+      SPEC_REVIEWER_PROMPT="${SPEC_REVIEWER_PROMPT}
+
+## Prior Iteration History (for context — DO NOT repeat failed approaches)
+${history_excerpt}"
+    fi
+
     local _spec_prompt_file
     _spec_prompt_file=$(mktemp)
     printf '%s' "$SPEC_REVIEWER_PROMPT" > "$_spec_prompt_file"
@@ -1693,6 +1703,16 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 ${QUALITY_REVIEWER_PROMPT}"
     fi
 
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      local history_excerpt
+      history_excerpt=$(jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\n\(.quality_review_excerpt)"' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null | head -60)
+      QUALITY_REVIEWER_PROMPT="${QUALITY_REVIEWER_PROMPT}
+
+## Prior Iteration History (for context — DO NOT repeat failed approaches)
+${history_excerpt}"
+    fi
+
     local _qual_prompt_file
     _qual_prompt_file=$(mktemp)
     printf '%s' "$QUALITY_REVIEWER_PROMPT" > "$_qual_prompt_file"
@@ -1797,6 +1817,16 @@ No other content in the file — just the status word.
 Stop after writing the result file.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+
+    REVIEW_LOOP_HISTORY_FILE="${REVIEW_LOOP_HISTORY_FILE:-${WORKTREE_DIR}/review-loop-history.json}"
+    if [[ -f "$REVIEW_LOOP_HISTORY_FILE" ]]; then
+      local history_excerpt
+      history_excerpt=$(jq -r '.[] | "Iteration \(.iteration): spec=\(.spec_status) quality=\(.quality_status) fix=\(.fix_status)\nDiff summary:\n\(.fix_diff_summary)"' "$REVIEW_LOOP_HISTORY_FILE" 2>/dev/null | head -80)
+      FIX_REVIEW_PROMPT="${FIX_REVIEW_PROMPT}
+
+## Prior Iteration History (DO NOT repeat approaches that already failed)
+${history_excerpt}"
+    fi
 
     local _fix_prompt_file
     _fix_prompt_file=$(mktemp)
@@ -2025,6 +2055,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
+    ARBITER_INVOKED_FOR_TASK=""
     STALL_COUNT=0
     PREV_SPEC_STATUS=""
     PREV_QUALITY_STATUS=""
@@ -2079,6 +2110,26 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       fi
     fi
 
+    # Resolve initial review statuses
+    SPEC_STATUS=$(resolve_result \
+      "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result" \
+      "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" \
+      SPEC_PASS SPEC_FAIL "SPEC_FAIL")
+    QUALITY_STATUS=$(resolve_result \
+      "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result" \
+      "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" \
+      QUALITY_PASS QUALITY_FAIL "QUALITY_FAIL")
+
+    # Initialize review loop history for this task
+    REVIEW_LOOP_HISTORY_FILE="${WORKTREE_DIR}/review-loop-history.json"
+    rm -f "$REVIEW_LOOP_HISTORY_FILE"
+    _append_loop_history \
+      0 "$SPEC_STATUS" "$QUALITY_STATUS" "INITIAL" \
+      "" "" ""
+
+    if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
+      log "  Task ${TASK_NUM}: both initial reviews pass — skipping fix loop"
+    else
     # Fix-review loop: agent fixes findings, then re-reviews, up to 5 times
     while [[ $REVIEW_LOOPS -lt 5 ]]; do
       REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
@@ -2140,46 +2191,70 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" \
         spec="${SPEC_STATUS:-unknown}" quality="${QUALITY_STATUS:-unknown}"
 
-      # Detect oscillation/stall: same failing status across consecutive loops
-      if [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
-        if [[ "$SPEC_STATUS" == "$PREV_SPEC_STATUS" && "$QUALITY_STATUS" == "$PREV_QUALITY_STATUS" ]]; then
-          STALL_COUNT=$((STALL_COUNT + 1))
-        else
-          STALL_COUNT=0
+      _append_loop_history \
+        "$REVIEW_LOOPS" "$SPEC_STATUS" "$QUALITY_STATUS" "$FIX_STATUS" \
+        "$(git -C "$WORKTREE_DIR" diff HEAD~1 2>/dev/null | head -20 || echo "")" \
+        "$(head -30 "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" 2>/dev/null || echo "")" \
+        "$(head -30 "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md" 2>/dev/null || echo "")"
+
+      _detect_loop_stall
+      if [[ "$LOOP_STALL_TYPE" != "STALL_NONE" ]]; then
+        log "  Task ${TASK_NUM}: stall detected (${LOOP_STALL_TYPE}) — invoking arbiter"
+        emit_event "arbitrate" "warn" "arbiter.stall_detected" \
+          "Stall detected for task ${TASK_NUM}: ${LOOP_STALL_TYPE}" \
+          task="${TASK_NUM}" stall_type="${LOOP_STALL_TYPE}" iteration="${REVIEW_LOOPS}"
+        ARBITER_INVOKED_FOR_TASK="${ARBITER_INVOKED_FOR_TASK:-}"
+        if [[ -n "$ARBITER_INVOKED_FOR_TASK" ]]; then
+          log "  Task ${TASK_NUM}: arbiter already invoked for this task — recording deviation and proceeding (guardrail G3)"
+          _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+            "Arbiter already invoked once (cap 1 per task), loop still stalled" \
+            "Loop stalled after arbiter attempt; proceeding with deviation"
+          break
         fi
-        PREV_SPEC_STATUS="$SPEC_STATUS"
-        PREV_QUALITY_STATUS="$QUALITY_STATUS"
-
-        if [[ $STALL_COUNT -ge 2 ]]; then
-          log "  Task ${TASK_NUM}: stalled ${STALL_COUNT}+ consecutive loops — invoking arbiter"
-          run_arbiter "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$SPEC_STATUS" "$QUALITY_STATUS"
-
-          local _arb_result_file="${WORKTREE_DIR}/arbiter-result.json"
-          if [[ -f "$_arb_result_file" ]]; then
-            local _arb_outcome
-            _arb_outcome=$(grep -oP '"outcome"\s*:\s*"\K[^"]+' "$_arb_result_file" 2>/dev/null || echo "")
-            case "$_arb_outcome" in
-              RESOLVED_TIEBREAK|RESOLVED_AMENDED|DEVIATION_PROCEED)
-                log "  Arbiter: $_arb_outcome — resetting stall counter and continuing review loop"
-                STALL_COUNT=0
-                ;;
-              BLOCKED_IMPL_DEFECT)
-                local _arb_rationale
-                _arb_rationale=$(cat "${WORKTREE_DIR}/arbiter-rationale.md" 2>/dev/null | head -10)
-                orchestrator_fail "Task ${TASK_NUM}: arbiter blocked (${_arb_outcome}) — ${_arb_rationale}"
-                ;;
-              *)
-                warn "Arbiter returned unknown outcome '${_arb_outcome}' — continuing review loop"
-                ;;
-            esac
-          else
-            warn "Arbiter ran but did not produce arbiter-result.json — continuing review loop"
+        ARBITER_INVOKED_FOR_TASK=1
+        run_arbiter "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$SPEC_STATUS" "$QUALITY_STATUS"
+        _validate_arbiter_result
+        emit_event "arbitrate" "info" "arbiter.resolved" \
+          "Arbiter resolved for task ${TASK_NUM}: ${ARBITER_OUTCOME}" \
+          task="${TASK_NUM}" outcome="${ARBITER_OUTCOME}" valid="${ARBITER_VALID}"
+        if [[ "$ARBITER_VALID" != "true" ]]; then
+          if [[ "$ARBITER_DEFECT_CLASSIFICATION" == "implementation_defect" || "$ARBITER_OUTCOME" == "BLOCKED_IMPL_DEFECT" ]]; then
+            _record_deviation "$TASK_NUM" "implementation_defect" "BLOCKED_IMPL_DEFECT" \
+              "${ARBITER_EVIDENCE:-validation failed}" "${ARBITER_RATIONALE:-no rationale}"
+            orchestrator_fail "Task ${TASK_NUM}: arbiter classified as implementation defect. Stopping run."
           fi
+          _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+            "Arbiter result invalid but defect is verification-related" \
+            "${ARBITER_RATIONALE:-no rationale}"
+          log "  Task ${TASK_NUM}: arbiter result invalid, proceeding with deviation"
+          break
         fi
-      else
-        STALL_COUNT=0
-        PREV_SPEC_STATUS=""
-        PREV_QUALITY_STATUS=""
+        case "$ARBITER_OUTCOME" in
+          RESOLVED_TIEBREAK)
+            SPEC_STATUS="SPEC_PASS"
+            QUALITY_STATUS="QUALITY_PASS"
+            log "  Task ${TASK_NUM}: arbiter tiebreak — overriding to PASS"
+            _record_deviation "$TASK_NUM" "verification_spec_defect" "RESOLVED_TIEBREAK" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            break
+            ;;
+          RESOLVED_AMENDED)
+            log "  Task ${TASK_NUM}: arbiter amended verification — re-running reviews once"
+            _record_deviation "$TASK_NUM" "verification_spec_defect" "RESOLVED_AMENDED" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            ;;
+          DEVIATION_PROCEED)
+            _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            log "  Task ${TASK_NUM}: arbiter deviation/proceed — continuing to PR"
+            break
+            ;;
+          BLOCKED_IMPL_DEFECT)
+            _record_deviation "$TASK_NUM" "implementation_defect" "BLOCKED_IMPL_DEFECT" \
+              "$ARBITER_EVIDENCE" "$ARBITER_RATIONALE"
+            orchestrator_fail "Task ${TASK_NUM}: arbiter classified as implementation defect. Stopping run."
+            ;;
+        esac
       fi
 
       if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
@@ -2197,39 +2272,25 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         orchestrator_fail "reviews_inconsistent: Task ${TASK_NUM} — review says FAIL (spec=${SPEC_STATUS}, quality=${QUALITY_STATUS}) but fix-review says DONE_NO_FIXES_NEEDED. Spec review: ${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result / .md — Quality review: ${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result / .md"
       fi
     done
+    fi
 
-    if [[ $REVIEW_LOOPS -eq 5 ]]; then
+    if [[ $REVIEW_LOOPS -ge 5 ]]; then
       emit_event "fix-review" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
-      # Invoke arbiter as final escalation before hard failure
-      run_arbiter "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "${SPEC_STATUS:-FAIL}" "${QUALITY_STATUS:-FAIL}"
-      local _final_arb_result="${WORKTREE_DIR}/arbiter-result.json"
-      if [[ -f "$_final_arb_result" ]]; then
-        local _final_outcome
-        _final_outcome=$(grep -oP '"outcome"\s*:\s*"\K[^"]+' "$_final_arb_result" 2>/dev/null || echo "")
-        case "$_final_outcome" in
-          RESOLVED_TIEBREAK|RESOLVED_AMENDED|DEVIATION_PROCEED)
-            log "  Arbiter: $_final_outcome at max iterations — resetting stall counter and continuing review loop"
-            STALL_COUNT=0
-            ;;
-          BLOCKED_IMPL_DEFECT)
-            local _final_rationale
-            _final_rationale=$(cat "${WORKTREE_DIR}/arbiter-rationale.md" 2>/dev/null | head -10)
-            orchestrator_fail "Task ${TASK_NUM}: arbiter blocked at max iterations (${_final_outcome}) — ${_final_rationale}"
-            ;;
-          *)
-            warn "Arbiter returned unknown outcome '${_final_outcome}' at max iterations — proceeding to hard fail"
-            ;;
-        esac
-      fi
-      orchestrator_fail "Review loop hit max 5 iterations for task ${TASK_NUM}. Reviews not passing (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})."
+      _record_deviation "$TASK_NUM" "verification_spec_defect" "DEVIATION_PROCEED" \
+        "Review loop exhausted ${REVIEW_LOOPS} iterations without arbiter resolution (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})" \
+        "Loop exhaustion — proceeding with deviation as safety net"
+      log "  Task ${TASK_NUM}: loop exhausted, proceeding with deviation"
     fi
 
     # Defense in depth: even if a future code path adds a `break` that
     # isn't gated on PASS, fail before declaring the task complete.
     if [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
-      orchestrator_fail "Task ${TASK_NUM}: exited review loop with spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?}. Refusing to mark complete."
+      if [[ ! -f "${WORKTREE_DIR}/deviation-record.json" ]]; then
+        orchestrator_fail "Task ${TASK_NUM}: exited review loop with spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?}. Refusing to mark complete."
+      fi
+      log "  Task ${TASK_NUM}: reviews not passing but deviation recorded — proceeding"
     fi
 
     {
@@ -2982,6 +3043,22 @@ if [[ "$PHASE" == "create-pr" ]]; then
     PR_REVIEW="No code review performed"
   fi
 
+  PR_AUTONOMOUS_ACTIONS=""
+  if [[ -f "${WORKTREE_DIR}/arbiter-rationale.md" ]]; then
+    PR_AUTONOMOUS_ACTIONS="### Arbiter Rationale
+$(cat "${WORKTREE_DIR}/arbiter-rationale.md")
+"
+  fi
+  if [[ -f "${WORKTREE_DIR}/deviation-record.md" ]]; then
+    PR_AUTONOMOUS_ACTIONS="${PR_AUTONOMOUS_ACTIONS}### Deviation Record
+$(cat "${WORKTREE_DIR}/deviation-record.md")
+"
+  fi
+  if [[ -n "$PR_AUTONOMOUS_ACTIONS" ]]; then
+    PR_AUTONOMOUS_ACTIONS="## Autonomous Actions
+${PR_AUTONOMOUS_ACTIONS}"
+  fi
+
   cat > "${ISSUES_DIR}/pr-summary.md" << EOF
 # ${ISSUE_TITLE}
 
@@ -3001,6 +3078,7 @@ ${PR_VALIDATION_STEPS}
 ## Review Findings
 ${PR_REVIEW}
 
+${PR_AUTONOMOUS_ACTIONS}
 ## Artifacts
 Run logs and artifacts: \`ai/issues/${ISSUE_NUM}/\`
 EOF
