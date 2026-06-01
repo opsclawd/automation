@@ -431,6 +431,12 @@ next-env.d.ts
 node_modules/
 .next/
 .review-context/
+arbiter-result.json
+arbiter-task-*.log
+arbiter-rationale-*.md
+deviation-record-*.md
+deviation-record-*.json
+review-loop-history.json
 EOF
 }
 
@@ -814,6 +820,8 @@ LAST_PHASE="start"
     quality_result=$(cat "$quality_result_file" 2>/dev/null || echo "QUALITY_FAIL")
 
     if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
+      echo "complete"
+    elif [[ -f "${ISSUES_DIR}/deviation-record-${task_n}.json" ]]; then
       echo "complete"
     else
       echo "review-needed"
