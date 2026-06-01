@@ -619,7 +619,23 @@ LAST_PHASE="start"
       impl_result=$(cat "$impl_result_file" 2>/dev/null || echo "PENDING")
     fi
 
-    if [[ "$impl_result" != "DONE" ]]; then
+    # Completion is decided by the reviews, not the implementer's self-reported
+    # status: if both reviews passed, the task is complete regardless of whether
+    # impl reported DONE or DONE_WITH_CONCERNS. Gating on the impl string caused
+    # resume to rewind to an earlier DONE_WITH_CONCERNS task even though its
+    # reviews had passed and later tasks were already complete.
+    if [[ -f "$spec_result_file" && -f "$quality_result_file" ]]; then
+      local spec_result quality_result
+      spec_result=$(cat "$spec_result_file" 2>/dev/null || echo "SPEC_FAIL")
+      quality_result=$(cat "$quality_result_file" 2>/dev/null || echo "QUALITY_FAIL")
+      if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
+        echo "complete"
+        return
+      fi
+    fi
+
+    # Not yet passed — report the stage so resume re-enters at the right point.
+    if [[ "$impl_result" != "DONE" && "$impl_result" != "DONE_WITH_CONCERNS" ]]; then
       if [[ -f "${ISSUES_DIR}/implement-task-${task_n}.log" ]]; then
         echo "implementing"
       else
@@ -628,20 +644,7 @@ LAST_PHASE="start"
       return
     fi
 
-    if [[ ! -f "$spec_result_file" || ! -f "$quality_result_file" ]]; then
-      echo "review-needed"
-      return
-    fi
-
-    local spec_result quality_result
-    spec_result=$(cat "$spec_result_file" 2>/dev/null || echo "SPEC_FAIL")
-    quality_result=$(cat "$quality_result_file" 2>/dev/null || echo "QUALITY_FAIL")
-
-    if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
-      echo "complete"
-    else
-      echo "review-needed"
-    fi
+    echo "review-needed"
   }
 
 find_first_incomplete_task() {
