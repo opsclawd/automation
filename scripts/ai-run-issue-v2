@@ -1770,6 +1770,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       fi
 
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+      # Persist the post-impl head too, so a later resume into this task's review
+      # uses THIS task's tip — not the branch tip, which may already carry later
+      # tasks' commits and would pollute the review diff with unrelated changes.
+      echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
     else
       # Resuming directly into review: the implement step ran in a prior session.
       # BASE_SHA above is the *post*-impl HEAD here, so a naive base..head range
@@ -1783,7 +1787,15 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "$BASE_SHA")
         warn "No persisted base SHA for task ${TASK_NUM}; using HEAD~1 for the review diff range"
       fi
-      HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+      # Use the task's own post-impl head, not the branch tip: later tasks may
+      # already be committed on top, and reviewing base..tip would span them and
+      # pass/fail the resumed task on unrelated changes.
+      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" ]]; then
+        HEAD_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" 2>/dev/null || echo "")
+      else
+        HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+        warn "No persisted head SHA for task ${TASK_NUM}; review diff may include later tasks' commits"
+      fi
     fi
 
     # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations).
@@ -1840,8 +1852,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         orchestrator_fail "Task ${TASK_NUM} fix review is blocked. Fix the blocker and re-run."
       fi
 
-      # Update HEAD_SHA after potential fixes
+      # Update HEAD_SHA after potential fixes, and refresh the persisted marker
+      # so a mid-fix-loop resume sees the fixes already applied to this task.
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+      echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
 
       # Check current review status after fix attempt
       log "  Task ${TASK_NUM}: re-running reviews after fix loop..."
