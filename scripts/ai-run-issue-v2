@@ -1846,6 +1846,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       log "  Cancel window: press Ctrl+C within 10s to abort..."
       sleep 10
 
+      _head_before_fix=$(git rev-parse HEAD 2>/dev/null || echo "")
       run_fix_review "$TASK_NUM" "$task_title" "$TASK_TEXT"
       FIX_STATUS=$(resolve_result \
         "${WORKTREE_DIR}/fix-review-task-${TASK_NUM}.result" \
@@ -1857,14 +1858,18 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         orchestrator_fail "Task ${TASK_NUM} fix review is blocked. Fix the blocker and re-run."
       fi
 
-      # Update HEAD_SHA after potential fixes. Only refresh the persisted marker
-      # when we implemented this session: on a resume-into-review, later tasks may
-      # be stacked on the branch tip, so writing that tip back would re-pollute the
-      # marker (and future resumes) with unrelated commits. Keeping the original
-      # scoped post-impl head is safer than persisting a stacked tip.
-      HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-      if [[ $DID_IMPLEMENT -eq 1 ]]; then
-        echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+      # Only advance HEAD_SHA if the fix actually committed something. If it did
+      # not (e.g. DONE_NO_FIXES_NEEDED), keep the current scoped head so the
+      # re-review range stays base..task-N-head rather than expanding to the
+      # branch tip — which, on a resume with later tasks stacked, would re-review
+      # unrelated commits. Refresh the persisted marker only in normal flow
+      # (DID_IMPLEMENT=1), where the new tip is genuinely this task's head.
+      _head_after_fix=$(git rev-parse HEAD 2>/dev/null || echo "")
+      if [[ -n "$_head_after_fix" && "$_head_after_fix" != "$_head_before_fix" ]]; then
+        HEAD_SHA="$_head_after_fix"
+        if [[ $DID_IMPLEMENT -eq 1 ]]; then
+          echo "$HEAD_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log"
+        fi
       fi
 
       # Check current review status after fix attempt
