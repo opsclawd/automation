@@ -226,6 +226,39 @@ PLAN
   echo "$result" | grep -q "^Also real$"
 }
 
+@test "extract_task_text: title first appears inside fence, grep finds real copy" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+```bash
+## Task 1: Implement X
+echo "example"
+```
+## Task 1: Implement X
+
+Body of task 1.
+
+## Task 2: Second task
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement X")
+  echo "$result" | grep -q "Body of task 1"
+  ! echo "$result" | grep -q "Second task"
+}
+
+@test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+```bash
+## Task 1: First task
+git commit -m "feat: fenced commit"
+```
+## Task 1: First task
+
+git commit -m "feat: real commit"
+
+## Task 2: Second task
+PLAN
+  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "First task" "fallback")
+  [ "$result" = "feat: real commit" ]
+}
+
 @test "find_first_incomplete_task: count matches parse_tasks for plan with fenced examples" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Real

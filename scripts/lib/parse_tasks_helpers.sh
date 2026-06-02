@@ -77,18 +77,22 @@ extract_task_text() {
   local plan_file="$1"
   local task_title="$2"
 
-  local title_file
+  local stripped_file title_file
+  stripped_file=$(mktemp)
   title_file=$(mktemp)
+
   printf '%s' "$task_title" > "$title_file"
+  _strip_fenced < "$plan_file" > "$stripped_file"
 
   local line_num
-  line_num=$(grep -F -n -f "$title_file" "$plan_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
-  rm -f "$title_file"
+  line_num=$(grep -F -n -f "$title_file" "$stripped_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
 
-  if [[ -z "$line_num" ]]; then return 1; fi
+  if [[ -z "$line_num" ]]; then
+    rm -f "$stripped_file" "$title_file"
+    return 1
+  fi
 
-  printf '%s' "$task_title" > "$title_file"
-  tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file" '
+  tail -n +"$line_num" "$stripped_file" | awk -v title_file="$title_file" '
     BEGIN {
       while ((getline line < title_file) > 0) { title = line }
       close(title_file)
@@ -105,7 +109,8 @@ extract_task_text() {
     }
     in_task { buf[++buf_idx] = $0 }
   '
-  rm -f "$title_file"
+
+  rm -f "$stripped_file" "$title_file"
 }
 
 extract_task_commit_msg() {
@@ -113,15 +118,18 @@ extract_task_commit_msg() {
   local task_title="$2"
   local fallback_msg="$3"
 
-  local title_file
+  local stripped_file title_file
+  stripped_file=$(mktemp)
   title_file=$(mktemp)
+
   printf '%s' "$task_title" > "$title_file"
+  _strip_fenced < "$plan_file" > "$stripped_file"
 
   local line_num
-  line_num=$(grep -F -n -f "$title_file" "$plan_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
-  rm -f "$title_file"
+  line_num=$(grep -F -n -f "$title_file" "$stripped_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
 
   if [[ -z "$line_num" ]]; then
+    rm -f "$stripped_file" "$title_file"
     echo "$fallback_msg"
     return
   fi
@@ -130,14 +138,16 @@ extract_task_commit_msg() {
   next_task_line=$(awk -v start="$line_num" '
     /^[[:space:]]*```/ { in_fence = !in_fence; next }
     NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
-  ' "$plan_file")
+  ' "$stripped_file")
 
   local commit_msg
   if [[ -n "$next_task_line" ]]; then
-    commit_msg=$(sed -n "${line_num},$((next_task_line - 1))p" "$plan_file" | grep -oP 'git commit -m "\K[^"]+' | tail -1)
+    commit_msg=$(sed -n "${line_num},$((next_task_line - 1))p" "$stripped_file" | grep -oP 'git commit -m "\K[^"]+' | tail -1)
   else
-    commit_msg=$(tail -n +"$line_num" "$plan_file" | grep -oP 'git commit -m "\K[^"]+' | tail -1)
+    commit_msg=$(tail -n +"$line_num" "$stripped_file" | grep -oP 'git commit -m "\K[^"]+' | tail -1)
   fi
+
+  rm -f "$stripped_file" "$title_file"
 
   if [[ -n "$commit_msg" ]]; then
     echo "$commit_msg"
