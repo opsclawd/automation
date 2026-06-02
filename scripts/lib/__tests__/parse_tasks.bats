@@ -721,3 +721,84 @@ PLAN
   result=$(detect_resume_point)
   [ "$result" = "validate" ]
 }
+
+@test "integration: manifest + plan.md produces correct task list" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 3, "tasks": [
+  { "n": 1, "title": "Add read_manifest function", "files": ["scripts/lib/parse_tasks_helpers.sh"] },
+  { "n": 2, "title": "Update parse_tasks to prefer manifest", "files": ["scripts/lib/parse_tasks_helpers.sh"] },
+  { "n": 3, "title": "Update plan-write prompt", "files": ["scripts/ai-run-issue-v2"] }
+] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Test Plan
+
+<!-- task-count: 3 -->
+
+## Task 1: Add read_manifest function
+
+Body for task 1.
+
+```bash
+  ## Task 2: Phantom example header
+```
+
+## Task 2: Update parse_tasks to prefer manifest
+
+Body for task 2.
+
+## Task 3: Update plan-write prompt
+
+Body for task 3.
+PLAN
+
+  emit_event() { true; }
+
+  TASKS=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  TASK_COUNT=$(echo "$TASKS" | grep -c "." || echo 0)
+  [ "$TASK_COUNT" -eq 3 ]
+
+  validate_result=$(validate_task_list "$TMPDIR_TEST/plan.md" 3)
+  [ -z "$validate_result" ]
+
+  incomplete=$(find_first_incomplete_task)
+  [ "$incomplete" = "1" ]
+}
+
+@test "integration: no manifest falls back to scraping correctly" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Scrape task one
+
+Body.
+
+```bash
+  ## Task 2: Phantom fenced task
+```
+
+## Task 2: Scrape task two
+
+Body.
+PLAN
+
+  emit_event() { true; }
+
+  TASKS=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  TASK_COUNT=$(echo "$TASKS" | grep -c "." || echo 0)
+  [ "$TASK_COUNT" -eq 2 ]
+  echo "$TASKS" | grep -q "Scrape task one"
+  echo "$TASKS" | grep -q "Scrape task two"
+  ! echo "$TASKS" | grep -q "Phantom"
+}
+
+@test "integration: invalid manifest falls back to scraping" {
+  echo "{ bad json" > "$TMPDIR_TEST/task-manifest.json"
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Fallback task
+PLAN
+
+  emit_event() { true; }
+
+  TASKS=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$TASKS" | wc -l | tr -d ' ')" = "1" ]
+  echo "$TASKS" | grep -q "Fallback task"
+}
