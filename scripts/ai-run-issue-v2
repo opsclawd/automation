@@ -2448,13 +2448,11 @@ with open(path, 'w') as f:
       log "  Task ${TASK_NUM}: loop exhausted, proceeding with deviation"
     fi
 
-    # Defense in depth: even if a future code path adds a `break` that
-    # isn't gated on PASS, fail before declaring the task complete.
-    if [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
-      if [[ ! -f "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json" ]]; then
-        orchestrator_fail "Task ${TASK_NUM}: exited review loop with spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?}. Refusing to mark complete."
-      fi
-      log "  Task ${TASK_NUM}: reviews not passing but deviation recorded — proceeding"
+    # Defense in depth: the canonical completion predicate must agree.
+    local completion_status
+    completion_status=$(is_task_complete "$TASK_NUM")
+    if [[ "$completion_status" != "complete" ]]; then
+      orchestrator_fail "Task ${TASK_NUM}: exited review loop but is_task_complete reports '${completion_status}'. Refusing to mark complete."
     fi
 
     {
