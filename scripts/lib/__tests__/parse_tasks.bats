@@ -14,6 +14,10 @@ setup() {
     /^(find_first_incomplete_task|detect_resume_point)\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
+  eval "$(awk '
+    /^[[:space:]]*extract_task_commit_msg\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
 
   TMPDIR_TEST="$(mktemp -d)"
   export ISSUES_DIR="$TMPDIR_TEST"
@@ -112,4 +116,20 @@ PLAN
   }
   result=$(detect_resume_point)
   [ "$result" = "validate" ]
+}
+
+@test "extract_task_commit_msg: finds commit msg skipping fenced task boundaries" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+```bash
+## Task 2: Phantom fenced task
+git commit -m "feat: phantom commit"
+```
+
+git commit -m "feat: first commit"
+
+## Task 2: Second task
+PLAN
+  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "First task" "fallback")
+  [ "$result" = "feat: first commit" ]
 }

@@ -1372,7 +1372,10 @@ if [[ "$PHASE" == "implement" ]]; then
     fi
 
     local next_task_line
-    next_task_line=$(awk -v start="$line_num" 'NR > start && /^#{2,3} Task [0-9]+:/ {print NR; exit}' "$plan_file")
+    next_task_line=$(awk -v start="$line_num" '
+      /^```/ { in_fence = !in_fence; next }
+      NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
+    ' "$plan_file")
 
     local commit_msg
     if [[ -n "$next_task_line" ]]; then
