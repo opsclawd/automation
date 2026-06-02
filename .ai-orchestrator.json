@@ -19,13 +19,13 @@
         "runtime": "opencode",
         "provider": "zai-coding-plan",
         "model": "glm-5.1",
-        "timeoutMinutes": 60
+        "timeoutMinutes": 30
       },
       "senior": {
         "runtime": "opencode",
-        "provider": "crofai",
+        "provider": "ollama-cloud",
         "model": "glm-5.1",
-        "timeoutMinutes": 60
+        "timeoutMinutes": 30
       },
       "builder": {
         "runtime": "opencode",
@@ -42,13 +42,13 @@
       "reviewer": {
         "runtime": "antigravity",
         "provider": "google",
-        "model": "gemini-3.1-pro-high",
+        "model": "gemini-3.5-flash-high",
         "timeoutMinutes": 30
       },
       "task-reviewer": {
         "runtime": "antigravity",
         "provider": "google",
-        "model": "gemini-3.1-pro",
+        "model": "gemini-3.5-flash-low",
         "timeoutMinutes": 30
       },
       "local": {
@@ -75,7 +75,25 @@
       "gemini": {
         "runtime": "antigravity",
         "provider": "google",
-        "model": "gemini-3.1-pro",
+        "model": "gemini-3.5-flash-high",
+        "timeoutMinutes": 30
+      },
+      "minimax": {
+        "runtime": "opencode",
+        "provider": "minimax-coding-plan",
+        "model": "MiniMax-M2.7-highspeed",
+        "timeoutMinutes": 30
+      },
+      "glm": {
+        "runtime": "opencode",
+        "provider": "ollama-cloud",
+        "model": "glm-5.1",
+        "timeoutMinutes": 30
+      },
+      "deepseek": {
+        "runtime": "opencode",
+        "provider": "ollama-cloud",
+        "model": "deepseek-v4-pro",
         "timeoutMinutes": 30
       }
     },
@@ -83,15 +101,15 @@
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
       "implement": { "profile": "builder", "fallbackProfile": "qwen" },
-      "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
-      "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
-      "fix-review": { "profile": "senior", "fallbackProfile": "gemini" },
-      "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "junior" },
-      "post-pr-review": { "profile": "senior", "fallbackProfile": "gemini" },
+      "quality-review": { "profile": "junior", "fallbackProfile": "builder" },
+      "spec-review": { "profile": "junior", "fallbackProfile": "builder" },
+      "fix-review": { "profile": "senior", "fallbackProfile": "builder" },
+      "whole-pr-review": { "profile": "gemini", "fallbackProfile": "junior" },
+      "post-pr-review": { "profile": "senior", "fallbackProfile": "builder" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
-      "extract": { "profile": "qwen", "fallbackProfile": "junior" },
-      "create-pr": { "profile": "architect", "fallbackProfile": "senior" },
-      "arbitrate": { "profile": "architect", "fallbackProfile": "claude" }
+      "extract": { "profile": "junior", "fallbackProfile": "builder" },
+      "create-pr": { "profile": "junior", "fallbackProfile": "builder" },
+      "arbitrate": { "profile": "architect", "fallbackProfile": "senior" }
     }
   }
 }
