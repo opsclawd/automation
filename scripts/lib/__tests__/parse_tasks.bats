@@ -137,6 +137,8 @@ Second task body.
 PLAN
   result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task")
   echo "$result" | grep -q "Still part of task 1 body"
+  echo "$result" | grep -q "Phantom fenced task"
+  ! echo "$result" | grep -q "Second task body"
 }
 
 @test "PR task list generation: excludes fenced tasks" {

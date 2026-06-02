@@ -77,22 +77,24 @@ extract_task_text() {
   local plan_file="$1"
   local task_title="$2"
 
-  local stripped_file title_file
-  stripped_file=$(mktemp)
+  local title_file
   title_file=$(mktemp)
 
   printf '%s' "$task_title" > "$title_file"
-  _strip_fenced < "$plan_file" > "$stripped_file"
 
   local line_num
-  line_num=$(grep -F -n -f "$title_file" "$stripped_file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+  line_num=$(awk -v title_file="$title_file" '
+    BEGIN { getline title < title_file; close(title_file) }
+    /^[[:space:]]*```/ { in_fence = !in_fence; next }
+    !in_fence && index($0, title) > 0 { print NR; exit }
+  ' "$plan_file")
 
   if [[ -z "$line_num" ]]; then
-    rm -f "$stripped_file" "$title_file"
+    rm -f "$title_file"
     return 1
   fi
 
-  tail -n +"$line_num" "$stripped_file" | awk -v title_file="$title_file" '
+  tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file" '
     BEGIN {
       while ((getline line < title_file) > 0) { title = line }
       close(title_file)
@@ -110,7 +112,7 @@ extract_task_text() {
     in_task { buf[++buf_idx] = $0 }
   '
 
-  rm -f "$stripped_file" "$title_file"
+  rm -f "$title_file"
 }
 
 extract_task_commit_msg() {
