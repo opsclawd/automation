@@ -27,12 +27,6 @@
         "model": "glm-5.1",
         "timeoutMinutes": 60
       },
-      "senior-fallback": {
-        "runtime": "opencode",
-        "provider": "ollama-cloud",
-        "model": "glm-5.1",
-        "timeoutMinutes": 60
-      },
       "builder": {
         "runtime": "opencode",
         "provider": "minimax-coding-plan",
@@ -76,7 +70,13 @@
         "runtime": "claude-code",
         "provider": "anthropic",
         "model": "opus",
-        "timeoutMinutes": 45
+        "timeoutMinutes": 30
+      },
+      "gemini": {
+        "runtime": "antigravity",
+        "provider": "google",
+        "model": "gemini-3.1-pro",
+        "timeoutMinutes": 30
       }
     },
     "phaseProfiles": {
@@ -85,9 +85,9 @@
       "implement": { "profile": "qwen", "fallbackProfile": "builder" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
-      "fix-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
+      "fix-review": { "profile": "senior", "fallbackProfile": "gemini" },
       "whole-pr-review": { "profile": "reviewer", "fallbackProfile": "junior" },
-      "post-pr-review": { "profile": "senior", "fallbackProfile": "senior-fallback" },
+      "post-pr-review": { "profile": "senior", "fallbackProfile": "gemini" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
       "extract": { "profile": "qwen", "fallbackProfile": "junior" },
       "create-pr": { "profile": "architect", "fallbackProfile": "senior" },
