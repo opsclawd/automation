@@ -14,6 +14,67 @@ teardown() {
   rm -rf "$TMPDIR_TEST"
 }
 
+@test "read_manifest: returns titles and count for valid manifest" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{
+  "version": 1,
+  "task_count": 3,
+  "tasks": [
+    { "n": 1, "title": "First task", "files": [], "validation": [] },
+    { "n": 2, "title": "Second task", "files": [], "validation": [] },
+    { "n": 3, "title": "Third task" }
+  ]
+}
+JSON
+  MANIFEST_TASKS=""
+  MANIFEST_COUNT=0
+  read_manifest "$TMPDIR_TEST/task-manifest.json"
+  [ $? -eq 0 ]
+  [ "$MANIFEST_COUNT" -eq 3 ]
+  echo "$MANIFEST_TASKS" | grep -q "First task"
+  echo "$MANIFEST_TASKS" | grep -q "Second task"
+  echo "$MANIFEST_TASKS" | grep -q "Third task"
+}
+
+@test "read_manifest: returns error for missing file" {
+  MANIFEST_TASKS=""
+  MANIFEST_COUNT=0
+  ! read_manifest "$TMPDIR_TEST/nonexistent.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for invalid JSON" {
+  echo "not json" > "$TMPDIR_TEST/task-manifest.json"
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for wrong version" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 2, "task_count": 1, "tasks": [{ "n": 1, "title": "T" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for count mismatch" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 5, "tasks": [{ "n": 1, "title": "T" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for non-sequential numbers" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "A" }, { "n": 3, "title": "B" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for empty title" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [{ "n": 1, "title": "" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
 @test "_strip_fenced: removes lines inside triple-backtick fences" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 outside line 1

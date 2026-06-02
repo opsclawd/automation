@@ -10,6 +10,54 @@ _strip_fenced() {
   '
 }
 
+read_manifest() {
+  local manifest_path="$1"
+
+  if [[ ! -f "$manifest_path" ]]; then
+    echo "manifest not found: ${manifest_path}" >&2
+    return 1
+  fi
+
+  if ! jq -e '.' "$manifest_path" >/dev/null 2>&1; then
+    echo "manifest is not valid JSON: ${manifest_path}" >&2
+    return 1
+  fi
+
+  local version
+  version=$(jq -r '.version // 0' "$manifest_path")
+  if [[ "$version" -ne 1 ]]; then
+    echo "manifest version ${version} is not supported (expected 1)" >&2
+    return 1
+  fi
+
+  local declared_count
+  declared_count=$(jq -r '.task_count // 0' "$manifest_path")
+  local actual_count
+  actual_count=$(jq '.tasks | length' "$manifest_path")
+  if [[ "$declared_count" -ne "$actual_count" ]]; then
+    echo "manifest task_count (${declared_count}) does not match tasks length (${actual_count})" >&2
+    return 1
+  fi
+
+  local i title n
+  for ((i = 0; i < actual_count; i++)); do
+    n=$(jq -r ".tasks[${i}].n" "$manifest_path")
+    if [[ "$n" -ne $((i + 1)) ]]; then
+      echo "manifest task[${i}].n is ${n}, expected $((i + 1))" >&2
+      return 1
+    fi
+    title=$(jq -r ".tasks[${i}].title // \"\"" "$manifest_path")
+    if [[ -z "$title" ]]; then
+      echo "manifest task[${i}] has empty title" >&2
+      return 1
+    fi
+  done
+
+  MANIFEST_TASKS=$(jq -r '.tasks[].title' "$manifest_path")
+  MANIFEST_COUNT=$actual_count
+  return 0
+}
+
 _extract_declared_count() {
   local plan_file="$1"
   local count
