@@ -23,35 +23,19 @@ read_manifest() {
     return 1
   fi
 
-  local version
-  version=$(jq -r '.version // 0' "$manifest_path")
-  if [[ "$version" -ne 1 ]]; then
-    echo "manifest version ${version} is not supported (expected 1)" >&2
-    return 1
-  fi
-
-  local declared_count
-  declared_count=$(jq -r '.task_count // 0' "$manifest_path")
   local actual_count
   actual_count=$(jq '.tasks | length' "$manifest_path")
-  if [[ "$declared_count" -ne "$actual_count" ]]; then
-    echo "manifest task_count (${declared_count}) does not match tasks length (${actual_count})" >&2
+
+  if ! jq -e '
+    .version == 1 and
+    .task_count == (.tasks | length) and
+    (.tasks | type == "array") and
+    ([ .tasks[].n ] == [ range(1; (.task_count + 1)) ]) and
+    ([ .tasks[].title | type == "string" and length > 0 ] | all)
+  ' "$manifest_path" >/dev/null 2>&1; then
+    echo "manifest validation failed" >&2
     return 1
   fi
-
-  local i title n
-  for ((i = 0; i < actual_count; i++)); do
-    n=$(jq -r ".tasks[${i}].n" "$manifest_path")
-    if [[ "$n" -ne $((i + 1)) ]]; then
-      echo "manifest task[${i}].n is ${n}, expected $((i + 1))" >&2
-      return 1
-    fi
-    title=$(jq -r ".tasks[${i}].title // \"\"" "$manifest_path")
-    if [[ -z "$title" ]]; then
-      echo "manifest task[${i}] has empty title" >&2
-      return 1
-    fi
-  done
 
   MANIFEST_TASKS=$(jq -r '.tasks[].title' "$manifest_path")
   MANIFEST_COUNT=$actual_count
@@ -164,7 +148,7 @@ validate_task_list() {
   if [[ -f "$manifest_path" ]]; then
     MANIFEST_TASKS=""
     MANIFEST_COUNT=0
-    if read_manifest "$manifest_path" 2>/dev/null; then
+    if read_manifest "$manifest_path"; then
       if [[ "$MANIFEST_COUNT" -ne "$parsed_count" ]]; then
         echo "parsed ${parsed_count} tasks but manifest declares ${MANIFEST_COUNT} — task extraction is wrong"
         return 1
@@ -243,7 +227,7 @@ find_first_incomplete_task() {
   local manifest_path="${ISSUES_DIR}/task-manifest.json"
   MANIFEST_TASKS=""
   MANIFEST_COUNT=0
-  if [[ -f "$manifest_path" ]] && read_manifest "$manifest_path" 2>/dev/null; then
+  if [[ -f "$manifest_path" ]] && read_manifest "$manifest_path"; then
     task_count=$MANIFEST_COUNT
   else
     task_count=$(_strip_fenced < "$plan_file" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
@@ -277,27 +261,27 @@ detect_resume_point() {
     return
   fi
 
+  local task_count
+  local manifest_path="${ISSUES_DIR}/task-manifest.json"
+  MANIFEST_TASKS=""
+  MANIFEST_COUNT=0
+  if [[ -f "$manifest_path" ]] && read_manifest "$manifest_path"; then
+    task_count=$MANIFEST_COUNT
+  else
+    task_count=$(_strip_fenced < "${ISSUES_DIR}/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
+  fi
+
+  if [[ $first_incomplete -gt $task_count ]]; then
+    echo "validate"
+    return
+  fi
+
   local status
   status=$(get_task_completion_status "$first_incomplete")
 
   case "$status" in
-    complete)
-      local task_count
-      local manifest_path="${ISSUES_DIR}/task-manifest.json"
-      MANIFEST_TASKS=""
-      MANIFEST_COUNT=0
-      if [[ -f "$manifest_path" ]] && read_manifest "$manifest_path" 2>/dev/null; then
-        task_count=$MANIFEST_COUNT
-      else
-        task_count=$(_strip_fenced < "${ISSUES_DIR}/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
-      fi
-      if [[ $first_incomplete -gt $task_count ]]; then
-        echo "validate"
-      else
-        echo "implement"
-      fi
-      ;;
-    implementing)    echo "implement" ;;
+    complete)       echo "validate" ;;
+    implementing)   echo "implement" ;;
     pending)        echo "implement" ;;
     review-needed)  echo "spec-review" ;;
     *)              echo "implement" ;;
@@ -313,7 +297,7 @@ parse_tasks() {
   if [[ -f "$manifest_path" ]]; then
     MANIFEST_TASKS=""
     MANIFEST_COUNT=0
-    if read_manifest "$manifest_path" 2>/dev/null; then
+    if read_manifest "$manifest_path"; then
       echo "$MANIFEST_TASKS"
       return 0
     fi

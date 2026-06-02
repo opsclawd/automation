@@ -434,6 +434,7 @@ next-env.d.ts
 node_modules/
 .next/
 .review-context/
+task-manifest.json
 arbiter-result.json
 arbiter-task-*.log
 arbiter-rationale-*.md
@@ -1003,6 +1004,7 @@ if [[ "$PHASE" == "read_issue" ]]; then
     info "Archive has plan.md — pre-seeding to skip plan-design and plan-write"
     cp "${ARCHIVE_DIR}/plan.md" "${WORKTREE_DIR}/plan.md"
     cp "${ARCHIVE_DIR}/design.md" "${WORKTREE_DIR}/design.md" 2>/dev/null || true
+    cp "${ARCHIVE_DIR}/task-manifest.json" "${WORKTREE_DIR}/task-manifest.json" 2>/dev/null || true
     PHASE="implement"
   elif [[ -f "${ARCHIVE_DIR}/design.md" ]]; then
     info "Archive has design.md — pre-seeding to skip plan-design"
@@ -1207,7 +1209,7 @@ Write plan.md and task-manifest.json now."
       if [[ -n "$_expected_sha" ]]; then
         git -C "$REPO_ROOT" diff --name-only "$_expected_sha"..HEAD 2>/dev/null
       fi
-    } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+    } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
   fi
 
   _guard_main_checkout "plan-write" "$_main_state_before"
@@ -1218,7 +1220,7 @@ Write plan.md and task-manifest.json now."
     if [[ -n "$_worktree_sha_before" ]]; then
       git -C "$WORKTREE_DIR" diff --name-only "$_worktree_sha_before"..HEAD 2>/dev/null
     fi
-  } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+  } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
 
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
   if [[ -n "$_all_violations" ]]; then
@@ -1243,7 +1245,7 @@ Write plan.md and task-manifest.json now."
   if [[ -f "${WORKTREE_DIR}/task-manifest.json" ]]; then
     MANIFEST_TASKS=""
     MANIFEST_COUNT=0
-    if read_manifest "${WORKTREE_DIR}/task-manifest.json" 2>/dev/null; then
+    if read_manifest "${WORKTREE_DIR}/task-manifest.json"; then
       info "Task manifest found: ${MANIFEST_COUNT} tasks declared"
       emit_event "plan-write" "info" "plan_written.manifest" \
         "task-manifest.json written alongside plan.md" taskCount="$MANIFEST_COUNT" manifestVersion="1"
@@ -3126,8 +3128,8 @@ if [[ "$PHASE" == "create-pr" ]]; then
   if [[ -f "${ISSUES_DIR}/task-manifest.json" ]]; then
     MANIFEST_TASKS=""
     MANIFEST_COUNT=0
-    if read_manifest "${ISSUES_DIR}/task-manifest.json" 2>/dev/null; then
-      PR_TASKS=$(echo "$MANIFEST_TASKS" | awk '{print "- " $0}')
+    if read_manifest "${ISSUES_DIR}/task-manifest.json"; then
+      PR_TASKS=$(echo "$MANIFEST_TASKS" | awk 'NF {print "- " $0}')
     fi
   fi
   if [[ -z "$PR_TASKS" && -f "${ISSUES_DIR}/plan.md" ]]; then
