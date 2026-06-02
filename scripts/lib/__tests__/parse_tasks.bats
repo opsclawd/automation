@@ -172,3 +172,97 @@ PLAN
   echo "$result" | grep -q "Also real"
   ! echo "$result" | grep -q "Phantom"
 }
+
+@test "_strip_fenced: unclosed fence treats rest of file as fenced (safe default)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+outside
+```
+inside
+  ## Task 99: Phantom in unclosed
+still inside
+PLAN
+  result=$(_strip_fenced < "$TMPDIR_TEST/plan.md")
+  echo "$result" | grep -q "outside"
+  ! echo "$result" | grep -q "Phantom in unclosed"
+}
+
+@test "parse_tasks: fenced tasks before, between, and after real tasks" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+```bash
+  ## Task 0: Before any real task
+```
+## Task 1: First real
+
+Body.
+
+```bash
+  ## Task 1: Duplicate in fence
+```
+
+## Task 2: Second real
+
+```
+  ## Task 99: After all real tasks
+```
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "2" ]
+  echo "$result" | grep -q "First real"
+  echo "$result" | grep -q "Second real"
+}
+
+@test "parse_tasks: multiple fence blocks with tasks" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real one
+
+```bash
+  ## Task 2: Fenced one
+```
+
+## Task 2: Real two
+
+```sh
+  ## Task 3: Fenced two
+```
+
+## Task 3: Real three
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "3" ]
+}
+
+@test "parse_tasks: task header adjacent to fence line" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real
+```
+  ## Task 2: Fenced
+```
+## Task 2: Also real
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "2" ]
+  echo "$result" | grep -q "^Real$"
+  echo "$result" | grep -q "^Also real$"
+}
+
+@test "find_first_incomplete_task: count matches parse_tasks for plan with fenced examples" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real
+
+```bash
+  ## Task 2: Fenced phantom
+  ## Task 3: Another phantom
+```
+
+## Task 2: Also real
+
+```
+  ## Task 4: Yet another phantom
+```
+PLAN
+  parsed_count=$(parse_tasks "$TMPDIR_TEST/plan.md" | wc -l | tr -d ' ')
+  incomplete=$(find_first_incomplete_task)
+  [ "$incomplete" = "1" ]
+  task_count=$(_strip_fenced < "$TMPDIR_TEST/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
+  [ "$task_count" = "$parsed_count" ]
+}
