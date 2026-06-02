@@ -157,6 +157,34 @@ _check_fixture_titles() {
 validate_task_list() {
   local plan_file="$1"
   local parsed_count="$2"
+  local plan_dir
+  plan_dir=$(dirname "$plan_file")
+  local manifest_path="${plan_dir}/task-manifest.json"
+
+  if [[ -f "$manifest_path" ]]; then
+    MANIFEST_TASKS=""
+    MANIFEST_COUNT=0
+    if read_manifest "$manifest_path" 2>/dev/null; then
+      if [[ "$MANIFEST_COUNT" -ne "$parsed_count" ]]; then
+        echo "parsed ${parsed_count} tasks but manifest declares ${MANIFEST_COUNT} — task extraction is wrong"
+        return 1
+      fi
+
+      local dup_result
+      dup_result=$(_check_duplicate_titles "$MANIFEST_TASKS")
+      local dup_rc=$?
+      if [[ $dup_rc -ne 0 ]]; then
+        echo "$dup_result"
+        return 1
+      fi
+
+      emit_event "implement" "info" "sanity_check.passed" \
+        "task list sanity check passed (manifest)" manifestVersion="1" manifestCount="$MANIFEST_COUNT"
+
+      echo ""
+      return 0
+    fi
+  fi
 
   local declared
   declared=$(_extract_declared_count "$plan_file")

@@ -632,6 +632,33 @@ PLAN
   [ -z "$result" ]
 }
 
+@test "validate_task_list: accepts valid manifest without scraping prose" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Build model" }, { "n": 2, "title": "Write tests" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Build model
+Body.
+## Task 2: Write tests
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: rejects invalid manifest" {
+  echo "bad" > "$TMPDIR_TEST/task-manifest.json"
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 2 -->
+## Task 1: Only one task
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
+  set -e
+  [[ "$result" == *"parsed 1 tasks but plan declares"* ]]
+}
+
 @test "parse_tasks: prefers manifest over scraping when manifest exists" {
   cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
 { "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
