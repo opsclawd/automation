@@ -1169,7 +1169,7 @@ The manifest is the machine-readable source of truth for task boundaries. plan.m
 - All shell commands in the plan MUST be relative — no absolute paths, no cd to directories outside the worktree. The agent executing the plan runs inside the worktree and cannot access paths outside it. Commands like 'pnpm --filter @ai-sdlc/domain test -- --run ...' should work without any cd prefix.
 - Do NOT edit any source files (*.ts, *.js, *.sh, *.py, etc.). Your ONLY output is plan.md and task-manifest.json.
 - If you find yourself wanting to edit source code, STOP — that is for the implement phase.
-- The <!-- task-count: N --> HTML comment is NO LONGER REQUIRED in plan.md. The manifest carries the task count.
+- The <!-- task-count: N --> HTML comment is not required when task-manifest.json is valid. If the manifest is missing or invalid, the comment serves as a fallback count check — without either, validation will fail.
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code.
 
 Write plan.md and task-manifest.json now."

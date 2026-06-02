@@ -265,8 +265,8 @@ validate_task_list() {
       return 1
     fi
   else
-    emit_event "implement" "warn" "sanity_check.missing_declared_count" \
-      "plan.md has no <!-- task-count: N --> comment; count cross-check skipped"
+    echo "no task-manifest.json and no <!-- task-count: N --> comment — cannot verify task count"
+    return 1
   fi
 
   local seq_result
