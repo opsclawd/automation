@@ -20,7 +20,7 @@ _extract_declared_count() {
 _check_sequential_numbers() {
   local plan_file="$1"
   local numbers
-  numbers=$(_strip_fenced < "$plan_file" | grep -oP '(?<=^#{2,3} Task )\d+' 2>/dev/null || true)
+  numbers=$(_strip_fenced < "$plan_file" | grep -oP '^#{2,3} Task \K\d+' 2>/dev/null || true)
 
   if [[ -z "$numbers" ]]; then
     echo ""
