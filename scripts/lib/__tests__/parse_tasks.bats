@@ -14,6 +14,67 @@ teardown() {
   rm -rf "$TMPDIR_TEST"
 }
 
+@test "read_manifest: returns titles and count for valid manifest" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{
+  "version": 1,
+  "task_count": 3,
+  "tasks": [
+    { "n": 1, "title": "First task", "files": [], "validation": [] },
+    { "n": 2, "title": "Second task", "files": [], "validation": [] },
+    { "n": 3, "title": "Third task" }
+  ]
+}
+JSON
+  MANIFEST_TASKS=""
+  MANIFEST_COUNT=0
+  read_manifest "$TMPDIR_TEST/task-manifest.json"
+  [ $? -eq 0 ]
+  [ "$MANIFEST_COUNT" -eq 3 ]
+  echo "$MANIFEST_TASKS" | grep -q "First task"
+  echo "$MANIFEST_TASKS" | grep -q "Second task"
+  echo "$MANIFEST_TASKS" | grep -q "Third task"
+}
+
+@test "read_manifest: returns error for missing file" {
+  MANIFEST_TASKS=""
+  MANIFEST_COUNT=0
+  ! read_manifest "$TMPDIR_TEST/nonexistent.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for invalid JSON" {
+  echo "not json" > "$TMPDIR_TEST/task-manifest.json"
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for wrong version" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 2, "task_count": 1, "tasks": [{ "n": 1, "title": "T" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for count mismatch" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 5, "tasks": [{ "n": 1, "title": "T" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for non-sequential numbers" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "A" }, { "n": 3, "title": "B" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
+@test "read_manifest: returns error for empty title" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [{ "n": 1, "title": "" }] }
+JSON
+  ! read_manifest "$TMPDIR_TEST/task-manifest.json" 2>/dev/null
+}
+
 @test "_strip_fenced: removes lines inside triple-backtick fences" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 outside line 1
@@ -245,6 +306,104 @@ PLAN
   ! echo "$result" | grep -q "Second task"
 }
 
+@test "extract_task_text: falls back to task number when title does not match" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement authentication
+
+This is the auth body.
+
+## Task 2: Write database migration
+
+This is the migration body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement auth" "1")
+  echo "$result" | grep -q "auth body"
+  ! echo "$result" | grep -q "migration body"
+}
+
+@test "extract_task_text: title match works when no task_num provided" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement auth
+
+This is the auth body.
+
+## Task 2: Write migration
+
+This is the migration body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement auth")
+  echo "$result" | grep -q "auth body"
+}
+
+@test "extract_task_text: prefers task_num lookup when both title and task_num provided" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Manifest title differs
+
+Actual body for task 1.
+
+## Task 2: Prose has different title
+
+Actual body for task 2.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Prose has different title" "1")
+  echo "$result" | grep -q "Actual body for task 1"
+  ! echo "$result" | grep -q "Actual body for task 2"
+}
+
+@test "extract_task_text: task_num fallback finds correct task" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+Body 1.
+
+## Task 2: Second task
+
+Body 2.
+
+## Task 3: Third task
+
+Body 3.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Non-existent title" "2")
+  echo "$result" | grep -q "Body 2"
+  ! echo "$result" | grep -q "Body 1"
+  ! echo "$result" | grep -q "Body 3"
+}
+
+@test "extract_task_text: stops at ### Task N: headers (level-3)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+Body 1.
+
+### Task 2: Sub task
+
+Body 2.
+
+## Task 2: Second task
+
+Body 2b.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
+  echo "$result" | grep -q "Body 1"
+  ! echo "$result" | grep -q "Body 2"
+}
+
+@test "extract_task_text: stops at ### Task N: with task_num lookup" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+### Task 1: First task
+
+Body 1.
+
+### Task 2: Second task
+
+Body 2.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
+  echo "$result" | grep -q "Body 1"
+  ! echo "$result" | grep -q "Body 2"
+}
+
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash
@@ -260,6 +419,36 @@ git commit -m "feat: real commit"
 PLAN
   result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "Implement X" "fallback")
   [ "$result" = "feat: real commit" ]
+}
+
+@test "extract_task_commit_msg: falls back to task number when title does not match" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement authentication
+
+Body here.
+git commit -m "feat: add auth"
+
+## Task 2: Write database migration
+
+Body here.
+git commit -m "feat: add migration"
+PLAN
+  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "Implement auth" "fallback" "1")
+  [ "$result" = "feat: add auth" ]
+}
+
+@test "extract_task_commit_msg: task_num fallback returns correct commit msg" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+git commit -m "feat: first"
+
+## Task 2: Second task
+
+git commit -m "feat: second"
+PLAN
+  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "Non-existent title" "fallback" "2")
+  [ "$result" = "feat: second" ]
 }
 
 @test "find_first_incomplete_task: count matches parse_tasks for plan with fenced examples" {
@@ -526,18 +715,21 @@ PLAN
   [[ "$result" == *"parsed 1 tasks but plan declares 5"* ]]
 }
 
-@test "validate_task_list: passes when declared count absent (skip cross-check)" {
+@test "validate_task_list: fails when no manifest and no declared count" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Do something
 ## Task 2: Do another thing
 PLAN
   emit_event() { true; }
+  set +e
   result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
-  [ -z "$result" ]
+  set -e
+  [[ "$result" == *"no task-manifest.json and no <!-- task-count:"* ]]
 }
 
 @test "validate_task_list: fails on gap in task numbers" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 2 -->
 ## Task 1: First
 ## Task 3: Third
 PLAN
@@ -569,4 +761,292 @@ PLAN
   emit_event() { true; }
   result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
   [ -z "$result" ]
+}
+
+@test "validate_task_list: accepts valid manifest without scraping prose" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Build model" }, { "n": 2, "title": "Write tests" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Build model
+Body.
+## Task 2: Write tests
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: rejects invalid manifest" {
+  echo "bad" > "$TMPDIR_TEST/task-manifest.json"
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 2 -->
+## Task 1: Only one task
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
+  set -e
+  [[ "$result" == *"parsed 1 tasks but plan declares"* ]]
+}
+
+@test "validate_task_list: rejects manifest when tasks missing from plan prose" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 3, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }, { "n": 3, "title": "Gamma" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Alpha
+## Task 2: Beta
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 3)
+  set -e
+  [[ "$result" == *"manifest tasks missing from plan.md prose"* ]]
+  [[ "$result" == *"Task 3"* ]]
+}
+
+@test "validate_task_list: accepts manifest when all tasks have matching prose headers" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Build model" }, { "n": 2, "title": "Write tests" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Build model
+Body here.
+### Task 2: Write tests
+More body.
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: rejects manifest when prose has extra tasks not in manifest" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Alpha
+## Task 2: Beta
+## Task 3: Gamma
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"prose tasks not in manifest"* ]]
+  [[ "$result" == *"Task 3"* ]]
+}
+
+@test "validate_task_list: rejects manifest when task header inside fenced block" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Real task" }, { "n": 2, "title": "Hidden task" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real task
+Body.
+```markdown
+## Task 2: Should not count
+```
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"manifest tasks missing from plan.md prose"* ]]
+  [[ "$result" == *"Task 2"* ]]
+}
+
+@test "parse_tasks: prefers manifest over scraping when manifest exists" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Different title
+## Task 2: Another different title
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "2" ]
+  echo "$result" | grep -q "Alpha"
+  echo "$result" | grep -q "Beta"
+}
+
+@test "parse_tasks: falls back to scraping when no manifest" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Scraped task
+## Task 2: Another scraped task
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "2" ]
+  echo "$result" | grep -q "Scraped task"
+  echo "$result" | grep -q "Another scraped task"
+}
+
+@test "parse_tasks: falls back to scraping when manifest is invalid" {
+  echo "bad" > "$TMPDIR_TEST/task-manifest.json"
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Fallback task
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  echo "$result" | grep -q "Fallback task"
+}
+
+@test "find_first_incomplete_task: uses manifest count when manifest exists" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 3, "tasks": [{ "n": 1, "title": "A" }, { "n": 2, "title": "B" }, { "n": 3, "title": "C" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: A
+## Task 2: B
+## Task 3: C
+PLAN
+  get_task_completion_status() {
+    if [[ "$1" -le 2 ]]; then echo "complete"; else echo "pending"; fi
+  }
+  result=$(find_first_incomplete_task)
+  [ "$result" = "3" ]
+}
+
+@test "detect_resume_point: uses manifest for task counting" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "A" }, { "n": 2, "title": "B" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: A
+## Task 2: B
+PLAN
+  get_task_completion_status() { echo "complete"; }
+  warn() { true; }
+  result=$(detect_resume_point)
+  [ "$result" = "validate" ]
+}
+
+@test "detect_resume_point: returns implement when manifest omits a prose task" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "A" }, { "n": 2, "title": "B" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: A
+## Task 2: B
+## Task 3: C
+PLAN
+  get_task_completion_status() { echo "complete"; }
+  warn() { true; }
+  result=$(detect_resume_point)
+  [ "$result" = "implement" ]
+}
+
+@test "integration: manifest + plan.md produces correct task list" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 3, "tasks": [
+  { "n": 1, "title": "Add read_manifest function", "files": ["scripts/lib/parse_tasks_helpers.sh"] },
+  { "n": 2, "title": "Update parse_tasks to prefer manifest", "files": ["scripts/lib/parse_tasks_helpers.sh"] },
+  { "n": 3, "title": "Update plan-write prompt", "files": ["scripts/ai-run-issue-v2"] }
+] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Test Plan
+
+<!-- task-count: 3 -->
+
+## Task 1: Add read_manifest function
+
+Body for task 1.
+
+```bash
+  ## Task 2: Phantom example header
+```
+
+## Task 2: Update parse_tasks to prefer manifest
+
+Body for task 2.
+
+## Task 3: Update plan-write prompt
+
+Body for task 3.
+PLAN
+
+  emit_event() { true; }
+
+  TASKS=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  TASK_COUNT=$(echo "$TASKS" | grep -c "." || echo 0)
+  [ "$TASK_COUNT" -eq 3 ]
+
+  validate_result=$(validate_task_list "$TMPDIR_TEST/plan.md" 3)
+  [ -z "$validate_result" ]
+
+  incomplete=$(find_first_incomplete_task)
+  [ "$incomplete" = "1" ]
+}
+
+@test "integration: no manifest falls back to scraping correctly" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Scrape task one
+
+Body.
+
+```bash
+  ## Task 2: Phantom fenced task
+```
+
+## Task 2: Scrape task two
+
+Body.
+PLAN
+
+  emit_event() { true; }
+
+  TASKS=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  TASK_COUNT=$(echo "$TASKS" | grep -c "." || echo 0)
+  [ "$TASK_COUNT" -eq 2 ]
+  echo "$TASKS" | grep -q "Scrape task one"
+  echo "$TASKS" | grep -q "Scrape task two"
+  ! echo "$TASKS" | grep -q "Phantom"
+}
+
+@test "integration: invalid manifest falls back to scraping" {
+  echo "{ bad json" > "$TMPDIR_TEST/task-manifest.json"
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Fallback task
+PLAN
+
+  emit_event() { true; }
+
+  TASKS=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$TASKS" | wc -l | tr -d ' ')" = "1" ]
+  echo "$TASKS" | grep -q "Fallback task"
+}
+
+@test "validate_task_list: rejects manifest when prose has duplicate task numbers" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Alpha
+## Task 2: Beta
+## Task 2: Duplicate beta
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "validate_task_list: reports both missing-from-prose and extra-in-prose errors" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Alpha
+## Task 3: Gamma
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"missing from plan.md prose"* ]]
+  [[ "$result" == *"Task 2"* ]]
+  [[ "$result" == *"prose tasks not in manifest"* ]]
+  [[ "$result" == *"Task 3"* ]]
 }

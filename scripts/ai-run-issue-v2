@@ -397,11 +397,11 @@ seed_excludes() {
   common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
   exclude_file="${common_dir}/info/exclude"
   mkdir -p "${common_dir}/info"
-  # Sentinel check: fix-status.txt is unique to the current block version, so
+  # Sentinel check: task-manifest.json is unique to the current block version, so
   # its presence means a previous seed_excludes call already wrote the full set.
   # Bumping the sentinel when the block changes causes a one-time re-seed in
   # existing worktrees (duplicate patterns in info/exclude are harmless).
-  if [[ -f "$exclude_file" ]] && grep -qxF 'arbiter-result.json' "$exclude_file"; then
+  if [[ -f "$exclude_file" ]] && grep -qxF 'task-manifest.json' "$exclude_file"; then
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -434,6 +434,7 @@ next-env.d.ts
 node_modules/
 .next/
 .review-context/
+task-manifest.json
 arbiter-result.json
 arbiter-task-*.log
 arbiter-rationale-*.md
@@ -1003,6 +1004,7 @@ if [[ "$PHASE" == "read_issue" ]]; then
     info "Archive has plan.md — pre-seeding to skip plan-design and plan-write"
     cp "${ARCHIVE_DIR}/plan.md" "${WORKTREE_DIR}/plan.md"
     cp "${ARCHIVE_DIR}/design.md" "${WORKTREE_DIR}/design.md" 2>/dev/null || true
+    cp "${ARCHIVE_DIR}/task-manifest.json" "${WORKTREE_DIR}/task-manifest.json" 2>/dev/null || true
     PHASE="implement"
   elif [[ -f "${ARCHIVE_DIR}/design.md" ]]; then
     info "Archive has design.md — pre-seeding to skip plan-design"
@@ -1116,6 +1118,7 @@ Comments file: issue-comments.md
 1. Load the writing-plans skill: say exactly '/skill writing-plans' to activate it.
 2. Read design.md, issue.md, and issue-comments.md.
 3. Using the writing-plans skill guidance, produce a complete implementation plan at ./plan.md.
+4. ALSO write ./task-manifest.json alongside plan.md (see schema below).
 
 The plan MUST include:
 - goal
@@ -1126,21 +1129,50 @@ The plan MUST include:
 - validation commands (exact commands to verify correctness)
 - risk areas
 - stop conditions (what would cause you to abort instead of continue)
-- The plan MUST include a <!-- task-count: N --> HTML comment immediately before the first task header, where N is the total number of implementation tasks. This is used by the orchestrator for a sanity check.
 - Verification commands must be scoped to the files/paths explicitly changed by each task. Do NOT use whole-file grep/rg on files where the task only changes a subset — scope to specific line ranges or file sections.
 - Prefer making verification an acceptance criterion of implementing tasks rather than a standalone \"Full verification\" task. If a standalone verification task is necessary, its verification commands must reference only files/paths explicitly in scope for that task.
+
+## TASK MANIFEST SCHEMA
+
+Write task-manifest.json as a JSON file with this exact structure:
+
+\`\`\`json
+{
+  \"version\": 1,
+  \"task_count\": N,
+  \"tasks\": [
+    {
+      \"n\": 1,
+      \"title\": \"Short task title\",
+      \"files\": [\"path/to/file1\", \"path/to/file2\"],
+      \"validation\": [\"command to verify\"]
+    }
+  ]
+}
+\`\`\`
+
+Fields:
+- version: always 1
+- task_count: must equal tasks.length
+- tasks[].n: sequential 1-indexed task number
+- tasks[].title: one-line summary matching the prose task header
+- tasks[].files: files the task touches (optional but encouraged)
+- tasks[].validation: commands to verify task completion (optional but encouraged)
+
+The manifest is the machine-readable source of truth for task boundaries. plan.md remains the human-readable document with full prose.
 
 ## CRITICAL RULES
 - Do NOT ask questions. Make reasonable assumptions and document them.
 - Do NOT rely on agent memory. Write everything to plan.md.
 - Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
-- Stop after writing plan.md. Do not implement anything.
+- Stop after writing plan.md AND task-manifest.json. Do not implement anything.
 - All shell commands in the plan MUST be relative — no absolute paths, no cd to directories outside the worktree. The agent executing the plan runs inside the worktree and cannot access paths outside it. Commands like 'pnpm --filter @ai-sdlc/domain test -- --run ...' should work without any cd prefix.
-- Do NOT edit any source files (*.ts, *.js, *.sh, *.py, etc.). Your ONLY output is plan.md.
+- Do NOT edit any source files (*.ts, *.js, *.sh, *.py, etc.). Your ONLY output is plan.md and task-manifest.json.
 - If you find yourself wanting to edit source code, STOP — that is for the implement phase.
-- When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), they MUST be indented by at least 2 spaces or wrapped in inline code. Do NOT emit bare column-0 \`## Task N:\` example lines — the task parser counts all such lines outside fenced blocks as real tasks. The <!-- task-count: N --> comment at the top of the plan tells the sanity checker the exact expected count.
+- The <!-- task-count: N --> HTML comment is not required when task-manifest.json is valid. If the manifest is missing or invalid, the comment serves as a fallback count check — without either, validation will fail.
+- When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code.
 
-Write plan.md now."
+Write plan.md and task-manifest.json now."
 
   _plan_prompt_file=$(mktemp)
   printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
@@ -1177,7 +1209,7 @@ Write plan.md now."
       if [[ -n "$_expected_sha" ]]; then
         git -C "$REPO_ROOT" diff --name-only "$_expected_sha"..HEAD 2>/dev/null
       fi
-    } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+    } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
   fi
 
   _guard_main_checkout "plan-write" "$_main_state_before"
@@ -1188,7 +1220,7 @@ Write plan.md now."
     if [[ -n "$_worktree_sha_before" ]]; then
       git -C "$WORKTREE_DIR" diff --name-only "$_worktree_sha_before"..HEAD 2>/dev/null
     fi
-  } | grep -vE '^(plan\.md|design\.md|\.gitignore)$' | tr '\n' ' ' || true)
+  } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
 
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
   if [[ -n "$_all_violations" ]]; then
@@ -1209,6 +1241,24 @@ Write plan.md now."
   fi
   info "Plan saved to ${WORKTREE_DIR}/plan.md"
   _emit_artifact "plan-write" "${WORKTREE_DIR}/plan.md" "plan"
+
+  if [[ -f "${WORKTREE_DIR}/task-manifest.json" ]]; then
+    MANIFEST_TASKS=""
+    MANIFEST_COUNT=0
+    if read_manifest "${WORKTREE_DIR}/task-manifest.json"; then
+      info "Task manifest found: ${MANIFEST_COUNT} tasks declared"
+      emit_event "plan-write" "info" "plan_written.manifest" \
+        "task-manifest.json written alongside plan.md" taskCount="$MANIFEST_COUNT" manifestVersion="1"
+    else
+      warn "task-manifest.json exists but is invalid; will fall back to prose scraping"
+      emit_event "plan-write" "warn" "plan_written.manifest_invalid" \
+        "task-manifest.json is invalid"
+    fi
+  else
+    warn "task-manifest.json not found after plan-write; will fall back to prose scraping"
+    emit_event "plan-write" "warn" "plan_written.manifest_missing" \
+      "task-manifest.json not produced by plan-write"
+  fi
 
   _emit_phase_done "plan-write"
 
@@ -1977,7 +2027,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     log "=== Task ${TASK_NUM}/${TASK_COUNT}: ${task_title} ==="
 
-    TASK_TEXT=$(extract_task_text "plan.md" "$task_title")
+    TASK_TEXT=$(extract_task_text "plan.md" "$task_title" "$TASK_NUM")
     if [[ -z "$TASK_TEXT" ]]; then
       warn "Could not extract task text for '${task_title}', using title as description"
       TASK_TEXT="$task_title"
@@ -1985,7 +2035,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     BASE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
-    COMMIT_MSG=$(extract_task_commit_msg "plan.md" "$task_title" "feat: implement issue #${ISSUE_NUM} task ${TASK_NUM}")
+    COMMIT_MSG=$(extract_task_commit_msg "plan.md" "$task_title" "feat: implement issue #${ISSUE_NUM} task ${TASK_NUM}" "$TASK_NUM")
 
     if [[ "$TASK_NUM" -eq "$RESUME_TASK_NUM" && "$RESUME_STAGE" == "review" ]]; then
       log "  Resuming at review loop for task ${TASK_NUM}"
@@ -2311,7 +2361,7 @@ with open(path, 'w') as f:
                 break
               else
                 log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
-                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" 2>/dev/null || echo "$TASK_TEXT")
+                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" "$TASK_NUM" 2>/dev/null || echo "$TASK_TEXT")
                 if [[ -z "$TASK_TEXT" ]]; then
                   TASK_TEXT="$task_title"
                 fi
@@ -3075,7 +3125,14 @@ if [[ "$PHASE" == "create-pr" ]]; then
   fi
 
   PR_TASKS=""
-  if [[ -f "${ISSUES_DIR}/plan.md" ]]; then
+  if [[ -f "${ISSUES_DIR}/task-manifest.json" ]]; then
+    MANIFEST_TASKS=""
+    MANIFEST_COUNT=0
+    if read_manifest "${ISSUES_DIR}/task-manifest.json"; then
+      PR_TASKS=$(echo "$MANIFEST_TASKS" | awk 'NF {print "- " $0}')
+    fi
+  fi
+  if [[ -z "$PR_TASKS" && -f "${ISSUES_DIR}/plan.md" ]]; then
     PR_TASKS=$(_strip_fenced < "${ISSUES_DIR}/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {sub(/^#{2,3} /, "- "); print}' 2>/dev/null || true)
   fi
 

@@ -115,3 +115,32 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "feature.ts" ]
 }
+
+@test "simulate resume: old sentinel re-seeds with task-manifest.json pattern" {
+  # Simulates a resumed run where the exclude file has the old sentinel
+  # (arbiter-result.json) but not the new pattern (task-manifest.json).
+  # seed_excludes must re-seed so task-manifest.json is excluded.
+  local script_path
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  cd "$WORKTREE_DIR"
+  local common_dir
+  common_dir=$(git rev-parse --git-common-dir)
+  local exclude_file="${common_dir}/info/exclude"
+  mkdir -p "${common_dir}/info"
+  # Write old sentinel-only exclude file (pre-task-manifest era)
+  cat >> "$exclude_file" << 'OLDBLOCK'
+*.log
+*.result
+design.md
+plan.md
+arbiter-result.json
+OLDBLOCK
+  # Verify old sentinel is present but task-manifest.json is absent
+  grep -qxF 'arbiter-result.json' "$exclude_file"
+  ! grep -qxF 'task-manifest.json' "$exclude_file"
+  # Call seed_excludes (simulates a resumed run)
+  eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
+  seed_excludes
+  # task-manifest.json must now be in the exclude file
+  grep -qxF 'task-manifest.json' "$exclude_file"
+}
