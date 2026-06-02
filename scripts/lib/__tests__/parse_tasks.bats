@@ -18,6 +18,10 @@ setup() {
     /^[[:space:]]*extract_task_commit_msg\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
+  eval "$(awk '
+    /^[[:space:]]*extract_task_text\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
 
   TMPDIR_TEST="$(mktemp -d)"
   export ISSUES_DIR="$TMPDIR_TEST"
@@ -132,4 +136,24 @@ git commit -m "feat: first commit"
 PLAN
   result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "First task" "fallback")
   [ "$result" = "feat: first commit" ]
+}
+
+@test "extract_task_text: reads full task text, does not stop at fenced ## boundary" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+This is the body of task 1.
+
+```bash
+## Task 2: Phantom fenced task
+```
+
+Still part of task 1 body.
+
+## Task 2: Second task
+
+Second task body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task")
+  echo "$result" | grep -q "Still part of task 1 body"
 }
