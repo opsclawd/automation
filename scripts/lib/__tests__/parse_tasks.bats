@@ -370,6 +370,40 @@ PLAN
   ! echo "$result" | grep -q "Body 3"
 }
 
+@test "extract_task_text: stops at ### Task N: headers (level-3)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+Body 1.
+
+### Task 2: Sub task
+
+Body 2.
+
+## Task 2: Second task
+
+Body 2b.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
+  echo "$result" | grep -q "Body 1"
+  ! echo "$result" | grep -q "Body 2"
+}
+
+@test "extract_task_text: stops at ### Task N: with task_num lookup" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+### Task 1: First task
+
+Body 1.
+
+### Task 2: Second task
+
+Body 2.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
+  echo "$result" | grep -q "Body 1"
+  ! echo "$result" | grep -q "Body 2"
+}
+
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash

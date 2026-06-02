@@ -439,7 +439,7 @@ extract_task_text() {
       /^[[:space:]]*```/ { in_fence = !in_fence }
       NF == 0 { next }
       !in_fence && $0 ~ "^#{2,3} Task " tn ":" { in_task=1; next }
-      !in_fence && /^## / {
+      !in_fence && /^#{2,3} Task [0-9]+:/ {
         if (in_task) { exit }
       }
       in_task { print }
@@ -457,7 +457,7 @@ extract_task_text() {
       /^[[:space:]]*```/ { in_fence = !in_fence }
       NF == 0 { next }
       index($0, title) > 0 { in_task=1; next }
-      !in_fence && /^## / {
+      !in_fence && /^#{2,3} Task [0-9]+:/ {
         if (in_task) {
           for (i = 1; i <= buf_idx; i++) print buf[i]
           exit
