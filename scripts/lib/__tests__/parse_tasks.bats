@@ -753,6 +753,56 @@ PLAN
   [[ "$result" == *"parsed 1 tasks but plan declares"* ]]
 }
 
+@test "validate_task_list: rejects manifest when tasks missing from plan prose" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 3, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }, { "n": 3, "title": "Gamma" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Alpha
+## Task 2: Beta
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 3)
+  set -e
+  [[ "$result" == *"manifest tasks missing from plan.md prose"* ]]
+  [[ "$result" == *"Task 3"* ]]
+}
+
+@test "validate_task_list: accepts manifest when all tasks have matching prose headers" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Build model" }, { "n": 2, "title": "Write tests" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Build model
+Body here.
+### Task 2: Write tests
+More body.
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: rejects manifest when task header inside fenced block" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Real task" }, { "n": 2, "title": "Hidden task" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real task
+Body.
+```markdown
+## Task 2: Should not count
+```
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"manifest tasks missing from plan.md prose"* ]]
+  [[ "$result" == *"Task 2"* ]]
+}
+
 @test "parse_tasks: prefers manifest over scraping when manifest exists" {
   cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
 { "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }

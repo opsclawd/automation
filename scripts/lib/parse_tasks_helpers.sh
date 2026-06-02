@@ -113,6 +113,35 @@ _check_duplicate_titles() {
   return 0
 }
 
+_check_manifest_against_prose() {
+  local plan_file="$1"
+  local manifest_path="$2"
+  local missing=""
+
+  local task_nums
+  task_nums=$(jq -r '.tasks[].n' "$manifest_path")
+
+  local n
+  while IFS= read -r n; do
+    local found
+    found=$(_strip_fenced < "$plan_file" | awk -v tn="$n" '
+      $0 ~ "^#{2,3} Task " tn ":" { print "1"; exit }
+    ')
+    if [[ -z "$found" ]]; then
+      if [[ -n "$missing" ]]; then
+        missing+=", "
+      fi
+      missing+="Task ${n}"
+    fi
+  done <<< "$task_nums"
+
+  if [[ -n "$missing" ]]; then
+    echo "manifest tasks missing from plan.md prose: ${missing}"
+    return 1
+  fi
+  return 0
+}
+
 _check_fixture_titles() {
   local task_list="$1"
   local fixture_patterns=("Phantom" "Real task" "Make CI green" "Fix failing tests" "Some task" "First task" "Example task" "TODO task")
@@ -167,6 +196,14 @@ validate_task_list() {
       if [[ -n "$fixture_warnings" ]]; then
         emit_event "implement" "warn" "sanity_check.fixture_title" \
           "fixture-like task titles detected: ${fixture_warnings}"
+      fi
+
+      local prose_result
+      prose_result=$(_check_manifest_against_prose "$plan_file" "$manifest_path")
+      local prose_rc=$?
+      if [[ $prose_rc -ne 0 ]]; then
+        echo "$prose_result"
+        return 1
       fi
 
       emit_event "implement" "info" "sanity_check.passed" \
