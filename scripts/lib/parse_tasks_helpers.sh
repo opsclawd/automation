@@ -15,7 +15,7 @@ _extract_declared_count() {
   local count
   count=$(_strip_fenced < "$plan_file" | awk '
     /^#{2,3} Task [0-9]+:/ { found = 1 }
-    !found && /<!--\s*task-count:\s*[0-9]+/ {
+    !found && /<!--[[:space:]]*task-count:[[:space:]]*[0-9]+/ {
       val = $0
       sub(/.*task-count:[[:space:]]*/, "", val)
       sub(/[^0-9].*/, "", val)
