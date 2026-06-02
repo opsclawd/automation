@@ -12,14 +12,18 @@ _strip_fenced() {
 
 _extract_declared_count() {
   local plan_file="$1"
-  local header_line
-  header_line=$(_strip_fenced < "$plan_file" | grep -nP '^#{2,3} Task \d+:' | head -1 | cut -d: -f1)
-  if [[ -z "$header_line" ]]; then
-    echo ""
-    return 0
-  fi
   local count
-  count=$(_strip_fenced < "$plan_file" | head -n "$((header_line - 1))" | grep -oP '<!--\s*task-count:\s*\K[0-9]+' 2>/dev/null | tail -1 || true)
+  count=$(_strip_fenced < "$plan_file" | awk '
+    /^#{2,3} Task [0-9]+:/ { found = 1 }
+    !found && /<!--\s*task-count:\s*[0-9]+/ {
+      match($0, /task-count:[[:space:]]*[0-9]+/)
+      val = $0
+      sub(/.*task-count:[[:space:]]*/, "", val)
+      sub(/[^0-9].*/, "", val)
+    }
+    found { exit }
+    END { if (val != "") print val }
+  ' || true)
   echo "${count:-}"
 }
 
