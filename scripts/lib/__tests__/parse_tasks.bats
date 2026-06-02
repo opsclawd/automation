@@ -301,14 +301,25 @@ PLAN
   [ -z "$result" ]
 }
 
-@test "_extract_declared_count: returns first match when multiple comments" {
+@test "_extract_declared_count: extracts count immediately before first task header" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
-<!-- task-count: 3 -->
 <!-- task-count: 7 -->
+<!-- task-count: 3 -->
 ## Task 1: First
 PLAN
   result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
   [ "$result" = "3" ]
+}
+
+@test "_extract_declared_count: ignores prose task-count before real comment" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+Some prose mentioning <!-- task-count: 99 --> as an example.
+<!-- task-count: 2 -->
+## Task 1: First
+## Task 2: Second
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "2" ]
 }
 
 @test "_extract_declared_count: ignores fenced task-count comments" {

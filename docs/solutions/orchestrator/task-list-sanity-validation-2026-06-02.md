@@ -78,7 +78,7 @@ fi
 ### File Layout
 
 All validation logic lives in `scripts/lib/parse_tasks_helpers.sh`:
-- `_extract_declared_count` — greps for `<!-- task-count: N -->` (lines 13-18)
+- `_extract_declared_count` — extracts `<!-- task-count: N -->` from the preamble before the first task header, not from the entire document (lines 13-22)
 - `_check_sequential_numbers` — extracts task numbers from fence-stripped headers (lines 20-49)
 - `_check_duplicate_titles` — case-insensitive duplicate detection via awk/grep (lines 51-69)
 - `_check_fixture_titles` — substring match against curated fixture pattern array (lines 71-94)
@@ -88,15 +88,16 @@ Tests in `scripts/lib/__tests__/parse_tasks.bats` — 17 new test cases covering
 
 ## Key Implementation Decisions
 
-### 1. The grep regex for `<!-- task-count: N -->` must allow flexible whitespace
+### 1. The task-count comment is scoped to the preamble before the first task header
 
-The HTML comment can have varying whitespace around the attribute. Use `\s*` not literal spaces:
+The prompt now contains the literal `<!-- task-count: N -->` marker in its instructions, so a plan may include prose examples referencing the marker. To prevent a prose example like `<!-- task-count: 99 -->` from being matched, `_extract_declared_count` scopes its search to lines before the first `## Task N:` header (after fence-stripping). It picks the **last** match in that preamble (i.e., the one immediately before the tasks), using `tail -1`:
 
 ```bash
-count=$(grep -oP '<!--\s*task-count:\s*\K[0-9]+' "$plan_file" 2>/dev/null | head -1)
+header_line=$(_strip_fenced < "$plan_file" | grep -nP '^#{2,3} Task \d+:' | head -1 | cut -d: -f1)
+count=$(_strip_fenced < "$plan_file" | head -n "$((header_line - 1))" | grep -oP '<!--\s*task-count:\s*\K[0-9]+' 2>/dev/null | tail -1)
 ```
 
-Without this, `<!--  task-count:  5  -->` (extra spaces) would fail to parse.
+This also handles flexible whitespace (`\s*`) in the HTML comment attribute.
 
 ### 2. Sequential numbering checks original order, not sorted order
 
