@@ -116,8 +116,8 @@ _check_duplicate_titles() {
 _check_manifest_against_prose() {
   local plan_file="$1"
   local manifest_path="$2"
-  local missing=""
 
+  local missing_from_prose=""
   local task_nums
   task_nums=$(jq -r '.tasks[].n' "$manifest_path")
 
@@ -128,17 +128,41 @@ _check_manifest_against_prose() {
       $0 ~ "^#{2,3} Task " tn ":" { print "1"; exit }
     ')
     if [[ -z "$found" ]]; then
-      if [[ -n "$missing" ]]; then
-        missing+=", "
+      if [[ -n "$missing_from_prose" ]]; then
+        missing_from_prose+=", "
       fi
-      missing+="Task ${n}"
+      missing_from_prose+="Task ${n}"
     fi
   done <<< "$task_nums"
 
-  if [[ -n "$missing" ]]; then
-    echo "manifest tasks missing from plan.md prose: ${missing}"
+  if [[ -n "$missing_from_prose" ]]; then
+    echo "manifest tasks missing from plan.md prose: ${missing_from_prose}"
     return 1
   fi
+
+  local extra_in_prose=""
+  local prose_nums
+  prose_nums=$(_strip_fenced < "$plan_file" | grep -oP '^#{2,3} Task \K\d+(?=:)' 2>/dev/null || true)
+
+  if [[ -n "$prose_nums" ]]; then
+    local manifest_nums_csv
+    manifest_nums_csv=$(jq -r '.tasks[].n' "$manifest_path" | tr '\n' ',' | sed 's/,$//')
+    while IFS= read -r pn; do
+      [[ -z "$pn" ]] && continue
+      if ! echo ",${manifest_nums_csv}," | grep -q ",${pn},"; then
+        if [[ -n "$extra_in_prose" ]]; then
+          extra_in_prose+=", "
+        fi
+        extra_in_prose+="Task ${pn}"
+      fi
+    done <<< "$prose_nums"
+  fi
+
+  if [[ -n "$extra_in_prose" ]]; then
+    echo "prose tasks not in manifest: ${extra_in_prose}"
+    return 1
+  fi
+
   return 0
 }
 
