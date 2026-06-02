@@ -879,8 +879,24 @@ JSON
 ## Task 2: B
 PLAN
   get_task_completion_status() { echo "complete"; }
+  warn() { true; }
   result=$(detect_resume_point)
   [ "$result" = "validate" ]
+}
+
+@test "detect_resume_point: returns implement when manifest omits a prose task" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "A" }, { "n": 2, "title": "B" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: A
+## Task 2: B
+## Task 3: C
+PLAN
+  get_task_completion_status() { echo "complete"; }
+  warn() { true; }
+  result=$(detect_resume_point)
+  [ "$result" = "implement" ]
 }
 
 @test "integration: manifest + plan.md produces correct task list" {

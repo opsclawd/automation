@@ -358,6 +358,15 @@ detect_resume_point() {
   fi
 
   if [[ $first_incomplete -gt $task_count ]]; then
+    if [[ -f "$manifest_path" ]]; then
+      local prose_result
+      prose_result=$(_check_manifest_against_prose "${ISSUES_DIR}/plan.md" "$manifest_path")
+      if [[ $? -ne 0 ]]; then
+        warn "manifest/prose agreement check failed at resume: ${prose_result}"
+        echo "implement"
+        return
+      fi
+    fi
     echo "validate"
     return
   fi
