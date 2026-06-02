@@ -3220,7 +3220,7 @@ if [[ "$PHASE" == "create-pr" ]]; then
 
   PR_TASKS=""
   if [[ -f "${ISSUES_DIR}/plan.md" ]]; then
-    PR_TASKS=$(awk '/^#{2,3} Task [0-9]+:/ {sub(/^#{2,3} /, "- "); print}' "${ISSUES_DIR}/plan.md" 2>/dev/null || true)
+    PR_TASKS=$(_strip_fenced < "${ISSUES_DIR}/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {sub(/^#{2,3} /, "- "); print}' 2>/dev/null || true)
   fi
 
   PR_CHANGES=""

@@ -157,3 +157,18 @@ PLAN
   result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task")
   echo "$result" | grep -q "Still part of task 1 body"
 }
+
+@test "PR task list generation: excludes fenced tasks" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real feature
+```bash
+## Task 2: Phantom task in example
+```
+## Task 2: Also real
+PLAN
+  result=$(_strip_fenced < "$TMPDIR_TEST/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {sub(/^#{2,3} /, "- "); print}' 2>/dev/null || true)
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "2" ]
+  echo "$result" | grep -q "Real feature"
+  echo "$result" | grep -q "Also real"
+  ! echo "$result" | grep -q "Phantom"
+}
