@@ -48,6 +48,49 @@ _check_sequential_numbers() {
   return 0
 }
 
+_check_duplicate_titles() {
+  local task_list="$1"
+  local duplicates
+  duplicates=$(echo "$task_list" | awk '{ titles[tolower($0)]++; if (titles[tolower($0)] == 2) print tolower($0) }')
+
+  if [[ -n "$duplicates" ]]; then
+    local first_dup
+    first_dup=$(echo "$duplicates" | head -1)
+    local count
+    count=$(echo "$task_list" | grep -ci "^${first_dup}$" || true)
+    echo "duplicate task titles detected: '${first_dup}' appears ${count} times"
+    return 1
+  fi
+
+  echo ""
+  return 0
+}
+
+_check_fixture_titles() {
+  local task_list="$1"
+  local fixture_patterns="Phantom Real task Make CI green Fix failing tests Some task First task Example task TODO task"
+  local warnings=""
+
+  local title
+  while IFS= read -r title; do
+    [[ -z "$title" ]] && continue
+    local lower_title
+    lower_title=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+    local pattern
+    for pattern in $fixture_patterns; do
+      local lower_pattern
+      lower_pattern=$(echo "$pattern" | tr '[:upper:]' '[:lower:]')
+      if [[ "$lower_title" == *"$lower_pattern"* ]]; then
+        warnings+="title '${title}' matches fixture pattern '${pattern}'; "
+        break
+      fi
+    done
+  done <<< "$task_list"
+
+  echo "${warnings}"
+  return 0
+}
+
 find_first_incomplete_task() {
   local plan_file="${ISSUES_DIR}/plan.md"
   if [[ ! -f "$plan_file" ]]; then

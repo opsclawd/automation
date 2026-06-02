@@ -363,3 +363,43 @@ PLAN
   result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
   [ -z "$result" ]
 }
+
+@test "_check_duplicate_titles: passes with unique titles" {
+  result=$(_check_duplicate_titles "Task A
+Task B
+Task C")
+  [ -z "$result" ]
+}
+
+@test "_check_duplicate_titles: fails with duplicate titles" {
+  set +e
+  result=$(_check_duplicate_titles "Implement X
+Implement X
+Do something else")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"implement x"* ]]
+}
+
+@test "_check_duplicate_titles: is case-insensitive" {
+  set +e
+  result=$(_check_duplicate_titles "Implement X
+implement x")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+}
+
+@test "_check_fixture_titles: warns on fixture-like title" {
+  result=$(_check_fixture_titles "Fix failing tests")
+  [[ "$result" == *"fixture pattern"* ]]
+}
+
+@test "_check_fixture_titles: returns empty for normal titles" {
+  result=$(_check_fixture_titles "Implement the data model")
+  [ -z "$result" ]
+}
+
+@test "_check_fixture_titles: returns empty for empty input" {
+  result=$(_check_fixture_titles "")
+  [ -z "$result" ]
+}
