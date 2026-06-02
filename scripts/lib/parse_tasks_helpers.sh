@@ -212,7 +212,14 @@ find_first_incomplete_task() {
   fi
 
   local task_count
-  task_count=$(_strip_fenced < "$plan_file" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
+  local manifest_path="${ISSUES_DIR}/task-manifest.json"
+  MANIFEST_TASKS=""
+  MANIFEST_COUNT=0
+  if [[ -f "$manifest_path" ]] && read_manifest "$manifest_path" 2>/dev/null; then
+    task_count=$MANIFEST_COUNT
+  else
+    task_count=$(_strip_fenced < "$plan_file" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
+  fi
 
   if [[ "$task_count" -eq 0 ]]; then
     echo "0"

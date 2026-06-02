@@ -665,3 +665,19 @@ PLAN
   result=$(parse_tasks "$TMPDIR_TEST/plan.md")
   echo "$result" | grep -q "Fallback task"
 }
+
+@test "find_first_incomplete_task: uses manifest count when manifest exists" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 3, "tasks": [{ "n": 1, "title": "A" }, { "n": 2, "title": "B" }, { "n": 3, "title": "C" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: A
+## Task 2: B
+## Task 3: C
+PLAN
+  get_task_completion_status() {
+    if [[ "$1" -le 2 ]]; then echo "complete"; else echo "pending"; fi
+  }
+  result=$(find_first_incomplete_task)
+  [ "$result" = "3" ]
+}
