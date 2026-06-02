@@ -10,8 +10,15 @@ setup() {
     /^[[:space:]]*parse_tasks\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
+  eval "$(awk '
+    /^(find_first_incomplete_task|detect_resume_point)\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
 
   TMPDIR_TEST="$(mktemp -d)"
+  export ISSUES_DIR="$TMPDIR_TEST"
+  # stub get_task_completion_status
+  get_task_completion_status() { echo "pending"; }
 }
 
 teardown() {
@@ -64,4 +71,45 @@ No tasks here.
 PLAN
   result=$(parse_tasks "$TMPDIR_TEST/plan.md")
   [ -z "$result" ]
+}
+
+@test "find_first_incomplete_task: counts only real tasks, ignores fenced" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real task
+
+```bash
+## Task 2: Phantom
+```
+
+## Task 2: Also real
+PLAN
+  get_task_completion_status() { echo "complete"; }
+  result=$(find_first_incomplete_task)
+  # Buggy: counts 3 (incl. fenced Task 2 Phantom) → all complete → returns 4
+  # Fixed: counts 2 (only real tasks) → all complete → returns 3
+  [ "$result" = "3" ]
+}
+
+@test "find_first_incomplete_task: returns 0 when no plan" {
+  rm -f "$TMPDIR_TEST/plan.md"
+  result=$(find_first_incomplete_task)
+  [ "$result" = "0" ]
+}
+
+@test "detect_resume_point: counts only real tasks" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Done task
+
+```
+## Task 2: Phantom
+```
+PLAN
+  # Stub: tasks 1-2 are "complete", tasks 3+ are "pending"
+  # Buggy sees 2 tasks (incl. fenced Task 2) — all complete — first_incomplete=3, stub(3)=pending → "implement"
+  # Fixed sees 1 task — all complete — first_incomplete=2, stub(2)=complete, 2>1 → "validate"
+  get_task_completion_status() {
+    if [[ "$1" -le 2 ]]; then echo "complete"; else echo "pending"; fi
+  }
+  result=$(detect_resume_point)
+  [ "$result" = "validate" ]
 }
