@@ -1,27 +1,8 @@
 #!/usr/bin/env bats
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
-  eval "$(awk '
-    /^_strip_fenced\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$SCRIPT_PATH")"
-  eval "$(awk '
-    /^[[:space:]]*parse_tasks\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$SCRIPT_PATH")"
-  eval "$(awk '
-    /^(find_first_incomplete_task|detect_resume_point)\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$SCRIPT_PATH")"
-  eval "$(awk '
-    /^[[:space:]]*extract_task_commit_msg\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$SCRIPT_PATH")"
-  eval "$(awk '
-    /^[[:space:]]*extract_task_text\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$SCRIPT_PATH")"
+  SCRIPT_DIR="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  source "${SCRIPT_DIR}/parse_tasks_helpers.sh"
 
   TMPDIR_TEST="$(mktemp -d)"
   export ISSUES_DIR="$TMPDIR_TEST"
