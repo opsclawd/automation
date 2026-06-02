@@ -117,6 +117,15 @@ _check_manifest_against_prose() {
   local plan_file="$1"
   local manifest_path="$2"
 
+  local errors=""
+
+  local seq_result
+  seq_result=$(_check_sequential_numbers "$plan_file")
+  local seq_rc=$?
+  if [[ $seq_rc -ne 0 ]]; then
+    errors="${seq_result}"
+  fi
+
   local missing_from_prose=""
   local task_nums
   task_nums=$(jq -r '.tasks[].n' "$manifest_path")
@@ -136,8 +145,10 @@ _check_manifest_against_prose() {
   done <<< "$task_nums"
 
   if [[ -n "$missing_from_prose" ]]; then
-    echo "manifest tasks missing from plan.md prose: ${missing_from_prose}"
-    return 1
+    if [[ -n "$errors" ]]; then
+      errors+="; "
+    fi
+    errors+="manifest tasks missing from plan.md prose: ${missing_from_prose}"
   fi
 
   local extra_in_prose=""
@@ -159,7 +170,14 @@ _check_manifest_against_prose() {
   fi
 
   if [[ -n "$extra_in_prose" ]]; then
-    echo "prose tasks not in manifest: ${extra_in_prose}"
+    if [[ -n "$errors" ]]; then
+      errors+="; "
+    fi
+    errors+="prose tasks not in manifest: ${extra_in_prose}"
+  fi
+
+  if [[ -n "$errors" ]]; then
+    echo "$errors"
     return 1
   fi
 

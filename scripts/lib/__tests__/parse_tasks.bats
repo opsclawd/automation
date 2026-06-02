@@ -963,3 +963,37 @@ PLAN
   [ "$(echo "$TASKS" | wc -l | tr -d ' ')" = "1" ]
   echo "$TASKS" | grep -q "Fallback task"
 }
+
+@test "validate_task_list: rejects manifest when prose has duplicate task numbers" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Alpha
+## Task 2: Beta
+## Task 2: Duplicate beta
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "validate_task_list: reports both missing-from-prose and extra-in-prose errors" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Alpha
+## Task 3: Gamma
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"missing from plan.md prose"* ]]
+  [[ "$result" == *"Task 2"* ]]
+  [[ "$result" == *"prose tasks not in manifest"* ]]
+  [[ "$result" == *"Task 3"* ]]
+}
