@@ -255,7 +255,14 @@ detect_resume_point() {
   case "$status" in
     complete)
       local task_count
-      task_count=$(_strip_fenced < "${ISSUES_DIR}/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
+      local manifest_path="${ISSUES_DIR}/task-manifest.json"
+      MANIFEST_TASKS=""
+      MANIFEST_COUNT=0
+      if [[ -f "$manifest_path" ]] && read_manifest "$manifest_path" 2>/dev/null; then
+        task_count=$MANIFEST_COUNT
+      else
+        task_count=$(_strip_fenced < "${ISSUES_DIR}/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
+      fi
       if [[ $first_incomplete -gt $task_count ]]; then
         echo "validate"
       else

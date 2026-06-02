@@ -681,3 +681,16 @@ PLAN
   result=$(find_first_incomplete_task)
   [ "$result" = "3" ]
 }
+
+@test "detect_resume_point: uses manifest for task counting" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "A" }, { "n": 2, "title": "B" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: A
+## Task 2: B
+PLAN
+  get_task_completion_status() { echo "complete"; }
+  result=$(detect_resume_point)
+  [ "$result" = "validate" ]
+}
