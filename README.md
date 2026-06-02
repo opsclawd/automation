@@ -1,6 +1,8 @@
 # AI SDLC Orchestrator
 
-A single-tenant AI SDLC orchestrator for manually starting issue-to-PR runs across approved GitHub repositories. It runs locally or on a VPS, executes multiple repositories concurrently while enforcing one active worker per repo, and supports interchangeable agent runtime adapters (initially OpenCode and Pi) behind a single `AgentPort` contract.
+AI SDLC Orchestrator is a single-tenant AI software delivery control plane. A user explicitly enqueues an approved GitHub issue, then the orchestrator drives it through a configurable issue-to-reviewed-PR pipeline with phase-specific agent/model profiles, durable state, artifacts, logs, validation gates, review/fix loops, and retry/resume controls.
+
+It runs locally or on a VPS, executes multiple repositories concurrently while enforcing one active worker per repository, and supports interchangeable agent runtime adapters (initially OpenCode and Pi) behind a single `AgentPort` contract.
 
 ## Status
 
@@ -8,9 +10,11 @@ M1 (observable wrapper) and M2 (structured events) are **complete**. M3 (domain/
 
 ## What this project is
 
-AI SDLC Orchestrator is a single-tenant local/VPS AI SDLC orchestrator for manually starting issue-to-PR runs across approved GitHub repositories, with observable run state, repo-scoped worker concurrency, runtime-agnostic agent invocations, validation, review/fix loops, PR creation, and PR review handling.
+AI SDLC Orchestrator is a single-tenant local/VPS AI SDLC control plane for turning approved GitHub issues into reviewed pull requests. It provides observable run state, repo-scoped worker concurrency, runtime-agnostic agent invocations, validation, internal review/fix loops, PR creation, and PR review comment handling.
 
-It is not SaaS, not multi-user, not multi-machine, and not a generic workflow engine. Run starts are explicit (user picks a registered repository + issue number); the orchestrator never discovers issues automatically and never executes against an unregistered repository.
+The operating model is **manual enqueue, autonomous execution**. Run starts are explicit: the user picks a registered repository and GitHub issue number. After that, the orchestrator owns the phase pipeline until the run reaches `READY`, `SUCCESS`, `FAILED`, `CANCELLED`, or a human-review gate.
+
+It is not SaaS, not multi-user, not multi-machine, and not a generic workflow engine. The orchestrator never discovers issues automatically and never executes against an unregistered repository.
 
 The target workflow is:
 
@@ -21,12 +25,13 @@ GitHub issue
 → implementation
 → validation
 → internal review/fix loop
+→ compound learning/documentation
 → PR creation
 → PR review comment handling
 → ready for merge
 ```
 
-The core product goal is to make AI-generated software delivery **observable, auditable, resumable, and recoverable**.
+The core product goal is to make AI-generated software delivery **observable, auditable, resumable, recoverable, and review-gated**.
 
 At any point, the system should be able to answer:
 
@@ -36,6 +41,8 @@ What completed?
 What failed?
 Why did it fail?
 What artifacts exist?
+Which model/runtime/prompt version was used?
+Which review gates remain?
 What can safely happen next?
 ```
 
@@ -50,9 +57,12 @@ That creates predictable operational problems:
 - logs and artifacts are difficult to correlate;
 - retry/resume behavior is unsafe or unclear;
 - agent contract violations are hard to distinguish from normal command failures;
-- post-PR review automation is not first-class orchestration state.
+- post-PR review automation is not first-class orchestration state;
+- prompt, skill, phase, and model changes are hard to reason about without versioned pipeline state.
 
-This project formalizes that workflow into a single-tenant orchestrator with explicit state, artifacts, events, failures, recovery paths, and repo-scoped concurrency.
+This project formalizes that workflow into a single-tenant orchestrator with explicit state, artifacts, events, failures, recovery paths, review gates, and repo-scoped concurrency.
+
+The product is not another coding agent. Agent runtimes execute work; the orchestrator governs the delivery lifecycle around them.
 
 ## Core concepts
 
@@ -65,9 +75,12 @@ This project formalizes that workflow into a single-tenant orchestrator with exp
 | WorkerLease      | A per-Repository lease held by exactly one Worker for the duration of an active Run. |
 | Phase            | A named major stage inside a Run, such as `plan-design`, `implement`, or `validate`. |
 | Step             | An ordered sub-unit within a Phase.                                                  |
+| Attempt          | One execution of a Phase or Step, including inputs, outputs, artifacts, and result.  |
 | Loop             | A bounded repeated cycle, such as review/fix.                                        |
+| Review Gate      | A validation, internal review, external review bot, or PR comment gate.              |
 | Agent Invocation | One call to an agent runtime with a prompt, expected artifacts, and a result.        |
 | Agent Profile    | A named runtime+model+budgets+timeout config that an invocation runs under.          |
+| Pipeline Version | The recorded phase sequence, prompts, skills, profiles, validation, and retry rules. |
 | Artifact         | A persisted file produced or captured during orchestration.                          |
 
 ## Planned architecture
@@ -128,9 +141,10 @@ The local/VPS distinction is a deployment concern only. The orchestrator itself 
 - `OpenCodeAgentAdapter` is the frontier-model runtime — design, planning, high-context review, and PR-comment handling default to it.
 - `PiAgentAdapter` is the local small-model runtime (e.g. Qwen 3.6 27B with a 64k context limit) for bounded mechanical work; explicit fallback to OpenCode is configured per phase.
 - Runtime/model selection is config-driven (per phase profile), auditable, and fallback-capable — never inferred by opaque LLM judgment.
+- Pipeline definitions, prompts, skills, validation commands, retry rules, and phase-profile routing should be versioned and recorded per Run.
 - Git worktrees scoped per (Repository, Issue, Run). No shared mutable checkout across concurrent Runs.
 - Clean cancellation by terminating the agent process, resetting the worktree to the last known-good commit, and releasing the repo lease.
-- Multi-machine distributed workers, multi-user SaaS hosting, RBAC, automatic issue discovery, and generic workflow engines are explicit non-goals.
+- Multi-machine distributed workers, multi-user SaaS hosting, RBAC, automatic issue discovery, automatic merge, and generic workflow engines are explicit non-goals.
 
 ## Planned lifecycle states
 
@@ -174,6 +188,8 @@ After the observable wrapper exists, orchestration should migrate incrementally 
 6. Managed PR review polling, running on the same worker/lease primitives.
 7. TypeScript review/fix loop.
 8. Full TypeScript phase orchestration, driven by Workers that claim Jobs, acquire repo leases, and call `AgentPort.invoke(...)`.
+9. Pipeline versioning for phase order, prompts, skills, model profiles, validation gates, retry policies, and fallback routing.
+10. Operations UI for queue state, repo leases, phase attempts, review gates, retry/resume controls, and failure recovery.
 
 ## Quickstart
 
@@ -182,6 +198,7 @@ See [`docs/quickstart.md`](./docs/quickstart.md) for installation, starting the 
 ## Documentation
 
 - [`CONTEXT.md`](./CONTEXT.md) — project language, core domain model, relationships, outcome rules, and lifecycle states.
+- [`docs/product-direction.md`](./docs/product-direction.md) — product thesis, positioning, invariants, priorities, deferred ambitions, risks, and decision log.
 - [`docs/adr/0001-local-first-orchestrator-architecture.md`](./docs/adr/0001-local-first-orchestrator-architecture.md) — architecture decision record for local-first design, persistence, agent execution, cancellation, and distribution boundaries.
 - [`docs/prd.md`](./docs/prd.md) — full product requirements document.
 - [`docs/design-decisions-report.md`](./docs/design-decisions-report.md) — resolved design questions and implementation constraints.
