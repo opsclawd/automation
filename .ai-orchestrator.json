@@ -30,7 +30,7 @@
       "builder": {
         "runtime": "opencode",
         "provider": "minimax-coding-plan",
-        "model": "MiniMax-M2.7",
+        "model": "MiniMax-M3",
         "timeoutMinutes": 30
       },
       "junior": {
@@ -82,7 +82,7 @@
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
-      "implement": { "profile": "qwen", "fallbackProfile": "builder" },
+      "implement": { "profile": "builder", "fallbackProfile": "qwen" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "senior" },
       "fix-review": { "profile": "senior", "fallbackProfile": "gemini" },
