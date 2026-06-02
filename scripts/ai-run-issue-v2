@@ -862,6 +862,40 @@ is_task_complete() {
   return 1
 }
 
+# get_task_review_range: rebuild the (base, head) SHA range for a task's review
+# from the persisted markers, falling back to git when a marker is missing.
+# Sets REVIEW_BASE_SHA and REVIEW_HEAD_SHA as side effects so the caller can
+# assign to its own names (BASE_SHA / HEAD_SHA). Shared by the resume-into-review
+# path and any future consumer; do not reimplement this inline.
+get_task_review_range() {
+  local task_n="$1"
+  local basesha_log="${WORKTREE_DIR}/implement-task-${task_n}.basesha.log"
+  local headsha_log="${WORKTREE_DIR}/implement-task-${task_n}.headsha.log"
+
+  REVIEW_BASE_SHA=""
+  REVIEW_HEAD_SHA=""
+
+  if [[ -s "$basesha_log" ]]; then
+    REVIEW_BASE_SHA=$(cat "$basesha_log" 2>/dev/null || echo "")
+  fi
+  if [[ -z "$REVIEW_BASE_SHA" ]]; then
+    REVIEW_BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+    if [[ -n "$REVIEW_BASE_SHA" ]]; then
+      warn "No persisted base SHA for task ${task_n}; using HEAD~1 for the review diff range"
+    fi
+  fi
+
+  if [[ -s "$headsha_log" ]]; then
+    REVIEW_HEAD_SHA=$(cat "$headsha_log" 2>/dev/null || echo "")
+  fi
+  if [[ -z "$REVIEW_HEAD_SHA" ]]; then
+    REVIEW_HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [[ -n "$REVIEW_HEAD_SHA" && -z "$(cat "$headsha_log" 2>/dev/null)" ]]; then
+      warn "No persisted head SHA for task ${task_n}; review diff may include later tasks' commits"
+    fi
+  fi
+}
+
   get_task_completion_status() {
     is_task_complete "$1"
     return $?
@@ -2091,26 +2125,12 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       DID_IMPLEMENT=1
     else
       # Resuming directly into review: the implement step ran in a prior session.
-      # BASE_SHA above is the *post*-impl HEAD here, so a naive base..head range
-      # would be empty and the quality reviewer would see no changes. Recover the
-      # real range: base = persisted pre-impl SHA, head = current HEAD.
-      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" ]]; then
-        BASE_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" 2>/dev/null || echo "$BASE_SHA")
-      else
-        # No marker (task implemented before this was added) — best-effort to the
-        # parent commit so the reviewer still sees a diff rather than nothing.
-        BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "$BASE_SHA")
-        warn "No persisted base SHA for task ${TASK_NUM}; using HEAD~1 for the review diff range"
-      fi
-      # Use the task's own post-impl head, not the branch tip: later tasks may
-      # already be committed on top, and reviewing base..tip would span them and
-      # pass/fail the resumed task on unrelated changes.
-      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" ]]; then
-        HEAD_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" 2>/dev/null || echo "")
-      else
-        HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-        warn "No persisted head SHA for task ${TASK_NUM}; review diff may include later tasks' commits"
-      fi
+      # Rebuild the (base, head) range from the persisted SHA markers, falling
+      # back to git when a marker is missing. See get_task_review_range() for
+      # the rationale (HEAD~1 base, task's own post-impl head).
+      get_task_review_range "$TASK_NUM"
+      BASE_SHA="$REVIEW_BASE_SHA"
+      HEAD_SHA="$REVIEW_HEAD_SHA"
     fi
 
     # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations).
