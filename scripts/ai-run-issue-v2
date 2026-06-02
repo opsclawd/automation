@@ -938,6 +938,14 @@ detect_phase() {
   fi
 }
 
+# _strip_fenced: remove lines between triple-backtick fences from stdin
+_strip_fenced() {
+  awk '
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence { print }
+  '
+}
+
 # _lint_plan_verification: heuristic pre-check of plan verification commands
 # after plan-write. Catches whole-file greps without line-range scoping that
 # tend to produce unsatisfiable verification commands in the implement loop.
