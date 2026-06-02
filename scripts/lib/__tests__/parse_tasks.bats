@@ -246,16 +246,17 @@ PLAN
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash
-## Task 1: First task
-git commit -m "feat: fenced commit"
+## Task 1: Implement X
+echo "example"
 ```
-## Task 1: First task
+## Task 1: Implement X
 
+Body of task 1.
 git commit -m "feat: real commit"
 
 ## Task 2: Second task
 PLAN
-  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "First task" "fallback")
+  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "Implement X" "fallback")
   [ "$result" = "feat: real commit" ]
 }
 
