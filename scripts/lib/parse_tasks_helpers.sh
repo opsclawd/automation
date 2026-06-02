@@ -162,6 +162,13 @@ validate_task_list() {
         return 1
       fi
 
+      local fixture_warnings
+      fixture_warnings=$(_check_fixture_titles "$MANIFEST_TASKS")
+      if [[ -n "$fixture_warnings" ]]; then
+        emit_event "implement" "warn" "sanity_check.fixture_title" \
+          "fixture-like task titles detected: ${fixture_warnings}"
+      fi
+
       emit_event "implement" "info" "sanity_check.passed" \
         "task list sanity check passed (manifest)" manifestVersion="1" manifestCount="$MANIFEST_COUNT"
 
@@ -311,33 +318,35 @@ extract_task_text() {
   local task_title="$2"
   local task_num="${3:-}"
 
-  local title_file
-  title_file=$(mktemp)
-
-  printf '%s' "$task_title" > "$title_file"
-
   local line_num
-  line_num=$(awk -v title_file="$title_file" '
-    BEGIN { getline title < title_file; close(title_file) }
-    /^[[:space:]]*```/ { in_fence = !in_fence; next }
-    !in_fence && index($0, title) > 0 { print NR; exit }
-  ' "$plan_file")
+  local used_num_lookup=0
 
-  local used_num_fallback=0
-  if [[ -z "$line_num" ]] && [[ -n "$task_num" ]]; then
+  if [[ -n "$task_num" ]]; then
     line_num=$(awk -v tn="$task_num" '
       /^[[:space:]]*```/ { in_fence = !in_fence; next }
       !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
     ' "$plan_file")
-    used_num_fallback=1
+    used_num_lookup=1
   fi
 
   if [[ -z "$line_num" ]]; then
+    used_num_lookup=0
+    local title_file
+    title_file=$(mktemp)
+    printf '%s' "$task_title" > "$title_file"
+    line_num=$(awk -v title_file="$title_file" '
+      BEGIN { getline title < title_file; close(title_file) }
+      /^[[:space:]]*```/ { in_fence = !in_fence; next }
+      !in_fence && index($0, title) > 0 { print NR; exit }
+    ' "$plan_file")
     rm -f "$title_file"
+  fi
+
+  if [[ -z "$line_num" ]]; then
     return 1
   fi
 
-  if [[ "$used_num_fallback" -eq 1 ]]; then
+  if [[ "$used_num_lookup" -eq 1 ]]; then
     tail -n +"$line_num" "$plan_file" | awk -v tn="$task_num" '
       /^[[:space:]]*```/ { in_fence = !in_fence }
       NF == 0 { next }
@@ -348,7 +357,10 @@ extract_task_text() {
       in_task { print }
     '
   else
-    tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file" '
+    local title_file2
+    title_file2=$(mktemp)
+    printf '%s' "$task_title" > "$title_file2"
+    tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file2" '
       BEGIN {
         while ((getline line < title_file) > 0) { title = line }
         close(title_file)
@@ -365,9 +377,8 @@ extract_task_text() {
       }
       in_task { buf[++buf_idx] = $0 }
     '
+    rm -f "$title_file2"
   fi
-
-  rm -f "$title_file"
 }
 
 extract_task_commit_msg() {
@@ -376,19 +387,9 @@ extract_task_commit_msg() {
   local fallback_msg="$3"
   local task_num="${4:-}"
 
-  local title_file
-  title_file=$(mktemp)
-
-  printf '%s' "$task_title" > "$title_file"
-
   local line_num
-  line_num=$(awk -v title_file="$title_file" '
-    BEGIN { getline title < title_file; close(title_file) }
-    /^[[:space:]]*```/ { in_fence = !in_fence; next }
-    !in_fence && index($0, title) > 0 { print NR; exit }
-  ' "$plan_file")
 
-  if [[ -z "$line_num" ]] && [[ -n "$task_num" ]]; then
+  if [[ -n "$task_num" ]]; then
     line_num=$(awk -v tn="$task_num" '
       /^[[:space:]]*```/ { in_fence = !in_fence; next }
       !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
@@ -396,7 +397,18 @@ extract_task_commit_msg() {
   fi
 
   if [[ -z "$line_num" ]]; then
+    local title_file
+    title_file=$(mktemp)
+    printf '%s' "$task_title" > "$title_file"
+    line_num=$(awk -v title_file="$title_file" '
+      BEGIN { getline title < title_file; close(title_file) }
+      /^[[:space:]]*```/ { in_fence = !in_fence; next }
+      !in_fence && index($0, title) > 0 { print NR; exit }
+    ' "$plan_file")
     rm -f "$title_file"
+  fi
+
+  if [[ -z "$line_num" ]]; then
     echo "$fallback_msg"
     return
   fi
@@ -413,8 +425,6 @@ extract_task_commit_msg() {
   else
     commit_msg=$(tail -n +"$line_num" "$plan_file" | grep -oP 'git commit -m "\K[^"]+' | tail -1)
   fi
-
-  rm -f "$title_file"
 
   if [[ -n "$commit_msg" ]]; then
     echo "$commit_msg"

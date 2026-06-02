@@ -335,6 +335,21 @@ PLAN
   echo "$result" | grep -q "auth body"
 }
 
+@test "extract_task_text: prefers task_num lookup when both title and task_num provided" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Manifest title differs
+
+Actual body for task 1.
+
+## Task 2: Prose has different title
+
+Actual body for task 2.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Prose has different title" "1")
+  echo "$result" | grep -q "Actual body for task 1"
+  ! echo "$result" | grep -q "Actual body for task 2"
+}
+
 @test "extract_task_text: task_num fallback finds correct task" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: First task
