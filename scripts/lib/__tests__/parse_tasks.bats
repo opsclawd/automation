@@ -19,8 +19,7 @@ teardown() {
 outside line 1
 ```
 inside fence
-
-## Task 99: Phantom
+  ## Task 99: Phantom
 ```
 outside line 2
 PLAN
