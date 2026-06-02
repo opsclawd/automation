@@ -10,6 +10,13 @@ _strip_fenced() {
   '
 }
 
+_extract_declared_count() {
+  local plan_file="$1"
+  local count
+  count=$(grep -oP '<!-- task-count: \K[0-9]+' "$plan_file" 2>/dev/null | head -1)
+  echo "${count:-}"
+}
+
 find_first_incomplete_task() {
   local plan_file="${ISSUES_DIR}/plan.md"
   if [[ ! -f "$plan_file" ]]; then

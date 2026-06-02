@@ -283,3 +283,30 @@ PLAN
   task_count=$(_strip_fenced < "$TMPDIR_TEST/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
   [ "$task_count" = "$parsed_count" ]
 }
+
+@test "_extract_declared_count: returns count from HTML comment" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 5 -->
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "5" ]
+}
+
+@test "_extract_declared_count: returns empty when comment absent" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_extract_declared_count: returns first match when multiple comments" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 3 -->
+<!-- task-count: 7 -->
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "3" ]
+}
