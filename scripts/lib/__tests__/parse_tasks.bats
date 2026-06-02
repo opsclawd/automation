@@ -631,3 +631,37 @@ PLAN
   result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
   [ -z "$result" ]
 }
+
+@test "parse_tasks: prefers manifest over scraping when manifest exists" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Different title
+## Task 2: Another different title
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "2" ]
+  echo "$result" | grep -q "Alpha"
+  echo "$result" | grep -q "Beta"
+}
+
+@test "parse_tasks: falls back to scraping when no manifest" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Scraped task
+## Task 2: Another scraped task
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  [ "$(echo "$result" | wc -l | tr -d ' ')" = "2" ]
+  echo "$result" | grep -q "Scraped task"
+  echo "$result" | grep -q "Another scraped task"
+}
+
+@test "parse_tasks: falls back to scraping when manifest is invalid" {
+  echo "bad" > "$TMPDIR_TEST/task-manifest.json"
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Fallback task
+PLAN
+  result=$(parse_tasks "$TMPDIR_TEST/plan.md")
+  echo "$result" | grep -q "Fallback task"
+}

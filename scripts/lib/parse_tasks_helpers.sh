@@ -264,6 +264,19 @@ detect_resume_point() {
 
 parse_tasks() {
   local plan_file="$1"
+  local plan_dir
+  plan_dir=$(dirname "$plan_file")
+  local manifest_path="${plan_dir}/task-manifest.json"
+
+  if [[ -f "$manifest_path" ]]; then
+    MANIFEST_TASKS=""
+    MANIFEST_COUNT=0
+    if read_manifest "$manifest_path" 2>/dev/null; then
+      echo "$MANIFEST_TASKS"
+      return 0
+    fi
+  fi
+
   _strip_fenced < "$plan_file" | grep -E "^#{2,3} Task [0-9]+:" 2>/dev/null | sed -E "s/^#{2,3} Task [0-9]+: //" || true
 }
 
