@@ -1945,6 +1945,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     orchestrator_fail "No tasks found in plan.md"
   fi
 
+  _validation_error=$(validate_task_list "plan.md" "$TASK_COUNT")
+  if [[ -n "$_validation_error" ]]; then
+    orchestrator_fail "$_validation_error"
+  fi
+
   log "Found ${TASK_COUNT} task(s) to implement"
 
   TASK_NUM=0

@@ -378,7 +378,7 @@ Implement X
 Do something else")
   set -e
   [[ "$result" == *"duplicate task titles"* ]]
-  [[ "$result" == *"implement x"* ]]
+  [[ "$result" == *"Implement X"* ]]
 }
 
 @test "_check_duplicate_titles: is case-insensitive" {
@@ -411,5 +411,105 @@ implement x")
 
 @test "_check_fixture_titles: returns empty for empty input" {
   result=$(_check_fixture_titles "")
+  [ -z "$result" ]
+}
+
+@test "_check_sequential_numbers: fails for out-of-order task numbers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 2: Second
+## Task 1: First
+## Task 3: Third
+PLAN
+  set +e
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "_extract_declared_count: handles flexible whitespace in HTML comment" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!--  task-count:  5  -->
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "5" ]
+}
+
+@test "_check_duplicate_titles: shows original casing in error message" {
+  set +e
+  result=$(_check_duplicate_titles "Implement X
+Implement X
+Do something else")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"Implement X"* ]]
+}
+
+@test "validate_task_list: passes with correct declared count and sequential tasks" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 2 -->
+## Task 1: Build the data model
+Body.
+## Task 2: Write tests
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: fails when declared count mismatches" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 5 -->
+## Task 1: Only one task
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
+  set -e
+  [[ "$result" == *"parsed 1 tasks but plan declares 5"* ]]
+}
+
+@test "validate_task_list: passes when declared count absent (skip cross-check)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Do something
+## Task 2: Do another thing
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: fails on gap in task numbers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 3: Third
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "validate_task_list: fails on duplicate titles" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 2 -->
+## Task 1: Do the thing
+## Task 2: Do the thing
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+}
+
+@test "validate_task_list: passes but warns on fixture-like title" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 1 -->
+## Task 1: Fix failing tests
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
   [ -z "$result" ]
 }

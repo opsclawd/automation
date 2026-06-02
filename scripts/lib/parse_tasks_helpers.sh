@@ -13,7 +13,7 @@ _strip_fenced() {
 _extract_declared_count() {
   local plan_file="$1"
   local count
-  count=$(grep -oP '<!-- task-count: \K[0-9]+' "$plan_file" 2>/dev/null | head -1)
+  count=$(grep -oP '<!--\s*task-count:\s*\K[0-9]+' "$plan_file" 2>/dev/null | head -1)
   echo "${count:-}"
 }
 
@@ -27,8 +27,8 @@ _check_sequential_numbers() {
     return 0
   fi
 
-  local sorted expected i
-  sorted=$(echo "$numbers" | sort -n | tr '\n' ' ')
+  local original expected i
+  original=$(echo "$numbers" | tr '\n' ' ')
   local count
   count=$(echo "$numbers" | wc -l | tr -d ' ')
 
@@ -37,7 +37,7 @@ _check_sequential_numbers() {
     expected+="$i "
   done
 
-  if [[ "$sorted" != "$expected" ]]; then
+  if [[ "$original" != "$expected" ]]; then
     local joined
     joined=$(echo "$numbers" | tr '\n' ',' | sed 's/,$//')
     echo "task numbers are not sequential: found [${joined}], expected 1..${count}"
@@ -56,9 +56,11 @@ _check_duplicate_titles() {
   if [[ -n "$duplicates" ]]; then
     local first_dup
     first_dup=$(echo "$duplicates" | head -1)
+    local original_casing
+    original_casing=$(echo "$task_list" | grep -ixm 1 "$first_dup" || true)
     local count
     count=$(echo "$task_list" | grep -cFix "$first_dup" || true)
-    echo "duplicate task titles detected: '${first_dup}' appears ${count} times"
+    echo "duplicate task titles detected: '${original_casing}' appears ${count} times"
     return 1
   fi
 
@@ -88,6 +90,57 @@ _check_fixture_titles() {
   done <<< "$task_list"
 
   echo "${warnings}"
+  return 0
+}
+
+validate_task_list() {
+  local plan_file="$1"
+  local parsed_count="$2"
+  local errors=""
+
+  local declared
+  declared=$(_extract_declared_count "$plan_file")
+
+  if [[ -n "$declared" ]]; then
+    if [[ "$declared" -ne "$parsed_count" ]]; then
+      echo "parsed ${parsed_count} tasks but plan declares ${declared} — task extraction is wrong"
+      return 1
+    fi
+  else
+    emit_event "implement" "warn" "sanity_check.missing_declared_count" \
+      "plan.md has no <!-- task-count: N --> comment; count cross-check skipped"
+  fi
+
+  local seq_result
+  seq_result=$(_check_sequential_numbers "$plan_file")
+  local seq_rc=$?
+  if [[ $seq_rc -ne 0 ]]; then
+    echo "$seq_result"
+    return 1
+  fi
+
+  local task_list
+  task_list=$(parse_tasks "$plan_file")
+
+  local dup_result
+  dup_result=$(_check_duplicate_titles "$task_list")
+  local dup_rc=$?
+  if [[ $dup_rc -ne 0 ]]; then
+    echo "$dup_result"
+    return 1
+  fi
+
+  local fixture_warnings
+  fixture_warnings=$(_check_fixture_titles "$task_list")
+  if [[ -n "$fixture_warnings" ]]; then
+    emit_event "implement" "warn" "sanity_check.fixture_title" \
+      "fixture-like task titles detected: ${fixture_warnings}"
+  fi
+
+  emit_event "implement" "info" "sanity_check.passed" \
+    "task list sanity check passed" declaredCount="${declared:-none}" parsedCount="$parsed_count"
+
+  echo ""
   return 0
 }
 
