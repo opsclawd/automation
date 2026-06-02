@@ -310,3 +310,56 @@ PLAN
   result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
   [ "$result" = "3" ]
 }
+
+@test "_check_sequential_numbers: passes for contiguous 1..N" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 2: Second
+## Task 3: Third
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_check_sequential_numbers: fails for gap in numbering" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 3: Third
+PLAN
+  set +e
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "_check_sequential_numbers: fails for duplicate numbers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 2: Second
+## Task 2: Also second
+PLAN
+  set +e
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "_check_sequential_numbers: passes for single task" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Only task
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_check_sequential_numbers: ignores fenced task headers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+```bash
+## Task 99: Phantom
+```
+## Task 2: Second
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}

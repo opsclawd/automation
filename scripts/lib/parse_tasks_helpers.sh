@@ -17,6 +17,37 @@ _extract_declared_count() {
   echo "${count:-}"
 }
 
+_check_sequential_numbers() {
+  local plan_file="$1"
+  local numbers
+  numbers=$(_strip_fenced < "$plan_file" | grep -oP '(?<=^#{2,3} Task )\d+' 2>/dev/null || true)
+
+  if [[ -z "$numbers" ]]; then
+    echo ""
+    return 0
+  fi
+
+  local sorted expected i
+  sorted=$(echo "$numbers" | sort -n | tr '\n' ' ')
+  local count
+  count=$(echo "$numbers" | wc -l | tr -d ' ')
+
+  expected=""
+  for ((i = 1; i <= count; i++)); do
+    expected+="$i "
+  done
+
+  if [[ "$sorted" != "$expected" ]]; then
+    local joined
+    joined=$(echo "$numbers" | tr '\n' ',' | sed 's/,$//')
+    echo "task numbers are not sequential: found [${joined}], expected 1..${count}"
+    return 1
+  fi
+
+  echo ""
+  return 0
+}
+
 find_first_incomplete_task() {
   local plan_file="${ISSUES_DIR}/plan.md"
   if [[ ! -f "$plan_file" ]]; then
