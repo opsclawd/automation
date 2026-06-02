@@ -57,7 +57,7 @@ _check_duplicate_titles() {
     local first_dup
     first_dup=$(echo "$duplicates" | head -1)
     local count
-    count=$(echo "$task_list" | grep -ci "^${first_dup}$" || true)
+    count=$(echo "$task_list" | grep -cFix "$first_dup" || true)
     echo "duplicate task titles detected: '${first_dup}' appears ${count} times"
     return 1
   fi
