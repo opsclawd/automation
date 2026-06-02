@@ -2426,7 +2426,13 @@ task_pattern = re.compile(r'^#{2,3} Task ' + str(task_num) + ':')
 task_boundary = re.compile(r'^#{2,3} Task ')
 task_start = -1
 task_end = -1
+in_fence = False
 for i, line in enumerate(lines):
+    if line.startswith('\`\`\`'):
+        in_fence = not in_fence
+        continue
+    if in_fence:
+        continue
     if task_pattern.match(line):
         task_start = i
     elif task_boundary.match(line) and task_start >= 0 and task_end < 0:
