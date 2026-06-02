@@ -10,6 +10,152 @@ _strip_fenced() {
   '
 }
 
+_extract_declared_count() {
+  local plan_file="$1"
+  local count
+  count=$(_strip_fenced < "$plan_file" | awk '
+    /^#{2,3} Task [0-9]+:/ { found = 1 }
+    !found && /<!--[[:space:]]*task-count:[[:space:]]*[0-9]+/ {
+      val = $0
+      sub(/.*task-count:[[:space:]]*/, "", val)
+      sub(/[^0-9].*/, "", val)
+    }
+    found { exit }
+    END { if (val != "") print val }
+  ' || true)
+  echo "${count:-}"
+}
+
+_check_sequential_numbers() {
+  local plan_file="$1"
+  local numbers
+  numbers=$(_strip_fenced < "$plan_file" | grep -oP '^#{2,3} Task \K\d+(?=:)' 2>/dev/null || true)
+
+  if [[ -z "$numbers" ]]; then
+    echo ""
+    return 0
+  fi
+
+  local original expected i
+  original=$(echo "$numbers" | tr '\n' ' ')
+  local count
+  count=$(echo "$numbers" | wc -l | tr -d ' ')
+
+  expected=""
+  for ((i = 1; i <= count; i++)); do
+    expected+="$i "
+  done
+
+  if [[ "$original" != "$expected" ]]; then
+    local joined
+    joined=$(echo "$numbers" | tr '\n' ',' | sed 's/,$//')
+    echo "task numbers are not sequential: found [${joined}], expected 1..${count}"
+    return 1
+  fi
+
+  echo ""
+  return 0
+}
+
+_check_duplicate_titles() {
+  local task_list="$1"
+  local duplicates
+  duplicates=$(echo "$task_list" | awk '{ t=tolower($0); titles[t]++; if (titles[t] == 2) print t }')
+
+  if [[ -n "$duplicates" ]]; then
+    local all_dups=""
+    local dup
+    while IFS= read -r dup; do
+      [[ -z "$dup" ]] && continue
+      local original_casing
+      original_casing=$(echo "$task_list" | grep -Fixm 1 "$dup" || true)
+      local count
+      count=$(echo "$task_list" | grep -cFix "$dup" || true)
+      all_dups+="'${original_casing}' appears ${count} times; "
+    done <<< "$duplicates"
+    echo "duplicate task titles detected: ${all_dups}"
+    return 1
+  fi
+
+  echo ""
+  return 0
+}
+
+_check_fixture_titles() {
+  local task_list="$1"
+  local fixture_patterns=("Phantom" "Real task" "Make CI green" "Fix failing tests" "Some task" "First task" "Example task" "TODO task")
+  local warnings=""
+
+  local title
+  while IFS= read -r title; do
+    [[ -z "$title" ]] && continue
+    local lower_title
+    lower_title=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+    local pattern
+    for pattern in "${fixture_patterns[@]}"; do
+      local lower_pattern
+      lower_pattern=$(echo "$pattern" | tr '[:upper:]' '[:lower:]')
+      if [[ "$lower_title" == *"$lower_pattern"* ]]; then
+        warnings+="title '${title}' matches fixture pattern '${pattern}'; "
+        break
+      fi
+    done
+  done <<< "$task_list"
+
+  echo "${warnings}"
+  return 0
+}
+
+validate_task_list() {
+  local plan_file="$1"
+  local parsed_count="$2"
+
+  local declared
+  declared=$(_extract_declared_count "$plan_file")
+
+  if [[ -n "$declared" ]]; then
+    if [[ "$declared" -ne "$parsed_count" ]]; then
+      echo "parsed ${parsed_count} tasks but plan declares ${declared} — task extraction is wrong"
+      return 1
+    fi
+  else
+    emit_event "implement" "warn" "sanity_check.missing_declared_count" \
+      "plan.md has no <!-- task-count: N --> comment; count cross-check skipped"
+  fi
+
+  local seq_result
+  seq_result=$(_check_sequential_numbers "$plan_file")
+  local seq_rc=$?
+  if [[ $seq_rc -ne 0 ]]; then
+    echo "$seq_result"
+    return 1
+  fi
+
+  local task_list
+  task_list=$(parse_tasks "$plan_file")
+
+  local dup_result
+  dup_result=$(_check_duplicate_titles "$task_list")
+  local dup_rc=$?
+  if [[ $dup_rc -ne 0 ]]; then
+    echo "$dup_result"
+    return 1
+  fi
+
+  local fixture_warnings
+  fixture_warnings=$(_check_fixture_titles "$task_list")
+  if [[ -n "$fixture_warnings" ]]; then
+    emit_event "implement" "warn" "sanity_check.fixture_title" \
+      "fixture-like task titles detected: ${fixture_warnings}"
+  fi
+
+  emit_event "implement" "info" "sanity_check.passed" \
+    "task list sanity check passed" declaredCount="${declared:-none}" parsedCount="$parsed_count"
+
+  echo ""
+  return 0
+}
+
 find_first_incomplete_task() {
   local plan_file="${ISSUES_DIR}/plan.md"
   if [[ ! -f "$plan_file" ]]; then

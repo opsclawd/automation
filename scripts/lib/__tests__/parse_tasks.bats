@@ -283,3 +283,290 @@ PLAN
   task_count=$(_strip_fenced < "$TMPDIR_TEST/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {n++} END{print n+0}')
   [ "$task_count" = "$parsed_count" ]
 }
+
+@test "_extract_declared_count: returns count from HTML comment" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 5 -->
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "5" ]
+}
+
+@test "_extract_declared_count: returns empty when comment absent" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_extract_declared_count: extracts count immediately before first task header" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 7 -->
+<!-- task-count: 3 -->
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "3" ]
+}
+
+@test "_extract_declared_count: ignores prose task-count before real comment" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+Some prose mentioning <!-- task-count: 99 --> as an example.
+<!-- task-count: 2 -->
+## Task 1: First
+## Task 2: Second
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "2" ]
+}
+
+@test "_extract_declared_count: ignores fenced task-count comments" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+```
+<!-- task-count: 99 -->
+```
+<!-- task-count: 2 -->
+## Task 1: First
+## Task 2: Second
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "2" ]
+}
+
+@test "_check_sequential_numbers: passes for contiguous 1..N" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 2: Second
+## Task 3: Third
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_check_sequential_numbers: fails for gap in numbering" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 3: Third
+PLAN
+  set +e
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "_check_sequential_numbers: fails for duplicate numbers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 2: Second
+## Task 2: Also second
+PLAN
+  set +e
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "_check_sequential_numbers: passes for single task" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Only task
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_check_sequential_numbers: ignores fenced task headers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+```bash
+## Task 99: Phantom
+```
+## Task 2: Second
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_check_duplicate_titles: passes with unique titles" {
+  result=$(_check_duplicate_titles "Task A
+Task B
+Task C")
+  [ -z "$result" ]
+}
+
+@test "_check_duplicate_titles: fails with duplicate titles" {
+  set +e
+  result=$(_check_duplicate_titles "Implement X
+Implement X
+Do something else")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"Implement X"* ]]
+}
+
+@test "_check_duplicate_titles: is case-insensitive" {
+  set +e
+  result=$(_check_duplicate_titles "Implement X
+implement x")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+}
+
+@test "_check_fixture_titles: warns on fixture-like title" {
+  result=$(_check_fixture_titles "Fix failing tests")
+  [[ "$result" == *"fixture pattern"* ]]
+}
+
+@test "_check_fixture_titles: matches multi-word pattern as whole phrase" {
+  result=$(_check_fixture_titles "Some task")
+  [[ "$result" == *"fixture pattern"* ]]
+}
+
+@test "_check_fixture_titles: no false positive on partial word match" {
+  result=$(_check_fixture_titles "Add logging to the task runner")
+  [ -z "$result" ]
+}
+
+@test "_check_fixture_titles: returns empty for normal titles" {
+  result=$(_check_fixture_titles "Implement the data model")
+  [ -z "$result" ]
+}
+
+@test "_check_fixture_titles: returns empty for empty input" {
+  result=$(_check_fixture_titles "")
+  [ -z "$result" ]
+}
+
+@test "_check_sequential_numbers: ignores subtask headings without colon" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement feature
+### Task 1 notes
+Some detail here.
+## Task 2: Write tests
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
+@test "_check_sequential_numbers: fails for out-of-order task numbers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 2: Second
+## Task 1: First
+## Task 3: Third
+PLAN
+  set +e
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "_extract_declared_count: handles flexible whitespace in HTML comment" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!--  task-count:  5  -->
+## Task 1: First
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "5" ]
+}
+
+@test "_check_duplicate_titles: shows original casing in error message" {
+  set +e
+  result=$(_check_duplicate_titles "Implement X
+Implement X
+Do something else")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"Implement X"* ]]
+}
+
+@test "_check_duplicate_titles: reports all distinct duplicate pairs" {
+  set +e
+  result=$(_check_duplicate_titles "Do A
+Do B
+Do A
+Do B")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"Do A"* ]]
+  [[ "$result" == *"Do B"* ]]
+}
+
+@test "_check_duplicate_titles: handles titles with regex metacharacters" {
+  local input
+  input=$'Refactor the API.\nRefactor the API.'
+  set +e
+  result=$(_check_duplicate_titles "$input")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"Refactor the API."* ]]
+}
+
+@test "validate_task_list: passes with correct declared count and sequential tasks" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 2 -->
+## Task 1: Build the data model
+Body.
+## Task 2: Write tests
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: fails when declared count mismatches" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 5 -->
+## Task 1: Only one task
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
+  set -e
+  [[ "$result" == *"parsed 1 tasks but plan declares 5"* ]]
+}
+
+@test "validate_task_list: passes when declared count absent (skip cross-check)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Do something
+## Task 2: Do another thing
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  [ -z "$result" ]
+}
+
+@test "validate_task_list: fails on gap in task numbers" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First
+## Task 3: Third
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"not sequential"* ]]
+}
+
+@test "validate_task_list: fails on duplicate titles" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 2 -->
+## Task 1: Do the thing
+## Task 2: Do the thing
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+}
+
+@test "validate_task_list: passes but warns on fixture-like title" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+<!-- task-count: 1 -->
+## Task 1: Fix failing tests
+PLAN
+  emit_event() { true; }
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 1)
+  [ -z "$result" ]
+}
