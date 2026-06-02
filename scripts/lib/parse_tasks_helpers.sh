@@ -309,6 +309,7 @@ parse_tasks() {
 extract_task_text() {
   local plan_file="$1"
   local task_title="$2"
+  local task_num="${3:-}"
 
   local title_file
   title_file=$(mktemp)
@@ -322,28 +323,49 @@ extract_task_text() {
     !in_fence && index($0, title) > 0 { print NR; exit }
   ' "$plan_file")
 
+  local used_num_fallback=0
+  if [[ -z "$line_num" ]] && [[ -n "$task_num" ]]; then
+    line_num=$(awk -v tn="$task_num" '
+      /^[[:space:]]*```/ { in_fence = !in_fence; next }
+      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
+    ' "$plan_file")
+    used_num_fallback=1
+  fi
+
   if [[ -z "$line_num" ]]; then
     rm -f "$title_file"
     return 1
   fi
 
-  tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file" '
-    BEGIN {
-      while ((getline line < title_file) > 0) { title = line }
-      close(title_file)
-      buf_idx = 0
-    }
-    /^[[:space:]]*```/ { in_fence = !in_fence }
-    NF == 0 { next }
-    index($0, title) > 0 { in_task=1; next }
-    !in_fence && /^## / {
-      if (in_task) {
-        for (i = 1; i <= buf_idx; i++) print buf[i]
-        exit
+  if [[ "$used_num_fallback" -eq 1 ]]; then
+    tail -n +"$line_num" "$plan_file" | awk -v tn="$task_num" '
+      /^[[:space:]]*```/ { in_fence = !in_fence }
+      NF == 0 { next }
+      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { in_task=1; next }
+      !in_fence && /^## / {
+        if (in_task) { exit }
       }
-    }
-    in_task { buf[++buf_idx] = $0 }
-  '
+      in_task { print }
+    '
+  else
+    tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file" '
+      BEGIN {
+        while ((getline line < title_file) > 0) { title = line }
+        close(title_file)
+        buf_idx = 0
+      }
+      /^[[:space:]]*```/ { in_fence = !in_fence }
+      NF == 0 { next }
+      index($0, title) > 0 { in_task=1; next }
+      !in_fence && /^## / {
+        if (in_task) {
+          for (i = 1; i <= buf_idx; i++) print buf[i]
+          exit
+        }
+      }
+      in_task { buf[++buf_idx] = $0 }
+    '
+  fi
 
   rm -f "$title_file"
 }
@@ -352,6 +374,7 @@ extract_task_commit_msg() {
   local plan_file="$1"
   local task_title="$2"
   local fallback_msg="$3"
+  local task_num="${4:-}"
 
   local title_file
   title_file=$(mktemp)
@@ -364,6 +387,13 @@ extract_task_commit_msg() {
     /^[[:space:]]*```/ { in_fence = !in_fence; next }
     !in_fence && index($0, title) > 0 { print NR; exit }
   ' "$plan_file")
+
+  if [[ -z "$line_num" ]] && [[ -n "$task_num" ]]; then
+    line_num=$(awk -v tn="$task_num" '
+      /^[[:space:]]*```/ { in_fence = !in_fence; next }
+      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
+    ' "$plan_file")
+  fi
 
   if [[ -z "$line_num" ]]; then
     rm -f "$title_file"

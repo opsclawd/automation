@@ -306,6 +306,55 @@ PLAN
   ! echo "$result" | grep -q "Second task"
 }
 
+@test "extract_task_text: falls back to task number when title does not match" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement authentication
+
+This is the auth body.
+
+## Task 2: Write database migration
+
+This is the migration body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement auth" "1")
+  echo "$result" | grep -q "auth body"
+  ! echo "$result" | grep -q "migration body"
+}
+
+@test "extract_task_text: title match works when no task_num provided" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement auth
+
+This is the auth body.
+
+## Task 2: Write migration
+
+This is the migration body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement auth")
+  echo "$result" | grep -q "auth body"
+}
+
+@test "extract_task_text: task_num fallback finds correct task" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+Body 1.
+
+## Task 2: Second task
+
+Body 2.
+
+## Task 3: Third task
+
+Body 3.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Non-existent title" "2")
+  echo "$result" | grep -q "Body 2"
+  ! echo "$result" | grep -q "Body 1"
+  ! echo "$result" | grep -q "Body 3"
+}
+
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash
@@ -321,6 +370,36 @@ git commit -m "feat: real commit"
 PLAN
   result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "Implement X" "fallback")
   [ "$result" = "feat: real commit" ]
+}
+
+@test "extract_task_commit_msg: falls back to task number when title does not match" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement authentication
+
+Body here.
+git commit -m "feat: add auth"
+
+## Task 2: Write database migration
+
+Body here.
+git commit -m "feat: add migration"
+PLAN
+  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "Implement auth" "fallback" "1")
+  [ "$result" = "feat: add auth" ]
+}
+
+@test "extract_task_commit_msg: task_num fallback returns correct commit msg" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+git commit -m "feat: first"
+
+## Task 2: Second task
+
+git commit -m "feat: second"
+PLAN
+  result=$(extract_task_commit_msg "$TMPDIR_TEST/plan.md" "Non-existent title" "fallback" "2")
+  [ "$result" = "feat: second" ]
 }
 
 @test "find_first_incomplete_task: count matches parse_tasks for plan with fenced examples" {

@@ -397,11 +397,11 @@ seed_excludes() {
   common_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-common-dir)
   exclude_file="${common_dir}/info/exclude"
   mkdir -p "${common_dir}/info"
-  # Sentinel check: fix-status.txt is unique to the current block version, so
+  # Sentinel check: task-manifest.json is unique to the current block version, so
   # its presence means a previous seed_excludes call already wrote the full set.
   # Bumping the sentinel when the block changes causes a one-time re-seed in
   # existing worktrees (duplicate patterns in info/exclude are harmless).
-  if [[ -f "$exclude_file" ]] && grep -qxF 'arbiter-result.json' "$exclude_file"; then
+  if [[ -f "$exclude_file" ]] && grep -qxF 'task-manifest.json' "$exclude_file"; then
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -2027,7 +2027,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     log "=== Task ${TASK_NUM}/${TASK_COUNT}: ${task_title} ==="
 
-    TASK_TEXT=$(extract_task_text "plan.md" "$task_title")
+    TASK_TEXT=$(extract_task_text "plan.md" "$task_title" "$TASK_NUM")
     if [[ -z "$TASK_TEXT" ]]; then
       warn "Could not extract task text for '${task_title}', using title as description"
       TASK_TEXT="$task_title"
@@ -2035,7 +2035,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     BASE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
-    COMMIT_MSG=$(extract_task_commit_msg "plan.md" "$task_title" "feat: implement issue #${ISSUE_NUM} task ${TASK_NUM}")
+    COMMIT_MSG=$(extract_task_commit_msg "plan.md" "$task_title" "feat: implement issue #${ISSUE_NUM} task ${TASK_NUM}" "$TASK_NUM")
 
     if [[ "$TASK_NUM" -eq "$RESUME_TASK_NUM" && "$RESUME_STAGE" == "review" ]]; then
       log "  Resuming at review loop for task ${TASK_NUM}"
@@ -2361,7 +2361,7 @@ with open(path, 'w') as f:
                 break
               else
                 log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
-                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" 2>/dev/null || echo "$TASK_TEXT")
+                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" "$TASK_NUM" 2>/dev/null || echo "$TASK_TEXT")
                 if [[ -z "$TASK_TEXT" ]]; then
                   TASK_TEXT="$task_title"
                 fi
