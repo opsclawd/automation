@@ -445,6 +445,18 @@ Do something else")
   [[ "$result" == *"Implement X"* ]]
 }
 
+@test "_check_duplicate_titles: reports all distinct duplicate pairs" {
+  set +e
+  result=$(_check_duplicate_titles "Do A
+Do B
+Do A
+Do B")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"Do A"* ]]
+  [[ "$result" == *"Do B"* ]]
+}
+
 @test "validate_task_list: passes with correct declared count and sequential tasks" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 <!-- task-count: 2 -->

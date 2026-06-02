@@ -13,7 +13,8 @@ _strip_fenced() {
 _extract_declared_count() {
   local plan_file="$1"
   local count
-  count=$(grep -oP '<!--\s*task-count:\s*\K[0-9]+' "$plan_file" 2>/dev/null | head -1)
+  count=$(grep -oP '<!--\s*task-count:\s*\K[0-9]+' "$plan_file" 2>/dev/null || true)
+  count=$(head -1 <<< "$count")
   echo "${count:-}"
 }
 
@@ -54,13 +55,17 @@ _check_duplicate_titles() {
   duplicates=$(echo "$task_list" | awk '{ t=tolower($0); titles[t]++; if (titles[t] == 2) print t }')
 
   if [[ -n "$duplicates" ]]; then
-    local first_dup
-    first_dup=$(echo "$duplicates" | head -1)
-    local original_casing
-    original_casing=$(echo "$task_list" | grep -ixm 1 "$first_dup" || true)
-    local count
-    count=$(echo "$task_list" | grep -cFix "$first_dup" || true)
-    echo "duplicate task titles detected: '${original_casing}' appears ${count} times"
+    local all_dups=""
+    local dup
+    while IFS= read -r dup; do
+      [[ -z "$dup" ]] && continue
+      local original_casing
+      original_casing=$(echo "$task_list" | grep -ixm 1 "$dup" || true)
+      local count
+      count=$(echo "$task_list" | grep -cFix "$dup" || true)
+      all_dups+="'${original_casing}' appears ${count} times; "
+    done <<< "$duplicates"
+    echo "duplicate task titles detected: ${all_dups}"
     return 1
   fi
 
@@ -96,7 +101,6 @@ _check_fixture_titles() {
 validate_task_list() {
   local plan_file="$1"
   local parsed_count="$2"
-  local errors=""
 
   local declared
   declared=$(_extract_declared_count "$plan_file")
