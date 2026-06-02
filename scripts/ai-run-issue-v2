@@ -3123,7 +3123,14 @@ if [[ "$PHASE" == "create-pr" ]]; then
   fi
 
   PR_TASKS=""
-  if [[ -f "${ISSUES_DIR}/plan.md" ]]; then
+  if [[ -f "${ISSUES_DIR}/task-manifest.json" ]]; then
+    MANIFEST_TASKS=""
+    MANIFEST_COUNT=0
+    if read_manifest "${ISSUES_DIR}/task-manifest.json" 2>/dev/null; then
+      PR_TASKS=$(echo "$MANIFEST_TASKS" | awk '{print "- " $0}')
+    fi
+  fi
+  if [[ -z "$PR_TASKS" && -f "${ISSUES_DIR}/plan.md" ]]; then
     PR_TASKS=$(_strip_fenced < "${ISSUES_DIR}/plan.md" | awk '/^#{2,3} Task [0-9]+:/ {sub(/^#{2,3} /, "- "); print}' 2>/dev/null || true)
   fi
 
