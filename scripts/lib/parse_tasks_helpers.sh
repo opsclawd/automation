@@ -51,7 +51,7 @@ _check_sequential_numbers() {
 _check_duplicate_titles() {
   local task_list="$1"
   local duplicates
-  duplicates=$(echo "$task_list" | awk '{ titles[tolower($0)]++; if (titles[tolower($0)] == 2) print tolower($0) }')
+  duplicates=$(echo "$task_list" | awk '{ t=tolower($0); titles[t]++; if (titles[t] == 2) print t }')
 
   if [[ -n "$duplicates" ]]; then
     local first_dup
@@ -68,7 +68,7 @@ _check_duplicate_titles() {
 
 _check_fixture_titles() {
   local task_list="$1"
-  local fixture_patterns="Phantom Real task Make CI green Fix failing tests Some task First task Example task TODO task"
+  local fixture_patterns=("Phantom" "Real task" "Make CI green" "Fix failing tests" "Some task" "First task" "Example task" "TODO task")
   local warnings=""
 
   local title
@@ -77,7 +77,7 @@ _check_fixture_titles() {
     local lower_title
     lower_title=$(echo "$title" | tr '[:upper:]' '[:lower:]')
     local pattern
-    for pattern in $fixture_patterns; do
+    for pattern in "${fixture_patterns[@]}"; do
       local lower_pattern
       lower_pattern=$(echo "$pattern" | tr '[:upper:]' '[:lower:]')
       if [[ "$lower_title" == *"$lower_pattern"* ]]; then

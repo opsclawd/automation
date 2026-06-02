@@ -394,6 +394,16 @@ implement x")
   [[ "$result" == *"fixture pattern"* ]]
 }
 
+@test "_check_fixture_titles: matches multi-word pattern as whole phrase" {
+  result=$(_check_fixture_titles "Some task")
+  [[ "$result" == *"fixture pattern"* ]]
+}
+
+@test "_check_fixture_titles: no false positive on partial word match" {
+  result=$(_check_fixture_titles "Add logging to the task runner")
+  [ -z "$result" ]
+}
+
 @test "_check_fixture_titles: returns empty for normal titles" {
   result=$(_check_fixture_titles "Implement the data model")
   [ -z "$result" ]
