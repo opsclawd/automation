@@ -960,7 +960,6 @@ _lint_plan_verification() {
   fi
 }
 
-# _strip_fenced: remove lines between triple-backtick fences from stdin
 _strip_fenced() {
   awk '
     /^```/ { in_fence = !in_fence; next }
