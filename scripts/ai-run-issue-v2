@@ -2283,10 +2283,7 @@ for i, line in enumerate(lines):
         in_fence = not in_fence
         continue
     if in_fence:
-        if task_pattern.match(line) or task_boundary.match(line):
-            in_fence = False
-        else:
-            continue
+        continue
     if task_pattern.match(line):
         task_start = i
     elif task_boundary.match(line) and task_start >= 0 and task_end < 0:
