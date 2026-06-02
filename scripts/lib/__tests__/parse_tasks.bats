@@ -414,6 +414,17 @@ implement x")
   [ -z "$result" ]
 }
 
+@test "_check_sequential_numbers: ignores subtask headings without colon" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement feature
+### Task 1 notes
+Some detail here.
+## Task 2: Write tests
+PLAN
+  result=$(_check_sequential_numbers "$TMPDIR_TEST/plan.md")
+  [ -z "$result" ]
+}
+
 @test "_check_sequential_numbers: fails for out-of-order task numbers" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 2: Second
@@ -455,6 +466,16 @@ Do B")
   [[ "$result" == *"duplicate task titles"* ]]
   [[ "$result" == *"Do A"* ]]
   [[ "$result" == *"Do B"* ]]
+}
+
+@test "_check_duplicate_titles: handles titles with regex metacharacters" {
+  local input
+  input=$'Refactor the API.\nRefactor the API.'
+  set +e
+  result=$(_check_duplicate_titles "$input")
+  set -e
+  [[ "$result" == *"duplicate task titles"* ]]
+  [[ "$result" == *"Refactor the API."* ]]
 }
 
 @test "validate_task_list: passes with correct declared count and sequential tasks" {

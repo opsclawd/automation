@@ -21,7 +21,7 @@ _extract_declared_count() {
 _check_sequential_numbers() {
   local plan_file="$1"
   local numbers
-  numbers=$(_strip_fenced < "$plan_file" | grep -oP '^#{2,3} Task \K\d+' 2>/dev/null || true)
+  numbers=$(_strip_fenced < "$plan_file" | grep -oP '^#{2,3} Task \K\d+(?=:)' 2>/dev/null || true)
 
   if [[ -z "$numbers" ]]; then
     echo ""
@@ -60,7 +60,7 @@ _check_duplicate_titles() {
     while IFS= read -r dup; do
       [[ -z "$dup" ]] && continue
       local original_casing
-      original_casing=$(echo "$task_list" | grep -ixm 1 "$dup" || true)
+      original_casing=$(echo "$task_list" | grep -Fixm 1 "$dup" || true)
       local count
       count=$(echo "$task_list" | grep -cFix "$dup" || true)
       all_dups+="'${original_casing}' appears ${count} times; "
