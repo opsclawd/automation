@@ -311,6 +311,19 @@ PLAN
   [ "$result" = "3" ]
 }
 
+@test "_extract_declared_count: ignores fenced task-count comments" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+```
+<!-- task-count: 99 -->
+```
+<!-- task-count: 2 -->
+## Task 1: First
+## Task 2: Second
+PLAN
+  result=$(_extract_declared_count "$TMPDIR_TEST/plan.md")
+  [ "$result" = "2" ]
+}
+
 @test "_check_sequential_numbers: passes for contiguous 1..N" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: First

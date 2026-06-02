@@ -13,7 +13,7 @@ _strip_fenced() {
 _extract_declared_count() {
   local plan_file="$1"
   local count
-  count=$(grep -oP '<!--\s*task-count:\s*\K[0-9]+' "$plan_file" 2>/dev/null || true)
+  count=$(_strip_fenced < "$plan_file" | grep -oP '<!--\s*task-count:\s*\K[0-9]+' 2>/dev/null || true)
   count=$(head -1 <<< "$count")
   echo "${count:-}"
 }
