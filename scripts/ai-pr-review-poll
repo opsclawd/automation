@@ -560,34 +560,61 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     total="$total_comment_count" unprocessed="$comment_count"
 
   if [[ $comment_count -eq 0 ]]; then
-    # No new comments. But if any IDs are in REPLIED (replies posted, build
-    # was last seen red), the previous poll left work undone. Re-run build
-    # verification only — don't re-invoke the agent, replies are already up.
-    local pending_count=0
-    if [[ -s "$REPLIED_IDS_FILE" ]]; then
-      pending_count=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
+    # No new comments. Re-check replied IDs using per-comment verification.
+    local replied_count_json=0
+    if [[ -f "$COMMENT_STATE_FILE" ]]; then
+      replied_count_json=$(jq '[to_entries[] | select(.value.state == "replied")] | length' "$COMMENT_STATE_FILE" 2>/dev/null || echo 0)
     fi
-    if [[ $pending_count -gt 0 ]]; then
-      log "No new comments, but ${pending_count} replied ID(s) awaiting verification. Re-checking commits + build."
-      # Both checks must pass before promotion. Order matters: a passing
-      # local build with unpushed commits would otherwise mark the PR as
-      # processed while origin still has the broken code — silently
-      # abandoning the review with the fix stranded locally.
+    if [[ "$replied_count_json" -gt 0 ]]; then
+      log "No new comments, but ${replied_count_json} replied comment(s) awaiting verification. Re-checking."
       local reverify_ok=true
       ensure_local_pushed || reverify_ok=false
       verify_build_passes || reverify_ok=false
       if $reverify_ok; then
-        local promoted_ids
-        promoted_ids=$(tr '\n' ' ' < "$REPLIED_IDS_FILE")
-        cat "$REPLIED_IDS_FILE" >> "$PROCESSED_IDS_FILE"
-        sort -u "$PROCESSED_IDS_FILE" -o "$PROCESSED_IDS_FILE"
-        : > "$REPLIED_IDS_FILE"
-        resolve_threads $promoted_ids
-        log "All checks passed; promoted ${pending_count} ID(s) from REPLIED to PROCESSED."
-        LAST_REVIEW_RESULT="NO_FIXES_NEEDED"
-        return 0
+        # Re-verify per-comment: only promote comments that pass the guard
+        local replied_ids
+        replied_ids=$(jq -r 'to_entries[] | select(.value.state == "replied") | .key' "$COMMENT_STATE_FILE" 2>/dev/null)
+        local promoted=0
+        local cid
+        for cid in $replied_ids; do
+          [[ -z "$cid" ]] && continue
+          # Re-verify the reply is still on GitHub
+          local has_reply
+          has_reply=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.in_reply_to_id == ${cid})] | length" 2>/dev/null || echo "0")
+          if [[ "$has_reply" -gt 0 ]]; then
+            jq --arg cid "$cid" '.[$cid].reply_verified = true' \
+              "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+              mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+          fi
+          # For fixed outcomes, re-verify commit SHA
+          local outcome
+          outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+          if [[ "$outcome" == "fixed" ]]; then
+            local commit_sha
+            commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+            if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
+              if ! verify_comment_commit "$cid" "$commit_sha" "$pre_sha"; then
+                warn "  Comment ${cid}: commit verification failed on re-check"
+                continue
+              fi
+            fi
+          fi
+          if can_transition_to_processed "$cid"; then
+            set_comment_state "$cid" "processed"
+            promoted=$((promoted + 1))
+          fi
+        done
+        if [[ $promoted -gt 0 ]]; then
+          log "Promoted ${promoted} comment(s) from replied to processed."
+          derive_compat_files
+          LAST_REVIEW_RESULT="NO_FIXES_NEEDED"
+          return 0
+        else
+          warn "No comments passed per-comment verification on re-check."
+        fi
       else
-        warn "Verification still failing; ${pending_count} ID(s) remain in REPLIED for next poll."
+        warn "Verification still failing; replied comments remain for next poll."
         return 2
       fi
     fi
