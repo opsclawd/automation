@@ -2447,7 +2447,6 @@ with open(path, 'w') as f:
     fi
 
     # Defense in depth: the canonical completion predicate must agree.
-    local completion_status
     completion_status=$(is_task_complete "$TASK_NUM" || true)
     if [[ "$completion_status" != "complete" ]]; then
       orchestrator_fail "Task ${TASK_NUM}: exited review loop but is_task_complete reports '${completion_status}'. Refusing to mark complete."
