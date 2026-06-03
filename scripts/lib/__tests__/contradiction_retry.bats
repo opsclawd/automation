@@ -6,11 +6,13 @@
 
 setup() {
   SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
 
-  # Extract helper functions needed by handle_contradiction_reconciliation
-  # via awk brace-counting so tests exercise the actual script implementation.
+  # Source shared helpers, then extract remaining functions via awk brace-counting
+  # so tests exercise the actual script implementation.
+  source "$SHARED_LIB"
   eval "$(awk '
-    /^(validate_result_file|read_result_value|resolve_result|validate_review_artifacts|rerun_reviewer_once|rerun_reviewer_for_contradiction|handle_contradiction_reconciliation)\(\)/ { found=1 }
+    /^(resolve_result|validate_review_artifacts|rerun_reviewer_once|rerun_reviewer_for_contradiction|handle_contradiction_reconciliation)\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 

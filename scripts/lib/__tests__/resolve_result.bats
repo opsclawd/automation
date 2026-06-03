@@ -8,9 +8,12 @@
 
 setup() {
   SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
-  # Pull in the three functions resolve_result needs via awk brace-counting.
+  SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
+  # Source shared helpers, then extract resolve_result (which references them).
+  source "$SHARED_LIB"
+  # Pull in resolve_result via awk brace-counting.
   eval "$(awk '
-    /^(validate_result_file|read_result_value|resolve_result)\(\)/ { found=1 }
+    /^(resolve_result)\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
