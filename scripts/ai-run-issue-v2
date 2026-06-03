@@ -948,7 +948,7 @@ _lint_plan_verification() {
   fi
 
   local validation_tasks
-  validation_tasks=$(grep -iP '##+ .*Task \d+.*(?:validation suite|full validation|run validation|make.*green|make.*pass|fix failing test)' "$plan_file" 2>/dev/null || true)
+  validation_tasks=$(grep -iE '##+ .*Task [0-9]+.*(validation suite|full validation|run validation|make.*green|make.*pass|fix failing test)' "$plan_file" 2>/dev/null || true)
   if [[ -n "$validation_tasks" ]]; then
     while IFS= read -r task_line; do
       warn "plan.lint: validation-suite task detected — validation runs automatically after all implement tasks: ${task_line}"
@@ -2548,6 +2548,9 @@ if [[ "$PHASE" == "validate" ]]; then
   # Mutation guard: validate phase must not produce any file changes
   if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
     orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
+  fi
+  if [[ -n "$(git -C "${WORKTREE_DIR}" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
+    orchestrator_fail "validate phase produced untracked files — mutation not allowed"
   fi
 
   _emit_phase_done "validate"
