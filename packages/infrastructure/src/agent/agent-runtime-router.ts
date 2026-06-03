@@ -246,6 +246,7 @@ export class AgentRuntimeRouter implements AgentPort {
       'runtime_error',
       'token_limit_exceeded',
       'quota_exceeded',
+      'provider_error',
     ];
     for (const trigger of triggers) {
       switch (trigger) {
@@ -285,6 +286,13 @@ export class AgentRuntimeRouter implements AgentPort {
         case 'quota_exceeded':
           if (result.outcome === 'failed' && isQuotaError(result)) return true;
           break;
+        case 'provider_error':
+          if (
+            result.outcome === 'failed' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)
+          )
+            return true;
+          break;
       }
     }
     return false;
@@ -312,6 +320,9 @@ export class AgentRuntimeRouter implements AgentPort {
     if (result.outcome === 'failed') {
       if (isTokenLimitError(result)) return 'token_limit_exceeded';
       if (isQuotaError(result)) return 'quota_exceeded';
+      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
+        return 'provider_error';
+      }
       return 'runtime_error';
     }
     return 'unknown';
