@@ -95,6 +95,12 @@
         "provider": "ollama-cloud",
         "model": "deepseek-v4-pro",
         "timeoutMinutes": 30
+      },
+      "mimo": {
+        "runtime": "opencode",
+        "provider": "opencode-go",
+        "model": "mimo-v2.5-pro",
+        "timeoutMinutes": 30
       }
     },
     "phaseProfiles": {
