@@ -2740,13 +2740,13 @@ _emit_phase_started "fix-review"
 while [[ "$PHASE" == "fix-review" ]]; do
   FIX_LOOP_COUNT=$((FIX_LOOP_COUNT + 1))
   emit_event "fix-review" "info" "loop.iteration.started" \
-    "fix-review loop ${FIX_LOOP_COUNT}/10" \
-    iteration="${FIX_LOOP_COUNT}" max=10
-  if [[ $FIX_LOOP_COUNT -gt 10 ]]; then
+    "fix-review loop ${FIX_LOOP_COUNT}/${MAX_WHOLE_PR_FIX_ITERATIONS}" \
+    iteration="${FIX_LOOP_COUNT}" max="${MAX_WHOLE_PR_FIX_ITERATIONS}"
+  if [[ $FIX_LOOP_COUNT -gt $MAX_WHOLE_PR_FIX_ITERATIONS ]]; then
     emit_event "fix-review" "error" "loop.exhausted" \
       "fix-review hit max iterations" \
       iterations="${FIX_LOOP_COUNT}"
-    info "Fix loop limit (10) reached. Moving on."
+    info "Fix loop limit (${MAX_WHOLE_PR_FIX_ITERATIONS}) reached. Moving on."
     break
   fi
   log "=== Phase: fix-review (loop $FIX_LOOP_COUNT) ==="
