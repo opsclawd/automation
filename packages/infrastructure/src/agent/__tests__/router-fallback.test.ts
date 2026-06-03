@@ -149,6 +149,36 @@ describe('AgentRuntimeRouter fallback', () => {
       },
       expectedReason: 'contract_violation',
     },
+    {
+      name: 'provider_error',
+      result: {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR],
+        outcome: 'failed',
+      },
+      expectedReason: 'provider_error',
+    },
+    {
+      name: 'no_output',
+      result: {
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [CONTRACT_VIOLATION_CODES.NO_OUTPUT],
+        outcome: 'contract_violation',
+      },
+      expectedReason: 'no_output',
+    },
   ];
 
   triggerVariants.forEach(({ name, result: triggerResult, expectedReason }) => {
@@ -756,6 +786,62 @@ describe('AgentRuntimeRouter fallback', () => {
       });
 
       await router.invoke(req({ phaseId: 'implement' }));
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(2);
+    });
+
+    it('triggers fallback for provider_error by default (no fallbackTriggers override)', async () => {
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR],
+        outcome: 'failed',
+      });
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-pe-default',
+        readPromptChars: () => 100,
+      });
+
+      await router.invoke(req());
+
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(2);
+    });
+
+    it('triggers fallback for no_output by default (no fallbackTriggers override)', async () => {
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [CONTRACT_VIOLATION_CODES.NO_OUTPUT],
+        outcome: 'contract_violation',
+      });
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-no-default',
+        readPromptChars: () => 100,
+      });
+
+      await router.invoke(req());
 
       const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
       expect(rows.length).toBe(2);

@@ -3,7 +3,8 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { testQuotaPatterns } from './quota-patterns.js';
+import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 
@@ -38,8 +39,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let stderr = '';
     let contractViolations: string[] = [];
     let watchdogInterval: NodeJS.Timeout | null = null;
+    let timeoutSignal: AbortSignal | undefined;
+    let isCanceled = false;
     try {
-      const timeoutSignal =
+      timeoutSignal =
         this.opts.timeoutMsDefault !== undefined
           ? AbortSignal.timeout(this.opts.timeoutMsDefault)
           : undefined;
@@ -83,27 +86,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
       exitCode = r.exitCode ?? 0;
-      if (watchdogKilled) {
-        outcome = 'failed';
-        stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
-      } else if (r.isCanceled) {
-        if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
-          outcome = 'timeout';
-        } else {
-          outcome = 'failed';
-          contractViolations = ['cancelled_by_orchestrator'];
-        }
-      } else if (exitCode !== 0) {
-        outcome = 'failed';
-      }
+      isCanceled = r.isCanceled;
     } catch (e) {
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
       outcome = 'failed';
       exitCode = 1;
       stderr = String((e as Error).message);
     }
-    writeFileSync(stdoutPath, stdout);
-    writeFileSync(stderrPath, stderr);
 
     const durationMs = Date.now() - start;
     let endCommitSha: string | undefined;
@@ -112,6 +101,58 @@ export class OpenCodeAgentAdapter implements AgentPort {
     } catch {
       contractViolations = [...contractViolations, 'missing_commit'];
     }
+
+    let stderrForLog = stderr;
+    if (watchdogKilled) {
+      outcome = 'failed';
+      stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
+      stderrForLog = `QUOTA_EXCEEDED: ${watchdogMatch}\n${stderrForLog}`;
+    } else if (isCanceled) {
+      if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
+        outcome = 'timeout';
+      } else {
+        outcome = 'failed';
+        contractViolations = [CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR];
+      }
+    } else if (exitCode !== 0) {
+      outcome = 'failed';
+      const providerMatch = testProviderErrorPatterns(stderr);
+      if (providerMatch) {
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(stderr);
+        if (quotaLine) {
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+        }
+      }
+    } else if (outcome === 'success') {
+      const providerMatch = testProviderErrorPatterns(stderr);
+      if (providerMatch) {
+        outcome = 'failed';
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(stderr);
+        if (quotaLine) {
+          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderr = `PROVIDER_ERROR: ${providerMatch}`;
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+        }
+      } else if (
+        request.phaseId.startsWith('implement') &&
+        request.startCommitSha &&
+        endCommitSha === request.startCommitSha &&
+        stdout.trim().length === 0
+      ) {
+        outcome = 'contract_violation';
+        contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
+        stderr = 'NO_OUTPUT: agent exited 0 with empty stdout and no git changes';
+        stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
+      }
+    }
+    writeFileSync(stdoutPath, stdout);
+    writeFileSync(stderrPath, stderrForLog);
 
     const ret: AgentInvocationResult = {
       runtime: 'opencode',

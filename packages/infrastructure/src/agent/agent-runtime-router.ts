@@ -14,7 +14,7 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationPort } from '@ai-sdlc/application/ports';
 import type { EventBusPort } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
-import { testQuotaPatterns } from './quota-patterns.js';
+import { testQuotaPatterns } from './error-patterns.js';
 
 export interface AgentRuntimeRouterOptions {
   agent: AgentConfig;
@@ -246,6 +246,8 @@ export class AgentRuntimeRouter implements AgentPort {
       'runtime_error',
       'token_limit_exceeded',
       'quota_exceeded',
+      'provider_error',
+      'no_output',
     ];
     for (const trigger of triggers) {
       switch (trigger) {
@@ -285,6 +287,20 @@ export class AgentRuntimeRouter implements AgentPort {
         case 'quota_exceeded':
           if (result.outcome === 'failed' && isQuotaError(result)) return true;
           break;
+        case 'provider_error':
+          if (
+            result.outcome === 'failed' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)
+          )
+            return true;
+          break;
+        case 'no_output':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)
+          )
+            return true;
+          break;
       }
     }
     return false;
@@ -307,11 +323,17 @@ export class AgentRuntimeRouter implements AgentPort {
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON)) {
         return 'invalid_result_json';
       }
+      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)) {
+        return 'no_output';
+      }
       return 'contract_violation';
     }
     if (result.outcome === 'failed') {
       if (isTokenLimitError(result)) return 'token_limit_exceeded';
       if (isQuotaError(result)) return 'quota_exceeded';
+      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
+        return 'provider_error';
+      }
       return 'runtime_error';
     }
     return 'unknown';

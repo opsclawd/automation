@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationResult } from '@ai-sdlc/application/ports';
+import { testProviderErrorPatterns, testQuotaPatterns } from './error-patterns.js';
 
 export interface ExternalCliRunInput {
   runtime: AgentRuntimeKind;
@@ -74,10 +75,12 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   };
   cancelSignal?.addEventListener('abort', onAbort);
 
+  let stderrForLog = stderr;
   try {
     const r = await child;
     stdout = r.stdout ?? '';
     stderr = r.stderr ?? '';
+    stderrForLog = stderr;
     exitCode = r.exitCode ?? 0;
     if (r.isCanceled) {
       if (timeoutSignal?.aborted && !input.abortSignal?.aborted) {
@@ -88,11 +91,36 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
+      const providerMatch = testProviderErrorPatterns(stderr);
+      if (providerMatch) {
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(stderr);
+        if (quotaLine) {
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+        }
+      }
+    } else if (outcome === 'success') {
+      const providerMatch = testProviderErrorPatterns(stderr);
+      if (providerMatch) {
+        outcome = 'failed';
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(stderr);
+        if (quotaLine) {
+          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderr = `PROVIDER_ERROR: ${providerMatch}`;
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+        }
+      }
     }
   } catch (e) {
     outcome = 'failed';
     exitCode = 1;
     stderr = String((e as Error).message);
+    stderrForLog = stderr;
   } finally {
     cancelSignal?.removeEventListener('abort', onAbort);
     // Safety net: only meaningful for detached children (process-group leaders).
@@ -107,7 +135,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     }
   }
   writeFileSync(stdoutPath, stdout);
-  writeFileSync(stderrPath, stderr);
+  writeFileSync(stderrPath, stderrForLog);
 
   const durationMs = Date.now() - start;
   let endCommitSha: string | undefined;
