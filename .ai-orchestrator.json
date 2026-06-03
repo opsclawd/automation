@@ -30,7 +30,7 @@
       "builder": {
         "runtime": "opencode",
         "provider": "minimax-coding-plan",
-        "model": "MiniMax-M3",
+        "model": "MiniMax-M2.7",
         "timeoutMinutes": 30
       },
       "junior": {
@@ -81,7 +81,7 @@
       "minimax": {
         "runtime": "opencode",
         "provider": "minimax-coding-plan",
-        "model": "MiniMax-M2.7-highspeed",
+        "model": "MiniMax-M3",
         "timeoutMinutes": 30
       },
       "glm": {
@@ -109,7 +109,7 @@
       "implement": { "profile": "builder", "fallbackProfile": "qwen" },
       "quality-review": { "profile": "junior", "fallbackProfile": "builder" },
       "spec-review": { "profile": "junior", "fallbackProfile": "builder" },
-      "fix-review": { "profile": "senior", "fallbackProfile": "builder" },
+      "fix-review": { "profile": "minimax", "fallbackProfile": "junior" },
       "whole-pr-review": { "profile": "gemini", "fallbackProfile": "junior" },
       "post-pr-review": { "profile": "senior", "fallbackProfile": "builder" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
