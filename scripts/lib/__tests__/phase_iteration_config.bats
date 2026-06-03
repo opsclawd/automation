@@ -64,6 +64,12 @@ _load_config_block() {
   [ "$MAX_WHOLE_PR_FIX_ITERATIONS" = "10" ]
 }
 
+@test "rejects zero as maxIterations, falls back to default" {
+  echo '{"phases":{"reviewFix":{"maxIterations":0},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "5" ]
+}
+
 @test "logs effective limits on startup" {
   echo '{"phases":{"reviewFix":{"maxIterations":8},"implement":{"maxIterations":5},"wholePrFix":{"maxIterations":12}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
   _load_config_block
