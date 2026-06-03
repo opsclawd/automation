@@ -21,6 +21,8 @@ setup() {
   export ISSUES_DIR="$TMPDIR_TEST"
   export WORKTREE_DIR="$TMPDIR_TEST"
   git init "$TMPDIR_TEST" >/dev/null 2>&1
+  git -C "$TMPDIR_TEST" config user.email "test@test.com"
+  git -C "$TMPDIR_TEST" config user.name "Test"
   git -C "$TMPDIR_TEST" commit --allow-empty -m "init" >/dev/null 2>&1
 }
 
@@ -127,14 +129,12 @@ teardown() {
 @test "get_task_review_range: both markers → uses persisted values" {
   echo "aaaa1111" > "${WORKTREE_DIR}/implement-task-2.basesha.log"
   echo "bbbb2222" > "${WORKTREE_DIR}/implement-task-2.headsha.log"
-  local range
   read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 2)"
   [ "$REVIEW_BASE_SHA" = "aaaa1111" ]
   [ "$REVIEW_HEAD_SHA" = "bbbb2222" ]
 }
 
 @test "get_task_review_range: no markers → falls back to git" {
-  local range
   read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 3)"
   [ -n "$REVIEW_BASE_SHA" ]
   [ -n "$REVIEW_HEAD_SHA" ]
@@ -143,7 +143,6 @@ teardown() {
 @test "get_task_review_range: empty marker file → falls back to git" {
   touch "${WORKTREE_DIR}/implement-task-4.basesha.log"
   touch "${WORKTREE_DIR}/implement-task-4.headsha.log"
-  local range
   read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 4)"
   [ -n "$REVIEW_BASE_SHA" ]
   [ -n "$REVIEW_HEAD_SHA" ]
@@ -151,7 +150,6 @@ teardown() {
 
 @test "get_task_review_range: base marker only → head falls back to git" {
   echo "aaaa1111" > "${WORKTREE_DIR}/implement-task-5.basesha.log"
-  local range
   read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 5)"
   [ "$REVIEW_BASE_SHA" = "aaaa1111" ]
   [ -n "$REVIEW_HEAD_SHA" ]
@@ -159,7 +157,6 @@ teardown() {
 
 @test "get_task_review_range: head marker only → base falls back to git" {
   echo "bbbb2222" > "${WORKTREE_DIR}/implement-task-6.headsha.log"
-  local range
   read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 6)"
   [ -n "$REVIEW_BASE_SHA" ]
   [ "$REVIEW_HEAD_SHA" = "bbbb2222" ]
