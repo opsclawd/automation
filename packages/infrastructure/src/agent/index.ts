@@ -6,6 +6,7 @@ export {
 export { OpenCodeAgentAdapter, type OpenCodeAdapterOptions } from './opencode-adapter.js';
 export { PiAgentAdapter, type PiAdapterOptions } from './pi-adapter.js';
 export {
+  isOpenCodeLogLine,
   testQuotaPatterns,
   testProviderErrorPatterns,
   QUOTA_PATTERNS,

@@ -314,7 +314,7 @@ describe('OpenCodeAgentAdapter', () => {
     const timer = setTimeout(() => {
       writeFileSync(
         join(sessionLogDir, '2026-05-28T225115.log'),
-        'Normal entry\nError: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
+        'INFO  2026-05-28T22:51:15.000Z +0ms service=llm msg=normal\nERROR 2026-05-28T22:51:16.000Z +0ms service=llm Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
       );
     }, 800);
 
@@ -361,6 +361,44 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.outcome).toBe('timeout');
   }, 15000);
 
+  it('does not kill child on quota-like strings in non-structural log content (Issue #182 regression)', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      sessionLogDir,
+      quotaPollMs: 500,
+      timeoutMsDefault: 3000,
+    });
+
+    const timer = setTimeout(() => {
+      writeFileSync(
+        join(sessionLogDir, '2026-05-28T225115.log'),
+        "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'\n",
+      );
+    }, 800);
+
+    try {
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'plan-design',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+
+      expect(r.outcome).toBe('timeout');
+      expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
+    } finally {
+      clearTimeout(timer);
+      rmSync(sessionLogDir, { recursive: true });
+    }
+  }, 15000);
+
   it('detects quota pattern appended to existing log file', async () => {
     const cwd = makeWorktree();
     const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
@@ -377,7 +415,7 @@ describe('OpenCodeAgentAdapter', () => {
     const timer = setTimeout(() => {
       writeFileSync(
         logFile,
-        'Previous session content\nNothing relevant here\nNew: "statusCode": 429 Too Many Requests\n',
+        'Previous session content\nNothing relevant here\nERROR 2026-05-28T23:00:02.000Z +0ms service=llm New: "statusCode": 429 Too Many Requests\n',
       );
     }, 800);
 

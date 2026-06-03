@@ -205,7 +205,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
           const newContent = content.slice(prevOffset);
           logOffsets.set(logPath, content.length);
 
-          const match = testQuotaPatterns(newContent);
+          const match = testQuotaPatterns(newContent, { structuralOnly: true });
           if (match) {
             onQuota(match);
             child.kill('SIGKILL');
