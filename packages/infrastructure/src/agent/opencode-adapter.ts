@@ -3,9 +3,6 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-// testProviderErrorPatterns is imported for use in Task 4 (post-execution
-// provider error scan); the lint rule will be re-enabled once that lands.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -98,6 +95,19 @@ export class OpenCodeAgentAdapter implements AgentPort {
         }
       } else if (exitCode !== 0) {
         outcome = 'failed';
+      } else if (outcome === 'success') {
+        const combinedOutput = `${stdout}\n${stderr}`;
+        const providerMatch = testProviderErrorPatterns(combinedOutput);
+        if (providerMatch) {
+          outcome = 'failed';
+          contractViolations = ['provider_error'];
+          const quotaLine = testQuotaPatterns(combinedOutput);
+          if (quotaLine) {
+            stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+          } else {
+            stderr = `PROVIDER_ERROR: ${providerMatch}`;
+          }
+        }
       }
     } catch (e) {
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
