@@ -2472,7 +2472,7 @@ with open(path, 'w') as f:
     done
     fi
 
-    if [[ $REVIEW_LOOPS -ge $MAX_REVIEW_FIX_ITERATIONS ]]; then
+    if [[ $REVIEW_LOOPS -ge $MAX_REVIEW_FIX_ITERATIONS ]] && [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
       emit_event "fix-review" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
