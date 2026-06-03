@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationResult } from '@ai-sdlc/application/ports';
+import { testProviderErrorPatterns, testQuotaPatterns } from './error-patterns.js';
 
 export interface ExternalCliRunInput {
   runtime: AgentRuntimeKind;
@@ -88,6 +89,19 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
+    } else if (outcome === 'success') {
+      const combinedOutput = `${stdout}\n${stderr}`;
+      const providerMatch = testProviderErrorPatterns(combinedOutput);
+      if (providerMatch) {
+        outcome = 'failed';
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(combinedOutput);
+        if (quotaLine) {
+          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+        } else {
+          stderr = `PROVIDER_ERROR: ${providerMatch}`;
+        }
+      }
     }
   } catch (e) {
     outcome = 'failed';
