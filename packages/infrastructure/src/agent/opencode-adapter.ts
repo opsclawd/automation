@@ -3,7 +3,10 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'n
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { testQuotaPatterns } from './quota-patterns.js';
+// testProviderErrorPatterns is imported for use in Task 4 (post-execution
+// provider error scan); the lint rule will be re-enabled once that lands.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 

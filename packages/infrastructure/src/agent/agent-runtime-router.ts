@@ -14,7 +14,7 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationPort } from '@ai-sdlc/application/ports';
 import type { EventBusPort } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
-import { testQuotaPatterns } from './quota-patterns.js';
+import { testQuotaPatterns } from './error-patterns.js';
 
 export interface AgentRuntimeRouterOptions {
   agent: AgentConfig;
