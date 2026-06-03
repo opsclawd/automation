@@ -1008,6 +1008,15 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   # Derive compatibility text files from JSON state
   derive_compat_files
 
+  # Dirty worktree cleanup — archive diff and reset on failure paths.
+  # This MUST run after verify_commits_pushed has attempted to push valid commits,
+  # but before we return from process_reviews.
+  if [[ "$_agent_ec" != "0" || "$review_result" == "BLOCKED" || ("$verify_ok" == "false" && "$replies_ok" == "false") ]]; then
+    if [[ -n "${POLL_WORKTREE:-}" ]]; then
+      cleanup_dirty_worktree "$POLL_WORKTREE"
+    fi
+  fi
+
   if $verify_ok; then
     log "All verifications passed."
     return 0
