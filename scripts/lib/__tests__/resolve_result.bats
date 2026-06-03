@@ -67,3 +67,21 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "DONE_NO_FIXES_NEEDED" ]
 }
+
+@test "implement-task with no result file and no .md uses BLOCKED instead of DONE fallback" {
+  run resolve_result "$TMPDIR_TEST/implement-task-1.result" "$TMPDIR_TEST/implement-task-1.md" DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT "DONE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "BLOCKED" ]
+}
+
+@test "implement-task with no result file and non-DONE fallback keeps caller fallback" {
+  run resolve_result "$TMPDIR_TEST/implement-task-2.result" "$TMPDIR_TEST/implement-task-2.md" DONE DONE_WITH_CONCERNS BLOCKED "BLOCKED"
+  [ "$status" -eq 0 ]
+  [ "$output" = "BLOCKED" ]
+}
+
+@test "non-implement-task with no result file still uses caller fallback" {
+  run resolve_result "$TMPDIR_TEST/plan-design.result" "$TMPDIR_TEST/plan-design.md" DONE BLOCKED "DONE"
+  [ "$status" -eq 0 ]
+  [ "$output" = "DONE" ]
+}
