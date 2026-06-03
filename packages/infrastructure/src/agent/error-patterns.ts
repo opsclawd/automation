@@ -2,7 +2,7 @@ export const QUOTA_PATTERNS = [
   /Usage limit reached/i,
   /"statusCode":\s*429/,
   /rate_limit_exceeded/i,
-  /quota.*exceed/i,
+  /quota[_ ]exceeded/i,
   /\b429\b/,
 ] as const;
 
