@@ -36,6 +36,7 @@ export function testQuotaPatterns(text: string): string | null {
 export function testProviderErrorPatterns(text: string): string | null {
   const lines = text.split('\n');
   for (const line of lines) {
+    if (!isOpenCodeLogLine(line)) continue;
     for (const pattern of PROVIDER_ERROR_PATTERNS) {
       if (pattern.test(line)) return line.trim();
     }

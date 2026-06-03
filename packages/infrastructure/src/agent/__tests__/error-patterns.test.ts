@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { isOpenCodeLogLine, testQuotaPatterns } from '../error-patterns.js';
+import {
+  isOpenCodeLogLine,
+  testQuotaPatterns,
+  testProviderErrorPatterns,
+} from '../error-patterns.js';
 
 describe('isOpenCodeLogLine', () => {
   it('accepts valid INFO log line', () => {
@@ -100,6 +104,48 @@ describe('testQuotaPatterns with structural filtering', () => {
 
   it('ignores 429 in non-structural bash variable assignment', () => {
     const result = testQuotaPatterns(
+      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+    );
+    expect(result).toBeNull();
+  });
+});
+
+describe('testProviderErrorPatterns with structural filtering', () => {
+  it('matches provider error in structural log line', () => {
+    const result = testProviderErrorPatterns(
+      'ERROR 2026-05-28T22:51:15.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://example.com","statusCode":500}',
+    );
+    expect(result).toBeTruthy();
+    expect(result).toContain('AI_APICallError');
+  });
+
+  it('ignores provider error in non-structural line', () => {
+    const result = testProviderErrorPatterns(
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+    );
+    expect(result).toBeNull();
+  });
+
+  it('ignores raw JSON without structural prefix', () => {
+    const result = testProviderErrorPatterns(
+      '{"name":"AI_APICallError","url":"https://example.com","statusCode":500}',
+    );
+    expect(result).toBeNull();
+  });
+
+  it('matches when structural line is mixed with non-structural lines', () => {
+    const text = [
+      'code with AI_APICallError in a comment',
+      'ERROR 2026-05-28T22:51:15.000Z +0ms service=llm ProviderError: API failure',
+      'more code',
+    ].join('\n');
+    const result = testProviderErrorPatterns(text);
+    expect(result).toBeTruthy();
+    expect(result).toContain('ProviderError');
+  });
+
+  it('ignores RESOURCE_EXHAUSTED in non-structural line', () => {
+    const result = testProviderErrorPatterns(
       'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
     );
     expect(result).toBeNull();
