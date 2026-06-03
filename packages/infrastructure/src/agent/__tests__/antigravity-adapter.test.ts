@@ -166,4 +166,17 @@ describe('AntigravityAgentAdapter', () => {
     expect(elapsed).toBeGreaterThan(4_000);
     expect(elapsed).toBeLessThan(10_000);
   });
+
+  it('detects provider error in stderr when process exits 0', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-provider-error.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('provider_error');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+    expect(r.exitCode).toBe(0);
+  });
 });
