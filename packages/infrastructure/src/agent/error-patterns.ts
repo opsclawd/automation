@@ -12,7 +12,7 @@ export const PROVIDER_ERROR_PATTERNS = [
   /provider.*error/i,
   /API error/i,
   /\b5\d{2}\b.*error/i,
-  /RESOURCE_EXHAUSTED/,
+  /RESOURCE_EXHAUSTED/i,
   ...QUOTA_PATTERNS,
 ] as const;
 

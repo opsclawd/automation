@@ -505,7 +505,27 @@ validate_review_artifacts() {
 # For non-infra failures, re-runs once immediately (backward compatible).
 # Uses ISSUES_DIR and WORKTREE_DIR from caller scope (dynamic bash globals
 # set by the orchestrator's main loop).
-REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|AI_APIConnectionError|provider.*error|API error|RESOURCE_EXHAUSTED|429|quota.*exceed|rate_limit_exceeded|Usage limit reached'
+REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|AI_APIConnectionError|provider.*error|API error|RESOURCE_EXHAUSTED|\b429\b|quota.*exceed|rate_limit_exceeded|Usage limit reached'
+
+# find_latest_adapter_stderr: locate the most recently modified inv-*/stderr.log
+# in the agent-artifacts directory. Adapters write captured (and possibly
+# post-processed) child stderr to inv-{timestamp}-{random}/stderr.log under
+# the agent-artifacts dir. The tee'd .log file only contains run-agent's own
+# stdout/stderr — the adapter's stderr artifact is the canonical source for
+# provider error detection.
+find_latest_adapter_stderr() {
+  local artifacts_dir="${REPO_ROOT}/.ai-runs/agent-artifacts"
+  if [[ ! -d "$artifacts_dir" ]]; then
+    return 1
+  fi
+  local stderr_file
+  stderr_file=$(find "$artifacts_dir" -maxdepth 2 -name 'stderr.log' -path '*/inv-*/stderr.log' -newer "$artifacts_dir" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  if [[ -n "$stderr_file" && -s "$stderr_file" ]]; then
+    echo "$stderr_file"
+    return 0
+  fi
+  return 1
+}
 
 rerun_reviewer_with_retry() {
   local reviewer_type="$1"  # "spec" or "quality"
@@ -517,12 +537,21 @@ rerun_reviewer_with_retry() {
 
   log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} failed to write valid review artifacts (missing/empty .md or missing both) — checking for infra error"
 
-  # Adapter artifacts use inv-{timestamp}-{random} directories, so stderr
-  # cannot be checked at a predictable phase-named path.  The .log file
-  # is the tee'd stdout+stderr of the agent process and is the reliable
-  # place to detect provider errors.
+  # Adapter artifacts are under inv-{timestamp}-{random}/stderr.log in the
+  # agent-artifacts directory. These contain the adapter-captured child stderr
+  # (with PROVIDER_ERROR:/QUOTA_EXCEEDED: prefixes when detected). The .log
+  # file only tees run-agent's own stdout/stderr and does NOT contain the
+  # child's stderr, so grepping the adapter's stderr artifact is the canonical
+  # detection method. Fall back to the .log file if no inv-* dir exists
+  # (e.g. if the adapter crashed before writing artifacts).
   local is_infra_error=false
-  if grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.log" 2>/dev/null; then
+  local adapter_stderr
+  adapter_stderr=$(find_latest_adapter_stderr) || true
+  if [[ -n "$adapter_stderr" ]]; then
+    if grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "$adapter_stderr" 2>/dev/null; then
+      is_infra_error=true
+    fi
+  elif grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.log" 2>/dev/null; then
     is_infra_error=true
   fi
 
