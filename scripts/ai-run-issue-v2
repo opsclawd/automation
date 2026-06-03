@@ -471,7 +471,7 @@ validate_review_artifacts() {
 # For non-infra failures, re-runs once immediately (backward compatible).
 # Uses ISSUES_DIR and WORKTREE_DIR from caller scope (dynamic bash globals
 # set by the orchestrator's main loop).
-REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|AI_APIConnectionError|ProviderError:|APIError:|\bRESOURCE_EXHAUSTED\b|\b429\b|quota[_ ]exceeded|rate_limit_exceeded|Usage limit reached'
+REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|AI_APIConnectionError|ProviderError:|APIError:|\bRESOURCE_EXHAUSTED\b|\b429\b|rate_limit_exceeded|Usage limit reached'
 
 # check_adapter_stderr_for_infra_error: grep all inv-*/stderr.log files in
 # the agent-artifacts directory for provider error patterns. Adapters write
