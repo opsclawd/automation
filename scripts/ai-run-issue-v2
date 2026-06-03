@@ -520,16 +520,16 @@ check_adapter_stderr_for_infra_error() {
   if [[ ! -d "$artifacts_dir" ]]; then
     return 1
   fi
-  local matched
-  matched=$(find "$artifacts_dir" -maxdepth 2 -name 'stderr.log' -path '*/inv-*/stderr.log' 2>/dev/null | head -20)
-  if [[ -z "$matched" ]]; then
-    return 1
-  fi
+  local count=0
   while IFS= read -r stderr_file; do
+    count=$((count + 1))
+    if [[ $count -gt 20 ]]; then
+      break
+    fi
     if [[ -s "$stderr_file" ]] && grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "$stderr_file" 2>/dev/null; then
       return 0
     fi
-  done <<< "$matched"
+  done < <(find "$artifacts_dir" -maxdepth 2 -name 'stderr.log' -path '*/inv-*/stderr.log' 2>/dev/null)
   return 1
 }
 
