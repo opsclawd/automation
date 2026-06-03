@@ -76,13 +76,22 @@ info() { log "INFO: $*"; }
 warn() { log "WARN: $*" >&2; }
 
 # ── Phase iteration limits from config ────────────────────────────────────────
+# Note: phases.implement.maxIterations is intentionally not read here. The
+# implement phase runs each task once sequentially (no retry loop exists), so
+# the value would be dead config. See packages/shared/src/config/schema.ts for
+# the matching dead-config comment on the Zod schema.
 _ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
-  _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
-  _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[0-9]+$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[0-9]+$ ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
 fi
+# Ensure the log target exists before the first log() call. The setup block
+# creates it later (around the "# ── setup" section), but we may log before
+# then on startup, and log() pipes through `tee -a` which fails fast with
+# set -euo pipefail if the directory is missing.
+mkdir -p "${ISSUES_DIR}"
 log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}"
 
 # Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.

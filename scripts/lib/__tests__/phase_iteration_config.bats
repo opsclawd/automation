@@ -9,6 +9,10 @@ setup() {
   LOG_OUTPUT=""
   # Stub log to capture output
   log() { LOG_OUTPUT="${LOG_OUTPUT}$*\n"; }
+  # Stub mkdir — the config-reading block ensures ISSUES_DIR exists before
+  # the first log() call so tee -a doesn't fail under set -euo pipefail.
+  # Tests evaluate that block in isolation, so we no-op the side effect.
+  mkdir() { :; }
 }
 
 teardown() {
