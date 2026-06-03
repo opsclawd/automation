@@ -130,7 +130,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
           stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
         }
       } else if (
-        request.phaseId === 'implement' &&
+        request.phaseId.startsWith('implement') &&
         request.startCommitSha &&
         endCommitSha === request.startCommitSha &&
         stdout.trim().length === 0

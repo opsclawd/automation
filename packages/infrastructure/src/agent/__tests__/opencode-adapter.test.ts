@@ -471,6 +471,27 @@ describe('OpenCodeAgentAdapter', () => {
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
   });
 
+  it('detects no-op invocation with implement-task-N phaseId (real orchestrator format)', async () => {
+    const cwd = makeWorktree();
+    const startSha = execSync('git rev-parse HEAD', { cwd }).toString().trim();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-noop.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement-task-3',
+      startCommitSha: startSha,
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('no_output');
+  });
+
   it('does not trigger no-op heuristic when stdout is non-empty', async () => {
     const cwd = makeWorktree();
     const startSha = execSync('git rev-parse HEAD', { cwd }).toString().trim();
