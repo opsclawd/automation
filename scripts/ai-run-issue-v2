@@ -775,9 +775,16 @@ resolve_result() {
   fi
 
   # Tertiary: conservative fallback default
-  log "  Result (fallback): ${fallback}"
-  echo "$fallback" > "$result_file" 2>/dev/null || true
-  echo "$fallback"
+  # For implement-task results, an empty/missing source and no extractor result
+  # means the agent produced nothing — should not default to DONE (phantom
+  # success). Use BLOCKED instead so the orchestrator surfaces the failure.
+  local effective_fallback="$fallback"
+  if [[ "$base_name" == implement-task-*.result && "$fallback" == "DONE" ]]; then
+    effective_fallback="BLOCKED"
+  fi
+  log "  Result (fallback): ${effective_fallback}"
+  echo "$effective_fallback" > "$result_file" 2>/dev/null || true
+  echo "$effective_fallback"
   return 0
 }
 
