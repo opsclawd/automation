@@ -824,6 +824,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   review_result=$(resolve_result \
     "$_result_file" \
     "${ISSUES_DIR}/process-review-p${POLL_COUNT}.log" \
+    --agent-ec "$_agent_ec" \
     ALL_DONE NO_FIXES_NEEDED PARTIAL BLOCKED \
     PARTIAL)
 
