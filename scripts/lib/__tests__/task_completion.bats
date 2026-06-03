@@ -20,6 +20,8 @@ setup() {
   TMPDIR_TEST="$(mktemp -d)"
   export ISSUES_DIR="$TMPDIR_TEST"
   export WORKTREE_DIR="$TMPDIR_TEST"
+  git init "$TMPDIR_TEST" >/dev/null 2>&1
+  git -C "$TMPDIR_TEST" commit --allow-empty -m "init" >/dev/null 2>&1
 }
 
 teardown() {
@@ -81,7 +83,7 @@ teardown() {
   echo "QUALITY_FAIL" > "${ISSUES_DIR}/quality-review-task-1.result"
   echo "Spec report" > "${ISSUES_DIR}/spec-review-task-1.md"
   echo "Quality report" > "${ISSUES_DIR}/quality-review-task-1.md"
-  echo '{"outcome":"DEVIATION_PROCEED"}' > "${ISSUES_DIR}/deviation-record-1.json"
+  echo '{"outcome":"DEVIATION_PROCEED"}' > "${WORKTREE_DIR}/deviation-record-1.json"
   run is_task_complete 1
   [ "$status" -eq 0 ]
   [ "$output" = "complete" ]
@@ -93,7 +95,7 @@ teardown() {
   echo "QUALITY_FAIL" > "${ISSUES_DIR}/quality-review-task-1.result"
   echo "Spec report" > "${ISSUES_DIR}/spec-review-task-1.md"
   echo "Quality report" > "${ISSUES_DIR}/quality-review-task-1.md"
-  echo '{"outcome":"RESOLVED_TIEBREAK"}' > "${ISSUES_DIR}/deviation-record-1.json"
+  echo '{"outcome":"RESOLVED_TIEBREAK"}' > "${WORKTREE_DIR}/deviation-record-1.json"
   run is_task_complete 1
   [ "$status" -eq 0 ]
   [ "$output" = "complete" ]
@@ -105,7 +107,7 @@ teardown() {
   echo "QUALITY_FAIL" > "${ISSUES_DIR}/quality-review-task-1.result"
   echo "Spec report" > "${ISSUES_DIR}/spec-review-task-1.md"
   echo "Quality report" > "${ISSUES_DIR}/quality-review-task-1.md"
-  echo '{"outcome":"BLOCKED_IMPL_DEFECT"}' > "${ISSUES_DIR}/deviation-record-1.json"
+  echo '{"outcome":"BLOCKED_IMPL_DEFECT"}' > "${WORKTREE_DIR}/deviation-record-1.json"
   run is_task_complete 1
   [ "$status" -eq 1 ]
   [ "$output" = "review-needed" ]
@@ -125,45 +127,40 @@ teardown() {
 @test "get_task_review_range: both markers → uses persisted values" {
   echo "aaaa1111" > "${WORKTREE_DIR}/implement-task-2.basesha.log"
   echo "bbbb2222" > "${WORKTREE_DIR}/implement-task-2.headsha.log"
-  REVIEW_BASE_SHA=""
-  REVIEW_HEAD_SHA=""
-  get_task_review_range 2
+  local range
+  read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 2)"
   [ "$REVIEW_BASE_SHA" = "aaaa1111" ]
   [ "$REVIEW_HEAD_SHA" = "bbbb2222" ]
 }
 
 @test "get_task_review_range: no markers → falls back to git" {
-  REVIEW_BASE_SHA=""
-  REVIEW_HEAD_SHA=""
-  get_task_review_range 3
-  [ -n "$REVIEW_BASE_SHA" ] || true
-  [ -n "$REVIEW_HEAD_SHA" ] || true
+  local range
+  read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 3)"
+  [ -n "$REVIEW_BASE_SHA" ]
+  [ -n "$REVIEW_HEAD_SHA" ]
 }
 
 @test "get_task_review_range: empty marker file → falls back to git" {
   touch "${WORKTREE_DIR}/implement-task-4.basesha.log"
   touch "${WORKTREE_DIR}/implement-task-4.headsha.log"
-  REVIEW_BASE_SHA=""
-  REVIEW_HEAD_SHA=""
-  get_task_review_range 4
-  [ -n "$REVIEW_BASE_SHA" ] || true
-  [ -n "$REVIEW_HEAD_SHA" ] || true
+  local range
+  read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 4)"
+  [ -n "$REVIEW_BASE_SHA" ]
+  [ -n "$REVIEW_HEAD_SHA" ]
 }
 
 @test "get_task_review_range: base marker only → head falls back to git" {
   echo "aaaa1111" > "${WORKTREE_DIR}/implement-task-5.basesha.log"
-  REVIEW_BASE_SHA=""
-  REVIEW_HEAD_SHA=""
-  get_task_review_range 5
+  local range
+  read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 5)"
   [ "$REVIEW_BASE_SHA" = "aaaa1111" ]
-  [ -n "$REVIEW_HEAD_SHA" ] || true
+  [ -n "$REVIEW_HEAD_SHA" ]
 }
 
 @test "get_task_review_range: head marker only → base falls back to git" {
   echo "bbbb2222" > "${WORKTREE_DIR}/implement-task-6.headsha.log"
-  REVIEW_BASE_SHA=""
-  REVIEW_HEAD_SHA=""
-  get_task_review_range 6
-  [ -n "$REVIEW_BASE_SHA" ] || true
+  local range
+  read -r REVIEW_BASE_SHA REVIEW_HEAD_SHA <<< "$(get_task_review_range 6)"
+  [ -n "$REVIEW_BASE_SHA" ]
   [ "$REVIEW_HEAD_SHA" = "bbbb2222" ]
 }

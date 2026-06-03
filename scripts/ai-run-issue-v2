@@ -849,9 +849,9 @@ is_task_complete() {
     return 0
   fi
 
-  if [[ -f "${ISSUES_DIR}/deviation-record-${task_n}.json" ]]; then
+  if [[ -f "${WORKTREE_DIR}/deviation-record-${task_n}.json" ]]; then
     local dev_outcome
-    dev_outcome=$(jq -r '.outcome // ""' "${ISSUES_DIR}/deviation-record-${task_n}.json" 2>/dev/null || echo "")
+    dev_outcome=$(jq -r '.outcome // ""' "${WORKTREE_DIR}/deviation-record-${task_n}.json" 2>/dev/null || echo "")
     if [[ "$dev_outcome" == "DEVIATION_PROCEED" || "$dev_outcome" == "RESOLVED_TIEBREAK" ]]; then
       echo "complete"
       return 0
@@ -864,41 +864,41 @@ is_task_complete() {
 
 # get_task_review_range: rebuild the (base, head) SHA range for a task's review
 # from the persisted markers, falling back to git when a marker is missing.
-# Sets REVIEW_BASE_SHA and REVIEW_HEAD_SHA as side effects so the caller can
-# assign to its own names (BASE_SHA / HEAD_SHA). Shared by the resume-into-review
-# path and any future consumer; do not reimplement this inline.
+# Outputs space-separated "BASE_SHA HEAD_SHA" on stdout. Shared by the
+# resume-into-review path and any future consumer; do not reimplement inline.
 get_task_review_range() {
   local task_n="$1"
   local basesha_log="${WORKTREE_DIR}/implement-task-${task_n}.basesha.log"
   local headsha_log="${WORKTREE_DIR}/implement-task-${task_n}.headsha.log"
 
-  REVIEW_BASE_SHA=""
-  REVIEW_HEAD_SHA=""
+  local review_base_sha=""
+  local review_head_sha=""
 
   if [[ -s "$basesha_log" ]]; then
-    REVIEW_BASE_SHA=$(cat "$basesha_log" 2>/dev/null || echo "")
+    review_base_sha=$(cat "$basesha_log" 2>/dev/null || echo "")
   fi
-  if [[ -z "$REVIEW_BASE_SHA" ]]; then
-    REVIEW_BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "")
-    if [[ -n "$REVIEW_BASE_SHA" ]]; then
+  if [[ -z "$review_base_sha" ]]; then
+    review_base_sha=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+    if [[ -n "$review_base_sha" ]]; then
       warn "No persisted base SHA for task ${task_n}; using HEAD~1 for the review diff range"
     fi
   fi
 
   if [[ -s "$headsha_log" ]]; then
-    REVIEW_HEAD_SHA=$(cat "$headsha_log" 2>/dev/null || echo "")
+    review_head_sha=$(cat "$headsha_log" 2>/dev/null || echo "")
   fi
-  if [[ -z "$REVIEW_HEAD_SHA" ]]; then
-    REVIEW_HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-    if [[ -n "$REVIEW_HEAD_SHA" && -z "$(cat "$headsha_log" 2>/dev/null)" ]]; then
+  if [[ -z "$review_head_sha" ]]; then
+    review_head_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [[ -n "$review_head_sha" && ! -s "$headsha_log" ]]; then
       warn "No persisted head SHA for task ${task_n}; review diff may include later tasks' commits"
     fi
   fi
+
+  echo "$review_base_sha $review_head_sha"
 }
 
   get_task_completion_status() {
-    is_task_complete "$1"
-    return $?
+    is_task_complete "$1" || true
   }
 
 detect_phase() {
@@ -2128,9 +2128,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       # Rebuild the (base, head) range from the persisted SHA markers, falling
       # back to git when a marker is missing. See get_task_review_range() for
       # the rationale (HEAD~1 base, task's own post-impl head).
-      get_task_review_range "$TASK_NUM"
-      BASE_SHA="$REVIEW_BASE_SHA"
-      HEAD_SHA="$REVIEW_HEAD_SHA"
+      read -r BASE_SHA HEAD_SHA <<< "$(get_task_review_range "$TASK_NUM")"
     fi
 
     # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations).
@@ -2450,7 +2448,7 @@ with open(path, 'w') as f:
 
     # Defense in depth: the canonical completion predicate must agree.
     local completion_status
-    completion_status=$(is_task_complete "$TASK_NUM")
+    completion_status=$(is_task_complete "$TASK_NUM" || true)
     if [[ "$completion_status" != "complete" ]]; then
       orchestrator_fail "Task ${TASK_NUM}: exited review loop but is_task_complete reports '${completion_status}'. Refusing to mark complete."
     fi
