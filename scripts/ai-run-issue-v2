@@ -63,6 +63,17 @@ TIMEOUT_VALIDATE=300
 TIMEOUT_REVIEW=600
 TIMEOUT_FIX=900
 TIMEOUT_PR_FIX=1200
+
+# ── Phase iteration limits from config ────────────────────────────────────────
+_ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
+MAX_REVIEW_FIX_ITERATIONS=5
+MAX_WHOLE_PR_FIX_ITERATIONS=10
+if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
+  _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
+fi
+log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}"
+
 TIMEOUT_COMPOUND=600
 
 # All artifacts live in the worktree (no cross-directory permission needed for sub-agents)
