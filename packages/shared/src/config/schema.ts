@@ -55,6 +55,7 @@ const fallbackTriggerSchema = z.enum([
   'runtime_error',
   'token_limit_exceeded',
   'quota_exceeded',
+  'provider_error',
 ]);
 
 const phaseProfileEntrySchema = z.strictObject({

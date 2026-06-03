@@ -2349,6 +2349,14 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
       # Check current review status after fix attempt
       log "  Task ${TASK_NUM}: re-running reviews after fix loop..."
+      # Remove stale review artifacts from prior iterations. Re-review runs after
+      # a fix attempt and previous .result/.md files may still exist. If the
+      # reviewer exits non-zero before overwriting, validate_review_artifacts
+      # would accept stale files as valid.
+      rm -f "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result" \
+            "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md" \
+            "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result" \
+            "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md"
       IMPL_REPORT=$(cat "${ISSUES_DIR}/fix-review-task-${TASK_NUM}.log" 2>/dev/null || echo "")
       run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
       run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
