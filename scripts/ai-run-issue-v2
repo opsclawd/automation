@@ -794,69 +794,111 @@ log "=== Starting orchestrator for issue #${ISSUE_NUM} ==="
 # ── auto-resume: task-level checkpoint detection ─────────────────────────────
 LAST_PHASE="start"
 
-  get_task_completion_status() {
-    local task_n="$1"
-    local impl_result_file="${ISSUES_DIR}/implement-task-${task_n}.result"
-    local spec_result_file="${ISSUES_DIR}/spec-review-task-${task_n}.result"
-    local quality_result_file="${ISSUES_DIR}/quality-review-task-${task_n}.result"
-    local spec_md_file="${ISSUES_DIR}/spec-review-task-${task_n}.md"
-    local quality_md_file="${ISSUES_DIR}/quality-review-task-${task_n}.md"
+is_task_complete() {
+  local task_n="$1"
+  local impl_result_file="${ISSUES_DIR}/implement-task-${task_n}.result"
+  local spec_result_file="${ISSUES_DIR}/spec-review-task-${task_n}.result"
+  local quality_result_file="${ISSUES_DIR}/quality-review-task-${task_n}.result"
+  local spec_md_file="${ISSUES_DIR}/spec-review-task-${task_n}.md"
+  local quality_md_file="${ISSUES_DIR}/quality-review-task-${task_n}.md"
 
-    local impl_result="PENDING"
-    if [[ -f "$impl_result_file" ]]; then
-      impl_result=$(cat "$impl_result_file" 2>/dev/null || echo "PENDING")
-    fi
+  local impl_result="PENDING"
+  if [[ -f "$impl_result_file" ]]; then
+    impl_result=$(cat "$impl_result_file" 2>/dev/null || echo "PENDING")
+  fi
 
-    # A task can only be complete if its implementation finished successfully.
-    # DONE and DONE_WITH_CONCERNS are both treated as success — the original bug
-    # was requiring exactly "DONE", which rewound resume past a
-    # DONE_WITH_CONCERNS task whose reviews had already passed. Any other status
-    # (BLOCKED / NEEDS_CONTEXT / PENDING / absent) is NOT complete, even if stale
-    # SPEC_PASS/QUALITY_PASS artifacts are present: reviews alone must never let a
-    # task skip a successful implementation.
-    if [[ "$impl_result" != "DONE" && "$impl_result" != "DONE_WITH_CONCERNS" ]]; then
-      if [[ -f "${ISSUES_DIR}/implement-task-${task_n}.log" ]]; then
-        echo "implementing"
-      else
-        echo "pending"
-      fi
-      return
-    fi
-
-    # Implementation succeeded — completion is then decided by the reviews.
-    if [[ ! -f "$spec_result_file" || ! -f "$quality_result_file" ]]; then
-      echo "review-needed"
-      return
-    fi
-
-    # A passing .result is only trustworthy alongside a valid (non-empty) review
-    # report. If the reviewer wrote .result but not a real .md (killed mid-write,
-    # or a contract violation), treat the task as review-needed so resume re-runs
-    # the review — find_first_incomplete_task must not skip it on a bare .result.
-    # Reuse the same check the in-loop path uses so the two cannot drift.
-    if ! validate_review_artifacts "$spec_result_file" "$spec_md_file" \
-      || ! validate_review_artifacts "$quality_result_file" "$quality_md_file"; then
-      echo "review-needed"
-      return
-    fi
-
-    local spec_result quality_result
-    spec_result=$(cat "$spec_result_file" 2>/dev/null || echo "SPEC_FAIL")
-    quality_result=$(cat "$quality_result_file" 2>/dev/null || echo "QUALITY_FAIL")
-
-    if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
-      echo "complete"
-    elif [[ -f "${ISSUES_DIR}/deviation-record-${task_n}.json" ]]; then
-      local dev_outcome
-      dev_outcome=$(jq -r '.outcome // ""' "${ISSUES_DIR}/deviation-record-${task_n}.json" 2>/dev/null || echo "")
-      if [[ "$dev_outcome" == "DEVIATION_PROCEED" || "$dev_outcome" == "RESOLVED_TIEBREAK" ]]; then
-        echo "complete"
-      else
-        echo "review-needed"
-      fi
+  # A task can only be complete if its implementation finished successfully.
+  # DONE and DONE_WITH_CONCERNS are both treated as success — the original bug
+  # was requiring exactly "DONE", which rewound resume past a
+  # DONE_WITH_CONCERNS task whose reviews had already passed. Any other status
+  # (BLOCKED / NEEDS_CONTEXT / PENDING / absent) is NOT complete, even if stale
+  # SPEC_PASS/QUALITY_PASS artifacts are present: reviews alone must never let a
+  # task skip a successful implementation.
+  if [[ "$impl_result" != "DONE" && "$impl_result" != "DONE_WITH_CONCERNS" ]]; then
+    if [[ -f "${ISSUES_DIR}/implement-task-${task_n}.log" ]]; then
+      echo "implementing"
     else
-      echo "review-needed"
+      echo "pending"
     fi
+    return 1
+  fi
+
+  # Implementation succeeded — completion is then decided by the reviews.
+  if [[ ! -f "$spec_result_file" || ! -f "$quality_result_file" ]]; then
+    echo "review-needed"
+    return 1
+  fi
+
+  # A passing .result is only trustworthy alongside a valid (non-empty) review
+  # report. If the reviewer wrote .result but not a real .md (killed mid-write,
+  # or a contract violation), treat the task as review-needed so resume re-runs
+  # the review — find_first_incomplete_task must not skip it on a bare .result.
+  # Reuse the same check the in-loop path uses so the two cannot drift.
+  if ! validate_review_artifacts "$spec_result_file" "$spec_md_file" \
+    || ! validate_review_artifacts "$quality_result_file" "$quality_md_file"; then
+    echo "review-needed"
+    return 1
+  fi
+
+  local spec_result quality_result
+  spec_result=$(cat "$spec_result_file" 2>/dev/null || echo "SPEC_FAIL")
+  quality_result=$(cat "$quality_result_file" 2>/dev/null || echo "QUALITY_FAIL")
+
+  if [[ "$spec_result" == "SPEC_PASS" && "$quality_result" == "QUALITY_PASS" ]]; then
+    echo "complete"
+    return 0
+  fi
+
+  if [[ -f "${WORKTREE_DIR}/deviation-record-${task_n}.json" ]]; then
+    local dev_outcome
+    dev_outcome=$(jq -r '.outcome // ""' "${WORKTREE_DIR}/deviation-record-${task_n}.json" 2>/dev/null || echo "")
+    if [[ "$dev_outcome" == "DEVIATION_PROCEED" || "$dev_outcome" == "RESOLVED_TIEBREAK" ]]; then
+      echo "complete"
+      return 0
+    fi
+  fi
+
+  echo "review-needed"
+  return 1
+}
+
+# get_task_review_range: rebuild the (base, head) SHA range for a task's review
+# from the persisted markers, falling back to git when a marker is missing.
+# Outputs space-separated "BASE_SHA HEAD_SHA" on stdout. Shared by the
+# resume-into-review path and any future consumer; do not reimplement inline.
+get_task_review_range() {
+  local task_n="$1"
+  local basesha_log="${WORKTREE_DIR}/implement-task-${task_n}.basesha.log"
+  local headsha_log="${WORKTREE_DIR}/implement-task-${task_n}.headsha.log"
+
+  local review_base_sha=""
+  local review_head_sha=""
+
+  if [[ -s "$basesha_log" ]]; then
+    review_base_sha=$(cat "$basesha_log" 2>/dev/null || echo "")
+  fi
+  if [[ -z "$review_base_sha" ]]; then
+    review_base_sha=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+    if [[ -n "$review_base_sha" ]]; then
+      warn "No persisted base SHA for task ${task_n}; using HEAD~1 for the review diff range"
+    fi
+  fi
+
+  if [[ -s "$headsha_log" ]]; then
+    review_head_sha=$(cat "$headsha_log" 2>/dev/null || echo "")
+  fi
+  if [[ -z "$review_head_sha" ]]; then
+    review_head_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+    if [[ -n "$review_head_sha" && ! -s "$headsha_log" ]]; then
+      warn "No persisted head SHA for task ${task_n}; review diff may include later tasks' commits"
+    fi
+  fi
+
+  echo "$review_base_sha $review_head_sha"
+}
+
+  get_task_completion_status() {
+    is_task_complete "$1" || true
   }
 
 detect_phase() {
@@ -2083,26 +2125,10 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       DID_IMPLEMENT=1
     else
       # Resuming directly into review: the implement step ran in a prior session.
-      # BASE_SHA above is the *post*-impl HEAD here, so a naive base..head range
-      # would be empty and the quality reviewer would see no changes. Recover the
-      # real range: base = persisted pre-impl SHA, head = current HEAD.
-      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" ]]; then
-        BASE_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log" 2>/dev/null || echo "$BASE_SHA")
-      else
-        # No marker (task implemented before this was added) — best-effort to the
-        # parent commit so the reviewer still sees a diff rather than nothing.
-        BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "$BASE_SHA")
-        warn "No persisted base SHA for task ${TASK_NUM}; using HEAD~1 for the review diff range"
-      fi
-      # Use the task's own post-impl head, not the branch tip: later tasks may
-      # already be committed on top, and reviewing base..tip would span them and
-      # pass/fail the resumed task on unrelated changes.
-      if [[ -s "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" ]]; then
-        HEAD_SHA=$(cat "${WORKTREE_DIR}/implement-task-${TASK_NUM}.headsha.log" 2>/dev/null || echo "")
-      else
-        HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-        warn "No persisted head SHA for task ${TASK_NUM}; review diff may include later tasks' commits"
-      fi
+      # Rebuild the (base, head) range from the persisted SHA markers, falling
+      # back to git when a marker is missing. See get_task_review_range() for
+      # the rationale (HEAD~1 base, task's own post-impl head).
+      read -r BASE_SHA HEAD_SHA <<< "$(get_task_review_range "$TASK_NUM")"
     fi
 
     # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations).
@@ -2420,13 +2446,10 @@ with open(path, 'w') as f:
       log "  Task ${TASK_NUM}: loop exhausted, proceeding with deviation"
     fi
 
-    # Defense in depth: even if a future code path adds a `break` that
-    # isn't gated on PASS, fail before declaring the task complete.
-    if [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
-      if [[ ! -f "${WORKTREE_DIR}/deviation-record-${TASK_NUM}.json" ]]; then
-        orchestrator_fail "Task ${TASK_NUM}: exited review loop with spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?}. Refusing to mark complete."
-      fi
-      log "  Task ${TASK_NUM}: reviews not passing but deviation recorded — proceeding"
+    # Defense in depth: the canonical completion predicate must agree.
+    completion_status=$(is_task_complete "$TASK_NUM" || true)
+    if [[ "$completion_status" != "complete" ]]; then
+      orchestrator_fail "Task ${TASK_NUM}: exited review loop but is_task_complete reports '${completion_status}'. Refusing to mark complete."
     fi
 
     {
