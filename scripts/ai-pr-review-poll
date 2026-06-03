@@ -210,7 +210,7 @@ Write the result now."
   echo "$extractor_prompt" | run_agent "extract-${phase}" 60
   extractor_ec=$?
 
-  if [[ $extractor_ec -ne 0 ]]; then
+  if [[ "$extractor_ec" != "0" ]]; then
     warn "  Extractor: agent exited with code ${extractor_ec}"
   fi
 
@@ -221,47 +221,6 @@ Write the result now."
     warn "  Extractor: failed to resolve ${phase} result"
     return 1
   fi
-}
-
-resolve_result() {
-  local result_file="$1"
-  local source_file="$2"; shift 2
-  local all_args=("$@")
-  local fallback="${all_args[-1]}"
-  local allowed_arr=("${all_args[@]:0:$(( ${#all_args[@]} - 1 ))}")
-    local _skip_extractor=false
-  if [[ "${all_args[0]}" == "--agent-ec" ]]; then
-    local _aec="${all_args[1]:-}"
-    if [[ "$_aec" != "0" ]]; then
-      _skip_extractor=true
-    fi
-    allowed_arr=("${all_args[@]:2:$(( ${#all_args[@]} - 3 ))}")
-  fi
-  if validate_result_file "$result_file" "${allowed_arr[@]}"; then
-    local val
-    val=$(read_result_value "$result_file")
-    log "  Result (file): ${val}"
-    echo "$val"
-    return 0
-  fi
-  if $_skip_extractor; then
-    log "  Agent exited non-zero; skipping extractor, using fallback"
-  else
-    log "  Result file missing or invalid, trying extractor..."
-    if [[ -f "$source_file" ]]; then
-      if extract_result "$(basename "$result_file" .result)" "$result_file" "$source_file" "${allowed_arr[@]}"; then
-        local val
-        val=$(read_result_value "$result_file")
-        log "  Result (extractor): ${val}"
-        echo "$val"
-        return 0
-      fi
-    fi
-  fi
-  log "  Result (fallback): ${fallback}"
-  echo "$fallback" > "$result_file" 2>/dev/null || true
-  echo "$fallback"
-  return 0
 }
 
 # ── Verification functions ──────────────────────────────────────────────────
@@ -515,11 +474,11 @@ run_agent() {
   _guard_main_checkout "post-pr-review" "$_main_state_before"
   rm -f "$_pnpm_ec_file"
   rm -f "$prompt_file"
-  if [[ $_agent_ec -eq 2 ]]; then
+  if [[ "$_agent_ec" == "2" ]]; then
     log "FAIL: '${phase}' timed out or had config error"
     return 1
   fi
-  if [[ $_agent_ec -ne 0 ]]; then
+  if [[ "$_agent_ec" != "0" ]]; then
     log "WARN: '${phase}' exited with code $_agent_ec"
   fi
   return $_agent_ec
@@ -773,7 +732,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   local _agent_ec=${PIPESTATUS[0]}
   _guard_main_checkout "post-pr-review" "$_main_state_before"
 
-  if [[ $_agent_ec -ne 0 ]]; then
+  if [[ "$_agent_ec" != "0" ]]; then
     warn "Agent exited with code ${_agent_ec} (poll ${POLL_COUNT})"
   fi
 
@@ -801,7 +760,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   LAST_REVIEW_RESULT="$review_result"
 
   AGENT_DUR=$(( $(_now_ms) - AGENT_START_MS ))
-  if [[ $_agent_ec -ne 0 ]]; then
+  if [[ "$_agent_ec" != "0" ]]; then
     AGENT_FAILED=true
     emit_event "post-pr-review" "error" "post-pr-review.agent.failed" \
       "agent for poll iteration ${POLL_COUNT} exited with code ${_agent_ec}" \
