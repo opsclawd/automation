@@ -259,7 +259,15 @@ resolve_result() {
   local all_args=("$@")
   local fallback="${all_args[-1]}"
   local allowed_arr=("${all_args[@]:0:$(( ${#all_args[@]} - 1 ))}")
-
+  local _skip_extractor=false
+  if [[ "${all_args[0]}" == "--agent-ec" ]]; then
+    local _aec="${all_args[1]}"
+    if [[ "$_aec" -ne 0 ]]; then
+      _skip_extractor=true
+    fi
+    allowed_arr=("${all_args[@]:2:$(( ${#all_args[@]} - 3 ))}")
+    fallback="${all_args[-1]}"
+  fi
   if validate_result_file "$result_file" "${allowed_arr[@]}"; then
     local val
     val=$(read_result_value "$result_file")
@@ -267,19 +275,20 @@ resolve_result() {
     echo "$val"
     return 0
   fi
-
-  log "  Result file missing or invalid, trying extractor..."
-
-  if [[ -f "$source_file" ]]; then
-    if extract_result "$(basename "$result_file" .result)" "$result_file" "$source_file" "${allowed_arr[@]}"; then
-      local val
-      val=$(read_result_value "$result_file")
-      log "  Result (extractor): ${val}"
-      echo "$val"
-      return 0
+  if $_skip_extractor; then
+    log "  Agent exited non-zero; skipping extractor, using fallback"
+  else
+    log "  Result file missing or invalid, trying extractor..."
+    if [[ -f "$source_file" ]]; then
+      if extract_result "$(basename "$result_file" .result)" "$result_file" "$source_file" "${allowed_arr[@]}"; then
+        local val
+        val=$(read_result_value "$result_file")
+        log "  Result (extractor): ${val}"
+        echo "$val"
+        return 0
+      fi
     fi
   fi
-
   log "  Result (fallback): ${fallback}"
   echo "$fallback" > "$result_file" 2>/dev/null || true
   echo "$fallback"
