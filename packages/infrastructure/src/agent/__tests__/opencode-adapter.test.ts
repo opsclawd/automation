@@ -314,7 +314,7 @@ describe('OpenCodeAgentAdapter', () => {
     const timer = setTimeout(() => {
       writeFileSync(
         join(sessionLogDir, '2026-05-28T225115.log'),
-        'Normal entry\nError: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
+        'INFO  2026-05-28T22:51:15.000Z +0ms service=llm msg=normal\nERROR 2026-05-28T22:51:16.000Z +0ms service=llm Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
       );
     }, 800);
 
@@ -377,7 +377,7 @@ describe('OpenCodeAgentAdapter', () => {
     const timer = setTimeout(() => {
       writeFileSync(
         logFile,
-        'Previous session content\nNothing relevant here\nNew: "statusCode": 429 Too Many Requests\n',
+        'Previous session content\nNothing relevant here\nERROR 2026-05-28T23:00:02.000Z +0ms service=llm New: "statusCode": 429 Too Many Requests\n',
       );
     }, 800);
 
