@@ -948,7 +948,7 @@ _lint_plan_verification() {
   fi
 
   local validation_tasks
-  validation_tasks=$(grep -iE '##+ .*Task [0-9]+.*(validation suite|full validation|run validation|make.*green|make.*pass|fix failing test)' "$plan_file" 2>/dev/null || true)
+  validation_tasks=$(grep -iE '##+ .*Task [0-9]+.*(validation suite|full validation|run validation|make.*green|make (tests|suite|CI|build) pass|fix failing test)' "$plan_file" 2>/dev/null || true)
   if [[ -n "$validation_tasks" ]]; then
     while IFS= read -r task_line; do
       warn "plan.lint: validation-suite task detected — validation runs automatically after all implement tasks: ${task_line}"
@@ -2545,6 +2545,7 @@ if [[ "$PHASE" == "validate" ]]; then
   # is the resume marker, not validate.log).
   if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
     git -C "${WORKTREE_DIR}" checkout -- . 2>/dev/null || true
+    git -C "${WORKTREE_DIR}" reset 2>/dev/null || true
     rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
     orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
   fi
@@ -2854,6 +2855,7 @@ Start now."
   # dirty worktree means CI/reviewers see different code than what was tested.
   if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
     git -C "${WORKTREE_DIR}" checkout -- . 2>/dev/null || true
+    git -C "${WORKTREE_DIR}" reset 2>/dev/null || true
     rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" \
           "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
     orchestrator_fail "revalidate phase produced uncommitted changes after fix — mutation not allowed"

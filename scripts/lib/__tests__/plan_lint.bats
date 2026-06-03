@@ -138,7 +138,7 @@ PLAN
   [[ "$EMIT_EVENT_ARGS" != *"plan.lint.validation_task"* ]]
 }
 
-@test "lint: make pass task emits warning" {
+@test "lint: make tests pass task emits warning" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 2: Make tests pass for arbiter module
 
@@ -149,4 +149,33 @@ PLAN
   EMIT_EVENT_ARGS=""
   _lint_plan_verification
   [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: make build pass task emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Make build pass
+
+### Validation
+Run: `pnpm build`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: make data pass through pipeline does not emit warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 3: Make data pass through the pipeline
+
+### Files
+- Modify: `packages/domain/src/foo.ts`
+
+### Validation
+Run: `pnpm test`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" != *"plan.lint.validation_task"* ]]
 }
