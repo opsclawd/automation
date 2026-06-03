@@ -50,6 +50,7 @@ mkdir -p "$TMPDIR"
 # REPLIED   — interim:  replies posted, verification pending.
 PROCESSED_IDS_FILE="${ISSUES_DIR}/processed-comment-ids.txt"
 REPLIED_IDS_FILE="${ISSUES_DIR}/replied-comment-ids.txt"
+COMMENT_STATE_FILE="${ISSUES_DIR}/comment-state.json"
 touch "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log" >&2; }
@@ -62,6 +63,8 @@ warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 # shellcheck source=lib/poll_compound.sh
 source "${REPO_ROOT}/scripts/lib/poll_compound.sh"
+# shellcheck source=lib/comment-state.sh
+source "${REPO_ROOT}/scripts/lib/comment-state.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "FATAL: jq is required but not found on PATH. Install jq and retry." >&2
