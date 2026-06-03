@@ -2545,12 +2545,12 @@ if [[ "$PHASE" == "validate" ]]; then
     info "Validation passed"
   fi
 
-  # Mutation guard: validate phase must not produce any file changes
+  # Mutation guard: validate phase must not modify tracked source files.
+  # Only check tracked-file diffs — untracked orchestrator artifacts
+  # (plan.md, design.md, validation.md, etc.) are expected in the worktree
+  # because ISSUES_DIR == WORKTREE_DIR and they are not in .gitignore.
   if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
     orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
-  fi
-  if [[ -n "$(git -C "${WORKTREE_DIR}" ls-files --others --exclude-standard 2>/dev/null)" ]]; then
-    orchestrator_fail "validate phase produced untracked files — mutation not allowed"
   fi
 
   _emit_phase_done "validate"
