@@ -913,7 +913,7 @@ detect_phase() {
     echo "create-pr"
   elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
     echo "fix-review"
-  elif [[ -f "${ISSUES_DIR}/validate.log" ]]; then
+  elif [[ -f "${ISSUES_DIR}/validation.result" ]]; then
     echo "whole-pr-review"
   elif [[ -f "${ISSUES_DIR}/plan.md" ]]; then
     detect_resume_point
@@ -2536,22 +2536,26 @@ if [[ "$PHASE" == "validate" ]]; then
       command="pnpm-validate-suite" exitCode="$VALIDATE_EXIT" durationMs="$_VALIDATE_DUR"
   fi
 
-  # Record validation status for downstream phases
+  # Mutation guard: validate phase must not modify tracked source files.
+  # Only check tracked-file diffs — untracked orchestrator artifacts
+  # (plan.md, design.md, validation.md, etc.) are expected in the worktree
+  # because ISSUES_DIR == WORKTREE_DIR and they are not in .gitignore.
+  # This check runs BEFORE writing validation.result so that on mutation,
+  # detect_phase won't skip validation on a subsequent run (validation.result
+  # is the resume marker, not validate.log).
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
+    orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
+  fi
+
+  # Record validation status for downstream phases (after mutation guard —
+  # this file is the resume marker checked by detect_phase)
   if [[ $VALIDATE_EXIT -ne 0 ]]; then
     echo "failed" > "${ISSUES_DIR}/validation.result"
     warn "Validation had failures (check validation.md for details)"
   else
     echo "passed" > "${ISSUES_DIR}/validation.result"
     info "Validation passed"
-  fi
-
-  # Mutation guard: validate phase must not modify tracked source files.
-  # Only check tracked-file diffs — untracked orchestrator artifacts
-  # (plan.md, design.md, validation.md, etc.) are expected in the worktree
-  # because ISSUES_DIR == WORKTREE_DIR and they are not in .gitignore.
-  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
-    rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" "${ISSUES_DIR}/validation.result"
-    orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
   fi
 
   _emit_phase_done "validate"
