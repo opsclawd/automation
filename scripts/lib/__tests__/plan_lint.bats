@@ -70,3 +70,112 @@ PLAN
   _lint_plan_verification
   [[ "$EMIT_EVENT_ARGS" != *"plan.lint.warning"* ]]
 }
+
+@test "lint: validation-suite task title emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Some task
+
+### Validation
+Run: `pnpm test`
+Expected: exit code 0
+
+## Task 2: Run full validation suite
+
+### Files
+- Modify: `scripts/ai-run-issue-v2`
+
+### Validation
+Run: `pnpm build && pnpm lint && pnpm test`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: make CI green task emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 3: Make CI green
+
+### Validation
+Run: `pnpm test`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: fix failing tests task emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 5: Fix failing tests
+
+### Files
+- Modify: `packages/domain/src/foo.ts`
+
+### Validation
+Run: `pnpm test`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: legitimate validate-in-title task does not emit warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Validate the data migration output
+
+### Files
+- Modify: `scripts/migrate.sh`
+
+### Validation
+Run: `pnpm test:bash -- scripts/lib/__tests__/migrate.bats`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" != *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: make tests pass task emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 2: Make tests pass for arbiter module
+
+### Validation
+Run: `pnpm test`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: make build pass task emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Make build pass
+
+### Validation
+Run: `pnpm build`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: make data pass through pipeline does not emit warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 3: Make data pass through the pipeline
+
+### Files
+- Modify: `packages/domain/src/foo.ts`
+
+### Validation
+Run: `pnpm test`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" != *"plan.lint.validation_task"* ]]
+}
