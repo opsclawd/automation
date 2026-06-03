@@ -92,12 +92,11 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     } else if (exitCode !== 0) {
       outcome = 'failed';
     } else if (outcome === 'success') {
-      const combinedOutput = `${stdout}\n${stderr}`;
-      const providerMatch = testProviderErrorPatterns(combinedOutput);
+      const providerMatch = testProviderErrorPatterns(stderr);
       if (providerMatch) {
         outcome = 'failed';
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(combinedOutput);
+        const quotaLine = testQuotaPatterns(stderr);
         if (quotaLine) {
           stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
           stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;

@@ -423,6 +423,32 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.exitCode).toBe(0);
   });
 
+  it('does not mistakenly classify provider error text in stdout as provider_error', async () => {
+    const cwd = makeWorktree();
+    const startSha = execSync('git rev-parse HEAD', { cwd }).toString().trim();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(
+        __dirname,
+        '..',
+        '__fixtures__',
+        'fake-opencode-provider-error-stdout-only.sh',
+      ),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement',
+      startCommitSha: startSha,
+    });
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('provider_error');
+  });
+
   it('detects no-op invocation with empty stdout and no git changes', async () => {
     const cwd = makeWorktree();
     const startSha = execSync('git rev-parse HEAD', { cwd }).toString().trim();

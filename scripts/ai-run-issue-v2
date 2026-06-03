@@ -517,11 +517,12 @@ rerun_reviewer_with_retry() {
 
   log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} failed to write valid review artifacts (missing/empty .md or missing both) — checking for infra error"
 
-  local stderr_file="${REPO_ROOT}/.ai-runs/agent-artifacts/${reviewer_type}-review-task-${task_n}.stderr.log"
+  # Adapter artifacts use inv-{timestamp}-{random} directories, so stderr
+  # cannot be checked at a predictable phase-named path.  The .log file
+  # is the tee'd stdout+stderr of the agent process and is the reliable
+  # place to detect provider errors.
   local is_infra_error=false
-  if [[ -f "$stderr_file" ]] && grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "$stderr_file" 2>/dev/null; then
-    is_infra_error=true
-  elif grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.log" 2>/dev/null; then
+  if grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.log" 2>/dev/null; then
     is_infra_error=true
   fi
 
@@ -530,7 +531,6 @@ rerun_reviewer_with_retry() {
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
-  rm -f "${REPO_ROOT}/.ai-runs/agent-artifacts/${reviewer_type}-review-task-${task_n}.stderr.log"
 
   if $is_infra_error; then
     local max_retries=2
@@ -557,7 +557,6 @@ rerun_reviewer_with_retry() {
       rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
-      rm -f "${REPO_ROOT}/.ai-runs/agent-artifacts/${reviewer_type}-review-task-${task_n}.stderr.log"
       attempt=$((attempt + 1))
       delay=60
     done
