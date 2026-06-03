@@ -10,4 +10,5 @@ export const CONTRACT_VIOLATION_CODES = {
   REPLIES_NOT_POSTED: 'replies_not_posted',
   REPO_NOT_PROVIDED: 'repo_not_provided',
   CANCELLED_BY_ORCHESTRATOR: 'cancelled_by_orchestrator',
+  PROVIDER_ERROR: 'provider_error',
 } as const;
