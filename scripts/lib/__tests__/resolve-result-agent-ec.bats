@@ -8,8 +8,11 @@
 
 setup() {
   SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-pr-review-poll"
+  SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
+  # Source shared helpers, then extract resolve_result (which references them).
+  source "$SHARED_LIB"
   eval "$(awk '
-    /^(validate_result_file|read_result_value|resolve_result)\(\)/ { found=1 }
+    /^(resolve_result)\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
