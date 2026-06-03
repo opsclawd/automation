@@ -75,10 +75,12 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   };
   cancelSignal?.addEventListener('abort', onAbort);
 
+  let stderrForLog = stderr;
   try {
     const r = await child;
     stdout = r.stdout ?? '';
     stderr = r.stderr ?? '';
+    stderrForLog = stderr;
     exitCode = r.exitCode ?? 0;
     if (r.isCanceled) {
       if (timeoutSignal?.aborted && !input.abortSignal?.aborted) {
@@ -98,8 +100,10 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         const quotaLine = testQuotaPatterns(combinedOutput);
         if (quotaLine) {
           stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
         } else {
           stderr = `PROVIDER_ERROR: ${providerMatch}`;
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
         }
       }
     }
@@ -107,6 +111,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     outcome = 'failed';
     exitCode = 1;
     stderr = String((e as Error).message);
+    stderrForLog = stderr;
   } finally {
     cancelSignal?.removeEventListener('abort', onAbort);
     // Safety net: only meaningful for detached children (process-group leaders).
@@ -121,7 +126,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     }
   }
   writeFileSync(stdoutPath, stdout);
-  writeFileSync(stderrPath, stderr);
+  writeFileSync(stderrPath, stderrForLog);
 
   const durationMs = Date.now() - start;
   let endCommitSha: string | undefined;

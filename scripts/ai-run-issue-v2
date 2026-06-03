@@ -517,10 +517,11 @@ rerun_reviewer_with_retry() {
 
   log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} failed to write valid review artifacts (missing/empty .md or missing both) — checking for infra error"
 
-  # Check stderr for provider/quota error patterns to classify the failure
-  local stderr_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.stderr.log"
+  local stderr_file="${REPO_ROOT}/.ai-runs/agent-artifacts/${reviewer_type}-review-task-${task_n}.stderr.log"
   local is_infra_error=false
   if [[ -f "$stderr_file" ]] && grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "$stderr_file" 2>/dev/null; then
+    is_infra_error=true
+  elif grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.log" 2>/dev/null; then
     is_infra_error=true
   fi
 
@@ -529,7 +530,7 @@ rerun_reviewer_with_retry() {
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
-  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.stderr.log"
+  rm -f "${REPO_ROOT}/.ai-runs/agent-artifacts/${reviewer_type}-review-task-${task_n}.stderr.log"
 
   if $is_infra_error; then
     local max_retries=2
@@ -556,7 +557,7 @@ rerun_reviewer_with_retry() {
       rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
-      rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.stderr.log"
+      rm -f "${REPO_ROOT}/.ai-runs/agent-artifacts/${reviewer_type}-review-task-${task_n}.stderr.log"
       attempt=$((attempt + 1))
       delay=60
     done
@@ -1681,8 +1682,8 @@ ${history_excerpt}"
         orchestrator_fail "spec-review-task-${task_n} is blocked (agent emitted BLOCKED)"
       else
         case $_agent_ec in
-          1) orchestrator_fail "spec-review-task-${task_n} failed (contract violation)" ;;
-          3) orchestrator_fail "spec-review-task-${task_n} failed (unexpected error)" ;;
+          1) warn "spec-review-task-${task_n} exited with code 1 (contract violation) — validation will attempt retry" ;;
+          3) warn "spec-review-task-${task_n} exited with code 3 (unexpected error) — validation will attempt retry" ;;
           *) orchestrator_fail "spec-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -1843,8 +1844,8 @@ ${history_excerpt}"
         orchestrator_fail "quality-review-task-${task_n} is blocked (agent emitted BLOCKED)"
       else
         case $_agent_ec in
-          1) orchestrator_fail "quality-review-task-${task_n} failed (contract violation)" ;;
-          3) orchestrator_fail "quality-review-task-${task_n} failed (unexpected error)" ;;
+          1) warn "quality-review-task-${task_n} exited with code 1 (contract violation) — validation will attempt retry" ;;
+          3) warn "quality-review-task-${task_n} exited with code 3 (unexpected error) — validation will attempt retry" ;;
           *) orchestrator_fail "quality-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi

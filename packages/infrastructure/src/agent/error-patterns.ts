@@ -18,8 +18,8 @@ export const PROVIDER_ERROR_PATTERNS = [
 
 export function testQuotaPatterns(text: string): string | null {
   const lines = text.split('\n');
-  for (const pattern of QUOTA_PATTERNS) {
-    for (const line of lines) {
+  for (const line of lines) {
+    for (const pattern of QUOTA_PATTERNS) {
       if (pattern.test(line)) return line.trim();
     }
   }
@@ -28,8 +28,8 @@ export function testQuotaPatterns(text: string): string | null {
 
 export function testProviderErrorPatterns(text: string): string | null {
   const lines = text.split('\n');
-  for (const pattern of PROVIDER_ERROR_PATTERNS) {
-    for (const line of lines) {
+  for (const line of lines) {
+    for (const pattern of PROVIDER_ERROR_PATTERNS) {
       if (pattern.test(line)) return line.trim();
     }
   }
