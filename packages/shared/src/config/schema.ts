@@ -8,7 +8,10 @@ const validationSchema = z.object({
 const phasesSchema = z.object({
   skip: z.array(z.string()).default([]),
   reviewFix: z.object({ maxIterations: z.number().int().positive() }),
+  // implement.maxIterations is validated but not consumed by any shell loop.
+  // The implement phase runs each task once sequentially — no retry loop exists.
   implement: z.object({ maxIterations: z.number().int().positive() }),
+  wholePrFix: z.object({ maxIterations: z.number().int().positive() }).optional(),
 });
 
 const timeoutsSchema = z.object({
