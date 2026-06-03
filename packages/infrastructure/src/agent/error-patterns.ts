@@ -16,6 +16,12 @@ export const PROVIDER_ERROR_PATTERNS = [
   ...QUOTA_PATTERNS,
 ] as const;
 
+const OPENCODE_LOG_LINE = /^\s*(INFO|ERROR|WARN|DEBUG)\s+\d{4}-\d{2}-\d{2}T/;
+
+export function isOpenCodeLogLine(line: string): boolean {
+  return OPENCODE_LOG_LINE.test(line);
+}
+
 export function testQuotaPatterns(text: string): string | null {
   const lines = text.split('\n');
   for (const line of lines) {
