@@ -6,7 +6,8 @@
   "phases": {
     "skip": [],
     "reviewFix": { "maxIterations": 10 },
-    "implement": { "maxIterations": 5 }
+    "implement": { "maxIterations": 5 },
+    "wholePrFix": { "maxIterations": 10 }
   },
   "timeouts": {
     "readyMaxDays": 7,
