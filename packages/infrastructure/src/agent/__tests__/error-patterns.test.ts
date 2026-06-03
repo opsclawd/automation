@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isOpenCodeLogLine } from '../error-patterns.js';
+import { isOpenCodeLogLine, testQuotaPatterns } from '../error-patterns.js';
 
 describe('isOpenCodeLogLine', () => {
   it('accepts valid INFO log line', () => {
@@ -52,5 +52,56 @@ describe('isOpenCodeLogLine', () => {
 
   it('rejects line with log level but no timestamp', () => {
     expect(isOpenCodeLogLine('ERROR something went wrong')).toBe(false);
+  });
+});
+
+describe('testQuotaPatterns with structural filtering', () => {
+  it('matches quota error in structural log line', () => {
+    const result = testQuotaPatterns(
+      'INFO  2026-05-28T22:51:15.000Z +0ms service=llm Usage limit reached for 5 hour',
+    );
+    expect(result).toBeTruthy();
+    expect(result).toContain('Usage limit reached');
+  });
+
+  it('ignores quota pattern in non-structural line', () => {
+    const result = testQuotaPatterns(
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+    );
+    expect(result).toBeNull();
+  });
+
+  it('matches when structural line is mixed with non-structural lines', () => {
+    const text = [
+      'some code output with 429 in it',
+      'INFO  2026-05-28T22:51:15.000Z +0ms service=llm Usage limit reached',
+      'more code output',
+    ].join('\n');
+    const result = testQuotaPatterns(text);
+    expect(result).toBeTruthy();
+    expect(result).toContain('Usage limit reached');
+  });
+
+  it('returns null when no structural lines match', () => {
+    const text = [
+      'random text with 429 in it',
+      'code: quota exceeded handling',
+      'some bash variable',
+    ].join('\n');
+    expect(testQuotaPatterns(text)).toBeNull();
+  });
+
+  it('matches "statusCode": 429 in structural line', () => {
+    const result = testQuotaPatterns(
+      'ERROR 2026-05-28T23:00:02.000Z +0ms service=llm "statusCode": 429 Too Many Requests',
+    );
+    expect(result).toBeTruthy();
+  });
+
+  it('ignores 429 in non-structural bash variable assignment', () => {
+    const result = testQuotaPatterns(
+      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+    );
+    expect(result).toBeNull();
   });
 });

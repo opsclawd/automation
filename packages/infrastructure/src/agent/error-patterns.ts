@@ -25,6 +25,7 @@ export function isOpenCodeLogLine(line: string): boolean {
 export function testQuotaPatterns(text: string): string | null {
   const lines = text.split('\n');
   for (const line of lines) {
+    if (!isOpenCodeLogLine(line)) continue;
     for (const pattern of QUOTA_PATTERNS) {
       if (pattern.test(line)) return line.trim();
     }
