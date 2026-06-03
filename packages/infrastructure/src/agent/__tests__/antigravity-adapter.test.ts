@@ -190,4 +190,17 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.outcome).toBe('success');
     expect(r.contractViolations).not.toContain('provider_error');
   });
+
+  it('detects provider error in stderr when process exits nonzero', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-nonzero-provider-error.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('provider_error');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
+    expect(r.exitCode).toBe(1);
+  });
 });

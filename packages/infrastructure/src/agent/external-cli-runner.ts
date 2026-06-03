@@ -91,6 +91,16 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
+      const providerMatch = testProviderErrorPatterns(stderr);
+      if (providerMatch) {
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(stderr);
+        if (quotaLine) {
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+        }
+      }
     } else if (outcome === 'success') {
       const providerMatch = testProviderErrorPatterns(stderr);
       if (providerMatch) {

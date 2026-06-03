@@ -116,6 +116,16 @@ export class OpenCodeAgentAdapter implements AgentPort {
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
+      const providerMatch = testProviderErrorPatterns(stderr);
+      if (providerMatch) {
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(stderr);
+        if (quotaLine) {
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+        }
+      }
     } else if (outcome === 'success') {
       const providerMatch = testProviderErrorPatterns(stderr);
       if (providerMatch) {
@@ -135,7 +145,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
         endCommitSha === request.startCommitSha &&
         stdout.trim().length === 0
       ) {
-        outcome = 'failed';
+        outcome = 'contract_violation';
         contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
         stderr = 'NO_OUTPUT: agent exited 0 with empty stdout and no git changes';
         stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;

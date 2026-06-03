@@ -466,7 +466,7 @@ describe('OpenCodeAgentAdapter', () => {
       phaseId: 'implement',
       startCommitSha: startSha,
     });
-    expect(r.outcome).toBe('failed');
+    expect(r.outcome).toBe('contract_violation');
     expect(r.contractViolations).toContain('no_output');
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
   });
@@ -488,7 +488,7 @@ describe('OpenCodeAgentAdapter', () => {
       phaseId: 'implement-task-3',
       startCommitSha: startSha,
     });
-    expect(r.outcome).toBe('failed');
+    expect(r.outcome).toBe('contract_violation');
     expect(r.contractViolations).toContain('no_output');
   });
 
@@ -510,5 +510,27 @@ describe('OpenCodeAgentAdapter', () => {
       startCommitSha: startSha,
     });
     expect(r.outcome).toBe('success');
+  });
+
+  it('detects provider error in stderr when process exits nonzero', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-nonzero-provider-error.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.contractViolations).toContain('provider_error');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
+    expect(r.exitCode).toBe(1);
   });
 });

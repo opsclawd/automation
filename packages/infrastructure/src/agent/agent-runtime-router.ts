@@ -247,6 +247,7 @@ export class AgentRuntimeRouter implements AgentPort {
       'token_limit_exceeded',
       'quota_exceeded',
       'provider_error',
+      'no_output',
     ];
     for (const trigger of triggers) {
       switch (trigger) {
@@ -293,6 +294,13 @@ export class AgentRuntimeRouter implements AgentPort {
           )
             return true;
           break;
+        case 'no_output':
+          if (
+            result.outcome === 'contract_violation' &&
+            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)
+          )
+            return true;
+          break;
       }
     }
     return false;
@@ -314,6 +322,9 @@ export class AgentRuntimeRouter implements AgentPort {
       }
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON)) {
         return 'invalid_result_json';
+      }
+      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)) {
+        return 'no_output';
       }
       return 'contract_violation';
     }
