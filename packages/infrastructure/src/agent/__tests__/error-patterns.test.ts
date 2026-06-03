@@ -59,8 +59,8 @@ describe('isOpenCodeLogLine', () => {
   });
 });
 
-describe('testQuotaPatterns with structural filtering', () => {
-  it('matches quota error in structural log line', () => {
+describe('testQuotaPatterns', () => {
+  it('matches quota error in structural log line (default mode)', () => {
     const result = testQuotaPatterns(
       'INFO  2026-05-28T22:51:15.000Z +0ms service=llm Usage limit reached for 5 hour',
     );
@@ -68,16 +68,23 @@ describe('testQuotaPatterns with structural filtering', () => {
     expect(result).toContain('Usage limit reached');
   });
 
-  it('ignores quota pattern in non-structural line', () => {
+  it('matches quota pattern in unstructured text (default mode)', () => {
     const result = testQuotaPatterns(
       "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
     );
-    expect(result).toBeNull();
+    expect(result).toBeTruthy();
   });
 
-  it('matches when structural line is mixed with non-structural lines', () => {
+  it('matches 429 in unstructured bash variable assignment (default mode)', () => {
+    const result = testQuotaPatterns(
+      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+    );
+    expect(result).toBeTruthy();
+  });
+
+  it('matches when structural line is mixed with non-structural lines (default mode)', () => {
     const text = [
-      'some code output with 429 in it',
+      'some code output',
       'INFO  2026-05-28T22:51:15.000Z +0ms service=llm Usage limit reached',
       'more code output',
     ].join('\n');
@@ -86,32 +93,53 @@ describe('testQuotaPatterns with structural filtering', () => {
     expect(result).toContain('Usage limit reached');
   });
 
-  it('returns null when no structural lines match', () => {
-    const text = [
-      'random text with 429 in it',
-      'code: quota exceeded handling',
-      'some bash variable',
-    ].join('\n');
-    expect(testQuotaPatterns(text)).toBeNull();
-  });
-
-  it('matches "statusCode": 429 in structural line', () => {
+  it('matches "statusCode": 429 in structural line (default mode)', () => {
     const result = testQuotaPatterns(
       'ERROR 2026-05-28T23:00:02.000Z +0ms service=llm "statusCode": 429 Too Many Requests',
     );
     expect(result).toBeTruthy();
   });
 
-  it('ignores 429 in non-structural bash variable assignment', () => {
+  it('returns null when no patterns match (default mode)', () => {
+    expect(testQuotaPatterns('just some text without any quota or provider patterns')).toBeNull();
+  });
+
+  it('matches quota error in structural log line (structuralOnly: true)', () => {
     const result = testQuotaPatterns(
-      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+      'INFO  2026-05-28T22:51:15.000Z +0ms service=llm Usage limit reached for 5 hour',
+      { structuralOnly: true },
+    );
+    expect(result).toBeTruthy();
+  });
+
+  it('ignores quota pattern in non-structural line (structuralOnly: true)', () => {
+    const result = testQuotaPatterns(
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      { structuralOnly: true },
     );
     expect(result).toBeNull();
   });
+
+  it('ignores 429 in non-structural bash variable assignment (structuralOnly: true)', () => {
+    const result = testQuotaPatterns(
+      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+      { structuralOnly: true },
+    );
+    expect(result).toBeNull();
+  });
+
+  it('returns null when no structural lines match (structuralOnly: true)', () => {
+    const text = [
+      'random text with 429 in it',
+      'code: quota exceeded handling',
+      'some bash variable',
+    ].join('\n');
+    expect(testQuotaPatterns(text, { structuralOnly: true })).toBeNull();
+  });
 });
 
-describe('testProviderErrorPatterns with structural filtering', () => {
-  it('matches provider error in structural log line', () => {
+describe('testProviderErrorPatterns', () => {
+  it('matches provider error in structural log line (default mode)', () => {
     const result = testProviderErrorPatterns(
       'ERROR 2026-05-28T22:51:15.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://example.com","statusCode":500}',
     );
@@ -119,23 +147,30 @@ describe('testProviderErrorPatterns with structural filtering', () => {
     expect(result).toContain('AI_APICallError');
   });
 
-  it('ignores provider error in non-structural line', () => {
-    const result = testProviderErrorPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
-    );
-    expect(result).toBeNull();
-  });
-
-  it('ignores raw JSON without structural prefix', () => {
+  it('matches provider error in raw JSON without structural prefix (default mode)', () => {
     const result = testProviderErrorPatterns(
       '{"name":"AI_APICallError","url":"https://example.com","statusCode":500}',
     );
-    expect(result).toBeNull();
+    expect(result).toBeTruthy();
   });
 
-  it('matches when structural line is mixed with non-structural lines', () => {
+  it('matches provider error in non-structural line (default mode)', () => {
+    const result = testProviderErrorPatterns(
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+    );
+    expect(result).toBeTruthy();
+  });
+
+  it('matches RESOURCE_EXHAUSTED in non-structural line (default mode)', () => {
+    const result = testProviderErrorPatterns(
+      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+    );
+    expect(result).toBeTruthy();
+  });
+
+  it('matches when structural line is mixed with non-structural lines (default mode)', () => {
     const text = [
-      'code with AI_APICallError in a comment',
+      'code with no patterns here',
       'ERROR 2026-05-28T22:51:15.000Z +0ms service=llm ProviderError: API failure',
       'more code',
     ].join('\n');
@@ -144,9 +179,40 @@ describe('testProviderErrorPatterns with structural filtering', () => {
     expect(result).toContain('ProviderError');
   });
 
-  it('ignores RESOURCE_EXHAUSTED in non-structural line', () => {
+  it('returns null when no patterns match (default mode)', () => {
+    expect(
+      testProviderErrorPatterns('just some text without any quota or provider patterns'),
+    ).toBeNull();
+  });
+
+  it('matches provider error in structural log line (structuralOnly: true)', () => {
+    const result = testProviderErrorPatterns(
+      'ERROR 2026-05-28T22:51:15.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://example.com","statusCode":500}',
+      { structuralOnly: true },
+    );
+    expect(result).toBeTruthy();
+  });
+
+  it('ignores provider error in non-structural line (structuralOnly: true)', () => {
+    const result = testProviderErrorPatterns(
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      { structuralOnly: true },
+    );
+    expect(result).toBeNull();
+  });
+
+  it('ignores raw JSON without structural prefix (structuralOnly: true)', () => {
+    const result = testProviderErrorPatterns(
+      '{"name":"AI_APICallError","url":"https://example.com","statusCode":500}',
+      { structuralOnly: true },
+    );
+    expect(result).toBeNull();
+  });
+
+  it('ignores RESOURCE_EXHAUSTED in non-structural line (structuralOnly: true)', () => {
     const result = testProviderErrorPatterns(
       'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+      { structuralOnly: true },
     );
     expect(result).toBeNull();
   });

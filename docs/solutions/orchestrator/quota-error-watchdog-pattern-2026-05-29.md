@@ -82,12 +82,24 @@ Any phase with a `fallbackProfile` but no explicit `fallbackTriggers` automatica
 
 ### Structural log-line filtering (Issue #182)
 The watchdog scans opencode session log content for quota/provider error patterns. The session log embeds full tool I/O — agent-written code containing strings like `RESOURCE_EXHAUSTED` or `429` appeared as raw text and triggered false-positive SIGKILLs.
-**Fix:** Both `testQuotaPatterns()` and `testProviderErrorPatterns()` now filter to only structural opencode log lines before pattern matching. A structural line matches:
+**Fix:** Both `testQuotaPatterns()` and `testProviderErrorPatterns()` accept an `options` parameter with a `structuralOnly` flag (defaulting to `false`). When `structuralOnly: true`, only structural opencode log lines are scanned. A structural line matches:
 ```
 /^\s*(INFO|ERROR|WARN|DEBUG)\s+\d{4}-\d{2}-\d{2}T/
 ```
 Lines not matching this prefix (tool output, code content, bash variables) are skipped. This prevents the false-positive scenario where an agent writes code containing quota-pattern strings via its `write`/`edit` tools.
-The classifier (`isOpenCodeLogLine`) is exported from `error-patterns.ts` and shared between both pattern-testing functions. It applies to both session log content (watchdog path) and stderr content (exit-handler path).
+
+The classifier (`isOpenCodeLogLine`) is exported from `error-patterns.ts` and shared between both pattern-testing functions.
+
+**Where to use which mode:**
+
+| Caller                                     | Mode             | Why                                                                                       |
+| ------------------------------------------ | ---------------- | ----------------------------------------------------------------------------------------- |
+| `startWatchdog` (opencode-adapter.ts)      | `structuralOnly: true`  | Reads the opencode session log, which embeds full tool I/O. Filter prevents false positives. |
+| `opencode-adapter.ts` exit-handler (stderr) | default (`false`) | Real-world child stderr from `agy`, `claude`, `codex`, etc. is rarely prefixed with a log line. |
+| `external-cli-runner.ts` exit-handler (stderr) | default (`false`) | Same — stderr is unstructured.                                                            |
+| `agent-runtime-router.ts` `isQuotaError` (stderr file) | default (`false`) | Reads the stderr file written by the adapters above.                                       |
+
+The default (`structuralOnly: false`) intentionally matches unstructured text so that provider/quota errors printed by external CLIs are detected.
 
 ### `quota-patterns.ts` (shared module)
 
@@ -243,7 +255,7 @@ For the adapter's per-poll call, this is fine (new content is usually a few line
 
 Add a regex to `QUOTA_PATTERNS` in `quota-patterns.ts`. No other code changes needed — the adapter's watchdog and router's `isQuotaError()` both use `testQuotaPatterns()` from the shared module.
 
-The structural log-line filter (`isOpenCodeLogLine`) applies automatically — new patterns only match inside lines with an opencode log prefix. If you need to test patterns against unstructured text, call the regex directly instead of using `testQuotaPatterns()`.
+The structural log-line filter (`isOpenCodeLogLine`) applies only when `testQuotaPatterns()` / `testProviderErrorPatterns()` are called with `{ structuralOnly: true }` — the watchdog path uses this mode. The default mode (used for stderr scanning in `opencode-adapter.ts`, `external-cli-runner.ts`, and `agent-runtime-router.ts`) does **not** apply the filter, so unstructured stderr is correctly scanned. If you need to test patterns against text that has been pre-filtered yourself, you can call the regex in `QUOTA_PATTERNS` / `PROVIDER_ERROR_PATTERNS` directly instead of using the helper functions.
 
 ### Adding a new adapter watchdog
 
