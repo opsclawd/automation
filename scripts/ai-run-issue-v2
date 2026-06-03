@@ -2846,6 +2846,17 @@ Start now."
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
 
+  # Mutation guard (revalidate): the fix agent commits before this block,
+  # so the worktree should be clean. If the validation commands themselves
+  # mutate tracked files (e.g., a build step rewriting generated output),
+  # the result would be uncommitted — and validation.result=passed from a
+  # dirty worktree means CI/reviewers see different code than what was tested.
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" \
+          "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
+    orchestrator_fail "revalidate phase produced uncommitted changes after fix — mutation not allowed"
+  fi
+
   # Propagate revalidate state into validation.result so the create-pr phase
   # (which labels ai:pr-ready vs ai:needs-human-review based on this file)
   # reflects the current build/lint/typecheck/test status — not the stale
