@@ -753,6 +753,17 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     cp "$RESULT_IN_WT" "${ISSUES_DIR}/process-review-p${POLL_COUNT}.result"
   fi
 
+  # Promote agent's per-comment outcome manifest (if present)
+  local OUTCOMES_IN_WT="${CTX}/comment-outcomes.json"
+  local OUTCOMES_FILE="${ISSUES_DIR}/comment-outcomes-p${POLL_COUNT}.json"
+  if [[ -f "$OUTCOMES_IN_WT" ]]; then
+    cp "$OUTCOMES_IN_WT" "$OUTCOMES_FILE"
+    log "  Promoted comment outcomes manifest from agent worktree"
+  else
+    : > "$OUTCOMES_FILE"
+    warn "  No comment-outcomes.json found in agent worktree"
+  fi
+
   # Resolve structured result from agent output
   local _result_file="${ISSUES_DIR}/process-review-p${POLL_COUNT}.result"
   local _result_was_valid=false
@@ -802,6 +813,9 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
       esac
     fi
   fi
+
+  # Merge agent outcomes into per-comment state
+  update_comment_outcomes "$OUTCOMES_FILE"
 
   rm -f "$prompt_file"
 
@@ -906,32 +920,66 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     fi
   fi
 
-  # Per-ID append: every individually-replied comment gets marked REPLIED so
-  # the agent isn't re-prompted for it next poll, even when the overall
-  # batch was partial. Only IDs the agent ACTUALLY replied to land here.
+  # Per-comment state transitions — reply_verified + side-effect verification
+  # For each comment in the batch, update reply_verified if reply was confirmed.
   local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
   if [[ -f "$status_file" && -s "$status_file" ]]; then
-    cat "$status_file" >> "$REPLIED_IDS_FILE"
-    sort -u "$REPLIED_IDS_FILE" -o "$REPLIED_IDS_FILE"
+    local replied_id
+    while IFS= read -r replied_id; do
+      [[ -z "$replied_id" ]] && continue
+      if [[ -f "$COMMENT_STATE_FILE" ]] && jq -e --arg cid "$replied_id" 'has($cid)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
+        jq --arg cid "$replied_id" '.[$cid].reply_verified = true' \
+          "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+          mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+      fi
+    done < "$status_file"
     local replied_count
     replied_count=$(wc -l < "$status_file" | tr -d ' ')
-    log "Tracked ${replied_count} comment(s) as REPLIED (cumulative: $(wc -l < "$REPLIED_IDS_FILE" | tr -d ' '))."
+    log "  Set reply_verified=true for ${replied_count} comment(s)"
   fi
 
-  # Promotion to PROCESSED + thread resolution requires both: every comment
-  # in this batch got a reply AND build/commits verified clean.
-  if $replies_ok && $verify_ok; then
-    local fed_ids
-    fed_ids=$(echo "$comments" | jq -r '.[].id' | tr '\n' ' ')
-    echo "$fed_ids" | tr ' ' '\n' | grep -v '^$' >> "$PROCESSED_IDS_FILE"
-    sort -u "$PROCESSED_IDS_FILE" -o "$PROCESSED_IDS_FILE"
-    log "Replies + verification confirmed; marked ${comment_count} comment(s) as PROCESSED."
-    resolve_threads $fed_ids
-  elif $replies_ok; then
-    warn "All replies confirmed but verification failed; will re-verify next poll."
-  else
-    warn "Partial/no replies; ${comment_count} comment(s) tracked individually above. Missing IDs retry next poll."
-  fi
+  # Per-comment commit SHA verification for fixed outcomes
+  local comment_ids
+  comment_ids=$(jq -r 'keys[]' "$COMMENT_STATE_FILE" 2>/dev/null)
+  local cid
+  for cid in $comment_ids; do
+    [[ -z "$cid" ]] && continue
+    local outcome
+    outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+    if [[ "$outcome" == "fixed" ]]; then
+      local commit_sha
+      commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+      if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
+        if verify_comment_commit "$cid" "$commit_sha" "$pre_sha"; then
+          log "  Comment ${cid}: commit ${commit_sha:0:7} verified on origin/${PR_BRANCH}"
+        else
+          warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — cannot transition to processed"
+          jq --arg cid "$cid" '.[$cid].commit_sha = null' \
+            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+        fi
+      fi
+    fi
+  done
+
+  # State transitions: replied -> processed (if guard passes)
+  for cid in $comment_ids; do
+    [[ -z "$cid" ]] && continue
+    local state
+    state=$(jq -r --arg cid "$cid" '.[$cid].state' "$COMMENT_STATE_FILE")
+    if [[ "$state" == "replied" ]]; then
+      if can_transition_to_processed "$cid"; then
+        set_comment_state "$cid" "processed"
+        log "  Comment ${cid}: transitioned replied → processed"
+      fi
+    fi
+  done
+
+  # Check for stuck comments and block them
+  check_stuck_comments
+
+  # Derive compatibility text files from JSON state
+  derive_compat_files
 
   if $verify_ok; then
     log "All verifications passed."
