@@ -499,12 +499,15 @@ validate_review_artifacts() {
   return 0
 }
 
-# rerun_reviewer_once: re-run a single reviewer once after a contract violation
-# (.result written without matching .md). Cleans up all orphaned artifacts
-# from both ISSUES_DIR and WORKTREE_DIR so the re-run starts fresh.
+# rerun_reviewer_with_retry: re-run a reviewer with a small retry budget after a
+# contract violation. For infra errors (provider/quota patterns detected in
+# reviewer stderr), retries up to 2 more times with backoff (30s, 60s).
+# For non-infra failures, re-runs once immediately (backward compatible).
 # Uses ISSUES_DIR and WORKTREE_DIR from caller scope (dynamic bash globals
 # set by the orchestrator's main loop).
-rerun_reviewer_once() {
+REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|AI_APIConnectionError|provider.*error|API error|RESOURCE_EXHAUSTED|429|quota.*exceed|rate_limit_exceeded|Usage limit reached'
+
+rerun_reviewer_with_retry() {
   local reviewer_type="$1"  # "spec" or "quality"
   local task_n="$2"
   local task_title="$3"
@@ -512,24 +515,67 @@ rerun_reviewer_once() {
   local base_sha="$5"
   local head_sha="$6"
 
-  log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} failed to write valid review artifacts (missing/empty .md or missing both) — re-running once"
+  log "  invalid_agent_contract: ${reviewer_type}-review-task-${task_n} failed to write valid review artifacts (missing/empty .md or missing both) — checking for infra error"
+
+  # Check stderr for provider/quota error patterns to classify the failure
+  local stderr_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.stderr.log"
+  local is_infra_error=false
+  if [[ -f "$stderr_file" ]] && grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "$stderr_file" 2>/dev/null; then
+    is_infra_error=true
+  fi
 
   # Clean up orphaned artifacts from both directories so the re-run starts fresh
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+  rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.stderr.log"
 
-  if [[ "$reviewer_type" == "spec" ]]; then
-    local impl_report="$7"
-    SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
-  elif [[ "$reviewer_type" == "quality" ]]; then
-    QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+  if $is_infra_error; then
+    local max_retries=2
+    local delay=30
+    local attempt=1
+    while [[ $attempt -le $max_retries ]]; do
+      log "  Infra error detected, retrying ${reviewer_type}-review-task-${task_n} in ${delay}s (attempt $attempt/$max_retries)"
+      sleep "$delay"
+      if [[ "$reviewer_type" == "spec" ]]; then
+        local impl_report="$7"
+        SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+      elif [[ "$reviewer_type" == "quality" ]]; then
+        QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+      fi
+      local result_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
+      local md_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+      if validate_review_artifacts "$result_file" "$md_file"; then
+        log "  ${reviewer_type}-review-task-${task_n} retry $attempt succeeded"
+        return 0
+      fi
+      log "  ${reviewer_type}-review-task-${task_n} retry $attempt still failing"
+      # Clean up before next retry
+      rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
+      rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
+      rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
+      rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+      rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.stderr.log"
+      attempt=$((attempt + 1))
+      delay=60
+    done
+    log "  ${reviewer_type}-review-task-${task_n} exhausted infra-error retries"
+    return 1
+  else
+    # Non-infra failure: single immediate re-run (backward compatible)
+    log "  Non-infra failure, re-running once immediately"
+    if [[ "$reviewer_type" == "spec" ]]; then
+      local impl_report="$7"
+      SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+    elif [[ "$reviewer_type" == "quality" ]]; then
+      QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+    fi
   fi
 }
 
 # rerun_reviewer_for_contradiction: re-run a reviewer for contradiction reconciliation.
-# Same cleanup as rerun_reviewer_once but does NOT set *_RERUN_WARNING flags,
+# Same cleanup as rerun_reviewer_with_retry but does NOT set *_RERUN_WARNING flags,
 # because the prior review may be valid — it just disagrees with fix-review.
 rerun_reviewer_for_contradiction() {
   local reviewer_type="$1"  # "spec" or "quality"
@@ -2174,17 +2220,19 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     # Validate spec-review artifacts
     if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-      rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
-      if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-        orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run (missing/empty .md or missing both)"
+      if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
+        if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+        fi
       fi
     fi
 
     # Validate quality-review artifacts
     if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-      rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
-      if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-        orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
+      if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
+        if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+        fi
       fi
     fi
 
@@ -2263,15 +2311,17 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
       # Validate re-review artifacts (same pattern as initial reviews above)
       if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-        rerun_reviewer_once "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"
-        if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
+        if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
+          if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+            orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+          fi
         fi
       fi
       if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-        rerun_reviewer_once "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
-        if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-review (missing/empty .md or missing both)"
+        if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
+          if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+            orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+          fi
         fi
       fi
 
