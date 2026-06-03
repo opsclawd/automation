@@ -9,6 +9,7 @@ const phasesSchema = z.object({
   skip: z.array(z.string()).default([]),
   reviewFix: z.object({ maxIterations: z.number().int().positive() }),
   implement: z.object({ maxIterations: z.number().int().positive() }),
+  wholePrFix: z.object({ maxIterations: z.number().int().positive() }).optional(),
 });
 
 const timeoutsSchema = z.object({
