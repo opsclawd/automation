@@ -80,6 +80,15 @@ Any phase with a `fallbackProfile` but no explicit `fallbackTriggers` automatica
 
 ## Implementation
 
+### Structural log-line filtering (Issue #182)
+The watchdog scans opencode session log content for quota/provider error patterns. The session log embeds full tool I/O — agent-written code containing strings like `RESOURCE_EXHAUSTED` or `429` appeared as raw text and triggered false-positive SIGKILLs.
+**Fix:** Both `testQuotaPatterns()` and `testProviderErrorPatterns()` now filter to only structural opencode log lines before pattern matching. A structural line matches:
+```
+/^\s*(INFO|ERROR|WARN|DEBUG)\s+\d{4}-\d{2}-\d{2}T/
+```
+Lines not matching this prefix (tool output, code content, bash variables) are skipped. This prevents the false-positive scenario where an agent writes code containing quota-pattern strings via its `write`/`edit` tools.
+The classifier (`isOpenCodeLogLine`) is exported from `error-patterns.ts` and shared between both pattern-testing functions. It applies to both session log content (watchdog path) and stderr content (exit-handler path).
+
 ### `quota-patterns.ts` (shared module)
 
 Both the adapter and router import from this module — patterns are defined once, not duplicated:
@@ -233,6 +242,8 @@ For the adapter's per-poll call, this is fine (new content is usually a few line
 ### Adding a new quota pattern
 
 Add a regex to `QUOTA_PATTERNS` in `quota-patterns.ts`. No other code changes needed — the adapter's watchdog and router's `isQuotaError()` both use `testQuotaPatterns()` from the shared module.
+
+The structural log-line filter (`isOpenCodeLogLine`) applies automatically — new patterns only match inside lines with an opencode log prefix. If you need to test patterns against unstructured text, call the regex directly instead of using `testQuotaPatterns()`.
 
 ### Adding a new adapter watchdog
 
