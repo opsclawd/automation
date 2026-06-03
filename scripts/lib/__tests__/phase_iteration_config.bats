@@ -1,0 +1,68 @@
+#!/usr/bin/env bats
+
+# Tests for phase iteration limit config reading in ai-run-issue-v2.
+# We extract the config-reading block via awk and test it in isolation.
+
+setup() {
+  TMPDIR_TEST="$(mktemp -d)"
+  REPO_ROOT="$TMPDIR_TEST"
+  LOG_OUTPUT=""
+  # Stub log to capture output
+  log() { LOG_OUTPUT="${LOG_OUTPUT}$*\n"; }
+}
+
+teardown() {
+  rm -rf "$TMPDIR_TEST"
+}
+
+# Extract the config-reading block from the script.
+# The block starts at the "# ── Phase iteration limits" comment and ends
+# at the log line that follows the fi.
+_load_config_block() {
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  eval "$(awk '
+    /# ── Phase iteration limits from config/ { found=1 }
+    found {
+      print
+      if (/^log "Config:/) { found=0 }
+    }
+  ' "$SCRIPT_PATH")"
+}
+
+@test "defaults: when config file is missing, defaults are 5 and 10" {
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "5" ]
+  [ "$MAX_WHOLE_PR_FIX_ITERATIONS" = "10" ]
+}
+
+@test "reads reviewFix.maxIterations from config" {
+  echo '{"phases":{"reviewFix":{"maxIterations":7},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "7" ]
+}
+
+@test "reads wholePrFix.maxIterations from config" {
+  echo '{"phases":{"reviewFix":{"maxIterations":10},"implement":{"maxIterations":5},"wholePrFix":{"maxIterations":15}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$MAX_WHOLE_PR_FIX_ITERATIONS" = "15" ]
+}
+
+@test "falls back to default when wholePrFix key is absent" {
+  echo '{"phases":{"reviewFix":{"maxIterations":10},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$MAX_WHOLE_PR_FIX_ITERATIONS" = "10" ]
+}
+
+@test "falls back to defaults on malformed JSON" {
+  echo 'not json at all' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "5" ]
+  [ "$MAX_WHOLE_PR_FIX_ITERATIONS" = "10" ]
+}
+
+@test "logs effective limits on startup" {
+  echo '{"phases":{"reviewFix":{"maxIterations":8},"implement":{"maxIterations":5},"wholePrFix":{"maxIterations":12}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [[ "$LOG_OUTPUT" == *"reviewFix.maxIterations=8"* ]]
+  [[ "$LOG_OUTPUT" == *"wholePrFix.maxIterations=12"* ]]
+}
