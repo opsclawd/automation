@@ -571,6 +571,14 @@ rerun_reviewer_with_retry() {
     elif [[ "$reviewer_type" == "quality" ]]; then
       QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
     fi
+    local result_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
+    local md_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+    if validate_review_artifacts "$result_file" "$md_file"; then
+      log "  ${reviewer_type}-review-task-${task_n} non-infra re-run succeeded"
+      return 0
+    fi
+    log "  ${reviewer_type}-review-task-${task_n} non-infra re-run still failing"
+    return 1
   fi
 }
 
