@@ -9,8 +9,8 @@ export const QUOTA_PATTERNS = [
 export const PROVIDER_ERROR_PATTERNS = [
   /AI_APICallError/,
   /AI_APIConnectionError/,
-  /provider.*error/i,
-  /API error/i,
+  /\bProviderError:/i,
+  /\bAPIError:/i,
   /\b5\d{2}\b.*error/i,
   /RESOURCE_EXHAUSTED/i,
   ...QUOTA_PATTERNS,
