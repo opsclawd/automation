@@ -2550,6 +2550,7 @@ if [[ "$PHASE" == "validate" ]]; then
   # (plan.md, design.md, validation.md, etc.) are expected in the worktree
   # because ISSUES_DIR == WORKTREE_DIR and they are not in .gitignore.
   if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" "${ISSUES_DIR}/validation.result"
     orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
   fi
 
