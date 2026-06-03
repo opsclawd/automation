@@ -38,8 +38,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let stderr = '';
     let contractViolations: string[] = [];
     let watchdogInterval: NodeJS.Timeout | null = null;
+    let timeoutSignal: AbortSignal | undefined;
+    let isCanceled = false;
     try {
-      const timeoutSignal =
+      timeoutSignal =
         this.opts.timeoutMsDefault !== undefined
           ? AbortSignal.timeout(this.opts.timeoutMsDefault)
           : undefined;
@@ -83,40 +85,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
       exitCode = r.exitCode ?? 0;
-      if (watchdogKilled) {
-        outcome = 'failed';
-        stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
-      } else if (r.isCanceled) {
-        if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
-          outcome = 'timeout';
-        } else {
-          outcome = 'failed';
-          contractViolations = ['cancelled_by_orchestrator'];
-        }
-      } else if (exitCode !== 0) {
-        outcome = 'failed';
-      } else if (outcome === 'success') {
-        const combinedOutput = `${stdout}\n${stderr}`;
-        const providerMatch = testProviderErrorPatterns(combinedOutput);
-        if (providerMatch) {
-          outcome = 'failed';
-          contractViolations = ['provider_error'];
-          const quotaLine = testQuotaPatterns(combinedOutput);
-          if (quotaLine) {
-            stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
-          } else {
-            stderr = `PROVIDER_ERROR: ${providerMatch}`;
-          }
-        }
-      }
+      isCanceled = r.isCanceled;
     } catch (e) {
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
       outcome = 'failed';
       exitCode = 1;
       stderr = String((e as Error).message);
     }
-    writeFileSync(stdoutPath, stdout);
-    writeFileSync(stderrPath, stderr);
 
     const durationMs = Date.now() - start;
     let endCommitSha: string | undefined;
@@ -125,6 +100,43 @@ export class OpenCodeAgentAdapter implements AgentPort {
     } catch {
       contractViolations = [...contractViolations, 'missing_commit'];
     }
+
+    if (watchdogKilled) {
+      outcome = 'failed';
+      stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
+    } else if (isCanceled) {
+      if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
+        outcome = 'timeout';
+      } else {
+        outcome = 'failed';
+        contractViolations = ['cancelled_by_orchestrator'];
+      }
+    } else if (exitCode !== 0) {
+      outcome = 'failed';
+    } else if (outcome === 'success') {
+      const combinedOutput = `${stdout}\n${stderr}`;
+      const providerMatch = testProviderErrorPatterns(combinedOutput);
+      if (providerMatch) {
+        outcome = 'failed';
+        contractViolations = ['provider_error'];
+        const quotaLine = testQuotaPatterns(combinedOutput);
+        if (quotaLine) {
+          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+        } else {
+          stderr = `PROVIDER_ERROR: ${providerMatch}`;
+        }
+      } else if (
+        request.startCommitSha &&
+        endCommitSha === request.startCommitSha &&
+        stdout.trim().length === 0
+      ) {
+        outcome = 'failed';
+        contractViolations = ['no_output'];
+        stderr = 'NO_OUTPUT: agent exited 0 with empty stdout and no git changes';
+      }
+    }
+    writeFileSync(stdoutPath, stdout);
+    writeFileSync(stderrPath, stderr);
 
     const ret: AgentInvocationResult = {
       runtime: 'opencode',
