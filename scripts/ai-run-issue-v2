@@ -2150,7 +2150,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       read -r BASE_SHA HEAD_SHA <<< "$(get_task_review_range "$TASK_NUM")"
     fi
 
-    # Step 2: Initial spec + quality reviews, then fix loop (max 5 iterations).
+    # Step 2: Initial spec + quality reviews, then fix loop (max $MAX_REVIEW_FIX_ITERATIONS iterations).
     # We always run initial reviews here — even on resume. Reaching this point
     # on a resumed run means find_first_incomplete_task returned this task
     # because its status is "review-needed" (i.e. reviews are NOT both passing
@@ -2214,13 +2214,13 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if [[ "$SPEC_STATUS" == "SPEC_PASS" && "$QUALITY_STATUS" == "QUALITY_PASS" ]]; then
       log "  Task ${TASK_NUM}: both initial reviews pass — skipping fix loop"
     else
-    # Fix-review loop: agent fixes findings, then re-reviews, up to 5 times
-    while [[ $REVIEW_LOOPS -lt 5 ]]; do
+    # Fix-review loop: agent fixes findings, then re-reviews, up to $MAX_REVIEW_FIX_ITERATIONS times
+    while [[ $REVIEW_LOOPS -lt $MAX_REVIEW_FIX_ITERATIONS ]]; do
       REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
-      log "  Review-fix loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}"
+      log "  Review-fix loop ${REVIEW_LOOPS}/${MAX_REVIEW_FIX_ITERATIONS} for task ${TASK_NUM}"
       emit_event "fix-review" "info" "loop.iteration.started" \
-        "fix-review loop ${REVIEW_LOOPS}/5 for task ${TASK_NUM}" \
-        task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" max=5
+        "fix-review loop ${REVIEW_LOOPS}/${MAX_REVIEW_FIX_ITERATIONS} for task ${TASK_NUM}" \
+        task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" max="${MAX_REVIEW_FIX_ITERATIONS}"
       log "  Cancel window: press Ctrl+C within 10s to abort..."
       sleep 10
 
@@ -2463,7 +2463,7 @@ with open(path, 'w') as f:
     done
     fi
 
-    if [[ $REVIEW_LOOPS -ge 5 ]]; then
+    if [[ $REVIEW_LOOPS -ge $MAX_REVIEW_FIX_ITERATIONS ]]; then
       emit_event "fix-review" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
