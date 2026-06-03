@@ -528,11 +528,14 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     return 1
   }
 
-  # Filter out IDs the agent has already replied to (PROCESSED ∪ REPLIED) so
-  # the agent is never re-prompted for a thread it already answered.
+  # Filter out already-handled IDs using comment-state.json.
+  # Blocked, replied, and processed IDs are excluded from prompts.
   local known_ids
-  known_ids=$(cat "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE" 2>/dev/null \
-    | tr '\n' ',' | sed 's/,$//')
+  if [[ -f "$COMMENT_STATE_FILE" ]]; then
+    known_ids=$(jq -r 'to_entries[] | select(.value.state == "processed" or .value.state == "replied" or .value.state == "blocked") | .key' "$COMMENT_STATE_FILE" | tr '\n' ',' | sed 's/,$//')
+  else
+    known_ids=""
+  fi
   if [[ -n "$known_ids" ]]; then
     comments=$(echo "$all_comments" | jq --arg ids "$known_ids" '
       [ .[] | .id as $cid
@@ -542,6 +545,11 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   else
     comments="$all_comments"
   fi
+
+  # Seed new comment IDs into comment-state.json
+  local new_comment_ids
+  new_comment_ids=$(echo "$comments" | jq -r '.[].id' 2>/dev/null | tr '\n' ' ')
+  init_comment_state "$new_comment_ids"
 
   local total_comment_count
   total_comment_count=$(echo "$all_comments" | jq 'length' 2>/dev/null || echo 0)
