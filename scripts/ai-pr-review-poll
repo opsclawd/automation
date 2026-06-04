@@ -634,6 +634,10 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
           fi
           # For fixed outcomes, set build_verified since reverify_ok confirms
           # the build passed (verify_build_passes ran and succeeded).
+          # Re-read outcome from JSON because the demotion block above may have
+          # cleared it to null; using the stale local variable would incorrectly
+          # mark a just-demoted comment as build_verified.
+          outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
           if [[ "$outcome" == "fixed" ]]; then
             jq --arg cid "$cid" '.[$cid].build_verified = true' \
               "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
@@ -895,8 +899,17 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     fi
   fi
 
-  # Merge agent outcomes into per-comment state
-  update_comment_outcomes "$OUTCOMES_FILE"
+  # Merge agent outcomes into per-comment state — only when the agent
+  # produced a valid result. When _agent_ec != 0, the outcomes file is
+  # empty, and update_comment_outcomes would mark every pending comment
+  # as "unresolved" and increment their attempts, hitting the block
+  # threshold on transient failures without the agent ever having
+  # handled those comments.
+  if ! $AGENT_FAILED; then
+    update_comment_outcomes "$OUTCOMES_FILE"
+  else
+    log "  Skipping outcome merge — agent failed or produced no valid result"
+  fi
 
   rm -f "$prompt_file"
 
