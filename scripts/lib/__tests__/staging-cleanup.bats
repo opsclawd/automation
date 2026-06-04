@@ -78,6 +78,22 @@ run_stale_sweep() {
   while IFS= read -r -d '' _stale_dir; do
     if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
       rmdir "$_stale_dir" 2>/dev/null || true
+    elif [[ -n "$(find "$_stale_dir" -maxdepth 1 -name '.owner-*' ! -name '.owner-* *' -print 2>/dev/null)" ]]; then
+      _all_markers_dead=true
+      for _marker in "$_stale_dir"/.owner-*; do
+        [[ -f "$_marker" ]] || continue
+        _marker_pid="${_marker##*.owner-}"
+        if [[ "$_marker_pid" =~ ^[0-9]+$ ]] && kill -0 "$_marker_pid" 2>/dev/null; then
+          _all_markers_dead=false
+          break
+        fi
+      done
+      if $_all_markers_dead; then
+        rm -f "$_stale_dir"/.owner-*
+        if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
+          rmdir "$_stale_dir" 2>/dev/null || true
+        fi
+      fi
     fi
   done < <(find "$REPO_ROOT/.ai-worktrees" -maxdepth 1 -type d -name 'issue-*-staging' -mmin +5 -print0 2>/dev/null)
 }
@@ -128,4 +144,56 @@ run_stale_sweep() {
   # No issue-*-staging dirs — find returns nothing
   run_stale_sweep
   # No error — loop body never executes
+}
+
+@test "stale sweep removes owner-marker-only dir when owning process is dead" {
+  mkdir -p "$STAGING_BASE/issue-5-staging"
+  : > "$STAGING_BASE/issue-5-staging/.owner-99999"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-5-staging"
+  run_stale_sweep
+  # Dir had only an owner marker for a dead PID — must be removed
+  [[ ! -d "$STAGING_BASE/issue-5-staging" ]]
+}
+
+@test "stale sweep removes owner-marker-only dir with multiple dead PIDs" {
+  mkdir -p "$STAGING_BASE/issue-5-staging"
+  : > "$STAGING_BASE/issue-5-staging/.owner-99998"
+  : > "$STAGING_BASE/issue-5-staging/.owner-99999"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-5-staging"
+  run_stale_sweep
+  # All markers belong to dead PIDs — must be removed
+  [[ ! -d "$STAGING_BASE/issue-5-staging" ]]
+}
+
+@test "stale sweep preserves owner-marker-only dir when owning process is alive" {
+  mkdir -p "$STAGING_BASE/issue-5-staging"
+  # Use current shell's PID — it IS alive
+  : > "$STAGING_BASE/issue-5-staging/.owner-${BASHPID}"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-5-staging"
+  run_stale_sweep
+  # Owner marker belongs to a live process — must survive
+  [[ -d "$STAGING_BASE/issue-5-staging" ]]
+  [[ -f "$STAGING_BASE/issue-5-staging/.owner-${BASHPID}" ]]
+}
+
+@test "stale sweep preserves dir with mixed dead and live owner markers" {
+  mkdir -p "$STAGING_BASE/issue-5-staging"
+  : > "$STAGING_BASE/issue-5-staging/.owner-99999"
+  # Current shell's PID — alive
+  : > "$STAGING_BASE/issue-5-staging/.owner-${BASHPID}"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-5-staging"
+  run_stale_sweep
+  # At least one marker belongs to a live process — must survive
+  [[ -d "$STAGING_BASE/issue-5-staging" ]]
+}
+
+@test "stale sweep preserves dir with owner marker and real content" {
+  mkdir -p "$STAGING_BASE/issue-5-staging"
+  : > "$STAGING_BASE/issue-5-staging/.owner-99999"
+  echo "data" > "$STAGING_BASE/issue-5-staging/issue.json"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-5-staging"
+  run_stale_sweep
+  # Dir has real content beyond owner markers — must survive
+  [[ -d "$STAGING_BASE/issue-5-staging" ]]
+  [[ -f "$STAGING_BASE/issue-5-staging/issue.json" ]]
 }

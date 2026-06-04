@@ -822,6 +822,26 @@ while IFS= read -r -d '' _stale_dir; do
   if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
     rmdir "$_stale_dir" 2>/dev/null || true
     echo "[$(date +%H:%M:%S)] Cleanup: removed empty staging dir ${_stale_dir}" >&2
+  elif [[ -n "$(find "$_stale_dir" -maxdepth 1 -name '.owner-*' ! -name '.owner-* *' -print 2>/dev/null)" ]]; then
+    # Dir contains only owner-marker files from dead processes (SIGKILL / host
+    # restart). If all markers belong to PIDs no longer running, remove them
+    # so the dir becomes empty and can be rmdir'd below on the next sweep.
+    _all_markers_dead=true
+    for _marker in "$_stale_dir"/.owner-*; do
+      [[ -f "$_marker" ]] || continue
+      _marker_pid="${_marker##*.owner-}"
+      if [[ "$_marker_pid" =~ ^[0-9]+$ ]] && kill -0 "$_marker_pid" 2>/dev/null; then
+        _all_markers_dead=false
+        break
+      fi
+    done
+    if $_all_markers_dead; then
+      rm -f "$_stale_dir"/.owner-*
+      if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
+        rmdir "$_stale_dir" 2>/dev/null || true
+        echo "[$(date +%H:%M:%S)] Cleanup: removed stale owner-only staging dir ${_stale_dir}" >&2
+      fi
+    fi
   fi
 done < <(find "${REPO_ROOT}/.ai-worktrees" -maxdepth 1 -type d -name 'issue-*-staging' -mmin +5 -print0 2>/dev/null)
 
