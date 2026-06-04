@@ -1,10 +1,32 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ZodError } from 'zod';
 import { ConfigError } from './errors.js';
 import { orchestratorConfigSchema, type OrchestratorConfig } from './schema.js';
 
 const CONFIG_FILENAME = '.ai-orchestrator.json';
+const LOCAL_CONFIG_FILENAME = '.ai-orchestrator.local.json';
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function deepMerge(base: unknown, override: unknown): unknown {
+  if (isPlainObject(base) && isPlainObject(override)) {
+    const result: Record<string, unknown> = { ...base };
+    for (const key of Object.keys(override)) {
+      if (key === '__proto__') {
+        continue;
+      }
+      result[key] = deepMerge(
+        (base as Record<string, unknown>)[key],
+        (override as Record<string, unknown>)[key],
+      );
+    }
+    return result;
+  }
+  return override;
+}
 
 export function loadConfig(repoRoot: string): OrchestratorConfig {
   const path = resolve(repoRoot, CONFIG_FILENAME);
@@ -25,9 +47,33 @@ export function loadConfig(repoRoot: string): OrchestratorConfig {
   } catch (err) {
     throw new ConfigError(`Invalid JSON in ${CONFIG_FILENAME}: ${(err as Error).message}`, err);
   }
+  const localPath = resolve(repoRoot, LOCAL_CONFIG_FILENAME);
+  const hasLocal = existsSync(localPath);
+  if (hasLocal) {
+    let localRaw: string;
+    try {
+      localRaw = readFileSync(localPath, 'utf8');
+    } catch (err) {
+      throw new ConfigError(
+        `Failed to read ${LOCAL_CONFIG_FILENAME}: ${(err as Error).message}`,
+        err,
+      );
+    }
+    let localJson: unknown;
+    try {
+      localJson = JSON.parse(localRaw);
+    } catch (err) {
+      throw new ConfigError(
+        `Invalid JSON in ${LOCAL_CONFIG_FILENAME}: ${(err as Error).message}`,
+        err,
+      );
+    }
+    json = deepMerge(json, localJson);
+  }
   const parsed = orchestratorConfigSchema.safeParse(json);
   if (!parsed.success) {
-    throw new ConfigError(formatZodError(parsed.error), parsed.error);
+    const extraMsg = hasLocal ? ` (validated with overrides from ${LOCAL_CONFIG_FILENAME})` : '';
+    throw new ConfigError(`${formatZodError(parsed.error)}${extraMsg}`, parsed.error);
   }
   return parsed.data;
 }

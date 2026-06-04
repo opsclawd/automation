@@ -16,3 +16,4 @@ test-results/
 .antigravitycli/
 .claude/
 cache/
+.ai-orchestrator.local.json

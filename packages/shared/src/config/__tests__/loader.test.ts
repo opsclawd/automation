@@ -1,15 +1,60 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../loader.js';
 import { ConfigError } from '../errors.js';
 
+const createdDirs: string[] = [];
+
 function makeRepo(contents?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'ai-orch-cfg-'));
+  createdDirs.push(dir);
   if (contents !== undefined) writeFileSync(join(dir, '.ai-orchestrator.json'), contents);
   return dir;
 }
+
+afterEach(() => {
+  for (const dir of createdDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  createdDirs.length = 0;
+});
+
+function writeLocalConfig(dir: string, contents: string): void {
+  writeFileSync(join(dir, '.ai-orchestrator.local.json'), contents);
+}
+
+const BASE_CONFIG = JSON.stringify({
+  validation: { commands: ['pnpm build'], timeout: 300 },
+  phases: {
+    skip: [],
+    reviewFix: { maxIterations: 10 },
+    implement: { maxIterations: 5 },
+  },
+  timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+});
+
+const BASE_WITH_AGENT = JSON.stringify({
+  validation: { commands: ['pnpm build'], timeout: 300 },
+  phases: {
+    skip: [],
+    reviewFix: { maxIterations: 10 },
+    implement: { maxIterations: 5 },
+  },
+  timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  agent: {
+    defaultProfile: 'senior',
+    profiles: {
+      senior: { runtime: 'opencode', provider: 'openai', model: 'gpt-4', timeoutMinutes: 5 },
+      junior: { runtime: 'opencode', provider: 'openai', model: 'gpt-3.5', timeoutMinutes: 3 },
+    },
+    phaseProfiles: {
+      implement: { profile: 'senior' },
+      review: { profile: 'junior' },
+    },
+  },
+});
 
 describe('loadConfig', () => {
   it('parses a valid config', () => {
@@ -72,5 +117,77 @@ describe('loadConfig', () => {
     );
     const cfg = loadConfig(repo);
     expect(cfg.phases.skip).toEqual([]);
+  });
+});
+
+describe('loadConfig with local override', () => {
+  it('returns base config when no local file exists', () => {
+    const repo = makeRepo(BASE_WITH_AGENT);
+    const cfg = loadConfig(repo);
+    expect(cfg.agent!.phaseProfiles.implement.profile).toBe('senior');
+  });
+  it('deep-merges local config on top of base config', () => {
+    const repo = makeRepo(BASE_WITH_AGENT);
+    writeLocalConfig(
+      repo,
+      JSON.stringify({
+        agent: {
+          phaseProfiles: {
+            implement: { profile: 'junior' },
+          },
+        },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.agent!.phaseProfiles.implement.profile).toBe('junior');
+    expect(cfg.agent!.phaseProfiles.review.profile).toBe('junior');
+    expect(cfg.agent!.profiles.senior).toBeDefined();
+    expect(cfg.validation.commands).toEqual(['pnpm build']);
+  });
+  it('throws ConfigError for invalid JSON in local config', () => {
+    const repo = makeRepo(BASE_CONFIG);
+    writeLocalConfig(repo, '{ not json');
+    expect(() => loadConfig(repo)).toThrow(ConfigError);
+    expect(() => loadConfig(repo)).toThrow(/\.ai-orchestrator\.local\.json/);
+  });
+  it('throws ConfigError when merged result fails schema', () => {
+    const repo = makeRepo(BASE_WITH_AGENT);
+    writeLocalConfig(
+      repo,
+      JSON.stringify({
+        agent: {
+          phaseProfiles: {
+            implement: { profile: 'nonexistent' },
+          },
+        },
+      }),
+    );
+    expect(() => loadConfig(repo)).toThrow(ConfigError);
+    expect(() => loadConfig(repo)).toThrow(/phaseProfiles\.implement\.profile/);
+  });
+  it('allows local file to add new profile entries', () => {
+    const repo = makeRepo(BASE_WITH_AGENT);
+    writeLocalConfig(
+      repo,
+      JSON.stringify({
+        agent: {
+          profiles: {
+            fast: {
+              runtime: 'opencode',
+              provider: 'openai',
+              model: 'fast-model',
+              timeoutMinutes: 2,
+            },
+          },
+          phaseProfiles: {
+            compound: { profile: 'fast' },
+          },
+        },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.agent!.profiles.fast).toBeDefined();
+    expect(cfg.agent!.profiles.fast.model).toBe('fast-model');
+    expect(cfg.agent!.phaseProfiles.compound.profile).toBe('fast');
   });
 });
