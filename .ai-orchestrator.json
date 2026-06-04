@@ -107,7 +107,7 @@
     "phaseProfiles": {
       "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
-      "implement": { "profile": "builder", "fallbackProfile": "qwen" },
+      "implement": { "profile": "builder", "fallbackProfile": "deepseek" },
       "quality-review": { "profile": "junior", "fallbackProfile": "builder" },
       "spec-review": { "profile": "junior", "fallbackProfile": "builder" },
       "fix-review": { "profile": "minimax", "fallbackProfile": "junior" },
