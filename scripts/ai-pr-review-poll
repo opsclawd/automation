@@ -626,7 +626,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
                 # Demote to pending WITHOUT incrementing attempts — update_comment_outcomes
                 # already counted this agent run for this comment.
                 jq --arg cid "$cid" \
-                  '.[$cid].commit_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
+                  '.[$cid].commit_verified = false | .[$cid].build_verified = false | .[$cid].reply_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
                   "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
                   mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
               fi
@@ -1087,15 +1087,15 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
           jq --arg cid "$cid" '.[$cid].commit_verified = true' \
             "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
-        else
-          warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — demoting to pending for re-prompt"
-          # Demote to pending WITHOUT incrementing attempts — update_comment_outcomes
-          # already counted this agent run for this comment.
-          jq --arg cid "$cid" \
-            '.[$cid].commit_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
-            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
-            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
-        fi
+         else
+           warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — demoting to pending for re-prompt"
+           # Demote to pending WITHOUT incrementing attempts — update_comment_outcomes
+           # already counted this agent run for this comment.
+           jq --arg cid "$cid" \
+             '.[$cid].commit_verified = false | .[$cid].build_verified = false | .[$cid].reply_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
+             "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+         fi
       fi
     fi
   done

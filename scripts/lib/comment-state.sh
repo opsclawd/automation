@@ -162,11 +162,17 @@ update_comment_outcomes() {
              else "UNRESOLVED" end)
         | .value.commit_sha = ($outcomes[.key].commit_sha // .value.commit_sha)
         | .value.no_fix_reason = ($outcomes[.key].reason // .value.no_fix_reason)
+        | .value.reply_verified = false
+        | .value.commit_verified = false
+        | .value.build_verified = false
       elif .value.state == "pending" then
         .value.outcome = "unresolved"
         | .value.last_result = "MISSING_OUTCOME"
         | .value.last_poll = $poll
         | .value.attempts = ((.value.attempts // 0) + 1)
+        | .value.reply_verified = false
+        | .value.commit_verified = false
+        | .value.build_verified = false
       else . end
     ) | from_entries' \
     "$COMMENT_STATE_FILE" "$outcomes_file" > "${COMMENT_STATE_FILE}.tmp" && \

@@ -143,6 +143,20 @@ teardown() {
   [ "$output" = "unresolved" ]
 }
 
+@test "update_comment_outcomes resets verification flags on retry" {
+  printf '{"400": {"state": "pending", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc1234", "reply_verified": true, "commit_verified": true, "build_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  echo '{"400": {"outcome": "fixed", "commit_sha": "def5678"}}' > "${TMPDIR_TEST}/outcomes.json"
+  update_comment_outcomes "${TMPDIR_TEST}/outcomes.json"
+  run jq -r '.["400"].reply_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run jq -r '.["400"].commit_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run jq -r '.["400"].build_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run jq -r '.["400"].commit_sha' "$COMMENT_STATE_FILE"
+  [ "$output" = "def5678" ]
+}
+
 # check_stuck_comments tests
 @test "check_stuck_comments blocks comments with 2+ unresolved attempts" {
   printf '{"555": {"state": "pending", "attempts": 2, "last_poll": 2, "last_result": "unresolved", "outcome": "unresolved", "commit_sha": null, "reply_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
@@ -337,5 +351,32 @@ teardown() {
 @test "incomplete outcomes stay pending on reply instead of moving to replied" {
   printf '{"900": {"state": "pending", "attempts": 0, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": null, "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
   run can_transition_to_processed "900"
+  [ "$status" -ne 0 ]
+}
+
+@test "update_comment_outcomes resets verification flags for missing entries (pending comments)" {
+  printf '{"100": {"state": "pending", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc1234", "reply_verified": true, "commit_verified": true, "build_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  echo '{}' > "${TMPDIR_TEST}/outcomes.json"
+  update_comment_outcomes "${TMPDIR_TEST}/outcomes.json"
+  run jq -r '.["100"].reply_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run jq -r '.["100"].commit_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run jq -r '.["100"].build_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+}
+
+@test "demotion to pending clears all verification flags preventing stale transitions" {
+  printf '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc1234def5678", "reply_verified": true, "commit_verified": true, "build_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  jq '.["400"].commit_verified = false | .["400"].build_verified = false | .["400"].reply_verified = false | .["400"].outcome = null | .["400"].commit_sha = null | .["400"].state = "pending"' \
+    "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+    mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+  run jq -r '.["400"].reply_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run jq -r '.["400"].build_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run jq -r '.["400"].commit_verified' "$COMMENT_STATE_FILE"
+  [ "$output" = "false" ]
+  run can_transition_to_processed "400"
   [ "$status" -ne 0 ]
 }
