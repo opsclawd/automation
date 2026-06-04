@@ -52,32 +52,37 @@ teardown() {
   [[ ! -d "$ISSUE_STAGING_DIR" ]]
 }
 
-@test "stale sweep removes empty issue-*-staging dirs" {
+# Helper: run the stale sweep using find -mmin (matches production logic)
+run_stale_sweep() {
+  while IFS= read -r -d '' _stale_dir; do
+    if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
+      rmdir "$_stale_dir" 2>/dev/null || true
+    fi
+  done < <(find "$REPO_ROOT/.ai-worktrees" -maxdepth 1 -type d -name 'issue-*-staging' -mmin +5 -print0 2>/dev/null)
+}
+
+@test "stale sweep removes empty issue-*-staging dirs older than 5 minutes" {
   mkdir -p "$STAGING_BASE/issue-5-staging"
   mkdir -p "$STAGING_BASE/issue-22-staging"
   mkdir -p "$STAGING_BASE/issue-64-staging"
-  [[ -d "$STAGING_BASE/issue-5-staging" ]]
-  [[ -d "$STAGING_BASE/issue-22-staging" ]]
-  [[ -d "$STAGING_BASE/issue-64-staging" ]]
-  for _stale_dir in "${REPO_ROOT}/.ai-worktrees/"issue-*-staging; do
-    if [[ -d "$_stale_dir" ]] && [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
-      rmdir "$_stale_dir" 2>/dev/null || true
-    fi
-  done
+  # Backdate dirs to simulate they are older than 5 minutes
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-5-staging"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-22-staging"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-64-staging"
+  run_stale_sweep
   [[ ! -d "$STAGING_BASE/issue-5-staging" ]]
   [[ ! -d "$STAGING_BASE/issue-22-staging" ]]
   [[ ! -d "$STAGING_BASE/issue-64-staging" ]]
 }
 
-@test "stale sweep preserves non-empty issue-*-staging dirs" {
+@test "stale sweep preserves non-empty issue-*-staging dirs older than 5 minutes" {
   mkdir -p "$STAGING_BASE/issue-5-staging"
   echo "data" > "$STAGING_BASE/issue-5-staging/issue.json"
   mkdir -p "$STAGING_BASE/issue-22-staging"
-  for _stale_dir in "${REPO_ROOT}/.ai-worktrees/"issue-*-staging; do
-    if [[ -d "$_stale_dir" ]] && [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
-      rmdir "$_stale_dir" 2>/dev/null || true
-    fi
-  done
+  # Backdate dirs
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-5-staging"
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-22-staging"
+  run_stale_sweep
   # issue-5 has content — must survive
   [[ -d "$STAGING_BASE/issue-5-staging" ]]
   [[ -f "$STAGING_BASE/issue-5-staging/issue.json" ]]
@@ -85,12 +90,21 @@ teardown() {
   [[ ! -d "$STAGING_BASE/issue-22-staging" ]]
 }
 
+@test "stale sweep skips recently created empty staging dirs" {
+  mkdir -p "$STAGING_BASE/issue-5-staging"
+  mkdir -p "$STAGING_BASE/issue-22-staging"
+  # issue-5 is recent (just created) — must NOT be swept
+  # issue-22 is old — must be swept
+  touch -d '10 minutes ago' "$STAGING_BASE/issue-22-staging"
+  run_stale_sweep
+  # issue-5 is too new — must survive even though empty
+  [[ -d "$STAGING_BASE/issue-5-staging" ]]
+  # issue-22 is old and empty — must be removed
+  [[ ! -d "$STAGING_BASE/issue-22-staging" ]]
+}
+
 @test "stale sweep is a no-op when no staging dirs exist" {
-  # No issue-*-staging dirs — the glob will not match
-  for _stale_dir in "${REPO_ROOT}/.ai-worktrees/"issue-*-staging; do
-    if [[ -d "$_stale_dir" ]] && [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
-      rmdir "$_stale_dir" 2>/dev/null || true
-    fi
-  done
+  # No issue-*-staging dirs — find returns nothing
+  run_stale_sweep
   # No error — loop body never executes
 }

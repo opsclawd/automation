@@ -813,14 +813,17 @@ trap cleanup_staging EXIT
 mkdir -p "${ISSUES_DIR}"
 
 # One-time sweep: remove empty staging dirs left behind by prior runs.
-# rmdir only removes truly empty directories — a non-empty staging dir from
-# an active read_issue phase is never touched.
-for _stale_dir in "${REPO_ROOT}/.ai-worktrees/"issue-*-staging; do
-  if [[ -d "$_stale_dir" ]] && [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
+# Only dirs older than 5 minutes are swept — this avoids a race condition
+# where a concurrent run has just done mkdir -p in read_issue but hasn't
+# written its first file yet. The age threshold covers that window while
+# still cleaning up truly stale dirs from prior runs.
+# rmdir (not rm -rf) ensures only truly empty directories are removed.
+while IFS= read -r -d '' _stale_dir; do
+  if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
     rmdir "$_stale_dir" 2>/dev/null || true
     log "Cleanup: removed empty staging dir ${_stale_dir}"
   fi
-done
+done < <(find "${REPO_ROOT}/.ai-worktrees" -maxdepth 1 -type d -name 'issue-*-staging' -mmin +5 -print0 2>/dev/null)
 
 echo "" > "${ISSUES_DIR}/orchestrator.log"
 

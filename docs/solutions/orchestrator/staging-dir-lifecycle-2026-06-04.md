@@ -25,7 +25,8 @@ consumes them. Same class of bug as the `seed_excludes` conditional-logic gap.
 2. Add a `trap cleanup_staging EXIT` handler to clean up the staging dir on
    any exit path (success, failure, signal).
 3. Add a one-time sweep of empty `issue-*-staging` dirs on startup using
-   `rmdir` (safe — only removes truly empty dirs).
+   `find -mmin +5` + `rmdir` (safe — only removes truly empty dirs older
+   than 5 minutes, avoiding a race with concurrent runs).
 
 ## Pattern
 
