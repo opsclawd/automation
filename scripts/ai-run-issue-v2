@@ -811,7 +811,6 @@ cleanup_staging() {
 trap cleanup_staging EXIT
 
 mkdir -p "${ISSUES_DIR}"
-mkdir -p "${ISSUE_STAGING_DIR}"
 echo "" > "${ISSUES_DIR}/orchestrator.log"
 
 log "=== Starting orchestrator for issue #${ISSUE_NUM} ==="
@@ -1012,6 +1011,9 @@ if [[ "$PHASE" == "read_issue" ]]; then
     orchestrator_fail "read_issue phase reached but progress artifacts exist (design.md/plan.md). Likely a resume-detection bug. Use ORCHESTRATOR_PHASE=implement to force resume."
   fi
 
+  # Create staging dir only when it will be used (read_issue phase).
+  # A trap EXIT handler (cleanup_staging) ensures cleanup on all exit paths.
+  mkdir -p "${ISSUE_STAGING_DIR}"
   # Fetch issue — write to staging dir (not worktree, which gets rm -rf'd below)
   gh issue view "$ISSUE_NUM" \
     --json number,title,body,url,labels,comments,state \
