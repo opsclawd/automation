@@ -668,7 +668,8 @@ describe('OpenCodeAgentAdapter', () => {
       const elapsed = Date.now() - start;
       expect(r.outcome).toBe('failed');
       expect(elapsed).toBeLessThan(10000);
-      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+      expect(r.contractViolations).toContain('provider_error');
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
     } finally {
       clearTimeout(timer);
       rmSync(sessionLogDir, { recursive: true });

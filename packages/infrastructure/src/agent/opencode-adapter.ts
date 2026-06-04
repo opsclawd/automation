@@ -21,6 +21,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
 
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     let watchdogKilled = false;
+    let watchdogKilledType: 'quota' | 'provider' | null = null;
     let watchdogMatch = '';
 
     const bin = this.opts.binaryPath ?? 'opencode';
@@ -33,6 +34,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     const stderrPath = join(invocationDir, 'stderr.log');
 
     const start = Date.now();
+    const initialLogOffsets = this.captureInitialSessionLogOffsets();
     let outcome: AgentInvocationResult['outcome'] = 'success';
     let exitCode = 0;
     let stdout = '';
@@ -78,8 +80,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
       watchdogInterval = this.startWatchdog(
         child as ReturnType<typeof execa>,
         start,
-        (match: string) => {
+        (match: string, type: 'quota' | 'provider') => {
           watchdogKilled = true;
+          watchdogKilledType = type;
           watchdogMatch = match;
         },
       );
@@ -87,7 +90,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       const r = await child;
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
 
-      postExit = this.scanSessionLogsPostExit(start);
+      postExit = this.scanSessionLogsPostExit(start, initialLogOffsets);
 
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
@@ -96,7 +99,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
 
       if (!watchdogKilled && postExit.quotaMatch) {
         watchdogKilled = true;
+        watchdogKilledType = 'quota';
         watchdogMatch = postExit.quotaMatch;
+      }
+      if (!watchdogKilled && watchdogKilledType === null && postExit.providerMatch) {
+        watchdogKilled = true;
+        watchdogKilledType = 'provider';
+        watchdogMatch = postExit.providerMatch;
       }
     } catch (e) {
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
@@ -116,8 +125,20 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let stderrForLog = stderr;
     if (watchdogKilled) {
       outcome = 'failed';
-      stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
-      stderrForLog = `QUOTA_EXCEEDED: ${watchdogMatch}\n${stderrForLog}`;
+      if (watchdogKilledType === 'quota') {
+        stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
+        stderrForLog = `QUOTA_EXCEEDED: ${watchdogMatch}\n${stderrForLog}`;
+      } else {
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(watchdogMatch);
+        if (quotaLine) {
+          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderr = `PROVIDER_ERROR: ${watchdogMatch}`;
+          stderrForLog = `PROVIDER_ERROR: ${watchdogMatch}\n${stderrForLog}`;
+        }
+      }
     } else if (isCanceled) {
       if (timeoutSignal?.aborted && !request.abortSignal?.aborted) {
         outcome = 'timeout';
@@ -127,10 +148,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
-      const providerMatch = testProviderErrorPatterns(stderr);
+      const stderrProviderMatch = testProviderErrorPatterns(stderr);
+      const postExitProviderMatch = postExit?.providerMatch ?? null;
+      const providerMatch = stderrProviderMatch || postExitProviderMatch;
       if (providerMatch) {
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr);
+        const stderrQuotaLine = testQuotaPatterns(stderr);
+        const postExitQuotaLine = postExitProviderMatch && testQuotaPatterns(postExitProviderMatch);
+        const quotaLine = stderrQuotaLine || postExitQuotaLine;
         if (quotaLine) {
           stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
         } else {
@@ -143,7 +168,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       if (providerMatch) {
         outcome = 'failed';
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr);
+        const quotaLine = testQuotaPatterns(stderr) || testQuotaPatterns(providerMatch);
         if (quotaLine) {
           stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
           stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
@@ -181,10 +206,31 @@ export class OpenCodeAgentAdapter implements AgentPort {
     return ret;
   }
 
-  private scanSessionLogsPostExit(startTime: number): {
-    quotaMatch: string | null;
-    providerMatch: string | null;
-  } {
+  private captureInitialSessionLogOffsets(): Map<string, number> {
+    const offsets = new Map<string, number>();
+    const sessionLogDir =
+      this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
+    try {
+      if (!statSync(sessionLogDir).isDirectory()) return offsets;
+      const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
+      for (const f of files) {
+        const logPath = join(sessionLogDir, f);
+        try {
+          offsets.set(logPath, statSync(logPath).size);
+        } catch {
+          // File may have been removed between readdir and stat — ignore
+        }
+      }
+    } catch {
+      // Directory may not exist yet — start with empty offsets
+    }
+    return offsets;
+  }
+
+  private scanSessionLogsPostExit(
+    startTime: number,
+    initialOffsets: Map<string, number>,
+  ): { quotaMatch: string | null; providerMatch: string | null } {
     const sessionLogDir =
       this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
 
@@ -195,20 +241,25 @@ export class OpenCodeAgentAdapter implements AgentPort {
     }
 
     const startTimeSec = startTime / 1000;
+    const mtimeGraceSec = 2;
     let quotaMatch: string | null = null;
     let providerMatch: string | null = null;
 
     try {
       const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
       for (const f of files) {
-        const mtime = statSync(join(sessionLogDir, f)).mtimeMs / 1000;
-        if (mtime < startTimeSec) continue;
-        const content = readFileSync(join(sessionLogDir, f), 'utf-8');
+        const logPath = join(sessionLogDir, f);
+        const mtime = statSync(logPath).mtimeMs / 1000;
+        if (mtime < startTimeSec - mtimeGraceSec) continue;
+        const initialOffset = initialOffsets.get(logPath) ?? 0;
+        const content = readFileSync(logPath, 'utf-8');
+        const newContent = content.slice(initialOffset);
+        if (!newContent) continue;
         if (!quotaMatch) {
-          quotaMatch = testQuotaPatterns(content, { structuralOnly: true });
+          quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
         }
         if (!providerMatch) {
-          providerMatch = testProviderErrorPatterns(content, { structuralOnly: true });
+          providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
         }
         if (quotaMatch && providerMatch) break;
       }
@@ -222,7 +273,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
   private startWatchdog(
     child: ReturnType<typeof execa>,
     startTime: number,
-    onQuota: (match: string) => void,
+    onKilled: (match: string, type: 'quota' | 'provider') => void,
   ): NodeJS.Timeout | null {
     const sessionLogDir =
       this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
@@ -236,6 +287,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     const pollMs = this.opts.quotaPollMs ?? 2000;
     const logOffsets = new Map<string, number>();
     const startTimeSec = startTime / 1000;
+    const mtimeGraceSec = 2;
 
     return setInterval(() => {
       try {
@@ -243,10 +295,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
         if (files.length === 0) return;
 
         for (const f of files) {
-          const mtime = statSync(join(sessionLogDir, f)).mtimeMs / 1000;
-          if (mtime < startTimeSec) continue;
-
           const logPath = join(sessionLogDir, f);
+          const mtime = statSync(logPath).mtimeMs / 1000;
+          if (mtime < startTimeSec - mtimeGraceSec) continue;
+
           const prevOffset = logOffsets.get(logPath) ?? 0;
           const size = statSync(logPath).size;
           if (size <= prevOffset) continue;
@@ -257,13 +309,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
 
           const quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
           if (quotaMatch) {
-            onQuota(quotaMatch);
+            onKilled(quotaMatch, 'quota');
             child.kill('SIGKILL');
             return;
           }
           const providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
           if (providerMatch) {
-            onQuota(providerMatch);
+            onKilled(providerMatch, 'provider');
             child.kill('SIGKILL');
             return;
           }

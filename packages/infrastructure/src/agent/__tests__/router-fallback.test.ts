@@ -1,4 +1,6 @@
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
@@ -599,7 +601,8 @@ describe('AgentRuntimeRouter fallback', () => {
     });
 
     it('triggers quota_exceeded on crofai "Not Enough Credits" in stderr', async () => {
-      const stderrPath = '/tmp/test-stderr-crofai-qe.log';
+      const tmpDir = mkdtempSync(join(tmpdir(), 'router-fallback-crofai-qe-'));
+      const stderrPath = join(tmpDir, 'stderr.log');
       writeFileSync(
         stderrPath,
         'QUOTA_EXCEEDED: ERROR 2026-06-03T12:00:04.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}',
@@ -639,7 +642,7 @@ describe('AgentRuntimeRouter fallback', () => {
         expect(rows.length).toBe(2);
         expect(events[0].metadata.triggerReason).toBe('quota_exceeded');
       } finally {
-        if (cleanup) unlinkSync(stderrPath);
+        if (cleanup) rmSync(tmpDir, { recursive: true, force: true });
       }
     });
   });
