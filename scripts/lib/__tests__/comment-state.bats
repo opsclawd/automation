@@ -311,3 +311,23 @@ teardown() {
   run jq -r '.["600"].state' "$COMMENT_STATE_FILE"
   [ "$output" = "blocked" ]
 }
+
+@test "incomplete fixed outcome (no commit_sha) at threshold is blocked" {
+  printf '{"700": {"state": "pending", "attempts": 2, "last_poll": 2, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": null, "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  check_stuck_comments
+  run jq -r '.["700"].state' "$COMMENT_STATE_FILE"
+  [ "$output" = "blocked" ]
+}
+
+@test "incomplete no_fix_needed outcome (no reason) at threshold is blocked" {
+  printf '{"800": {"state": "pending", "attempts": 2, "last_poll": 2, "last_result": "NO_FIXES_NEEDED", "outcome": "no_fix_needed", "commit_sha": null, "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  check_stuck_comments
+  run jq -r '.["800"].state' "$COMMENT_STATE_FILE"
+  [ "$output" = "blocked" ]
+}
+
+@test "incomplete outcomes stay pending on reply instead of moving to replied" {
+  printf '{"900": {"state": "pending", "attempts": 0, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": null, "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  run can_transition_to_processed "900"
+  [ "$status" -ne 0 ]
+}

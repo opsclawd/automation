@@ -1007,11 +1007,31 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
          jq --arg cid "$replied_id" '.[$cid].reply_verified = true' \
            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
-         local outcome
-         outcome=$(jq -r --arg cid "$replied_id" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
-         if [[ "$outcome" != "unresolved" ]]; then
-           set_comment_state "$replied_id" "replied"
-         fi
+        local outcome
+          outcome=$(jq -r --arg cid "$replied_id" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+          # Only transition to "replied" if the outcome is promotable:
+          # - "fixed" requires a non-null commit_sha
+          # - "no_fix_needed" requires a non-empty no_fix_reason
+          # - "unresolved" stays pending for stuck-loop escalation
+          # Incomplete outcomes (fixed without commit_sha, no_fix_needed without reason)
+          # also stay pending so they can be re-prompted or eventually blocked.
+          local can_promote=false
+          if [[ "$outcome" == "fixed" ]]; then
+            local sha
+            sha=$(jq -r --arg cid "$replied_id" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+            if [[ -n "$sha" && "$sha" != "null" ]]; then
+              can_promote=true
+            fi
+          elif [[ "$outcome" == "no_fix_needed" ]]; then
+            local reason
+            reason=$(jq -r --arg cid "$replied_id" '.[$cid].no_fix_reason // "null"' "$COMMENT_STATE_FILE")
+            if [[ -n "$reason" && "$reason" != "null" ]]; then
+              can_promote=true
+            fi
+          fi
+          if $can_promote; then
+            set_comment_state "$replied_id" "replied"
+          fi
        fi
      done < "$status_file"
      local replied_count

@@ -200,8 +200,13 @@ check_stuck_comments() {
   fi
 
   local stuck_ids
+  # Block any pending comment that has reached the attempt threshold,
+  # regardless of outcome. A comment stuck in "pending" after multiple
+  # attempts is blocked even if its outcome is "fixed" without a commit_sha
+  # or "no_fix_needed" without a reason — these cannot transition to
+  # processed and must not loop indefinitely.
   stuck_ids=$(jq -r --argjson threshold "$block_threshold" \
-    'to_entries[] | select(.value.state == "pending" and .value.attempts >= $threshold and (.value.outcome == "unresolved" or .value.outcome == null)) | .key' \
+    'to_entries[] | select(.value.state == "pending" and .value.attempts >= $threshold) | .key' \
     "$COMMENT_STATE_FILE")
 
   for cid in $stuck_ids; do
