@@ -433,6 +433,26 @@ verify_build_passes() {
   return 0
 }
 
+# Post a reply on a PR review comment explaining the agent timed out and
+# suggesting the reviewer open an issue. Called when timeout_count hits the
+# escalation threshold; does not mark the comment resolved.
+post_timeout_escalation_reply() {
+  local cid="$1"
+  local timeout_count="${2:-2}"
+  local body
+  body="The automated agent timed out on this comment ${timeout_count} consecutive time(s) and could not complete the fix within the allowed window. This usually means the fix requires more research, a non-trivial design decision, or changes broader than the automated flow can handle reliably.
+
+**Suggestion:** Consider opening a GitHub issue with this comment as context so it can be addressed with proper planning. The concern is valid — it has not been discarded."
+  if gh api "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments/${cid}/replies" \
+      --method POST --raw-field "body=${body}" >/dev/null 2>&1; then
+    log "  Posted timeout-escalation reply to comment ${cid}"
+    return 0
+  else
+    warn "  Failed to post timeout-escalation reply to comment ${cid}"
+    return 1
+  fi
+}
+
 # ── Agent runner ───────────────────────────────────────────────────────────
 run_agent() {
   local phase="$1"
@@ -796,14 +816,14 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   emit_event "post-pr-review" "info" "post-pr-review.agent.started" \
     "invoking agent for poll iteration ${POLL_COUNT}" commentId="batch-p${POLL_COUNT}"
 
-  # Scale the agent timeout with comment volume: 5 min baseline + ~2 min per
+  # Scale the agent timeout with comment volume: 10 min baseline + ~5 min per
   # comment (read diff, edit, commit, reply), capped at 30 min so a runaway
-  # agent doesn't hold the loop hostage. Floor at 5 min for the empty/edge case.
+  # agent doesn't hold the loop hostage. Floor at 10 min for the empty/edge case.
   local _comment_count
   _comment_count=$(echo "$comments" | jq 'length' 2>/dev/null || echo 0)
-  local _timeout_min=$(( 5 + 2 * _comment_count ))
+  local _timeout_min=$(( 10 + 5 * _comment_count ))
   if (( _timeout_min > 30 )); then _timeout_min=30; fi
-  if (( _timeout_min < 5 )); then _timeout_min=5; fi
+  if (( _timeout_min < 10 )); then _timeout_min=10; fi
   log "  Agent timeout: ${_timeout_min}m (for ${_comment_count} comment(s))"
 
   # Capture main checkout state before the agent runs: HEAD SHA + whether
@@ -909,6 +929,59 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     update_comment_outcomes "$OUTCOMES_FILE"
   else
     log "  Skipping outcome merge — agent failed or produced no valid result"
+  fi
+
+  # ── Timeout escalation ──────────────────────────────────────────────────
+  # When the agent exits due to timeout (ran for nearly the full window),
+  # increment a per-comment timeout counter. After COMMENT_TIMEOUT_ESCALATION_THRESHOLD
+  # consecutive timeouts on the same comment, post a GitHub reply explaining the
+  # situation and block the comment from further retries. The comment is NOT
+  # marked resolved — the reply tells the reviewer to open an issue instead.
+  if $AGENT_FAILED; then
+    local _timeout_ms=$(( _timeout_min * 60 * 1000 ))
+    if (( AGENT_DUR >= _timeout_ms - 10000 )); then
+      local _esc_threshold="${COMMENT_TIMEOUT_ESCALATION_THRESHOLD:-2}"
+      local _cid
+      for _cid in $(echo "$comments" | jq -r '.[].id' 2>/dev/null); do
+        [[ -z "$_cid" ]] && continue
+        local _cstate
+        _cstate=$(get_comment_state "$_cid")
+        [[ "$_cstate" != "pending" ]] && continue
+        increment_comment_timeout "$_cid"
+        local _tc
+        _tc=$(jq -r --arg cid "$_cid" '.[$cid].timeout_count // 0' "$COMMENT_STATE_FILE")
+        log "  Comment ${_cid}: timeout_count=${_tc}/${_esc_threshold}"
+      done
+
+      local _esc_candidates
+      _esc_candidates=$(get_timeout_escalation_candidates "$_esc_threshold")
+      for _cid in $_esc_candidates; do
+        [[ -z "$_cid" ]] && continue
+        local _tc
+        _tc=$(jq -r --arg cid "$_cid" '.[$cid].timeout_count // 0' "$COMMENT_STATE_FILE")
+        if post_timeout_escalation_reply "$_cid" "$_tc"; then
+          set_comment_state "$_cid" "blocked" "timeout_escalation: ${_tc} consecutive timeouts"
+          emit_event "post-pr-review" "warn" "post-pr-review.comment.timeout_escalated" \
+            "Comment ${_cid} escalated after ${_tc} timeouts — reply posted, blocked from retries" \
+            commentId="$_cid" timeoutCount="$_tc"
+        else
+          emit_event "post-pr-review" "warn" "post-pr-review.comment.escalation_reply_failed" \
+            "Comment ${_cid} escalation reply failed — keeping pending for retry" \
+            commentId="$_cid" timeoutCount="$_tc"
+        fi
+      done
+    else
+      # Fast failure — not a timeout. Reset timeout_count so an intervening
+      # non-timeout failure doesn't make a later timeout appear consecutive.
+      local _cid
+      for _cid in $(echo "$comments" | jq -r '.[].id' 2>/dev/null); do
+        [[ -z "$_cid" ]] && continue
+        local _cstate
+        _cstate=$(get_comment_state "$_cid")
+        [[ "$_cstate" != "pending" ]] && continue
+        reset_comment_timeout "$_cid"
+      done
+    fi
   fi
 
   rm -f "$prompt_file"

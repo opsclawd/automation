@@ -76,7 +76,7 @@ init_comment_state() {
     for id in $comment_ids; do
       if ! jq -e --arg id "$id" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
         jq --arg id "$id" --argjson poll "$POLL_COUNT" --arg sha "$pre_sha" \
-          '.[$id] = {state: "pending", attempts: 0, last_poll: $poll, last_result: null, outcome: null, commit_sha: null, pre_sha: $sha, reply_verified: false, commit_verified: false, build_verified: false, blocked_reason: null, no_fix_reason: null}' \
+          '.[$id] = {state: "pending", attempts: 0, last_poll: $poll, last_result: null, outcome: null, commit_sha: null, pre_sha: $sha, reply_verified: false, commit_verified: false, build_verified: false, blocked_reason: null, no_fix_reason: null, timeout_count: 0}' \
           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
         new_ids=$((new_ids + 1))
@@ -167,6 +167,7 @@ update_comment_outcomes() {
         | .value.reply_verified = false
         | .value.commit_verified = false
         | .value.build_verified = false
+        | .value.timeout_count = 0
       elif .value.state == "pending" then
         .value.outcome = "unresolved"
         | .value.last_result = "MISSING_OUTCOME"
@@ -175,6 +176,7 @@ update_comment_outcomes() {
         | .value.reply_verified = false
         | .value.commit_verified = false
         | .value.build_verified = false
+        | .value.timeout_count = 0
       else . end
     ) | from_entries' \
     "$COMMENT_STATE_FILE" "$outcomes_file" > "${COMMENT_STATE_FILE}.tmp" && \
@@ -226,6 +228,39 @@ check_stuck_comments() {
       "Comment ${cid} blocked after ${block_threshold} unresolved attempts" \
       commentId="$cid" attempts="$(jq -r --arg cid "$cid" '.[$cid].attempts' "$COMMENT_STATE_FILE")" lastResult="$last_result"
   done
+}
+
+reset_comment_timeout() {
+  local cid="$1"
+  if [[ -z "$COMMENT_STATE_FILE" || ! -f "$COMMENT_STATE_FILE" ]]; then
+    return 1
+  fi
+  jq --arg cid "$cid" \
+    '.[$cid].timeout_count = 0' \
+    "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+    mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+}
+
+increment_comment_timeout() {
+  local cid="$1"
+  if [[ -z "$COMMENT_STATE_FILE" || ! -f "$COMMENT_STATE_FILE" ]]; then
+    warn "increment_comment_timeout: COMMENT_STATE_FILE missing"
+    return 1
+  fi
+  jq --arg cid "$cid" --argjson poll "$POLL_COUNT" \
+    '.[$cid].timeout_count = ((.[$cid].timeout_count // 0) + 1) | .[$cid].last_poll = $poll' \
+    "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+    mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+}
+
+get_timeout_escalation_candidates() {
+  local threshold="${1:-2}"
+  if [[ -z "$COMMENT_STATE_FILE" || ! -f "$COMMENT_STATE_FILE" ]]; then
+    return 0
+  fi
+  jq -r --argjson threshold "$threshold" \
+    'to_entries[] | select(.value.state == "pending" and (.value.timeout_count // 0) >= $threshold) | .key' \
+    "$COMMENT_STATE_FILE"
 }
 
 verify_comment_commit() {
