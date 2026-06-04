@@ -812,15 +812,13 @@ trap cleanup_staging EXIT
 
 mkdir -p "${ISSUES_DIR}"
 
-# One-time sweep: remove empty staging dirs left behind by prior runs.
-# rmdir only removes truly empty directories — a non-empty staging dir from
-# an active read_issue phase is never touched.
-for _stale_dir in "${REPO_ROOT}/.ai-worktrees/"issue-*-staging; do
-  if [[ -d "$_stale_dir" ]] && [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
-    rmdir "$_stale_dir"
-    log "Cleanup: removed empty staging dir ${_stale_dir}"
-  fi
-done
+# One-time sweep: remove empty staging dir for the current issue if it was
+# left behind by a prior run. rmdir only removes truly empty directories —
+# a non-empty staging dir from a concurrent orchestrator is never touched.
+if [[ -d "$ISSUE_STAGING_DIR" ]] && [[ -z "$(ls -A "$ISSUE_STAGING_DIR" 2>/dev/null)" ]]; then
+  rmdir "$ISSUE_STAGING_DIR" 2>/dev/null || true
+  log "Cleanup: removed empty staging dir ${ISSUE_STAGING_DIR}"
+fi
 
 echo "" > "${ISSUES_DIR}/orchestrator.log"
 
