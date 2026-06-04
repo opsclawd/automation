@@ -597,6 +597,51 @@ describe('AgentRuntimeRouter fallback', () => {
         if (cleanup) unlinkSync(stderrPath);
       }
     });
+
+    it('triggers quota_exceeded on crofai "Not Enough Credits" in stderr', async () => {
+      const stderrPath = '/tmp/test-stderr-crofai-qe.log';
+      writeFileSync(
+        stderrPath,
+        'QUOTA_EXCEEDED: ERROR 2026-06-03T12:00:04.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}',
+      );
+      let cleanup = true;
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'crofai',
+        model: 'glm-5.1',
+        exitCode: 0,
+        durationMs: 4000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const events: OrchestratorEvent[] = [];
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['quota_exceeded'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-crofai-qe',
+        readPromptChars: () => 100,
+        eventBus: {
+          publish(_runId, ev) {
+            events.push(ev);
+          },
+        },
+      });
+      try {
+        await router.invoke(req());
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        expect(rows.length).toBe(2);
+        expect(events[0].metadata.triggerReason).toBe('quota_exceeded');
+      } finally {
+        if (cleanup) unlinkSync(stderrPath);
+      }
+    });
   });
 
   describe('fallbackTriggers configuration', () => {
