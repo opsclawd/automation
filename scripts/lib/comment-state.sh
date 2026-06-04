@@ -29,8 +29,46 @@ init_comment_state() {
   fi
 
   local new_ids=0
+  local fresh_init=false
   if [[ ! -f "$COMMENT_STATE_FILE" ]]; then
     echo '{}' > "$COMMENT_STATE_FILE"
+    fresh_init=true
+  fi
+
+  # Migrate legacy text-file state into comment-state.json on first init.
+  # Without this, previously processed/replied IDs are invisible to the
+  # JSON-only filter, causing duplicate agent replies on upgrade.
+  if $fresh_init; then
+    local migrated=0
+    if [[ -n "${PROCESSED_IDS_FILE:-}" && -f "$PROCESSED_IDS_FILE" ]]; then
+      local pid
+      while IFS= read -r pid; do
+        [[ -z "$pid" ]] && continue
+        if ! jq -e --arg id "$pid" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
+          jq --arg id "$pid" --argjson poll "$POLL_COUNT" \
+            '.[$id] = {state: "processed", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: "fixed", commit_sha: null, pre_sha: null, reply_verified: true, blocked_reason: null, no_fix_reason: null}' \
+            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+          migrated=$((migrated + 1))
+        fi
+      done < "$PROCESSED_IDS_FILE"
+    fi
+    if [[ -n "${REPLIED_IDS_FILE:-}" && -f "$REPLIED_IDS_FILE" ]]; then
+      local rid
+      while IFS= read -r rid; do
+        [[ -z "$rid" ]] && continue
+        if ! jq -e --arg id "$rid" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
+          jq --arg id "$rid" --argjson poll "$POLL_COUNT" \
+            '.[$id] = {state: "replied", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: null, commit_sha: null, pre_sha: null, reply_verified: true, blocked_reason: null, no_fix_reason: null}' \
+            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+          migrated=$((migrated + 1))
+        fi
+      done < "$REPLIED_IDS_FILE"
+    fi
+    if [[ $migrated -gt 0 ]]; then
+      log "  init_comment_state: migrated ${migrated} legacy id(s) from text files"
+    fi
   fi
 
   if [[ -n "$comment_ids" ]]; then

@@ -583,6 +583,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         local replied_ids
         replied_ids=$(jq -r 'to_entries[] | select(.value.state == "replied") | .key' "$COMMENT_STATE_FILE" 2>/dev/null)
         local promoted=0
+        local promoted_reverify_ids=""
         local cid
         for cid in $replied_ids; do
           [[ -z "$cid" ]] && continue
@@ -616,10 +617,14 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
           if can_transition_to_processed "$cid"; then
             set_comment_state "$cid" "processed"
             promoted=$((promoted + 1))
+            promoted_reverify_ids="${promoted_reverify_ids:-} ${cid}"
           fi
         done
         if [[ $promoted -gt 0 ]]; then
           log "Promoted ${promoted} comment(s) from replied to processed."
+          if [[ -n "${promoted_reverify_ids:-}" ]]; then
+            resolve_threads $promoted_reverify_ids
+          fi
           derive_compat_files
           LAST_REVIEW_RESULT="NO_FIXES_NEEDED"
           return 0
@@ -721,6 +726,22 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     echo '```'
     echo "gh pr view ${PR_NUMBER} --json comments --jq 'length'"
     echo '```'
+    echo ''
+    echo '## MANDATORY OUTCOME FILE'
+    echo 'Alongside the result file, you MUST write a comment-outcomes manifest.'
+    echo "Write it to: .review-context/comment-outcomes.json"
+    echo 'Format: a JSON object keyed by numeric comment ID (as string), with values:'
+    echo '```json'
+    echo '{'
+    echo '  "<comment-id>": { "outcome": "fixed", "commit_sha": "<7+ char SHA>" },'
+    echo '  "<comment-id>": { "outcome": "no_fix_needed", "reason": "why no fix is needed" },'
+    echo '  "<comment-id>": { "outcome": "unresolved", "reason": "what blocked you" }'
+    echo '}'
+    echo '```'
+    echo '- Every comment ID from .review-context/comments.json MUST appear in this manifest.'
+    echo '- "fixed" requires the commit SHA of the fix pushed to the branch.'
+    echo '- "no_fix_needed" requires a non-empty reason string.'
+    echo '- "unresolved" means you could not address the comment; provide a reason.'
     echo ''
     echo '## MANDATORY RESULT FILE'
     echo 'When you are done, write EXACTLY ONE of these values to the file below (nothing else, no explanation):'
@@ -1006,6 +1027,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   done
 
   # State transitions: replied -> processed (if guard passes)
+  local promoted_ids=""
   for cid in $comment_ids; do
     [[ -z "$cid" ]] && continue
     local state
@@ -1014,9 +1036,15 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
       if can_transition_to_processed "$cid"; then
         set_comment_state "$cid" "processed"
         log "  Comment ${cid}: transitioned replied → processed"
+        promoted_ids="${promoted_ids} ${cid}"
       fi
     fi
   done
+
+  # Resolve GitHub threads for newly-processed comments
+  if [[ -n "$promoted_ids" ]]; then
+    resolve_threads $promoted_ids
+  fi
 
   # Check for stuck comments and block them
   check_stuck_comments
