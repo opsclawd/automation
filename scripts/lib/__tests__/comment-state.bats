@@ -296,3 +296,18 @@ teardown() {
   run can_transition_to_processed "500"
   [ "$status" -eq 0 ]
 }
+
+@test "fixed outcome with failed commit verification: demoting to pending allows re-prompt and eventual blocking" {
+  echo '{"600": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc1234", "pre_sha": "def5678", "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  set_comment_state "600" "pending"
+  run jq -r '.["600"].state' "$COMMENT_STATE_FILE"
+  [ "$output" = "pending" ]
+  run jq -r '.["600"].attempts' "$COMMENT_STATE_FILE"
+  [ "$output" = "2" ]
+  jq --arg cid "600" '.[$cid].outcome = null | .[$cid].commit_sha = null' \
+    "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+    mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+  check_stuck_comments
+  run jq -r '.["600"].state' "$COMMENT_STATE_FILE"
+  [ "$output" = "blocked" ]
+}
