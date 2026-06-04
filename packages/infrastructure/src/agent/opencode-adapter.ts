@@ -41,6 +41,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let watchdogInterval: NodeJS.Timeout | null = null;
     let timeoutSignal: AbortSignal | undefined;
     let isCanceled = false;
+    let postExit: { quotaMatch: string | null; providerMatch: string | null } | null = null;
     try {
       timeoutSignal =
         this.opts.timeoutMsDefault !== undefined
@@ -83,10 +84,17 @@ export class OpenCodeAgentAdapter implements AgentPort {
       const r = await child;
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
 
+      postExit = this.scanSessionLogsPostExit(start);
+
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
       exitCode = r.exitCode ?? 0;
       isCanceled = r.isCanceled;
+
+      if (!watchdogKilled && postExit.quotaMatch) {
+        watchdogKilled = true;
+        watchdogMatch = postExit.quotaMatch;
+      }
     } catch (e) {
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
       outcome = 'failed';
@@ -127,7 +135,8 @@ export class OpenCodeAgentAdapter implements AgentPort {
         }
       }
     } else if (outcome === 'success') {
-      const providerMatch = testProviderErrorPatterns(stderr);
+      const postExitProvider = !watchdogKilled && postExit ? postExit.providerMatch : null;
+      const providerMatch = testProviderErrorPatterns(stderr) || postExitProvider;
       if (providerMatch) {
         outcome = 'failed';
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
@@ -167,6 +176,44 @@ export class OpenCodeAgentAdapter implements AgentPort {
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     return ret;
+  }
+
+  private scanSessionLogsPostExit(startTime: number): {
+    quotaMatch: string | null;
+    providerMatch: string | null;
+  } {
+    const sessionLogDir =
+      this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
+
+    try {
+      if (!statSync(sessionLogDir).isDirectory()) return { quotaMatch: null, providerMatch: null };
+    } catch {
+      return { quotaMatch: null, providerMatch: null };
+    }
+
+    const startTimeSec = startTime / 1000;
+    let quotaMatch: string | null = null;
+    let providerMatch: string | null = null;
+
+    try {
+      const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
+      for (const f of files) {
+        const mtime = statSync(join(sessionLogDir, f)).mtimeMs / 1000;
+        if (mtime < startTimeSec) continue;
+        const content = readFileSync(join(sessionLogDir, f), 'utf-8');
+        if (!quotaMatch) {
+          quotaMatch = testQuotaPatterns(content, { structuralOnly: true });
+        }
+        if (!providerMatch) {
+          providerMatch = testProviderErrorPatterns(content, { structuralOnly: true });
+        }
+        if (quotaMatch && providerMatch) break;
+      }
+    } catch {
+      // File might be deleted between stat and read — ignore
+    }
+
+    return { quotaMatch, providerMatch };
   }
 
   private startWatchdog(
