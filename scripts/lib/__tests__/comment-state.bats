@@ -262,7 +262,7 @@ teardown() {
 
 # can_transition_to_processed acceptance tests
 @test "AC1: reply exists but no commit and no rationale → not processed" {
-  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": null, "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": null, "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
   run can_transition_to_processed "400"
   [ "$status" -ne 0 ]
 }
@@ -274,13 +274,19 @@ teardown() {
 }
 
 @test "AC3: fixed with valid commit SHA → can transition to processed" {
-  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
   run can_transition_to_processed "400"
   [ "$status" -eq 0 ]
 }
 
 @test "reply_verified false → cannot transition to processed even with commit" {
-  echo '{"400": {"state": "pending", "attempts": 0, "last_poll": 1, "last_result": null, "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  echo '{"400": {"state": "pending", "attempts": 0, "last_poll": 1, "last_result": null, "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": false, "commit_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  run can_transition_to_processed "400"
+  [ "$status" -ne 0 ]
+}
+
+@test "commit_verified false → cannot transition to processed even with commit SHA and reply" {
+  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
   run can_transition_to_processed "400"
   [ "$status" -ne 0 ]
 }

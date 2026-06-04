@@ -587,10 +587,11 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         # Re-verify per-comment: only promote comments that pass the guard
         local replied_ids
         replied_ids=$(jq -r 'to_entries[] | select(.value.state == "replied") | .key' "$COMMENT_STATE_FILE" 2>/dev/null)
-        # Fetch all PR comments once to avoid N+1 API calls
+        # Fetch all PR comments once to avoid N+1 API calls.
+        # Use jq -s to slurp paginated JSON arrays into a single merged array.
         local all_replies_json
-        all_replies_json=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" \
-          --jq '[.[] | select(.in_reply_to_id != null) | .in_reply_to_id]' 2>/dev/null || echo '[]')
+        all_replies_json=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" 2>/dev/null \
+          | jq -s '[flatten | .[] | select(.in_reply_to_id != null) | .in_reply_to_id]' 2>/dev/null || echo '[]')
         local promoted=0
         local promoted_reverify_ids=""
         local cid
@@ -616,8 +617,15 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
             commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
             cid_pre_sha=$(jq -r --arg cid "$cid" '.[$cid].pre_sha // ""' "$COMMENT_STATE_FILE")
             if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
-              if ! verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
+              if verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
+                jq --arg cid "$cid" '.[$cid].commit_verified = true' \
+                  "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+                  mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+              else
                 warn "  Comment ${cid}: commit verification failed on re-check"
+                jq --arg cid "$cid" '.[$cid].commit_verified = false' \
+                  "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+                  mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
                 continue
               fi
             fi
@@ -984,27 +992,31 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     fi
   fi
 
-  # Per-comment state transitions — reply_verified + state→replied
-  # For each comment in the batch, update reply_verified if reply was confirmed
-  # AND transition the state to "replied" so the promotion loop below can fire.
-  # Without this transition, the .state field stays "pending" and the guard
-  # never sees the comment as eligible for promotion to "processed".
-  local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
-  if [[ -f "$status_file" && -s "$status_file" ]]; then
-    local replied_id
-    while IFS= read -r replied_id; do
-      [[ -z "$replied_id" ]] && continue
-      if [[ -f "$COMMENT_STATE_FILE" ]] && jq -e --arg cid "$replied_id" 'has($cid)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
-        jq --arg cid "$replied_id" '.[$cid].reply_verified = true' \
-          "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
-          mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
-        set_comment_state "$replied_id" "replied"
-      fi
-    done < "$status_file"
-    local replied_count
-    replied_count=$(wc -l < "$status_file" | tr -d ' ')
-    log "  Set reply_verified=true and state=replied for ${replied_count} comment(s)"
-  fi
+   # Per-comment state transitions — reply_verified + state→replied
+   # For each comment in the batch, update reply_verified if reply was confirmed.
+   # Only transition to "replied" if the outcome is not "unresolved" — unresolved
+   # comments that received a reply stay "pending" so check_stuck_comments can
+   # track attempts and escalate them to "blocked" when they exceed the threshold.
+   local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
+   if [[ -f "$status_file" && -s "$status_file" ]]; then
+     local replied_id
+     while IFS= read -r replied_id; do
+       [[ -z "$replied_id" ]] && continue
+       if [[ -f "$COMMENT_STATE_FILE" ]] && jq -e --arg cid "$replied_id" 'has($cid)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
+         jq --arg cid "$replied_id" '.[$cid].reply_verified = true' \
+           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+         local outcome
+         outcome=$(jq -r --arg cid "$replied_id" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+         if [[ "$outcome" != "unresolved" ]]; then
+           set_comment_state "$replied_id" "replied"
+         fi
+       fi
+     done < "$status_file"
+     local replied_count
+     replied_count=$(wc -l < "$status_file" | tr -d ' ')
+     log "  Set reply_verified=true for ${replied_count} comment(s)"
+   fi
 
   # Per-comment commit SHA verification for fixed outcomes.
   # Uses the per-comment pre_sha captured at first init (so re-check
@@ -1024,8 +1036,14 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
       if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
         if verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
           log "  Comment ${cid}: commit ${commit_sha:0:7} verified on origin/${PR_BRANCH}"
+          jq --arg cid "$cid" '.[$cid].commit_verified = true' \
+            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
         else
           warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — preserving SHA for re-verification on next poll"
+          jq --arg cid "$cid" '.[$cid].commit_verified = false' \
+            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
         fi
       fi
     fi
