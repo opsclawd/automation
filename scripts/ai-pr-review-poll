@@ -1025,10 +1025,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         if verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
           log "  Comment ${cid}: commit ${commit_sha:0:7} verified on origin/${PR_BRANCH}"
         else
-          warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — cannot transition to processed"
-          jq --arg cid "$cid" '.[$cid].commit_sha = null' \
-            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
-            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+          warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — preserving SHA for re-verification on next poll"
         fi
       fi
     fi
