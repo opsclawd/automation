@@ -445,7 +445,8 @@ describe('OpenCodeAgentAdapter', () => {
           await sleep(600);
           writeFileSync(
             logFile,
-            'Previous session content\nNothing relevant here\nERROR 2026-05-28T23:00:02.000Z +0ms service=llm New: "statusCode": 429 Too Many Requests\n',
+            'ERROR 2026-05-28T23:00:02.000Z +0ms service=llm New: "statusCode": 429 Too Many Requests\n',
+            { flag: 'a' },
           );
         }
         resolve();

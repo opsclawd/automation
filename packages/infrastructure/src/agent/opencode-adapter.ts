@@ -1,9 +1,7 @@
 import { execa } from 'execa';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
@@ -36,7 +34,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
     mkdirSync(sessionLogDir, { recursive: true });
 
     const start = Date.now();
-    const initialLogOffsets = this.captureInitialSessionLogOffsets();
     let outcome: AgentInvocationResult['outcome'] = 'success';
     let exitCode = 0;
     let stdout = '';
@@ -80,8 +77,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
       watchdogInterval = this.startWatchdog(
         child as ReturnType<typeof execa>,
         sessionLogDir,
-        start,
-        initialLogOffsets,
         (match: string, type: 'quota' | 'provider') => {
           watchdogKilled = true;
           watchdogKilledType = type;
@@ -92,7 +87,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       const r = await child;
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
 
-      postExit = this.scanSessionLogsPostExit(sessionLogDir, start, initialLogOffsets);
+      postExit = this.scanSessionLogsPostExit(sessionLogDir);
 
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
@@ -209,86 +204,36 @@ export class OpenCodeAgentAdapter implements AgentPort {
     return ret;
   }
 
-  private captureInitialSessionLogOffsets(): Map<string, number> {
-    const offsets = new Map<string, number>();
-    const sharedLogDir = join(homedir(), '.local', 'share', 'opencode', 'log');
-    try {
-      if (!statSync(sharedLogDir).isDirectory()) return offsets;
-      const files = readdirSync(sharedLogDir).filter((f) => f.endsWith('.log'));
-      for (const f of files) {
-        const logPath = join(sharedLogDir, f);
-        try {
-          offsets.set(logPath, statSync(logPath).size);
-        } catch {
-          // File may have been removed between readdir and stat — ignore
-        }
-      }
-    } catch {
-      // Directory may not exist yet — start with empty offsets
-    }
-    return offsets;
-  }
-
-  private scanSessionLogsPostExit(
-    sessionLogDir: string,
-    startTime: number,
-    initialOffsets: Map<string, number>,
-  ): { quotaMatch: string | null; providerMatch: string | null } {
+  private scanSessionLogsPostExit(sessionLogDir: string): {
+    quotaMatch: string | null;
+    providerMatch: string | null;
+  } {
     let quotaMatch: string | null = null;
     let providerMatch: string | null = null;
 
-    // Scan per-invocation directory (all files belong to this invocation)
     try {
-      if (statSync(sessionLogDir).isDirectory()) {
-        const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
-        for (const f of files) {
-          try {
-            const logPath = join(sessionLogDir, f);
-            const buf = readFileSync(logPath);
-            const newContent = buf.toString('utf-8');
-            if (!newContent) continue;
-            if (!quotaMatch) {
-              quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
-            }
-            if (!providerMatch) {
-              providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
-            }
-            if (quotaMatch && providerMatch) return { quotaMatch, providerMatch };
-          } catch {
-            // File might be deleted between stat and read — ignore
-          }
-        }
-      }
+      if (!statSync(sessionLogDir).isDirectory()) return { quotaMatch: null, providerMatch: null };
     } catch {
-      // Directory might be deleted — ignore
+      return { quotaMatch: null, providerMatch: null };
     }
 
-    // Scan shared opencode log directory as fallback (with mtime filtering)
-    const sharedLogDir = join(homedir(), '.local', 'share', 'opencode', 'log');
-    const startTimeSec = startTime / 1000;
-    const mtimeGraceSec = 2;
     try {
-      if (statSync(sharedLogDir).isDirectory()) {
-        const files = readdirSync(sharedLogDir).filter((f) => f.endsWith('.log'));
-        for (const f of files) {
-          try {
-            const logPath = join(sharedLogDir, f);
-            const mtime = statSync(logPath).mtimeMs / 1000;
-            if (mtime < startTimeSec - mtimeGraceSec) continue;
-            const initialOffset = initialOffsets.get(logPath) ?? 0;
-            const buf = readFileSync(logPath);
-            const newContent = buf.subarray(initialOffset).toString('utf-8');
-            if (!newContent) continue;
-            if (!quotaMatch) {
-              quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
-            }
-            if (!providerMatch) {
-              providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
-            }
-            if (quotaMatch && providerMatch) break;
-          } catch {
-            // File might be deleted between stat and read — ignore
+      const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
+      for (const f of files) {
+        try {
+          const logPath = join(sessionLogDir, f);
+          const buf = readFileSync(logPath);
+          const newContent = buf.toString('utf-8');
+          if (!newContent) continue;
+          if (!quotaMatch) {
+            quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
           }
+          if (!providerMatch) {
+            providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
+          }
+          if (quotaMatch && providerMatch) break;
+        } catch {
+          // File might be deleted between stat and read — ignore
         }
       }
     } catch {
@@ -301,66 +246,39 @@ export class OpenCodeAgentAdapter implements AgentPort {
   private startWatchdog(
     child: ReturnType<typeof execa>,
     sessionLogDir: string,
-    startTime: number,
-    initialOffsets: Map<string, number>,
     onKilled: (match: string, type: 'quota' | 'provider') => void,
   ): NodeJS.Timeout | null {
     const pollMs = this.opts.quotaPollMs ?? 2000;
     const logOffsets = new Map<string, number>();
-    const logDecoders = new Map<string, StringDecoder>();
-    const sharedLogDir = join(homedir(), '.local', 'share', 'opencode', 'log');
-    const startTimeSec = startTime / 1000;
-    const mtimeGraceSec = 2;
-    const sharedLogOffsets = new Map(initialOffsets);
-    const sharedLogDecoders = new Map<string, StringDecoder>();
 
-    const scanDir = (
-      dir: string,
-      offsets: Map<string, number>,
-      decoders: Map<string, StringDecoder>,
-      useMtimeFilter: boolean,
-    ): boolean => {
+    return setInterval(() => {
       try {
-        if (!statSync(dir).isDirectory()) return false;
-      } catch {
-        return false;
-      }
-      try {
-        const files = readdirSync(dir).filter((f) => f.endsWith('.log'));
+        const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
+        if (files.length === 0) return;
+
         for (const f of files) {
           try {
-            const logPath = join(dir, f);
+            const logPath = join(sessionLogDir, f);
 
-            if (useMtimeFilter) {
-              const mtime = statSync(logPath).mtimeMs / 1000;
-              if (mtime < startTimeSec - mtimeGraceSec) continue;
-            }
-
-            let prevOffset = offsets.get(logPath) ?? 0;
+            const prevOffset = logOffsets.get(logPath) ?? 0;
             const size = statSync(logPath).size;
-            if (size < prevOffset) {
-              prevOffset = 0;
-              offsets.set(logPath, 0);
-            }
             if (size <= prevOffset) continue;
 
             const buf = readFileSync(logPath);
-            const decoder = decoders.get(logPath) ?? new StringDecoder('utf-8');
-            decoders.set(logPath, decoder);
-            const newContent = decoder.write(buf.subarray(prevOffset));
-            offsets.set(logPath, buf.length);
+            const newContent = buf.subarray(prevOffset).toString('utf-8');
+            logOffsets.set(logPath, buf.length);
 
             const quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
             if (quotaMatch) {
               onKilled(quotaMatch, 'quota');
               child.kill('SIGKILL');
-              return true;
+              return;
             }
             const providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
             if (providerMatch) {
               onKilled(providerMatch, 'provider');
               child.kill('SIGKILL');
-              return true;
+              return;
             }
           } catch {
             // File might be deleted between stat and read — ignore
@@ -368,18 +286,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
         }
       } catch {
         // Directory might be deleted — ignore
-      }
-      return false;
-    };
-
-    return setInterval(() => {
-      try {
-        // Scan per-invocation directory first (no mtime filter needed)
-        if (scanDir(sessionLogDir, logOffsets, logDecoders, false)) return;
-        // Scan shared opencode log directory as fallback (with mtime filter)
-        scanDir(sharedLogDir, sharedLogOffsets, sharedLogDecoders, true);
-      } catch {
-        // Unexpected error — ignore
       }
     }, pollMs);
   }
