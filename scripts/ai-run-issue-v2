@@ -2551,7 +2551,7 @@ if [[ "$PHASE" == "validate" ]]; then
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --phase-id validate \
-      2>&1 | tee -a "${ISSUES_DIR}/validate.log" || true
+      2>&1 | tee -a "${ISSUES_DIR}/validate.log"
     VALIDATE_EXIT=${PIPESTATUS[0]}
   fi
 
