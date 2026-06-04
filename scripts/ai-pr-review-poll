@@ -50,6 +50,7 @@ mkdir -p "$TMPDIR"
 # REPLIED   — interim:  replies posted, verification pending.
 PROCESSED_IDS_FILE="${ISSUES_DIR}/processed-comment-ids.txt"
 REPLIED_IDS_FILE="${ISSUES_DIR}/replied-comment-ids.txt"
+COMMENT_STATE_FILE="${ISSUES_DIR}/comment-state.json"
 touch "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_DIR}/poll.log" >&2; }
@@ -62,6 +63,8 @@ warn() { printf '[%s] WARN: %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "${ISSUES_
 source "${REPO_ROOT}/scripts/lib/emit_event.sh"
 # shellcheck source=lib/poll_compound.sh
 source "${REPO_ROOT}/scripts/lib/poll_compound.sh"
+# shellcheck source=lib/comment-state.sh
+source "${REPO_ROOT}/scripts/lib/comment-state.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "FATAL: jq is required but not found on PATH. Install jq and retry." >&2
@@ -525,11 +528,23 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     return 1
   }
 
-  # Filter out IDs the agent has already replied to (PROCESSED ∪ REPLIED) so
-  # the agent is never re-prompted for a thread it already answered.
+  # Seed/migrate comment-state.json BEFORE filtering so that legacy
+  # processed/replied IDs from text files are visible to the filter.
+  # Without this, an upgrade run where text files have IDs but comment-state.json
+  # does not would feed old comments back to the agent for duplicate replies.
+  local pre_sha
+  pre_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+  log "  Pre-agent SHA: ${pre_sha:-unknown}"
+  init_comment_state "" "$pre_sha"
+
+  # Filter out already-handled IDs using comment-state.json.
+  # Blocked, replied, and processed IDs are excluded from prompts.
   local known_ids
-  known_ids=$(cat "$PROCESSED_IDS_FILE" "$REPLIED_IDS_FILE" 2>/dev/null \
-    | tr '\n' ',' | sed 's/,$//')
+  if [[ -f "$COMMENT_STATE_FILE" ]]; then
+    known_ids=$(jq -r 'to_entries[] | select(.value.state == "processed" or .value.state == "replied" or .value.state == "blocked") | .key' "$COMMENT_STATE_FILE" | tr '\n' ',' | sed 's/,$//')
+  else
+    known_ids=""
+  fi
   if [[ -n "$known_ids" ]]; then
     comments=$(echo "$all_comments" | jq --arg ids "$known_ids" '
       [ .[] | .id as $cid
@@ -540,6 +555,15 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     comments="$all_comments"
   fi
 
+  # Seed new comment IDs into comment-state.json. The per-comment pre_sha
+  # captured here is the HEAD when the comment was FIRST seen, not HEAD on
+  # later polls — so re-check verification still confirms a commit is newer
+  # than the original pre-agent SHA, not newer than a SHA that has since
+  # advanced with successful pushes.
+  local new_comment_ids
+  new_comment_ids=$(echo "$comments" | jq -r '.[].id' 2>/dev/null | tr '\n' ' ')
+  init_comment_state "$new_comment_ids" "$pre_sha"
+
   local total_comment_count
   total_comment_count=$(echo "$all_comments" | jq 'length' 2>/dev/null || echo 0)
   local comment_count
@@ -549,34 +573,95 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     total="$total_comment_count" unprocessed="$comment_count"
 
   if [[ $comment_count -eq 0 ]]; then
-    # No new comments. But if any IDs are in REPLIED (replies posted, build
-    # was last seen red), the previous poll left work undone. Re-run build
-    # verification only — don't re-invoke the agent, replies are already up.
-    local pending_count=0
-    if [[ -s "$REPLIED_IDS_FILE" ]]; then
-      pending_count=$(wc -l < "$REPLIED_IDS_FILE" | tr -d ' ')
+    # No new comments. Re-check replied IDs using per-comment verification.
+    local replied_count_json=0
+    if [[ -f "$COMMENT_STATE_FILE" ]]; then
+      replied_count_json=$(jq '[to_entries[] | select(.value.state == "replied")] | length' "$COMMENT_STATE_FILE" 2>/dev/null || echo 0)
     fi
-    if [[ $pending_count -gt 0 ]]; then
-      log "No new comments, but ${pending_count} replied ID(s) awaiting verification. Re-checking commits + build."
-      # Both checks must pass before promotion. Order matters: a passing
-      # local build with unpushed commits would otherwise mark the PR as
-      # processed while origin still has the broken code — silently
-      # abandoning the review with the fix stranded locally.
+    if [[ "$replied_count_json" -gt 0 ]]; then
+      log "No new comments, but ${replied_count_json} replied comment(s) awaiting verification. Re-checking."
       local reverify_ok=true
       ensure_local_pushed || reverify_ok=false
       verify_build_passes || reverify_ok=false
       if $reverify_ok; then
-        local promoted_ids
-        promoted_ids=$(tr '\n' ' ' < "$REPLIED_IDS_FILE")
-        cat "$REPLIED_IDS_FILE" >> "$PROCESSED_IDS_FILE"
-        sort -u "$PROCESSED_IDS_FILE" -o "$PROCESSED_IDS_FILE"
-        : > "$REPLIED_IDS_FILE"
-        resolve_threads $promoted_ids
-        log "All checks passed; promoted ${pending_count} ID(s) from REPLIED to PROCESSED."
-        LAST_REVIEW_RESULT="NO_FIXES_NEEDED"
-        return 0
+        # Re-verify per-comment: only promote comments that pass the guard
+        local replied_ids
+        replied_ids=$(jq -r 'to_entries[] | select(.value.state == "replied") | .key' "$COMMENT_STATE_FILE" 2>/dev/null)
+        # Fetch all PR comments once to avoid N+1 API calls.
+        # Use jq -s to slurp paginated JSON arrays into a single merged array.
+        local all_replies_json
+        all_replies_json=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" 2>/dev/null \
+          | jq -s '[flatten | .[] | select(.in_reply_to_id != null) | .in_reply_to_id]' 2>/dev/null || echo '[]')
+        local promoted=0
+        local promoted_reverify_ids=""
+        local cid
+        for cid in $replied_ids; do
+          [[ -z "$cid" ]] && continue
+          # Check reply existence from the pre-fetched list
+          local has_reply
+          has_reply=$(echo "$all_replies_json" | jq --arg cid "$cid" '[.[] | select(. == ($cid | tonumber))] | length' 2>/dev/null || echo "0")
+          if [[ "$has_reply" -gt 0 ]]; then
+            jq --arg cid "$cid" '.[$cid].reply_verified = true' \
+              "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+              mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+          fi
+          # For fixed outcomes, re-verify commit SHA using the per-comment
+          # pre_sha captured when the comment was first seen. Using a
+          # per-comment pre_sha (not local $pre_sha, which is undefined
+          # in this re-check branch) keeps the "newer than pre_sha" check
+          # correct across polls even as HEAD advances.
+          local outcome
+          outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+          if [[ "$outcome" == "fixed" ]]; then
+            local commit_sha cid_pre_sha
+            commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+            cid_pre_sha=$(jq -r --arg cid "$cid" '.[$cid].pre_sha // ""' "$COMMENT_STATE_FILE")
+            if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
+              if verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
+                jq --arg cid "$cid" '.[$cid].commit_verified = true' \
+                  "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+                  mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+              else
+                warn "  Comment ${cid}: commit verification failed on re-check — demoting to pending for re-prompt"
+                # Demote to pending WITHOUT incrementing attempts — update_comment_outcomes
+                # already counted this agent run for this comment.
+                jq --arg cid "$cid" \
+                  '.[$cid].commit_verified = false | .[$cid].build_verified = false | .[$cid].reply_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
+                  "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+                  mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+              fi
+            fi
+          fi
+          # For fixed outcomes, set build_verified since reverify_ok confirms
+          # the build passed (verify_build_passes ran and succeeded).
+          # Re-read outcome from JSON because the demotion block above may have
+          # cleared it to null; using the stale local variable would incorrectly
+          # mark a just-demoted comment as build_verified.
+          outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+          if [[ "$outcome" == "fixed" ]]; then
+            jq --arg cid "$cid" '.[$cid].build_verified = true' \
+              "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+              mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+          fi
+          if can_transition_to_processed "$cid"; then
+            set_comment_state "$cid" "processed"
+            promoted=$((promoted + 1))
+            promoted_reverify_ids="${promoted_reverify_ids:-} ${cid}"
+          fi
+        done
+        if [[ $promoted -gt 0 ]]; then
+          log "Promoted ${promoted} comment(s) from replied to processed."
+          if [[ -n "${promoted_reverify_ids:-}" ]]; then
+            resolve_threads $promoted_reverify_ids
+          fi
+          derive_compat_files
+          LAST_REVIEW_RESULT="NO_FIXES_NEEDED"
+          return 0
+        else
+          warn "No comments passed per-comment verification on re-check."
+        fi
       else
-        warn "Verification still failing; ${pending_count} ID(s) remain in REPLIED for next poll."
+        warn "Verification still failing; replied comments remain for next poll."
         return 2
       fi
     fi
@@ -614,11 +699,6 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
 
   local comment_text
   comment_text=$(echo "$comments" | jq -r '.[] | "- \(.path):\(.line) — \(.body)"')
-
-  # Record pre-agent commit SHA for verification
-  local pre_sha
-  pre_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
-  log "  Pre-agent SHA: ${pre_sha:-unknown}"
 
   # Build prompt to temp file so we can capture run_agent exit code
   local prompt_file
@@ -675,6 +755,22 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     echo '```'
     echo "gh pr view ${PR_NUMBER} --json comments --jq 'length'"
     echo '```'
+    echo ''
+    echo '## MANDATORY OUTCOME FILE'
+    echo 'Alongside the result file, you MUST write a comment-outcomes manifest.'
+    echo "Write it to: .review-context/comment-outcomes.json"
+    echo 'Format: a JSON object keyed by numeric comment ID (as string), with values:'
+    echo '```json'
+    echo '{'
+    echo '  "<comment-id>": { "outcome": "fixed", "commit_sha": "<7+ char SHA>" },'
+    echo '  "<comment-id>": { "outcome": "no_fix_needed", "reason": "why no fix is needed" },'
+    echo '  "<comment-id>": { "outcome": "unresolved", "reason": "what blocked you" }'
+    echo '}'
+    echo '```'
+    echo '- Every comment ID from .review-context/comments.json MUST appear in this manifest.'
+    echo '- "fixed" requires the commit SHA of the fix pushed to the branch.'
+    echo '- "no_fix_needed" requires a non-empty reason string.'
+    echo '- "unresolved" means you could not address the comment; provide a reason.'
     echo ''
     echo '## MANDATORY RESULT FILE'
     echo 'When you are done, write EXACTLY ONE of these values to the file below (nothing else, no explanation):'
@@ -742,6 +838,17 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     cp "$RESULT_IN_WT" "${ISSUES_DIR}/process-review-p${POLL_COUNT}.result"
   fi
 
+  # Promote agent's per-comment outcome manifest (if present)
+  local OUTCOMES_IN_WT="${CTX}/comment-outcomes.json"
+  local OUTCOMES_FILE="${ISSUES_DIR}/comment-outcomes-p${POLL_COUNT}.json"
+  if [[ -f "$OUTCOMES_IN_WT" ]]; then
+    cp "$OUTCOMES_IN_WT" "$OUTCOMES_FILE"
+    log "  Promoted comment outcomes manifest from agent worktree"
+  else
+    : > "$OUTCOMES_FILE"
+    warn "  No comment-outcomes.json found in agent worktree"
+  fi
+
   # Resolve structured result from agent output
   local _result_file="${ISSUES_DIR}/process-review-p${POLL_COUNT}.result"
   local _result_was_valid=false
@@ -792,6 +899,18 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     fi
   fi
 
+  # Merge agent outcomes into per-comment state — only when the agent
+  # produced a valid result. When _agent_ec != 0, the outcomes file is
+  # empty, and update_comment_outcomes would mark every pending comment
+  # as "unresolved" and increment their attempts, hitting the block
+  # threshold on transient failures without the agent ever having
+  # handled those comments.
+  if ! $AGENT_FAILED; then
+    update_comment_outcomes "$OUTCOMES_FILE"
+  else
+    log "  Skipping outcome merge — agent failed or produced no valid result"
+  fi
+
   rm -f "$prompt_file"
 
   # ── Verification chain ──────────────────────────────────────────────────
@@ -805,6 +924,9 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   #   verify_ok  — every verification (replies + commits + build) passed.
   #                Drives the return code so the outer loop reports failure
   #                correctly, but does NOT gate processed-ID tracking.
+  #   build_passed — true only when verify_build_passes actually ran and
+  #                succeeded. Unlike verify_ok, this is false when
+  #                NO_FIXES_NEEDED skips build verification entirely.
   #
   # This split avoids two failure modes:
   #   (a) agent crashes before replying → replies_ok=false → IDs unmarked
@@ -814,6 +936,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   #       does not spam duplicate replies. Build still re-runs naturally
   #       on the next poll once unrelated state changes.
   local verify_ok=true
+  local build_passed=false
   local replies_ok=false
 
   if [[ "$review_result" == "NO_FIXES_NEEDED" ]]; then
@@ -849,6 +972,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         commentId="batch-p${POLL_COUNT}" error="verify_replies_failed"
     fi
     if verify_build_passes; then
+      build_passed=true
       emit_event "post-pr-review" "info" "post-pr-review.verification.passed" \
         "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="build_passes"
     else
@@ -885,6 +1009,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         commentId="batch-p${POLL_COUNT}" error="verify_replies_failed"
     fi
     if verify_build_passes; then
+      build_passed=true
       emit_event "post-pr-review" "info" "post-pr-review.verification.passed" \
         "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="build_passes"
     else
@@ -895,31 +1020,139 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     fi
   fi
 
-  # Per-ID append: every individually-replied comment gets marked REPLIED so
-  # the agent isn't re-prompted for it next poll, even when the overall
-  # batch was partial. Only IDs the agent ACTUALLY replied to land here.
-  local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
-  if [[ -f "$status_file" && -s "$status_file" ]]; then
-    cat "$status_file" >> "$REPLIED_IDS_FILE"
-    sort -u "$REPLIED_IDS_FILE" -o "$REPLIED_IDS_FILE"
-    local replied_count
-    replied_count=$(wc -l < "$status_file" | tr -d ' ')
-    log "Tracked ${replied_count} comment(s) as REPLIED (cumulative: $(wc -l < "$REPLIED_IDS_FILE" | tr -d ' '))."
+   # Per-comment state transitions — reply_verified + state→replied
+   # For each comment in the batch, update reply_verified if reply was confirmed.
+   # Only transition to "replied" if the outcome is not "unresolved" — unresolved
+   # comments that received a reply stay "pending" so check_stuck_comments can
+   # track attempts and escalate them to "blocked" when they exceed the threshold.
+   local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
+   if [[ -f "$status_file" && -s "$status_file" ]]; then
+     local replied_id
+     while IFS= read -r replied_id; do
+       [[ -z "$replied_id" ]] && continue
+       if [[ -f "$COMMENT_STATE_FILE" ]] && jq -e --arg cid "$replied_id" 'has($cid)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
+         jq --arg cid "$replied_id" '.[$cid].reply_verified = true' \
+           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+        local outcome
+          outcome=$(jq -r --arg cid "$replied_id" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+          # Only transition to "replied" if the outcome is promotable:
+          # - "fixed" requires a non-null commit_sha
+          # - "no_fix_needed" requires a non-empty no_fix_reason
+          # - "unresolved" stays pending for stuck-loop escalation
+          # Incomplete outcomes (fixed without commit_sha, no_fix_needed without reason)
+          # also stay pending so they can be re-prompted or eventually blocked.
+          local can_promote=false
+          if [[ "$outcome" == "fixed" ]]; then
+            local sha
+            sha=$(jq -r --arg cid "$replied_id" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+            if [[ -n "$sha" && "$sha" != "null" ]]; then
+              can_promote=true
+            fi
+          elif [[ "$outcome" == "no_fix_needed" ]]; then
+            local reason
+            reason=$(jq -r --arg cid "$replied_id" '.[$cid].no_fix_reason // "null"' "$COMMENT_STATE_FILE")
+            if [[ -n "$reason" && "$reason" != "null" ]]; then
+              can_promote=true
+            fi
+          fi
+          if $can_promote; then
+            set_comment_state "$replied_id" "replied"
+          fi
+       fi
+     done < "$status_file"
+     local replied_count
+     replied_count=$(wc -l < "$status_file" | tr -d ' ')
+     log "  Set reply_verified=true for ${replied_count} comment(s)"
+   fi
+
+  # Per-comment commit SHA verification for fixed outcomes.
+  # Uses the per-comment pre_sha captured at first init (so re-check
+  # verification on a later poll still compares against the original
+  # pre-agent SHA, not against HEAD that has since advanced with pushes).
+  local comment_ids
+  comment_ids=$(jq -r 'keys[]' "$COMMENT_STATE_FILE" 2>/dev/null)
+  local cid
+  for cid in $comment_ids; do
+    [[ -z "$cid" ]] && continue
+    local outcome
+    outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+    if [[ "$outcome" == "fixed" ]]; then
+      local commit_sha cid_pre_sha
+      commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+      cid_pre_sha=$(jq -r --arg cid "$cid" '.[$cid].pre_sha // ""' "$COMMENT_STATE_FILE")
+      if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
+        if verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
+          log "  Comment ${cid}: commit ${commit_sha:0:7} verified on origin/${PR_BRANCH}"
+          jq --arg cid "$cid" '.[$cid].commit_verified = true' \
+            "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+            mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+         else
+           warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — demoting to pending for re-prompt"
+           # Demote to pending WITHOUT incrementing attempts — update_comment_outcomes
+           # already counted this agent run for this comment.
+           jq --arg cid "$cid" \
+             '.[$cid].commit_verified = false | .[$cid].build_verified = false | .[$cid].reply_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
+             "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+         fi
+      fi
+    fi
+  done
+
+   # Set build_verified for fixed outcomes when build actually passed.
+   # This must be per-comment: verify_ok can be true without a build running
+   # (e.g. NO_FIXES_NEEDED path skips build verification), so we use
+   # build_passed which is true only when verify_build_passes actually ran
+   # and succeeded.
+   if $build_passed; then
+     for cid in $comment_ids; do
+       [[ -z "$cid" ]] && continue
+       local outcome
+       outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+       if [[ "$outcome" == "fixed" ]]; then
+         jq --arg cid "$cid" '.[$cid].build_verified = true' \
+           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+       fi
+     done
+   fi
+
+  # State transitions: replied -> processed (if guard passes)
+  # can_transition_to_processed checks per-comment build_verified for
+  # fixed outcomes, so no batch-level verify_ok check is needed here.
+  local promoted_ids=""
+  for cid in $comment_ids; do
+    [[ -z "$cid" ]] && continue
+    local state
+    state=$(jq -r --arg cid "$cid" '.[$cid].state' "$COMMENT_STATE_FILE")
+    if [[ "$state" == "replied" ]]; then
+      if can_transition_to_processed "$cid"; then
+        set_comment_state "$cid" "processed"
+        log "  Comment ${cid}: transitioned replied → processed"
+        promoted_ids="${promoted_ids} ${cid}"
+      fi
+    fi
+  done
+
+  # Resolve GitHub threads for newly-processed comments
+  if [[ -n "$promoted_ids" ]]; then
+    resolve_threads $promoted_ids
   fi
 
-  # Promotion to PROCESSED + thread resolution requires both: every comment
-  # in this batch got a reply AND build/commits verified clean.
-  if $replies_ok && $verify_ok; then
-    local fed_ids
-    fed_ids=$(echo "$comments" | jq -r '.[].id' | tr '\n' ' ')
-    echo "$fed_ids" | tr ' ' '\n' | grep -v '^$' >> "$PROCESSED_IDS_FILE"
-    sort -u "$PROCESSED_IDS_FILE" -o "$PROCESSED_IDS_FILE"
-    log "Replies + verification confirmed; marked ${comment_count} comment(s) as PROCESSED."
-    resolve_threads $fed_ids
-  elif $replies_ok; then
-    warn "All replies confirmed but verification failed; will re-verify next poll."
-  else
-    warn "Partial/no replies; ${comment_count} comment(s) tracked individually above. Missing IDs retry next poll."
+  # Check for stuck comments and block them
+  check_stuck_comments
+
+  # Derive compatibility text files from JSON state
+  derive_compat_files
+
+  # Dirty worktree cleanup — archive diff and reset on failure paths.
+  # This MUST run after verify_commits_pushed has attempted to push valid commits,
+  # but before we return from process_reviews.
+  if [[ "$_agent_ec" != "0" || "$review_result" == "BLOCKED" || ("$verify_ok" == "false" && "$replies_ok" == "false") ]]; then
+    if [[ -n "${POLL_WORKTREE:-}" ]]; then
+      cleanup_dirty_worktree "$POLL_WORKTREE"
+    fi
   fi
 
   if $verify_ok; then
@@ -942,6 +1175,7 @@ AGENT_FAILED=false
 DID_PUSH_COMMITS=0
 CONTRADICTION_FIRED=false
 PROCESSED_IDS_COUNT_START=$(wc -l < "$PROCESSED_IDS_FILE" 2>/dev/null || echo 0)
+COMMENT_STATE_FILE="${ISSUES_DIR}/comment-state.json"
 # Hard ceiling on total iterations regardless of resets — protects against
 # pathological loops where every push attracts a new comment.
 MAX_TOTAL_POLLS="${MAX_TOTAL_POLLS:-30}"

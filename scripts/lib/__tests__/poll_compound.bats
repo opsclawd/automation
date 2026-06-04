@@ -64,26 +64,23 @@ teardown() { rm -rf "$TMPDIR_TEST"; }
   [ "$status" -ne 0 ]
 }
 
-@test "emit_compound_doc: writes timestamped file under ISSUES_DIR" {
-  export PR_NUMBER=99
-  export PR_BRANCH=test-branch
-  export OWNER_REPO=owner/repo
-  # stub run_agent so the test doesn't shell out
-  run_agent() {
-    local phase="$1"; local timeout="$2"
-    cat > "${ISSUES_DIR}/${phase}.prompt.txt"
-    echo "stubbed agent output" > "${COMPOUND_OUT}"
-    return 0
-  }
-  export -f run_agent
-  DID_PUSH_COMMITS=1
-  emit_compound_doc
-  local files
-  files=$(ls "${ISSUES_DIR}"/compound-*.md 2>/dev/null | wc -l | tr -d ' ')
-  [ "$files" -eq 1 ]
+@test "should_emit_compound: true when JSON has processed state but text file is empty" {
+  export COMMENT_STATE_FILE="${ISSUES_DIR}/comment-state.json"
+  echo '{"111": {"state": "processed", "attempts": 1}}' > "$COMMENT_STATE_FILE"
+  > "$PROCESSED_IDS_FILE"
+  run should_emit_compound
+  [ "$status" -eq 0 ]
 }
 
-@test "emit_compound_doc: two invocations produce two distinct files" {
+@test "should_emit_compound: false when JSON has no processed state and text file is empty" {
+  export COMMENT_STATE_FILE="${ISSUES_DIR}/comment-state.json"
+  echo '{"111": {"state": "pending", "attempts": 1}}' > "$COMMENT_STATE_FILE"
+  > "$PROCESSED_IDS_FILE"
+  run should_emit_compound
+  [ "$status" -ne 0 ]
+}
+
+@test "emit_compound_doc: writes timestamped file under ISSUES_DIR" {
   export PR_NUMBER=99
   export PR_BRANCH=test-branch
   export OWNER_REPO=owner/repo

@@ -16,12 +16,13 @@ should_emit_compound() {
   if [[ "${DID_PUSH_COMMITS:-0}" -gt 0 ]]; then return 0; fi
   if [[ "${BLOCKED_EXIT:-false}" == "true" ]]; then return 0; fi
   if [[ "${CONTRADICTION_FIRED:-false}" == "true" ]]; then return 0; fi
-  # Snapshot-based: only signal if NEW comments were processed this run.
-  # Prevents false positives on quiet re-runs where PROCESSED_IDS_FILE
-  # retains content from a prior poll loop invocation.
   local current_count=0
   if [[ -f "${PROCESSED_IDS_FILE:-}" ]]; then
     current_count=$(wc -l < "$PROCESSED_IDS_FILE" | tr -d ' ')
+  fi
+  # Fallback: if text file is empty but JSON has processed state, use JSON count
+  if [[ "$current_count" -eq 0 && -f "${COMMENT_STATE_FILE:-}" ]]; then
+    current_count=$(jq '[.[] | select(.state == "processed")] | length' "$COMMENT_STATE_FILE" 2>/dev/null || echo 0)
   fi
   if [[ "${current_count}" -gt "${PROCESSED_IDS_COUNT_START:-0}" ]]; then return 0; fi
   return 1
