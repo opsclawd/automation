@@ -112,6 +112,22 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeTruthy();
   });
 
+  it('matches "Not Enough Credits" in structural log line (default mode)', () => {
+    const result = testQuotaPatterns(
+      'ERROR 2026-06-03T12:00:00.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}',
+    );
+    expect(result).toBeTruthy();
+    expect(result).toContain('Not Enough Credits');
+  });
+  it('matches "Not Enough Credits" in structural log line (structuralOnly: true)', () => {
+    const result = testQuotaPatterns(
+      'ERROR 2026-06-03T12:00:00.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}',
+      { structuralOnly: true },
+    );
+    expect(result).toBeTruthy();
+    expect(result).toContain('Not Enough Credits');
+  });
+
   it('ignores quota pattern in non-structural line (structuralOnly: true)', () => {
     const result = testQuotaPatterns(
       "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",

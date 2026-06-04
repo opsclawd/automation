@@ -3,6 +3,7 @@ export const QUOTA_PATTERNS = [
   /"statusCode":\s*429/,
   /rate_limit_exceeded/i,
   /\b429\b/,
+  /Not Enough Credits/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [
