@@ -201,7 +201,7 @@ check_stuck_comments() {
 
   local stuck_ids
   stuck_ids=$(jq -r --argjson threshold "$block_threshold" \
-    'to_entries[] | select(.value.state == "pending" and .value.attempts >= $threshold and .value.outcome == "unresolved") | .key' \
+    'to_entries[] | select(.value.state == "pending" and .value.attempts >= $threshold and (.value.outcome == "unresolved" or .value.outcome == null)) | .key' \
     "$COMMENT_STATE_FILE")
 
   for cid in $stuck_ids; do
@@ -211,7 +211,7 @@ check_stuck_comments() {
     set_comment_state "$cid" "blocked" "Exceeded ${block_threshold} attempts without resolution"
     emit_event "post-pr-review" "error" "post-pr-review.comment.blocked" \
       "Comment ${cid} blocked after ${block_threshold} unresolved attempts" \
-      commentId="$cid" attempts="$block_threshold" lastResult="$last_result"
+      commentId="$cid" attempts="$(jq -r --arg cid "$cid" '.[$cid].attempts' "$COMMENT_STATE_FILE")" lastResult="$last_result"
   done
 }
 
@@ -294,8 +294,3 @@ can_transition_to_processed() {
   return 1
 }
 
-get_unprocessed_comment_ids() {
-  if [[ -f "$COMMENT_STATE_FILE" ]]; then
-    jq -r 'to_entries[] | select(.value.state == "pending") | .key' "$COMMENT_STATE_FILE"
-  fi
-}

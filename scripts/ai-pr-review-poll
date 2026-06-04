@@ -582,15 +582,18 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         # Re-verify per-comment: only promote comments that pass the guard
         local replied_ids
         replied_ids=$(jq -r 'to_entries[] | select(.value.state == "replied") | .key' "$COMMENT_STATE_FILE" 2>/dev/null)
+        # Fetch all PR comments once to avoid N+1 API calls
+        local all_replies_json
+        all_replies_json=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" \
+          --jq '[.[] | select(.in_reply_to_id != null) | .in_reply_to_id]' 2>/dev/null || echo '[]')
         local promoted=0
         local promoted_reverify_ids=""
         local cid
         for cid in $replied_ids; do
           [[ -z "$cid" ]] && continue
-          # Re-verify the reply is still on GitHub
+          # Check reply existence from the pre-fetched list
           local has_reply
-          has_reply=$(gh api --paginate "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments" \
-            --jq "[.[] | select(.in_reply_to_id == ${cid})] | length" 2>/dev/null || echo "0")
+          has_reply=$(echo "$all_replies_json" | jq --arg cid "$cid" '[.[] | select(. == ($cid | tonumber))] | length' 2>/dev/null || echo "0")
           if [[ "$has_reply" -gt 0 ]]; then
             jq --arg cid "$cid" '.[$cid].reply_verified = true' \
               "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \

@@ -167,6 +167,22 @@ teardown() {
   [ "$count" -ge 1 ]
 }
 
+@test "check_stuck_comments emits event with actual attempts count" {
+  printf '{"555": {"state": "pending", "attempts": 5, "last_poll": 5, "last_result": "unresolved", "outcome": "unresolved", "commit_sha": null, "reply_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  : > "$AI_RUN_EVENTS_FILE"
+  COMMENT_BLOCK_THRESHOLD=2 check_stuck_comments
+  local attempts_in_event
+  attempts_in_event=$(jq -s -r '[.[] | select(.type == "post-pr-review.comment.blocked")] | .[0].metadata.attempts' "$AI_RUN_EVENTS_FILE")
+  [ "$attempts_in_event" = "5" ]
+}
+
+@test "check_stuck_comments blocks comments with null outcome at threshold" {
+  printf '{"777": {"state": "pending", "attempts": 2, "last_poll": 2, "last_result": null, "outcome": null, "commit_sha": null, "reply_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  check_stuck_comments
+  run jq -r '.["777"].state' "$COMMENT_STATE_FILE"
+  [ "$output" = "blocked" ]
+}
+
 # derive_compat_files tests
 @test "derive_compat_files produces correct text files" {
   printf '{"10": {"state": "processed", "attempts": 1, "last_poll": 2, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc1234", "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}, "20": {"state": "replied", "attempts": 0, "last_poll": 1, "last_result": null, "outcome": null, "commit_sha": null, "reply_verified": true, "blocked_reason": null, "no_fix_reason": null}, "30": {"state": "pending", "attempts": 0, "last_poll": 0, "last_result": null, "outcome": null, "commit_sha": null, "reply_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
