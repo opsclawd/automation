@@ -446,8 +446,10 @@ post_timeout_escalation_reply() {
   if gh api "repos/${OWNER_REPO}/pulls/${PR_NUMBER}/comments/${cid}/replies" \
       --method POST --raw-field "body=${body}" >/dev/null 2>&1; then
     log "  Posted timeout-escalation reply to comment ${cid}"
+    return 0
   else
     warn "  Failed to post timeout-escalation reply to comment ${cid}"
+    return 1
   fi
 }
 
@@ -957,11 +959,27 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         [[ -z "$_cid" ]] && continue
         local _tc
         _tc=$(jq -r --arg cid "$_cid" '.[$cid].timeout_count // 0' "$COMMENT_STATE_FILE")
-        post_timeout_escalation_reply "$_cid" "$_tc"
-        set_comment_state "$_cid" "blocked" "timeout_escalation: ${_tc} consecutive timeouts"
-        emit_event "post-pr-review" "warn" "post-pr-review.comment.timeout_escalated" \
-          "Comment ${_cid} escalated after ${_tc} timeouts — reply posted, blocked from retries" \
-          commentId="$_cid" timeoutCount="$_tc"
+        if post_timeout_escalation_reply "$_cid" "$_tc"; then
+          set_comment_state "$_cid" "blocked" "timeout_escalation: ${_tc} consecutive timeouts"
+          emit_event "post-pr-review" "warn" "post-pr-review.comment.timeout_escalated" \
+            "Comment ${_cid} escalated after ${_tc} timeouts — reply posted, blocked from retries" \
+            commentId="$_cid" timeoutCount="$_tc"
+        else
+          emit_event "post-pr-review" "warn" "post-pr-review.comment.escalation_reply_failed" \
+            "Comment ${_cid} escalation reply failed — keeping pending for retry" \
+            commentId="$_cid" timeoutCount="$_tc"
+        fi
+      done
+    else
+      # Fast failure — not a timeout. Reset timeout_count so an intervening
+      # non-timeout failure doesn't make a later timeout appear consecutive.
+      local _cid
+      for _cid in $(echo "$comments" | jq -r '.[].id' 2>/dev/null); do
+        [[ -z "$_cid" ]] && continue
+        local _cstate
+        _cstate=$(get_comment_state "$_cid")
+        [[ "$_cstate" != "pending" ]] && continue
+        reset_comment_timeout "$_cid"
       done
     fi
   fi

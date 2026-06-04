@@ -167,6 +167,7 @@ update_comment_outcomes() {
         | .value.reply_verified = false
         | .value.commit_verified = false
         | .value.build_verified = false
+        | .value.timeout_count = 0
       elif .value.state == "pending" then
         .value.outcome = "unresolved"
         | .value.last_result = "MISSING_OUTCOME"
@@ -226,6 +227,17 @@ check_stuck_comments() {
       "Comment ${cid} blocked after ${block_threshold} unresolved attempts" \
       commentId="$cid" attempts="$(jq -r --arg cid "$cid" '.[$cid].attempts' "$COMMENT_STATE_FILE")" lastResult="$last_result"
   done
+}
+
+reset_comment_timeout() {
+  local cid="$1"
+  if [[ -z "$COMMENT_STATE_FILE" || ! -f "$COMMENT_STATE_FILE" ]]; then
+    return 1
+  fi
+  jq --arg cid "$cid" \
+    '.[$cid].timeout_count = 0' \
+    "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+    mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
 }
 
 increment_comment_timeout() {
