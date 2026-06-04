@@ -571,4 +571,107 @@ describe('OpenCodeAgentAdapter', () => {
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
     expect(r.exitCode).toBe(1);
   });
+
+  it('detects crofai "Not Enough Credits" in session log post-exit (exit 0, clean stderr)', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(
+        __dirname,
+        '..',
+        '__fixtures__',
+        'fake-opencode-session-log-crofai-quota.sh',
+      ),
+      artifactsDir: cwd,
+      sessionLogDir,
+    });
+    try {
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'post-pr-review',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+      expect(r.outcome).toBe('failed');
+      expect(r.exitCode).toBe(0);
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('Not Enough Credits');
+    } finally {
+      rmSync(sessionLogDir, { recursive: true });
+    }
+  });
+
+  it('detects provider error in session log post-exit (exit 0, clean stderr)', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(
+        __dirname,
+        '..',
+        '__fixtures__',
+        'fake-opencode-session-log-provider-error.sh',
+      ),
+      artifactsDir: cwd,
+      sessionLogDir,
+    });
+    try {
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'plan-design',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+      expect(r.outcome).toBe('failed');
+      expect(r.exitCode).toBe(0);
+      expect(r.contractViolations).toContain('provider_error');
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
+    } finally {
+      rmSync(sessionLogDir, { recursive: true });
+    }
+  });
+
+  it('kills child process on provider error pattern in session log (watchdog)', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      sessionLogDir,
+      quotaPollMs: 500,
+    });
+    const timer = setTimeout(() => {
+      writeFileSync(
+        join(sessionLogDir, '2026-06-03T120000.log'),
+        'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=normal\nERROR 2026-06-03T12:00:01.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://crof.ai/v1/chat/completions","statusCode":500}\n',
+      );
+    }, 800);
+    try {
+      const start = Date.now();
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'plan-design',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+      const elapsed = Date.now() - start;
+      expect(r.outcome).toBe('failed');
+      expect(elapsed).toBeLessThan(10000);
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+    } finally {
+      clearTimeout(timer);
+      rmSync(sessionLogDir, { recursive: true });
+    }
+  }, 15000);
 });
