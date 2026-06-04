@@ -252,9 +252,15 @@ export class OpenCodeAgentAdapter implements AgentPort {
           const newContent = content.slice(prevOffset);
           logOffsets.set(logPath, content.length);
 
-          const match = testQuotaPatterns(newContent, { structuralOnly: true });
-          if (match) {
-            onQuota(match);
+          const quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
+          if (quotaMatch) {
+            onQuota(quotaMatch);
+            child.kill('SIGKILL');
+            return;
+          }
+          const providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
+          if (providerMatch) {
+            onQuota(providerMatch);
             child.kill('SIGKILL');
             return;
           }
