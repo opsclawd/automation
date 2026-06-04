@@ -15,6 +15,9 @@ function deepMerge(base: unknown, override: unknown): unknown {
   if (isPlainObject(base) && isPlainObject(override)) {
     const result: Record<string, unknown> = { ...base };
     for (const key of Object.keys(override)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+        continue;
+      }
       result[key] = deepMerge(
         (base as Record<string, unknown>)[key],
         (override as Record<string, unknown>)[key],
@@ -44,10 +47,11 @@ export function loadConfig(repoRoot: string): OrchestratorConfig {
   } catch (err) {
     throw new ConfigError(`Invalid JSON in ${CONFIG_FILENAME}: ${(err as Error).message}`, err);
   }
-  if (existsSync(resolve(repoRoot, LOCAL_CONFIG_FILENAME))) {
+  const localPath = resolve(repoRoot, LOCAL_CONFIG_FILENAME);
+  if (existsSync(localPath)) {
     let localRaw: string;
     try {
-      localRaw = readFileSync(resolve(repoRoot, LOCAL_CONFIG_FILENAME), 'utf8');
+      localRaw = readFileSync(localPath, 'utf8');
     } catch (err) {
       throw new ConfigError(
         `Failed to read ${LOCAL_CONFIG_FILENAME}: ${(err as Error).message}`,
@@ -67,7 +71,9 @@ export function loadConfig(repoRoot: string): OrchestratorConfig {
   }
   const parsed = orchestratorConfigSchema.safeParse(json);
   if (!parsed.success) {
-    throw new ConfigError(formatZodError(parsed.error), parsed.error);
+    const hasLocal = existsSync(localPath);
+    const extraMsg = hasLocal ? ` (validated with overrides from ${LOCAL_CONFIG_FILENAME})` : '';
+    throw new ConfigError(`${formatZodError(parsed.error)}${extraMsg}`, parsed.error);
   }
   return parsed.data;
 }

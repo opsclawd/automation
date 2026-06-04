@@ -1,15 +1,25 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig } from '../loader.js';
 import { ConfigError } from '../errors.js';
 
+const createdDirs: string[] = [];
+
 function makeRepo(contents?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'ai-orch-cfg-'));
+  createdDirs.push(dir);
   if (contents !== undefined) writeFileSync(join(dir, '.ai-orchestrator.json'), contents);
   return dir;
 }
+
+afterEach(() => {
+  for (const dir of createdDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  createdDirs.length = 0;
+});
 
 function writeLocalConfig(dir: string, contents: string): void {
   writeFileSync(join(dir, '.ai-orchestrator.local.json'), contents);
