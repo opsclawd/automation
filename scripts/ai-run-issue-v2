@@ -2544,15 +2544,22 @@ if [[ "$PHASE" == "validate" ]]; then
     echo "[install failed]" >> "${ISSUES_DIR}/validate.log"
     VALIDATE_EXIT=1
   else
-    NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
-      "$REPO_ROOT/apps/cli/src/run-validation.ts" \
-      --cwd "$WORKTREE_DIR" \
-      --run-id "$RUN_ID" \
-      --repo-id "$REPO_ID" \
-      --repo-root "$REPO_ROOT" \
-      --phase-id validate \
-      2>&1 | tee -a "${ISSUES_DIR}/validate.log" || :
-    VALIDATE_EXIT=${PIPESTATUS[0]}
+    # Pipeline in an if-condition is errexit-exempt (set -euo pipefail won't
+    # abort on exit 1 = expected validation failure), and PIPESTATUS reflects
+    # the pipeline — not a subsequent || true — so capture is safe in both branches.
+    if NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+        "$REPO_ROOT/apps/cli/src/run-validation.ts" \
+        --cwd "$WORKTREE_DIR" \
+        --run-id "$RUN_ID" \
+        --repo-id "$REPO_ID" \
+        --repo-root "$REPO_ROOT" \
+        --phase-id validate \
+        2>&1 | tee -a "${ISSUES_DIR}/validate.log"; then
+      _pipe_status=("${PIPESTATUS[@]}")
+    else
+      _pipe_status=("${PIPESTATUS[@]}")
+    fi
+    VALIDATE_EXIT=${_pipe_status[0]}
   fi
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
