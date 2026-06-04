@@ -95,6 +95,7 @@ async function main() {
   // implement phase) may not have a runs row. Create one so the FK on
   // validation_runs is satisfied — mirrors the synthetic-run guard in
   // run-agent.ts.
+  let createdSynthetic = false;
   if (!c.runRepository.findByUuid(runId)) {
     const syntheticRun = createRun({
       uuid: runId,
@@ -103,6 +104,7 @@ async function main() {
       startedAt: new Date(),
     });
     c.runRepository.insert(syntheticRun);
+    createdSynthetic = true;
   }
 
   const phaseId = values['phase-id'] ?? 'validate';
@@ -119,6 +121,13 @@ async function main() {
       timeoutSeconds: config.validation.timeout,
     });
 
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: passed ? 'passed' : 'failed',
+        completedAt: new Date(),
+      });
+    }
+
     for (const cmd of validationRun.commands) {
       // eslint-disable-next-line no-console
       console.log(`[${cmd.outcome}] ${cmd.command} (${cmd.durationMs}ms, exit ${cmd.exitCode})`);
@@ -127,6 +136,14 @@ async function main() {
     console.log(passed ? 'validation: PASSED' : 'validation: FAILED');
     process.exit(exitCodeForValidation(passed));
   } catch (e) {
+    if (createdSynthetic) {
+      c.runRepository.update(runId, {
+        status: 'failed',
+        completedAt: new Date(),
+        failureReason: e instanceof Error ? e.message : String(e),
+      });
+    }
+
     if (e instanceof Error && /no validation commands/i.test(e.message)) {
       console.error(e.message);
       process.exit(2);
