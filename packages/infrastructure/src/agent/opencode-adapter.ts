@@ -1,7 +1,6 @@
 import { execa } from 'execa';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
@@ -12,7 +11,6 @@ export interface OpenCodeAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
   timeoutMsDefault?: number;
-  sessionLogDir?: string;
   quotaPollMs?: number;
 }
 
@@ -32,9 +30,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
     mkdirSync(invocationDir, { recursive: true });
     const stdoutPath = join(invocationDir, 'stdout.log');
     const stderrPath = join(invocationDir, 'stderr.log');
+    const sessionLogDir = join(invocationDir, 'session-log');
+    mkdirSync(sessionLogDir, { recursive: true });
 
     const start = Date.now();
-    const initialLogOffsets = this.captureInitialSessionLogOffsets();
     let outcome: AgentInvocationResult['outcome'] = 'success';
     let exitCode = 0;
     let stdout = '';
@@ -60,29 +59,24 @@ export class OpenCodeAgentAdapter implements AgentPort {
             : undefined;
       const args = ['run'];
       if (request.model) {
-        // opencode's --model expects "provider/model". The router supplies
-        // both from the profile; the model field must be the bare model name
-        // (no provider prefix) — config is responsible for that contract.
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
       }
-      const childEnv: Record<string, string> = {};
-      if (this.opts.sessionLogDir) {
-        childEnv.OPENCODE_SESSION_LOG_DIR = this.opts.sessionLogDir;
-      }
+      const childEnv: Record<string, string> = {
+        OPENCODE_SESSION_LOG_DIR: sessionLogDir,
+      };
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
         all: false,
         input: readFileSync(request.promptPath, 'utf-8'),
         ...(cancelSignal ? { cancelSignal } : {}),
-        ...(Object.keys(childEnv).length > 0 ? { env: childEnv } : {}),
+        env: childEnv,
       });
 
       watchdogInterval = this.startWatchdog(
         child as ReturnType<typeof execa>,
-        start,
-        initialLogOffsets,
+        sessionLogDir,
         (match: string, type: 'quota' | 'provider') => {
           watchdogKilled = true;
           watchdogKilledType = type;
@@ -93,7 +87,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       const r = await child;
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
 
-      postExit = this.scanSessionLogsPostExit(start, initialLogOffsets);
+      postExit = this.scanSessionLogsPostExit(sessionLogDir);
 
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
@@ -210,42 +204,16 @@ export class OpenCodeAgentAdapter implements AgentPort {
     return ret;
   }
 
-  private captureInitialSessionLogOffsets(): Map<string, number> {
-    const offsets = new Map<string, number>();
-    const sessionLogDir =
-      this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
-    try {
-      if (!statSync(sessionLogDir).isDirectory()) return offsets;
-      const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
-      for (const f of files) {
-        const logPath = join(sessionLogDir, f);
-        try {
-          offsets.set(logPath, statSync(logPath).size);
-        } catch {
-          // File may have been removed between readdir and stat — ignore
-        }
-      }
-    } catch {
-      // Directory may not exist yet — start with empty offsets
-    }
-    return offsets;
-  }
-
-  private scanSessionLogsPostExit(
-    startTime: number,
-    initialOffsets: Map<string, number>,
-  ): { quotaMatch: string | null; providerMatch: string | null } {
-    const sessionLogDir =
-      this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
-
+  private scanSessionLogsPostExit(sessionLogDir: string): {
+    quotaMatch: string | null;
+    providerMatch: string | null;
+  } {
     try {
       if (!statSync(sessionLogDir).isDirectory()) return { quotaMatch: null, providerMatch: null };
     } catch {
       return { quotaMatch: null, providerMatch: null };
     }
 
-    const startTimeSec = startTime / 1000;
-    const mtimeGraceSec = 2;
     let quotaMatch: string | null = null;
     let providerMatch: string | null = null;
 
@@ -253,11 +221,8 @@ export class OpenCodeAgentAdapter implements AgentPort {
       const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
       for (const f of files) {
         const logPath = join(sessionLogDir, f);
-        const mtime = statSync(logPath).mtimeMs / 1000;
-        if (mtime < startTimeSec - mtimeGraceSec) continue;
-        const initialOffset = initialOffsets.get(logPath) ?? 0;
         const buf = readFileSync(logPath);
-        const newContent = buf.subarray(initialOffset).toString('utf-8');
+        const newContent = buf.toString('utf-8');
         if (!newContent) continue;
         if (!quotaMatch) {
           quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
@@ -276,13 +241,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
 
   private startWatchdog(
     child: ReturnType<typeof execa>,
-    startTime: number,
-    initialOffsets: Map<string, number>,
+    sessionLogDir: string,
     onKilled: (match: string, type: 'quota' | 'provider') => void,
   ): NodeJS.Timeout | null {
-    const sessionLogDir =
-      this.opts.sessionLogDir ?? join(homedir(), '.local', 'share', 'opencode', 'log');
-
     try {
       if (!statSync(sessionLogDir).isDirectory()) return null;
     } catch {
@@ -290,9 +251,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     }
 
     const pollMs = this.opts.quotaPollMs ?? 2000;
-    const logOffsets = new Map(initialOffsets);
-    const startTimeSec = startTime / 1000;
-    const mtimeGraceSec = 2;
+    const logOffsets = new Map<string, number>();
 
     return setInterval(() => {
       try {
@@ -301,8 +260,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
 
         for (const f of files) {
           const logPath = join(sessionLogDir, f);
-          const mtime = statSync(logPath).mtimeMs / 1000;
-          if (mtime < startTimeSec - mtimeGraceSec) continue;
 
           const prevOffset = logOffsets.get(logPath) ?? 0;
           const size = statSync(logPath).size;
