@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import { existsSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { RunId, PhaseName } from '@ai-sdlc/domain';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
@@ -25,19 +24,6 @@ export function validateRequiredFlags(values: Flags): string[] {
 /** Validation pass/fail maps to a binary exit code the Bash caller branches on. */
 export function exitCodeForValidation(passed: boolean): number {
   return passed ? 0 : 1;
-}
-
-/** Walk up from `dir` to find the repo root (containing pnpm-workspace.yaml). */
-function findRepoRoot(dir: string): string {
-  let current = resolve(dir);
-  for (let i = 0; i < 20; i++) {
-    if (existsSync(join(current, 'pnpm-workspace.yaml'))) return current;
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  console.error('could not find repo root (no pnpm-workspace.yaml found)');
-  process.exit(2);
 }
 
 /**
@@ -76,7 +62,8 @@ async function main() {
     process.exit(2);
   }
 
-  const repoRoot = values['repo-root'] ?? findRepoRoot(values.cwd!);
+  // --repo-root is required (enforced above), so no fallback is needed.
+  const repoRoot = values['repo-root']!;
 
   let config;
   try {
@@ -86,10 +73,21 @@ async function main() {
       console.error('no .ai-orchestrator.json found at repo root');
       process.exit(2);
     }
-    throw err;
+    if (err instanceof ConfigError) {
+      console.error(err.message);
+      process.exit(2);
+    }
+    console.error(err);
+    process.exit(3);
   }
 
-  const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
+  let c;
+  try {
+    c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
+  } catch (err) {
+    console.error(err);
+    process.exit(3);
+  }
 
   const runId = values['run-id']!;
   const phaseId = values['phase-id'] ?? 'validate';

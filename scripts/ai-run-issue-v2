@@ -2534,19 +2534,26 @@ if [[ "$PHASE" == "validate" ]]; then
   cd "${WORKTREE_DIR}"
   ensure_branch
   mkdir -p "${ISSUES_DIR}"
+  : > "${ISSUES_DIR}/validate.log"  # truncate; install + CLI append below
 
   # Dependencies must be installed before the configured validation commands run.
-  timeout 120 pnpm install --frozen-lockfile 2>&1 | tail -5 || echo "[install completed with warnings]"
-
-  NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
-    "$REPO_ROOT/apps/cli/src/run-validation.ts" \
-    --cwd "$WORKTREE_DIR" \
-    --run-id "$RUN_ID" \
-    --repo-id "$REPO_ID" \
-    --repo-root "$REPO_ROOT" \
-    --phase-id validate \
-    2>&1 | tee "${ISSUES_DIR}/validate.log"
-  VALIDATE_EXIT=${PIPESTATUS[0]}
+  # Capture both output (to validate.log) and exit status; skip the CLI if install
+  # fails so validation isn't run against a broken node_modules.
+  echo "=== pnpm install ===" >> "${ISSUES_DIR}/validate.log"
+  if ! timeout 120 pnpm install --frozen-lockfile 2>&1 | tee -a "${ISSUES_DIR}/validate.log" | tail -10; then
+    echo "[install failed]" >> "${ISSUES_DIR}/validate.log"
+    VALIDATE_EXIT=1
+  else
+    NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+      "$REPO_ROOT/apps/cli/src/run-validation.ts" \
+      --cwd "$WORKTREE_DIR" \
+      --run-id "$RUN_ID" \
+      --repo-id "$REPO_ID" \
+      --repo-root "$REPO_ROOT" \
+      --phase-id validate \
+      2>&1 | tee -a "${ISSUES_DIR}/validate.log"
+    VALIDATE_EXIT=${PIPESTATUS[0]}
+  fi
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
   _emit_artifact "validate" "${ISSUES_DIR}/validation.md" "validation"
