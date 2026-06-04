@@ -821,7 +821,7 @@ mkdir -p "${ISSUES_DIR}"
 while IFS= read -r -d '' _stale_dir; do
   if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
     rmdir "$_stale_dir" 2>/dev/null || true
-    log "Cleanup: removed empty staging dir ${_stale_dir}"
+    echo "[$(date +%H:%M:%S)] Cleanup: removed empty staging dir ${_stale_dir}" >&2
   fi
 done < <(find "${REPO_ROOT}/.ai-worktrees" -maxdepth 1 -type d -name 'issue-*-staging' -mmin +5 -print0 2>/dev/null)
 
