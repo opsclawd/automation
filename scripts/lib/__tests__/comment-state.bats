@@ -286,7 +286,13 @@ teardown() {
 }
 
 @test "commit_verified false → cannot transition to processed even with commit SHA and reply" {
-  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+   echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
   run can_transition_to_processed "400"
   [ "$status" -ne 0 ]
+}
+
+@test "legacy migrated replied ID with outcome=no_fix_needed can transition to processed" {
+  echo '{"500": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "LEGACY_MIGRATION", "outcome": "no_fix_needed", "commit_sha": null, "pre_sha": null, "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": "Migrated from legacy replied tracking; outcome assumed no_fix_needed"}}' > "$COMMENT_STATE_FILE"
+  run can_transition_to_processed "500"
+  [ "$status" -eq 0 ]
 }

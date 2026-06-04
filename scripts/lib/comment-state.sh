@@ -59,7 +59,7 @@ init_comment_state() {
         [[ -z "$rid" ]] && continue
         if ! jq -e --arg id "$rid" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
           jq --arg id "$rid" --argjson poll "$POLL_COUNT" \
-            '.[$id] = {state: "replied", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: null, commit_sha: null, pre_sha: null, reply_verified: true, commit_verified: false, blocked_reason: null, no_fix_reason: null}' \
+            '.[$id] = {state: "replied", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: "no_fix_needed", commit_sha: null, pre_sha: null, reply_verified: true, commit_verified: false, blocked_reason: null, no_fix_reason: "Migrated from legacy replied tracking; outcome assumed no_fix_needed"}' \
             "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
           migrated=$((migrated + 1))
