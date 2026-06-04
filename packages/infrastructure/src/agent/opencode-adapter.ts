@@ -2,6 +2,7 @@ import { execa } from 'execa';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
@@ -220,20 +221,24 @@ export class OpenCodeAgentAdapter implements AgentPort {
     try {
       const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
       for (const f of files) {
-        const logPath = join(sessionLogDir, f);
-        const buf = readFileSync(logPath);
-        const newContent = buf.toString('utf-8');
-        if (!newContent) continue;
-        if (!quotaMatch) {
-          quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
+        try {
+          const logPath = join(sessionLogDir, f);
+          const buf = readFileSync(logPath);
+          const newContent = buf.toString('utf-8');
+          if (!newContent) continue;
+          if (!quotaMatch) {
+            quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
+          }
+          if (!providerMatch) {
+            providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
+          }
+          if (quotaMatch && providerMatch) break;
+        } catch {
+          // File might be deleted between stat and read — ignore
         }
-        if (!providerMatch) {
-          providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
-        }
-        if (quotaMatch && providerMatch) break;
       }
     } catch {
-      // File might be deleted between stat and read — ignore
+      // Directory might be deleted — ignore
     }
 
     return { quotaMatch, providerMatch };
@@ -252,6 +257,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
 
     const pollMs = this.opts.quotaPollMs ?? 2000;
     const logOffsets = new Map<string, number>();
+    const logDecoders = new Map<string, StringDecoder>();
 
     return setInterval(() => {
       try {
@@ -259,31 +265,41 @@ export class OpenCodeAgentAdapter implements AgentPort {
         if (files.length === 0) return;
 
         for (const f of files) {
-          const logPath = join(sessionLogDir, f);
+          try {
+            const logPath = join(sessionLogDir, f);
 
-          const prevOffset = logOffsets.get(logPath) ?? 0;
-          const size = statSync(logPath).size;
-          if (size <= prevOffset) continue;
+            let prevOffset = logOffsets.get(logPath) ?? 0;
+            const size = statSync(logPath).size;
+            if (size < prevOffset) {
+              prevOffset = 0;
+              logOffsets.set(logPath, 0);
+            }
+            if (size <= prevOffset) continue;
 
-          const buf = readFileSync(logPath);
-          const newContent = buf.subarray(prevOffset).toString('utf-8');
-          logOffsets.set(logPath, buf.length);
+            const buf = readFileSync(logPath);
+            const decoder = logDecoders.get(logPath) ?? new StringDecoder('utf-8');
+            logDecoders.set(logPath, decoder);
+            const newContent = decoder.write(buf.subarray(prevOffset));
+            logOffsets.set(logPath, buf.length);
 
-          const quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
-          if (quotaMatch) {
-            onKilled(quotaMatch, 'quota');
-            child.kill('SIGKILL');
-            return;
-          }
-          const providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
-          if (providerMatch) {
-            onKilled(providerMatch, 'provider');
-            child.kill('SIGKILL');
-            return;
+            const quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
+            if (quotaMatch) {
+              onKilled(quotaMatch, 'quota');
+              child.kill('SIGKILL');
+              return;
+            }
+            const providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
+            if (providerMatch) {
+              onKilled(providerMatch, 'provider');
+              child.kill('SIGKILL');
+              return;
+            }
+          } catch {
+            // File might be deleted between stat and read — ignore
           }
         }
       } catch {
-        // File might be deleted between stat and read — ignore
+        // Directory might be deleted — ignore
       }
     }, pollMs);
   }

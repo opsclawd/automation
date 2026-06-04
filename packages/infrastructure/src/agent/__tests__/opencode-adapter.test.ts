@@ -16,7 +16,14 @@ function makeWorktree(): string {
   return dir;
 }
 
-function waitForSessionLogDir(artifactsDir: string, timeoutMs = 3000): string | null {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForSessionLogDir(
+  artifactsDir: string,
+  timeoutMs = 3000,
+): Promise<string | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const entries = readdirSync(artifactsDir);
@@ -25,6 +32,7 @@ function waitForSessionLogDir(artifactsDir: string, timeoutMs = 3000): string | 
       const slDir = join(artifactsDir, invDir, 'session-log');
       if (existsSync(slDir)) return slDir;
     }
+    await sleep(50);
   }
   return null;
 }
@@ -324,8 +332,8 @@ describe('OpenCodeAgentAdapter', () => {
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        const slDir = waitForSessionLogDir(cwd);
+      timer = setTimeout(async () => {
+        const slDir = await waitForSessionLogDir(cwd);
         if (slDir) {
           writeFileSync(
             join(slDir, '2026-05-28T225115.log'),
@@ -390,8 +398,8 @@ describe('OpenCodeAgentAdapter', () => {
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        const slDir = waitForSessionLogDir(cwd);
+      timer = setTimeout(async () => {
+        const slDir = await waitForSessionLogDir(cwd);
         if (slDir) {
           writeFileSync(
             join(slDir, '2026-05-28T225115.log'),
@@ -429,11 +437,12 @@ describe('OpenCodeAgentAdapter', () => {
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        const slDir = waitForSessionLogDir(cwd);
+      timer = setTimeout(async () => {
+        const slDir = await waitForSessionLogDir(cwd);
         if (slDir) {
           const logFile = join(slDir, '2026-05-28T230000.log');
           writeFileSync(logFile, 'Previous session content\nNothing relevant here\n');
+          await sleep(600);
           writeFileSync(
             logFile,
             'Previous session content\nNothing relevant here\nERROR 2026-05-28T23:00:02.000Z +0ms service=llm New: "statusCode": 429 Too Many Requests\n',
@@ -657,8 +666,8 @@ describe('OpenCodeAgentAdapter', () => {
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        const slDir = waitForSessionLogDir(cwd);
+      timer = setTimeout(async () => {
+        const slDir = await waitForSessionLogDir(cwd);
         if (slDir) {
           writeFileSync(
             join(slDir, '2026-06-03T120000.log'),
@@ -701,8 +710,8 @@ describe('OpenCodeAgentAdapter', () => {
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        const slDir = waitForSessionLogDir(cwd);
+      timer = setTimeout(async () => {
+        const slDir = await waitForSessionLogDir(cwd);
         if (slDir) {
           writeFileSync(
             join(slDir, '2026-06-03T120000.log'),
@@ -743,11 +752,12 @@ describe('OpenCodeAgentAdapter', () => {
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        const slDir = waitForSessionLogDir(cwd);
+      timer = setTimeout(async () => {
+        const slDir = await waitForSessionLogDir(cwd);
         if (slDir) {
           const logFile = join(slDir, '2026-06-03T120000.log');
           writeFileSync(logFile, 'INFO 2026-06-03T11:59:00.000Z 你好世界 — résumé naïve café 🚀\n');
+          await sleep(600);
           writeFileSync(
             logFile,
             'ERROR 2026-06-03T12:00:04.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}\n',
