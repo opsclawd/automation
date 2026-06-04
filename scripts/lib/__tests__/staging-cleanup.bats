@@ -80,6 +80,7 @@ run_stale_sweep() {
       rmdir "$_stale_dir" 2>/dev/null || true
     elif [[ -n "$(find "$_stale_dir" -maxdepth 1 -name '.owner-*' ! -name '.owner-* *' -print 2>/dev/null)" ]]; then
       _all_markers_dead=true
+      _dead_markers=()
       for _marker in "$_stale_dir"/.owner-*; do
         [[ -f "$_marker" ]] || continue
         _marker_pid="${_marker##*.owner-}"
@@ -87,9 +88,10 @@ run_stale_sweep() {
           _all_markers_dead=false
           break
         fi
+        _dead_markers+=("$_marker")
       done
       if $_all_markers_dead; then
-        rm -f "$_stale_dir"/.owner-*
+        rm -f "${_dead_markers[@]}"
         if [[ -z "$(ls -A "$_stale_dir" 2>/dev/null)" ]]; then
           rmdir "$_stale_dir" 2>/dev/null || true
         fi
