@@ -129,6 +129,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     if (watchdogKilled) {
       outcome = 'failed';
       if (watchdogKilledType === 'quota') {
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
         stderr = `QUOTA_EXCEEDED: ${watchdogMatch}`;
         stderrForLog = `QUOTA_EXCEEDED: ${watchdogMatch}\n${stderrForLog}`;
       } else {

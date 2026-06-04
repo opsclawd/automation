@@ -334,6 +334,7 @@ describe('OpenCodeAgentAdapter', () => {
 
       expect(r.outcome).toBe('failed');
       expect(elapsed).toBeLessThan(10000);
+      expect(r.contractViolations).toContain('provider_error');
       expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
     } finally {
       clearTimeout(timer);
