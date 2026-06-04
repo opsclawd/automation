@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -14,6 +14,19 @@ function makeWorktree(): string {
   writeFileSync(join(dir, 'README.md'), 'x');
   execSync('git add . && git commit -q -m init', { cwd: dir });
   return dir;
+}
+
+function waitForSessionLogDir(artifactsDir: string, timeoutMs = 3000): string | null {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const entries = readdirSync(artifactsDir);
+    const invDir = entries.find((d) => d.startsWith('inv-'));
+    if (invDir) {
+      const slDir = join(artifactsDir, invDir, 'session-log');
+      if (existsSync(slDir)) return slDir;
+    }
+  }
+  return null;
 }
 
 describe('OpenCodeAgentAdapter', () => {
@@ -303,20 +316,25 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('kills child process on quota pattern in session log', async () => {
     const cwd = makeWorktree();
-    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
-      sessionLogDir,
       quotaPollMs: 500,
     });
 
-    const timer = setTimeout(() => {
-      writeFileSync(
-        join(sessionLogDir, '2026-05-28T225115.log'),
-        'INFO  2026-05-28T22:51:15.000Z +0ms service=llm msg=normal\nERROR 2026-05-28T22:51:16.000Z +0ms service=llm Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
-      );
-    }, 800);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const injectionPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        const slDir = waitForSessionLogDir(cwd);
+        if (slDir) {
+          writeFileSync(
+            join(slDir, '2026-05-28T225115.log'),
+            'INFO  2026-05-28T22:51:15.000Z +0ms service=llm msg=normal\nERROR 2026-05-28T22:51:16.000Z +0ms service=llm Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
+          );
+        }
+        resolve();
+      }, 800);
+    });
 
     try {
       const start = Date.now();
@@ -338,7 +356,7 @@ describe('OpenCodeAgentAdapter', () => {
       expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
     } finally {
       clearTimeout(timer);
-      rmSync(sessionLogDir, { recursive: true });
+      await injectionPromise;
     }
   }, 15000);
 
@@ -629,19 +647,24 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('kills child process on provider error pattern in session log (watchdog)', async () => {
     const cwd = makeWorktree();
-    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
-      sessionLogDir,
       quotaPollMs: 500,
     });
-    const timer = setTimeout(() => {
-      writeFileSync(
-        join(sessionLogDir, '2026-06-03T120000.log'),
-        'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=normal\nERROR 2026-06-03T12:00:01.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://crof.ai/v1/chat/completions","statusCode":500}\n',
-      );
-    }, 800);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const injectionPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        const slDir = waitForSessionLogDir(cwd);
+        if (slDir) {
+          writeFileSync(
+            join(slDir, '2026-06-03T120000.log'),
+            'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=normal\nERROR 2026-06-03T12:00:01.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://crof.ai/v1/chat/completions","statusCode":500}\n',
+          );
+        }
+        resolve();
+      }, 800);
+    });
     try {
       const start = Date.now();
       const r = await adapter.invoke({
@@ -661,7 +684,7 @@ describe('OpenCodeAgentAdapter', () => {
       expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
     } finally {
       clearTimeout(timer);
-      rmSync(sessionLogDir, { recursive: true });
+      await injectionPromise;
     }
   }, 15000);
 
