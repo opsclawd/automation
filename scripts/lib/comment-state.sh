@@ -21,6 +21,7 @@
 
 init_comment_state() {
   local comment_ids="$1"
+  local pre_sha="${2:-}"
 
   if [[ -z "$COMMENT_STATE_FILE" ]]; then
     warn "init_comment_state: COMMENT_STATE_FILE is unset"
@@ -36,8 +37,8 @@ init_comment_state() {
     local id
     for id in $comment_ids; do
       if ! jq -e --arg id "$id" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
-        jq --arg id "$id" --argjson poll "$POLL_COUNT" \
-          '.[$id] = {state: "pending", attempts: 0, last_poll: $poll, last_result: null, outcome: null, commit_sha: null, reply_verified: false, blocked_reason: null, no_fix_reason: null}' \
+        jq --arg id "$id" --argjson poll "$POLL_COUNT" --arg sha "$pre_sha" \
+          '.[$id] = {state: "pending", attempts: 0, last_poll: $poll, last_result: null, outcome: null, commit_sha: null, pre_sha: $sha, reply_verified: false, blocked_reason: null, no_fix_reason: null}' \
           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
         new_ids=$((new_ids + 1))
@@ -102,7 +103,7 @@ update_comment_outcomes() {
     local cid
     for cid in $pending_ids; do
       jq --arg cid "$cid" --argjson poll "$POLL_COUNT" \
-        '.[$cid].outcome = "unresolved" | .[$cid].last_result = "MISSING_OUTCOMES" | .[$cid].last_poll = $poll' \
+        '.[$cid].outcome = "unresolved" | .[$cid].last_result = "MISSING_OUTCOMES" | .[$cid].last_poll = $poll | .[$cid].attempts = ((.[$cid].attempts // 0) + 1)' \
         "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
         mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
     done
@@ -116,6 +117,7 @@ update_comment_outcomes() {
         .value.outcome = $outcomes[.key].outcome //
           (if .value.outcome == null then "unresolved" else .value.outcome end)
         | .value.last_poll = $poll
+        | (if .value.state == "pending" then .value.attempts = ((.value.attempts // 0) + 1) else . end)
         | .value.last_result =
             (if $outcomes[.key].outcome == "fixed" then "ALL_DONE"
              elif $outcomes[.key].outcome == "no_fix_needed" then "NO_FIXES_NEEDED"
@@ -126,19 +128,13 @@ update_comment_outcomes() {
         .value.outcome = "unresolved"
         | .value.last_result = "MISSING_OUTCOME"
         | .value.last_poll = $poll
+        | .value.attempts = ((.value.attempts // 0) + 1)
       else . end
     ) | from_entries' \
     "$COMMENT_STATE_FILE" "$outcomes_file" > "${COMMENT_STATE_FILE}.tmp" && \
     mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
 
   log "  update_comment_outcomes: merged outcomes from agent manifest"
-}
-
-get_comments_by_state() {
-  local state="$1"
-  if [[ -f "$COMMENT_STATE_FILE" ]]; then
-    jq -r --arg state "$state" 'to_entries[] | select(.value.state == $state) | .key' "$COMMENT_STATE_FILE"
-  fi
 }
 
 derive_compat_files() {
@@ -249,8 +245,6 @@ can_transition_to_processed() {
     if [[ -z "$commit_sha" || "$commit_sha" == "null" ]]; then
       return 1
     fi
-    local pre_sha
-    pre_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE" 2>/dev/null)
     return 0
   elif [[ "$outcome" == "no_fix_needed" ]]; then
     no_fix_reason=$(jq -r --arg cid "$cid" '.[$cid].no_fix_reason // "null"' "$COMMENT_STATE_FILE")

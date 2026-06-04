@@ -546,10 +546,18 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     comments="$all_comments"
   fi
 
-  # Seed new comment IDs into comment-state.json
+  # Seed new comment IDs into comment-state.json. The per-comment pre_sha
+  # captured here is the HEAD when the comment was FIRST seen, not HEAD on
+  # later polls — so re-check verification still confirms a commit is newer
+  # than the original pre-agent SHA, not newer than a SHA that has since
+  # advanced with successful pushes.
+  local pre_sha
+  pre_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+  log "  Pre-agent SHA: ${pre_sha:-unknown}"
+
   local new_comment_ids
   new_comment_ids=$(echo "$comments" | jq -r '.[].id' 2>/dev/null | tr '\n' ' ')
-  init_comment_state "$new_comment_ids"
+  init_comment_state "$new_comment_ids" "$pre_sha"
 
   local total_comment_count
   total_comment_count=$(echo "$all_comments" | jq 'length' 2>/dev/null || echo 0)
@@ -587,14 +595,19 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
               "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
               mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
           fi
-          # For fixed outcomes, re-verify commit SHA
+          # For fixed outcomes, re-verify commit SHA using the per-comment
+          # pre_sha captured when the comment was first seen. Using a
+          # per-comment pre_sha (not local $pre_sha, which is undefined
+          # in this re-check branch) keeps the "newer than pre_sha" check
+          # correct across polls even as HEAD advances.
           local outcome
           outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
           if [[ "$outcome" == "fixed" ]]; then
-            local commit_sha
+            local commit_sha cid_pre_sha
             commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+            cid_pre_sha=$(jq -r --arg cid "$cid" '.[$cid].pre_sha // ""' "$COMMENT_STATE_FILE")
             if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
-              if ! verify_comment_commit "$cid" "$commit_sha" "$pre_sha"; then
+              if ! verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
                 warn "  Comment ${cid}: commit verification failed on re-check"
                 continue
               fi
@@ -652,11 +665,6 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
 
   local comment_text
   comment_text=$(echo "$comments" | jq -r '.[] | "- \(.path):\(.line) — \(.body)"')
-
-  # Record pre-agent commit SHA for verification
-  local pre_sha
-  pre_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
-  log "  Pre-agent SHA: ${pre_sha:-unknown}"
 
   # Build prompt to temp file so we can capture run_agent exit code
   local prompt_file
@@ -947,8 +955,11 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     fi
   fi
 
-  # Per-comment state transitions — reply_verified + side-effect verification
-  # For each comment in the batch, update reply_verified if reply was confirmed.
+  # Per-comment state transitions — reply_verified + state→replied
+  # For each comment in the batch, update reply_verified if reply was confirmed
+  # AND transition the state to "replied" so the promotion loop below can fire.
+  # Without this transition, the .state field stays "pending" and the guard
+  # never sees the comment as eligible for promotion to "processed".
   local status_file="${ISSUES_DIR}/replies-status-p${POLL_COUNT}.txt"
   if [[ -f "$status_file" && -s "$status_file" ]]; then
     local replied_id
@@ -958,14 +969,18 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         jq --arg cid "$replied_id" '.[$cid].reply_verified = true' \
           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+        set_comment_state "$replied_id" "replied"
       fi
     done < "$status_file"
     local replied_count
     replied_count=$(wc -l < "$status_file" | tr -d ' ')
-    log "  Set reply_verified=true for ${replied_count} comment(s)"
+    log "  Set reply_verified=true and state=replied for ${replied_count} comment(s)"
   fi
 
-  # Per-comment commit SHA verification for fixed outcomes
+  # Per-comment commit SHA verification for fixed outcomes.
+  # Uses the per-comment pre_sha captured at first init (so re-check
+  # verification on a later poll still compares against the original
+  # pre-agent SHA, not against HEAD that has since advanced with pushes).
   local comment_ids
   comment_ids=$(jq -r 'keys[]' "$COMMENT_STATE_FILE" 2>/dev/null)
   local cid
@@ -974,10 +989,11 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     local outcome
     outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
     if [[ "$outcome" == "fixed" ]]; then
-      local commit_sha
+      local commit_sha cid_pre_sha
       commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
+      cid_pre_sha=$(jq -r --arg cid "$cid" '.[$cid].pre_sha // ""' "$COMMENT_STATE_FILE")
       if [[ "$commit_sha" != "null" && -n "$commit_sha" ]]; then
-        if verify_comment_commit "$cid" "$commit_sha" "$pre_sha"; then
+        if verify_comment_commit "$cid" "$commit_sha" "$cid_pre_sha"; then
           log "  Comment ${cid}: commit ${commit_sha:0:7} verified on origin/${PR_BRANCH}"
         else
           warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — cannot transition to processed"
