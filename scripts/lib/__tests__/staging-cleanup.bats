@@ -20,12 +20,32 @@ teardown() {
   rm -rf "$TMPDIR_TEST"
 }
 
-@test "cleanup_staging removes staging dir when it exists" {
+@test "cleanup_staging removes staging dir when it exists and owns it" {
+  ISSUE_STAGING_DIR="$STAGING_BASE/issue-42-staging"
+  mkdir -p "$ISSUE_STAGING_DIR"
+  : > "$ISSUE_STAGING_DIR/.owner-${BASHPID}"
+  [[ -d "$ISSUE_STAGING_DIR" ]]
+  cleanup_staging
+  [[ ! -d "$ISSUE_STAGING_DIR" ]]
+}
+
+@test "cleanup_staging is a no-op when dir exists but no owner marker" {
   ISSUE_STAGING_DIR="$STAGING_BASE/issue-42-staging"
   mkdir -p "$ISSUE_STAGING_DIR"
   [[ -d "$ISSUE_STAGING_DIR" ]]
   cleanup_staging
-  [[ ! -d "$ISSUE_STAGING_DIR" ]]
+  # Dir must survive — no owner marker means we didn't create it
+  [[ -d "$ISSUE_STAGING_DIR" ]]
+}
+
+@test "cleanup_staging is a no-op when dir is owned by a different PID" {
+  ISSUE_STAGING_DIR="$STAGING_BASE/issue-42-staging"
+  mkdir -p "$ISSUE_STAGING_DIR"
+  : > "$ISSUE_STAGING_DIR/.owner-99999"
+  [[ -d "$ISSUE_STAGING_DIR" ]]
+  cleanup_staging
+  # Dir must survive — owned by a different process
+  [[ -d "$ISSUE_STAGING_DIR" ]]
 }
 
 @test "cleanup_staging is a no-op when staging dir does not exist" {
@@ -42,9 +62,10 @@ teardown() {
   # No error and no unintended rm -rf
 }
 
-@test "cleanup_staging removes non-empty staging dir" {
+@test "cleanup_staging removes non-empty staging dir when owned" {
   ISSUE_STAGING_DIR="$STAGING_BASE/issue-42-staging"
   mkdir -p "$ISSUE_STAGING_DIR"
+  : > "$ISSUE_STAGING_DIR/.owner-${BASHPID}"
   echo "active data" > "$ISSUE_STAGING_DIR/issue.json"
   cleanup_staging
   # cleanup_staging DOES remove non-empty dirs (it uses rm -rf, not rmdir).

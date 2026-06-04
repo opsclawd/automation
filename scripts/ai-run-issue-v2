@@ -804,7 +804,7 @@ Write the result now."
 ISSUE_STAGING_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}-staging"
 
 cleanup_staging() {
-  if [[ -n "${ISSUE_STAGING_DIR:-}" && -d "${ISSUE_STAGING_DIR}" ]]; then
+  if [[ -n "${ISSUE_STAGING_DIR:-}" && -d "${ISSUE_STAGING_DIR}" && -f "${ISSUE_STAGING_DIR}/.owner-${BASHPID}" ]]; then
     rm -rf "${ISSUE_STAGING_DIR}"
   fi
 }
@@ -1027,7 +1027,10 @@ if [[ "$PHASE" == "read_issue" ]]; then
 
   # Create staging dir only when it will be used (read_issue phase).
   # A trap EXIT handler (cleanup_staging) ensures cleanup on all exit paths.
+  # Write a PID marker so the trap only deletes dirs this process created,
+  # avoiding a race where overlapping same-issue runs clobber each other.
   mkdir -p "${ISSUE_STAGING_DIR}"
+  : > "${ISSUE_STAGING_DIR}/.owner-${BASHPID}"
   # Fetch issue — write to staging dir (not worktree, which gets rm -rf'd below)
   gh issue view "$ISSUE_NUM" \
     --json number,title,body,url,labels,comments,state \
