@@ -2544,6 +2544,8 @@ if [[ "$PHASE" == "validate" ]]; then
     echo "[install failed]" >> "${ISSUES_DIR}/validate.log"
     VALIDATE_EXIT=1
   else
+    # Capture PIPESTATUS immediately after the pipeline; doing so in a separate
+    # statement avoids the assignment itself resetting PIPESTATUS.
     NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
       "$REPO_ROOT/apps/cli/src/run-validation.ts" \
       --cwd "$WORKTREE_DIR" \
@@ -2551,8 +2553,9 @@ if [[ "$PHASE" == "validate" ]]; then
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --phase-id validate \
-      2>&1 | tee -a "${ISSUES_DIR}/validate.log" || true
-    VALIDATE_EXIT=${PIPESTATUS[0]}
+      2>&1 | tee -a "${ISSUES_DIR}/validate.log"
+    _pipe_status=("${PIPESTATUS[@]}")
+    VALIDATE_EXIT=${_pipe_status[0]}
   fi
 
   cp "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"

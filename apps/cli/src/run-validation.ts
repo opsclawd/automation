@@ -2,7 +2,7 @@
 import { parseArgs } from 'node:util';
 import { join } from 'node:path';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { RunId, PhaseName } from '@ai-sdlc/domain';
+import { RunId, PhaseName, createRun } from '@ai-sdlc/domain';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 
 interface Flags {
@@ -90,6 +90,21 @@ async function main() {
   }
 
   const runId = values['run-id']!;
+
+  // Standalone invocation (e.g., ORCHESTRATOR_PHASE=validate without prior
+  // implement phase) may not have a runs row. Create one so the FK on
+  // validation_runs is satisfied — mirrors the synthetic-run guard in
+  // run-agent.ts.
+  if (!c.runRepository.findByUuid(runId)) {
+    const syntheticRun = createRun({
+      uuid: runId,
+      displayId: runId,
+      issueNumber: 0,
+      startedAt: new Date(),
+    });
+    c.runRepository.insert(syntheticRun);
+  }
+
   const phaseId = values['phase-id'] ?? 'validate';
   const displayId = c.runRepository.findByUuid(runId)?.displayId ?? runId;
   const logDir = join(c.runsDir, displayId, 'validate');
