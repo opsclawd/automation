@@ -70,9 +70,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
         all: false,
         input: readFileSync(request.promptPath, 'utf-8'),
         ...(cancelSignal ? { cancelSignal } : {}),
-        env: this.opts.sessionLogDir
-          ? { OPENCODE_SESSION_LOG_DIR: this.opts.sessionLogDir }
-          : undefined,
+        ...(this.opts.sessionLogDir
+          ? { env: { OPENCODE_SESSION_LOG_DIR: this.opts.sessionLogDir } }
+          : {}),
       });
 
       watchdogInterval = this.startWatchdog(
