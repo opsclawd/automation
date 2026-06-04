@@ -575,7 +575,6 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('detects crofai "Not Enough Credits" in session log post-exit (exit 0, clean stderr)', async () => {
     const cwd = makeWorktree();
-    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(
         __dirname,
@@ -584,31 +583,25 @@ describe('OpenCodeAgentAdapter', () => {
         'fake-opencode-session-log-crofai-quota.sh',
       ),
       artifactsDir: cwd,
-      sessionLogDir,
     });
-    try {
-      const r = await adapter.invoke({
-        profile: AgentProfileName('opencode-frontier'),
-        promptPath: '/dev/null',
-        expectedArtifacts: [],
-        cwd,
-        runId: '00000000-0000-0000-0000-000000000001',
-        repoId: 'r',
-        phaseId: 'post-pr-review',
-        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
-      });
-      expect(r.outcome).toBe('failed');
-      expect(r.exitCode).toBe(0);
-      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
-      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('Not Enough Credits');
-    } finally {
-      rmSync(sessionLogDir, { recursive: true });
-    }
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('Not Enough Credits');
   });
 
   it('detects provider error in session log post-exit (exit 0, clean stderr)', async () => {
     const cwd = makeWorktree();
-    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(
         __dirname,
@@ -617,26 +610,21 @@ describe('OpenCodeAgentAdapter', () => {
         'fake-opencode-session-log-provider-error.sh',
       ),
       artifactsDir: cwd,
-      sessionLogDir,
     });
-    try {
-      const r = await adapter.invoke({
-        profile: AgentProfileName('opencode-frontier'),
-        promptPath: '/dev/null',
-        expectedArtifacts: [],
-        cwd,
-        runId: '00000000-0000-0000-0000-000000000001',
-        repoId: 'r',
-        phaseId: 'plan-design',
-        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
-      });
-      expect(r.outcome).toBe('failed');
-      expect(r.exitCode).toBe(0);
-      expect(r.contractViolations).toContain('provider_error');
-      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
-    } finally {
-      rmSync(sessionLogDir, { recursive: true });
-    }
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.exitCode).toBe(0);
+    expect(r.contractViolations).toContain('provider_error');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
   });
 
   it('kills child process on provider error pattern in session log (watchdog)', async () => {
