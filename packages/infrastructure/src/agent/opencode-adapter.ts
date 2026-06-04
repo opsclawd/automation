@@ -253,8 +253,8 @@ export class OpenCodeAgentAdapter implements AgentPort {
         const mtime = statSync(logPath).mtimeMs / 1000;
         if (mtime < startTimeSec - mtimeGraceSec) continue;
         const initialOffset = initialOffsets.get(logPath) ?? 0;
-        const content = readFileSync(logPath, 'utf-8');
-        const newContent = content.slice(initialOffset);
+        const buf = readFileSync(logPath);
+        const newContent = buf.subarray(initialOffset).toString('utf-8');
         if (!newContent) continue;
         if (!quotaMatch) {
           quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
@@ -305,9 +305,9 @@ export class OpenCodeAgentAdapter implements AgentPort {
           const size = statSync(logPath).size;
           if (size <= prevOffset) continue;
 
-          const content = readFileSync(logPath, 'utf-8');
-          const newContent = content.slice(prevOffset);
-          logOffsets.set(logPath, content.length);
+          const buf = readFileSync(logPath);
+          const newContent = buf.subarray(prevOffset).toString('utf-8');
+          logOffsets.set(logPath, buf.length);
 
           const quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
           if (quotaMatch) {

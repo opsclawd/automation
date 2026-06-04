@@ -711,4 +711,49 @@ describe('OpenCodeAgentAdapter', () => {
       rmSync(sessionLogDir, { recursive: true });
     }
   });
+
+  it('detects quota pattern in session log when pre-existing content contains multi-byte characters (byte offset regression)', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const logFile = join(sessionLogDir, '2026-06-03T120000.log');
+    const stalePrefix = 'INFO 2026-06-03T11:59:00.000Z 你好世界 — résumé naïve café 🚀\n';
+    writeFileSync(logFile, stalePrefix);
+    const initialByteSize = readFileSync(logFile).length;
+    expect(initialByteSize).toBeGreaterThan(stalePrefix.length);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      sessionLogDir,
+      quotaPollMs: 500,
+      timeoutMsDefault: 8000,
+    });
+
+    const timer = setTimeout(() => {
+      writeFileSync(
+        logFile,
+        'ERROR 2026-06-03T12:00:04.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}\n',
+        { flag: 'a' },
+      );
+    }, 800);
+
+    try {
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'post-pr-review',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+      expect(r.outcome).toBe('failed');
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
+      expect(readFileSync(r.stderrPath, 'utf-8')).toContain('Not Enough Credits');
+    } finally {
+      clearTimeout(timer);
+      rmSync(sessionLogDir, { recursive: true });
+    }
+  }, 15000);
 });
