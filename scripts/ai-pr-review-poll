@@ -623,13 +623,21 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
                   mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
               else
                 warn "  Comment ${cid}: commit verification failed on re-check — demoting to pending for re-prompt"
+                # Demote to pending WITHOUT incrementing attempts — update_comment_outcomes
+                # already counted this agent run for this comment.
                 jq --arg cid "$cid" \
-                  '.[$cid].commit_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null' \
+                  '.[$cid].commit_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
                   "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
                   mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
-                set_comment_state "$cid" "pending"
               fi
             fi
+          fi
+          # For fixed outcomes, set build_verified since reverify_ok confirms
+          # the build passed (verify_build_passes ran and succeeded).
+          if [[ "$outcome" == "fixed" ]]; then
+            jq --arg cid "$cid" '.[$cid].build_verified = true' \
+              "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+              mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
           fi
           if can_transition_to_processed "$cid"; then
             set_comment_state "$cid" "processed"
@@ -903,6 +911,9 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   #   verify_ok  — every verification (replies + commits + build) passed.
   #                Drives the return code so the outer loop reports failure
   #                correctly, but does NOT gate processed-ID tracking.
+  #   build_passed — true only when verify_build_passes actually ran and
+  #                succeeded. Unlike verify_ok, this is false when
+  #                NO_FIXES_NEEDED skips build verification entirely.
   #
   # This split avoids two failure modes:
   #   (a) agent crashes before replying → replies_ok=false → IDs unmarked
@@ -912,6 +923,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   #       does not spam duplicate replies. Build still re-runs naturally
   #       on the next poll once unrelated state changes.
   local verify_ok=true
+  local build_passed=false
   local replies_ok=false
 
   if [[ "$review_result" == "NO_FIXES_NEEDED" ]]; then
@@ -947,6 +959,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         commentId="batch-p${POLL_COUNT}" error="verify_replies_failed"
     fi
     if verify_build_passes; then
+      build_passed=true
       emit_event "post-pr-review" "info" "post-pr-review.verification.passed" \
         "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="build_passes"
     else
@@ -983,6 +996,7 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
         commentId="batch-p${POLL_COUNT}" error="verify_replies_failed"
     fi
     if verify_build_passes; then
+      build_passed=true
       emit_event "post-pr-review" "info" "post-pr-review.verification.passed" \
         "build verification passed for batch p${POLL_COUNT}" commentId="batch-p${POLL_COUNT}" step="build_passes"
     else
@@ -1062,31 +1076,44 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
         else
           warn "  Comment ${cid}: commit ${commit_sha:0:7} verification failed — demoting to pending for re-prompt"
+          # Demote to pending WITHOUT incrementing attempts — update_comment_outcomes
+          # already counted this agent run for this comment.
           jq --arg cid "$cid" \
-            '.[$cid].commit_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null' \
+            '.[$cid].commit_verified = false | .[$cid].outcome = null | .[$cid].commit_sha = null | .[$cid].state = "pending"' \
             "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
-          set_comment_state "$cid" "pending"
         fi
       fi
     fi
   done
 
+   # Set build_verified for fixed outcomes when build actually passed.
+   # This must be per-comment: verify_ok can be true without a build running
+   # (e.g. NO_FIXES_NEEDED path skips build verification), so we use
+   # build_passed which is true only when verify_build_passes actually ran
+   # and succeeded.
+   if $build_passed; then
+     for cid in $comment_ids; do
+       [[ -z "$cid" ]] && continue
+       local outcome
+       outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+       if [[ "$outcome" == "fixed" ]]; then
+         jq --arg cid "$cid" '.[$cid].build_verified = true' \
+           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
+           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+       fi
+     done
+   fi
+
   # State transitions: replied -> processed (if guard passes)
-  # fixed outcomes require build verification to pass before promotion;
-  # no_fix_needed outcomes do not need build verification since no code changed.
+  # can_transition_to_processed checks per-comment build_verified for
+  # fixed outcomes, so no batch-level verify_ok check is needed here.
   local promoted_ids=""
   for cid in $comment_ids; do
     [[ -z "$cid" ]] && continue
     local state
     state=$(jq -r --arg cid "$cid" '.[$cid].state' "$COMMENT_STATE_FILE")
     if [[ "$state" == "replied" ]]; then
-      local outcome
-      outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
-      if [[ "$outcome" == "fixed" ]] && ! $verify_ok; then
-        log "  Comment ${cid}: outcome=fixed but build verification failed; not promoting to processed"
-        continue
-      fi
       if can_transition_to_processed "$cid"; then
         set_comment_state "$cid" "processed"
         log "  Comment ${cid}: transitioned replied → processed"

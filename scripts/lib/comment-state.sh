@@ -46,7 +46,7 @@ init_comment_state() {
         [[ -z "$pid" ]] && continue
         if ! jq -e --arg id "$pid" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
           jq --arg id "$pid" --argjson poll "$POLL_COUNT" \
-            '.[$id] = {state: "processed", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: "fixed", commit_sha: null, pre_sha: null, reply_verified: true, commit_verified: true, blocked_reason: null, no_fix_reason: null}' \
+            '.[$id] = {state: "processed", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: "fixed", commit_sha: null, pre_sha: null, reply_verified: true, commit_verified: true, build_verified: true, blocked_reason: null, no_fix_reason: null}' \
             "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
           migrated=$((migrated + 1))
@@ -59,7 +59,7 @@ init_comment_state() {
         [[ -z "$rid" ]] && continue
         if ! jq -e --arg id "$rid" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
           jq --arg id "$rid" --argjson poll "$POLL_COUNT" \
-            '.[$id] = {state: "replied", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: "no_fix_needed", commit_sha: null, pre_sha: null, reply_verified: true, commit_verified: false, blocked_reason: null, no_fix_reason: "Migrated from legacy replied tracking; outcome assumed no_fix_needed"}' \
+            '.[$id] = {state: "replied", attempts: 1, last_poll: $poll, last_result: "LEGACY_MIGRATION", outcome: "no_fix_needed", commit_sha: null, pre_sha: null, reply_verified: true, commit_verified: false, build_verified: false, blocked_reason: null, no_fix_reason: "Migrated from legacy replied tracking; outcome assumed no_fix_needed"}' \
             "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
             mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
           migrated=$((migrated + 1))
@@ -76,7 +76,7 @@ init_comment_state() {
     for id in $comment_ids; do
       if ! jq -e --arg id "$id" 'has($id)' "$COMMENT_STATE_FILE" >/dev/null 2>&1; then
         jq --arg id "$id" --argjson poll "$POLL_COUNT" --arg sha "$pre_sha" \
-          '.[$id] = {state: "pending", attempts: 0, last_poll: $poll, last_result: null, outcome: null, commit_sha: null, pre_sha: $sha, reply_verified: false, commit_verified: false, blocked_reason: null, no_fix_reason: null}' \
+          '.[$id] = {state: "pending", attempts: 0, last_poll: $poll, last_result: null, outcome: null, commit_sha: null, pre_sha: $sha, reply_verified: false, commit_verified: false, build_verified: false, blocked_reason: null, no_fix_reason: null}' \
           "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
           mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
         new_ids=$((new_ids + 1))
@@ -283,13 +283,17 @@ can_transition_to_processed() {
   outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
 
   if [[ "$outcome" == "fixed" ]]; then
-    local commit_sha commit_verified
+    local commit_sha commit_verified build_verified
     commit_sha=$(jq -r --arg cid "$cid" '.[$cid].commit_sha // "null"' "$COMMENT_STATE_FILE")
     commit_verified=$(jq -r --arg cid "$cid" '.[$cid].commit_verified // false' "$COMMENT_STATE_FILE")
+    build_verified=$(jq -r --arg cid "$cid" '.[$cid].build_verified // false' "$COMMENT_STATE_FILE")
     if [[ -z "$commit_sha" || "$commit_sha" == "null" ]]; then
       return 1
     fi
     if [[ "$commit_verified" != "true" ]]; then
+      return 1
+    fi
+    if [[ "$build_verified" != "true" ]]; then
       return 1
     fi
     return 0

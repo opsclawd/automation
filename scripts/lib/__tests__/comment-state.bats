@@ -273,8 +273,8 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "AC3: fixed with valid commit SHA → can transition to processed" {
-  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+@test "AC3: fixed with valid commit SHA and build verified → can transition to processed" {
+  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": true, "build_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
   run can_transition_to_processed "400"
   [ "$status" -eq 0 ]
 }
@@ -286,7 +286,13 @@ teardown() {
 }
 
 @test "commit_verified false → cannot transition to processed even with commit SHA and reply" {
-   echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+   echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": false, "build_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  run can_transition_to_processed "400"
+  [ "$status" -ne 0 ]
+}
+
+@test "build_verified false → cannot transition to processed even with commit verified" {
+  echo '{"400": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc123def456789", "reply_verified": true, "commit_verified": true, "build_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
   run can_transition_to_processed "400"
   [ "$status" -ne 0 ]
 }
@@ -297,19 +303,21 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "fixed outcome with failed commit verification: demoting to pending allows re-prompt and eventual blocking" {
+@test "fixed outcome with failed commit verification: demoting to pending without double-counting attempts allows retry before blocking" {
   echo '{"600": {"state": "replied", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "abc1234", "pre_sha": "def5678", "reply_verified": true, "commit_verified": false, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
-  set_comment_state "600" "pending"
-  run jq -r '.["600"].state' "$COMMENT_STATE_FILE"
-  [ "$output" = "pending" ]
-  run jq -r '.["600"].attempts' "$COMMENT_STATE_FILE"
-  [ "$output" = "2" ]
-  jq --arg cid "600" '.[$cid].outcome = null | .[$cid].commit_sha = null' \
+  # Demote to pending via direct jq (same as the poll script does now, without incrementing attempts)
+  jq '.["600"].commit_verified = false | .["600"].outcome = null | .["600"].commit_sha = null | .["600"].state = "pending"' \
     "$COMMENT_STATE_FILE" > "${COMMENT_STATE_FILE}.tmp" && \
     mv "${COMMENT_STATE_FILE}.tmp" "$COMMENT_STATE_FILE"
+  run jq -r '.["600"].state' "$COMMENT_STATE_FILE"
+  [ "$output" = "pending" ]
+  # Attempts should still be 1 — no double-counting
+  run jq -r '.["600"].attempts' "$COMMENT_STATE_FILE"
+  [ "$output" = "1" ]
+  # At attempts=1, check_stuck_comments should NOT block yet
   check_stuck_comments
   run jq -r '.["600"].state' "$COMMENT_STATE_FILE"
-  [ "$output" = "blocked" ]
+  [ "$output" = "pending" ]
 }
 
 @test "incomplete fixed outcome (no commit_sha) at threshold is blocked" {
