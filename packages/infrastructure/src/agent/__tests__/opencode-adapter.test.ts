@@ -675,4 +675,40 @@ describe('OpenCodeAgentAdapter', () => {
       rmSync(sessionLogDir, { recursive: true });
     }
   }, 15000);
+
+  it('does not kill child on provider error in pre-existing session log content (PR #190 watchdog regression)', async () => {
+    const cwd = makeWorktree();
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'opencode-session-'));
+    const logFile = join(sessionLogDir, '2026-06-03T120000.log');
+    writeFileSync(
+      logFile,
+      'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=stale\nERROR 2026-06-03T12:00:01.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://crof.ai/v1/chat/completions","statusCode":500}\n',
+    );
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+      sessionLogDir,
+      quotaPollMs: 200,
+    });
+
+    try {
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'plan-design',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+      expect(r.outcome).toBe('success');
+      expect(r.contractViolations).not.toContain('provider_error');
+      expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('PROVIDER_ERROR');
+      expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
+    } finally {
+      rmSync(sessionLogDir, { recursive: true });
+    }
+  });
 });

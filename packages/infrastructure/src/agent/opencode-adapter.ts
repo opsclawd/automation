@@ -80,6 +80,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       watchdogInterval = this.startWatchdog(
         child as ReturnType<typeof execa>,
         start,
+        initialLogOffsets,
         (match: string, type: 'quota' | 'provider') => {
           watchdogKilled = true;
           watchdogKilledType = type;
@@ -273,6 +274,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
   private startWatchdog(
     child: ReturnType<typeof execa>,
     startTime: number,
+    initialOffsets: Map<string, number>,
     onKilled: (match: string, type: 'quota' | 'provider') => void,
   ): NodeJS.Timeout | null {
     const sessionLogDir =
@@ -285,7 +287,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     }
 
     const pollMs = this.opts.quotaPollMs ?? 2000;
-    const logOffsets = new Map<string, number>();
+    const logOffsets = new Map(initialOffsets);
     const startTimeSec = startTime / 1000;
     const mtimeGraceSec = 2;
 
