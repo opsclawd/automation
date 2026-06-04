@@ -528,6 +528,15 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
     return 1
   }
 
+  # Seed/migrate comment-state.json BEFORE filtering so that legacy
+  # processed/replied IDs from text files are visible to the filter.
+  # Without this, an upgrade run where text files have IDs but comment-state.json
+  # does not would feed old comments back to the agent for duplicate replies.
+  local pre_sha
+  pre_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
+  log "  Pre-agent SHA: ${pre_sha:-unknown}"
+  init_comment_state "" "$pre_sha"
+
   # Filter out already-handled IDs using comment-state.json.
   # Blocked, replied, and processed IDs are excluded from prompts.
   local known_ids
@@ -551,10 +560,6 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   # later polls — so re-check verification still confirms a commit is newer
   # than the original pre-agent SHA, not newer than a SHA that has since
   # advanced with successful pushes.
-  local pre_sha
-  pre_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
-  log "  Pre-agent SHA: ${pre_sha:-unknown}"
-
   local new_comment_ids
   new_comment_ids=$(echo "$comments" | jq -r '.[].id' 2>/dev/null | tr '\n' ' ')
   init_comment_state "$new_comment_ids" "$pre_sha"
@@ -1030,12 +1035,20 @@ emit_event "post-pr-review" "info" "post-pr-review.run.completed" \
   done
 
   # State transitions: replied -> processed (if guard passes)
+  # fixed outcomes require build verification to pass before promotion;
+  # no_fix_needed outcomes do not need build verification since no code changed.
   local promoted_ids=""
   for cid in $comment_ids; do
     [[ -z "$cid" ]] && continue
     local state
     state=$(jq -r --arg cid "$cid" '.[$cid].state' "$COMMENT_STATE_FILE")
     if [[ "$state" == "replied" ]]; then
+      local outcome
+      outcome=$(jq -r --arg cid "$cid" '.[$cid].outcome // "null"' "$COMMENT_STATE_FILE")
+      if [[ "$outcome" == "fixed" ]] && ! $verify_ok; then
+        log "  Comment ${cid}: outcome=fixed but build verification failed; not promoting to processed"
+        continue
+      fi
       if can_transition_to_processed "$cid"; then
         set_comment_state "$cid" "processed"
         log "  Comment ${cid}: transitioned replied → processed"
@@ -1085,9 +1098,6 @@ DID_PUSH_COMMITS=0
 CONTRADICTION_FIRED=false
 PROCESSED_IDS_COUNT_START=$(wc -l < "$PROCESSED_IDS_FILE" 2>/dev/null || echo 0)
 COMMENT_STATE_FILE="${ISSUES_DIR}/comment-state.json"
-if [[ ! -f "$COMMENT_STATE_FILE" ]]; then
-  echo '{}' > "$COMMENT_STATE_FILE"
-fi
 # Hard ceiling on total iterations regardless of resets — protects against
 # pathological loops where every push attracts a new comment.
 MAX_TOTAL_POLLS="${MAX_TOTAL_POLLS:-30}"
