@@ -66,15 +66,17 @@ export class OpenCodeAgentAdapter implements AgentPort {
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
       }
+      const childEnv: Record<string, string> = {};
+      if (this.opts.sessionLogDir) {
+        childEnv.OPENCODE_SESSION_LOG_DIR = this.opts.sessionLogDir;
+      }
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
         all: false,
         input: readFileSync(request.promptPath, 'utf-8'),
         ...(cancelSignal ? { cancelSignal } : {}),
-        ...(this.opts.sessionLogDir
-          ? { env: { OPENCODE_SESSION_LOG_DIR: this.opts.sessionLogDir } }
-          : {}),
+        ...(Object.keys(childEnv).length > 0 ? { env: childEnv } : {}),
       });
 
       watchdogInterval = this.startWatchdog(
