@@ -802,6 +802,14 @@ Write the result now."
 # Stage issue data in a temp directory outside the worktree, so it survives
 # the rm-rf that happens before worktree creation on fresh runs.
 ISSUE_STAGING_DIR="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}-staging"
+
+cleanup_staging() {
+  if [[ -n "${ISSUE_STAGING_DIR:-}" && -d "${ISSUE_STAGING_DIR}" ]]; then
+    rm -rf "${ISSUE_STAGING_DIR}"
+  fi
+}
+trap cleanup_staging EXIT
+
 mkdir -p "${ISSUES_DIR}"
 mkdir -p "${ISSUE_STAGING_DIR}"
 echo "" > "${ISSUES_DIR}/orchestrator.log"
