@@ -380,3 +380,43 @@ teardown() {
   run can_transition_to_processed "400"
   [ "$status" -ne 0 ]
 }
+
+@test "update_comment_outcomes clears stale commit_sha when new manifest omits it" {
+  printf '{"100": {"state": "pending", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "stalesha1234567", "reply_verified": false, "commit_verified": true, "build_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  echo '{"100": {"outcome": "unresolved"}}' > "${TMPDIR_TEST}/outcomes.json"
+  update_comment_outcomes "${TMPDIR_TEST}/outcomes.json"
+  run jq -r '.["100"].outcome' "$COMMENT_STATE_FILE"
+  [ "$output" = "unresolved" ]
+  run jq -r '.["100"].commit_sha' "$COMMENT_STATE_FILE"
+  [ "$output" = "null" ]
+}
+
+@test "update_comment_outcomes clears stale no_fix_reason when new manifest omits it" {
+  printf '{"100": {"state": "pending", "attempts": 1, "last_poll": 1, "last_result": "NO_FIXES_NEEDED", "outcome": "no_fix_needed", "commit_sha": null, "reply_verified": false, "commit_verified": false, "build_verified": false, "blocked_reason": null, "no_fix_reason": "stale reason from prior attempt"}}' > "$COMMENT_STATE_FILE"
+  echo '{"100": {"outcome": "unresolved"}}' > "${TMPDIR_TEST}/outcomes.json"
+  update_comment_outcomes "${TMPDIR_TEST}/outcomes.json"
+  run jq -r '.["100"].outcome' "$COMMENT_STATE_FILE"
+  [ "$output" = "unresolved" ]
+  run jq -r '.["100"].no_fix_reason' "$COMMENT_STATE_FILE"
+  [ "$output" = "null" ]
+}
+
+@test "update_comment_outcomes uses new commit_sha when manifest provides it" {
+  printf '{"100": {"state": "pending", "attempts": 1, "last_poll": 1, "last_result": "ALL_DONE", "outcome": "fixed", "commit_sha": "stalesha1234567", "reply_verified": false, "commit_verified": true, "build_verified": true, "blocked_reason": null, "no_fix_reason": null}}' > "$COMMENT_STATE_FILE"
+  echo '{"100": {"outcome": "fixed", "commit_sha": "freshshaabcdef"}}' > "${TMPDIR_TEST}/outcomes.json"
+  update_comment_outcomes "${TMPDIR_TEST}/outcomes.json"
+  run jq -r '.["100"].outcome' "$COMMENT_STATE_FILE"
+  [ "$output" = "fixed" ]
+  run jq -r '.["100"].commit_sha' "$COMMENT_STATE_FILE"
+  [ "$output" = "freshshaabcdef" ]
+}
+
+@test "update_comment_outcomes uses new no_fix_reason when manifest provides it" {
+  printf '{"100": {"state": "pending", "attempts": 1, "last_poll": 1, "last_result": "NO_FIXES_NEEDED", "outcome": "no_fix_needed", "commit_sha": null, "reply_verified": false, "commit_verified": false, "build_verified": false, "blocked_reason": null, "no_fix_reason": "stale reason"}}' > "$COMMENT_STATE_FILE"
+  echo '{"100": {"outcome": "no_fix_needed", "reason": "fresh valid reason"}}' > "${TMPDIR_TEST}/outcomes.json"
+  update_comment_outcomes "${TMPDIR_TEST}/outcomes.json"
+  run jq -r '.["100"].outcome' "$COMMENT_STATE_FILE"
+  [ "$output" = "no_fix_needed" ]
+  run jq -r '.["100"].no_fix_reason' "$COMMENT_STATE_FILE"
+  [ "$output" = "fresh valid reason" ]
+}

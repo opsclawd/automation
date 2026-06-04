@@ -160,8 +160,10 @@ update_comment_outcomes() {
             (if $outcomes[.key].outcome == "fixed" then "ALL_DONE"
              elif $outcomes[.key].outcome == "no_fix_needed" then "NO_FIXES_NEEDED"
              else "UNRESOLVED" end)
-        | .value.commit_sha = ($outcomes[.key].commit_sha // .value.commit_sha)
-        | .value.no_fix_reason = ($outcomes[.key].reason // .value.no_fix_reason)
+        | .value.commit_sha = null
+        | .value.no_fix_reason = null
+        | .value.commit_sha = ($outcomes[.key].commit_sha // null)
+        | .value.no_fix_reason = ($outcomes[.key].reason // null)
         | .value.reply_verified = false
         | .value.commit_verified = false
         | .value.build_verified = false
