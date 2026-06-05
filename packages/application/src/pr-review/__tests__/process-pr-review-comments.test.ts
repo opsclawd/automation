@@ -270,3 +270,40 @@ describe('ProcessPrReviewComments — blocking', () => {
     expect(out2.blocked).toBe(1);
   });
 });
+
+describe('ProcessPrReviewComments — invalid result', () => {
+  it('records a failed poll and posts no replies when extractResult fails', async () => {
+    const { deps, github, repo } = makeDeps({
+      extractResult: async () => ({
+        ok: false,
+        reason: 'invalid_result',
+        detail: 'result.json missing outcome field',
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(github.repliesPosted).toHaveLength(0);
+    const poll = repo.latestPollAttempt(runId);
+    expect(poll?.status).toBe('failed');
+  });
+});
