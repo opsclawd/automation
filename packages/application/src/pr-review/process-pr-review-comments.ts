@@ -92,12 +92,26 @@ export class ProcessPrReviewComments {
 
     if (unresolved.length === 0) {
       await this.verifyOrphaned(input);
-      this.recordPoll(input, startedAt, reviewerComments.length, 0, 'all_resolved');
+
+      const allComments = d.prReviewRepo.listComments(input.runId);
+      const stillUnresolved = allComments.filter(isUnresolved);
+      const hasBlocked = allComments.some((c) => c.state === 'blocked');
+
+      let terminal: PollAttempt['terminalState'];
+      if (stillUnresolved.length > 0) {
+        terminal = undefined;
+      } else if (hasBlocked) {
+        terminal = 'blocked';
+      } else {
+        terminal = 'all_resolved';
+      }
+
+      this.recordPoll(input, startedAt, reviewerComments.length, 0, terminal);
       return {
         outcome: 'NO_UNRESOLVED',
         processed: 0,
         blocked: 0,
-        allResolved: true,
+        allResolved: stillUnresolved.length === 0 && !hasBlocked,
       };
     }
 
