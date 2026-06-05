@@ -307,3 +307,50 @@ describe('ProcessPrReviewComments — invalid result', () => {
     expect(poll?.status).toBe('failed');
   });
 });
+
+describe('ProcessPrReviewComments — no_fix action', () => {
+  it('marks a no_fix comment processed without commit/build verification', async () => {
+    const { deps, github, repo } = makeDeps({
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'NO_FIXES_NEEDED',
+          comments: [
+            { commentId: 9001, action: 'no_fix', replyBody: 'Intentional design choice.' },
+          ],
+        },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'why not X?',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('NO_FIXES_NEEDED');
+    expect(out.processed).toBe(1);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe('processed');
+    expect(comment?.replyVerified).toBe(true);
+    expect(github.resolvedThreads).toContainEqual({
+      repoFullName: 'o/r',
+      prNumber: 5,
+      commentId: 9001,
+    });
+  });
+});
