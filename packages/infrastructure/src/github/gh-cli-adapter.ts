@@ -201,9 +201,9 @@ export class GhCliAdapter implements GitHubPort {
 
     while (true) {
       const cursorParam = threadCursor ? `,$afterThread:String!` : '';
-      const cursorArg = threadCursor ? `,afterThread:${threadCursor}` : '';
+      const cursorArg = threadCursor ? `,after:$afterThread` : '';
       const query = `query($owner:String!,$repo:String!,$pr:Int!${cursorParam}){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:${threadPageSize}${cursorArg}){nodes{id isResolved comments(first:${commentPageSize}){nodes{databaseId}}}pageInfo{hasNextPage endCursor}}}}}`;
-      const out = await this.run([
+      const ghArgs = [
         'api',
         'graphql',
         '-f',
@@ -214,7 +214,11 @@ export class GhCliAdapter implements GitHubPort {
         `repo=${repo}`,
         '-F',
         `pr=${prNumber}`,
-      ]);
+      ];
+      if (threadCursor) {
+        ghArgs.push('-F', `afterThread=${threadCursor}`);
+      }
+      const out = await this.run(ghArgs);
       const command = `gh api graphql owner=${owner} repo=${repo} pr=${prNumber}`;
       const data = this.safeJsonParse<{
         data: {
