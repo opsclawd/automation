@@ -71,6 +71,19 @@ export class FakeGitHubPort implements GitHubPort {
     body: string,
   ): Promise<void> {
     this.repliesPosted.push({ repoFullName, prNumber, commentId, body });
+    const key = `${repoFullName}/${prNumber}`;
+    const existing = this.comments.get(key) ?? [];
+    existing.push({
+      id: existing.length + 9000,
+      prNumber,
+      path: '',
+      line: 0,
+      reviewer: 'agent',
+      body,
+      createdAt: new Date(),
+      inReplyToId: commentId,
+    });
+    this.comments.set(key, existing);
   }
 
   async resolveReviewThread(

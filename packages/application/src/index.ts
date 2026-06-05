@@ -13,3 +13,4 @@ export * from './results/index.js';
 export * from './run-validation.js';
 export * from './validation/classify-validation.js';
 export * from './validation/validation-run-to-failure.js';
+export * from './pr-review/process-pr-review-comments.js';
