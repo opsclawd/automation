@@ -3247,9 +3247,7 @@ Start now."
         --name-only | grep -qx "compound-draft.md" 2>/dev/null; then
       warn "compound agent committed compound-draft.md — removing from PR branch"
       git -C "${WORKTREE_DIR}" rm -f -- compound-draft.md 2>/dev/null || true
-      if ! git -C "${WORKTREE_DIR}" diff --cached --quiet; then
-        git -C "${WORKTREE_DIR}" commit -m "fix: remove compound-draft.md committed by compound agent"
-      fi
+      git -C "${WORKTREE_DIR}" commit --only -- compound-draft.md -m "fix: remove compound-draft.md committed by compound agent"
     fi
 
     # Ensure no docs/solutions/ changes leak into the PR — that directory is
@@ -3310,9 +3308,7 @@ if [[ "$PHASE" == "create-pr" ]]; then
       --name-only 2>/dev/null | grep -qx "compound-draft.md"; then
     warn "create-pr: compound-draft.md found on branch — removing before push"
     git -C "${WORKTREE_DIR}" rm -f -- compound-draft.md 2>/dev/null || true
-    if ! git -C "${WORKTREE_DIR}" diff --cached --quiet; then
-      git -C "${WORKTREE_DIR}" commit -m "fix: remove compound-draft.md committed by compound agent"
-    fi
+    git -C "${WORKTREE_DIR}" commit --only -- compound-draft.md -m "fix: remove compound-draft.md committed by compound agent"
   fi
   rm -f "${WORKTREE_DIR}/compound-draft.md"
 
