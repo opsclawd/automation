@@ -1418,12 +1418,21 @@ Write plan.md and task-manifest.json now."
 
   _lint_plan_verification
 
-  # ── Plan Review Phase ────────────────────────────────────────────────────
+  PHASE="plan-review"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE: plan-review — adversarial plan review loop
+# ═══════════════════════════════════════════════════════════════════════════
+if [[ "$PHASE" == "plan-review" ]]; then
+  log "=== Phase: plan-review (adversarial review) ==="
+  ensure_worktree
+  _emit_phase_started "plan-review"
+  LAST_PHASE="plan-review"
+
   if [[ "$PLAN_REVIEW_ENABLED" == "true" ]]; then
     if classify_plan_risk "$WORKTREE_DIR"; then
       log "Plan contains retry/state-machine/side-effect patterns — running adversarial review"
-      _emit_phase_started "plan-review"
-      LAST_PHASE="plan-review"
       if run_plan_review_loop "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW" "$MAX_PLAN_REVIEW_ITERATIONS"; then
         touch "${WORKTREE_DIR}/plan-review-passed.marker"
         _emit_phase_done "plan-review"
@@ -1437,10 +1446,12 @@ Write plan.md and task-manifest.json now."
       emit_event "plan-review" "info" "plan_review.review_skipped" \
         "Plan classified as low-risk, adversarial review skipped"
       touch "${WORKTREE_DIR}/plan-review-passed.marker"
+      _emit_phase_done "plan-review"
     fi
   else
     info "Plan review disabled in config — skipping"
     touch "${WORKTREE_DIR}/plan-review-passed.marker"
+    _emit_phase_done "plan-review"
   fi
 
   PHASE="implement"

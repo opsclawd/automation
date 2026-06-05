@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 # plan-review.sh — Adversarial plan review functions for the orchestrator.
 
+# _check_review_worktree_violations: Verify that the review/fix agents did not
+# modify files outside the allowed set (plan.md, plan-review-findings.md, and
+# marker files). Calls orchestrator_fail on violation.
+# Args:
+#   $1 — worktree dir
+_check_review_worktree_violations() {
+  local worktree_dir="$1"
+  local violations
+  violations=$({
+    git -C "$worktree_dir" diff --name-only HEAD 2>/dev/null
+    git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null
+  } | grep . | grep -vE '^(plan\.md|plan-review-findings\.md|plan-review-passed\.marker|\.gitignore)$' | tr '\n' ' ' || true)
+  if [[ -n "$violations" ]]; then
+    orchestrator_fail "Plan review/fix agent modified unexpected files (contract violation): ${violations}"
+  fi
+}
+
 # classify_plan_risk: Check if plan.md contains the <!-- plan-review-required -->
 # sentinel written by the plan-write agent when it detects retry/state-machine/
 # side-effect patterns.
@@ -36,12 +53,12 @@ parse_review_findings() {
     return
   fi
 
-  if grep -qP '^#{2,3}\s+P1' "$findings_file" || grep -qP '^\*\*P1\*\*' "$findings_file" || grep -qiP 'severity:\s*P1' "$findings_file"; then
+  if grep -qiP '(#{2,3}\s+P1\b|\*\*P1\*\*|severity:\s*P1)' "$findings_file"; then
     echo "P1_FOUND"
     return
   fi
 
-  if grep -qP '^#{2,3}\s+P2' "$findings_file" || grep -qP '^\*\*P2\*\*' "$findings_file" || grep -qiP 'severity:\s*P2' "$findings_file"; then
+  if grep -qiP '(#{2,3}\s+P2\b|\*\*P2\*\*|severity:\s*P2)' "$findings_file"; then
     echo "P2_ACKNOWLEDGED"
     return
   fi
@@ -239,14 +256,22 @@ run_plan_review_loop() {
       warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration}"
       emit_event "plan-review" "error" "plan_review.reviewer_failed" \
         "Reviewer agent failed on iteration ${iteration}" iteration="$iteration" exit_code="$reviewer_ec"
-      return 1
+      orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
+    fi
+    _check_review_worktree_violations "$worktree_dir"
+
+    if [[ ! -f "${worktree_dir}/plan-review-findings.md" ]]; then
+      warn "Reviewer agent completed successfully but plan-review-findings.md is missing"
+      emit_event "plan-review" "error" "plan_review.findings_file_missing" \
+        "Reviewer agent did not produce plan-review-findings.md on iteration ${iteration}" iteration="$iteration"
+      orchestrator_fail "Reviewer agent completed but plan-review-findings.md not found — agent contract violation"
     fi
 
     status=$(parse_review_findings "$worktree_dir")
     local p1_count=0 p2_count=0
     if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
-      p1_count=$(grep -cP '###\s+P1:' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
-      p2_count=$(grep -cP '###\s+P2:' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
+      p1_count=$(grep -ciP '(#{2,3}\s+P1\b|\*\*P1\*\*|severity:\s*P1)' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
+      p2_count=$(grep -ciP '(#{2,3}\s+P2\b|\*\*P2\*\*|severity:\s*P2)' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
     fi
 
     emit_event "plan-review" "info" "plan_review.findings" \
@@ -274,8 +299,9 @@ run_plan_review_loop() {
         warn "Plan fixer agent failed (exit ${fixer_ec}) on iteration ${iteration}"
         emit_event "plan-review" "error" "plan_review.fixer_failed" \
           "Plan fixer failed on iteration ${iteration}" iteration="$iteration" exit_code="$fixer_ec"
-        return 1
+        orchestrator_fail "Plan fixer agent failed (exit ${fixer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
       fi
+      _check_review_worktree_violations "$worktree_dir"
       continue
     fi
   done
