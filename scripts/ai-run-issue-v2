@@ -3168,7 +3168,7 @@ Implementation: implementation-log.md
 
 ## TASK
 Read implementation-log.md and write a solution document to:
-  docs/solutions/issue-${ISSUE_NUM}.md
+  compound-draft.md
 
 This document should capture:
 - The problem and context
@@ -3183,6 +3183,7 @@ Rules:
 - Do NOT ask questions.
 - Write the document yourself. Do not delegate.
 - Do not create a PR or commit anything.
+- Do NOT write to docs/solutions/ — that directory is managed exclusively by the consolidation script.
 - Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
 
 Start now."
@@ -3222,10 +3223,43 @@ Start now."
     fi
 
     # Copy the generated doc back to issues dir
-    if [[ -f "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" ]]; then
-      cp "${WORKTREE_DIR}/docs/solutions/issue-${ISSUE_NUM}.md" "${ISSUES_DIR}/compound.md"
+    if [[ -f "${WORKTREE_DIR}/compound-draft.md" ]]; then
+      cp "${WORKTREE_DIR}/compound-draft.md" "${ISSUES_DIR}/compound.md"
       info "Compound doc saved to ${ISSUES_DIR}/compound.md"
       _emit_artifact "compound" "${ISSUES_DIR}/compound.md" "compound"
+    fi
+
+    # Ensure no docs/solutions/ changes leak into the PR — that directory is
+    # managed exclusively by ai-consolidate-compound, not individual issue runs.
+    # 1. Revert uncommitted changes (worktree + untracked).
+    if ! git -C "${WORKTREE_DIR}" diff --quiet -- docs/solutions/ || \
+       [[ -n "$(git -C "${WORKTREE_DIR}" ls-files --others --exclude-standard -- docs/solutions/)" ]]; then
+      warn "compound agent wrote to docs/solutions/ — reverting those changes (use ai-consolidate-compound instead)"
+      git -C "${WORKTREE_DIR}" checkout -- docs/solutions/ 2>/dev/null || true
+      git -C "${WORKTREE_DIR}" ls-files --others --exclude-standard -- docs/solutions/ | \
+        xargs -r -I{} rm -f "${WORKTREE_DIR}/{}"
+    fi
+    # 2. Strip any docs/solutions/ changes the agent committed to the branch.
+    # Use --diff-filter to handle each case correctly:
+    #   Added files   → delete (git rm); they don't exist on base branch
+    #   Modified/deleted files → restore from base branch (git checkout origin/BASE)
+    _added_docs=$(git -C "${WORKTREE_DIR}" diff "origin/${BASE_BRANCH}..HEAD" \
+      --diff-filter=A --name-only -- docs/solutions/ 2>/dev/null || true)
+    _changed_docs=$(git -C "${WORKTREE_DIR}" diff "origin/${BASE_BRANCH}..HEAD" \
+      --diff-filter=MD --name-only -- docs/solutions/ 2>/dev/null || true)
+    if [[ -n "$_added_docs" || -n "$_changed_docs" ]]; then
+      warn "compound agent committed docs/solutions/ changes — neutralising (use ai-consolidate-compound instead)"
+      while IFS= read -r _f; do
+        [[ -z "$_f" ]] && continue
+        git -C "${WORKTREE_DIR}" rm -f -- "$_f" 2>/dev/null || rm -f "${WORKTREE_DIR}/$_f"
+      done <<< "$_added_docs"
+      while IFS= read -r _f; do
+        [[ -z "$_f" ]] && continue
+        git -C "${WORKTREE_DIR}" checkout "origin/${BASE_BRANCH}" -- "$_f"
+      done <<< "$_changed_docs"
+      if ! git -C "${WORKTREE_DIR}" diff --cached --quiet; then
+        git -C "${WORKTREE_DIR}" commit -m "fix: remove docs/solutions/ changes committed by compound agent"
+      fi
     fi
   fi
 

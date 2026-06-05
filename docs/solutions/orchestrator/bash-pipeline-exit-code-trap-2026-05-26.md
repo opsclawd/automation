@@ -118,6 +118,44 @@ grep -n 'PIPESTATUS\[0\]' scripts/*.sh | grep -B1 'pushd\|popd'
 
 Lines where `PIPESTATUS[0]` is used inside a `pushd`/`popd` or similar subshell-wrapping construct are likely broken. The fix is to use a temp file for exit code capture.
 
+## Problem 4: `|| true` (and `|| :`) Consume `PIPESTATUS` Under `set -e`
+
+When a script runs `set -euo pipefail` and a pipeline can legitimately exit non-zero
+(e.g. a validator CLI exiting 1 on validation failure), authors reach for `|| true`
+to suppress errexit. But `|| true` runs an extra command (`true`), which **resets
+`PIPESTATUS`** — so the exit code you wanted to capture is already gone. `|| :` has
+the identical problem. This produced a six-iteration oscillation on PR #192 (issue
+#137) as each `|| true` ↔ remove-`|| true` swap was reviewed and rejected:
+
+```bash
+# WRONG — `|| true` suppresses errexit but PIPESTATUS is now from `true`
+node run-validation.ts ... 2>&1 | tee -a validate.log || true
+_ec=${PIPESTATUS[0]}   # reflects `true`, not the node process
+
+# WRONG — removing `|| true` lets set -e abort the script before _ec is read
+node run-validation.ts ... 2>&1 | tee -a validate.log
+_ec=${PIPESTATUS[0]}   # never reached on non-zero exit under set -e
+```
+
+### Fix: pipeline in an `if` condition + immediate `PIPESTATUS` capture
+
+A pipeline used as an `if` condition is **exempt from `set -e`** (errexit does not
+apply to commands whose status is being tested). Capture `PIPESTATUS` into a local
+array immediately, in both branches, before any other command can reset it:
+
+```bash
+if node run-validation.ts ... 2>&1 | tee -a validate.log; then
+  _pipe_status=("${PIPESTATUS[@]}")
+else
+  _pipe_status=("${PIPESTATUS[@]}")
+fi
+_ec=${_pipe_status[0]}
+```
+
+This is the canonical escape hatch when a `set -euo pipefail` script delegates to a
+tool whose non-zero exit is a meaningful, non-fatal signal. Neither `set +e`/`set -e`
+wraparound (brittle, doesn't compose) nor `|| true`/`|| :` (consume PIPESTATUS) works.
+
 ## Rules
 
 1. **Any command piped to `tee` or any multi-stage pipeline must use `PIPESTATUS[0]`**, never `$?`.
