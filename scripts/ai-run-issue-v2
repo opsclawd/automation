@@ -3303,6 +3303,19 @@ if [[ "$PHASE" == "create-pr" ]]; then
   cd "${WORKTREE_DIR}"
   ensure_branch
 
+  # Guard: remove compound-draft.md if it was committed to the branch before
+  # this fix landed. Handles resumed runs that skipped the compound phase
+  # cleanup because compound.md already existed (detect_phase → create-pr).
+  if git -C "${WORKTREE_DIR}" diff "origin/${BASE_BRANCH}..HEAD" \
+      --name-only 2>/dev/null | grep -qx "compound-draft.md"; then
+    warn "create-pr: compound-draft.md found on branch — removing before push"
+    git -C "${WORKTREE_DIR}" rm -f -- compound-draft.md 2>/dev/null || true
+    if ! git -C "${WORKTREE_DIR}" diff --cached --quiet; then
+      git -C "${WORKTREE_DIR}" commit -m "fix: remove compound-draft.md committed by compound agent"
+    fi
+  fi
+  rm -f "${WORKTREE_DIR}/compound-draft.md"
+
   # Validate branch has commits
   if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
     orchestrator_fail "Worktree has no commits — cannot create PR"
