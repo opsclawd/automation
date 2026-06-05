@@ -268,7 +268,7 @@ describe('ProcessPrReviewComments — blocking', () => {
       pollNumber: 1,
     });
     const after1 = repo.getComment(runId, 9001);
-    expect(after1?.state).toBe('pending');
+    expect(after1?.state).toBe('replied');
     expect(after1?.attempts).toBe(1);
     const out2 = await uc.execute({
       runId,
@@ -604,8 +604,9 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
     });
     expect(out.processed).toBe(0);
     const comment = repo.getComment(runId, 9001);
-    expect(comment?.state).toBe('pending');
+    expect(comment?.state).toBe('replied');
     expect(comment?.attempts).toBe(1);
+    expect(comment?.replyVerified).toBe(false);
   });
 });
 

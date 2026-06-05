@@ -5,7 +5,6 @@ import {
   createPrReviewComment,
   markReplied,
   markProcessed,
-  resetForRetry,
   blockComment,
   isUnresolved,
   type PrReviewComment,
@@ -96,6 +95,7 @@ export class ProcessPrReviewComments {
       const allComments = d.prReviewRepo.listComments(input.runId);
       const stillUnresolved = allComments.filter(isUnresolved);
       const hasBlocked = allComments.some((c) => c.state === 'blocked');
+      const blockedCount = allComments.filter((c) => c.state === 'blocked').length;
 
       let terminal: PollAttempt['terminalState'];
       if (stillUnresolved.length > 0) {
@@ -110,7 +110,7 @@ export class ProcessPrReviewComments {
       return {
         outcome: 'NO_UNRESOLVED',
         processed: 0,
-        blocked: 0,
+        blocked: blockedCount,
         allResolved: stillUnresolved.length === 0 && !hasBlocked,
       };
     }
@@ -195,6 +195,7 @@ export class ProcessPrReviewComments {
 
     let processed = 0;
     let blocked = 0;
+    const repliedInThisPass = new Set<number>();
     const toVerify: Array<{
       commentId: number;
       action: 'fixed' | 'no_fix';
@@ -257,7 +258,6 @@ export class ProcessPrReviewComments {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
       if (!existing || existing.state !== 'pending') continue;
 
-      const replyVerified = afterComments.some((c) => c.inReplyToId === item.commentId);
       const githubReply = afterComments.find((c) => c.inReplyToId === item.commentId);
 
       if (!githubReply) {
@@ -275,13 +275,19 @@ export class ProcessPrReviewComments {
         continue;
       }
 
-      const repliedComment = markReplied(existing, {
-        replyId: githubReply.id,
-        outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
-        ...(item.action === 'fixed' && fixCommitSha ? { commitSha: fixCommitSha } : {}),
-        poll: input.pollNumber,
-      });
+      const repliedComment = {
+        ...markReplied(existing, {
+          replyId: githubReply.id,
+          outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
+          ...(item.action === 'fixed' && fixCommitSha ? { commitSha: fixCommitSha } : {}),
+          poll: input.pollNumber,
+        }),
+        replyVerified: false,
+      };
+      d.prReviewRepo.upsertComment(repliedComment);
+      repliedInThisPass.add(item.commentId);
 
+      const replyVerified = afterComments.some((c) => c.inReplyToId === item.commentId);
       const noFixOk = item.action === 'no_fix' && replyVerified;
       const fixOk =
         item.action === 'fixed' &&
@@ -303,12 +309,10 @@ export class ProcessPrReviewComments {
       } else if (repliedComment.attempts >= BLOCK_THRESHOLD) {
         d.prReviewRepo.upsertComment(blockComment(repliedComment, 'verification failed twice'));
         blocked++;
-      } else {
-        d.prReviewRepo.upsertComment(resetForRetry(repliedComment, { poll: input.pollNumber }));
       }
     }
 
-    await this.verifyOrphaned(input);
+    await this.verifyOrphaned(input, repliedInThisPass);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
@@ -333,10 +337,15 @@ export class ProcessPrReviewComments {
     };
   }
 
-  private async verifyOrphaned(input: ProcessPrReviewInput): Promise<void> {
+  private async verifyOrphaned(
+    input: ProcessPrReviewInput,
+    skipCommentIds: Set<number> = new Set(),
+  ): Promise<void> {
     const d = this.deps;
     const allComments = d.prReviewRepo.listComments(input.runId);
-    const orphaned = allComments.filter((c) => c.state === 'replied' && !c.replyVerified);
+    const orphaned = allComments.filter(
+      (c) => c.state === 'replied' && !c.replyVerified && !skipCommentIds.has(c.commentId),
+    );
 
     if (orphaned.length === 0) return;
 
@@ -359,10 +368,15 @@ export class ProcessPrReviewComments {
           }),
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
-      } else if (c.attempts >= BLOCK_THRESHOLD) {
+      } else if (c.attempts + 1 >= BLOCK_THRESHOLD) {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
       } else {
-        d.prReviewRepo.upsertComment(resetForRetry(c, { poll: input.pollNumber }));
+        d.prReviewRepo.upsertComment({
+          ...c,
+          attempts: c.attempts + 1,
+          lastPoll: input.pollNumber,
+          updatedAt: d.now(),
+        });
       }
     }
   }
