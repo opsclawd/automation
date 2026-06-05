@@ -138,7 +138,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   _main_state_before=$(_capture_main_state)
   ! NODE_OPTIONS='--conditions=development' node --import "$tsx_loader" "${repo_root}/apps/cli/src/run-agent.ts" \
     --phase plan-review \
-    --phase-id "plan-review-iter-${iteration}" \
+    --phase-id "plan-review-${iteration}" \
     --cwd "$worktree_dir" \
     --run-id "$run_id" \
     --repo-id "$repo_id" \
@@ -151,7 +151,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   if [[ ${_tee_ec:-0} -ne 0 ]]; then
     warn "tee failed writing log for plan-review (exit $_tee_ec)"
   fi
-  _guard_main_checkout "plan-review-iter-${iteration}" "$_main_state_before"
+  _guard_main_checkout "plan-review-${iteration}" "$_main_state_before"
   check_branch_after_agent
   return ${_agent_ec:-0}
 }
@@ -205,7 +205,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   _main_state_before=$(_capture_main_state)
   ! NODE_OPTIONS='--conditions=development' node --import "$tsx_loader" "${repo_root}/apps/cli/src/run-agent.ts" \
     --phase plan-fix \
-    --phase-id "plan-fix-iter-${iteration}" \
+    --phase-id "plan-fix-${iteration}" \
     --cwd "$worktree_dir" \
     --run-id "$run_id" \
     --repo-id "$repo_id" \
@@ -218,7 +218,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   if [[ ${_tee_ec:-0} -ne 0 ]]; then
     warn "tee failed writing log for plan-fix (exit $_tee_ec)"
   fi
-  _guard_main_checkout "plan-fix-iter-${iteration}" "$_main_state_before"
+  _guard_main_checkout "plan-fix-${iteration}" "$_main_state_before"
   check_branch_after_agent
   return ${_agent_ec:-0}
 }
