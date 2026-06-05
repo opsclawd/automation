@@ -3,7 +3,6 @@ import {
   RepositoryId,
   PhaseName,
   createPrReviewComment,
-  markReplied,
   markProcessed,
   blockComment,
   isUnresolved,
@@ -258,6 +257,16 @@ export class ProcessPrReviewComments {
         verified: false,
       });
 
+      d.prReviewRepo.upsertComment({
+        ...existing,
+        state: 'replied',
+        outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
+        attempts: existing.attempts + 1,
+        lastPoll: input.pollNumber,
+        updatedAt: d.now(),
+      });
+      repliedInThisPass.add(item.commentId);
+
       toVerify.push({ commentId: item.commentId, action: item.action, replyBody: item.replyBody });
     }
 
@@ -276,38 +285,15 @@ export class ProcessPrReviewComments {
 
     for (const item of toVerify) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
-      if (!existing || existing.state !== 'pending') continue;
-
-      const githubReply = afterComments.find((c) => c.inReplyToId === item.commentId);
-
-      if (!githubReply) {
-        if (existing.attempts + 1 >= BLOCK_THRESHOLD) {
-          d.prReviewRepo.upsertComment(blockComment(existing, 'reply not found on GitHub'));
-          blocked++;
-        } else {
-          d.prReviewRepo.upsertComment({
-            ...existing,
-            attempts: existing.attempts + 1,
-            lastPoll: input.pollNumber,
-            updatedAt: d.now(),
-          });
-        }
-        continue;
-      }
-
-      const repliedComment = {
-        ...markReplied(existing, {
-          replyId: githubReply.id,
-          outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
-          ...(item.action === 'fixed' && fixCommitSha ? { commitSha: fixCommitSha } : {}),
-          poll: input.pollNumber,
-        }),
-        replyVerified: false,
-      };
-      d.prReviewRepo.upsertComment(repliedComment);
-      repliedInThisPass.add(item.commentId);
+      if (!existing || existing.state !== 'replied') continue;
 
       const replyVerified = afterComments.some((c) => c.inReplyToId === item.commentId);
+      const githubReply = afterComments.find((c) => c.inReplyToId === item.commentId);
+      const repliedWithId = githubReply ? { ...existing, replyId: githubReply.id } : existing;
+      if (githubReply) {
+        d.prReviewRepo.upsertComment(repliedWithId);
+      }
+
       const noFixOk = item.action === 'no_fix' && replyVerified;
       const fixOk =
         item.action === 'fixed' &&
@@ -318,7 +304,7 @@ export class ProcessPrReviewComments {
 
       if (noFixOk || fixOk) {
         d.prReviewRepo.upsertComment(
-          markProcessed(repliedComment, {
+          markProcessed(repliedWithId, {
             commitVerified: item.action === 'fixed' ? commitVerified : true,
             replyVerified,
             buildVerified: item.action === 'fixed' ? buildVerified : true,
@@ -326,15 +312,9 @@ export class ProcessPrReviewComments {
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, item.commentId);
         processed++;
-      } else if (repliedComment.attempts >= BLOCK_THRESHOLD) {
-        d.prReviewRepo.upsertComment(blockComment(repliedComment, 'verification failed twice'));
+      } else if (existing.attempts >= BLOCK_THRESHOLD) {
+        d.prReviewRepo.upsertComment(blockComment(existing, 'verification failed twice'));
         blocked++;
-      } else {
-        d.prReviewRepo.upsertComment({
-          ...repliedComment,
-          lastPoll: input.pollNumber,
-          updatedAt: d.now(),
-        });
       }
     }
 
