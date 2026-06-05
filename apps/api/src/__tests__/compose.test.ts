@@ -71,6 +71,14 @@ describe('composeRoot', () => {
     expect(typeof container.validationRunRepository.listByRun).toBe('function');
   });
 
+  it('exposes prReviewRepository', () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const container = composeRoot({ repoRoot: root, scriptPath });
+    expect(container.prReviewRepository).toBeDefined();
+    expect(typeof container.prReviewRepository.listComments).toBe('function');
+  });
+
   it('passes optional deps through to StartIssueRun', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
     const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
