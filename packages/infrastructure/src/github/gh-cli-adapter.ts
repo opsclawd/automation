@@ -105,10 +105,18 @@ export class GhCliAdapter implements GitHubPort {
       state: string;
       headRefName: string;
     }>(out, command);
+    const VALID_STATES = new Set(['open', 'closed', 'merged']);
+    const normalised = j.state.toLowerCase();
+    if (!VALID_STATES.has(normalised)) {
+      throw new GitHubFailedError(
+        `gh pr view ${prNumber} --repo ${repoFullName}`,
+        `Unexpected PR state: ${j.state}`,
+      );
+    }
     return {
       number: j.number,
       url: j.url,
-      state: j.state.toLowerCase() as PullRequest['state'],
+      state: normalised as PullRequest['state'],
       headRefName: j.headRefName,
     };
   }
@@ -130,6 +138,12 @@ export class GhCliAdapter implements GitHubPort {
   ): Promise<GitHubReviewComment[]> {
     const all = await this.listReviewComments(repoFullName, prNumber);
     const since = new Date(sinceIso);
+    if (isNaN(since.getTime())) {
+      throw new GitHubFailedError(
+        `listPrCommentsSince(${repoFullName}, ${prNumber})`,
+        `Invalid ISO date string: ${sinceIso}`,
+      );
+    }
     return all.filter((c) => c.createdAt >= since);
   }
 
@@ -170,7 +184,13 @@ export class GhCliAdapter implements GitHubPort {
     const out = await this.run(args);
     const url = out.trim().split('\n').pop() ?? '';
     const numMatch = url.match(/\/pull\/(\d+)/);
-    return { number: numMatch ? Number(numMatch[1]) : 0, url, state: 'open' };
+    if (!numMatch) {
+      throw new GitHubFailedError(
+        `gh pr create --repo ${input.repoFullName}`,
+        `Could not parse PR number from output: ${url}`,
+      );
+    }
+    return { number: Number(numMatch[1]), url, state: 'open' };
   }
 
   async replyToReviewComment(
@@ -261,7 +281,7 @@ export class GhCliAdapter implements GitHubPort {
     const args = ['issue', 'edit', String(issueNumber), '--repo', repoFullName];
     for (const l of labels.add ?? []) args.push('--add-label', l);
     for (const l of labels.remove ?? []) args.push('--remove-label', l);
-    if (args.length === 5) return;
+    if (args.length <= 5) return;
     await this.run(args);
   }
 }
