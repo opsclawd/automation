@@ -5,6 +5,7 @@ import {
   createPrReviewComment,
   markReplied,
   markProcessed,
+  resetForRetry,
   blockComment,
   isUnresolved,
   type PrReviewComment,
@@ -205,7 +206,14 @@ export class ProcessPrReviewComments {
       replyBody: string;
     }> = [];
 
-    for (const item of result.comments) {
+    const seenCommentIds = new Set<number>();
+    const uniqueComments = result.comments.filter((item) => {
+      if (seenCommentIds.has(item.commentId)) return false;
+      seenCommentIds.add(item.commentId);
+      return true;
+    });
+
+    for (const item of uniqueComments) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
       if (!existing || existing.state === 'processed') continue;
 
@@ -312,10 +320,12 @@ export class ProcessPrReviewComments {
       } else if (repliedComment.attempts >= BLOCK_THRESHOLD) {
         d.prReviewRepo.upsertComment(blockComment(repliedComment, 'verification failed twice'));
         blocked++;
+      } else {
+        d.prReviewRepo.upsertComment(resetForRetry(repliedComment, { poll: input.pollNumber }));
       }
     }
 
-    await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
+    blocked += await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
@@ -345,20 +355,21 @@ export class ProcessPrReviewComments {
     input: ProcessPrReviewInput,
     startCommitSha?: string,
     skipCommentIds: Set<number> = new Set(),
-  ): Promise<void> {
+  ): Promise<number> {
     const d = this.deps;
     const allComments = d.prReviewRepo.listComments(input.runId);
     const orphaned = allComments.filter(
       (c) => c.state === 'replied' && !c.replyVerified && !skipCommentIds.has(c.commentId),
     );
 
-    if (orphaned.length === 0) return;
+    if (orphaned.length === 0) return 0;
 
     const pr = await d.github.getPr(input.repoFullName, input.prNumber);
     const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
     const commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
     const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
 
+    let blocked = 0;
     for (const c of orphaned) {
       const replyVerified = afterComments.some((rc) => rc.inReplyToId === c.commentId);
       const isFix = c.outcome === 'fixed';
@@ -384,17 +395,14 @@ export class ProcessPrReviewComments {
           }),
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
-      } else if (c.attempts + 1 >= BLOCK_THRESHOLD) {
+      } else if (c.attempts >= BLOCK_THRESHOLD) {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
+        blocked++;
       } else {
-        d.prReviewRepo.upsertComment({
-          ...c,
-          attempts: c.attempts + 1,
-          lastPoll: input.pollNumber,
-          updatedAt: d.now(),
-        });
+        d.prReviewRepo.upsertComment(resetForRetry(c, { poll: input.pollNumber }));
       }
     }
+    return blocked;
   }
 
   private recordPoll(
