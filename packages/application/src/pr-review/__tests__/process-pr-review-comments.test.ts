@@ -15,7 +15,9 @@ import {
 const runId = RunId('44444444-4444-4444-4444-444444444444');
 const repoId = RepositoryId('o/r');
 
-function makeSuccessAgentResult(): AgentInvocationResult {
+function makeSuccessAgentResult(
+  overrides: Partial<AgentInvocationResult> = {},
+): AgentInvocationResult {
   return {
     runtime: 'opencode',
     provider: 'test',
@@ -27,7 +29,22 @@ function makeSuccessAgentResult(): AgentInvocationResult {
     resultJsonPath: '/tmp/result.json',
     contractViolations: [],
     outcome: 'success',
+    ...overrides,
   };
+}
+
+class TwoShaGitPort extends FakeGitPort {
+  private callCount = 0;
+  constructor(
+    private firstSha: string,
+    private secondSha: string,
+  ) {
+    super();
+  }
+  override async headCommitSha(_cwd: string): Promise<string> {
+    this.callCount++;
+    return this.callCount <= 1 ? this.firstSha : this.secondSha;
+  }
 }
 
 function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
@@ -38,7 +55,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   agent: FakeAgentPort;
 } {
   const github = new FakeGitHubPort();
-  const git = new FakeGitPort();
+  const git = new TwoShaGitPort('abc123', 'def456');
   const repo = new FakePrReviewRepository();
   const agent = new FakeAgentPort({
     'post-pr-review-profile': [makeSuccessAgentResult()],
@@ -61,7 +78,6 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
       createdAt: new Date('2026-06-04T00:00:00Z'),
     },
   ]);
-  git.headByCwd.set('/work/tree', 'abc123');
   git.remoteRefs.set('origin/feat-x', 'abc123');
 
   let replyCounter = 0;
@@ -420,5 +436,140 @@ describe('ProcessPrReviewComments — multiple comments', () => {
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
     expect(repo.getComment(runId, 9002)?.state).toBe('processed');
     expect(repo.getComment(runId, 9003)?.state).toBe('blocked');
+  });
+});
+
+describe('ProcessPrReviewComments — failed agent invocation', () => {
+  it('records a failed poll and posts no replies when agent invocation fails', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult({ outcome: 'failed' })],
+    });
+    const { deps, github, repo } = makeDeps({ agent });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(github.repliesPosted).toHaveLength(0);
+    const poll = repo.latestPollAttempt(runId);
+    expect(poll?.status).toBe('failed');
+  });
+
+  it('blocks when agent invocation times out', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult({ outcome: 'timeout' })],
+    });
+    const { deps, github, repo } = makeDeps({ agent });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(github.repliesPosted).toHaveLength(0);
+    expect(repo.latestPollAttempt(runId)?.status).toBe('failed');
+  });
+
+  it('blocks when agent invocation has contract violations', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult({
+          outcome: 'contract_violation',
+          contractViolations: ['missing result.json'],
+        }),
+      ],
+    });
+    const { deps, github, repo } = makeDeps({ agent });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(github.repliesPosted).toHaveLength(0);
+    expect(repo.latestPollAttempt(runId)?.status).toBe('failed');
+  });
+});
+
+describe('ProcessPrReviewComments — commit SHA change required for fixed', () => {
+  it('blocks a fixed comment when the agent did not produce a new commit', async () => {
+    const git = new FakeGitPort();
+    git.headByCwd.set('/work/tree', 'abc123');
+    git.remoteRefs.set('origin/feat-x', 'abc123');
+    const { deps, github, repo } = makeDeps({ git });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.processed).toBe(0);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe('pending');
+    expect(comment?.attempts).toBe(1);
   });
 });

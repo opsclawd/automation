@@ -136,6 +136,16 @@ export class ProcessPrReviewComments {
       startCommitSha,
     });
 
+    if (invocation.outcome !== 'success') {
+      this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
+      return {
+        outcome: 'BLOCKED',
+        processed: 0,
+        blocked: 0,
+        allResolved: false,
+      };
+    }
+
     const extracted = await d.extractResult(
       invocation.resultJsonPath !== undefined
         ? { resultJsonPath: invocation.resultJsonPath, cwd: input.cwd }
@@ -193,17 +203,18 @@ export class ProcessPrReviewComments {
       toVerify.push({ commentId: item.commentId, action: item.action, replyBody: item.replyBody });
     }
 
+    const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
+    const fixCommitSha = toVerify.some((v) => v.action === 'fixed')
+      ? await d.git.headCommitSha(input.cwd)
+      : undefined;
+    const commitShaChanged = fixCommitSha !== undefined && fixCommitSha !== startCommitSha;
+
     let commitVerified = true;
     let buildVerified = true;
     if (toVerify.some((v) => v.action === 'fixed')) {
       commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
       buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
     }
-
-    const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const fixCommitSha = toVerify.some((v) => v.action === 'fixed')
-      ? await d.git.headCommitSha(input.cwd)
-      : undefined;
 
     for (const item of toVerify) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
@@ -222,7 +233,12 @@ export class ProcessPrReviewComments {
       });
 
       const noFixOk = item.action === 'no_fix' && replyVerified;
-      const fixOk = item.action === 'fixed' && commitVerified && replyVerified && buildVerified;
+      const fixOk =
+        item.action === 'fixed' &&
+        commitShaChanged &&
+        commitVerified &&
+        replyVerified &&
+        buildVerified;
 
       if (noFixOk || fixOk) {
         d.prReviewRepo.upsertComment(
