@@ -539,6 +539,42 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
   });
 });
 
+describe('ProcessPrReviewComments — empty non-blocked manifest', () => {
+  it('fails the pass when agent returns empty comments with unresolved comments pending', async () => {
+    const { deps, github, repo } = makeDeps({
+      extractResult: async () => ({
+        ok: true,
+        result: { outcome: 'NO_FIXES_NEEDED', comments: [] },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(github.repliesPosted).toHaveLength(0);
+    const poll = repo.latestPollAttempt(runId);
+    expect(poll?.status).toBe('failed');
+  });
+});
+
 describe('ProcessPrReviewComments — commit SHA change required for fixed', () => {
   it('blocks a fixed comment when the agent did not produce a new commit', async () => {
     const git = new FakeGitPort();

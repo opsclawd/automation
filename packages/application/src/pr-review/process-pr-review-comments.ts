@@ -164,12 +164,25 @@ export class ProcessPrReviewComments {
 
     const result = extracted.result;
 
+    if (result.comments.length === 0 && result.outcome !== 'BLOCKED') {
+      this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
+      return {
+        outcome: 'BLOCKED',
+        processed: 0,
+        blocked: 0,
+        allResolved: false,
+      };
+    }
+
     if (result.outcome === 'BLOCKED' && result.comments.length === 0) {
       let blocked = 0;
       for (const c of unresolved) {
         d.prReviewRepo.upsertComment(blockComment(c, 'agent returned global BLOCKED'));
         blocked++;
       }
+
+      await this.verifyOrphaned(input);
+
       this.recordPoll(input, startedAt, unresolved.length, 0, 'blocked');
       return {
         outcome: 'BLOCKED',
@@ -199,6 +212,16 @@ export class ProcessPrReviewComments {
       );
 
       if (item.action === 'blocked') {
+        const blockedReplyId = d.idFactory();
+        d.prReviewRepo.insertReply({
+          id: blockedReplyId,
+          runId: input.runId,
+          prNumber: input.prNumber,
+          commentId: item.commentId,
+          body: item.replyBody,
+          postedAt: d.now(),
+          verified: true,
+        });
         d.prReviewRepo.upsertComment(blockComment(existing, item.blockedReason ?? 'agent blocked'));
         blocked++;
         continue;
