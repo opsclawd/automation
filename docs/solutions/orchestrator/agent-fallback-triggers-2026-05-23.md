@@ -241,6 +241,14 @@ export const QUOTA_PATTERNS = [
 
 ## Gotchas and Pitfalls
 
+0. **A spent `abortSignal` leaking into the fallback request kills it at ~0 ms (issue #150)**: The fallback request was built with `{ ...request }`, which carried the primary invocation's already-aborted `abortSignal`. `dispatch()` then composes `AbortSignal.any([freshProfileTimeoutSignal, alreadyAbortedCallerSignal])` — and per the Web API spec, **`AbortSignal.any([alreadyAborted, ...])` returns an immediately-aborted signal** (`aborted === true` from birth). So the fallback adapter received a dead signal, returned `isCanceled` instantly, and recorded `timeout 0.0 min` — defeating fallback precisely when timeout (the most important trigger) fired. Fix: strip `abortSignal` from the fallback request so it runs under its own fresh budget derived from the fallback profile's `timeoutMinutes`:
+   ```ts
+   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+   const { abortSignal: _spent, ...rest } = request;
+   const fallbackRequest = { ...rest, profile: ..., fallbackOfInvocationId: id, fallbackReason };
+   ```
+   General lesson: any cloned request that re-composes signals must drop spent caller-scoped signals. Only `abortSignal` was caller-scoped here (`provider`/`model`/`promptBudgetTokens` are overwritten from the fallback profile); new caller-scoped fields added later need the same treatment. Test spent timeouts with `AbortSignal.timeout(0)` — it produces a `TimeoutError`-reasoned aborted signal, distinct from `AbortController.abort()` (reason `undefined`), which matters if code branches on `signal.reason`.
+
 1. **Recursive `invoke()` vs `dispatch()`**: Calling `this.invoke()` from within `dispatch()` for the fallback path would cause `fallbackOfInvocationId` on the _new_ request to be misinterpreted as caller-signalled. Always call `dispatch(fallbackRequest, true)` for the fallback hop.
 
 2. **Caller-signalled fallback does not go through `shouldFallback()`**: If a caller sets `fallbackOfInvocationId` on the initial request, the router emits the event and dispatches directly. It does NOT re-evaluate whether escalation is warranted — the router trusts the caller's decision. This was fixed after a review caught that the original `shouldFallback()` returned `true` whenever `fallbackOfInvocationId` was set, causing successful caller-signalled invocations to be discarded.
