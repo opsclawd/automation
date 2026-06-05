@@ -10,7 +10,8 @@ export type {
   GitHubPort,
   GitHubIssue,
   PullRequest,
-  PrReviewComment,
+  PullRequestDetail,
+  GitHubReviewComment,
   CreatePullRequestInput,
 } from './github-port.js';
 export type { GitPort, CreateWorktreeInput, PushInput } from './git-port.js';

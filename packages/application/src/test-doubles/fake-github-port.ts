@@ -2,19 +2,22 @@ import type {
   GitHubPort,
   GitHubIssue,
   PullRequest,
-  PrReviewComment,
+  PullRequestDetail,
+  GitHubReviewComment,
   CreatePullRequestInput,
 } from '../ports/github-port.js';
 
 export class FakeGitHubPort implements GitHubPort {
   issues = new Map<string, GitHubIssue>();
-  comments = new Map<string, PrReviewComment[]>();
+  prs = new Map<string, PullRequestDetail>();
+  comments = new Map<string, GitHubReviewComment[]>();
   repliesPosted: Array<{
     repoFullName: string;
     prNumber: number;
     commentId: number;
     body: string;
   }> = [];
+  resolvedThreads: Array<{ repoFullName: string; prNumber: number; commentId: number }> = [];
   labelChanges: Array<{
     repoFullName: string;
     issueNumber: number;
@@ -30,6 +33,12 @@ export class FakeGitHubPort implements GitHubPort {
     return i;
   }
 
+  async getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail> {
+    const pr = this.prs.get(`${repoFullName}/${prNumber}`);
+    if (!pr) throw new Error(`no pr ${repoFullName}#${prNumber}`);
+    return pr;
+  }
+
   async createPullRequest(input: CreatePullRequestInput): Promise<PullRequest> {
     this.createdPrInputs.push(input);
     const pr: PullRequest = {
@@ -41,7 +50,7 @@ export class FakeGitHubPort implements GitHubPort {
     return pr;
   }
 
-  async listReviewComments(repoFullName: string, prNumber: number): Promise<PrReviewComment[]> {
+  async listReviewComments(repoFullName: string, prNumber: number): Promise<GitHubReviewComment[]> {
     return this.comments.get(`${repoFullName}/${prNumber}`) ?? [];
   }
 
@@ -49,7 +58,7 @@ export class FakeGitHubPort implements GitHubPort {
     repoFullName: string,
     prNumber: number,
     sinceIso: string,
-  ): Promise<PrReviewComment[]> {
+  ): Promise<GitHubReviewComment[]> {
     const all = this.comments.get(`${repoFullName}/${prNumber}`) ?? [];
     const since = new Date(sinceIso);
     return all.filter((c) => c.createdAt >= since);
@@ -62,6 +71,14 @@ export class FakeGitHubPort implements GitHubPort {
     body: string,
   ): Promise<void> {
     this.repliesPosted.push({ repoFullName, prNumber, commentId, body });
+  }
+
+  async resolveReviewThread(
+    repoFullName: string,
+    prNumber: number,
+    commentId: number,
+  ): Promise<void> {
+    this.resolvedThreads.push({ repoFullName, prNumber, commentId });
   }
 
   async updateIssueLabels(

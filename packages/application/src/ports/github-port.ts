@@ -11,7 +11,14 @@ export interface PullRequest {
   state: 'open' | 'closed' | 'merged';
 }
 
-export interface PrReviewComment {
+/** PR metadata including branch name, used by the poller. */
+export interface PullRequestDetail extends PullRequest {
+  headRefName: string;
+}
+
+/** Raw GitHub review comment (wire shape from REST API).
+ *  Distinct from the persisted `PrReviewComment` domain record in @ai-sdlc/domain. */
+export interface GitHubReviewComment {
   id: number;
   prNumber: number;
   path: string;
@@ -19,6 +26,8 @@ export interface PrReviewComment {
   reviewer: string;
   body: string;
   createdAt: Date;
+  /** Present when this comment is itself a reply to another comment. */
+  inReplyToId?: number;
 }
 
 export interface CreatePullRequestInput {
@@ -32,19 +41,21 @@ export interface CreatePullRequestInput {
 
 export interface GitHubPort {
   getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue>;
+  getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;
-  listReviewComments(repoFullName: string, prNumber: number): Promise<PrReviewComment[]>;
+  listReviewComments(repoFullName: string, prNumber: number): Promise<GitHubReviewComment[]>;
   listPrCommentsSince(
     repoFullName: string,
     prNumber: number,
     sinceIso: string,
-  ): Promise<PrReviewComment[]>;
+  ): Promise<GitHubReviewComment[]>;
   replyToReviewComment(
     repoFullName: string,
     prNumber: number,
     commentId: number,
     body: string,
   ): Promise<void>;
+  resolveReviewThread(repoFullName: string, prNumber: number, commentId: number): Promise<void>;
   updateIssueLabels(
     repoFullName: string,
     issueNumber: number,
