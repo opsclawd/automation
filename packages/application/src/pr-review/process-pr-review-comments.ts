@@ -223,8 +223,23 @@ export class ProcessPrReviewComments {
       const replyVerified = afterComments.some((c) => c.inReplyToId === item.commentId);
       const githubReply = afterComments.find((c) => c.inReplyToId === item.commentId);
 
+      if (!githubReply) {
+        if (existing.attempts + 1 >= BLOCK_THRESHOLD) {
+          d.prReviewRepo.upsertComment(blockComment(existing, 'reply not found on GitHub'));
+          blocked++;
+        } else {
+          d.prReviewRepo.upsertComment({
+            ...existing,
+            attempts: existing.attempts + 1,
+            lastPoll: input.pollNumber,
+            updatedAt: new Date(),
+          });
+        }
+        continue;
+      }
+
       const repliedComment = markReplied(existing, {
-        replyId: githubReply?.id ?? existing.commentId,
+        replyId: githubReply.id,
         outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
         ...(item.action === 'fixed' && fixCommitSha ? { commitSha: fixCommitSha } : {}),
         poll: input.pollNumber,
