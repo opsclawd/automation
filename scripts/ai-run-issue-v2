@@ -434,6 +434,7 @@ review.md
 design.md
 plan.md
 compound.md
+compound-draft.md
 implementation-log.md
 review-fix-log.md
 validation*.md
@@ -3227,6 +3228,25 @@ Start now."
       cp "${WORKTREE_DIR}/compound-draft.md" "${ISSUES_DIR}/compound.md"
       info "Compound doc saved to ${ISSUES_DIR}/compound.md"
       _emit_artifact "compound" "${ISSUES_DIR}/compound.md" "compound"
+    fi
+
+    # Remove compound-draft.md from the worktree — it's an orchestrator artifact
+    # that must not ship in the PR. Content has been archived to ISSUES_DIR above.
+    # 1. Uncommitted / untracked: just delete it.
+    rm -f "${WORKTREE_DIR}/compound-draft.md"
+    # 2. Staged but not committed: unstage and delete.
+    if git -C "${WORKTREE_DIR}" diff --cached --name-only | grep -qx "compound-draft.md" 2>/dev/null; then
+      git -C "${WORKTREE_DIR}" reset HEAD -- compound-draft.md 2>/dev/null || true
+      rm -f "${WORKTREE_DIR}/compound-draft.md"
+    fi
+    # 3. Already committed to the branch: remove it with a fixup commit.
+    if git -C "${WORKTREE_DIR}" diff "origin/${BASE_BRANCH}..HEAD" \
+        --name-only | grep -qx "compound-draft.md" 2>/dev/null; then
+      warn "compound agent committed compound-draft.md — removing from PR branch"
+      git -C "${WORKTREE_DIR}" rm -f -- compound-draft.md 2>/dev/null || true
+      if ! git -C "${WORKTREE_DIR}" diff --cached --quiet; then
+        git -C "${WORKTREE_DIR}" commit -m "fix: remove compound-draft.md committed by compound agent"
+      fi
     fi
 
     # Ensure no docs/solutions/ changes leak into the PR — that directory is
