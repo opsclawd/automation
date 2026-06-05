@@ -8,6 +8,7 @@ export * from './sqlite/artifact-repository.js';
 export * from './sqlite/failure-repository.js';
 export * from './sqlite/agent-invocation-repository.js';
 export * from './sqlite/validation-run-repository.js';
+export * from './sqlite/pr-review-repository.js';
 export * from './failure/classifier.js';
 export * from './bash/run-bash-script.js';
 export * from './events/event-bus.js';
