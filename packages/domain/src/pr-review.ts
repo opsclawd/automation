@@ -94,18 +94,26 @@ export function markProcessed(
       `cannot mark comment ${c.commentId} processed: current state is ${c.state}, expected replied`,
     );
   }
-  if (!v.commitVerified || !v.replyVerified || !v.buildVerified) {
-    throw new CommentStateError(
-      `cannot mark comment ${c.commentId} processed: verification incomplete ` +
-        `(commit=${v.commitVerified} reply=${v.replyVerified} build=${v.buildVerified})`,
-    );
+  if (c.outcome === 'no_fix') {
+    if (!v.replyVerified) {
+      throw new CommentStateError(
+        `cannot mark comment ${c.commentId} processed: reply not verified for no_fix outcome`,
+      );
+    }
+  } else {
+    if (!v.commitVerified || !v.replyVerified || !v.buildVerified) {
+      throw new CommentStateError(
+        `cannot mark comment ${c.commentId} processed: verification incomplete ` +
+          `(commit=${v.commitVerified} reply=${v.replyVerified} build=${v.buildVerified})`,
+      );
+    }
   }
   return {
     ...c,
     state: 'processed',
-    commitVerified: true,
+    commitVerified: c.outcome === 'no_fix' ? c.commitVerified : true,
     replyVerified: true,
-    buildVerified: true,
+    buildVerified: c.outcome === 'no_fix' ? c.buildVerified : true,
     updatedAt: new Date(),
   };
 }
@@ -148,14 +156,9 @@ export function resetForRetry(c: PrReviewComment, input: { poll: number }): PrRe
 }
 
 export function blockComment(c: PrReviewComment, reason: string): PrReviewComment {
-  if (c.state !== 'replied') {
+  if (c.state !== 'pending' && c.state !== 'replied') {
     throw new CommentStateError(
-      `cannot block comment ${c.commentId}: current state is ${c.state}, expected replied`,
-    );
-  }
-  if (c.attempts < 2) {
-    throw new CommentStateError(
-      `cannot block comment ${c.commentId}: requires at least 2 attempts, got ${c.attempts}`,
+      `cannot block comment ${c.commentId}: current state is ${c.state}, expected pending or replied`,
     );
   }
   return { ...c, state: 'blocked', blockedReason: reason, updatedAt: new Date() };

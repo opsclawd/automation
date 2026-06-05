@@ -54,7 +54,7 @@ describe('PrReviewComment state machine', () => {
     );
   });
 
-  it('replied -> processed only when all verifications pass', () => {
+  it('replied -> processed only when all verifications pass (fixed outcome)', () => {
     const replied = markReplied(base(), {
       replyId: 555,
       outcome: 'fixed',
@@ -69,13 +69,29 @@ describe('PrReviewComment state machine', () => {
     expect(processed.state).toBe('processed');
   });
 
+  it('replied -> processed for no_fix with only replyVerified', () => {
+    const replied = markReplied(base(), {
+      replyId: 555,
+      outcome: 'no_fix',
+      poll: 1,
+    });
+    const processed = markProcessed(replied, {
+      commitVerified: false,
+      replyVerified: true,
+      buildVerified: false,
+    });
+    expect(processed.state).toBe('processed');
+    expect(processed.commitVerified).toBe(false);
+    expect(processed.buildVerified).toBe(false);
+  });
+
   it('markProcessed throws if not in replied state', () => {
     expect(() =>
       markProcessed(base(), { commitVerified: true, replyVerified: true, buildVerified: true }),
     ).toThrow(/cannot mark.*processed/i);
   });
 
-  it('markProcessed throws if a verification is missing', () => {
+  it('markProcessed throws if a verification is missing (fixed outcome)', () => {
     const replied = markReplied(base(), {
       replyId: 555,
       outcome: 'fixed',
@@ -85,6 +101,17 @@ describe('PrReviewComment state machine', () => {
     expect(() =>
       markProcessed(replied, { commitVerified: true, replyVerified: false, buildVerified: true }),
     ).toThrow(/cannot mark.*processed/i);
+  });
+
+  it('markProcessed throws if replyVerified missing for no_fix', () => {
+    const replied = markReplied(base(), {
+      replyId: 555,
+      outcome: 'no_fix',
+      poll: 1,
+    });
+    expect(() =>
+      markProcessed(replied, { commitVerified: false, replyVerified: false, buildVerified: false }),
+    ).toThrow(/reply not verified/i);
   });
 
   it('resetForRetry sends replied back to pending and clears stale fields', () => {
@@ -124,13 +151,25 @@ describe('PrReviewComment state machine', () => {
     expect(blocked.blockedReason).toBe('verification failed twice');
   });
 
-  it('blockComment throws if not in replied state', () => {
-    expect(() => blockComment(base(), 'reason')).toThrow(/cannot block/i);
+  it('blockComment from pending state (unresolved after repeated attempts)', () => {
+    const blocked = blockComment(base(), 'agent could not resolve');
+    expect(blocked.state).toBe('blocked');
+    expect(blocked.blockedReason).toBe('agent could not resolve');
   });
 
-  it('blockComment throws if fewer than 2 attempts', () => {
-    const replied = markReplied(base(), { replyId: 1, outcome: 'fixed', commitSha: 'a', poll: 1 });
-    expect(() => blockComment(replied, 'reason')).toThrow(/requires at least 2 attempts/i);
+  it('blockComment throws if in processed state', () => {
+    const replied = markReplied(base(), {
+      replyId: 1,
+      outcome: 'fixed',
+      commitSha: 'a',
+      poll: 1,
+    });
+    const processed = markProcessed(replied, {
+      commitVerified: true,
+      replyVerified: true,
+      buildVerified: true,
+    });
+    expect(() => blockComment(processed, 'reason')).toThrow(/cannot block/i);
   });
 
   it('isUnresolved returns true only for pending comments', () => {
