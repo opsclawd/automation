@@ -165,6 +165,7 @@ export class ProcessPrReviewComments {
     const result = extracted.result;
 
     if (result.comments.length === 0 && result.outcome !== 'BLOCKED') {
+      await this.verifyOrphaned(input);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
         outcome: 'BLOCKED',
@@ -227,17 +228,6 @@ export class ProcessPrReviewComments {
         continue;
       }
 
-      const replyId = d.idFactory();
-      d.prReviewRepo.insertReply({
-        id: replyId,
-        runId: input.runId,
-        prNumber: input.prNumber,
-        commentId: item.commentId,
-        body: item.replyBody,
-        postedAt: d.now(),
-        verified: false,
-      });
-
       toVerify.push({ commentId: item.commentId, action: item.action, replyBody: item.replyBody });
     }
 
@@ -292,6 +282,15 @@ export class ProcessPrReviewComments {
         buildVerified;
 
       if (noFixOk || fixOk) {
+        d.prReviewRepo.insertReply({
+          id: d.idFactory(),
+          runId: input.runId,
+          prNumber: input.prNumber,
+          commentId: item.commentId,
+          body: item.replyBody,
+          postedAt: d.now(),
+          verified: true,
+        });
         d.prReviewRepo.upsertComment(
           markProcessed(repliedComment, {
             commitVerified: item.action === 'fixed' ? commitVerified : true,
