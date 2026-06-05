@@ -3308,7 +3308,7 @@ if [[ "$PHASE" == "create-pr" ]]; then
       --name-only 2>/dev/null | grep -qx "compound-draft.md"; then
     warn "create-pr: compound-draft.md found on branch — removing before push"
     git -C "${WORKTREE_DIR}" rm -f -- compound-draft.md 2>/dev/null || true
-    git -C "${WORKTREE_DIR}" commit --only -- compound-draft.md -m "fix: remove compound-draft.md committed by compound agent"
+    git -C "${WORKTREE_DIR}" commit --only -m "fix: remove compound-draft.md committed by compound agent" -- compound-draft.md
   fi
   rm -f "${WORKTREE_DIR}/compound-draft.md"
 
