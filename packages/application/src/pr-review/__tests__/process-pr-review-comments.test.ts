@@ -274,7 +274,7 @@ describe('ProcessPrReviewComments — blocking', () => {
     const after1 = repo.getComment(runId, 9001);
     expect(after1?.state).toBe('replied');
     expect(after1?.attempts).toBe(1);
-    await uc.execute({
+    const out2 = await uc.execute({
       runId,
       repoId,
       repoFullName: 'o/r',
@@ -284,20 +284,8 @@ describe('ProcessPrReviewComments — blocking', () => {
       pollNumber: 2,
     });
     const after2 = repo.getComment(runId, 9001);
-    expect(after2?.state).toBe('replied');
-    expect(after2?.attempts).toBe(2);
-    const out3 = await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 3,
-    });
-    const after3 = repo.getComment(runId, 9001);
-    expect(after3?.state).toBe('blocked');
-    expect(out3.blocked).toBe(1);
+    expect(after2?.state).toBe('blocked');
+    expect(out2.blocked).toBe(1);
   });
 });
 
@@ -877,7 +865,7 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
 
     expect(github.repliesPosted).toHaveLength(1);
     const after2 = repo.getComment(runId, 9001);
-    expect(after2?.state).toBe('replied');
+    expect(after2?.state).toBe('blocked');
     expect(after2?.replyVerified).toBe(false);
   });
 });
