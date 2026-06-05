@@ -176,18 +176,18 @@ export class ProcessPrReviewComments {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
       if (!existing || existing.state === 'processed') continue;
 
-      if (item.action === 'blocked') {
-        d.prReviewRepo.upsertComment(blockComment(existing, item.blockedReason ?? 'agent blocked'));
-        blocked++;
-        continue;
-      }
-
       await d.github.replyToReviewComment(
         input.repoFullName,
         input.prNumber,
         item.commentId,
         item.replyBody,
       );
+
+      if (item.action === 'blocked') {
+        d.prReviewRepo.upsertComment(blockComment(existing, item.blockedReason ?? 'agent blocked'));
+        blocked++;
+        continue;
+      }
 
       const replyId = d.idFactory();
       d.prReviewRepo.insertReply({
@@ -221,9 +221,7 @@ export class ProcessPrReviewComments {
       if (!existing || existing.state !== 'pending') continue;
 
       const replyVerified = afterComments.some((c) => c.inReplyToId === item.commentId);
-      const githubReply = afterComments.find(
-        (c) => c.inReplyToId === item.commentId && c.reviewer === 'agent',
-      );
+      const githubReply = afterComments.find((c) => c.inReplyToId === item.commentId);
 
       const repliedComment = markReplied(existing, {
         replyId: githubReply?.id ?? existing.commentId,

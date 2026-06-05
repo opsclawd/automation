@@ -237,7 +237,6 @@ describe('ProcessPrReviewComments — dedup', () => {
     });
 
     expect(github.repliesPosted.filter((r) => r.commentId === 9001)).toHaveLength(0);
-    repo.getComment(runId, 9001);
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
   });
 });
