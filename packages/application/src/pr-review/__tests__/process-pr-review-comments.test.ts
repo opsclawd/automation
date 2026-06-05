@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
+import { RunId, RepositoryId, PhaseName, createPrReviewComment } from '@ai-sdlc/domain';
 import {
   FakeGitHubPort,
   FakeGitPort,
@@ -129,5 +129,100 @@ describe('ProcessPrReviewComments — happy path', () => {
 
     const poll = repo.latestPollAttempt(runId);
     expect(poll?.terminalState).toBe('all_resolved');
+  });
+});
+
+describe('ProcessPrReviewComments — dedup', () => {
+  it('does not invoke the agent when the only comment is already processed', async () => {
+    const { deps, repo, agent } = makeDeps();
+    const seeded = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'rename foo',
+      now: new Date(),
+    });
+    repo.upsertComment({
+      ...seeded,
+      state: 'processed',
+      commitVerified: true,
+      replyVerified: true,
+      buildVerified: true,
+    });
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 2,
+    });
+
+    expect(out.outcome).toBe('NO_UNRESOLVED');
+    expect(agent.invocations.length).toBe(0);
+    expect(repo.latestPollAttempt(runId)?.terminalState).toBe('all_resolved');
+  });
+
+  it('skips already-processed comments in the apply loop', async () => {
+    const { deps, repo, github } = makeDeps();
+    const seeded = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'rename foo',
+      now: new Date(),
+    });
+    repo.upsertComment({
+      ...seeded,
+      state: 'processed',
+      commitVerified: true,
+      replyVerified: true,
+      buildVerified: true,
+    });
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 10,
+        reviewer: 'reviewer2',
+        body: 'fix typo',
+        createdAt: new Date(),
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(github.repliesPosted.filter((r) => r.commentId === 9001)).toHaveLength(0);
+    repo.getComment(runId, 9001);
+    expect(repo.getComment(runId, 9001)?.state).toBe('processed');
   });
 });
