@@ -226,3 +226,47 @@ describe('ProcessPrReviewComments — dedup', () => {
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
   });
 });
+
+describe('ProcessPrReviewComments — blocking', () => {
+  it('blocks a comment after two failed verification attempts', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const { deps, repo } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => false,
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'PARTIAL',
+          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'attempted fix' }],
+        },
+      }),
+    });
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    const after1 = repo.getComment(runId, 9001);
+    expect(after1?.state).toBe('pending');
+    expect(after1?.attempts).toBe(1);
+    const out2 = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 2,
+    });
+    const after2 = repo.getComment(runId, 9001);
+    expect(after2?.state).toBe('blocked');
+    expect(out2.blocked).toBe(1);
+  });
+});
