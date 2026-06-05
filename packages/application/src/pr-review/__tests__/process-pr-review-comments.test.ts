@@ -699,9 +699,9 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
   });
 });
 
-describe('ProcessPrReviewComments — orphan verification requires commitSha change', () => {
-  it('does not mark an orphaned fixed comment processed when no new commit was produced', async () => {
-    const { deps, repo } = makeDeps();
+describe('ProcessPrReviewComments — orphan verification uses remoteRef', () => {
+  it('marks an orphaned fixed comment processed when the fix commit is on the remote', async () => {
+    const { deps, repo, github } = makeDeps();
     const seeded = createPrReviewComment({
       runId,
       prNumber: 5,
@@ -722,6 +722,28 @@ describe('ProcessPrReviewComments — orphan verification requires commitSha cha
       replyVerified: false,
     });
 
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Fixed.',
+        createdAt: new Date('2026-06-04T00:05:00Z'),
+        inReplyToId: 9001,
+      },
+    ]);
+
     const uc = new ProcessPrReviewComments(deps);
     const out = await uc.execute({
       runId,
@@ -734,8 +756,9 @@ describe('ProcessPrReviewComments — orphan verification requires commitSha cha
     });
 
     expect(out.outcome).toBe('NO_UNRESOLVED');
-    expect(out.allResolved).toBe(false);
+    expect(out.allResolved).toBe(true);
     const comment = repo.getComment(runId, 9001);
-    expect(comment?.state).not.toBe('processed');
+    expect(comment?.state).toBe('processed');
+    expect(comment?.replyVerified).toBe(true);
   });
 });

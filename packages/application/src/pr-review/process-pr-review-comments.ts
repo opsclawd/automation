@@ -358,15 +358,21 @@ export class ProcessPrReviewComments {
     const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
     const commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
     const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
-    const currentHead = await d.git.headCommitSha(input.cwd);
-    const baselineSha = startCommitSha ?? currentHead;
 
     for (const c of orphaned) {
       const replyVerified = afterComments.some((rc) => rc.inReplyToId === c.commentId);
       const isFix = c.outcome === 'fixed';
-      const commitShaChanged = currentHead !== (c.commitSha ?? baselineSha);
+      let fixCommitOnRemote = true;
+      if (isFix && c.commitSha) {
+        const remoteSha = await d.git.remoteRef({
+          cwd: input.cwd,
+          remote: 'origin',
+          ref: pr.headRefName,
+        });
+        fixCommitOnRemote = remoteSha === c.commitSha;
+      }
       const ok = isFix
-        ? commitShaChanged && commitVerified && replyVerified && buildVerified
+        ? fixCommitOnRemote && commitVerified && replyVerified && buildVerified
         : replyVerified;
 
       if (ok) {
