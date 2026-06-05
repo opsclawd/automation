@@ -82,6 +82,18 @@ describe('PrReviewRepository', () => {
 
   it('inserts and lists replies', () => {
     const repo = new PrReviewRepository(db);
+    repo.upsertComment(
+      createPrReviewComment({
+        runId,
+        prNumber: 7,
+        commentId: 100,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r',
+        body: 'b',
+        now: new Date(),
+      }),
+    );
     repo.insertReply({
       id: 'r1',
       runId,

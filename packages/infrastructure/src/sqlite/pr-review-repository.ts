@@ -108,6 +108,8 @@ export class PrReviewRepository implements PrReviewRepositoryPort {
            @outcome, @replyId, @commitSha, @commitVerified, @replyVerified, @buildVerified,
            @blockedReason, @lastPoll, @createdAt, @updatedAt)
          ON CONFLICT(run_uuid, comment_id) DO UPDATE SET
+           pr_number=excluded.pr_number, path=excluded.path, line=excluded.line,
+           reviewer=excluded.reviewer, body=excluded.body,
            state=excluded.state, attempts=excluded.attempts, outcome=excluded.outcome,
            reply_id=excluded.reply_id, commit_sha=excluded.commit_sha,
            commit_verified=excluded.commit_verified, reply_verified=excluded.reply_verified,

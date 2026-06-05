@@ -20,6 +20,9 @@ export class FakePrReviewRepository implements PrReviewRepositoryPort {
     return [...this.comments.values()].filter((c) => c.runId === runId);
   }
   insertReply(reply: PrReviewReply): void {
+    if (this.replies.some((r) => r.id === reply.id)) {
+      throw new Error(`Unique constraint violation: reply ID ${reply.id} already exists`);
+    }
     this.replies.push(reply);
   }
   listReplies(runId: RunId): PrReviewReply[] {
@@ -31,7 +34,6 @@ export class FakePrReviewRepository implements PrReviewRepositoryPort {
   updatePollAttempt(attempt: PollAttempt): void {
     const i = this.polls.findIndex((p) => p.id === attempt.id);
     if (i >= 0) this.polls[i] = attempt;
-    else this.polls.push(attempt);
   }
   listPollAttempts(runId: RunId): PollAttempt[] {
     return this.polls.filter((p) => p.runId === runId);

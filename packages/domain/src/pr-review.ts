@@ -29,6 +29,7 @@ export class CommentStateError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CommentStateError';
+    Object.setPrototypeOf(this, CommentStateError.prototype);
   }
 }
 
@@ -67,12 +68,17 @@ export function markReplied(
   c: PrReviewComment,
   input: { replyId: number; outcome: CommentOutcome; commitSha?: string; poll: number },
 ): PrReviewComment {
+  if (c.state !== 'pending') {
+    throw new CommentStateError(
+      `cannot mark comment ${c.commentId} replied: current state is ${c.state}, expected pending`,
+    );
+  }
   return {
-    ...c,
+    ...stripOptionalFields(c),
     state: 'replied',
     replyId: input.replyId,
     outcome: input.outcome,
-    ...(input.commitSha ? { commitSha: input.commitSha } : {}),
+    ...(input.commitSha !== undefined ? { commitSha: input.commitSha } : {}),
     attempts: c.attempts + 1,
     lastPoll: input.poll,
     updatedAt: new Date(),
@@ -83,6 +89,11 @@ export function markProcessed(
   c: PrReviewComment,
   v: { commitVerified: boolean; replyVerified: boolean; buildVerified: boolean },
 ): PrReviewComment {
+  if (c.state !== 'replied') {
+    throw new CommentStateError(
+      `cannot mark comment ${c.commentId} processed: current state is ${c.state}, expected replied`,
+    );
+  }
   if (!v.commitVerified || !v.replyVerified || !v.buildVerified) {
     throw new CommentStateError(
       `cannot mark comment ${c.commentId} processed: verification incomplete ` +
@@ -99,11 +110,54 @@ export function markProcessed(
   };
 }
 
+function stripOptionalFields(c: PrReviewComment): PrReviewComment {
+  return {
+    runId: c.runId,
+    prNumber: c.prNumber,
+    commentId: c.commentId,
+    path: c.path,
+    line: c.line,
+    reviewer: c.reviewer,
+    body: c.body,
+    state: c.state,
+    attempts: c.attempts,
+    commitVerified: c.commitVerified,
+    replyVerified: c.replyVerified,
+    buildVerified: c.buildVerified,
+    lastPoll: c.lastPoll,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+  };
+}
+
 export function resetForRetry(c: PrReviewComment, input: { poll: number }): PrReviewComment {
-  return { ...c, state: 'pending', lastPoll: input.poll, updatedAt: new Date() };
+  if (c.state !== 'replied') {
+    throw new CommentStateError(
+      `cannot reset comment ${c.commentId} for retry: current state is ${c.state}, expected replied`,
+    );
+  }
+  return {
+    ...stripOptionalFields(c),
+    state: 'pending',
+    lastPoll: input.poll,
+    commitVerified: false,
+    replyVerified: false,
+    buildVerified: false,
+    updatedAt: new Date(),
+  };
 }
 
 export function blockComment(c: PrReviewComment, reason: string): PrReviewComment {
+  if (c.state !== 'replied') {
+    throw new CommentStateError(
+      `cannot block comment ${c.commentId}: current state is ${c.state}, expected replied`,
+    );
+  }
+  if (c.attempts < 2) {
+    throw new CommentStateError(
+      `cannot block comment ${c.commentId}: requires at least 2 attempts, got ${c.attempts}`,
+    );
+  }
   return { ...c, state: 'blocked', blockedReason: reason, updatedAt: new Date() };
 }
 

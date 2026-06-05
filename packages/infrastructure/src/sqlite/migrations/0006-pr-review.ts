@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS pr_review_replies (
   comment_id INTEGER NOT NULL,
   body TEXT NOT NULL,
   posted_at TEXT NOT NULL,
-  verified INTEGER NOT NULL DEFAULT 0
+  verified INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (run_uuid, comment_id) REFERENCES pr_review_comments(run_uuid, comment_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS poll_attempts (
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS poll_attempts (
 CREATE INDEX IF NOT EXISTS idx_pr_review_comments_run
   ON pr_review_comments (run_uuid, state);
 CREATE INDEX IF NOT EXISTS idx_pr_review_replies_run
-  ON pr_review_replies (run_uuid, comment_id);
+  ON pr_review_replies (run_uuid, posted_at);
 CREATE INDEX IF NOT EXISTS idx_poll_attempts_run
   ON poll_attempts (run_uuid, poll_number);
 `;

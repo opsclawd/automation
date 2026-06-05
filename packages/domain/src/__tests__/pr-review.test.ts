@@ -6,6 +6,8 @@ import {
   markProcessed,
   resetForRetry,
   blockComment,
+  isUnresolved,
+  CommentStateError,
   type PrReviewComment,
 } from '../pr-review.js';
 
@@ -40,6 +42,18 @@ describe('PrReviewComment state machine', () => {
     expect(c.attempts).toBe(1);
   });
 
+  it('markReplied without commitSha clears it', () => {
+    const c = markReplied(base(), { replyId: 555, outcome: 'fixed', poll: 1 });
+    expect(c.commitSha).toBeUndefined();
+  });
+
+  it('markReplied throws if not in pending state', () => {
+    const replied = markReplied(base(), { replyId: 1, outcome: 'fixed', poll: 1 });
+    expect(() => markReplied(replied, { replyId: 2, outcome: 'fixed', poll: 2 })).toThrow(
+      /cannot mark.*replied/i,
+    );
+  });
+
   it('replied -> processed only when all verifications pass', () => {
     const replied = markReplied(base(), {
       replyId: 555,
@@ -55,6 +69,12 @@ describe('PrReviewComment state machine', () => {
     expect(processed.state).toBe('processed');
   });
 
+  it('markProcessed throws if not in replied state', () => {
+    expect(() =>
+      markProcessed(base(), { commitVerified: true, replyVerified: true, buildVerified: true }),
+    ).toThrow(/cannot mark.*processed/i);
+  });
+
   it('markProcessed throws if a verification is missing', () => {
     const replied = markReplied(base(), {
       replyId: 555,
@@ -67,7 +87,7 @@ describe('PrReviewComment state machine', () => {
     ).toThrow(/cannot mark.*processed/i);
   });
 
-  it('resetForRetry sends replied back to pending (verification failed)', () => {
+  it('resetForRetry sends replied back to pending and clears stale fields', () => {
     const replied = markReplied(base(), {
       replyId: 555,
       outcome: 'fixed',
@@ -77,6 +97,17 @@ describe('PrReviewComment state machine', () => {
     const retried = resetForRetry(replied, { poll: 2 });
     expect(retried.state).toBe('pending');
     expect(retried.attempts).toBe(1);
+    expect(retried.replyId).toBeUndefined();
+    expect(retried.outcome).toBeUndefined();
+    expect(retried.commitSha).toBeUndefined();
+    expect(retried.blockedReason).toBeUndefined();
+    expect(retried.commitVerified).toBe(false);
+    expect(retried.replyVerified).toBe(false);
+    expect(retried.buildVerified).toBe(false);
+  });
+
+  it('resetForRetry throws if not in replied state', () => {
+    expect(() => resetForRetry(base(), { poll: 1 })).toThrow(/cannot reset.*retry/i);
   });
 
   it('blockComment after 2 unresolved attempts', () => {
@@ -93,10 +124,25 @@ describe('PrReviewComment state machine', () => {
     expect(blocked.blockedReason).toBe('verification failed twice');
   });
 
-  it('isUnresolved returns true only for pending comments', async () => {
-    const { isUnresolved } = await import('../pr-review.js');
+  it('blockComment throws if not in replied state', () => {
+    expect(() => blockComment(base(), 'reason')).toThrow(/cannot block/i);
+  });
+
+  it('blockComment throws if fewer than 2 attempts', () => {
+    const replied = markReplied(base(), { replyId: 1, outcome: 'fixed', commitSha: 'a', poll: 1 });
+    expect(() => blockComment(replied, 'reason')).toThrow(/requires at least 2 attempts/i);
+  });
+
+  it('isUnresolved returns true only for pending comments', () => {
     expect(isUnresolved(base())).toBe(true);
     const replied = markReplied(base(), { replyId: 1, outcome: 'fixed', commitSha: 'a', poll: 1 });
     expect(isUnresolved(replied)).toBe(false);
+  });
+
+  it('CommentStateError is instanceof Error', () => {
+    const err = new CommentStateError('test');
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toBeInstanceOf(CommentStateError);
+    expect(err.name).toBe('CommentStateError');
   });
 });
