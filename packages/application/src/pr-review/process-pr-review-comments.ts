@@ -214,7 +214,7 @@ export class ProcessPrReviewComments {
 
     for (const item of uniqueComments) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
-      if (!existing || existing.state === 'processed') continue;
+      if (!existing || existing.state !== 'pending') continue;
 
       await d.github.replyToReviewComment(
         input.repoFullName,
