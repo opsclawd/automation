@@ -139,16 +139,95 @@ export class GhCliAdapter implements GitHubPort {
     }));
   }
 
-  async createPullRequest(_input: CreatePullRequestInput): Promise<PullRequest> {
-    throw new Error('not implemented until Task 4');
+  async createPullRequest(input: CreatePullRequestInput): Promise<PullRequest> {
+    const args = [
+      'pr',
+      'create',
+      '--repo',
+      input.repoFullName,
+      '--base',
+      input.baseBranch,
+      '--head',
+      input.headBranch,
+      '--title',
+      input.title,
+      '--body',
+      input.body,
+    ];
+    if (input.draft) args.push('--draft');
+    const out = await this.run(args);
+    const url = out.trim().split('\n').pop() ?? '';
+    const numMatch = url.match(/\/pull\/(\d+)/);
+    return { number: numMatch ? Number(numMatch[1]) : 0, url, state: 'open' };
   }
-  async replyToReviewComment(): Promise<void> {
-    throw new Error('not implemented until Task 4');
+
+  async replyToReviewComment(
+    repoFullName: string,
+    prNumber: number,
+    commentId: number,
+    body: string,
+  ): Promise<void> {
+    await this.run([
+      'api',
+      `repos/${repoFullName}/pulls/${prNumber}/comments/${commentId}/replies`,
+      '--method',
+      'POST',
+      '--raw-field',
+      `body=${body}`,
+    ]);
   }
-  async resolveReviewThread(): Promise<void> {
-    throw new Error('not implemented until Task 4');
+
+  async resolveReviewThread(
+    repoFullName: string,
+    prNumber: number,
+    commentId: number,
+  ): Promise<void> {
+    const [owner, repo] = repoFullName.split('/');
+    const query = `query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved comments(first:50){nodes{databaseId}}}}}}}`;
+    const out = await this.run([
+      'api',
+      'graphql',
+      '-f',
+      `query=${query}`,
+      '-F',
+      `owner=${owner}`,
+      '-F',
+      `repo=${repo}`,
+      '-F',
+      `pr=${prNumber}`,
+    ]);
+    const data = JSON.parse(out) as {
+      data: {
+        repository: {
+          pullRequest: {
+            reviewThreads: {
+              nodes: Array<{
+                id: string;
+                isResolved: boolean;
+                comments: { nodes: Array<{ databaseId: number }> };
+              }>;
+            };
+          };
+        };
+      };
+    };
+    const thread = data.data.repository.pullRequest.reviewThreads.nodes.find(
+      (t) => !t.isResolved && t.comments.nodes.some((c) => c.databaseId === commentId),
+    );
+    if (!thread) return;
+    const mutation = `mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}`;
+    await this.run(['api', 'graphql', '-f', `query=${mutation}`, '-F', `id=${thread.id}`]);
   }
-  async updateIssueLabels(): Promise<void> {
-    throw new Error('not implemented until Task 4');
+
+  async updateIssueLabels(
+    repoFullName: string,
+    issueNumber: number,
+    labels: { add?: string[]; remove?: string[] },
+  ): Promise<void> {
+    const args = ['issue', 'edit', String(issueNumber), '--repo', repoFullName];
+    for (const l of labels.add ?? []) args.push('--add-label', l);
+    for (const l of labels.remove ?? []) args.push('--remove-label', l);
+    if (args.length === 5) return;
+    await this.run(args);
   }
 }

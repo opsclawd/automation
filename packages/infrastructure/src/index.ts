@@ -15,3 +15,5 @@ export * from './events/event-bus.js';
 export * from './events/tailer.js';
 export * from './agent/index.js';
 export * from './validation/validation-adapter.js';
+export * from './github/gh-cli-adapter.js';
+export * from './github/errors.js';
