@@ -869,3 +869,77 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
     expect(after2?.replyVerified).toBe(false);
   });
 });
+
+describe('ProcessPrReviewComments — closed PR guard', () => {
+  it('blocks without invoking the agent when the PR is closed', async () => {
+    const { deps, github, repo, agent } = makeDeps();
+    github.prs.set('o/r/5', {
+      number: 5,
+      url: 'https://x/pr/5',
+      state: 'closed',
+      headRefName: 'feat-x',
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(out.processed).toBe(0);
+    expect(out.blocked).toBe(0);
+    expect(out.allResolved).toBe(false);
+    expect(agent.invocations.length).toBe(0);
+    expect(github.repliesPosted).toHaveLength(0);
+    const poll = repo.latestPollAttempt(runId);
+    expect(poll?.status).toBe('failed');
+  });
+
+  it('blocks without invoking the agent when the PR is merged', async () => {
+    const { deps, github, agent } = makeDeps();
+    github.prs.set('o/r/5', {
+      number: 5,
+      url: 'https://x/pr/5',
+      state: 'merged',
+      headRefName: 'feat-x',
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(agent.invocations.length).toBe(0);
+  });
+});

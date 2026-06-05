@@ -119,6 +119,16 @@ export class ProcessPrReviewComments {
     }
 
     const pr = await d.github.getPr(input.repoFullName, input.prNumber);
+    if (pr.state !== 'open') {
+      this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
+      return {
+        outcome: 'BLOCKED',
+        processed: 0,
+        blocked: 0,
+        allResolved: false,
+      };
+    }
+
     const diff = await d.git.diff(input.cwd, 'origin/HEAD');
     const promptPath = await d.renderPrompt({
       cwd: input.cwd,
@@ -329,7 +339,7 @@ export class ProcessPrReviewComments {
     }
 
     if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0) {
-      await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
+      await this.verifyOrphaned(input, repliedInThisPass);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
         outcome: 'BLOCKED',
@@ -339,7 +349,7 @@ export class ProcessPrReviewComments {
       };
     }
 
-    blocked += await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
+    blocked += await this.verifyOrphaned(input, repliedInThisPass);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
@@ -367,7 +377,6 @@ export class ProcessPrReviewComments {
 
   private async verifyOrphaned(
     input: ProcessPrReviewInput,
-    startCommitSha?: string,
     skipCommentIds: Set<number> = new Set(),
   ): Promise<number> {
     const d = this.deps;
