@@ -14,6 +14,8 @@ export { createPrResultSchema } from './schemas/create-pr.js';
 export type { CreatePrResult } from './schemas/create-pr.js';
 export { postPrReviewResultSchema } from './schemas/post-pr-review.js';
 export type { PostPrReviewResult } from './schemas/post-pr-review.js';
+export { postPrReviewCommentSchema } from './schemas/post-pr-review.js';
+export type { PostPrReviewComment } from './schemas/post-pr-review.js';
 export { specReviewResultSchema } from './schemas/spec-review.js';
 export type { SpecReviewResult } from './schemas/spec-review.js';
 export { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
