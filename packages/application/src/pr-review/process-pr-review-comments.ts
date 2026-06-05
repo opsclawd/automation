@@ -164,6 +164,21 @@ export class ProcessPrReviewComments {
 
     const result = extracted.result;
 
+    if (result.outcome === 'BLOCKED' && result.comments.length === 0) {
+      let blocked = 0;
+      for (const c of unresolved) {
+        d.prReviewRepo.upsertComment(blockComment(c, 'agent returned global BLOCKED'));
+        blocked++;
+      }
+      this.recordPoll(input, startedAt, unresolved.length, 0, 'blocked');
+      return {
+        outcome: 'BLOCKED',
+        processed: 0,
+        blocked,
+        allResolved: false,
+      };
+    }
+
     let processed = 0;
     let blocked = 0;
     const toVerify: Array<{
@@ -232,7 +247,7 @@ export class ProcessPrReviewComments {
             ...existing,
             attempts: existing.attempts + 1,
             lastPoll: input.pollNumber,
-            updatedAt: new Date(),
+            updatedAt: d.now(),
           });
         }
         continue;
@@ -270,6 +285,8 @@ export class ProcessPrReviewComments {
         d.prReviewRepo.upsertComment(resetForRetry(repliedComment, { poll: input.pollNumber }));
       }
     }
+
+    await this.verifyOrphaned(input);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);

@@ -572,3 +572,43 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
     expect(comment?.attempts).toBe(1);
   });
 });
+
+describe('ProcessPrReviewComments — top-level BLOCKED outcome', () => {
+  it('blocks all unresolved comments when agent returns BLOCKED with empty comments', async () => {
+    const { deps, github, repo } = makeDeps({
+      extractResult: async () => ({
+        ok: true,
+        result: { outcome: 'BLOCKED', comments: [] },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('BLOCKED');
+    expect(out.blocked).toBe(1);
+    expect(out.processed).toBe(0);
+    expect(out.allResolved).toBe(false);
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
+    expect(github.repliesPosted).toHaveLength(0);
+    const poll = repo.latestPollAttempt(runId);
+    expect(poll?.terminalState).toBe('blocked');
+  });
+});
