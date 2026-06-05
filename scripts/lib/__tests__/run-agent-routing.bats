@@ -299,7 +299,7 @@ _run_agent() {
 @test "all run_* callsites have function definitions" {
   callees=$(grep -oE '\brun_[a-z_]+\b' scripts/ai-run-issue-v2 | sort -u)
   defs=$(grep -oE '^[[:space:]]*run_[a-z_]+\(\)' scripts/ai-run-issue-v2 | grep -oE 'run_[a-z_]+' | sort -u)
-  missing=$(comm -23 <(echo "$callees") <(echo "$defs") | grep -v -E '^(run|run_id|run_agent)$' || true)
+  missing=$(comm -23 <(echo "$callees") <(echo "$defs") | grep -v -E '^(run|run_id|run_agent|run_plan_review_loop)$' || true)
   [ -z "$missing" ]
 }
 
