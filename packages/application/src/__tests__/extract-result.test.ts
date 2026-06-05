@@ -79,7 +79,7 @@ const PHASE_TESTS: Array<{
   },
   {
     phase: 'post-pr-review',
-    validJson: { result: 'handled', repliesPosted: 0 },
+    validJson: { outcome: 'ALL_DONE', comments: [] },
     invalidJson: { bad: 'shape' },
     retrySafe: false,
   },
