@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { AgentInvocationId, AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
 import type { AgentInvocation } from '@ai-sdlc/domain';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../test-doubles/index.js';
-import type { PrReviewComment } from '../ports/github-port.js';
+import type { GitHubReviewComment } from '../ports/github-port.js';
 import { validateAgentContract } from '../agent/validate-agent-contract.js';
 import { CONTRACT_VIOLATION_CODES } from '../ports/contract-violation-codes.js';
 
@@ -262,7 +262,7 @@ describe('validateAgentContract', () => {
   describe('mustPostReplies', () => {
     it('returns no violations when bot replies exist after startedAt', async () => {
       const github = new FakeGitHubPort();
-      const comment: PrReviewComment = {
+      const comment: GitHubReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',
@@ -297,7 +297,7 @@ describe('validateAgentContract', () => {
     });
     it('returns replies_not_posted when comments exist but all before startedAt', async () => {
       const github = new FakeGitHubPort();
-      const oldComment: PrReviewComment = {
+      const oldComment: GitHubReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',
@@ -331,7 +331,7 @@ describe('validateAgentContract', () => {
     });
     it('filters by agentAuthor when provided and returns replies_not_posted when no agent-authored comments exist', async () => {
       const github = new FakeGitHubPort();
-      const humanComment: PrReviewComment = {
+      const humanComment: GitHubReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',
@@ -352,7 +352,7 @@ describe('validateAgentContract', () => {
     });
     it('filters by agentAuthor and passes when agent-authored reply exists', async () => {
       const github = new FakeGitHubPort();
-      const botComment: PrReviewComment = {
+      const botComment: GitHubReviewComment = {
         id: 2,
         prNumber: 42,
         path: 'file.ts',
@@ -361,7 +361,7 @@ describe('validateAgentContract', () => {
         body: 'done',
         createdAt: new Date('2026-05-22T10:01:00Z'),
       };
-      const humanComment: PrReviewComment = {
+      const humanComment: GitHubReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',
@@ -382,7 +382,7 @@ describe('validateAgentContract', () => {
     });
     it('filters by agentAuthor case-insensitively and passes when agent-authored reply exists with different casing', async () => {
       const github = new FakeGitHubPort();
-      const botComment: PrReviewComment = {
+      const botComment: GitHubReviewComment = {
         id: 3,
         prNumber: 42,
         path: 'file.ts',
@@ -485,7 +485,7 @@ describe('validateAgentContract', () => {
       git.headByCwd.set('/tmp', 'a'.repeat(40));
       git.remoteRefs.set('origin/main', 'b'.repeat(40));
       const github = new FakeGitHubPort();
-      const comment: PrReviewComment = {
+      const comment: GitHubReviewComment = {
         id: 1,
         prNumber: 42,
         path: 'file.ts',
