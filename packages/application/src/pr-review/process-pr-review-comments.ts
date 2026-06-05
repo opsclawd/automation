@@ -5,7 +5,6 @@ import {
   createPrReviewComment,
   markReplied,
   markProcessed,
-  resetForRetry,
   blockComment,
   isUnresolved,
   type PrReviewComment,
@@ -321,8 +320,23 @@ export class ProcessPrReviewComments {
         d.prReviewRepo.upsertComment(blockComment(repliedComment, 'verification failed twice'));
         blocked++;
       } else {
-        d.prReviewRepo.upsertComment(resetForRetry(repliedComment, { poll: input.pollNumber }));
+        d.prReviewRepo.upsertComment({
+          ...repliedComment,
+          lastPoll: input.pollNumber,
+          updatedAt: d.now(),
+        });
       }
+    }
+
+    if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0) {
+      await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
+      this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
+      return {
+        outcome: 'BLOCKED',
+        processed: 0,
+        blocked: 0,
+        allResolved: false,
+      };
     }
 
     blocked += await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
@@ -399,7 +413,12 @@ export class ProcessPrReviewComments {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
         blocked++;
       } else {
-        d.prReviewRepo.upsertComment(resetForRetry(c, { poll: input.pollNumber }));
+        d.prReviewRepo.upsertComment({
+          ...c,
+          attempts: c.attempts + 1,
+          lastPoll: input.pollNumber,
+          updatedAt: d.now(),
+        });
       }
     }
     return blocked;
