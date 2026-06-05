@@ -649,3 +649,93 @@ describe('ProcessPrReviewComments — top-level BLOCKED outcome', () => {
     expect(poll?.terminalState).toBe('blocked');
   });
 });
+
+describe('ProcessPrReviewComments — replied with failed verification prevents allResolved', () => {
+  it('does not report allResolved when a replied comment has unverified reply', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const { deps, github, repo } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => false,
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'PARTIAL',
+          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'attempted fix' }],
+        },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+
+    const out1 = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out1.allResolved).toBe(false);
+    expect(out1.processed).toBe(0);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe('replied');
+    expect(comment?.replyVerified).toBe(false);
+    const poll = repo.latestPollAttempt(runId);
+    expect(poll?.terminalState).toBeUndefined();
+  });
+});
+
+describe('ProcessPrReviewComments — orphan verification requires commitSha change', () => {
+  it('does not mark an orphaned fixed comment processed when no new commit was produced', async () => {
+    const { deps, repo } = makeDeps();
+    const seeded = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'rename foo',
+      now: new Date('2026-06-04T00:00:00Z'),
+    });
+    repo.upsertComment({
+      ...seeded,
+      state: 'replied',
+      replyId: 8888,
+      outcome: 'fixed',
+      commitSha: 'abc123',
+      attempts: 1,
+      replyVerified: false,
+    });
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 2,
+    });
+
+    expect(out.outcome).toBe('NO_UNRESOLVED');
+    expect(out.allResolved).toBe(false);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).not.toBe('processed');
+  });
+});

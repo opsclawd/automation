@@ -94,11 +94,14 @@ export class ProcessPrReviewComments {
 
       const allComments = d.prReviewRepo.listComments(input.runId);
       const stillUnresolved = allComments.filter(isUnresolved);
+      const hasRepliedUnverified = allComments.some(
+        (c) => c.state === 'replied' && !c.replyVerified,
+      );
       const hasBlocked = allComments.some((c) => c.state === 'blocked');
       const blockedCount = allComments.filter((c) => c.state === 'blocked').length;
 
       let terminal: PollAttempt['terminalState'];
-      if (stillUnresolved.length > 0) {
+      if (stillUnresolved.length > 0 || hasRepliedUnverified) {
         terminal = undefined;
       } else if (hasBlocked) {
         terminal = 'blocked';
@@ -111,7 +114,7 @@ export class ProcessPrReviewComments {
         outcome: 'NO_UNRESOLVED',
         processed: 0,
         blocked: blockedCount,
-        allResolved: stillUnresolved.length === 0 && !hasBlocked,
+        allResolved: stillUnresolved.length === 0 && !hasRepliedUnverified && !hasBlocked,
       };
     }
 
@@ -312,14 +315,15 @@ export class ProcessPrReviewComments {
       }
     }
 
-    await this.verifyOrphaned(input, repliedInThisPass);
+    await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
+    const hasRepliedUnverified = allComments.some((c) => c.state === 'replied' && !c.replyVerified);
     const hasBlocked = allComments.some((c) => c.state === 'blocked');
 
     let terminal: PollAttempt['terminalState'];
-    if (stillUnresolved.length > 0) {
+    if (stillUnresolved.length > 0 || hasRepliedUnverified) {
       terminal = undefined;
     } else if (hasBlocked) {
       terminal = 'blocked';
@@ -333,12 +337,13 @@ export class ProcessPrReviewComments {
       outcome: result.outcome,
       processed,
       blocked,
-      allResolved: stillUnresolved.length === 0 && !hasBlocked,
+      allResolved: stillUnresolved.length === 0 && !hasRepliedUnverified && !hasBlocked,
     };
   }
 
   private async verifyOrphaned(
     input: ProcessPrReviewInput,
+    startCommitSha?: string,
     skipCommentIds: Set<number> = new Set(),
   ): Promise<void> {
     const d = this.deps;
@@ -353,11 +358,16 @@ export class ProcessPrReviewComments {
     const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
     const commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
     const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
+    const currentHead = await d.git.headCommitSha(input.cwd);
+    const baselineSha = startCommitSha ?? currentHead;
 
     for (const c of orphaned) {
       const replyVerified = afterComments.some((rc) => rc.inReplyToId === c.commentId);
       const isFix = c.outcome === 'fixed';
-      const ok = isFix ? commitVerified && replyVerified && buildVerified : replyVerified;
+      const commitShaChanged = currentHead !== (c.commitSha ?? baselineSha);
+      const ok = isFix
+        ? commitShaChanged && commitVerified && replyVerified && buildVerified
+        : replyVerified;
 
       if (ok) {
         d.prReviewRepo.upsertComment(
