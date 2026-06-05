@@ -354,3 +354,72 @@ describe('ProcessPrReviewComments — no_fix action', () => {
     });
   });
 });
+
+describe('ProcessPrReviewComments — multiple comments', () => {
+  it('processes a mix of fixed and no_fix comments in one pass', async () => {
+    const { deps, github, repo } = makeDeps({
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'PARTIAL',
+          comments: [
+            { commentId: 9001, action: 'fixed', replyBody: 'Fixed the typo.' },
+            { commentId: 9002, action: 'no_fix', replyBody: 'Intentional.' },
+            {
+              commentId: 9003,
+              action: 'blocked',
+              replyBody: 'Cannot fix safely.',
+              blockedReason: 'unsafe change',
+            },
+          ],
+        },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r1',
+        body: 'typo',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 2,
+        reviewer: 'r2',
+        body: 'why?',
+        createdAt: new Date(),
+      },
+      {
+        id: 9003,
+        prNumber: 5,
+        path: 'c.ts',
+        line: 3,
+        reviewer: 'r3',
+        body: 'redo',
+        createdAt: new Date(),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.outcome).toBe('PARTIAL');
+    expect(out.processed).toBe(2);
+    expect(out.blocked).toBe(1);
+    expect(repo.getComment(runId, 9001)?.state).toBe('processed');
+    expect(repo.getComment(runId, 9002)?.state).toBe('processed');
+    expect(repo.getComment(runId, 9003)?.state).toBe('blocked');
+  });
+});
