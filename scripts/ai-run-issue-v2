@@ -424,6 +424,9 @@ seed_excludes() {
   # Bumping the sentinel when the block changes causes a one-time re-seed in
   # existing worktrees (duplicate patterns in info/exclude are harmless).
   if [[ -f "$exclude_file" ]] && grep -qxF 'task-manifest.json' "$exclude_file"; then
+    # Existing worktrees have the base block. Patch in any patterns added after
+    # the sentinel was last written without re-seeding the whole block.
+    grep -qxF 'compound-draft.md' "$exclude_file" || echo 'compound-draft.md' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
