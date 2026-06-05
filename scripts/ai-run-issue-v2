@@ -3236,7 +3236,7 @@ Start now."
       warn "compound agent wrote to docs/solutions/ — reverting those changes (use ai-consolidate-compound instead)"
       git -C "${WORKTREE_DIR}" checkout -- docs/solutions/ 2>/dev/null || true
       git -C "${WORKTREE_DIR}" ls-files --others --exclude-standard -- docs/solutions/ | \
-        xargs -r git -C "${WORKTREE_DIR}" rm -f --
+        xargs -r -I{} rm -f "${WORKTREE_DIR}/{}"
     fi
   fi
 
