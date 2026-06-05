@@ -3247,7 +3247,7 @@ Start now."
         --name-only | grep -qx "compound-draft.md" 2>/dev/null; then
       warn "compound agent committed compound-draft.md — removing from PR branch"
       git -C "${WORKTREE_DIR}" rm -f -- compound-draft.md 2>/dev/null || true
-      git -C "${WORKTREE_DIR}" commit --only -- compound-draft.md -m "fix: remove compound-draft.md committed by compound agent"
+      git -C "${WORKTREE_DIR}" commit --only -m "fix: remove compound-draft.md committed by compound agent" -- compound-draft.md
     fi
 
     # Ensure no docs/solutions/ changes leak into the PR — that directory is
