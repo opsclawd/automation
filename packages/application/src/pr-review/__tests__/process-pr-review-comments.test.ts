@@ -81,7 +81,6 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => true,
     resolveProfileForPhase: () => 'post-pr-review-profile' as never,
-    eventBus: { publish: () => {}, subscribe: () => () => {} } as never,
     idFactory: () => `id-${++replyCounter}`,
     now: () => new Date('2026-06-04T00:10:00Z'),
     maxIterations: 10,

@@ -15,7 +15,6 @@ import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { AgentPort } from '../ports/agent-port.js';
 import type { AgentProfileName } from '../ports/agent-invocation-types.js';
-import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
 import type { PostPrReviewResult } from '../results/schemas/post-pr-review.js';
 
@@ -38,7 +37,6 @@ export interface ProcessPrReviewDeps {
   verifyCommitPushed: (input: { cwd: string; branch: string }) => Promise<boolean>;
   verifyBuildPasses: (input: { cwd: string }) => Promise<boolean>;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
-  eventBus: EventBusPort;
   idFactory: () => string;
   now: () => Date;
   maxIterations: number;
@@ -93,6 +91,7 @@ export class ProcessPrReviewComments {
     const unresolved = d.prReviewRepo.listComments(input.runId).filter((c) => isUnresolved(c));
 
     if (unresolved.length === 0) {
+      await this.verifyOrphaned(input);
       this.recordPoll(input, startedAt, reviewerComments.length, 0, 'all_resolved');
       return {
         outcome: 'NO_UNRESOLVED',
@@ -143,6 +142,11 @@ export class ProcessPrReviewComments {
 
     let processed = 0;
     let blocked = 0;
+    const toVerify: Array<{
+      commentId: number;
+      action: 'fixed' | 'no_fix';
+      replyBody: string;
+    }> = [];
 
     for (const item of result.comments) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
@@ -172,26 +176,31 @@ export class ProcessPrReviewComments {
         verified: false,
       });
 
-      let commitSha: string | undefined;
-      let commitVerified = true;
-      let buildVerified = true;
+      toVerify.push({ commentId: item.commentId, action: item.action, replyBody: item.replyBody });
+    }
 
-      if (item.action === 'fixed') {
-        commitSha = await d.git.headCommitSha(input.cwd);
-        commitVerified = await d.verifyCommitPushed({
-          cwd: input.cwd,
-          branch: pr.headRefName,
-        });
-        buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
-      }
+    let commitVerified = true;
+    let buildVerified = true;
+    if (toVerify.some((v) => v.action === 'fixed')) {
+      commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
+      buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
+    }
 
-      const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
+    const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
+
+    for (const item of toVerify) {
+      const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
+      if (!existing || existing.state !== 'pending') continue;
+
       const replyVerified = afterComments.some((c) => c.inReplyToId === item.commentId);
+      const githubReply = afterComments.find(
+        (c) => c.inReplyToId === item.commentId && c.reviewer === 'agent',
+      );
 
       const repliedComment = markReplied(existing, {
-        replyId: Number(replyId) || existing.commentId,
+        replyId: githubReply?.id ?? existing.commentId,
         outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
-        ...(commitSha ? { commitSha } : {}),
+        ...(item.action === 'fixed' ? { commitSha: startCommitSha } : {}),
         poll: input.pollNumber,
       });
 
@@ -227,6 +236,40 @@ export class ProcessPrReviewComments {
       blocked,
       allResolved: stillUnresolved.length === 0,
     };
+  }
+
+  private async verifyOrphaned(input: ProcessPrReviewInput): Promise<void> {
+    const d = this.deps;
+    const allComments = d.prReviewRepo.listComments(input.runId);
+    const orphaned = allComments.filter((c) => c.state === 'replied' && !c.replyVerified);
+
+    if (orphaned.length === 0) return;
+
+    const pr = await d.github.getPr(input.repoFullName, input.prNumber);
+    const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
+    const commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
+    const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
+
+    for (const c of orphaned) {
+      const replyVerified = afterComments.some((rc) => rc.inReplyToId === c.commentId);
+      const isFix = c.outcome === 'fixed';
+      const ok = isFix ? commitVerified && replyVerified && buildVerified : replyVerified;
+
+      if (ok) {
+        d.prReviewRepo.upsertComment(
+          markProcessed(c, {
+            commitVerified: isFix ? commitVerified : true,
+            replyVerified,
+            buildVerified: isFix ? buildVerified : true,
+          }),
+        );
+        await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
+      } else if (c.attempts >= BLOCK_THRESHOLD) {
+        d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
+      } else {
+        d.prReviewRepo.upsertComment(resetForRetry(c, { poll: input.pollNumber }));
+      }
+    }
   }
 
   private recordPoll(
