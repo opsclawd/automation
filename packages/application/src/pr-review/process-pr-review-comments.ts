@@ -187,6 +187,9 @@ export class ProcessPrReviewComments {
     }
 
     const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
+    const fixCommitSha = toVerify.some((v) => v.action === 'fixed')
+      ? await d.git.headCommitSha(input.cwd)
+      : undefined;
 
     for (const item of toVerify) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
@@ -200,7 +203,7 @@ export class ProcessPrReviewComments {
       const repliedComment = markReplied(existing, {
         replyId: githubReply?.id ?? existing.commentId,
         outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
-        ...(item.action === 'fixed' ? { commitSha: startCommitSha } : {}),
+        ...(item.action === 'fixed' && fixCommitSha ? { commitSha: fixCommitSha } : {}),
         poll: input.pollNumber,
       });
 
@@ -225,8 +228,18 @@ export class ProcessPrReviewComments {
       }
     }
 
-    const stillUnresolved = d.prReviewRepo.listComments(input.runId).filter(isUnresolved);
-    const terminal = stillUnresolved.length === 0 ? ('all_resolved' as const) : undefined;
+    const allComments = d.prReviewRepo.listComments(input.runId);
+    const stillUnresolved = allComments.filter(isUnresolved);
+    const hasBlocked = allComments.some((c) => c.state === 'blocked');
+
+    let terminal: PollAttempt['terminalState'];
+    if (stillUnresolved.length > 0) {
+      terminal = undefined;
+    } else if (hasBlocked) {
+      terminal = 'blocked';
+    } else {
+      terminal = 'all_resolved';
+    }
 
     this.recordPoll(input, startedAt, unresolved.length, processed, terminal);
 
@@ -234,7 +247,7 @@ export class ProcessPrReviewComments {
       outcome: result.outcome,
       processed,
       blocked,
-      allResolved: stillUnresolved.length === 0,
+      allResolved: stillUnresolved.length === 0 && !hasBlocked,
     };
   }
 
