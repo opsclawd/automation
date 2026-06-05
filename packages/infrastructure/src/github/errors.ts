@@ -6,5 +6,8 @@ export class GitHubFailedError extends Error {
     this.name = 'GitHubFailedError';
     this.command = command;
     this.stderr = stderr;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor);
+    }
   }
 }

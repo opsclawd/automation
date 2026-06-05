@@ -20,7 +20,7 @@ interface RestComment {
   id: number;
   path: string;
   line: number | null;
-  user: { login: string };
+  user: { login: string } | null | undefined;
   body: string;
   created_at: string;
   in_reply_to_id: number | null;
@@ -37,6 +37,14 @@ export class GhCliAdapter implements GitHubPort {
     this.maxRetries = opts.maxRetries ?? 2;
     this.backoffMs = opts.backoffMs ?? 1000;
     this.env = opts.env ?? {};
+  }
+
+  private safeJsonParse<T>(raw: string, command: string): T {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      throw new GitHubFailedError(command, `Invalid JSON output: ${raw.slice(0, 200)}`);
+    }
   }
 
   private async run(args: string[]): Promise<string> {
@@ -70,12 +78,13 @@ export class GhCliAdapter implements GitHubPort {
       '--json',
       'number,title,body,labels',
     ]);
-    const j = JSON.parse(out) as {
+    const command = `gh issue view ${issueNumber} --repo ${repoFullName}`;
+    const j = this.safeJsonParse<{
       number: number;
       title: string;
       body: string;
       labels: Array<{ name: string }>;
-    };
+    }>(out, command);
     return { number: j.number, title: j.title, body: j.body, labels: j.labels.map((l) => l.name) };
   }
 
@@ -89,12 +98,13 @@ export class GhCliAdapter implements GitHubPort {
       '--json',
       'number,url,state,headRefName',
     ]);
-    const j = JSON.parse(out) as {
+    const command = `gh pr view ${prNumber} --repo ${repoFullName}`;
+    const j = this.safeJsonParse<{
       number: number;
       url: string;
       state: string;
       headRefName: string;
-    };
+    }>(out, command);
     return {
       number: j.number,
       url: j.url,
@@ -107,6 +117,7 @@ export class GhCliAdapter implements GitHubPort {
     const out = await this.run([
       'api',
       '--paginate',
+      '--slurp',
       `repos/${repoFullName}/pulls/${prNumber}/comments`,
     ]);
     return this.parseComments(out, prNumber);
@@ -125,14 +136,15 @@ export class GhCliAdapter implements GitHubPort {
   private parseComments(raw: string, prNumber: number): GitHubReviewComment[] {
     const trimmed = raw.trim();
     if (!trimmed) return [];
-    const arrays = trimmed.split(/\n(?=\[)/).map((chunk) => JSON.parse(chunk) as RestComment[]);
-    const flat = arrays.flat();
+    const command = `gh api --paginate --slurp repos/.../pulls/${prNumber}/comments`;
+    const parsed = this.safeJsonParse<RestComment[][]>(trimmed, command);
+    const flat = parsed.flat();
     return flat.map((c) => ({
       id: c.id,
       prNumber,
       path: c.path,
       line: c.line ?? 0,
-      reviewer: c.user.login,
+      reviewer: c.user?.login ?? 'ghost',
       body: c.body,
       createdAt: new Date(c.created_at),
       ...(c.in_reply_to_id !== null ? { inReplyToId: c.in_reply_to_id } : {}),
@@ -183,40 +195,58 @@ export class GhCliAdapter implements GitHubPort {
     commentId: number,
   ): Promise<void> {
     const [owner, repo] = repoFullName.split('/');
-    const query = `query($owner:String!,$repo:String!,$pr:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:100){nodes{id isResolved comments(first:50){nodes{databaseId}}}}}}}`;
-    const out = await this.run([
-      'api',
-      'graphql',
-      '-f',
-      `query=${query}`,
-      '-F',
-      `owner=${owner}`,
-      '-F',
-      `repo=${repo}`,
-      '-F',
-      `pr=${prNumber}`,
-    ]);
-    const data = JSON.parse(out) as {
-      data: {
-        repository: {
-          pullRequest: {
-            reviewThreads: {
-              nodes: Array<{
-                id: string;
-                isResolved: boolean;
-                comments: { nodes: Array<{ databaseId: number }> };
-              }>;
+    const threadPageSize = 100;
+    const commentPageSize = 50;
+    let threadCursor: string | null = null;
+
+    while (true) {
+      const cursorParam = threadCursor ? `,$afterThread:String!` : '';
+      const cursorArg = threadCursor ? `,afterThread:${threadCursor}` : '';
+      const query = `query($owner:String!,$repo:String!,$pr:Int!${cursorParam}){repository(owner:$owner,name:$repo){pullRequest(number:$pr){reviewThreads(first:${threadPageSize}${cursorArg}){nodes{id isResolved comments(first:${commentPageSize}){nodes{databaseId}}}pageInfo{hasNextPage endCursor}}}}}`;
+      const out = await this.run([
+        'api',
+        'graphql',
+        '-f',
+        `query=${query}`,
+        '-F',
+        `owner=${owner}`,
+        '-F',
+        `repo=${repo}`,
+        '-F',
+        `pr=${prNumber}`,
+      ]);
+      const command = `gh api graphql owner=${owner} repo=${repo} pr=${prNumber}`;
+      const data = this.safeJsonParse<{
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                nodes: Array<{
+                  id: string;
+                  isResolved: boolean;
+                  comments: { nodes: Array<{ databaseId: number }> };
+                }>;
+                pageInfo: { hasNextPage: boolean; endCursor: string | null };
+              };
             };
           };
         };
-      };
-    };
-    const thread = data.data.repository.pullRequest.reviewThreads.nodes.find(
-      (t) => !t.isResolved && t.comments.nodes.some((c) => c.databaseId === commentId),
-    );
-    if (!thread) return;
-    const mutation = `mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}`;
-    await this.run(['api', 'graphql', '-f', `query=${mutation}`, '-F', `id=${thread.id}`]);
+      }>(out, command);
+
+      const threads = data.data.repository.pullRequest.reviewThreads.nodes;
+      const thread = threads.find(
+        (t) => !t.isResolved && t.comments.nodes.some((c) => c.databaseId === commentId),
+      );
+      if (thread) {
+        const mutation = `mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}`;
+        await this.run(['api', 'graphql', '-f', `query=${mutation}`, '-F', `id=${thread.id}`]);
+        return;
+      }
+
+      const pageInfo = data.data.repository.pullRequest.reviewThreads.pageInfo;
+      if (!pageInfo.hasNextPage || !pageInfo.endCursor) break;
+      threadCursor = pageInfo.endCursor;
+    }
   }
 
   async updateIssueLabels(
