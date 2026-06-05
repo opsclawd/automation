@@ -221,6 +221,18 @@ export class ProcessPrReviewComments {
       return true;
     });
 
+    const hasFixedComments = uniqueComments.some((c) => c.action === 'fixed');
+    const fixCommitSha = hasFixedComments ? await d.git.headCommitSha(input.cwd) : undefined;
+    const commitShaChanged = fixCommitSha !== undefined && fixCommitSha !== startCommitSha;
+
+    let commitVerified = true;
+    let buildVerified = true;
+    if (hasFixedComments) {
+      commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
+      buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
+    }
+
+    const replyBodies = new Map<number, string>();
     for (const item of uniqueComments) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
       if (!existing || existing.state !== 'pending') continue;
@@ -257,38 +269,35 @@ export class ProcessPrReviewComments {
         verified: false,
       });
 
-      d.prReviewRepo.upsertComment({
+      replyBodies.set(item.commentId, item.replyBody);
+      const replied: PrReviewComment = {
         ...existing,
         state: 'replied',
         outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
         attempts: existing.attempts + 1,
         lastPoll: input.pollNumber,
         updatedAt: d.now(),
-      });
+      };
+      if (item.action === 'fixed' && fixCommitSha !== undefined) {
+        replied.commitSha = fixCommitSha;
+      }
+      d.prReviewRepo.upsertComment(replied);
       repliedInThisPass.add(item.commentId);
 
       toVerify.push({ commentId: item.commentId, action: item.action, replyBody: item.replyBody });
     }
 
     const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const fixCommitSha = toVerify.some((v) => v.action === 'fixed')
-      ? await d.git.headCommitSha(input.cwd)
-      : undefined;
-    const commitShaChanged = fixCommitSha !== undefined && fixCommitSha !== startCommitSha;
-
-    let commitVerified = true;
-    let buildVerified = true;
-    if (toVerify.some((v) => v.action === 'fixed')) {
-      commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
-      buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
-    }
 
     for (const item of toVerify) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
       if (!existing || existing.state !== 'replied') continue;
 
-      const replyVerified = afterComments.some((c) => c.inReplyToId === item.commentId);
-      const githubReply = afterComments.find((c) => c.inReplyToId === item.commentId);
+      const expectedBody = replyBodies.get(item.commentId) ?? item.replyBody;
+      const githubReply = afterComments.find(
+        (c) => c.inReplyToId === item.commentId && c.body === expectedBody,
+      );
+      const replyVerified = githubReply !== undefined;
       const repliedWithId = githubReply ? { ...existing, replyId: githubReply.id } : existing;
       if (githubReply) {
         d.prReviewRepo.upsertComment(repliedWithId);
@@ -312,9 +321,6 @@ export class ProcessPrReviewComments {
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, item.commentId);
         processed++;
-      } else if (existing.attempts >= BLOCK_THRESHOLD) {
-        d.prReviewRepo.upsertComment(blockComment(existing, 'verification failed twice'));
-        blocked++;
       }
     }
 
