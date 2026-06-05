@@ -3239,15 +3239,27 @@ Start now."
       git -C "${WORKTREE_DIR}" ls-files --others --exclude-standard -- docs/solutions/ | \
         xargs -r -I{} rm -f "${WORKTREE_DIR}/{}"
     fi
-    # 2. Strip any docs/solutions/ files the agent committed to the branch.
-    _committed_docs=$(git -C "${WORKTREE_DIR}" diff "origin/${BASE_BRANCH}..HEAD" \
-      --name-only -- docs/solutions/ 2>/dev/null || true)
-    if [[ -n "$_committed_docs" ]]; then
-      warn "compound agent committed docs/solutions/ files — removing from branch (use ai-consolidate-compound instead)"
+    # 2. Strip any docs/solutions/ changes the agent committed to the branch.
+    # Use --diff-filter to handle each case correctly:
+    #   Added files   → delete (git rm); they don't exist on base branch
+    #   Modified/deleted files → restore from base branch (git checkout origin/BASE)
+    _added_docs=$(git -C "${WORKTREE_DIR}" diff "origin/${BASE_BRANCH}..HEAD" \
+      --diff-filter=A --name-only -- docs/solutions/ 2>/dev/null || true)
+    _changed_docs=$(git -C "${WORKTREE_DIR}" diff "origin/${BASE_BRANCH}..HEAD" \
+      --diff-filter=MD --name-only -- docs/solutions/ 2>/dev/null || true)
+    if [[ -n "$_added_docs" || -n "$_changed_docs" ]]; then
+      warn "compound agent committed docs/solutions/ changes — neutralising (use ai-consolidate-compound instead)"
       while IFS= read -r _f; do
+        [[ -z "$_f" ]] && continue
         git -C "${WORKTREE_DIR}" rm -f -- "$_f" 2>/dev/null || rm -f "${WORKTREE_DIR}/$_f"
-      done <<< "$_committed_docs"
-      git -C "${WORKTREE_DIR}" commit -m "fix: remove docs/solutions/ files added by compound agent"
+      done <<< "$_added_docs"
+      while IFS= read -r _f; do
+        [[ -z "$_f" ]] && continue
+        git -C "${WORKTREE_DIR}" checkout "origin/${BASE_BRANCH}" -- "$_f"
+      done <<< "$_changed_docs"
+      if ! git -C "${WORKTREE_DIR}" diff --cached --quiet; then
+        git -C "${WORKTREE_DIR}" commit -m "fix: remove docs/solutions/ changes committed by compound agent"
+      fi
     fi
   fi
 
