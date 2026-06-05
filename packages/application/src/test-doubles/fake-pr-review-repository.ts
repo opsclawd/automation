@@ -29,6 +29,9 @@ export class FakePrReviewRepository implements PrReviewRepositoryPort {
     return this.replies.filter((r) => r.runId === runId);
   }
   insertPollAttempt(attempt: PollAttempt): void {
+    if (this.polls.some((p) => p.id === attempt.id)) {
+      throw new Error(`Unique constraint violation: poll attempt ID ${attempt.id} already exists`);
+    }
     this.polls.push(attempt);
   }
   updatePollAttempt(attempt: PollAttempt): void {

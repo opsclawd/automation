@@ -83,7 +83,7 @@ describe('FakePrReviewRepository', () => {
       status: 'completed',
       commentsFetched: 2,
       commentsProcessed: 2,
-      startedAt: new Date('2026-04T00:00:00Z'),
+      startedAt: new Date('2026-06-04T00:00:00Z'),
       completedAt: new Date('2026-06-04T00:05:00Z'),
       terminalState: 'all_resolved',
     });
