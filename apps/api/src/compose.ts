@@ -11,6 +11,7 @@ import {
   FailureRepository,
   AgentInvocationRepository,
   ValidationRunRepository,
+  PrReviewRepository,
   RunDirectory,
   runBashScript,
   classifyExit,
@@ -95,6 +96,7 @@ export interface Container {
   failureRepository: FailureRepository;
   agentInvocationRepository: AgentInvocationRepository;
   validationRunRepository: ValidationRunRepository;
+  prReviewRepository: PrReviewRepository;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
@@ -154,6 +156,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
+  const prReviewRepository = new PrReviewRepository(db);
   const validationAdapter = new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
@@ -257,6 +260,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     failureRepository,
     agentInvocationRepository,
     validationRunRepository,
+    prReviewRepository,
     runValidation,
     startIssueRun,
     cancelRun,
