@@ -1458,12 +1458,15 @@ if [[ "$PHASE" == "plan-review" ]]; then
         info "Plan review passed — proceeding to implement"
       else
         info "Plan review did not converge — invoking judgment agent"
-        run_plan_review_judge "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW" "$JUDGMENT_AGENT_PROFILE"
-        judge_ec=$?
+        local _pre_judge_sha
+        _pre_judge_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        local judge_ec=0
+        run_plan_review_judge "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW" "$JUDGMENT_AGENT_PROFILE" || judge_ec=$?
         if [[ $judge_ec -ne 0 ]]; then
           warn "Judgment agent failed (exit ${judge_ec})"
           escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
         else
+          _check_review_worktree_violations "$WORKTREE_DIR" "$_pre_judge_sha" '^plan-review-judgment\.md$'
           judgment=$(parse_judgment_decision "$WORKTREE_DIR")
           info "Judgment agent decision: ${judgment}"
           case "$judgment" in
