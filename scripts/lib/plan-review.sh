@@ -17,7 +17,7 @@ _check_review_worktree_violations() {
     if [[ -n "$pre_sha" ]]; then
       git -C "$worktree_dir" diff --name-only "$pre_sha"..HEAD 2>/dev/null
     fi
-  } | grep . | grep -vE '^(plan\.md|plan-review-findings\.md|plan-review-passed\.marker|\.gitignore)$' | tr '\n' ' ' || true)
+  } | grep . | grep -vE '^(plan\.md|plan-review-findings\.md|plan-review-passed\.marker)$' | tr '\n' ' ' || true)
   if [[ -n "$violations" ]]; then
     orchestrator_fail "Plan review/fix agent modified unexpected files (contract violation): ${violations}"
   fi

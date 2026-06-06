@@ -1443,7 +1443,6 @@ if [[ "$PHASE" == "plan-review" ]]; then
         _emit_phase_done "plan-review"
         info "Plan review passed — proceeding to implement"
       else
-        _emit_phase_done "plan-review"
         escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
       fi
     else
