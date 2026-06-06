@@ -205,6 +205,100 @@ teardown() {
   [[ "$output" == "# Notes" ]]
 }
 
+@test "detects ignored misplaced plan.md when exclude hides it" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'plan.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Misplaced" > "${WORKTREE_DIR}/docs/plan.md"
+
+  run _detect_ignored_misplaced_plan
+  [[ "$status" -eq 0 ]]
+  [[ -f "${WORKTREE_DIR}/plan.md" ]]
+  [[ ! -f "${WORKTREE_DIR}/docs/plan.md" ]]
+  run cat "${WORKTREE_DIR}/plan.md"
+  [[ "$output" == "# Misplaced" ]]
+}
+
+@test "detect_ignored_misplaced_plan no-ops when plan.md already exists" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'plan.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Existing" > "${WORKTREE_DIR}/plan.md"
+  echo "# Misplaced" > "${WORKTREE_DIR}/docs/plan.md"
+
+  run _detect_ignored_misplaced_plan
+  [[ "$status" -eq 1 ]]
+  run cat "${WORKTREE_DIR}/plan.md"
+  [[ "$output" == "# Existing" ]]
+}
+
+@test "detect_ignored_misplaced_plan no-ops when no misplaced plan exists" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'plan.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+
+  run _detect_ignored_misplaced_plan
+  [[ "$status" -eq 1 ]]
+  [[ ! -f "${WORKTREE_DIR}/plan.md" ]]
+}
+
+@test "detect_ignored_misplaced_plan emits telemetry on remediation" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'plan.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Plan" > "${WORKTREE_DIR}/docs/plan.md"
+
+  _detect_ignored_misplaced_plan
+
+  run jq -e '.type == "plan_written.removed_mispath" and .level == "warn" and .metadata.src == "docs/plan.md"' "$AI_RUN_EVENTS_FILE"
+  [[ "$status" -eq 0 ]]
+}
+
+@test "detect_ignored_misplaced_plan cleans up empty parent dirs" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'plan.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+  mkdir -p "${WORKTREE_DIR}/docs/superpowers/plans"
+  echo "# Plan" > "${WORKTREE_DIR}/docs/superpowers/plans/plan.md"
+
+  _detect_ignored_misplaced_plan
+
+  [[ -f "${WORKTREE_DIR}/plan.md" ]]
+  [[ ! -d "${WORKTREE_DIR}/docs/superpowers/plans" ]]
+  [[ ! -d "${WORKTREE_DIR}/docs/superpowers" ]]
+  [[ ! -d "${WORKTREE_DIR}/docs" ]]
+}
+
+@test "detect_ignored_misplaced_plan does not remove non-empty parent dirs" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'plan.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Plan" > "${WORKTREE_DIR}/docs/plan.md"
+  echo "keep" > "${WORKTREE_DIR}/docs/README.md"
+
+  _detect_ignored_misplaced_plan
+
+  [[ -f "${WORKTREE_DIR}/plan.md" ]]
+  [[ -f "${WORKTREE_DIR}/docs/README.md" ]]
+  [[ -d "${WORKTREE_DIR}/docs" ]]
+}
+
 @test "ai-run-issue-v2 sources plan-write-remediation.sh" {
   run grep -q 'source.*plan-write-remediation.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [[ "$status" -eq 0 ]]

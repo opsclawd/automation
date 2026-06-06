@@ -1390,6 +1390,8 @@ Write plan.md and task-manifest.json now."
 
   _guard_main_checkout "plan-write" "$_main_state_before"
 
+  _detect_ignored_misplaced_plan || true
+
   _worktree_violations=$({
     git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null
     git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null

@@ -16,6 +16,38 @@
 #   emit_event() — telemetry
 #   git          — must be on PATH (used to check tracked status)
 #
+# _detect_ignored_misplaced_plan: find plan.md files in subdirectories that
+# are hidden by git's exclude rules (seed_excludes writes an unanchored
+# "plan.md" pattern that matches at any depth). If found and no plan.md
+# exists at the worktree root, move it there.
+#
+# Returns 0 if a misplaced plan was found and moved, 1 otherwise.
+_detect_ignored_misplaced_plan() {
+  if [[ ! -f "${WORKTREE_DIR}/plan.md" ]]; then
+    local _misplaced
+    _misplaced=$(git -C "$WORKTREE_DIR" ls-files --others --no-exclude 2>/dev/null \
+      | grep -E '^.*\/plan\.md$' | head -1)
+    if [[ -n "$_misplaced" ]]; then
+      local _v_file="${WORKTREE_DIR}/${_misplaced}"
+      if [[ -f "$_v_file" ]]; then
+        warn "plan-write agent wrote plan to ignored path: ${_misplaced} -- moving to plan.md"
+        emit_event "plan-write" "warn" "plan_written.removed_mispath" \
+          "auto-remediated ignored mispathed plan" src="${_misplaced}"
+        mv "$_v_file" "${WORKTREE_DIR}/plan.md"
+        local _wt_norm="${WORKTREE_DIR%/}"
+        local _v_dir
+        _v_dir=$(dirname "$_v_file")
+        while [[ "${_v_dir%/}" != "$_wt_norm" && -d "$_v_dir" ]] ; do
+          rmdir "$_v_dir" 2>/dev/null || break
+          _v_dir=$(dirname "$_v_dir")
+        done
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
 # After calling:
 #   _all_violations is cleared on successful remediation (empty string).
 _remediate_plan_write_violations() {
