@@ -425,6 +425,7 @@ run_plan_review_loop() {
       local _carried_p1s
       _carried_p1s=$(awk '/^### P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || true)
       if [[ -n "$_carried_p1s" ]]; then
+        local _p1_lines
         mapfile -t _p1_lines <<< "$_carried_p1s"
         _append_known_limitations "${worktree_dir}/plan.md" "${_p1_lines[@]}"
       fi
@@ -500,6 +501,7 @@ run_plan_review_loop() {
         "Reviewer invoked PROCEED_WITH_CONCERNS on final pass" iteration="$_final_iter"
       _carried_p1s=$(awk '/^### P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || true)
       if [[ -n "$_carried_p1s" ]]; then
+        local _p1_lines
         mapfile -t _p1_lines <<< "$_carried_p1s"
         _append_known_limitations "${worktree_dir}/plan.md" "${_p1_lines[@]}"
       fi
@@ -625,6 +627,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   local _judge_prompt_file
   _judge_prompt_file=$(mktemp)
   printf '%s' "$JUDGE_PROMPT" > "$_judge_prompt_file"
+  local _plan_checksum_before
+  _plan_checksum_before=$(_checksum_file "${worktree_dir}/plan.md")
   local _main_state_before
   _main_state_before=$(_capture_main_state)
   ! NODE_OPTIONS='--conditions=development' node --import "$tsx_loader" "${repo_root}/apps/cli/src/run-agent.ts" \
@@ -644,6 +648,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     warn "tee failed writing log for plan-judge (exit $_tee_ec)"
   fi
   _guard_main_checkout "plan-judge-1" "$_main_state_before"
+  _check_excluded_file_integrity "${worktree_dir}/plan.md" "$_plan_checksum_before" "plan.md"
   check_branch_after_agent
   return ${_agent_ec:-0}
 }
