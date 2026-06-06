@@ -407,8 +407,13 @@ exit 1
     writeFileSync(
       path.join(root, '.ai-orchestrator.json'),
       JSON.stringify({
-        validation: { commands: [], timeout: 60 },
-        phases: { skip: [], reviewFix: {}, implement: {}, wholePrFix: {} },
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3 },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
           defaultProfile: 'test',
