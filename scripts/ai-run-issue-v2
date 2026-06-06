@@ -442,6 +442,8 @@ seed_excludes() {
     grep -qxF 'compound-draft.md' "$exclude_file" || echo 'compound-draft.md' >> "$exclude_file"
     grep -qxF 'plan-review-findings.md' "$exclude_file" || echo 'plan-review-findings.md' >> "$exclude_file"
     grep -qxF 'plan-review-passed.marker' "$exclude_file" || echo 'plan-review-passed.marker' >> "$exclude_file"
+    grep -qxF 'plan-review-findings-iter-*.md' "$exclude_file" || echo 'plan-review-findings-iter-*.md' >> "$exclude_file"
+    grep -qxF 'plan-review-judgment.md' "$exclude_file" || echo 'plan-review-judgment.md' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -484,6 +486,8 @@ deviation-record-*.json
 review-loop-history.json
 plan-review-findings.md
 plan-review-passed.marker
+plan-review-findings-iter-*.md
+plan-review-judgment.md
 EOF
 }
 
@@ -3607,7 +3611,7 @@ if [[ "$PHASE" == "done" ]]; then
     fix-review-*.log fix-review-*.result \
     arbiter-task-*.log arbiter-result.json arbiter-rationale-*.md \
     deviation-record-*.md deviation-record-*.json review-loop-history.json \
-    plan-review-passed.marker plan-review-findings.md plan-review.log plan-fix.log; do
+    plan-review-passed.marker plan-review-findings.md plan-review-findings-iter-*.md plan-review-judgment.md plan-review.log plan-fix.log; do
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"
