@@ -326,11 +326,12 @@ _run_agent() {
 }
 
 @test "run_agent in ai-pr-review-poll routes through run-agent.ts" {
-  run grep -q 'run-agent.ts' scripts/ai-pr-review-poll
+  # run_agent routing now lives in the legacy script (M6-05 shim delegates to TS poller)
+  run grep -q 'run-agent.ts' scripts/legacy/ai-pr-review-poll.legacy
   [ "$status" -eq 0 ]
-  run grep -q '\-\-phase "\$routing_phase"' scripts/ai-pr-review-poll
+  run grep -q '\-\-phase "\$routing_phase"' scripts/legacy/ai-pr-review-poll.legacy
   [ "$status" -eq 0 ]
-  run grep -q '\-\-phase-id "\$routing_phase"' scripts/ai-pr-review-poll
+  run grep -q '\-\-phase-id "\$routing_phase"' scripts/legacy/ai-pr-review-poll.legacy
   [ "$status" -eq 0 ]
 }
 

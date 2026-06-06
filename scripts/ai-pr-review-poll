@@ -27,6 +27,14 @@ fi
 POLL_CWD="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
 [[ -d "$POLL_CWD" ]] || POLL_CWD="$REPO_ROOT"
 
+# Own our TMPDIR. The parent run (ai-run-issue-v2) injects a per-run TMPDIR
+# that gets deleted in its finally block. We need a poll-owned directory so
+# subprocesses (gh, git, agent) don't lose their tmp dir mid-poll.
+POLL_TMPDIR="${REPO_ROOT}/ai/poll-pr-${PR_NUMBER}/tmp"
+mkdir -p "$POLL_TMPDIR"
+export TMPDIR="$POLL_TMPDIR"
+export SQLITE_TMPDIR="$POLL_TMPDIR"
+
 ARGS=(--pr "$PR_NUMBER" --repo "$OWNER_REPO" --cwd "$POLL_CWD"
       --max-polls "$MAX_POLLS" --interval-seconds "$POLL_INTERVAL")
 [[ -n "$ISSUE_NUM" ]] && ARGS+=(--issue "$ISSUE_NUM")

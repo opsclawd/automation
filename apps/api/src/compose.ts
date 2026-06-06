@@ -307,8 +307,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         );
       },
       async headCommitSha(cwd: string): Promise<string> {
-        const { execSync } = await import('node:child_process');
-        return execSync('git rev-parse HEAD', { cwd }).toString().trim();
+        const { execFileSync } = await import('node:child_process');
+        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
       },
       async resetHard(_cwd: string, _commitSha: string): Promise<void> {
         throw new Error(
@@ -316,13 +316,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         );
       },
       async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
-        const { execSync } = await import('node:child_process');
-        const args = _head ? `${_base}...${_head}` : _base;
+        const { execFileSync } = await import('node:child_process');
+        const args = _head ? [`${_base}...${_head}`] : [_base];
         try {
-          return execSync(`git diff ${args}`, { cwd: _cwd }).toString();
+          return execFileSync('git', ['diff', ...args], { cwd: _cwd }).toString();
         } catch (err) {
           process.stderr.write(
-            `[compose] git diff ${args} failed in ${_cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
+            `[compose] git diff ${args.join(' ')} failed in ${_cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
           );
           return '';
         }
@@ -343,8 +343,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         ref: string;
       }): Promise<string | undefined> {
         try {
-          const { execSync } = await import('node:child_process');
-          const output = execSync(`git ls-remote ${input.remote} ${input.ref}`, {
+          const { execFileSync } = await import('node:child_process');
+          const output = execFileSync('git', ['ls-remote', input.remote, input.ref], {
             cwd: input.cwd,
           })
             .toString()
@@ -384,7 +384,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '2. Stage and commit your changes:',
           '   ```',
           '   git add -A',
-          '   \'git commit -m "fix: address PR review feedback"\'',
+          '   git commit -m "fix: address PR review feedback"',
           '   ```',
           `3. Push to the PR branch: \`git push origin ${branch}\``,
           '',
