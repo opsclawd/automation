@@ -350,6 +350,39 @@ run_plan_review_loop() {
     fi
   done
 
+  # If we exited the loop after running the fixer on the last iteration,
+  # the fixer output was never reviewed. Run one final review pass to
+  # evaluate whether the fix resolved the P1 findings.
+  if [[ "$status" == "P1_FOUND" ]]; then
+    local _final_iter=$((iteration + 1))
+    emit_event "plan-review" "info" "plan_review.final_review" \
+      "Running final review after last fixer pass" iteration="$_final_iter"
+
+    local _pre_review_sha
+    _pre_review_sha=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || echo "")
+    local _plan_checksum_before
+    _plan_checksum_before=$(_checksum_file "${worktree_dir}/plan.md")
+    rm -f "${worktree_dir}/plan-review-findings.md"
+    run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$_final_iter"
+    local reviewer_ec=$?
+    if [[ $reviewer_ec -ne 0 ]]; then
+      warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on final review pass"
+      emit_event "plan-review" "error" "plan_review.reviewer_failed" \
+        "Reviewer agent failed on final review pass" iteration="$_final_iter" exit_code="$reviewer_ec"
+      orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on final review pass — agent invocation error, not plan non-convergence"
+    fi
+    _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^plan-review-findings\.md$'
+    _check_excluded_file_integrity "${worktree_dir}/plan.md" "$_plan_checksum_before" "plan.md"
+
+    status=$(parse_review_findings "$worktree_dir")
+    if [[ "$status" == "PASS" || "$status" == "P2_ACKNOWLEDGED" ]]; then
+      info "Plan passed adversarial review on final pass (iteration ${_final_iter})"
+      emit_event "plan-review" "info" "plan_review.review_passed" \
+        "Plan passed adversarial review on final pass" iterations="$_final_iter"
+      return 0
+    fi
+  fi
+
   emit_event "plan-review" "warn" "plan_review.max_iterations_reached" \
     "Plan review loop reached max iterations (${max_iter})" max_iterations="$max_iter"
   return 1

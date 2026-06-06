@@ -1457,12 +1457,10 @@ if [[ "$PHASE" == "plan-review" ]]; then
       info "Plan classified as low-risk — skipping adversarial review"
       emit_event "plan-review" "info" "plan_review.review_skipped" \
         "Plan classified as low-risk, adversarial review skipped"
-      touch "${WORKTREE_DIR}/plan-review-passed.marker"
       _emit_phase_done "plan-review"
     fi
   else
     info "Plan review disabled in config — skipping"
-    touch "${WORKTREE_DIR}/plan-review-passed.marker"
     _emit_phase_done "plan-review"
   fi
 

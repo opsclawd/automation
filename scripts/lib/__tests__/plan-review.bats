@@ -400,3 +400,37 @@ FINDINGS
   # Should fail because stale file was removed and reviewer produced nothing
   [[ $status -ne 0 ]]
 }
+
+@test "run_plan_review_loop: final review pass evaluates fixer output on last iteration" {
+  # With max_iter=2: iter 1 reviewer finds P1, fixer runs; iter 2 reviewer
+  # finds P1 again, fixer runs; final review still finds P1 → escalate.
+  run_adversarial_reviewer() {
+    echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "2"
+  # Final review also found P1 → should escalate (exit 1)
+  [[ $status -ne 0 ]]
+}
+
+@test "run_plan_review_loop: final review pass succeeds when fix resolves P1 on last iteration" {
+  # With max_iter=1: iter 1 reviewer finds P1, fixer runs; final review
+  # finds PASS → success.
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1"
+  [[ $status -eq 0 ]]
+}
