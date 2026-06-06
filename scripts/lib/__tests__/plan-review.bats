@@ -199,6 +199,28 @@ FINDINGS
   [[ "$output" == "P2_ACKNOWLEDGED" ]]
 }
 
+@test "parse_review_findings: returns PROCEED_WITH_CONCERNS when sentinel present" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: PROCEED_WITH_CONCERNS
+**Reasoning:** P1 depends on future infrastructure.
+### P1s carried forward
+- Missing retry: requires circuit breaker not in scope
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED_WITH_CONCERNS" ]]
+}
+
+@test "parse_review_findings: PROCEED_WITH_CONCERNS takes precedence over P1_FOUND" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: PROCEED_WITH_CONCERNS
+### P1: Scoped boundary issue
+**Plan text:** > retry logic
+**What actually happens:** needs future infra
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED_WITH_CONCERNS" ]]
+}
+
 # ── _check_review_worktree_violations ────────────────────────────────────────
 
 @test "_check_review_worktree_violations: passes when no violations" {

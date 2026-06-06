@@ -82,7 +82,7 @@ classify_plan_risk() {
 
 # parse_review_findings: Read plan-review-findings.md and extract the highest
 # severity level present.
-# Returns one of: PASS | P2_ACKNOWLEDGED | P1_FOUND
+# Returns one of: PASS | P2_ACKNOWLEDGED | P1_FOUND | PROCEED_WITH_CONCERNS
 # Args:
 #   $1 — path to the worktree directory containing plan-review-findings.md
 parse_review_findings() {
@@ -91,6 +91,11 @@ parse_review_findings() {
 
   if [[ ! -f "$findings_file" ]]; then
     echo "PASS"
+    return
+  fi
+
+  if grep -qiE 'Review Result:[[:space:]]*PROCEED_WITH_CONCERNS' "$findings_file"; then
+    echo "PROCEED_WITH_CONCERNS"
     return
   fi
 
