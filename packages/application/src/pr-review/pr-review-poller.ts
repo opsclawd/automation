@@ -31,7 +31,6 @@ export interface PrReviewPollerDeps {
   recordTerminalState: (
     attempt: PollAttempt | undefined,
     state: PollerTerminalState,
-    pollsRun: number,
   ) => Promise<void>;
 }
 
@@ -67,7 +66,7 @@ export class PrReviewPoller {
       if (d.now() >= deadline) {
         this.emit(input, 'post-pr-review.poll.timed_out', 'warn', { pollNumber });
         const result = { terminalState: 'timed_out' as const, pollsRun };
-        await d.recordTerminalState(lastAttempt, result.terminalState, pollsRun);
+        await d.recordTerminalState(lastAttempt, result.terminalState);
         return result;
       }
 
@@ -96,7 +95,7 @@ export class PrReviewPoller {
       if (pass.allResolved) {
         this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
         const result = { terminalState: 'all_resolved' as const, pollsRun };
-        await d.recordTerminalState(lastAttempt, result.terminalState, pollsRun);
+        await d.recordTerminalState(lastAttempt, result.terminalState);
         return result;
       }
 
@@ -107,7 +106,7 @@ export class PrReviewPoller {
         if (!hasActiveWork) {
           this.emit(input, 'post-pr-review.poll.blocked', 'warn', { pollsRun });
           const result = { terminalState: 'blocked' as const, pollsRun };
-          await d.recordTerminalState(lastAttempt, result.terminalState, pollsRun);
+          await d.recordTerminalState(lastAttempt, result.terminalState);
           return result;
         }
       }
@@ -120,7 +119,7 @@ export class PrReviewPoller {
     if (d.now() >= deadline) {
       this.emit(input, 'post-pr-review.poll.timed_out', 'warn', { pollsRun });
       const result = { terminalState: 'timed_out' as const, pollsRun };
-      await d.recordTerminalState(lastAttempt, result.terminalState, pollsRun);
+      await d.recordTerminalState(lastAttempt, result.terminalState);
       return result;
     }
 
@@ -129,7 +128,7 @@ export class PrReviewPoller {
     this.emit(input, `post-pr-review.poll.${terminal}`, terminal === 'blocked' ? 'warn' : 'info', {
       pollsRun,
     });
-    await d.recordTerminalState(lastAttempt, terminal, pollsRun);
+    await d.recordTerminalState(lastAttempt, terminal);
     return { terminalState: terminal, pollsRun };
   }
 

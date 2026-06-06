@@ -277,7 +277,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       pollIntervalMs: opts.pollIntervalMs,
       readyMaxDays: opts.readyMaxDays,
       phaseStartedAt: opts.phaseStartedAt,
-      recordTerminalState: async (attempt, state, _pollsRun) => {
+      recordTerminalState: async (attempt, state) => {
         if (attempt) {
           prReviewRepository.updatePollAttempt({
             ...attempt,

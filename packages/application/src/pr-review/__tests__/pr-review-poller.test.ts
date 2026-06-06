@@ -21,7 +21,7 @@ const repoId = RepositoryId('o/r');
 function makePoller(passes: PollPassResult[], overrides: Partial<PrReviewPollerDeps> = {}) {
   const repo = new FakePrReviewRepository();
   const events: Array<{ runUuid: string; event: unknown }> = [];
-  const terminalStates: Array<{ runId: string; state: string; pollsRun: number }> = [];
+  const terminalStates: Array<{ runId: string; state: string }> = [];
   let i = 0;
   const sleeps: number[] = [];
   let clock = new Date('2026-06-04T00:00:00Z');
@@ -44,8 +44,8 @@ function makePoller(passes: PollPassResult[], overrides: Partial<PrReviewPollerD
     pollIntervalMs: 1000,
     readyMaxDays: 7,
     phaseStartedAt: clock,
-    recordTerminalState: async (_attempt, state, pollsRun) => {
-      terminalStates.push({ runId: String(runId), state, pollsRun });
+    recordTerminalState: async (_attempt, state) => {
+      terminalStates.push({ runId: String(runId), state });
     },
     ...overrides,
   };
@@ -90,7 +90,7 @@ describe('PrReviewPoller', () => {
     expect(
       events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.all_resolved'),
     ).toBe(true);
-    expect(terminalStates).toEqual([{ runId: String(runId), state: 'all_resolved', pollsRun: 1 }]);
+    expect(terminalStates).toEqual([{ runId: String(runId), state: 'all_resolved' }]);
   });
 
   it('runs up to maxPolls then terminates as max_polls_reached', async () => {
@@ -105,9 +105,7 @@ describe('PrReviewPoller', () => {
     });
     expect(result.pollsRun).toBe(3);
     expect(result.terminalState).toBe('max_polls_reached');
-    expect(terminalStates).toEqual([
-      { runId: String(runId), state: 'max_polls_reached', pollsRun: 3 },
-    ]);
+    expect(terminalStates).toEqual([{ runId: String(runId), state: 'max_polls_reached' }]);
   });
 
   it('sleeps the configured interval between polls but not after the last', async () => {
@@ -182,8 +180,8 @@ describe('PrReviewPoller — global timeout', () => {
           attempt: fakeAttempt,
         };
       },
-      recordTerminalState: async (attempt, state, pollsRun) => {
-        recordCalls.push({ attempt, state, pollsRun });
+      recordTerminalState: async (attempt, state) => {
+        recordCalls.push({ attempt, state });
       },
       sleep: async () => {},
     });
