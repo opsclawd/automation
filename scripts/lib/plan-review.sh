@@ -22,8 +22,15 @@ _check_review_worktree_violations() {
       git -C "$worktree_dir" diff --name-only "$pre_sha"..HEAD 2>/dev/null
     fi
   } | grep . | grep -vE "$allowlist" | tr '\n' ' ' || true)
-  if [[ -n "$violations" ]]; then
-    orchestrator_fail "Plan review/fix agent modified unexpected files (contract violation): ${violations}"
+  # Also check for review artifacts hidden from git by .git/info/exclude rules.
+  # seed_excludes adds plan-review-passed.marker to the exclude list, so
+  # --exclude-standard won't surface it even if an agent creates it.
+  local _excluded_artifacts=""
+  if [[ ! "$allowlist" =~ plan-review-passed\.marker ]] && [[ -f "${worktree_dir}/plan-review-passed.marker" ]]; then
+    _excluded_artifacts="plan-review-passed.marker"
+  fi
+  if [[ -n "$violations$_excluded_artifacts" ]]; then
+    orchestrator_fail "Plan review/fix agent modified unexpected files (contract violation): ${violations}${_excluded_artifacts}"
   fi
 }
 
@@ -199,7 +206,7 @@ Findings file: plan-review-findings.md
 ## RULES
 - Do NOT switch branches.
 - Do NOT edit source files (*.ts, *.js, *.sh, *.py, etc.).
-- Stop after updating plan.md.
+- Stop after updating plan.md and task-manifest.json (if task boundaries changed).
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${branch}."
 
   local _fixer_prompt_file
