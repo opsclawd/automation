@@ -127,6 +127,26 @@ teardown() {
   [[ ! -f "${WORKTREE_DIR}/plan.md" ]]
 }
 
+@test "does not remediate when violation file is tracked in git" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Tracked" > "${WORKTREE_DIR}/docs/README.md"
+  git -C "$WORKTREE_DIR" add docs/README.md
+  git -C "$WORKTREE_DIR" commit -m "init"
+
+  _main_checkout_violations=""
+  _worktree_violations="docs/README.md "
+  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+
+  _remediate_plan_write_violations
+
+  [[ -n "$_all_violations" ]]
+  [[ ! -f "${WORKTREE_DIR}/plan.md" ]]
+  [[ -f "${WORKTREE_DIR}/docs/README.md" ]]
+}
+
 @test "no-op when no violations" {
   _main_checkout_violations=""
   _worktree_violations=""
