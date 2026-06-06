@@ -84,7 +84,7 @@ warn() { log "WARN: $*" >&2; }
 _ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
-PLAN_REVIEW_ENABLED=true
+PLAN_REVIEW_ENABLED=false
 MAX_PLAN_REVIEW_ITERATIONS=5
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"

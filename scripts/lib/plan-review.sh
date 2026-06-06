@@ -53,12 +53,12 @@ parse_review_findings() {
     return
   fi
 
-  if grep -qiP '(#{2,3}\s+P1\b|\*\*P1\*\*|severity:\s*P1)' "$findings_file"; then
+  if grep -qiE '(#{2,3}[[:space:]]+P1:|[[:space:]]\*\*P1\*\*|severity:[[:space:]]*P1($|[[:space:]]))' "$findings_file"; then
     echo "P1_FOUND"
     return
   fi
 
-  if grep -qiP '(#{2,3}\s+P2\b|\*\*P2\*\*|severity:\s*P2)' "$findings_file"; then
+  if grep -qiE '(#{2,3}[[:space:]]+P2:|[[:space:]]\*\*P2\*\*|severity:[[:space:]]*P2($|[[:space:]]))' "$findings_file"; then
     echo "P2_ACKNOWLEDGED"
     return
   fi
@@ -90,10 +90,7 @@ run_adversarial_reviewer() {
 
   log "  Plan review: invoking adversarial reviewer (iteration ${iteration})..."
 
-  local plan_content=""
-  [[ -f "${worktree_dir}/plan.md" ]] && plan_content=$(cat "${worktree_dir}/plan.md")
-
-  REVIEWER_PROMPT="You are an adversarial plan reviewer. Your job is to find design-level errors in the implementation plan.
+  local REVIEWER_PROMPT="You are an adversarial plan reviewer. Your job is to find design-level errors in the implementation plan.
 ## CONTEXT
 You are reviewing: ${worktree_dir}/plan.md
 ## YOUR ROLE
@@ -179,10 +176,7 @@ run_plan_fixer() {
 
   log "  Plan review: invoking plan-fixer to address findings (iteration ${iteration})..."
 
-  local findings_content=""
-  [[ -f "${worktree_dir}/plan-review-findings.md" ]] && findings_content=$(cat "${worktree_dir}/plan-review-findings.md")
-
-  FIXER_PROMPT="You are a plan fixer. Your job is to address adversarial review findings in the implementation plan.
+  local FIXER_PROMPT="You are a plan fixer. Your job is to address adversarial review findings in the implementation plan.
 ## CONTEXT
 You are working in: ${worktree_dir}
 Plan file: plan.md
@@ -270,8 +264,8 @@ run_plan_review_loop() {
     status=$(parse_review_findings "$worktree_dir")
     local p1_count=0 p2_count=0
     if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
-      p1_count=$(grep -ciP '(#{2,3}\s+P1\b|\*\*P1\*\*|severity:\s*P1)' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
-      p2_count=$(grep -ciP '(#{2,3}\s+P2\b|\*\*P2\*\*|severity:\s*P2)' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
+      p1_count=$(grep -ciE '(#{2,3}[[:space:]]+P1:|[[:space:]]\*\*P1\*\*|severity:[[:space:]]*P1($|[[:space:]]))' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
+      p2_count=$(grep -ciE '(#{2,3}[[:space:]]+P2:|[[:space:]]\*\*P2\*\*|severity:[[:space:]]*P2($|[[:space:]]))' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || echo 0)
     fi
 
     emit_event "plan-review" "info" "plan_review.findings" \
