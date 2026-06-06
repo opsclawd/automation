@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
+import { RunId, RepositoryId, PhaseName, PollAttempt } from '@ai-sdlc/domain';
 import { FakePrReviewRepository } from '../../test-doubles/index.js';
 import {
   PrReviewPoller,
@@ -132,5 +132,65 @@ describe('PrReviewPoller — rate limit', () => {
     expect(
       events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.rate_limited'),
     ).toBe(true);
+  });
+});
+
+describe('PrReviewPoller — global timeout', () => {
+  it('terminates as timed_out when the readyMaxDays deadline has passed', async () => {
+    const pastStart = new Date('2026-05-20T00:00:00Z');
+    const { poller } = makePoller([partial(), partial(), partial()], {
+      readyMaxDays: 7,
+      phaseStartedAt: pastStart,
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('timed_out');
+    expect(result.pollsRun).toBe(0);
+  });
+  it('passes lastAttempt to recordTerminalState on timeout after a prior poll ran', async () => {
+    let pollRan = false;
+    const recordCalls: Array<unknown> = [];
+    const start = new Date('2026-06-04T00:00:00Z');
+    const fakeAttempt = { runUuid: 'x', pollNumber: 1, status: 'completed' } as PollAttempt &
+      Record<string, unknown>;
+    const { poller } = makePoller([], {
+      maxPolls: 5,
+      readyMaxDays: 1,
+      phaseStartedAt: start,
+      now: () => {
+        if (!pollRan) return start;
+        return new Date('2026-06-05T00:00:00Z');
+      },
+      processOnePass: async () => {
+        pollRan = true;
+        return {
+          result: partial(),
+          attempt: fakeAttempt,
+        };
+      },
+      recordTerminalState: async (attempt, state, pollsRun) => {
+        recordCalls.push({ attempt, state, pollsRun });
+      },
+      sleep: async () => {},
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('timed_out');
+    expect(result.pollsRun).toBe(1);
+    expect(recordCalls).toHaveLength(1);
+    expect(recordCalls[0].attempt).toBe(fakeAttempt);
+    expect(recordCalls[0].state).toBe('timed_out');
   });
 });
