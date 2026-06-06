@@ -60,6 +60,7 @@ _remediate_plan_write_violations() {
         read -r _trimmed_violations <<< "$_worktree_violations"
         local _v_file="${WORKTREE_DIR}/${_trimmed_violations}"
         if [[ "$_v_file" == *.md && -f "$_v_file" && ! -f "${WORKTREE_DIR}/plan.md" ]] \
+            && echo "$_trimmed_violations" | grep -qi 'plan' \
             && ! git -C "$WORKTREE_DIR" ls-files --error-unmatch -- "$_trimmed_violations" >/dev/null 2>&1; then
           warn "plan-write wrote plan to wrong path: ${_trimmed_violations} -- moving to plan.md"
           emit_event "plan-write" "warn" "plan_written.removed_mispath" \

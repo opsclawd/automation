@@ -60,10 +60,10 @@ teardown() {
 
 @test "does not remediate when main checkout has violations" {
   mkdir -p "${WORKTREE_DIR}/docs"
-  echo "# Plan" > "${WORKTREE_DIR}/docs/plan.md"
+  echo "# Plan" > "${WORKTREE_DIR}/docs/README.md"
 
   _main_checkout_violations="something.ts "
-  _worktree_violations="docs/plan.md "
+  _worktree_violations="docs/README.md "
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -74,11 +74,11 @@ teardown() {
 
 @test "does not remediate multiple worktree violations" {
   mkdir -p "${WORKTREE_DIR}/docs"
-  echo "# A" > "${WORKTREE_DIR}/docs/a.md"
-  echo "# B" > "${WORKTREE_DIR}/docs/b.md"
+  echo "# A" > "${WORKTREE_DIR}/docs/plan-a.md"
+  echo "# B" > "${WORKTREE_DIR}/docs/plan-b.md"
 
   _main_checkout_violations=""
-  _worktree_violations="docs/a.md docs/b.md "
+  _worktree_violations="docs/plan-a.md docs/plan-b.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -100,6 +100,21 @@ teardown() {
   [[ ! -f "${WORKTREE_DIR}/plan.md" ]]
 }
 
+@test "does not remediate non-plan .md file (e.g. README.md)" {
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Readme" > "${WORKTREE_DIR}/docs/README.md"
+
+  _main_checkout_violations=""
+  _worktree_violations="docs/README.md "
+  _all_violations="${_worktree_violations}"
+
+  _remediate_plan_write_violations
+
+  [[ -n "$_all_violations" ]]
+  [[ ! -f "${WORKTREE_DIR}/plan.md" ]]
+  [[ -f "${WORKTREE_DIR}/docs/README.md" ]]
+}
+
 @test "does not remediate when plan.md already exists" {
   mkdir -p "${WORKTREE_DIR}/docs"
   echo "# Existing" > "${WORKTREE_DIR}/plan.md"
@@ -118,7 +133,7 @@ teardown() {
 
 @test "does not remediate when violation file does not exist on disk" {
   _main_checkout_violations=""
-  _worktree_violations="phantom.md "
+  _worktree_violations="plan-draft.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -132,19 +147,19 @@ teardown() {
   git -C "$WORKTREE_DIR" config user.email "test@test.com"
   git -C "$WORKTREE_DIR" config user.name "Test"
   mkdir -p "${WORKTREE_DIR}/docs"
-  echo "# Tracked" > "${WORKTREE_DIR}/docs/README.md"
-  git -C "$WORKTREE_DIR" add docs/README.md
+  echo "# Tracked" > "${WORKTREE_DIR}/docs/plan-notes.md"
+  git -C "$WORKTREE_DIR" add docs/plan-notes.md
   git -C "$WORKTREE_DIR" commit -m "init"
 
   _main_checkout_violations=""
-  _worktree_violations="docs/README.md "
+  _worktree_violations="docs/plan-notes.md "
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
 
   _remediate_plan_write_violations
 
   [[ -n "$_all_violations" ]]
   [[ ! -f "${WORKTREE_DIR}/plan.md" ]]
-  [[ -f "${WORKTREE_DIR}/docs/README.md" ]]
+  [[ -f "${WORKTREE_DIR}/docs/plan-notes.md" ]]
 }
 
 @test "no-op when no violations" {
@@ -189,18 +204,18 @@ teardown() {
   [[ -d "${WORKTREE_DIR}/docs" ]]
 }
 
-@test "remediates single-level .md at worktree root (e.g. notes.md)" {
-  echo "# Notes" > "${WORKTREE_DIR}/notes.md"
+@test "remediates single-level .md at worktree root (e.g. my-plan.md)" {
+  echo "# Notes" > "${WORKTREE_DIR}/my-plan.md"
 
   _main_checkout_violations=""
-  _worktree_violations="notes.md "
+  _worktree_violations="my-plan.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
 
   [[ -z "$_all_violations" ]]
   [[ -f "${WORKTREE_DIR}/plan.md" ]]
-  [[ ! -f "${WORKTREE_DIR}/notes.md" ]]
+  [[ ! -f "${WORKTREE_DIR}/my-plan.md" ]]
   run cat "${WORKTREE_DIR}/plan.md"
   [[ "$output" == "# Notes" ]]
 }
