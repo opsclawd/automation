@@ -360,7 +360,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderPrompt: async ({ cwd: _cwd, comments, diff }) => {
+      renderPrompt: async ({ cwd: _cwd, comments, diff, branch }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, 'prompt.md');
@@ -374,6 +374,25 @@ export function composeRoot(opts: ComposeOptions): Container {
           '## Current Diff',
           '',
           diff,
+          '',
+          '## Instructions',
+          '',
+          'For each review comment, make a judgement call: is it technically valid?',
+          '',
+          'For comments that require code changes:',
+          '1. Edit the relevant source files',
+          '2. Stage and commit your changes:',
+          '   ```',
+          '   git add -A',
+          '   \'git commit -m "fix: address PR review feedback"\'',
+          '   ```',
+          `3. Push to the PR branch: \`git push origin ${branch}\``,
+          '',
+          'For comments assessed as invalid, no code changes are needed — just reply explaining why.',
+          '',
+          'Reply to EVERY comment thread (both valid and invalid) using `gh api`:',
+          '`gh api repos/<owner>/<repo>/pulls/<pr>/comments/<commentId>/replies --method POST --raw-field body="<reply>"`',
+          'Use the actual commentId values from the list above.',
           '',
           '## Required Output',
           '',

@@ -25,6 +25,7 @@ export interface ProcessPrReviewDeps {
     cwd: string;
     comments: PrReviewComment[];
     diff: string;
+    branch: string;
   }) => Promise<string>;
   extractResult: (input: {
     resultJsonPath?: string;
@@ -133,6 +134,7 @@ export class ProcessPrReviewComments {
       cwd: input.cwd,
       comments: unresolved,
       diff,
+      branch: pr.headRefName,
     });
     const profile = d.resolveProfileForPhase('post-pr-review');
     const startCommitSha = await d.git.headCommitSha(input.cwd);
