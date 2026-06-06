@@ -320,7 +320,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         const args = _head ? `${_base}...${_head}` : _base;
         try {
           return execSync(`git diff ${args}`, { cwd: _cwd }).toString();
-        } catch {
+        } catch (err) {
+          process.stderr.write(
+            `[compose] git diff ${args} failed in ${_cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
           return '';
         }
       },
@@ -358,7 +361,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
       renderPrompt: async ({ cwd: _cwd, comments, diff }) => {
-        const promptDir = join(baseTmpDir, `pr-review-prompt-${Date.now()}`);
+        const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, 'prompt.md');
         const content = [
@@ -406,7 +409,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           const config = loadConfig(cwd);
           if (!config.validation?.commands?.length) return true;
           const buildCheckRunId = RunId(`pr-review-build-check-${randomUUID()}`);
-          const logDir = join(runsDir, `pr-review-build-check-${randomUUID()}`);
+          const logDir = join(runsDir, buildCheckRunId);
           const result = await runValidation.execute({
             runId: buildCheckRunId,
             phaseId: PhaseName('post-pr-review'),
