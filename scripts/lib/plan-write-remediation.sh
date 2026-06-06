@@ -21,12 +21,34 @@
 # "plan.md" pattern that matches at any depth). If found and no plan.md
 # exists at the worktree root, move it there.
 #
+# Uses find instead of git ls-files --no-exclude to avoid picking up stale
+# files in non-artifact directories (node_modules, .next, .cache, etc.)
+# that are hidden by unrelated exclude rules.
+#
 # Returns 0 if a misplaced plan was found and moved, 1 otherwise.
 _detect_ignored_misplaced_plan() {
   if [[ ! -f "${WORKTREE_DIR}/plan.md" ]]; then
     local _misplaced
-    _misplaced=$(git -C "$WORKTREE_DIR" ls-files --others --no-exclude 2>/dev/null \
-      | grep -E '^.*\/plan\.md$' | head -1)
+    local _raw
+    _raw=$(find "$WORKTREE_DIR" -name plan.md -mindepth 2 \
+      -not -path '*/node_modules/*' \
+      -not -path '*/.next/*' \
+      -not -path '*/.cache/*' \
+      -not -path '*/.git/*' \
+      -not -path '*/dist/*' \
+      -not -path '*/build/*' \
+      -not -path '*/.turbo/*' \
+      -not -path '*/.nuxt/*' \
+      -not -path '*/coverage/*' \
+      -not -path '*/__pycache__/*' \
+      -not -path '*/.venv/*' \
+      -not -path '*/vendor/*' \
+      -not -path '*/.pytest_cache/*' \
+      -not -path '*/.mypy_cache/*' \
+      2>/dev/null | head -1)
+    if [[ -n "$_raw" ]]; then
+      _misplaced="${_raw#${WORKTREE_DIR}/}"
+    fi
     if [[ -n "$_misplaced" ]]; then
       local _v_file="${WORKTREE_DIR}/${_misplaced}"
       if [[ -f "$_v_file" ]]; then
