@@ -24,8 +24,15 @@ if [[ -z "$OWNER_REPO" ]]; then
   exit 1
 fi
 
+if [[ -z "$ISSUE_NUM" ]]; then
+  echo "FATAL: ISSUE_NUM is required. The poller must not run from the main checkout." >&2
+  exit 1
+fi
 POLL_CWD="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
-[[ -d "$POLL_CWD" ]] || POLL_CWD="$REPO_ROOT"
+if [[ ! -d "$POLL_CWD" ]]; then
+  echo "FATAL: worktree $POLL_CWD does not exist. Create it before polling." >&2
+  exit 1
+fi
 
 # Own our TMPDIR. The parent run (ai-run-issue-v2) injects a per-run TMPDIR
 # that gets deleted in its finally block. We need a poll-owned directory so

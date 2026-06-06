@@ -386,7 +386,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '   git add -A',
           '   git commit -m "fix: address PR review feedback"',
           '   ```',
-          `3. Push to the PR branch: \`git push origin ${branch}\``,
+          `3. Push to the PR branch: \`git push origin '${branch.replace(/'/g, "'\\''")}'\``,
           '',
           'For comments assessed as invalid, no code changes are needed — include your reasoning in replyBody below.',
           '',

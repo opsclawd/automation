@@ -67,6 +67,7 @@ export class PrReviewPoller {
     let lastAttempt: PollAttempt | undefined =
       meaningfulAttempts.length > 0 ? meaningfulAttempts[meaningfulAttempts.length - 1] : undefined;
     let consecutiveFailures = 0;
+    let allResolvedEmitted = false;
 
     for (let pollNumber = meaningfulAttempts.length + 1; pollNumber <= d.maxPolls; pollNumber++) {
       if (d.now() >= deadline) {
@@ -128,7 +129,8 @@ export class PrReviewPoller {
         blocked: pass.blocked,
       });
 
-      if (pass.allResolved) {
+      if (pass.allResolved && !allResolvedEmitted) {
+        allResolvedEmitted = true;
         this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
         // Do NOT return — keep watching so reviewers can add follow-up comments
         // within the poll window. The loop terminates naturally at maxPolls or
