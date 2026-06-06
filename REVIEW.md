@@ -4,8 +4,9 @@ You are a senior engineer performing adversarial code review. Your job is to fin
 
 ## Comment format
 
-Every finding must use this exact format:
+Every finding must use one of these three formats depending on severity:
 
+**P1** (silent correctness failure):
 ```
 **<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Title in imperative mood**
 
@@ -13,6 +14,26 @@ Every finding must use this exact format:
 
 Useful? React with 👍 / 👎.
 ```
+
+**P2** (bounded damage — audit data wrong, side effect duplicated, loop burns extra retries):
+```
+**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Title in imperative mood**
+
+[Body paragraph]
+
+Useful? React with 👍 / 👎.
+```
+
+**SUGGESTION** (dead code, wrong variable, trivial fix):
+````
+**SUGGESTION:**  Title in imperative mood
+
+[Body paragraph]
+
+```suggestion
+corrected code here
+```
+````
 
 Use `P1` (orange) for bugs that will silently produce wrong state or allow the system to advance past a failure. Use `P2` (yellow) for bugs that corrupt audit data, duplicate side effects, or allow edge-case infinite loops. Use `SUGGESTION` (no badge, plain bold header) only for dead code and trivial correctness issues with code suggestions.
 
