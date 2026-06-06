@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   openDatabase,
@@ -28,6 +36,7 @@ import {
   RunValidation,
   PrReviewPoller,
   ProcessPrReviewComments,
+  postPrReviewResultSchema,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
@@ -39,7 +48,7 @@ import {
   type PushInput,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName, RunId } from '@ai-sdlc/domain';
+import { AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -281,8 +290,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       async currentBranch(_cwd: string): Promise<string> {
         throw new Error('currentBranch not implemented in compose poller');
       },
-      async headCommitSha(_cwd: string): Promise<string> {
-        throw new Error('headCommitSha not implemented in compose poller');
+      async headCommitSha(cwd: string): Promise<string> {
+        const { execSync } = await import('node:child_process');
+        return execSync('git rev-parse HEAD', { cwd }).toString().trim();
       },
       async resetHard(_cwd: string, _commitSha: string): Promise<void> {
         throw new Error('resetHard not implemented in compose poller');
@@ -296,12 +306,22 @@ export function composeRoot(opts: ComposeOptions): Container {
       async push(_input: PushInput): Promise<void> {
         throw new Error('push not implemented in compose poller');
       },
-      async remoteRef(_input: {
+      async remoteRef(input: {
         cwd: string;
         remote: string;
         ref: string;
       }): Promise<string | undefined> {
-        return undefined;
+        try {
+          const { execSync } = await import('node:child_process');
+          const output = execSync(`git ls-remote ${input.remote} ${input.ref}`, {
+            cwd: input.cwd,
+          })
+            .toString()
+            .trim();
+          return output.split(/\s+/)[0] || undefined;
+        } catch {
+          return undefined;
+        }
       },
     };
     const processor = new ProcessPrReviewComments({
@@ -309,16 +329,67 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime!,
       prReviewRepo: prReviewRepository,
-      renderPrompt: async () => {
-        throw new Error('renderPrompt not implemented in compose poller');
+      renderPrompt: async ({ cwd: _cwd, comments, diff }) => {
+        const promptDir = join(baseTmpDir, `pr-review-prompt-${Date.now()}`);
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(promptDir, 'prompt.md');
+        const content = [
+          '# PR Review Task',
+          '',
+          'Review and address the following PR review comments:',
+          '',
+          ...comments.map((c) => `- ${c.body}`),
+          '',
+          '## Current Diff',
+          '',
+          diff,
+        ].join('\n');
+        writeFileSync(promptPath, content, 'utf-8');
+        return promptPath;
       },
-      extractResult: async () => ({
-        ok: false as const,
-        reason: 'not implemented',
-        detail: 'extractResult stub in compose poller — not reachable during tests',
-      }),
-      verifyCommitPushed: async () => false,
-      verifyBuildPasses: async () => false,
+      extractResult: async (input) => {
+        try {
+          const absPath = input.resultJsonPath
+            ? join(input.cwd, input.resultJsonPath)
+            : join(input.cwd, 'result.json');
+          const raw = readFileSync(absPath, 'utf-8');
+          const parsed = JSON.parse(raw);
+          const result = postPrReviewResultSchema.safeParse(parsed);
+          if (!result.success) {
+            return { ok: false, reason: 'invalid', detail: result.error.message };
+          }
+          return { ok: true, result: result.data };
+        } catch (err) {
+          return { ok: false, reason: 'missing', detail: String(err) };
+        }
+      },
+      verifyCommitPushed: async ({ cwd, branch }) => {
+        try {
+          const headSha = await gitAdapter.headCommitSha(cwd);
+          if (!headSha) return false;
+          const remoteSha = await gitAdapter.remoteRef({ cwd, remote: 'origin', ref: branch });
+          return remoteSha === headSha;
+        } catch {
+          return false;
+        }
+      },
+      verifyBuildPasses: async ({ cwd }) => {
+        try {
+          const config = loadConfig(cwd);
+          if (!config.validation?.commands?.length) return true;
+          const result = await runValidation.execute({
+            runId: RunId('pr-review-build-check'),
+            phaseId: PhaseName('post-pr-review'),
+            cwd,
+            logDir: join(runsDir, 'pr-review-build-check'),
+            commands: config.validation.commands,
+            timeoutSeconds: config.validation.timeout,
+          });
+          return result.passed;
+        } catch {
+          return false;
+        }
+      },
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
       idFactory: () => randomUUID(),
       now: () => new Date(),
