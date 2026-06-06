@@ -34,6 +34,21 @@ if [[ ! -d "$POLL_CWD" ]]; then
   exit 1
 fi
 
+# Verify the worktree is on the PR branch before invoking agents.
+# The legacy script fetched the PR branch and asserted HEAD; the shim
+# restores this safety contract to prevent running from a stale or
+# wrong-branch checkout.
+PR_BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName' 2>/dev/null || echo "")
+if [[ -z "$PR_BRANCH" ]]; then
+  echo "FATAL: could not determine PR branch for #${PR_NUMBER}. Check gh auth and retry." >&2
+  exit 1
+fi
+ACTUAL_BRANCH=$(git -C "$POLL_CWD" symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [[ "$ACTUAL_BRANCH" != "$PR_BRANCH" ]]; then
+  echo "FATAL: worktree $POLL_CWD is on '${ACTUAL_BRANCH}', expected '${PR_BRANCH}'. Refusing to poll from wrong branch." >&2
+  exit 1
+fi
+
 # Own our TMPDIR. The parent run (ai-run-issue-v2) injects a per-run TMPDIR
 # that gets deleted in its finally block. We need a poll-owned directory so
 # subprocesses (gh, git, agent) don't lose their tmp dir mid-poll.

@@ -465,6 +465,30 @@ export function composeRoot(opts: ComposeOptions): Container {
       now: () => new Date(),
       maxIterations: 10,
     });
+    // Wrap the in-memory bus so poll events are persisted to the database.
+    // In the detached CLI process there are no SSE subscribers, so without
+    // this wrapper post-pr-review.poll.* events would vanish.
+    const persistingEventBus: EventBusPort = {
+      subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
+      publish: (runUuid, event) => {
+        eventBus.publish(runUuid, event);
+        try {
+          eventRepository.insert({
+            runUuid,
+            ...(event.phase !== undefined ? { phase: event.phase } : {}),
+            level: event.level,
+            type: event.type,
+            message: event.message,
+            ...(event.metadata !== undefined
+              ? { metadata: event.metadata as Record<string, unknown> }
+              : {}),
+            timestamp: new Date(event.timestamp),
+          });
+        } catch {
+          // Best-effort: event persistence must not crash the poller
+        }
+      },
+    };
     return new PrReviewPoller({
       prReviewRepo: prReviewRepository,
       processOnePass: async (input) => {
@@ -482,7 +506,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           attempt: lastAttempt,
         };
       },
-      eventBus,
+      eventBus: persistingEventBus,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => new Date(),
       maxPolls: opts.maxPolls,
