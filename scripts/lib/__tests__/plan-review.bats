@@ -434,3 +434,41 @@ FINDINGS
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1"
   [[ $status -eq 0 ]]
 }
+
+@test "run_plan_review_loop: orchestrator_fail when findings file missing on final review pass" {
+  # max_iter=1: iter 1 reviewer finds P1, fixer runs; final review
+  # reviewer exits 0 without writing findings → should fail.
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      # Final review: exit 0 but don't write findings file
+      rm -f "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1"
+  [[ $status -ne 0 ]]
+}
+
+@test "run_plan_review_loop: reviewer modifying task-manifest.json triggers contract violation" {
+  # Reviewer modifies task-manifest.json (git-excluded, so worktree violations
+  # won't catch it) — _check_excluded_file_integrity should catch the checksum
+  # mismatch.
+  echo '{"tasks":[]}' > "$TMPDIR_TEST/task-manifest.json"
+
+  run_adversarial_reviewer() {
+    echo '{"tasks":[{"id":1}]}' > "${WORKTREE_DIR}/task-manifest.json"
+    echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -ne 0 ]]
+}

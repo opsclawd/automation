@@ -290,6 +290,8 @@ run_plan_review_loop() {
     _pre_review_sha=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || echo "")
     local _plan_checksum_before
     _plan_checksum_before=$(_checksum_file "${worktree_dir}/plan.md")
+    local _manifest_checksum_before
+    _manifest_checksum_before=$(_checksum_file "${worktree_dir}/task-manifest.json")
     rm -f "${worktree_dir}/plan-review-findings.md"
     run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration"
     local reviewer_ec=$?
@@ -301,6 +303,7 @@ run_plan_review_loop() {
     fi
     _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^plan-review-findings\.md$'
     _check_excluded_file_integrity "${worktree_dir}/plan.md" "$_plan_checksum_before" "plan.md"
+    _check_excluded_file_integrity "${worktree_dir}/task-manifest.json" "$_manifest_checksum_before" "task-manifest.json"
 
     if [[ ! -f "${worktree_dir}/plan-review-findings.md" ]]; then
       warn "Reviewer agent completed successfully but plan-review-findings.md is missing"
@@ -362,6 +365,8 @@ run_plan_review_loop() {
     _pre_review_sha=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || echo "")
     local _plan_checksum_before
     _plan_checksum_before=$(_checksum_file "${worktree_dir}/plan.md")
+    local _manifest_checksum_before
+    _manifest_checksum_before=$(_checksum_file "${worktree_dir}/task-manifest.json")
     rm -f "${worktree_dir}/plan-review-findings.md"
     run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$_final_iter"
     local reviewer_ec=$?
@@ -373,6 +378,14 @@ run_plan_review_loop() {
     fi
     _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^plan-review-findings\.md$'
     _check_excluded_file_integrity "${worktree_dir}/plan.md" "$_plan_checksum_before" "plan.md"
+    _check_excluded_file_integrity "${worktree_dir}/task-manifest.json" "$_manifest_checksum_before" "task-manifest.json"
+
+    if [[ ! -f "${worktree_dir}/plan-review-findings.md" ]]; then
+      warn "Reviewer agent completed successfully but plan-review-findings.md is missing on final review pass"
+      emit_event "plan-review" "error" "plan_review.findings_file_missing" \
+        "Reviewer agent did not produce plan-review-findings.md on final review pass" iteration="$_final_iter"
+      orchestrator_fail "Reviewer agent completed but plan-review-findings.md not found on final review pass — agent contract violation"
+    fi
 
     status=$(parse_review_findings "$worktree_dir")
     if [[ "$status" == "PASS" || "$status" == "P2_ACKNOWLEDGED" ]]; then
