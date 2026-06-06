@@ -65,7 +65,7 @@ export class PrReviewPoller {
     const meaningfulAttempts = existingAttempts.filter((a) => a.status !== 'rate_limited');
     let pollsRun = meaningfulAttempts.length;
     let lastAttempt: PollAttempt | undefined =
-      existingAttempts.length > 0 ? existingAttempts[existingAttempts.length - 1] : undefined;
+      meaningfulAttempts.length > 0 ? meaningfulAttempts[meaningfulAttempts.length - 1] : undefined;
     let consecutiveFailures = 0;
 
     for (let pollNumber = meaningfulAttempts.length + 1; pollNumber <= d.maxPolls; pollNumber++) {
