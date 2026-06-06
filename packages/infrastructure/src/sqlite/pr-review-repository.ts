@@ -242,7 +242,7 @@ export class PrReviewRepository implements PrReviewRepositoryPort {
 
   latestPollAttempt(runId: RunId): PollAttempt | undefined {
     const row = this.db
-      .prepare('SELECT * FROM poll_attempts WHERE run_uuid = ? ORDER BY poll_number DESC LIMIT 1')
+      .prepare('SELECT * FROM poll_attempts WHERE run_uuid = ? ORDER BY rowid DESC LIMIT 1')
       .get(runId) as PollRow | undefined;
     return row ? rowToPoll(row) : undefined;
   }

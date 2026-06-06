@@ -8,8 +8,8 @@ import {
   chmodSync,
   rmSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
@@ -30,16 +30,16 @@ function trackDir<T>(fn: () => T): T {
 }
 
 function fakeScript(exitCode: number): string {
-  const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-  const path = join(dir, 'run.sh');
-  writeFileSync(path, `#!/usr/bin/env bash\nexit ${exitCode}\n`);
-  chmodSync(path, 0o755);
-  return path;
+  const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+  const scriptPath = path.join(dir, 'run.sh');
+  writeFileSync(scriptPath, `#!/usr/bin/env bash\nexit ${exitCode}\n`);
+  chmodSync(scriptPath, 0o755);
+  return scriptPath;
 }
 
 describe('composeRoot', () => {
   it('wires dependencies correctly and can execute a run against a fake script', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const container = composeRoot({
       repoRoot: root,
@@ -52,7 +52,7 @@ describe('composeRoot', () => {
     expect(container.artifactRepository).toBeDefined();
     expect(container.failureRepository).toBeDefined();
     expect(container.startIssueRun).toBeDefined();
-    expect(container.runsDir).toBe(join(root, '.ai-runs'));
+    expect(container.runsDir).toBe(path.join(root, '.ai-runs'));
 
     const out = await container.startIssueRun.execute({ issueNumber: 1 });
     expect(out.status).toBe('passed');
@@ -64,7 +64,7 @@ describe('composeRoot', () => {
   });
 
   it('exposes validationRunRepository', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const container = composeRoot({ repoRoot: root, scriptPath });
     expect(container.validationRunRepository).toBeDefined();
@@ -72,7 +72,7 @@ describe('composeRoot', () => {
   });
 
   it('exposes prReviewRepository', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const container = composeRoot({ repoRoot: root, scriptPath });
     expect(container.prReviewRepository).toBeDefined();
@@ -80,9 +80,9 @@ describe('composeRoot', () => {
   });
 
   it('passes optional deps through to StartIssueRun', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = join(dir, 'env.sh');
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = path.join(dir, 'env.sh');
     writeFileSync(
       scriptPath,
       `#!/usr/bin/env bash\necho "BRANCH=$AI_BASE_BRANCH MODEL=$AI_AGENT_MODEL RUNTIME=$AI_RUNTIME"\nexit 0\n`,
@@ -102,9 +102,9 @@ describe('composeRoot', () => {
   });
 
   it('classifies failure from phase.failed event end-to-end', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = join(dir, 'fail-with-event.sh');
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = path.join(dir, 'fail-with-event.sh');
     writeFileSync(
       scriptPath,
       `#!/usr/bin/env bash
@@ -132,19 +132,19 @@ exit 1
     expect(failure!.exitCode).toBe(2);
     expect(failure!.message).toMatch(/pnpm build/);
 
-    const runDir = join(container.runsDir, out.displayId);
-    if (existsSync(join(runDir, 'failure.json'))) {
-      const failureJson = JSON.parse(readFileSync(join(runDir, 'failure.json'), 'utf-8'));
+    const runDir = path.join(container.runsDir, out.displayId);
+    if (existsSync(path.join(runDir, 'failure.json'))) {
+      const failureJson = JSON.parse(readFileSync(path.join(runDir, 'failure.json'), 'utf-8'));
       expect(failureJson.kind).toBe('validation_failed');
       expect(failureJson.phase).toBe('validate');
     }
   });
 
   it('sweeps orphaned runs on compose', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     // Manually insert a "running" row with a dead PID
-    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const dbPath = path.join(root, '.ai-runs', 'orchestrator.sqlite');
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
@@ -169,14 +169,14 @@ exit 1
   });
 
   it('creates .ai-tmp/ directory at compose time', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
       composeRoot({ repoRoot: root, scriptPath });
-      expect(existsSync(join(root, '.ai-tmp'))).toBe(true);
-      expect(statSync(join(root, '.ai-tmp')).isDirectory()).toBe(true);
+      expect(existsSync(path.join(root, '.ai-tmp'))).toBe(true);
+      expect(statSync(path.join(root, '.ai-tmp')).isDirectory()).toBe(true);
     } finally {
       if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
       else delete process.env.TMPDIR;
@@ -184,9 +184,9 @@ exit 1
   });
 
   it('sets TMPDIR/SQLITE_TMPDIR in child env to per-run tmp dir', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = join(dir, 'check-env.sh');
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = path.join(dir, 'check-env.sh');
     writeFileSync(
       scriptPath,
       `#!/usr/bin/env bash\necho "TMPDIR=$TMPDIR"\necho "SQLITE_TMPDIR=$SQLITE_TMPDIR"\nexit 0\n`,
@@ -197,8 +197,8 @@ exit 1
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
       const out = await container.startIssueRun.execute({ issueNumber: 1 });
-      const runDir = join(container.runsDir, out.displayId);
-      const combined = readFileSync(join(runDir, 'combined.log'), 'utf8');
+      const runDir = path.join(container.runsDir, out.displayId);
+      const combined = readFileSync(path.join(runDir, 'combined.log'), 'utf8');
       expect(combined).toContain('TMPDIR=');
       expect(combined).toContain('SQLITE_TMPDIR=');
       expect(combined).toContain(out.uuid);
@@ -209,21 +209,21 @@ exit 1
   });
 
   it('respects operator-set TMPDIR and nests per-run tmp dirs under it', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const customTmp = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-custom-tmp-')));
-    const dir = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
-    const scriptPath = join(dir, 'check-tmpdir.sh');
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const customTmp = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-custom-tmp-')));
+    const dir = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = path.join(dir, 'check-tmpdir.sh');
     writeFileSync(scriptPath, `#!/usr/bin/env bash\necho "TMPDIR=$TMPDIR"\nexit 0\n`);
     chmodSync(scriptPath, 0o755);
     const origTmpdir = process.env.TMPDIR;
     process.env.TMPDIR = customTmp;
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
-      expect(container.baseTmpDir).toBe(join(customTmp, '.ai-tmp'));
+      expect(container.baseTmpDir).toBe(path.join(customTmp, '.ai-tmp'));
       const out = await container.startIssueRun.execute({ issueNumber: 2 });
-      const runDir = join(container.runsDir, out.displayId);
-      const combined = readFileSync(join(runDir, 'combined.log'), 'utf8');
-      expect(combined).toContain(`TMPDIR=${join(customTmp, '.ai-tmp', out.uuid)}`);
+      const runDir = path.join(container.runsDir, out.displayId);
+      const combined = readFileSync(path.join(runDir, 'combined.log'), 'utf8');
+      expect(combined).toContain(`TMPDIR=${path.join(customTmp, '.ai-tmp', out.uuid)}`);
     } finally {
       if (origTmpdir === undefined) {
         delete process.env.TMPDIR;
@@ -234,12 +234,12 @@ exit 1
   });
 
   it('sweeps orphaned tmp dirs on compose', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
-      const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+      const dbPath = path.join(root, '.ai-runs', 'orchestrator.sqlite');
       const db = openDatabase(dbPath);
       applyMigrations(db);
       db.prepare(
@@ -255,11 +255,11 @@ exit 1
         new Date().toISOString(),
       );
       db.close();
-      const tmpBase = join(root, '.ai-tmp');
+      const tmpBase = path.join(root, '.ai-tmp');
       mkdirSync(tmpBase, { recursive: true });
-      const orphanTmpDir = join(tmpBase, 'completed-uuid');
+      const orphanTmpDir = path.join(tmpBase, 'completed-uuid');
       mkdirSync(orphanTmpDir, { recursive: true });
-      writeFileSync(join(orphanTmpDir, 'test.tmp'), 'orphan');
+      writeFileSync(path.join(orphanTmpDir, 'test.tmp'), 'orphan');
       expect(existsSync(orphanTmpDir)).toBe(true);
       composeRoot({ repoRoot: root, scriptPath });
       expect(existsSync(orphanTmpDir)).toBe(false);
@@ -270,12 +270,12 @@ exit 1
   });
 
   it('skips orphan and tmp-dir sweeps when runStartupSweeps is false', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
-      const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+      const dbPath = path.join(root, '.ai-runs', 'orchestrator.sqlite');
       const db = openDatabase(dbPath);
       applyMigrations(db);
       db.prepare(
@@ -305,21 +305,21 @@ exit 1
       );
       db.close();
 
-      const tmpBase = join(root, '.ai-tmp');
+      const tmpBase = path.join(root, '.ai-tmp');
       mkdirSync(tmpBase, { recursive: true });
-      const deadPidTmpDir = join(tmpBase, 'dead-pid-uuid');
+      const deadPidTmpDir = path.join(tmpBase, 'dead-pid-uuid');
       mkdirSync(deadPidTmpDir, { recursive: true });
-      writeFileSync(join(deadPidTmpDir, 'prompt.md'), 'important prompt');
-      const completedTmpDir = join(tmpBase, 'completed-uuid');
+      writeFileSync(path.join(deadPidTmpDir, 'prompt.md'), 'important prompt');
+      const completedTmpDir = path.join(tmpBase, 'completed-uuid');
       mkdirSync(completedTmpDir, { recursive: true });
-      writeFileSync(join(completedTmpDir, 'leftover.tmp'), 'data');
+      writeFileSync(path.join(completedTmpDir, 'leftover.tmp'), 'data');
 
       composeRoot({ repoRoot: root, scriptPath, runStartupSweeps: false });
 
       expect(existsSync(deadPidTmpDir)).toBe(true);
-      expect(existsSync(join(deadPidTmpDir, 'prompt.md'))).toBe(true);
+      expect(existsSync(path.join(deadPidTmpDir, 'prompt.md'))).toBe(true);
       expect(existsSync(completedTmpDir)).toBe(true);
-      expect(existsSync(join(completedTmpDir, 'leftover.tmp'))).toBe(true);
+      expect(existsSync(path.join(completedTmpDir, 'leftover.tmp'))).toBe(true);
 
       const container2 = composeRoot({ repoRoot: root, scriptPath });
       expect(container2.runRepository.findByUuid('dead-pid-uuid')?.status).toBe('cancelled');
@@ -331,16 +331,16 @@ exit 1
   });
 
   it('does not sweep tmp dirs for unknown UUIDs', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
-      const tmpBase = join(root, '.ai-tmp');
+      const tmpBase = path.join(root, '.ai-tmp');
       mkdirSync(tmpBase, { recursive: true });
-      const unknownTmpDir = join(tmpBase, 'unknown-uuid-from-another-instance');
+      const unknownTmpDir = path.join(tmpBase, 'unknown-uuid-from-another-instance');
       mkdirSync(unknownTmpDir, { recursive: true });
-      writeFileSync(join(unknownTmpDir, 'test.tmp'), 'active run from another repo');
+      writeFileSync(path.join(unknownTmpDir, 'test.tmp'), 'active run from another repo');
       expect(existsSync(unknownTmpDir)).toBe(true);
       composeRoot({ repoRoot: root, scriptPath });
       expect(existsSync(unknownTmpDir)).toBe(true);
@@ -351,14 +351,14 @@ exit 1
   });
 
   it('removes per-run tmp dir after a passing run completes', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
       const out = await container.startIssueRun.execute({ issueNumber: 3 });
-      const tmpRunDir = join(container.baseTmpDir, out.uuid);
+      const tmpRunDir = path.join(container.baseTmpDir, out.uuid);
       expect(existsSync(tmpRunDir)).toBe(false);
     } finally {
       if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
@@ -367,7 +367,7 @@ exit 1
   });
 
   it('exposes runValidation use case', () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
     const c = composeRoot({ repoRoot: root, scriptPath });
     expect(c.runValidation).toBeDefined();
@@ -375,19 +375,28 @@ exit 1
   });
 
   it('removes per-run tmp dir after a failed run completes', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-compose-')));
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(1);
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
       const out = await container.startIssueRun.execute({ issueNumber: 4 });
-      const tmpRunDir = join(container.baseTmpDir, out.uuid);
+      const tmpRunDir = path.join(container.baseTmpDir, out.uuid);
       expect(out.status).toBe('failed');
       expect(existsSync(tmpRunDir)).toBe(false);
     } finally {
       if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;
       else delete process.env.TMPDIR;
     }
+  });
+
+  it('exposes a buildPrReviewPoller factory', () => {
+    const c = composeRoot({
+      repoRoot: trackDir(() => path.join(os.tmpdir(), `compose-poller-test-${Date.now()}`)),
+      scriptPath: 'scripts/ai-run-issue-v2',
+      dbPath: ':memory:',
+    });
+    expect(typeof c.buildPrReviewPoller).toBe('function');
   });
 });

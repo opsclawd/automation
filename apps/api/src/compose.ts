@@ -25,6 +25,7 @@ import {
   SweepOrphanedRuns,
   checkPid,
   RunValidation,
+  PrReviewPoller,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
@@ -106,6 +107,12 @@ export interface Container {
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
+  buildPrReviewPoller: (opts: {
+    maxPolls: number;
+    pollIntervalMs: number;
+    readyMaxDays: number;
+    phaseStartedAt: Date;
+  }) => PrReviewPoller;
 }
 
 export interface ComposeOptions {
@@ -252,6 +259,37 @@ export function composeRoot(opts: ComposeOptions): Container {
     throw new ConfigError('no agent config');
   };
 
+  function buildPrReviewPoller(opts: {
+    maxPolls: number;
+    pollIntervalMs: number;
+    readyMaxDays: number;
+    phaseStartedAt: Date;
+  }): PrReviewPoller {
+    return new PrReviewPoller({
+      prReviewRepo: prReviewRepository,
+      processOnePass: async () => {
+        throw new Error('processOnePass not wired — wire ProcessPrReviewComments in M6-05');
+      },
+      eventBus,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => new Date(),
+      maxPolls: opts.maxPolls,
+      pollIntervalMs: opts.pollIntervalMs,
+      readyMaxDays: opts.readyMaxDays,
+      phaseStartedAt: opts.phaseStartedAt,
+      recordTerminalState: async (attempt, state, _pollsRun) => {
+        if (attempt) {
+          prReviewRepository.updatePollAttempt({
+            ...attempt,
+            status: 'completed',
+            terminalState: state,
+            completedAt: new Date(),
+          });
+        }
+      },
+    });
+  }
+
   return {
     runRepository,
     phaseRepository,
@@ -269,6 +307,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     eventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+    buildPrReviewPoller,
   };
 }
 
