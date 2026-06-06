@@ -279,32 +279,60 @@ export function composeRoot(opts: ComposeOptions): Container {
     readyMaxDays: number;
     phaseStartedAt: Date;
   }): PrReviewPoller {
+    if (!agentRuntime) {
+      throw new ConfigError(
+        'agent config required for PR review poller; configure .ai-sdlc/config.yaml',
+      );
+    }
     const ghAdapter = new GhCliAdapter({});
+    // GitPort audit: ProcessPrReviewComments only invokes git.diff, git.headCommitSha,
+    // and git.remoteRef. The remaining methods are stubs that throw with a clear
+    // message — they must not be called from the PR review poller flow. If a
+    // future change in ProcessPrReviewComments exercises them, this adapter must
+    // be extended to delegate to the real git CLI.
     const gitAdapter: GitPort = {
       async createWorktree(_input: CreateWorktreeInput): Promise<void> {
-        throw new Error('createWorktree not implemented in compose poller');
+        throw new Error(
+          'GitPort.createWorktree is not wired in compose poller (PR review flow does not create worktrees)',
+        );
       },
       async removeWorktree(_worktreePath: string): Promise<void> {
-        throw new Error('removeWorktree not implemented in compose poller');
+        throw new Error(
+          'GitPort.removeWorktree is not wired in compose poller (PR review flow does not remove worktrees)',
+        );
       },
       async currentBranch(_cwd: string): Promise<string> {
-        throw new Error('currentBranch not implemented in compose poller');
+        throw new Error(
+          'GitPort.currentBranch is not wired in compose poller (PR review flow does not query branch)',
+        );
       },
       async headCommitSha(cwd: string): Promise<string> {
         const { execSync } = await import('node:child_process');
         return execSync('git rev-parse HEAD', { cwd }).toString().trim();
       },
       async resetHard(_cwd: string, _commitSha: string): Promise<void> {
-        throw new Error('resetHard not implemented in compose poller');
+        throw new Error(
+          'GitPort.resetHard is not wired in compose poller (PR review flow does not reset)',
+        );
       },
       async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
-        return '';
+        const { execSync } = await import('node:child_process');
+        const args = _head ? `${_base}...${_head}` : _base;
+        try {
+          return execSync(`git diff ${args}`, { cwd: _cwd }).toString();
+        } catch {
+          return '';
+        }
       },
       async commit(_cwd: string, _message: string): Promise<string> {
-        throw new Error('commit not implemented in compose poller');
+        throw new Error(
+          'GitPort.commit is not wired in compose poller (PR review flow does not commit via this adapter)',
+        );
       },
       async push(_input: PushInput): Promise<void> {
-        throw new Error('push not implemented in compose poller');
+        throw new Error(
+          'GitPort.push is not wired in compose poller (PR review flow does not push via this adapter)',
+        );
       },
       async remoteRef(input: {
         cwd: string;
@@ -327,7 +355,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     const processor = new ProcessPrReviewComments({
       github: ghAdapter,
       git: gitAdapter,
-      agent: agentRuntime!,
+      agent: agentRuntime,
       prReviewRepo: prReviewRepository,
       renderPrompt: async ({ cwd: _cwd, comments, diff }) => {
         const promptDir = join(baseTmpDir, `pr-review-prompt-${Date.now()}`);
@@ -377,11 +405,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         try {
           const config = loadConfig(cwd);
           if (!config.validation?.commands?.length) return true;
+          const buildCheckRunId = RunId(`pr-review-build-check-${randomUUID()}`);
+          const logDir = join(runsDir, `pr-review-build-check-${randomUUID()}`);
           const result = await runValidation.execute({
-            runId: RunId('pr-review-build-check'),
+            runId: buildCheckRunId,
             phaseId: PhaseName('post-pr-review'),
             cwd,
-            logDir: join(runsDir, 'pr-review-build-check'),
+            logDir,
             commands: config.validation.commands,
             timeoutSeconds: config.validation.timeout,
           });

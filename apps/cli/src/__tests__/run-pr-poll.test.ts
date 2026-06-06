@@ -50,6 +50,33 @@ describe('parsePollArgs', () => {
   it('throws on missing --cwd', () => {
     expect(() => parsePollArgs(['--pr', '5', '--repo', 'o/r'])).toThrow(/--cwd/);
   });
+
+  it('rejects --pr <= 0', () => {
+    expect(() => parsePollArgs(['--pr', '0', '--repo', 'o/r', '--cwd', '/w'])).toThrow(
+      /--pr.*positive integer/,
+    );
+    expect(() => parsePollArgs(['--pr=-1', '--repo', 'o/r', '--cwd', '/w'])).toThrow(
+      /--pr.*positive integer/,
+    );
+  });
+
+  it('rejects --max-polls <= 0', () => {
+    expect(() =>
+      parsePollArgs(['--pr', '5', '--repo', 'o/r', '--cwd', '/w', '--max-polls', '0']),
+    ).to.throw(/--max-polls.*positive integer/);
+  });
+
+  it('rejects --interval-seconds <= 0', () => {
+    expect(() =>
+      parsePollArgs(['--pr', '5', '--repo', 'o/r', '--cwd', '/w', '--interval-seconds=-5']),
+    ).toThrow(/--interval-seconds.*positive integer/);
+  });
+
+  it('rejects non-integer numeric values', () => {
+    expect(() => parsePollArgs(['--pr', '5.5', '--repo', 'o/r', '--cwd', '/w'])).toThrow(
+      /--pr.*positive integer/,
+    );
+  });
 });
 
 describe('exitCodeForTerminalState', () => {

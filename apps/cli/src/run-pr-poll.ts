@@ -14,6 +14,17 @@ export interface PollArgs {
   runId?: string;
 }
 
+function requirePositiveInt(raw: string | undefined, flag: string): number {
+  if (raw === undefined || raw === '') {
+    throw new Error(`missing required flag: ${flag}`);
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
+    throw new Error(`invalid value for ${flag}: must be a positive integer (got "${raw}")`);
+  }
+  return n;
+}
+
 export function parsePollArgs(argv: string[]): PollArgs {
   const { values } = parseArgs({
     args: argv,
@@ -33,12 +44,14 @@ export function parsePollArgs(argv: string[]): PollArgs {
   if (!values.repo) throw new Error('missing required flag: --repo');
   if (!values.cwd) throw new Error('missing required flag: --cwd');
   return {
-    prNumber: Number(values.pr),
-    ...(values.issue ? { issueNumber: Number(values.issue) } : {}),
+    prNumber: requirePositiveInt(values.pr, '--pr'),
+    ...(values.issue ? { issueNumber: requirePositiveInt(values.issue, '--issue') } : {}),
     repoFullName: values.repo,
     cwd: values.cwd,
-    maxPolls: values['max-polls'] ? Number(values['max-polls']) : 3,
-    pollIntervalSeconds: values['interval-seconds'] ? Number(values['interval-seconds']) : 300,
+    maxPolls: values['max-polls'] ? requirePositiveInt(values['max-polls'], '--max-polls') : 3,
+    pollIntervalSeconds: values['interval-seconds']
+      ? requirePositiveInt(values['interval-seconds'], '--interval-seconds')
+      : 300,
     ...(values['run-id'] ? { runId: values['run-id'] } : {}),
   };
 }
