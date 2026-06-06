@@ -13,6 +13,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
+import { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
+import type { PrReviewPollerDeps } from '@ai-sdlc/application';
 
 const tempDirs: string[] = [];
 
@@ -398,5 +400,31 @@ exit 1
       dbPath: ':memory:',
     });
     expect(typeof c.buildPrReviewPoller).toBe('function');
+  });
+
+  it('wires processOnePass to ProcessPrReviewComments (no stub throw)', async () => {
+    const c = composeRoot({
+      repoRoot: process.cwd(),
+      scriptPath: '/dev/null',
+      runStartupSweeps: false,
+    });
+    const poller = c.buildPrReviewPoller({
+      maxPolls: 1,
+      pollIntervalMs: 1000,
+      readyMaxDays: 7,
+      phaseStartedAt: new Date(),
+    });
+    const deps = (poller as unknown as { deps: PrReviewPollerDeps }).deps;
+    await expect(
+      deps.processOnePass({
+        runId: RunId('test'),
+        repoId: RepositoryId('o/r'),
+        repoFullName: 'o/r',
+        prNumber: 1,
+        cwd: process.cwd(),
+        phaseId: PhaseName('post-pr-review'),
+        pollNumber: 1,
+      }),
+    ).rejects.not.toThrow('processOnePass not wired — wire ProcessPrReviewComments in M6-05');
   });
 });

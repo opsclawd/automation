@@ -18,6 +18,7 @@ import {
   InMemoryEventBus,
   EventTailer,
   ProcessValidationAdapter,
+  GhCliAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -26,12 +27,16 @@ import {
   checkPid,
   RunValidation,
   PrReviewPoller,
+  ProcessPrReviewComments,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
   type EventBusPort,
   type RunRepositoryPort,
   type TmpDirectoryFactory,
+  type GitPort,
+  type CreateWorktreeInput,
+  type PushInput,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
 import { AgentProfileName, RunId } from '@ai-sdlc/domain';
@@ -265,10 +270,76 @@ export function composeRoot(opts: ComposeOptions): Container {
     readyMaxDays: number;
     phaseStartedAt: Date;
   }): PrReviewPoller {
+    const ghAdapter = new GhCliAdapter({});
+    const gitAdapter: GitPort = {
+      async createWorktree(_input: CreateWorktreeInput): Promise<void> {
+        throw new Error('createWorktree not implemented in compose poller');
+      },
+      async removeWorktree(_worktreePath: string): Promise<void> {
+        throw new Error('removeWorktree not implemented in compose poller');
+      },
+      async currentBranch(_cwd: string): Promise<string> {
+        throw new Error('currentBranch not implemented in compose poller');
+      },
+      async headCommitSha(_cwd: string): Promise<string> {
+        throw new Error('headCommitSha not implemented in compose poller');
+      },
+      async resetHard(_cwd: string, _commitSha: string): Promise<void> {
+        throw new Error('resetHard not implemented in compose poller');
+      },
+      async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
+        return '';
+      },
+      async commit(_cwd: string, _message: string): Promise<string> {
+        throw new Error('commit not implemented in compose poller');
+      },
+      async push(_input: PushInput): Promise<void> {
+        throw new Error('push not implemented in compose poller');
+      },
+      async remoteRef(_input: {
+        cwd: string;
+        remote: string;
+        ref: string;
+      }): Promise<string | undefined> {
+        return undefined;
+      },
+    };
+    const processor = new ProcessPrReviewComments({
+      github: ghAdapter,
+      git: gitAdapter,
+      agent: agentRuntime!,
+      prReviewRepo: prReviewRepository,
+      renderPrompt: async () => {
+        throw new Error('renderPrompt not implemented in compose poller');
+      },
+      extractResult: async () => ({
+        ok: false as const,
+        reason: 'not implemented',
+        detail: 'extractResult stub in compose poller — not reachable during tests',
+      }),
+      verifyCommitPushed: async () => false,
+      verifyBuildPasses: async () => false,
+      resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+      idFactory: () => randomUUID(),
+      now: () => new Date(),
+      maxIterations: 10,
+    });
     return new PrReviewPoller({
       prReviewRepo: prReviewRepository,
-      processOnePass: async () => {
-        throw new Error('processOnePass not wired — wire ProcessPrReviewComments in M6-05');
+      processOnePass: async (input) => {
+        const output = await processor.execute(input);
+        const attempts = prReviewRepository.listPollAttempts(input.runId);
+        const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : undefined;
+        return {
+          result: {
+            outcome: output.outcome,
+            processed: output.processed,
+            blocked: output.blocked,
+            allResolved: output.allResolved,
+            rateLimited: false,
+          },
+          attempt: lastAttempt,
+        };
       },
       eventBus,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
