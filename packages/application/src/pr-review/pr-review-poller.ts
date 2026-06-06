@@ -92,6 +92,12 @@ export class PrReviewPoller {
             pollNumber,
             consecutiveFailures,
           });
+          if (d.now() >= deadline) {
+            this.emit(input, 'post-pr-review.poll.timed_out', 'warn', { pollNumber });
+            const result = { terminalState: 'timed_out' as const, pollsRun };
+            await d.recordTerminalState(lastAttempt, result.terminalState);
+            return result;
+          }
           const result = { terminalState: 'max_polls_reached' as const, pollsRun };
           await d.recordTerminalState(lastAttempt, result.terminalState);
           return result;
