@@ -3608,7 +3608,8 @@ if [[ "$PHASE" == "done" ]]; then
     fix-review-task-*.log fix-review-task-*.result \
     fix-review-*.log fix-review-*.result \
     arbiter-task-*.log arbiter-result.json arbiter-rationale-*.md \
-    deviation-record-*.md deviation-record-*.json review-loop-history.json; do
+    deviation-record-*.md deviation-record-*.json review-loop-history.json \
+    plan-review-passed.marker plan-review-findings.md plan-review.log plan-fix.log; do
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"
