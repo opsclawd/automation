@@ -312,6 +312,11 @@ run_plan_review_loop() {
       orchestrator_fail "Reviewer agent completed but plan-review-findings.md not found — agent contract violation"
     fi
 
+    # Archive findings before deletion at end of iteration
+    if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
+      cp "${worktree_dir}/plan-review-findings.md" "${worktree_dir}/plan-review-findings-iter-${iteration}.md"
+    fi
+
     status=$(parse_review_findings "$worktree_dir")
     local p1_count=0 p2_count=0
     if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
@@ -385,6 +390,11 @@ run_plan_review_loop() {
       emit_event "plan-review" "error" "plan_review.findings_file_missing" \
         "Reviewer agent did not produce plan-review-findings.md on final review pass" iteration="$_final_iter"
       orchestrator_fail "Reviewer agent completed but plan-review-findings.md not found on final review pass — agent contract violation"
+    fi
+
+    # Archive final review findings before deletion
+    if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
+      cp "${worktree_dir}/plan-review-findings.md" "${worktree_dir}/plan-review-findings-iter-${_final_iter}.md"
     fi
 
     status=$(parse_review_findings "$worktree_dir")

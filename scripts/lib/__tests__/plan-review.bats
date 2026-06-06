@@ -472,3 +472,22 @@ FINDINGS
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
   [[ $status -ne 0 ]]
 }
+
+@test "run_plan_review_loop: archives findings to plan-review-findings-iter-N.md before deletion" {
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  [[ -f "$TMPDIR_TEST/plan-review-findings-iter-1.md" ]]
+  grep -q "P1: Bad state transition" "$TMPDIR_TEST/plan-review-findings-iter-1.md"
+}
