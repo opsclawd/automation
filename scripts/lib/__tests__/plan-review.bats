@@ -228,6 +228,22 @@ FINDINGS
   [[ $status -eq 0 ]]
 }
 
+@test "_check_review_worktree_violations: reviewer allowlist rejects plan.md edits" {
+  _DIFF_FILES="plan.md"
+  _LS_FILES=""
+  local reviewer_allowlist='^(plan-review-findings\.md|plan-review-passed\.marker)$'
+  run _check_review_worktree_violations "$TMPDIR_TEST" "" "$reviewer_allowlist"
+  [[ $status -ne 0 ]]
+}
+
+@test "_check_review_worktree_violations: reviewer allowlist accepts findings file" {
+  _DIFF_FILES="plan-review-findings.md"
+  _LS_FILES=""
+  local reviewer_allowlist='^(plan-review-findings\.md|plan-review-passed\.marker)$'
+  run _check_review_worktree_violations "$TMPDIR_TEST" "" "$reviewer_allowlist"
+  [[ $status -eq 0 ]]
+}
+
 # ── escalate_plan_review ────────────────────────────────────────────────────
 
 @test "escalate_plan_review: posts comment and adds label" {
@@ -242,12 +258,10 @@ FINDINGS
 # ── run_plan_review_loop ────────────────────────────────────────────────────
 
 @test "run_plan_review_loop: returns 0 when plan passes on first iteration" {
-  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
-## Review Result: PASS
-No P1 or P2 findings.
-FINDINGS
-
-  run_adversarial_reviewer() { return 0; }
+  run_adversarial_reviewer() {
+    echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0;
+  }
   run_plan_fixer() { return 0; }
 
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
@@ -306,4 +320,17 @@ FINDINGS
 
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
   [[ $status -eq 0 ]]
+}
+
+@test "run_plan_review_loop: stale findings file is removed before reviewer" {
+  # Pre-create a stale PASS findings file from a "previous" review
+  echo "## Review Result: PASS" > "$TMPDIR_TEST/plan-review-findings.md"
+
+  # Reviewer succeeds but writes nothing (simulating a crash/no-output)
+  run_adversarial_reviewer() { return 0; }
+  run_plan_fixer() { return 0; }
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  # Should fail because stale file was removed and reviewer produced nothing
+  [[ $status -ne 0 ]]
 }

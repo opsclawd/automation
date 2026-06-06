@@ -2,14 +2,16 @@
 # plan-review.sh — Adversarial plan review functions for the orchestrator.
 
 # _check_review_worktree_violations: Verify that the review/fix agents did not
-# modify files outside the allowed set (plan.md, plan-review-findings.md, and
-# marker files). Calls orchestrator_fail on violation.
+# modify files outside the allowed set. Calls orchestrator_fail on violation.
 # Args:
 #   $1 — worktree dir
 #   $2 — (optional) pre-agent SHA; if set, also checks for committed changes
+#   $3 — (optional) allowlist regex; defaults to plan.md + findings + marker
+#        Pass a stricter pattern for reviewer calls (findings + marker only).
 _check_review_worktree_violations() {
   local worktree_dir="$1"
   local pre_sha="${2:-}"
+  local allowlist="${3:-^(plan\.md|plan-review-findings\.md|plan-review-passed\.marker)$}"
   local violations
   violations=$({
     git -C "$worktree_dir" diff --name-only HEAD 2>/dev/null
@@ -17,7 +19,7 @@ _check_review_worktree_violations() {
     if [[ -n "$pre_sha" ]]; then
       git -C "$worktree_dir" diff --name-only "$pre_sha"..HEAD 2>/dev/null
     fi
-  } | grep . | grep -vE '^(plan\.md|plan-review-findings\.md|plan-review-passed\.marker)$' | tr '\n' ' ' || true)
+  } | grep . | grep -vE "$allowlist" | tr '\n' ' ' || true)
   if [[ -n "$violations" ]]; then
     orchestrator_fail "Plan review/fix agent modified unexpected files (contract violation): ${violations}"
   fi
@@ -251,6 +253,7 @@ run_plan_review_loop() {
 
     local _pre_review_sha
     _pre_review_sha=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || echo "")
+    rm -f "${worktree_dir}/plan-review-findings.md"
     run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration"
     local reviewer_ec=$?
     if [[ $reviewer_ec -ne 0 ]]; then
@@ -259,7 +262,7 @@ run_plan_review_loop() {
         "Reviewer agent failed on iteration ${iteration}" iteration="$iteration" exit_code="$reviewer_ec"
       orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
     fi
-    _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha"
+    _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^(plan-review-findings\.md|plan-review-passed\.marker)$'
 
     if [[ ! -f "${worktree_dir}/plan-review-findings.md" ]]; then
       warn "Reviewer agent completed successfully but plan-review-findings.md is missing"
