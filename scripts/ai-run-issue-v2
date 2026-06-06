@@ -1151,7 +1151,15 @@ if [[ "$PHASE" == "read_issue" ]]; then
     cp "${ARCHIVE_DIR}/plan.md" "${WORKTREE_DIR}/plan.md"
     cp "${ARCHIVE_DIR}/design.md" "${WORKTREE_DIR}/design.md" 2>/dev/null || true
     cp "${ARCHIVE_DIR}/task-manifest.json" "${WORKTREE_DIR}/task-manifest.json" 2>/dev/null || true
-    PHASE="implement"
+    if [[ -f "${ARCHIVE_DIR}/plan-review-passed.marker" ]]; then
+      cp "${ARCHIVE_DIR}/plan-review-passed.marker" "${WORKTREE_DIR}/plan-review-passed.marker"
+      PHASE="implement"
+    elif grep -q '<!-- plan-review-required -->' "${WORKTREE_DIR}/plan.md" 2>/dev/null; then
+      info "Archived plan has review sentinel — routing to plan-review before implement"
+      PHASE="plan-review"
+    else
+      PHASE="implement"
+    fi
   elif [[ -f "${ARCHIVE_DIR}/design.md" ]]; then
     info "Archive has design.md — pre-seeding to skip plan-design"
     cp "${ARCHIVE_DIR}/design.md" "${WORKTREE_DIR}/design.md"
