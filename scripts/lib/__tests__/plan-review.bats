@@ -42,9 +42,11 @@ setup() {
   node() { return ${_NODE_ECS}; }
   _GIT_SHA="abc123"
   _DIFF_FILES=""
+  _COMMITTED_DIFF_FILES=""
   _LS_FILES=""
   git() {
     case "$*" in
+      *"--name-only"*"..HEAD"*) echo "$_COMMITTED_DIFF_FILES";;
       *"--name-only"*) echo "$_DIFF_FILES";;
       *"--others"*"--exclude-standard"*) echo "$_LS_FILES";;
       *"rev-parse HEAD"*) echo "$_GIT_SHA";;
@@ -208,6 +210,22 @@ FINDINGS
   _LS_FILES=""
   run _check_review_worktree_violations "$TMPDIR_TEST"
   [[ $status -ne 0 ]]
+}
+
+@test "_check_review_worktree_violations: fails for committed source changes when pre-SHA provided" {
+  _DIFF_FILES=""
+  _LS_FILES=""
+  _COMMITTED_DIFF_FILES="src/index.ts"
+  run _check_review_worktree_violations "$TMPDIR_TEST" "abc123"
+  [[ $status -ne 0 ]]
+}
+
+@test "_check_review_worktree_violations: passes when only allowed files committed with pre-SHA" {
+  _DIFF_FILES=""
+  _LS_FILES=""
+  _COMMITTED_DIFF_FILES="plan.md"
+  run _check_review_worktree_violations "$TMPDIR_TEST" "abc123"
+  [[ $status -eq 0 ]]
 }
 
 # ── escalate_plan_review ────────────────────────────────────────────────────

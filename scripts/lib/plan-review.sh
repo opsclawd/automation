@@ -6,12 +6,17 @@
 # marker files). Calls orchestrator_fail on violation.
 # Args:
 #   $1 — worktree dir
+#   $2 — (optional) pre-agent SHA; if set, also checks for committed changes
 _check_review_worktree_violations() {
   local worktree_dir="$1"
+  local pre_sha="${2:-}"
   local violations
   violations=$({
     git -C "$worktree_dir" diff --name-only HEAD 2>/dev/null
     git -C "$worktree_dir" ls-files --others --exclude-standard 2>/dev/null
+    if [[ -n "$pre_sha" ]]; then
+      git -C "$worktree_dir" diff --name-only "$pre_sha"..HEAD 2>/dev/null
+    fi
   } | grep . | grep -vE '^(plan\.md|plan-review-findings\.md|plan-review-passed\.marker|\.gitignore)$' | tr '\n' ' ' || true)
   if [[ -n "$violations" ]]; then
     orchestrator_fail "Plan review/fix agent modified unexpected files (contract violation): ${violations}"
@@ -244,6 +249,8 @@ run_plan_review_loop() {
     emit_event "plan-review" "info" "plan_review.review_started" \
       "Review loop iteration ${iteration}" iteration="$iteration"
 
+    local _pre_review_sha
+    _pre_review_sha=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || echo "")
     run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration"
     local reviewer_ec=$?
     if [[ $reviewer_ec -ne 0 ]]; then
@@ -252,7 +259,7 @@ run_plan_review_loop() {
         "Reviewer agent failed on iteration ${iteration}" iteration="$iteration" exit_code="$reviewer_ec"
       orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
     fi
-    _check_review_worktree_violations "$worktree_dir"
+    _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha"
 
     if [[ ! -f "${worktree_dir}/plan-review-findings.md" ]]; then
       warn "Reviewer agent completed successfully but plan-review-findings.md is missing"
@@ -287,6 +294,8 @@ run_plan_review_loop() {
     fi
 
     if [[ "$status" == "P1_FOUND" ]]; then
+      local _pre_fixer_sha
+      _pre_fixer_sha=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || echo "")
       run_plan_fixer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration"
       local fixer_ec=$?
       if [[ $fixer_ec -ne 0 ]]; then
@@ -295,7 +304,7 @@ run_plan_review_loop() {
           "Plan fixer failed on iteration ${iteration}" iteration="$iteration" exit_code="$fixer_ec"
         orchestrator_fail "Plan fixer agent failed (exit ${fixer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
       fi
-      _check_review_worktree_violations "$worktree_dir"
+      _check_review_worktree_violations "$worktree_dir" "$_pre_fixer_sha"
       continue
     fi
   done
