@@ -1458,16 +1458,14 @@ if [[ "$PHASE" == "plan-review" ]]; then
         info "Plan review passed — proceeding to implement"
       else
         info "Plan review did not converge — invoking judgment agent"
-        local _pre_judge_sha
         _pre_judge_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
-        local judge_ec=0
+        judge_ec=0
         run_plan_review_judge "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW" "$JUDGMENT_AGENT_PROFILE" || judge_ec=$?
         if [[ $judge_ec -ne 0 ]]; then
           warn "Judgment agent failed (exit ${judge_ec})"
           escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
         else
           _check_review_worktree_violations "$WORKTREE_DIR" "$_pre_judge_sha" '^plan-review-judgment\.md$'
-          local judgment
           judgment=$(parse_judgment_decision "$WORKTREE_DIR")
           info "Judgment agent decision: ${judgment}"
           case "$judgment" in
@@ -1477,10 +1475,8 @@ if [[ "$PHASE" == "plan-review" ]]; then
               info "Plan review: judge PROCEED — proceeding to implement"
               ;;
             PROCEED_WITH_CAVEATS)
-              local _caveat_p1s
               _caveat_p1s=$(awk '/^### Unresolved P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${WORKTREE_DIR}/plan-review-judgment.md" 2>/dev/null || true)
               if [[ -n "$_caveat_p1s" ]]; then
-                local _caveat_lines
                 mapfile -t _caveat_lines <<< "$_caveat_p1s"
                 _append_known_limitations "${WORKTREE_DIR}/plan.md" "${_caveat_lines[@]}"
               fi
