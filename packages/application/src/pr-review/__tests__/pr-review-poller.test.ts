@@ -58,6 +58,13 @@ const partial = (): PollPassResult => ({
   allResolved: false,
   rateLimited: false,
 });
+const rateLimited = (): PollPassResult => ({
+  outcome: 'RATE_LIMITED',
+  processed: 0,
+  blocked: 0,
+  allResolved: false,
+  rateLimited: true,
+});
 
 describe('PrReviewPoller', () => {
   it('stops at the first all-resolved pass', async () => {
@@ -106,5 +113,24 @@ describe('PrReviewPoller', () => {
       phaseId: PhaseName('post-pr-review'),
     });
     expect(sleeps).toEqual([1000, 1000]);
+  });
+});
+
+describe('PrReviewPoller — rate limit', () => {
+  it('backs off and retries the same poll number on rate limit', async () => {
+    const { poller, sleeps, events } = makePoller([rateLimited(), resolved()]);
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(sleeps).toContain(60_000);
+    expect(
+      events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.rate_limited'),
+    ).toBe(true);
   });
 });
