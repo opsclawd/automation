@@ -38,6 +38,11 @@ setup() {
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
+  eval "$(awk '
+    /^_append_known_limitations\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
   LOG_OUTPUT=""
   log() { LOG_OUTPUT="${LOG_OUTPUT}$*\n"; }
   warn() { log "WARN: $*"; }
@@ -512,4 +517,47 @@ FINDINGS
   [[ $status -eq 0 ]]
   [[ -f "$TMPDIR_TEST/plan-review-findings-iter-1.md" ]]
   grep -q "P1: Bad state transition" "$TMPDIR_TEST/plan-review-findings-iter-1.md"
+}
+
+@test "run_plan_review_loop: exits 0 on PROCEED_WITH_CONCERNS without invoking fixer" {
+  _fixer_called=0
+  run_adversarial_reviewer() {
+    cat > "${WORKTREE_DIR}/plan-review-findings.md" << 'EOF'
+## Review Result: PROCEED_WITH_CONCERNS
+**Reasoning:** P1 needs future infra.
+### P1s carried forward
+- Missing retry: requires circuit breaker not in scope
+EOF
+    return 0
+  }
+  run_plan_fixer() { _fixer_called=1; return 0; }
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Test Plan
+## Task 1: Something
+PLAN
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  [[ $_fixer_called -eq 0 ]]
+  grep -q "Known Limitations" "$TMPDIR_TEST/plan.md"
+}
+
+@test "_append_known_limitations: appends to existing section" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+## Known Limitations
+- Existing limitation
+PLAN
+  _append_known_limitations "$TMPDIR_TEST/plan.md" "- New limitation"
+  grep -q "New limitation" "$TMPDIR_TEST/plan.md"
+  grep -qc "Known Limitations" "$TMPDIR_TEST/plan.md"
+}
+
+@test "_append_known_limitations: creates section when absent" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+## Task 1: Something
+PLAN
+  _append_known_limitations "$TMPDIR_TEST/plan.md" "- First limitation"
+  grep -q "## Known Limitations" "$TMPDIR_TEST/plan.md"
+  grep -q "First limitation" "$TMPDIR_TEST/plan.md"
 }

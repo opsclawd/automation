@@ -112,6 +112,30 @@ parse_review_findings() {
   echo "PASS"
 }
 
+# _append_known_limitations: Append items to a Known Limitations section in plan.md.
+# Creates the section if it doesn't exist.
+# Args:
+#   $1 — path to plan.md
+#   $2... — items to append (each as a separate argument)
+_append_known_limitations() {
+  local plan_file="$1"
+  shift
+  local items=("$@")
+  if [[ ! -f "$plan_file" ]]; then
+    return
+  fi
+  if grep -q '^## Known Limitations' "$plan_file"; then
+    for item in "${items[@]}"; do
+      echo "$item" >> "$plan_file"
+    done
+  else
+    printf '\n## Known Limitations\n' >> "$plan_file"
+    for item in "${items[@]}"; do
+      echo "$item" >> "$plan_file"
+    done
+  fi
+}
+
 # run_adversarial_reviewer: Invoke the reviewer agent to read plan.md and
 # produce plan-review-findings.md.
 # Args:
@@ -344,6 +368,21 @@ run_plan_review_loop() {
       info "Plan passed with P2 acknowledgments on iteration ${iteration}"
       emit_event "plan-review" "info" "plan_review.review_passed" \
         "Plan passed with P2 acknowledgments" iterations="$iteration" p2="$p2_count"
+      return 0
+    fi
+
+    if [[ "$status" == "PROCEED_WITH_CONCERNS" ]]; then
+      info "Plan review: reviewer proceeds with concerns on iteration ${iteration}"
+      emit_event "plan-review" "info" "plan_review.proceed_with_concerns" \
+        "Reviewer invoked PROCEED_WITH_CONCERNS" iteration="$iteration"
+      local _carried_p1s
+      _carried_p1s=$(grep -A 100 '^### P1s carried forward' "${worktree_dir}/plan-review-findings.md" 2>/dev/null \
+        | tail -n +2 | grep '^- ' || true)
+      if [[ -n "$_carried_p1s" ]]; then
+        while IFS= read -r _p1_line; do
+          _append_known_limitations "${worktree_dir}/plan.md" "$_p1_line"
+        done <<< "$_carried_p1s"
+      fi
       return 0
     fi
 
