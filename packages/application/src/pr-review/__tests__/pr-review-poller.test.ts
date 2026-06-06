@@ -105,7 +105,11 @@ describe('PrReviewPoller', () => {
     });
     expect(result.pollsRun).toBe(3);
     expect(result.terminalState).toBe('max_polls_reached');
-    expect(terminalStates).toEqual([{ runId: String(runId), state: 'max_polls_reached' }]);
+    expect(terminalStates).toEqual([
+      { runId: String(runId), state: 'running' },
+      { runId: String(runId), state: 'running' },
+      { runId: String(runId), state: 'max_polls_reached' },
+    ]);
   });
 
   it('sleeps the configured interval between polls but not after the last', async () => {
@@ -119,6 +123,30 @@ describe('PrReviewPoller', () => {
       phaseId: PhaseName('post-pr-review'),
     });
     expect(sleeps).toEqual([1000, 1000]);
+  });
+
+  it('persists nextPollAt before sleeping between polls', async () => {
+    const scheduleCalls: Array<{ state: string; nextPollAt?: Date }> = [];
+    const { poller } = makePoller([partial(), partial(), resolved()], {
+      maxPolls: 5,
+      recordTerminalState: async (_attempt, state, nextPollAt) => {
+        scheduleCalls.push({ state, nextPollAt });
+      },
+    });
+    await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(scheduleCalls).toHaveLength(3);
+    expect(scheduleCalls[0].state).toBe('running');
+    expect(scheduleCalls[0].nextPollAt).toBeInstanceOf(Date);
+    expect(scheduleCalls[1].state).toBe('running');
+    expect(scheduleCalls[1].nextPollAt).toBeInstanceOf(Date);
+    expect(scheduleCalls[2].state).toBe('all_resolved');
   });
 });
 
@@ -195,9 +223,11 @@ describe('PrReviewPoller — global timeout', () => {
     });
     expect(result.terminalState).toBe('timed_out');
     expect(result.pollsRun).toBe(1);
-    expect(recordCalls).toHaveLength(1);
+    expect(recordCalls).toHaveLength(2);
     expect(recordCalls[0].attempt).toBe(fakeAttempt);
-    expect(recordCalls[0].state).toBe('timed_out');
+    expect(recordCalls[0].state).toBe('running');
+    expect(recordCalls[1].attempt).toBe(fakeAttempt);
+    expect(recordCalls[1].state).toBe('timed_out');
   });
 });
 
@@ -340,6 +370,57 @@ describe('PrReviewPoller — transient error recovery', () => {
     expect(
       events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.failed'),
     ).toBe(true);
+  });
+
+  it('terminates as max_polls_reached after MAX_EXCEPTION_RETRIES consecutive failures', async () => {
+    const { poller, events } = makePoller([], {
+      maxPolls: 10,
+      processOnePass: async () => {
+        throw new Error('permanent bug');
+      },
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('max_polls_reached');
+    expect(result.pollsRun).toBe(0);
+    expect(
+      events.filter((e) => (e.event as { type: string }).type === 'post-pr-review.poll.failed'),
+    ).toHaveLength(3);
+    expect(
+      events.some(
+        (e) => (e.event as { type: string }).type === 'post-pr-review.poll.max_retries_reached',
+      ),
+    ).toBe(true);
+  });
+
+  it('resets consecutive failure counter after a successful pass', async () => {
+    let callCount = 0;
+    const { poller, events } = makePoller([], {
+      maxPolls: 10,
+      processOnePass: async () => {
+        callCount++;
+        if (callCount === 1 || callCount === 3) throw new Error('transient');
+        return { result: partial(), attempt: undefined };
+      },
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(
+      events.filter((e) => (e.event as { type: string }).type === 'post-pr-review.poll.failed'),
+    ).toHaveLength(2);
+    expect(result.pollsRun).toBeGreaterThan(0);
   });
 
   it('retries on failure and terminates as timed_out when deadline passes during retry', async () => {

@@ -30,7 +30,8 @@ export interface PrReviewPollerDeps {
   phaseStartedAt: Date;
   recordTerminalState: (
     attempt: PollAttempt | undefined,
-    state: PollerTerminalState,
+    state: PollerTerminalState | 'running',
+    nextPollAt?: Date,
   ) => Promise<void>;
 }
 
@@ -51,6 +52,7 @@ export interface PrReviewPollerResult {
 }
 
 const RATE_LIMIT_BACKOFF_MS = 60_000;
+const MAX_EXCEPTION_RETRIES = 3;
 
 export class PrReviewPoller {
   constructor(private readonly deps: PrReviewPollerDeps) {}
@@ -61,6 +63,7 @@ export class PrReviewPoller {
     const deadline = new Date(d.phaseStartedAt.getTime() + d.readyMaxDays * DAY_MS);
     let pollsRun = 0;
     let lastAttempt: PollAttempt | undefined;
+    let consecutiveFailures = 0;
 
     for (let pollNumber = 1; pollNumber <= d.maxPolls; pollNumber++) {
       if (d.now() >= deadline) {
@@ -76,15 +79,27 @@ export class PrReviewPoller {
       try {
         ({ result: pass, attempt } = await d.processOnePass({ ...input, pollNumber }));
       } catch (err) {
+        consecutiveFailures++;
         this.emit(input, 'post-pr-review.poll.failed', 'warn', {
           pollNumber,
+          consecutiveFailures,
           error: err instanceof Error ? err.message : String(err),
         });
+        if (consecutiveFailures >= MAX_EXCEPTION_RETRIES) {
+          this.emit(input, 'post-pr-review.poll.max_retries_reached', 'warn', {
+            pollNumber,
+            consecutiveFailures,
+          });
+          const result = { terminalState: 'max_polls_reached' as const, pollsRun };
+          await d.recordTerminalState(lastAttempt, result.terminalState);
+          return result;
+        }
         await this.cappedSleep(RATE_LIMIT_BACKOFF_MS, deadline);
         pollNumber--;
         continue;
       }
       if (attempt) lastAttempt = attempt;
+      consecutiveFailures = 0;
 
       if (pass.rateLimited) {
         this.emit(input, 'post-pr-review.poll.rate_limited', 'warn', {
@@ -124,6 +139,12 @@ export class PrReviewPoller {
       }
 
       if (pollNumber < d.maxPolls) {
+        const cappedMs = Math.max(
+          0,
+          Math.min(d.pollIntervalMs, deadline.getTime() - d.now().getTime()),
+        );
+        const nextPollAt = new Date(d.now().getTime() + cappedMs);
+        await d.recordTerminalState(lastAttempt, 'running' as PollerTerminalState, nextPollAt);
         await this.cappedSleep(d.pollIntervalMs, deadline);
       }
     }

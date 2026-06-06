@@ -277,13 +277,13 @@ export function composeRoot(opts: ComposeOptions): Container {
       pollIntervalMs: opts.pollIntervalMs,
       readyMaxDays: opts.readyMaxDays,
       phaseStartedAt: opts.phaseStartedAt,
-      recordTerminalState: async (attempt, state) => {
+      recordTerminalState: async (attempt, state, nextPollAt) => {
         if (attempt) {
           prReviewRepository.updatePollAttempt({
             ...attempt,
-            ...(attempt.status === 'running' ? { status: 'completed' } : {}),
-            terminalState: state,
-            completedAt: new Date(),
+            ...(attempt.status === 'running' && state !== 'running' ? { status: 'completed' } : {}),
+            ...(state !== 'running' ? { terminalState: state, completedAt: new Date() } : {}),
+            ...(nextPollAt ? { nextPollAt } : {}),
           });
         }
       },
