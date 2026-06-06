@@ -641,3 +641,40 @@ PLAN
   [[ $status -eq 0 ]]
   [[ -f "$TMPDIR_TEST/plan-review-judgment.md" ]]
 }
+
+# ── run_plan_review_loop: max iterations & judge routing ─────────────────────
+
+@test "run_plan_review_loop: returns 1 after max iterations without convergence" {
+  run_adversarial_reviewer() {
+    echo "### P1: Persistent finding" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "2"
+  [[ $status -ne 0 ]]
+  [[ -f "$TMPDIR_TEST/plan-review-findings-iter-1.md" ]]
+  [[ -f "$TMPDIR_TEST/plan-review-findings-iter-2.md" ]]
+}
+
+@test "judge routing: PROCEED_WITH_CAVEATS appends Known Limitations to plan.md" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED_WITH_CAVEATS
+**Reasoning:** Scoped P1s.
+### Unresolved P1s carried forward
+- Missing retry: needs circuit breaker not in scope
+JUDGMENT
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+PLAN
+  local judgment
+  judgment=$(parse_judgment_decision "$TMPDIR_TEST")
+  [[ "$judgment" == "PROCEED_WITH_CAVEATS" ]]
+  local _caveat_p1s
+  _caveat_p1s=$(grep -A 100 '^### Unresolved P1s carried forward' "$TMPDIR_TEST/plan-review-judgment.md" 2>/dev/null \
+    | tail -n +2 | grep '^- ' || true)
+  while IFS= read -r _p1_line; do
+    _append_known_limitations "$TMPDIR_TEST/plan.md" "$_p1_line"
+  done <<< "$_caveat_p1s"
+  grep -q "Known Limitations" "$TMPDIR_TEST/plan.md"
+  grep -q "Missing retry" "$TMPDIR_TEST/plan.md"
+}
