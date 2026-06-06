@@ -112,6 +112,44 @@ parse_review_findings() {
   echo "PASS"
 }
 
+# parse_judgment_decision: Read plan-review-judgment.md and extract the judgment.
+# Returns one of: PROCEED | PROCEED_WITH_CAVEATS | ESCALATE
+# Args:
+#   $1 — path to the worktree directory containing plan-review-judgment.md
+parse_judgment_decision() {
+  local worktree_dir="$1"
+  local judgment_file="${worktree_dir}/plan-review-judgment.md"
+
+  if [[ ! -f "$judgment_file" ]]; then
+    echo "ESCALATE"
+    return
+  fi
+
+  local judgment_line
+  judgment_line=$(grep -iE '^## Judgment:' "$judgment_file" | head -1 || true)
+  if [[ -z "$judgment_line" ]]; then
+    echo "ESCALATE"
+    return
+  fi
+
+  if echo "$judgment_line" | grep -qiE 'PROCEED_WITH_CAVEATS'; then
+    echo "PROCEED_WITH_CAVEATS"
+    return
+  fi
+
+  if echo "$judgment_line" | grep -qiE 'PROCEED'; then
+    echo "PROCEED"
+    return
+  fi
+
+  if echo "$judgment_line" | grep -qiE 'ESCALATE'; then
+    echo "ESCALATE"
+    return
+  fi
+
+  echo "ESCALATE"
+}
+
 # _append_known_limitations: Append items to a Known Limitations section in plan.md.
 # Creates the section if it doesn't exist.
 # Args:
@@ -495,4 +533,96 @@ The adversarial review loop reached the maximum of ${max_iter} iterations withou
     "Escalated to human: max iterations reached" issue="$issue_num" max_iterations="$max_iter"
 
   orchestrator_fail "Plan review did not converge after ${max_iter} iterations. Escalated to issue #${issue_num}."
+}
+
+# run_plan_review_judge: Invoke the judgment agent to evaluate non-convergent reviews.
+# Args:
+#   $1 — worktree dir
+#   $2 — repo root
+#   $3 — run ID
+#   $4 — repo ID
+#   $5 — branch name
+#   $6 — timeout seconds
+run_plan_review_judge() {
+  local worktree_dir="$1"
+  local repo_root="$2"
+  local run_id="$3"
+  local repo_id="$4"
+  local branch="$5"
+  local timeout_sec="$6"
+
+  local issues_dir="$worktree_dir"
+  local tsx_loader="${_TSX_LOADER:-tsx}"
+
+  log "  Plan review: invoking judgment agent..."
+
+  local _iteration_files=""
+  for f in "${worktree_dir}"/plan-review-findings-iter-*.md; do
+    if [[ -f "$f" ]]; then
+      _iteration_files="${_iteration_files}
+- $(basename "$f")"
+    fi
+  done
+
+  local JUDGE_PROMPT="You are a plan-review judge. Your job is to evaluate whether unresolved findings across multiple review iterations warrant blocking the plan.
+## CONTEXT
+You are working in: ${worktree_dir}
+Plan file: plan.md
+## ITERATION FINDINGS
+The following files contain findings from each review iteration:${_iteration_files}
+Read each file and plan.md.
+## YOUR TASK
+1. Read all iteration findings files listed above.
+2. Read plan.md.
+3. Determine whether the unresolved findings represent a fundamental design flaw or are scoped/bounded issues that are safe to proceed with.
+4. Write your judgment to ${worktree_dir}/plan-review-judgment.md.
+## OUTPUT FORMAT
+Write your judgment to ${worktree_dir}/plan-review-judgment.md using one of:
+If findings were minor, contradictory, or diminishing:
+\`\`\`markdown
+## Judgment: PROCEED
+**Reasoning:** [1-2 sentences]
+\`\`\`
+If genuine P1s remain but are scoped/bounded enough to proceed:
+\`\`\`markdown
+## Judgment: PROCEED_WITH_CAVEATS
+**Reasoning:** [1-2 sentences]
+
+### Unresolved P1s carried forward
+- [P1 title]: [one-line summary]
+\`\`\`
+If findings represent a fundamental design flaw:
+\`\`\`markdown
+## Judgment: ESCALATE
+**Reasoning:** [1-2 sentences]
+\`\`\`
+## MANDATORY OUTPUT FILE
+Write judgment to: ${worktree_dir}/plan-review-judgment.md
+## STOP RULE
+Stop after writing plan-review-judgment.md. Do NOT modify any other file.
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${branch}."
+
+  local _judge_prompt_file
+  _judge_prompt_file=$(mktemp)
+  printf '%s' "$JUDGE_PROMPT" > "$_judge_prompt_file"
+  local _main_state_before
+  _main_state_before=$(_capture_main_state)
+  ! NODE_OPTIONS='--conditions=development' node --import "$tsx_loader" "${repo_root}/apps/cli/src/run-agent.ts" \
+    --phase plan-judge \
+    --phase-id "plan-judge-1" \
+    --cwd "$worktree_dir" \
+    --run-id "$run_id" \
+    --repo-id "$repo_id" \
+    --repo-root "$repo_root" \
+    --prompt-file "$_judge_prompt_file" \
+    --timeout-minutes $(( (timeout_sec + 59) / 60 )) \
+    --start-sha "$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${issues_dir}/plan-judge.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+  rm -f "$_judge_prompt_file"
+  if [[ ${_tee_ec:-0} -ne 0 ]]; then
+    warn "tee failed writing log for plan-judge (exit $_tee_ec)"
+  fi
+  _guard_main_checkout "plan-judge-1" "$_main_state_before"
+  check_branch_after_agent
+  return ${_agent_ec:-0}
 }

@@ -43,6 +43,16 @@ setup() {
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
+  eval "$(awk '
+    /^parse_judgment_decision\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  eval "$(awk '
+    /^run_plan_review_judge\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
   LOG_OUTPUT=""
   log() { LOG_OUTPUT="${LOG_OUTPUT}$*\n"; }
   warn() { log "WARN: $*"; }
@@ -560,4 +570,74 @@ PLAN
   _append_known_limitations "$TMPDIR_TEST/plan.md" "- First limitation"
   grep -q "## Known Limitations" "$TMPDIR_TEST/plan.md"
   grep -q "First limitation" "$TMPDIR_TEST/plan.md"
+}
+
+# ── parse_judgment_decision ──────────────────────────────────────────────────
+
+@test "parse_judgment_decision: returns PROCEED for PROCEED judgment" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED
+**Reasoning:** Findings were minor across iterations.
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED" ]]
+}
+
+@test "parse_judgment_decision: returns PROCEED_WITH_CAVEATS" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED_WITH_CAVEATS
+**Reasoning:** Scoped P1s remain.
+
+### Unresolved P1s carried forward
+- Missing retry: needs circuit breaker
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED_WITH_CAVEATS" ]]
+}
+
+@test "parse_judgment_decision: returns ESCALATE" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: ESCALATE
+**Reasoning:** Fundamental design flaw.
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "ESCALATE" ]]
+}
+
+@test "parse_judgment_decision: returns ESCALATE when file missing" {
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "ESCALATE" ]]
+}
+
+@test "parse_judgment_decision: returns ESCALATE for unrecognized judgment" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: MAYBE
+**Reasoning:** Unclear.
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "ESCALATE" ]]
+}
+
+# ── run_plan_review_judge ────────────────────────────────────────────────────
+
+@test "run_plan_review_judge: writes judgment file and returns 0" {
+  node() {
+    cat > "${WORKTREE_DIR}/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED
+**Reasoning:** Findings were minor.
+JUDGMENT
+    return 0
+  }
+  _GIT_SHA="abc123"
+  _capture_main_state() { echo "main-state"; }
+  _guard_main_checkout() { :; }
+  check_branch_after_agent() { :; }
+
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+PLAN
+
+  run run_plan_review_judge "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60"
+  [[ $status -eq 0 ]]
+  [[ -f "$TMPDIR_TEST/plan-review-judgment.md" ]]
 }
