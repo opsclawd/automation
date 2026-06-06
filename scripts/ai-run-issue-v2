@@ -63,6 +63,7 @@ TIMEOUT_VALIDATE=300
 TIMEOUT_REVIEW=600
 TIMEOUT_FIX=900
 TIMEOUT_PR_FIX=1200
+TIMEOUT_PLAN_REVIEW=600
 
 TIMEOUT_COMPOUND=600
 
@@ -83,16 +84,25 @@ warn() { log "WARN: $*" >&2; }
 _ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
+PLAN_REVIEW_ENABLED=false
+MAX_PLAN_REVIEW_ITERATIONS=5
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
   _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.planReview.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
+  if [[ "$_val" == "false" ]]; then
+    PLAN_REVIEW_ENABLED=false
+  elif [[ "$_val" == "true" ]] || { [[ -z "$_val" || "$_val" == "null" ]] && jq -e '.phases.planReview' "$_ORCHESTRATOR_CONFIG" >/dev/null 2>&1; }; then
+    PLAN_REVIEW_ENABLED=true
+  fi
+  _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
 fi
 # Ensure the log target exists before the first log() call. The setup block
 # creates it later (around the "# ── setup" section), but we may log before
 # then on startup, and log() pipes through `tee -a` which fails fast with
 # set -euo pipefail if the directory is missing.
 mkdir -p "${ISSUES_DIR}"
-log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}"
+log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}"
 
 # Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
 # When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
@@ -106,6 +116,9 @@ source "${REPO_ROOT}/scripts/lib/guard-main-checkout.sh"
 source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
 # shellcheck source=lib/validation_result.sh
 source "${REPO_ROOT}/scripts/lib/validation_result.sh"
+
+# shellcheck source=lib/plan-review.sh
+source "${REPO_ROOT}/scripts/lib/plan-review.sh"
 
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
 # Invariant: _emit_phase_started must always be called before _emit_phase_done
@@ -427,6 +440,8 @@ seed_excludes() {
     # Existing worktrees have the base block. Patch in any patterns added after
     # the sentinel was last written without re-seeding the whole block.
     grep -qxF 'compound-draft.md' "$exclude_file" || echo 'compound-draft.md' >> "$exclude_file"
+    grep -qxF 'plan-review-findings.md' "$exclude_file" || echo 'plan-review-findings.md' >> "$exclude_file"
+    grep -qxF 'plan-review-passed.marker' "$exclude_file" || echo 'plan-review-passed.marker' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -467,6 +482,8 @@ arbiter-rationale-*.md
 deviation-record-*.md
 deviation-record-*.json
 review-loop-history.json
+plan-review-findings.md
+plan-review-passed.marker
 EOF
 }
 
@@ -982,7 +999,11 @@ detect_phase() {
   elif [[ -f "${ISSUES_DIR}/validation.result" ]]; then
     echo "whole-pr-review"
   elif [[ -f "${ISSUES_DIR}/plan.md" ]]; then
-    detect_resume_point
+    if [[ -f "${ISSUES_DIR}/plan-review-passed.marker" ]]; then
+      detect_resume_point
+    else
+      echo "plan-review"
+    fi
   elif [[ -f "${ISSUES_DIR}/design.md" ]]; then
     echo "plan-write"
   elif [[ -f "${ISSUES_DIR}/issue.json" ]]; then
@@ -1130,7 +1151,15 @@ if [[ "$PHASE" == "read_issue" ]]; then
     cp "${ARCHIVE_DIR}/plan.md" "${WORKTREE_DIR}/plan.md"
     cp "${ARCHIVE_DIR}/design.md" "${WORKTREE_DIR}/design.md" 2>/dev/null || true
     cp "${ARCHIVE_DIR}/task-manifest.json" "${WORKTREE_DIR}/task-manifest.json" 2>/dev/null || true
-    PHASE="implement"
+    if [[ -f "${ARCHIVE_DIR}/plan-review-passed.marker" ]]; then
+      cp "${ARCHIVE_DIR}/plan-review-passed.marker" "${WORKTREE_DIR}/plan-review-passed.marker"
+      PHASE="implement"
+    elif grep -q '<!-- plan-review-required -->' "${WORKTREE_DIR}/plan.md" 2>/dev/null; then
+      info "Archived plan has review sentinel — routing to plan-review before implement"
+      PHASE="plan-review"
+    else
+      PHASE="implement"
+    fi
   elif [[ -f "${ARCHIVE_DIR}/design.md" ]]; then
     info "Archive has design.md — pre-seeding to skip plan-design"
     cp "${ARCHIVE_DIR}/design.md" "${WORKTREE_DIR}/design.md"
@@ -1299,6 +1328,17 @@ The manifest is the machine-readable source of truth for task boundaries. plan.m
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code.
 - Do NOT create standalone \"run validation suite\" or \"make CI green\" tasks. If a test needs updating, that is a separate implementation task. The validate phase runs automatically after all tasks complete.
 
+## PLAN RISK CLASSIFICATION
+After writing plan.md, check whether your plan contains any of these patterns:
+- A retry loop or recovery path
+- A state machine with explicit transitions
+- An irreversible side effect (e.g., posting to an external API, writing to a database)
+
+If ANY of these patterns exist, add this HTML comment to the VERY FIRST LINE of plan.md:
+<!-- plan-review-required -->
+
+If none exist, do NOT add the comment. Simple/mechanical plans (adapters, CRUD, schema changes) should skip review.
+
 Write plan.md and task-manifest.json now."
 
   _plan_prompt_file=$(mktemp)
@@ -1390,6 +1430,39 @@ Write plan.md and task-manifest.json now."
   _emit_phase_done "plan-write"
 
   _lint_plan_verification
+
+  PHASE="plan-review"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE: plan-review — adversarial plan review loop
+# ═══════════════════════════════════════════════════════════════════════════
+if [[ "$PHASE" == "plan-review" ]]; then
+  log "=== Phase: plan-review (adversarial review) ==="
+  ensure_worktree
+  _emit_phase_started "plan-review"
+  LAST_PHASE="plan-review"
+
+  if [[ "$PLAN_REVIEW_ENABLED" == "true" ]]; then
+    if classify_plan_risk "$WORKTREE_DIR"; then
+      log "Plan contains retry/state-machine/side-effect patterns — running adversarial review"
+      if run_plan_review_loop "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW" "$MAX_PLAN_REVIEW_ITERATIONS"; then
+        touch "${WORKTREE_DIR}/plan-review-passed.marker"
+        _emit_phase_done "plan-review"
+        info "Plan review passed — proceeding to implement"
+      else
+        escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
+      fi
+    else
+      info "Plan classified as low-risk — skipping adversarial review"
+      emit_event "plan-review" "info" "plan_review.review_skipped" \
+        "Plan classified as low-risk, adversarial review skipped"
+      _emit_phase_done "plan-review"
+    fi
+  else
+    info "Plan review disabled in config — skipping"
+    _emit_phase_done "plan-review"
+  fi
 
   PHASE="implement"
 fi
@@ -3533,7 +3606,8 @@ if [[ "$PHASE" == "done" ]]; then
     fix-review-task-*.log fix-review-task-*.result \
     fix-review-*.log fix-review-*.result \
     arbiter-task-*.log arbiter-result.json arbiter-rationale-*.md \
-    deviation-record-*.md deviation-record-*.json review-loop-history.json; do
+    deviation-record-*.md deviation-record-*.json review-loop-history.json \
+    plan-review-passed.marker plan-review-findings.md plan-review.log plan-fix.log; do
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"

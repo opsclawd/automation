@@ -118,6 +118,39 @@ describe('loadConfig', () => {
     const cfg = loadConfig(repo);
     expect(cfg.phases.skip).toEqual([]);
   });
+
+  it('parses planReview config when provided', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          planReview: { maxIterations: 3, enabled: false },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.planReview!.maxIterations).toBe(3);
+    expect(cfg.phases.planReview!.enabled).toBe(false);
+  });
+
+  it('defaults planReview to undefined when omitted', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.planReview).toBeUndefined();
+  });
 });
 
 describe('loadConfig with local override', () => {

@@ -7,7 +7,8 @@
     "skip": [],
     "reviewFix": { "maxIterations": 10 },
     "implement": { "maxIterations": 5 },
-    "wholePrFix": { "maxIterations": 10 }
+    "wholePrFix": { "maxIterations": 10 },
+    "planReview": { "maxIterations": 5, "enabled": true }
   },
   "timeouts": {
     "readyMaxDays": 7,
@@ -122,7 +123,9 @@
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
       "extract": { "profile": "junior", "fallbackProfile": "builder" },
       "create-pr": { "profile": "junior", "fallbackProfile": "builder" },
-      "arbitrate": { "profile": "architect", "fallbackProfile": "senior" }
+      "arbitrate": { "profile": "architect", "fallbackProfile": "senior" },
+      "plan-review": { "profile": "architect", "fallbackProfile": "senior" },
+      "plan-fix": { "profile": "architect", "fallbackProfile": "senior" }
     }
   }
 }
