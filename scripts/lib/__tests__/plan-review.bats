@@ -205,6 +205,13 @@ FINDINGS
   [[ $status -eq 0 ]]
 }
 
+@test "_check_review_worktree_violations: default allowlist accepts task-manifest.json" {
+  _DIFF_FILES="task-manifest.json"
+  _LS_FILES=""
+  run _check_review_worktree_violations "$TMPDIR_TEST"
+  [[ $status -eq 0 ]]
+}
+
 @test "_check_review_worktree_violations: fails for source file modifications" {
   _DIFF_FILES="src/index.ts"
   _LS_FILES=""
@@ -231,7 +238,7 @@ FINDINGS
 @test "_check_review_worktree_violations: reviewer allowlist rejects plan.md edits" {
   _DIFF_FILES="plan.md"
   _LS_FILES=""
-  local reviewer_allowlist='^(plan-review-findings\.md|plan-review-passed\.marker)$'
+  local reviewer_allowlist='^plan-review-findings\.md$'
   run _check_review_worktree_violations "$TMPDIR_TEST" "" "$reviewer_allowlist"
   [[ $status -ne 0 ]]
 }
@@ -239,9 +246,17 @@ FINDINGS
 @test "_check_review_worktree_violations: reviewer allowlist accepts findings file" {
   _DIFF_FILES="plan-review-findings.md"
   _LS_FILES=""
-  local reviewer_allowlist='^(plan-review-findings\.md|plan-review-passed\.marker)$'
+  local reviewer_allowlist='^plan-review-findings\.md$'
   run _check_review_worktree_violations "$TMPDIR_TEST" "" "$reviewer_allowlist"
   [[ $status -eq 0 ]]
+}
+
+@test "_check_review_worktree_violations: reviewer allowlist rejects pass marker" {
+  _DIFF_FILES="plan-review-passed.marker"
+  _LS_FILES=""
+  local reviewer_allowlist='^plan-review-findings\.md$'
+  run _check_review_worktree_violations "$TMPDIR_TEST" "" "$reviewer_allowlist"
+  [[ $status -ne 0 ]]
 }
 
 # ── escalate_plan_review ────────────────────────────────────────────────────

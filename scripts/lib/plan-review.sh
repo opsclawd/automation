@@ -6,12 +6,14 @@
 # Args:
 #   $1 — worktree dir
 #   $2 — (optional) pre-agent SHA; if set, also checks for committed changes
-#   $3 — (optional) allowlist regex; defaults to plan.md + findings + marker
-#        Pass a stricter pattern for reviewer calls (findings + marker only).
+#   $3 — (optional) allowlist regex; defaults to plan.md + findings.
+#        Pass a stricter pattern for reviewer calls (findings only).
+#        The pass marker is NEVER in the allowlist — only the orchestrator
+#        writes it after run_plan_review_loop returns success.
 _check_review_worktree_violations() {
   local worktree_dir="$1"
   local pre_sha="${2:-}"
-  local allowlist="${3:-^(plan\.md|plan-review-findings\.md|plan-review-passed\.marker)$}"
+  local allowlist="${3:-^(plan\.md|plan-review-findings\.md|task-manifest\.json)$}"
   local violations
   violations=$({
     git -C "$worktree_dir" diff --name-only HEAD 2>/dev/null
@@ -192,7 +194,8 @@ Findings file: plan-review-findings.md
 1. Read plan-review-findings.md.
 2. For each P1 finding: update plan.md to fix the incorrect or incomplete behavior. Quote what changed and why.
 3. For each P2 finding: add a '## Known Limitations' section to plan.md (if not present) and acknowledge the limitation.
-4. Do NOT change any file other than plan.md.
+4. If the plan changes affect task boundaries (add, remove, or renumber tasks), also update task-manifest.json to stay in sync.
+5. Do NOT change any other file.
 ## RULES
 - Do NOT switch branches.
 - Do NOT edit source files (*.ts, *.js, *.sh, *.py, etc.).
@@ -262,7 +265,7 @@ run_plan_review_loop() {
         "Reviewer agent failed on iteration ${iteration}" iteration="$iteration" exit_code="$reviewer_ec"
       orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
     fi
-    _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^(plan-review-findings\.md|plan-review-passed\.marker)$'
+    _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^plan-review-findings\.md$'
 
     if [[ ! -f "${worktree_dir}/plan-review-findings.md" ]]; then
       warn "Reviewer agent completed successfully but plan-review-findings.md is missing"
