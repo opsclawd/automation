@@ -501,6 +501,9 @@ EOF
 # shellcheck source=lib/result-resolver.sh
 source "${REPO_ROOT}/scripts/lib/result-resolver.sh"
 
+# shellcheck source=lib/plan-write-remediation.sh
+source "${REPO_ROOT}/scripts/lib/plan-write-remediation.sh"
+
 # validate_review_artifacts: checks that review artifacts satisfy the
 # agent contract. An agent must always produce a non-empty .md findings
 # file. The .result file is optional but, if present, must coexist with
@@ -1387,6 +1390,8 @@ Write plan.md and task-manifest.json now."
 
   _guard_main_checkout "plan-write" "$_main_state_before"
 
+  _detect_ignored_misplaced_plan || true
+
   _worktree_violations=$({
     git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null
     git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
@@ -1396,6 +1401,7 @@ Write plan.md and task-manifest.json now."
   } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
 
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _remediate_plan_write_violations
   if [[ -n "$_all_violations" ]]; then
     orchestrator_fail "plan-write agent modified source files (contract violation): ${_all_violations}"
   fi
