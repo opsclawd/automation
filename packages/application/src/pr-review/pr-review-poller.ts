@@ -130,9 +130,10 @@ export class PrReviewPoller {
 
       if (pass.allResolved) {
         this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
-        const result = { terminalState: 'all_resolved' as const, pollsRun };
-        await d.recordTerminalState(lastAttempt, result.terminalState);
-        return result;
+        // Do NOT return — keep watching so reviewers can add follow-up comments
+        // within the poll window. The loop terminates naturally at maxPolls or
+        // deadline, matching the legacy shell loop's "all resolved but keep
+        // polling" behavior.
       }
 
       if (!pass.allResolved && pass.blocked > 0 && pass.processed === 0) {

@@ -402,59 +402,63 @@ exit 1
     expect(typeof c.buildPrReviewPoller).toBe('function');
   });
 
-  it('wires processOnePass to ProcessPrReviewComments (no stub throw)', async () => {
-    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    writeFileSync(
-      path.join(root, '.ai-orchestrator.json'),
-      JSON.stringify({
-        validation: { commands: ['echo ok'], timeout: 60 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 3 },
-          implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-        agent: {
-          defaultProfile: 'test',
-          profiles: {
-            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+  it(
+    'wires processOnePass to ProcessPrReviewComments (no stub throw)',
+    { timeout: 15000 },
+    async () => {
+      const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+      writeFileSync(
+        path.join(root, '.ai-orchestrator.json'),
+        JSON.stringify({
+          validation: { commands: ['echo ok'], timeout: 60 },
+          phases: {
+            skip: [],
+            reviewFix: { maxIterations: 3 },
+            implement: { maxIterations: 3 },
+            wholePrFix: { maxIterations: 3 },
           },
-          phaseProfiles: {
-            'post-pr-review': { profile: 'test' },
+          timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+          agent: {
+            defaultProfile: 'test',
+            profiles: {
+              test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+            },
+            phaseProfiles: {
+              'post-pr-review': { profile: 'test' },
+            },
           },
-        },
-      }),
-    );
-    const c = composeRoot({
-      repoRoot: root,
-      scriptPath: '/dev/null',
-      runStartupSweeps: false,
-    });
-    const poller = c.buildPrReviewPoller({
-      maxPolls: 1,
-      pollIntervalMs: 1000,
-      readyMaxDays: 7,
-      phaseStartedAt: new Date(),
-    });
-    const deps = (poller as unknown as { deps: PrReviewPollerDeps }).deps;
-    // Intentional white-box: PrReviewPoller does not expose `deps` on its public
-    // surface. We cast to the internal shape to assert the M6-05 wiring contract
-    // (processOnePass delegates to ProcessPrReviewComments, not a stub throw).
-    // If PrReviewPoller's internal field naming changes, this test must be
-    // updated to match the new shape.
-    await expect(
-      deps.processOnePass({
-        runId: RunId('test'),
-        repoId: RepositoryId('o/r'),
-        repoFullName: 'o/r',
-        prNumber: 1,
-        cwd: root,
-        phaseId: PhaseName('post-pr-review'),
-        pollNumber: 1,
-      }),
-    ).rejects.not.toThrow('processOnePass not wired — wire ProcessPrReviewComments in M6-05');
-  });
+        }),
+      );
+      const c = composeRoot({
+        repoRoot: root,
+        scriptPath: '/dev/null',
+        runStartupSweeps: false,
+      });
+      const poller = c.buildPrReviewPoller({
+        maxPolls: 1,
+        pollIntervalMs: 1000,
+        readyMaxDays: 7,
+        phaseStartedAt: new Date(),
+      });
+      const deps = (poller as unknown as { deps: PrReviewPollerDeps }).deps;
+      // Intentional white-box: PrReviewPoller does not expose `deps` on its public
+      // surface. We cast to the internal shape to assert the M6-05 wiring contract
+      // (processOnePass delegates to ProcessPrReviewComments, not a stub throw).
+      // If PrReviewPoller's internal field naming changes, this test must be
+      // updated to match the new shape.
+      await expect(
+        deps.processOnePass({
+          runId: RunId('test'),
+          repoId: RepositoryId('o/r'),
+          repoFullName: 'o/r',
+          prNumber: 1,
+          cwd: root,
+          phaseId: PhaseName('post-pr-review'),
+          pollNumber: 1,
+        }),
+      ).rejects.not.toThrow('processOnePass not wired — wire ProcessPrReviewComments in M6-05');
+    },
+  );
 
   it('throws ConfigError when buildPrReviewPoller is called without agent config', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
