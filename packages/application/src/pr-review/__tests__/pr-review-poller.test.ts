@@ -457,6 +457,54 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
     expect(result.pollsRun).toBe(3);
     expect(eventTypes).not.toContain('post-pr-review.poll.started');
   });
+
+  it('does not count rate_limited attempts toward poll budget on resume', async () => {
+    const repo = new FakePrReviewRepository();
+    let clock = new Date('2026-06-04T00:00:00Z');
+    const pollNumbers: number[] = [];
+
+    repo.insertPollAttempt({
+      id: 'existing-rl',
+      runId,
+      prNumber: 5,
+      pollNumber: 1,
+      status: 'rate_limited',
+      commentsFetched: 0,
+      commentsProcessed: 0,
+      startedAt: new Date('2026-06-03T22:00:00Z'),
+      completedAt: new Date('2026-06-03T22:01:00Z'),
+    });
+
+    const deps: PrReviewPollerDeps = {
+      prReviewRepo: repo,
+      processOnePass: async (input) => {
+        pollNumbers.push(input.pollNumber);
+        return { result: resolved(), attempt: undefined };
+      },
+      eventBus: { publish: () => {} } as never,
+      sleep: async (ms: number) => {
+        clock = new Date(clock.getTime() + ms);
+      },
+      now: () => clock,
+      maxPolls: 3,
+      pollIntervalMs: 1000,
+      readyMaxDays: 7,
+      phaseStartedAt: clock,
+      recordTerminalState: async () => {},
+    };
+    const poller = new PrReviewPoller(deps);
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(pollNumbers).toEqual([1]);
+    expect(result.pollsRun).toBe(1);
+  });
 });
 
 describe('PrReviewPoller — transient error recovery', () => {

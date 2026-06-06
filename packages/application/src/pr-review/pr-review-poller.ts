@@ -62,12 +62,13 @@ export class PrReviewPoller {
     const DAY_MS = 24 * 60 * 60 * 1000;
     const deadline = new Date(d.phaseStartedAt.getTime() + d.readyMaxDays * DAY_MS);
     const existingAttempts = d.prReviewRepo.listPollAttempts(input.runId);
-    let pollsRun = existingAttempts.length;
+    const meaningfulAttempts = existingAttempts.filter((a) => a.status !== 'rate_limited');
+    let pollsRun = meaningfulAttempts.length;
     let lastAttempt: PollAttempt | undefined =
       existingAttempts.length > 0 ? existingAttempts[existingAttempts.length - 1] : undefined;
     let consecutiveFailures = 0;
 
-    for (let pollNumber = existingAttempts.length + 1; pollNumber <= d.maxPolls; pollNumber++) {
+    for (let pollNumber = meaningfulAttempts.length + 1; pollNumber <= d.maxPolls; pollNumber++) {
       if (d.now() >= deadline) {
         this.emit(input, 'post-pr-review.poll.timed_out', 'warn', { pollNumber });
         const result = { terminalState: 'timed_out' as const, pollsRun };
