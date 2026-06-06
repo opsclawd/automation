@@ -16,6 +16,7 @@ const phasesSchema = z.object({
     .object({
       maxIterations: z.number().int().positive(),
       enabled: z.boolean().default(true),
+      judgmentAgent: z.string().min(1).optional(),
     })
     .optional(),
 });
