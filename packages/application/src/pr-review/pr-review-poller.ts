@@ -80,7 +80,7 @@ export class PrReviewPoller {
           pollNumber,
           backoffMs: RATE_LIMIT_BACKOFF_MS,
         });
-        await d.sleep(RATE_LIMIT_BACKOFF_MS);
+        await this.cappedSleep(RATE_LIMIT_BACKOFF_MS, deadline);
         pollNumber--;
         continue;
       }
@@ -113,7 +113,7 @@ export class PrReviewPoller {
       }
 
       if (pollNumber < d.maxPolls) {
-        await d.sleep(d.pollIntervalMs);
+        await this.cappedSleep(d.pollIntervalMs, deadline);
       }
     }
 
@@ -148,5 +148,11 @@ export class PrReviewPoller {
       timestamp: this.deps.now().toISOString(),
       metadata,
     });
+  }
+
+  private async cappedSleep(requestedMs: number, deadline: Date): Promise<void> {
+    const remaining = deadline.getTime() - this.deps.now().getTime();
+    const ms = Math.max(0, Math.min(requestedMs, remaining));
+    if (ms > 0) await this.deps.sleep(ms);
   }
 }
