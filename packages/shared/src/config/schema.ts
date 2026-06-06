@@ -16,6 +16,7 @@ const phasesSchema = z.object({
     .object({
       maxIterations: z.number().int().positive(),
       enabled: z.boolean().default(true),
+      judgmentAgent: z.string().min(1).optional(),
     })
     .optional(),
 });
@@ -114,12 +115,26 @@ const agentSchema = z
     }
   });
 
-export const orchestratorConfigSchema = z.strictObject({
-  validation: validationSchema,
-  phases: phasesSchema,
-  timeouts: timeoutsSchema,
-  agent: agentSchema.optional(),
-});
+export const orchestratorConfigSchema = z
+  .strictObject({
+    validation: validationSchema,
+    phases: phasesSchema,
+    timeouts: timeoutsSchema,
+    agent: agentSchema.optional(),
+  })
+  .superRefine((config, ctx) => {
+    const judgmentAgent = config.phases.planReview?.judgmentAgent;
+    if (judgmentAgent && config.agent) {
+      const profileNames = new Set(Object.keys(config.agent.profiles));
+      if (!profileNames.has(judgmentAgent)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['phases', 'planReview', 'judgmentAgent'],
+          message: `phases.planReview.judgmentAgent '${judgmentAgent}' is not defined in agent.profiles`,
+        });
+      }
+    }
+  });
 
 export type OrchestratorConfig = z.infer<typeof orchestratorConfigSchema>;
 export type AgentConfig = NonNullable<OrchestratorConfig['agent']>;

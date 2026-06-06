@@ -82,7 +82,7 @@ classify_plan_risk() {
 
 # parse_review_findings: Read plan-review-findings.md and extract the highest
 # severity level present.
-# Returns one of: PASS | P2_ACKNOWLEDGED | P1_FOUND
+# Returns one of: PASS | P2_ACKNOWLEDGED | P1_FOUND | PROCEED_WITH_CONCERNS
 # Args:
 #   $1 — path to the worktree directory containing plan-review-findings.md
 parse_review_findings() {
@@ -91,6 +91,11 @@ parse_review_findings() {
 
   if [[ ! -f "$findings_file" ]]; then
     echo "PASS"
+    return
+  fi
+
+  if grep -qiE 'Review Result:[[:space:]]*PROCEED_WITH_CONCERNS' "$findings_file"; then
+    echo "PROCEED_WITH_CONCERNS"
     return
   fi
 
@@ -105,6 +110,68 @@ parse_review_findings() {
   fi
 
   echo "PASS"
+}
+
+# parse_judgment_decision: Read plan-review-judgment.md and extract the judgment.
+# Returns one of: PROCEED | PROCEED_WITH_CAVEATS | ESCALATE
+# Args:
+#   $1 — path to the worktree directory containing plan-review-judgment.md
+parse_judgment_decision() {
+  local worktree_dir="$1"
+  local judgment_file="${worktree_dir}/plan-review-judgment.md"
+
+  if [[ ! -f "$judgment_file" ]]; then
+    echo "ESCALATE"
+    return
+  fi
+
+  local judgment_line
+  judgment_line=$(grep -iE '^## Judgment:' "$judgment_file" | head -1 || true)
+  if [[ -z "$judgment_line" ]]; then
+    echo "ESCALATE"
+    return
+  fi
+
+  if echo "$judgment_line" | grep -qiE 'PROCEED_WITH_CAVEATS'; then
+    echo "PROCEED_WITH_CAVEATS"
+    return
+  fi
+
+  if echo "$judgment_line" | grep -qiE 'PROCEED'; then
+    echo "PROCEED"
+    return
+  fi
+
+  if echo "$judgment_line" | grep -qiE 'ESCALATE'; then
+    echo "ESCALATE"
+    return
+  fi
+
+  echo "ESCALATE"
+}
+
+# _append_known_limitations: Append items to a Known Limitations section in plan.md.
+# Creates the section if it doesn't exist.
+# Args:
+#   $1 — path to plan.md
+#   $2... — items to append (each as a separate argument)
+_append_known_limitations() {
+  local plan_file="$1"
+  shift
+  local items=("$@")
+  if [[ ! -f "$plan_file" ]]; then
+    return
+  fi
+  if grep -q '^## Known Limitations' "$plan_file"; then
+    for item in "${items[@]}"; do
+      echo "$item" >> "$plan_file"
+    done
+  else
+    printf '\n## Known Limitations\n' >> "$plan_file"
+    for item in "${items[@]}"; do
+      echo "$item" >> "$plan_file"
+    done
+  fi
 }
 
 # run_adversarial_reviewer: Invoke the reviewer agent to read plan.md and
@@ -163,6 +230,15 @@ If findings exist:
 **Plan text:** > [exact quote from plan]
 **What is incomplete:** [explanation]
 \`\`\`
+If findings exist but P1s are unresolvable within the current milestone scope:
+\`\`\`markdown
+## Review Result: PROCEED_WITH_CONCERNS
+**Reasoning:** [why the P1 is unresolvable within this milestone's scope — e.g., depends on a future story, requires infrastructure not in scope]
+
+### P1s carried forward
+- [P1 title]: [one-line summary]
+\`\`\`
+Use PROCEED_WITH_CONCERNS only when a P1 is a genuine correctness issue that cannot be resolved within the current plan's scope boundary. Do NOT use it for resolvable P1s or to avoid engaging with difficult findings.
 ## MANDATORY OUTPUT FILE
 Write findings to: ${worktree_dir}/plan-review-findings.md
 ## STOP RULE
@@ -312,6 +388,11 @@ run_plan_review_loop() {
       orchestrator_fail "Reviewer agent completed but plan-review-findings.md not found — agent contract violation"
     fi
 
+    # Archive findings before deletion at end of iteration
+    if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
+      cp "${worktree_dir}/plan-review-findings.md" "${worktree_dir}/plan-review-findings-iter-${iteration}.md"
+    fi
+
     status=$(parse_review_findings "$worktree_dir")
     local p1_count=0 p2_count=0
     if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
@@ -334,6 +415,20 @@ run_plan_review_loop() {
       info "Plan passed with P2 acknowledgments on iteration ${iteration}"
       emit_event "plan-review" "info" "plan_review.review_passed" \
         "Plan passed with P2 acknowledgments" iterations="$iteration" p2="$p2_count"
+      return 0
+    fi
+
+    if [[ "$status" == "PROCEED_WITH_CONCERNS" ]]; then
+      info "Plan review: reviewer proceeds with concerns on iteration ${iteration}"
+      emit_event "plan-review" "info" "plan_review.proceed_with_concerns" \
+        "Reviewer invoked PROCEED_WITH_CONCERNS" iteration="$iteration"
+      local _carried_p1s
+      _carried_p1s=$(awk '/^### P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || true)
+      if [[ -n "$_carried_p1s" ]]; then
+        local _p1_lines
+        mapfile -t _p1_lines <<< "$_carried_p1s"
+        _append_known_limitations "${worktree_dir}/plan.md" "${_p1_lines[@]}"
+      fi
       return 0
     fi
 
@@ -387,11 +482,29 @@ run_plan_review_loop() {
       orchestrator_fail "Reviewer agent completed but plan-review-findings.md not found on final review pass — agent contract violation"
     fi
 
+    # Archive final review findings before deletion
+    if [[ -f "${worktree_dir}/plan-review-findings.md" ]]; then
+      cp "${worktree_dir}/plan-review-findings.md" "${worktree_dir}/plan-review-findings-iter-${_final_iter}.md"
+    fi
+
     status=$(parse_review_findings "$worktree_dir")
     if [[ "$status" == "PASS" || "$status" == "P2_ACKNOWLEDGED" ]]; then
       info "Plan passed adversarial review on final pass (iteration ${_final_iter})"
       emit_event "plan-review" "info" "plan_review.review_passed" \
         "Plan passed adversarial review on final pass" iterations="$_final_iter"
+      return 0
+    fi
+
+    if [[ "$status" == "PROCEED_WITH_CONCERNS" ]]; then
+      info "Plan review: reviewer proceeds with concerns on final pass (iteration ${_final_iter})"
+      emit_event "plan-review" "info" "plan_review.proceed_with_concerns" \
+        "Reviewer invoked PROCEED_WITH_CONCERNS on final pass" iteration="$_final_iter"
+      _carried_p1s=$(awk '/^### P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || true)
+      if [[ -n "$_carried_p1s" ]]; then
+        local _p1_lines
+        mapfile -t _p1_lines <<< "$_carried_p1s"
+        _append_known_limitations "${worktree_dir}/plan.md" "${_p1_lines[@]}"
+      fi
       return 0
     fi
   fi
@@ -432,4 +545,110 @@ The adversarial review loop reached the maximum of ${max_iter} iterations withou
     "Escalated to human: max iterations reached" issue="$issue_num" max_iterations="$max_iter"
 
   orchestrator_fail "Plan review did not converge after ${max_iter} iterations. Escalated to issue #${issue_num}."
+}
+
+# run_plan_review_judge: Invoke the judgment agent to evaluate non-convergent reviews.
+# Args:
+#   $1 — worktree dir
+#   $2 — repo root
+#   $3 — run ID
+#   $4 — repo ID
+#   $5 — branch name
+#   $6 — timeout seconds
+#   $7 — (optional) judgment agent profile override
+run_plan_review_judge() {
+  local worktree_dir="$1"
+  local repo_root="$2"
+  local run_id="$3"
+  local repo_id="$4"
+  local branch="$5"
+  local timeout_sec="$6"
+  local judge_profile="${7:-}"
+
+  local issues_dir="$worktree_dir"
+  local tsx_loader="${_TSX_LOADER:-tsx}"
+
+  # Resolve profile: use explicit override, or fall back to plan-review phase profile
+  if [[ -z "$judge_profile" ]]; then
+    local _config="${_ORCHESTRATOR_CONFIG:-}"
+    if [[ -n "$_config" && -f "$_config" ]]; then
+      judge_profile=$(jq -r '.agent.phaseProfiles["plan-review"].profile // empty' "$_config" 2>/dev/null || true)
+    fi
+  fi
+
+  log "  Plan review: invoking judgment agent..."
+
+  local _iteration_files=""
+  for f in "${worktree_dir}"/plan-review-findings-iter-*.md; do
+    if [[ -f "$f" ]]; then
+      _iteration_files="${_iteration_files}
+- $(basename "$f")"
+    fi
+  done
+
+  local JUDGE_PROMPT="You are a plan-review judge. Your job is to evaluate whether unresolved findings across multiple review iterations warrant blocking the plan.
+## CONTEXT
+You are working in: ${worktree_dir}
+Plan file: plan.md
+## ITERATION FINDINGS
+The following files contain findings from each review iteration:${_iteration_files}
+Read each file and plan.md.
+## YOUR TASK
+1. Read all iteration findings files listed above.
+2. Read plan.md.
+3. Determine whether the unresolved findings represent a fundamental design flaw or are scoped/bounded issues that are safe to proceed with.
+4. Write your judgment to ${worktree_dir}/plan-review-judgment.md.
+## OUTPUT FORMAT
+Write your judgment to ${worktree_dir}/plan-review-judgment.md using one of:
+If findings were minor, contradictory, or diminishing:
+\`\`\`markdown
+## Judgment: PROCEED
+**Reasoning:** [1-2 sentences]
+\`\`\`
+If genuine P1s remain but are scoped/bounded enough to proceed:
+\`\`\`markdown
+## Judgment: PROCEED_WITH_CAVEATS
+**Reasoning:** [1-2 sentences]
+
+### Unresolved P1s carried forward
+- [P1 title]: [one-line summary]
+\`\`\`
+If findings represent a fundamental design flaw:
+\`\`\`markdown
+## Judgment: ESCALATE
+**Reasoning:** [1-2 sentences]
+\`\`\`
+## MANDATORY OUTPUT FILE
+Write judgment to: ${worktree_dir}/plan-review-judgment.md
+## STOP RULE
+Stop after writing plan-review-judgment.md. Do NOT modify any other file.
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${branch}."
+
+  local _judge_prompt_file
+  _judge_prompt_file=$(mktemp)
+  printf '%s' "$JUDGE_PROMPT" > "$_judge_prompt_file"
+  local _plan_checksum_before
+  _plan_checksum_before=$(_checksum_file "${worktree_dir}/plan.md")
+  local _main_state_before
+  _main_state_before=$(_capture_main_state)
+  ! NODE_OPTIONS='--conditions=development' node --import "$tsx_loader" "${repo_root}/apps/cli/src/run-agent.ts" \
+    --phase plan-judge \
+    --phase-id "plan-judge-1" \
+    ${judge_profile:+--profile "$judge_profile"} \
+    --cwd "$worktree_dir" \
+    --run-id "$run_id" \
+    --repo-id "$repo_id" \
+    --repo-root "$repo_root" \
+    --prompt-file "$_judge_prompt_file" \
+    --timeout-minutes $(( (timeout_sec + 59) / 60 )) \
+    --start-sha "$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${issues_dir}/plan-judge.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+  rm -f "$_judge_prompt_file"
+  if [[ ${_tee_ec:-0} -ne 0 ]]; then
+    warn "tee failed writing log for plan-judge (exit $_tee_ec)"
+  fi
+  _guard_main_checkout "plan-judge-1" "$_main_state_before"
+  _check_excluded_file_integrity "${worktree_dir}/plan.md" "$_plan_checksum_before" "plan.md"
+  check_branch_after_agent
+  return ${_agent_ec:-0}
 }

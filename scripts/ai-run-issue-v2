@@ -85,7 +85,8 @@ _ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
 PLAN_REVIEW_ENABLED=false
-MAX_PLAN_REVIEW_ITERATIONS=5
+MAX_PLAN_REVIEW_ITERATIONS=3
+JUDGMENT_AGENT_PROFILE=""
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
   _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
@@ -96,13 +97,14 @@ if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
     PLAN_REVIEW_ENABLED=true
   fi
   _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.planReview.judgmentAgent // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && JUDGMENT_AGENT_PROFILE="$_val"
 fi
 # Ensure the log target exists before the first log() call. The setup block
 # creates it later (around the "# ── setup" section), but we may log before
 # then on startup, and log() pipes through `tee -a` which fails fast with
 # set -euo pipefail if the directory is missing.
 mkdir -p "${ISSUES_DIR}"
-log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}"
+log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
 
 # Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
 # When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
@@ -442,6 +444,8 @@ seed_excludes() {
     grep -qxF 'compound-draft.md' "$exclude_file" || echo 'compound-draft.md' >> "$exclude_file"
     grep -qxF 'plan-review-findings.md' "$exclude_file" || echo 'plan-review-findings.md' >> "$exclude_file"
     grep -qxF 'plan-review-passed.marker' "$exclude_file" || echo 'plan-review-passed.marker' >> "$exclude_file"
+    grep -qxF 'plan-review-findings-iter-*.md' "$exclude_file" || echo 'plan-review-findings-iter-*.md' >> "$exclude_file"
+    grep -qxF 'plan-review-judgment.md' "$exclude_file" || echo 'plan-review-judgment.md' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -484,6 +488,8 @@ deviation-record-*.json
 review-loop-history.json
 plan-review-findings.md
 plan-review-passed.marker
+plan-review-findings-iter-*.md
+plan-review-judgment.md
 EOF
 }
 
@@ -1451,7 +1457,38 @@ if [[ "$PHASE" == "plan-review" ]]; then
         _emit_phase_done "plan-review"
         info "Plan review passed — proceeding to implement"
       else
-        escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
+        info "Plan review did not converge — invoking judgment agent"
+        _pre_judge_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+        judge_ec=0
+        run_plan_review_judge "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW" "$JUDGMENT_AGENT_PROFILE" || judge_ec=$?
+        if [[ $judge_ec -ne 0 ]]; then
+          warn "Judgment agent failed (exit ${judge_ec})"
+          escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
+        else
+          _check_review_worktree_violations "$WORKTREE_DIR" "$_pre_judge_sha" '^plan-review-judgment\.md$'
+          judgment=$(parse_judgment_decision "$WORKTREE_DIR")
+          info "Judgment agent decision: ${judgment}"
+          case "$judgment" in
+            PROCEED)
+              touch "${WORKTREE_DIR}/plan-review-passed.marker"
+              _emit_phase_done "plan-review"
+              info "Plan review: judge PROCEED — proceeding to implement"
+              ;;
+            PROCEED_WITH_CAVEATS)
+              _caveat_p1s=$(awk '/^### Unresolved P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${WORKTREE_DIR}/plan-review-judgment.md" 2>/dev/null || true)
+              if [[ -n "$_caveat_p1s" ]]; then
+                mapfile -t _caveat_lines <<< "$_caveat_p1s"
+                _append_known_limitations "${WORKTREE_DIR}/plan.md" "${_caveat_lines[@]}"
+              fi
+              touch "${WORKTREE_DIR}/plan-review-passed.marker"
+              _emit_phase_done "plan-review"
+              info "Plan review: judge PROCEED_WITH_CAVEATS — proceeding to implement with caveats"
+              ;;
+            *)
+              escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
+              ;;
+          esac
+        fi
       fi
     else
       info "Plan classified as low-risk — skipping adversarial review"
@@ -3607,7 +3644,7 @@ if [[ "$PHASE" == "done" ]]; then
     fix-review-*.log fix-review-*.result \
     arbiter-task-*.log arbiter-result.json arbiter-rationale-*.md \
     deviation-record-*.md deviation-record-*.json review-loop-history.json \
-    plan-review-passed.marker plan-review-findings.md plan-review.log plan-fix.log; do
+    plan-review-passed.marker plan-review-findings.md plan-review-findings-iter-*.md plan-review-judgment.md plan-review.log plan-fix.log plan-judge.log; do
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"

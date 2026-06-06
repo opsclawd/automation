@@ -38,6 +38,21 @@ setup() {
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
+  eval "$(awk '
+    /^_append_known_limitations\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  eval "$(awk '
+    /^parse_judgment_decision\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  eval "$(awk '
+    /^run_plan_review_judge\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
   LOG_OUTPUT=""
   log() { LOG_OUTPUT="${LOG_OUTPUT}$*\n"; }
   warn() { log "WARN: $*"; }
@@ -197,6 +212,28 @@ severity: P2 — minor issue
 FINDINGS
   run parse_review_findings "$TMPDIR_TEST"
   [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: returns PROCEED_WITH_CONCERNS when sentinel present" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: PROCEED_WITH_CONCERNS
+**Reasoning:** P1 depends on future infrastructure.
+### P1s carried forward
+- Missing retry: requires circuit breaker not in scope
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED_WITH_CONCERNS" ]]
+}
+
+@test "parse_review_findings: PROCEED_WITH_CONCERNS takes precedence over P1_FOUND" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: PROCEED_WITH_CONCERNS
+### P1: Scoped boundary issue
+**Plan text:** > retry logic
+**What actually happens:** needs future infra
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED_WITH_CONCERNS" ]]
 }
 
 # ── _check_review_worktree_violations ────────────────────────────────────────
@@ -471,4 +508,173 @@ FINDINGS
 
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
   [[ $status -ne 0 ]]
+}
+
+@test "run_plan_review_loop: archives findings to plan-review-findings-iter-N.md before deletion" {
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  [[ -f "$TMPDIR_TEST/plan-review-findings-iter-1.md" ]]
+  grep -q "P1: Bad state transition" "$TMPDIR_TEST/plan-review-findings-iter-1.md"
+}
+
+@test "run_plan_review_loop: exits 0 on PROCEED_WITH_CONCERNS without invoking fixer" {
+  _fixer_called=0
+  run_adversarial_reviewer() {
+    cat > "${WORKTREE_DIR}/plan-review-findings.md" << 'EOF'
+## Review Result: PROCEED_WITH_CONCERNS
+**Reasoning:** P1 needs future infra.
+### P1s carried forward
+- Missing retry: requires circuit breaker not in scope
+EOF
+    return 0
+  }
+  run_plan_fixer() { _fixer_called=1; return 0; }
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Test Plan
+## Task 1: Something
+PLAN
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  [[ $_fixer_called -eq 0 ]]
+  grep -q "Known Limitations" "$TMPDIR_TEST/plan.md"
+}
+
+@test "_append_known_limitations: appends to existing section" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+## Known Limitations
+- Existing limitation
+PLAN
+  _append_known_limitations "$TMPDIR_TEST/plan.md" "- New limitation"
+  grep -q "New limitation" "$TMPDIR_TEST/plan.md"
+  grep -qc "Known Limitations" "$TMPDIR_TEST/plan.md"
+}
+
+@test "_append_known_limitations: creates section when absent" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+## Task 1: Something
+PLAN
+  _append_known_limitations "$TMPDIR_TEST/plan.md" "- First limitation"
+  grep -q "## Known Limitations" "$TMPDIR_TEST/plan.md"
+  grep -q "First limitation" "$TMPDIR_TEST/plan.md"
+}
+
+# ── parse_judgment_decision ──────────────────────────────────────────────────
+
+@test "parse_judgment_decision: returns PROCEED for PROCEED judgment" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED
+**Reasoning:** Findings were minor across iterations.
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED" ]]
+}
+
+@test "parse_judgment_decision: returns PROCEED_WITH_CAVEATS" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED_WITH_CAVEATS
+**Reasoning:** Scoped P1s remain.
+
+### Unresolved P1s carried forward
+- Missing retry: needs circuit breaker
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "PROCEED_WITH_CAVEATS" ]]
+}
+
+@test "parse_judgment_decision: returns ESCALATE" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: ESCALATE
+**Reasoning:** Fundamental design flaw.
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "ESCALATE" ]]
+}
+
+@test "parse_judgment_decision: returns ESCALATE when file missing" {
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "ESCALATE" ]]
+}
+
+@test "parse_judgment_decision: returns ESCALATE for unrecognized judgment" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: MAYBE
+**Reasoning:** Unclear.
+JUDGMENT
+  run parse_judgment_decision "$TMPDIR_TEST"
+  [[ "$output" == "ESCALATE" ]]
+}
+
+# ── run_plan_review_judge ────────────────────────────────────────────────────
+
+@test "run_plan_review_judge: writes judgment file and returns 0" {
+  node() {
+    cat > "${WORKTREE_DIR}/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED
+**Reasoning:** Findings were minor.
+JUDGMENT
+    return 0
+  }
+  _GIT_SHA="abc123"
+  _capture_main_state() { echo "main-state"; }
+  _guard_main_checkout() { :; }
+  check_branch_after_agent() { :; }
+
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+PLAN
+
+  run run_plan_review_judge "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60"
+  [[ $status -eq 0 ]]
+  [[ -f "$TMPDIR_TEST/plan-review-judgment.md" ]]
+}
+
+# ── run_plan_review_loop: max iterations & judge routing ─────────────────────
+
+@test "run_plan_review_loop: returns 1 after max iterations without convergence" {
+  run_adversarial_reviewer() {
+    echo "### P1: Persistent finding" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "2"
+  [[ $status -ne 0 ]]
+  [[ -f "$TMPDIR_TEST/plan-review-findings-iter-1.md" ]]
+  [[ -f "$TMPDIR_TEST/plan-review-findings-iter-2.md" ]]
+}
+
+@test "judge routing: PROCEED_WITH_CAVEATS appends Known Limitations to plan.md" {
+  cat > "$TMPDIR_TEST/plan-review-judgment.md" << 'JUDGMENT'
+## Judgment: PROCEED_WITH_CAVEATS
+**Reasoning:** Scoped P1s.
+### Unresolved P1s carried forward
+- Missing retry: needs circuit breaker not in scope
+JUDGMENT
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+PLAN
+  local judgment
+  judgment=$(parse_judgment_decision "$TMPDIR_TEST")
+  [[ "$judgment" == "PROCEED_WITH_CAVEATS" ]]
+  local _caveat_p1s
+  _caveat_p1s=$(grep -A 100 '^### Unresolved P1s carried forward' "$TMPDIR_TEST/plan-review-judgment.md" 2>/dev/null \
+    | tail -n +2 | grep '^- ' || true)
+  while IFS= read -r _p1_line; do
+    _append_known_limitations "$TMPDIR_TEST/plan.md" "$_p1_line"
+  done <<< "$_caveat_p1s"
+  grep -q "Known Limitations" "$TMPDIR_TEST/plan.md"
+  grep -q "Missing retry" "$TMPDIR_TEST/plan.md"
 }
