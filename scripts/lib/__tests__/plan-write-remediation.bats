@@ -28,7 +28,7 @@ teardown() {
   echo "# Plan content" > "${WORKTREE_DIR}/docs/superpowers/plans/2026-06-04-test.md"
 
   _main_checkout_violations=""
-  _worktree_violations="docs/superpowers/plans/2026-06-04-test.md"
+  _worktree_violations="docs/superpowers/plans/2026-06-04-test.md "
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -43,12 +43,27 @@ teardown() {
   [[ "$output" == "# Plan content" ]]
 }
 
+@test "remediates single .md violation with leading and trailing whitespace" {
+  mkdir -p "${WORKTREE_DIR}/docs/plans"
+  echo "# Plan" > "${WORKTREE_DIR}/docs/plans/test.md"
+
+  _main_checkout_violations=""
+  _worktree_violations="  docs/plans/test.md  "
+  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+
+  _remediate_plan_write_violations
+
+  [[ -z "$_all_violations" ]]
+  [[ -f "${WORKTREE_DIR}/plan.md" ]]
+  [[ ! -f "${WORKTREE_DIR}/docs/plans/test.md" ]]
+}
+
 @test "does not remediate when main checkout has violations" {
   mkdir -p "${WORKTREE_DIR}/docs"
   echo "# Plan" > "${WORKTREE_DIR}/docs/plan.md"
 
-  _main_checkout_violations="something.ts"
-  _worktree_violations="docs/plan.md"
+  _main_checkout_violations="something.ts "
+  _worktree_violations="docs/plan.md "
   _all_violations="${_main_checkout_violations}${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -63,7 +78,7 @@ teardown() {
   echo "# B" > "${WORKTREE_DIR}/docs/b.md"
 
   _main_checkout_violations=""
-  _worktree_violations="docs/a.md docs/b.md"
+  _worktree_violations="docs/a.md docs/b.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -76,7 +91,7 @@ teardown() {
   echo "code" > "${WORKTREE_DIR}/stray.ts"
 
   _main_checkout_violations=""
-  _worktree_violations="stray.ts"
+  _worktree_violations="stray.ts "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -91,7 +106,7 @@ teardown() {
   echo "# Stray" > "${WORKTREE_DIR}/docs/stray.md"
 
   _main_checkout_violations=""
-  _worktree_violations="docs/stray.md"
+  _worktree_violations="docs/stray.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -103,7 +118,7 @@ teardown() {
 
 @test "does not remediate when violation file does not exist on disk" {
   _main_checkout_violations=""
-  _worktree_violations="phantom.md"
+  _worktree_violations="phantom.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -128,7 +143,7 @@ teardown() {
   echo "# Plan" > "${WORKTREE_DIR}/docs/plan.md"
 
   _main_checkout_violations=""
-  _worktree_violations="docs/plan.md"
+  _worktree_violations="docs/plan.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -143,7 +158,7 @@ teardown() {
   echo "keep" > "${WORKTREE_DIR}/docs/README.md"
 
   _main_checkout_violations=""
-  _worktree_violations="docs/plan.md"
+  _worktree_violations="docs/plan.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
@@ -158,7 +173,7 @@ teardown() {
   echo "# Notes" > "${WORKTREE_DIR}/notes.md"
 
   _main_checkout_violations=""
-  _worktree_violations="notes.md"
+  _worktree_violations="notes.md "
   _all_violations="${_worktree_violations}"
 
   _remediate_plan_write_violations
