@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { RunId, RepositoryId, PhaseName, PollAttempt } from '@ai-sdlc/domain';
+import {
+  RunId,
+  RepositoryId,
+  PhaseName,
+  PollAttempt,
+  createPrReviewComment,
+  blockComment,
+  markReplied,
+} from '@ai-sdlc/domain';
 import { FakePrReviewRepository } from '../../test-doubles/index.js';
 import {
   PrReviewPoller,
@@ -192,5 +200,119 @@ describe('PrReviewPoller — global timeout', () => {
     expect(recordCalls).toHaveLength(1);
     expect(recordCalls[0].attempt).toBe(fakeAttempt);
     expect(recordCalls[0].state).toBe('timed_out');
+  });
+});
+
+const allBlocked = (): PollPassResult => ({
+  outcome: 'PARTIAL',
+  processed: 0,
+  blocked: 1,
+  allResolved: false,
+  rateLimited: false,
+});
+
+describe('PrReviewPoller — blocked early-stop', () => {
+  it('stops immediately as blocked when no comments are in-flight and a pass produces blocked > 0 with processed = 0', async () => {
+    const { poller, repo } = makePoller([allBlocked()], { maxPolls: 5 });
+    const c = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 1,
+      reviewer: 'octocat',
+      body: 'x',
+      now: new Date(),
+    });
+    repo.upsertComment(blockComment(c, 'agent blocked'));
+
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('blocked');
+    expect(result.pollsRun).toBe(1);
+  });
+
+  it('does NOT stop early when comments are still in replied state, even if current pass has blocked > 0 and processed = 0', async () => {
+    const { poller, repo } = makePoller([allBlocked(), allBlocked(), resolved()], {
+      maxPolls: 5,
+    });
+    const c = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 1,
+      reviewer: 'octocat',
+      body: 'x',
+      now: new Date(),
+    });
+    const replied = markReplied(c, { replyId: 100, outcome: 'fixed', poll: 1 });
+    repo.upsertComment(replied);
+
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.pollsRun).toBeGreaterThan(1);
+  });
+
+  it('does not stop early when a pass has both processed and blocked comments', async () => {
+    const mixed = (): PollPassResult => ({
+      outcome: 'PARTIAL',
+      processed: 1,
+      blocked: 1,
+      allResolved: false,
+      rateLimited: false,
+    });
+    const { poller } = makePoller([mixed(), mixed(), resolved()], {
+      maxPolls: 5,
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(result.pollsRun).toBe(3);
+  });
+
+  it('does NOT stop early when comments are still in pending state, even if current pass has blocked > 0 and processed = 0', async () => {
+    const { poller, repo } = makePoller([allBlocked(), allBlocked(), resolved()], {
+      maxPolls: 5,
+    });
+    const c = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9002,
+      path: 'b.ts',
+      line: 2,
+      reviewer: 'octocat',
+      body: 'y',
+      now: new Date(),
+    });
+    repo.upsertComment(c);
+
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.pollsRun).toBeGreaterThan(1);
   });
 });

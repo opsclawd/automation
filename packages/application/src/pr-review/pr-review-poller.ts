@@ -101,10 +101,15 @@ export class PrReviewPoller {
       }
 
       if (!pass.allResolved && pass.blocked > 0 && pass.processed === 0) {
-        this.emit(input, 'post-pr-review.poll.blocked', 'warn', { pollsRun });
-        const result = { terminalState: 'blocked' as const, pollsRun };
-        await d.recordTerminalState(lastAttempt, result.terminalState, pollsRun);
-        return result;
+        const hasActiveWork = d.prReviewRepo
+          .listComments(input.runId)
+          .some((c) => c.state === 'replied' || c.state === 'pending');
+        if (!hasActiveWork) {
+          this.emit(input, 'post-pr-review.poll.blocked', 'warn', { pollsRun });
+          const result = { terminalState: 'blocked' as const, pollsRun };
+          await d.recordTerminalState(lastAttempt, result.terminalState, pollsRun);
+          return result;
+        }
       }
 
       if (pollNumber < d.maxPolls) {
