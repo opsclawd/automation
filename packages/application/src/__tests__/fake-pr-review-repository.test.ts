@@ -63,6 +63,72 @@ describe('FakePrReviewRepository', () => {
     expect(repo.listReplies(runId)).toHaveLength(1);
   });
 
+  it('returns the most-recently-inserted attempt for duplicate poll numbers', () => {
+    const repo = new FakePrReviewRepository();
+    const a1 = {
+      id: 'p1',
+      runId,
+      prNumber: 7,
+      pollNumber: 2,
+      status: 'running' as const,
+      commentsFetched: 0,
+      commentsProcessed: 0,
+      startedAt: new Date('2026-06-04T00:00:00Z'),
+    };
+    const a2 = {
+      id: 'p2',
+      runId,
+      prNumber: 7,
+      pollNumber: 2,
+      status: 'running' as const,
+      commentsFetched: 0,
+      commentsProcessed: 0,
+      startedAt: new Date('2026-06-04T01:00:00Z'),
+    };
+    repo.insertPollAttempt(a1);
+    repo.insertPollAttempt(a2);
+    expect(repo.latestPollAttempt(runId)).toBe(a2);
+  });
+
+  it('listPollAttempts preserves insertion order for the same run', () => {
+    const repo = new FakePrReviewRepository();
+    const attempts = [
+      {
+        id: 'p1',
+        runId,
+        prNumber: 7,
+        pollNumber: 1,
+        status: 'running' as const,
+        commentsFetched: 0,
+        commentsProcessed: 0,
+        startedAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 'p2',
+        runId,
+        prNumber: 7,
+        pollNumber: 2,
+        status: 'running' as const,
+        commentsFetched: 0,
+        commentsProcessed: 0,
+        startedAt: new Date('2026-06-04T01:00:00Z'),
+      },
+      {
+        id: 'p3',
+        runId,
+        prNumber: 7,
+        pollNumber: 3,
+        status: 'running' as const,
+        commentsFetched: 0,
+        commentsProcessed: 0,
+        startedAt: new Date('2026-06-04T02:00:00Z'),
+      },
+    ];
+    for (const a of attempts) repo.insertPollAttempt(a);
+    const listed = repo.listPollAttempts(runId);
+    expect(listed.map((a) => a.id)).toEqual(['p1', 'p2', 'p3']);
+  });
+
   it('updatePollAttempt replaces an existing attempt', () => {
     const repo = new FakePrReviewRepository();
     repo.insertPollAttempt({

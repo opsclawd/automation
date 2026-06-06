@@ -42,6 +42,18 @@ export class FakePrReviewRepository implements PrReviewRepositoryPort {
     return this.polls.filter((p) => p.runId === runId);
   }
   latestPollAttempt(runId: RunId): PollAttempt | undefined {
-    return this.listPollAttempts(runId).sort((a, b) => b.pollNumber - a.pollNumber)[0];
+    const attempts = this.listPollAttempts(runId);
+    if (attempts.length === 0) return undefined;
+    let best = attempts[0];
+    let bestIdx = 0;
+    for (let i = 1; i < attempts.length; i++) {
+      const a = attempts[i];
+      if (!a) continue;
+      if (a.pollNumber > best!.pollNumber || (a.pollNumber === best!.pollNumber && i > bestIdx)) {
+        best = a;
+        bestIdx = i;
+      }
+    }
+    return best;
   }
 }
