@@ -23,15 +23,18 @@ _remediate_plan_write_violations() {
       local _v_count
       _v_count=$(echo "$_worktree_violations" | wc -w)
       if [[ "$_v_count" -eq 1 ]]; then
-        local _v_file="${WORKTREE_DIR}/${_worktree_violations}"
+        local _trimmed_violations
+        read -r _trimmed_violations <<< "$_worktree_violations"
+        local _v_file="${WORKTREE_DIR}/${_trimmed_violations}"
         if [[ "$_v_file" == *.md && -f "$_v_file" && ! -f "${WORKTREE_DIR}/plan.md" ]]; then
-          warn "plan-write wrote plan to wrong path: ${_worktree_violations} — moving to plan.md"
+          warn "plan-write wrote plan to wrong path: ${_trimmed_violations} -- moving to plan.md"
           emit_event "plan-write" "warn" "plan_written.removed_mispath" \
-            "auto-remediated mispathed plan" src="${_worktree_violations}"
+            "auto-remediated mispathed plan" src="${_trimmed_violations}"
           mv "$_v_file" "${WORKTREE_DIR}/plan.md"
+          local _wt_norm="${WORKTREE_DIR%/}"
           local _v_dir
           _v_dir=$(dirname "$_v_file")
-          while [[ "$_v_dir" != "$WORKTREE_DIR" && -d "$_v_dir" ]] ; do
+          while [[ "${_v_dir%/}" != "$_wt_norm" && -d "$_v_dir" ]] ; do
             rmdir "$_v_dir" 2>/dev/null || break
             _v_dir=$(dirname "$_v_dir")
           done
