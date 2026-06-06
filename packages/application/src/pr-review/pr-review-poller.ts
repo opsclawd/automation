@@ -71,7 +71,19 @@ export class PrReviewPoller {
       }
 
       this.emit(input, 'post-pr-review.poll.started', 'info', { pollNumber });
-      const { result: pass, attempt } = await d.processOnePass({ ...input, pollNumber });
+      let pass: PollPassResult;
+      let attempt: PollAttempt | undefined;
+      try {
+        ({ result: pass, attempt } = await d.processOnePass({ ...input, pollNumber }));
+      } catch (err) {
+        this.emit(input, 'post-pr-review.poll.failed', 'warn', {
+          pollNumber,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        await this.cappedSleep(RATE_LIMIT_BACKOFF_MS, deadline);
+        pollNumber--;
+        continue;
+      }
       if (attempt) lastAttempt = attempt;
 
       if (pass.rateLimited) {

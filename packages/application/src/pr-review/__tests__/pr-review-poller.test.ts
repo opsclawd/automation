@@ -314,3 +314,61 @@ describe('PrReviewPoller — blocked early-stop', () => {
     expect(result.pollsRun).toBeGreaterThan(1);
   });
 });
+
+describe('PrReviewPoller — transient error recovery', () => {
+  it('retries the same poll number after processOnePass throws', async () => {
+    let callCount = 0;
+    const { poller, sleeps, events } = makePoller([], {
+      maxPolls: 3,
+      processOnePass: async () => {
+        callCount++;
+        if (callCount === 1) throw new Error('GitHub API timeout');
+        return { result: resolved(), attempt: undefined };
+      },
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(result.pollsRun).toBe(1);
+    expect(sleeps).toContain(60_000);
+    expect(
+      events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.failed'),
+    ).toBe(true);
+  });
+
+  it('retries on failure and terminates as timed_out when deadline passes during retry', async () => {
+    let callCount = 0;
+    const start = new Date('2026-06-04T00:00:00Z');
+    const { poller, events } = makePoller([], {
+      maxPolls: 5,
+      readyMaxDays: 7,
+      phaseStartedAt: start,
+      now: () => {
+        if (callCount === 0) return start;
+        return new Date('2026-06-12T00:00:00Z');
+      },
+      processOnePass: async () => {
+        callCount++;
+        throw new Error('network down');
+      },
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('timed_out');
+    expect(
+      events.filter((e) => (e.event as { type: string }).type === 'post-pr-review.poll.failed'),
+    ).toHaveLength(1);
+  });
+});
