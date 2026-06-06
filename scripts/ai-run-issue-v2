@@ -1458,13 +1458,12 @@ if [[ "$PHASE" == "plan-review" ]]; then
         info "Plan review passed — proceeding to implement"
       else
         info "Plan review did not converge — invoking judgment agent"
-        run_plan_review_judge "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW"
-        local judge_ec=$?
+        run_plan_review_judge "$WORKTREE_DIR" "$REPO_ROOT" "$RUN_ID" "$REPO_ID" "$BRANCH" "$TIMEOUT_PLAN_REVIEW" "$JUDGMENT_AGENT_PROFILE"
+        judge_ec=$?
         if [[ $judge_ec -ne 0 ]]; then
           warn "Judgment agent failed (exit ${judge_ec})"
           escalate_plan_review "$WORKTREE_DIR" "$ISSUE_NUM" "$MAX_PLAN_REVIEW_ITERATIONS"
         else
-          local judgment
           judgment=$(parse_judgment_decision "$WORKTREE_DIR")
           info "Judgment agent decision: ${judgment}"
           case "$judgment" in
@@ -1474,13 +1473,10 @@ if [[ "$PHASE" == "plan-review" ]]; then
               info "Plan review: judge PROCEED — proceeding to implement"
               ;;
             PROCEED_WITH_CAVEATS)
-              local _caveat_p1s
-              _caveat_p1s=$(grep -A 100 '^### Unresolved P1s carried forward' "${WORKTREE_DIR}/plan-review-judgment.md" 2>/dev/null \
-                | tail -n +2 | grep '^- ' || true)
+              _caveat_p1s=$(awk '/^### Unresolved P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${WORKTREE_DIR}/plan-review-judgment.md" 2>/dev/null || true)
               if [[ -n "$_caveat_p1s" ]]; then
-                while IFS= read -r _p1_line; do
-                  _append_known_limitations "${WORKTREE_DIR}/plan.md" "$_p1_line"
-                done <<< "$_caveat_p1s"
+                mapfile -t _caveat_lines <<< "$_caveat_p1s"
+                _append_known_limitations "${WORKTREE_DIR}/plan.md" "${_caveat_lines[@]}"
               fi
               touch "${WORKTREE_DIR}/plan-review-passed.marker"
               _emit_phase_done "plan-review"
@@ -3646,7 +3642,7 @@ if [[ "$PHASE" == "done" ]]; then
     fix-review-*.log fix-review-*.result \
     arbiter-task-*.log arbiter-result.json arbiter-rationale-*.md \
     deviation-record-*.md deviation-record-*.json review-loop-history.json \
-    plan-review-passed.marker plan-review-findings.md plan-review-findings-iter-*.md plan-review-judgment.md plan-review.log plan-fix.log; do
+    plan-review-passed.marker plan-review-findings.md plan-review-findings-iter-*.md plan-review-judgment.md plan-review.log plan-fix.log plan-judge.log; do
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"

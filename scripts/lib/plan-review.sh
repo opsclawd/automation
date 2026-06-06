@@ -423,12 +423,10 @@ run_plan_review_loop() {
       emit_event "plan-review" "info" "plan_review.proceed_with_concerns" \
         "Reviewer invoked PROCEED_WITH_CONCERNS" iteration="$iteration"
       local _carried_p1s
-      _carried_p1s=$(grep -A 100 '^### P1s carried forward' "${worktree_dir}/plan-review-findings.md" 2>/dev/null \
-        | tail -n +2 | grep '^- ' || true)
+      _carried_p1s=$(awk '/^### P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || true)
       if [[ -n "$_carried_p1s" ]]; then
-        while IFS= read -r _p1_line; do
-          _append_known_limitations "${worktree_dir}/plan.md" "$_p1_line"
-        done <<< "$_carried_p1s"
+        mapfile -t _p1_lines <<< "$_carried_p1s"
+        _append_known_limitations "${worktree_dir}/plan.md" "${_p1_lines[@]}"
       fi
       return 0
     fi
@@ -495,6 +493,18 @@ run_plan_review_loop() {
         "Plan passed adversarial review on final pass" iterations="$_final_iter"
       return 0
     fi
+
+    if [[ "$status" == "PROCEED_WITH_CONCERNS" ]]; then
+      info "Plan review: reviewer proceeds with concerns on final pass (iteration ${_final_iter})"
+      emit_event "plan-review" "info" "plan_review.proceed_with_concerns" \
+        "Reviewer invoked PROCEED_WITH_CONCERNS on final pass" iteration="$_final_iter"
+      _carried_p1s=$(awk '/^### P1s carried forward/{flag=1;next} /^#{1,3}[^#]/{flag=0} flag && /^- /{print}' "${worktree_dir}/plan-review-findings.md" 2>/dev/null || true)
+      if [[ -n "$_carried_p1s" ]]; then
+        mapfile -t _p1_lines <<< "$_carried_p1s"
+        _append_known_limitations "${worktree_dir}/plan.md" "${_p1_lines[@]}"
+      fi
+      return 0
+    fi
   fi
 
   emit_event "plan-review" "warn" "plan_review.max_iterations_reached" \
@@ -543,6 +553,7 @@ The adversarial review loop reached the maximum of ${max_iter} iterations withou
 #   $4 — repo ID
 #   $5 — branch name
 #   $6 — timeout seconds
+#   $7 — (optional) judgment agent profile override
 run_plan_review_judge() {
   local worktree_dir="$1"
   local repo_root="$2"
@@ -550,9 +561,18 @@ run_plan_review_judge() {
   local repo_id="$4"
   local branch="$5"
   local timeout_sec="$6"
+  local judge_profile="${7:-}"
 
   local issues_dir="$worktree_dir"
   local tsx_loader="${_TSX_LOADER:-tsx}"
+
+  # Resolve profile: use explicit override, or fall back to plan-review phase profile
+  if [[ -z "$judge_profile" ]]; then
+    local _config="${_ORCHESTRATOR_CONFIG:-}"
+    if [[ -n "$_config" && -f "$_config" ]]; then
+      judge_profile=$(jq -r '.agent.phaseProfiles["plan-review"].profile // empty' "$_config" 2>/dev/null || true)
+    fi
+  fi
 
   log "  Plan review: invoking judgment agent..."
 
@@ -610,6 +630,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   ! NODE_OPTIONS='--conditions=development' node --import "$tsx_loader" "${repo_root}/apps/cli/src/run-agent.ts" \
     --phase plan-judge \
     --phase-id "plan-judge-1" \
+    ${judge_profile:+--profile "$judge_profile"} \
     --cwd "$worktree_dir" \
     --run-id "$run_id" \
     --repo-id "$repo_id" \
