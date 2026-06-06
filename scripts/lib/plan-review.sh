@@ -192,6 +192,15 @@ If findings exist:
 **Plan text:** > [exact quote from plan]
 **What is incomplete:** [explanation]
 \`\`\`
+If findings exist but P1s are unresolvable within the current milestone scope:
+\`\`\`markdown
+## Review Result: PROCEED_WITH_CONCERNS
+**Reasoning:** [why the P1 is unresolvable within this milestone's scope — e.g., depends on a future story, requires infrastructure not in scope]
+
+### P1s carried forward
+- [P1 title]: [one-line summary]
+\`\`\`
+Use PROCEED_WITH_CONCERNS only when a P1 is a genuine correctness issue that cannot be resolved within the current plan's scope boundary. Do NOT use it for resolvable P1s or to avoid engaging with difficult findings.
 ## MANDATORY OUTPUT FILE
 Write findings to: ${worktree_dir}/plan-review-findings.md
 ## STOP RULE
