@@ -393,7 +393,7 @@ exit 1
 
   it('exposes a buildPrReviewPoller factory', () => {
     const c = composeRoot({
-      repoRoot: trackDir(() => path.join(os.tmpdir(), `compose-poller-test-${Date.now()}`)),
+      repoRoot: trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-'))),
       scriptPath: 'scripts/ai-run-issue-v2',
       dbPath: ':memory:',
     });

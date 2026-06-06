@@ -73,7 +73,6 @@ export class PrReviewPoller {
 
       this.emit(input, 'post-pr-review.poll.started', 'info', { pollNumber });
       const { result: pass, attempt } = await d.processOnePass({ ...input, pollNumber });
-      pollsRun++;
       if (attempt) lastAttempt = attempt;
 
       if (pass.rateLimited) {
@@ -85,6 +84,7 @@ export class PrReviewPoller {
         pollNumber--;
         continue;
       }
+      pollsRun++;
 
       this.emit(input, 'post-pr-review.poll.completed', 'info', {
         pollNumber,

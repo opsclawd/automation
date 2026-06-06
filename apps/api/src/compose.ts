@@ -281,7 +281,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         if (attempt) {
           prReviewRepository.updatePollAttempt({
             ...attempt,
-            status: 'completed',
+            ...(attempt.status === 'running' ? { status: 'completed' } : {}),
             terminalState: state,
             completedAt: new Date(),
           });
