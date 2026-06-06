@@ -28,8 +28,8 @@
 # Returns 0 if a misplaced plan was found and moved, 1 otherwise.
 _detect_ignored_misplaced_plan() {
   if [[ ! -f "${WORKTREE_DIR}/plan.md" ]]; then
-    local _misplaced
-    local _raw
+    local _misplaced=""
+    local _raw=""
     _raw=$(find "$WORKTREE_DIR" -name plan.md -mindepth 2 \
       -not -path '*/node_modules/*' \
       -not -path '*/.next/*' \
