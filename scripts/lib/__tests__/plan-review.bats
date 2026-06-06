@@ -19,6 +19,16 @@ setup() {
   ' "$SCRIPT_PATH")"
 
   eval "$(awk '
+    /^_checksum_file\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  eval "$(awk '
+    /^_check_excluded_file_integrity\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  eval "$(awk '
     /^escalate_plan_review\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
@@ -256,6 +266,47 @@ FINDINGS
   _LS_FILES=""
   local reviewer_allowlist='^plan-review-findings\.md$'
   run _check_review_worktree_violations "$TMPDIR_TEST" "" "$reviewer_allowlist"
+  [[ $status -ne 0 ]]
+}
+
+# ── _check_excluded_file_integrity ──────────────────────────────────────────
+
+@test "_check_excluded_file_integrity: passes when file unchanged" {
+  echo "content" > "$TMPDIR_TEST/plan.md"
+  local checksum
+  checksum=$(_checksum_file "$TMPDIR_TEST/plan.md")
+  run _check_excluded_file_integrity "$TMPDIR_TEST/plan.md" "$checksum" "plan.md"
+  [[ $status -eq 0 ]]
+}
+
+@test "_check_excluded_file_integrity: fails when file modified" {
+  echo "original" > "$TMPDIR_TEST/plan.md"
+  local checksum
+  checksum=$(_checksum_file "$TMPDIR_TEST/plan.md")
+  echo "modified by reviewer" > "$TMPDIR_TEST/plan.md"
+  run _check_excluded_file_integrity "$TMPDIR_TEST/plan.md" "$checksum" "plan.md"
+  [[ $status -ne 0 ]]
+  [[ "$output" =~ "contract violation" ]]
+}
+
+@test "_check_excluded_file_integrity: fails when file created from nothing" {
+  local checksum=""
+  echo "new content" > "$TMPDIR_TEST/plan.md"
+  run _check_excluded_file_integrity "$TMPDIR_TEST/plan.md" "$checksum" "plan.md"
+  [[ $status -ne 0 ]]
+}
+
+@test "_check_excluded_file_integrity: passes when both missing" {
+  run _check_excluded_file_integrity "$TMPDIR_TEST/nonexistent.md" "" "nonexistent.md"
+  [[ $status -eq 0 ]]
+}
+
+@test "_check_excluded_file_integrity: fails when file deleted" {
+  echo "content" > "$TMPDIR_TEST/plan.md"
+  local checksum
+  checksum=$(_checksum_file "$TMPDIR_TEST/plan.md")
+  rm "$TMPDIR_TEST/plan.md"
+  run _check_excluded_file_integrity "$TMPDIR_TEST/plan.md" "$checksum" "plan.md"
   [[ $status -ne 0 ]]
 }
 

@@ -1,6 +1,31 @@
 #!/usr/bin/env bash
 # plan-review.sh — Adversarial plan review functions for the orchestrator.
 
+# _checksum_file: Compute a stable checksum for a file, or empty string if missing.
+_checksum_file() {
+  [[ -f "$1" ]] && sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || echo ""
+}
+
+# _check_excluded_file_integrity: Verify that a git-excluded file has not been
+# modified by an agent. Git's --exclude-standard hides ignored files from
+# ls-files and diff, so _check_review_worktree_violations cannot detect edits
+# to files in the exclude list (e.g., plan.md when seed_excludes ignores it).
+# Calls orchestrator_fail on mismatch.
+# Args:
+#   $1 — file path
+#   $2 — expected checksum (from _checksum_file captured before agent ran)
+#   $3 — label for error message (e.g., "plan.md")
+_check_excluded_file_integrity() {
+  local file_path="$1"
+  local expected_checksum="$2"
+  local label="${3:-$(basename "$file_path")}"
+  local actual_checksum
+  actual_checksum=$(_checksum_file "$file_path")
+  if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+    orchestrator_fail "Agent modified excluded file ${label} (contract violation): checksum changed from '${expected_checksum:-<missing>}' to '${actual_checksum:-<missing>}'"
+  fi
+}
+
 # _check_review_worktree_violations: Verify that the review/fix agents did not
 # modify files outside the allowed set. Calls orchestrator_fail on violation.
 # Args:
@@ -263,6 +288,8 @@ run_plan_review_loop() {
 
     local _pre_review_sha
     _pre_review_sha=$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || echo "")
+    local _plan_checksum_before
+    _plan_checksum_before=$(_checksum_file "${worktree_dir}/plan.md")
     rm -f "${worktree_dir}/plan-review-findings.md"
     run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration"
     local reviewer_ec=$?
@@ -273,6 +300,7 @@ run_plan_review_loop() {
       orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
     fi
     _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^plan-review-findings\.md$'
+    _check_excluded_file_integrity "${worktree_dir}/plan.md" "$_plan_checksum_before" "plan.md"
 
     if [[ ! -f "${worktree_dir}/plan-review-findings.md" ]]; then
       warn "Reviewer agent completed successfully but plan-review-findings.md is missing"
