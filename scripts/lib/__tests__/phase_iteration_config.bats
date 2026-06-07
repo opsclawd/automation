@@ -95,3 +95,21 @@ _load_config_block() {
   _load_config_block
   [[ "$LOG_OUTPUT" == *"fixValidate.maxIterations=1"* ]]
 }
+
+@test "reads fixValidate.enabled=false from config" {
+  echo '{"phases":{"reviewFix":{"maxIterations":5},"implement":{"maxIterations":5},"fixValidate":{"maxIterations":2,"enabled":false}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$FIX_VALIDATE_ENABLED" = "false" ]
+}
+
+@test "defaults fixValidate.enabled to true when absent" {
+  echo '{"phases":{"reviewFix":{"maxIterations":5},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$FIX_VALIDATE_ENABLED" = "true" ]
+}
+
+@test "logs fixValidate.enabled on startup" {
+  echo '{"phases":{"reviewFix":{"maxIterations":5},"implement":{"maxIterations":5},"fixValidate":{"maxIterations":2,"enabled":false}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [[ "$LOG_OUTPUT" == *"fixValidate.enabled=false"* ]]
+}

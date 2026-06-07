@@ -111,7 +111,10 @@ function buildRetryRequest(
 
 export async function extractResult(input: ExtractResultInput): Promise<ExtractResultOutcome> {
   const { invocation, ports, rerunContext } = input;
-  const phase = invocation.phaseId as string;
+  // Normalize dynamic phase IDs like "fix-validate-1" → "fix-validate"
+  // so iteration-suffixed invocations resolve against the registry.
+  const rawPhase = invocation.phaseId as string;
+  const phase = rawPhase.replace(/-\d+$/, '');
   if (!Object.hasOwn(PHASE_RESULT_REGISTRY, phase)) {
     throw new Error(`no result schema registered for phase '${invocation.phaseId}'`);
   }

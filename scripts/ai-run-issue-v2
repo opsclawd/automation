@@ -88,6 +88,7 @@ MAX_WHOLE_PR_FIX_ITERATIONS=10
 PLAN_REVIEW_ENABLED=false
 MAX_PLAN_REVIEW_ITERATIONS=3
 MAX_FIX_VALIDATE_ITERATIONS=2
+FIX_VALIDATE_ENABLED=true
 JUDGMENT_AGENT_PROFILE=""
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
@@ -101,13 +102,15 @@ if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
   _val=$(jq -r '.phases.planReview.judgmentAgent // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && JUDGMENT_AGENT_PROFILE="$_val"
   _val=$(jq -r '.phases.fixValidate.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_VALIDATE_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.fixValidate.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
+  [[ "$_val" == "false" ]] && FIX_VALIDATE_ENABLED=false
 fi
 # Ensure the log target exists before the first log() call. The setup block
 # creates it later (around the "# ── setup" section), but we may log before
 # then on startup, and log() pipes through `tee -a` which fails fast with
 # set -euo pipefail if the directory is missing.
 mkdir -p "${ISSUES_DIR}"
-log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, fixValidate.maxIterations=${MAX_FIX_VALIDATE_ITERATIONS}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
+log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, fixValidate.maxIterations=${MAX_FIX_VALIDATE_ITERATIONS}, fixValidate.enabled=${FIX_VALIDATE_ENABLED}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
 
 # Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
 # When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
@@ -1004,39 +1007,8 @@ get_task_review_range() {
     is_task_complete "$1" || true
   }
 
-detect_phase() {
-  if [[ -n "${ORCHESTRATOR_PHASE:-}" ]]; then
-    echo "$ORCHESTRATOR_PHASE"
-    return
-  fi
-
-  if [[ -f "${ISSUES_DIR}/pr-url.txt" ]]; then
-    echo "done"
-  elif [[ -f "${ISSUES_DIR}/compound.md" ]]; then
-    echo "create-pr"
-  elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
-    echo "fix-review"
-  elif [[ -f "${ISSUES_DIR}/validation.result" ]]; then
-    _vr=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)
-    if [[ "$_vr" == "passed" ]] || [[ -f "${ISSUES_DIR}/fix-validate-done.marker" ]]; then
-      echo "whole-pr-review"
-    else
-      echo "fix-validate"
-    fi
-  elif [[ -f "${ISSUES_DIR}/plan.md" ]]; then
-    if [[ -f "${ISSUES_DIR}/plan-review-passed.marker" ]]; then
-      detect_resume_point
-    else
-      echo "plan-review"
-    fi
-  elif [[ -f "${ISSUES_DIR}/design.md" ]]; then
-    echo "plan-write"
-  elif [[ -f "${ISSUES_DIR}/issue.json" ]]; then
-    echo "plan-design"
-  else
-    echo "read_issue"
-  fi
-}
+# shellcheck source=lib/detect-phase.sh
+source "${REPO_ROOT}/scripts/lib/detect-phase.sh"
 
 # _lint_plan_verification: heuristic pre-check of plan verification commands
 # after plan-write. Catches whole-file greps without line-range scoping that
@@ -2804,7 +2776,15 @@ if [[ "$PHASE" == "fix-validate" ]]; then
   _emit_phase_started "fix-validate"
   LAST_PHASE="fix-validate"
 
-  if [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]]; then
+  if [[ "$FIX_VALIDATE_ENABLED" == "false" ]]; then
+    info "fix-validate disabled via config — skipping."
+    emit_event "fix-validate" "info" "loop.skipped" \
+      "fix-validate disabled in .ai-orchestrator.json" \
+      reason="disabled"
+    touch "${ISSUES_DIR}/fix-validate-done.marker"
+    _emit_phase_done "fix-validate"
+    PHASE="whole-pr-review"
+  elif [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]]; then
     info "Validation passed — skipping fix-validate loop."
     emit_event "fix-validate" "info" "loop.skipped" \
       "validation.result is passed; no fix needed" \
@@ -2943,7 +2923,8 @@ Start now."
       # Mutation guard
       if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
         git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
-        rm -f "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log" "${ISSUES_DIR}/validation-fv-${FIX_VALIDATE_COUNT}.md"
+        rm -f "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log" "${ISSUES_DIR}/validation-fv-${FIX_VALIDATE_COUNT}.md" \
+              "${ISSUES_DIR}/fix-validate-done.marker"
         orchestrator_fail "revalidate after fix-validate produced uncommitted changes — mutation not allowed"
       fi
 
@@ -3847,6 +3828,7 @@ if [[ "$PHASE" == "done" ]]; then
     implementation-log.md \
     compound.md \
     validation.md validation.result validate.log revalidate-*.log validation-*.md \
+    fix-validate-*.log revalidate-fv-*.log validation-fv-*.md fix-validate-done.marker \
     review.md review-fix-log.md code-review.md review-findings-status.txt fix-status.txt \
     pr-summary.md pr-url.txt pr-number.txt \
     poll-pr.log \
