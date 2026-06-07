@@ -22,6 +22,16 @@ if [[ -z "$ISSUE_NUM" ]]; then
   echo "FATAL: ISSUE_NUM is required. The poller must not run from the main checkout." >&2
   exit 1
 fi
+# Escape hatch: USE_LEGACY_POLL=1 runs the legacy bash poller (issue #230).
+# Must run before the branch-gating check below: the legacy poller has its own
+# bootstrap that syncs the worktree to the PR branch
+# (scripts/legacy/ai-pr-review-poll.legacy:142-145), so the shim's stricter
+# preflight would otherwise block the documented recovery path.
+if [[ "${USE_LEGACY_POLL:-0}" == "1" ]]; then
+  exec bash "${REPO_ROOT}/scripts/legacy-poll" \
+    "$PR_NUMBER" "$ISSUE_NUM" "$MAX_POLLS" "$POLL_INTERVAL"
+fi
+
 POLL_CWD="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
 if [[ ! -d "$POLL_CWD" ]]; then
   echo "FATAL: worktree $POLL_CWD does not exist. Create it before polling." >&2
@@ -56,14 +66,6 @@ POLL_TMPDIR="${REPO_ROOT}/ai/poll-pr-${PR_NUMBER}/tmp"
 mkdir -p "$POLL_TMPDIR"
 export TMPDIR="$POLL_TMPDIR"
 export SQLITE_TMPDIR="$POLL_TMPDIR"
-
-# Escape hatch: USE_LEGACY_POLL=1 runs the legacy bash poller (issue #230).
-# Called via scripts/legacy-poll symlink so BASH_SOURCE[0] gives dirname=scripts/,
-# letting the legacy script compute REPO_ROOT correctly.
-if [[ "${USE_LEGACY_POLL:-0}" == "1" ]]; then
-  exec bash "${REPO_ROOT}/scripts/legacy-poll" \
-    "$PR_NUMBER" "$ISSUE_NUM" "$MAX_POLLS" "$POLL_INTERVAL"
-fi
 
 ARGS=(--pr "$PR_NUMBER" --repo "$OWNER_REPO" --cwd "$POLL_CWD"
       --max-polls "$MAX_POLLS" --interval-seconds "$POLL_INTERVAL")
