@@ -229,4 +229,26 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(0);
     expect(readFileSync(r.stdoutPath, 'utf-8').trim()).toBe('');
   });
+
+  it('skips no_output check for artifact-only phases with expectedArtifacts', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-silent-zero.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd, { expectedArtifacts: ['result.md'] }));
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('no_output');
+  });
+
+  it('persists NO_OUTPUT diagnostic in stderr.log', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-silent-zero.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
+  });
 });

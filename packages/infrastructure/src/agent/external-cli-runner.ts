@@ -22,6 +22,7 @@ export interface ExternalCliRunInput {
   forceKillAfterDelayMs?: number;
   detached?: boolean;
   startCommitSha?: string;
+  expectedArtifacts?: string[];
 }
 
 export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentInvocationResult> {
@@ -152,12 +153,13 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     input.startCommitSha &&
     endCommitSha === input.startCommitSha &&
     !stdout.trim() &&
-    !stderr.trim()
+    !stderr.trim() &&
+    !input.expectedArtifacts?.length
   ) {
     outcome = 'contract_violation';
     contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
-    stderr = 'NO_OUTPUT: agent exited 0 with empty stdout and no git changes';
     stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
+    writeFileSync(stderrPath, stderrForLog);
   }
 
   const ret: AgentInvocationResult = {
