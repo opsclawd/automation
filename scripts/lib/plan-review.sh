@@ -184,6 +184,7 @@ _append_known_limitations() {
 #   $5 — branch name
 #   $6 — timeout seconds
 #   $7 — iteration number (for logging)
+#   $8 — (optional) path to previous iteration's findings file; empty on first iteration
 run_adversarial_reviewer() {
   local worktree_dir="$1"
   local repo_root="$2"
@@ -192,6 +193,7 @@ run_adversarial_reviewer() {
   local branch="$5"
   local timeout_sec="$6"
   local iteration="$7"
+  local prev_findings_path="${8:-}"
 
   local issues_dir="$worktree_dir"
   local tsx_loader="${_TSX_LOADER:-tsx}"
@@ -244,6 +246,24 @@ Write findings to: ${worktree_dir}/plan-review-findings.md
 ## STOP RULE
 Stop after writing plan-review-findings.md. Do NOT modify any other file.
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${branch}."
+
+if [[ -n "$prev_findings_path" && -f "$prev_findings_path" ]]; then
+  REVIEWER_PROMPT+="
+
+## PREVIOUS FINDINGS
+Previous findings file: ${prev_findings_path}
+This is a RE-review pass. You have previously reviewed this plan and produced findings.
+## YOUR TASK
+1. Read the previous findings file first.
+2. For each prior finding, verify whether the plan fixer has resolved it:
+   - If resolved: note it as **RESOLVED** and move on.
+   - If not resolved: carry it forward as a finding in your new report.
+3. After verifying prior findings, scan the CHANGED sections of plan.md for new
+   design-level bugs introduced by the fixes.
+4. Do NOT flag new issues in unchanged sections of the plan unless they are
+   severe correctness problems (P1-level) that you genuinely missed before.
+5. Do NOT re-litigate findings you previously accepted."
+fi
 
   local _reviewer_prompt_file
   _reviewer_prompt_file=$(mktemp)
