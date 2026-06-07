@@ -154,4 +154,17 @@ exit 0
     expect(r.outcome).toBe('failed');
     expect(r.contractViolations).toContain('cancelled_by_orchestrator');
   });
+
+  it('detects silent zero-exit as contract_violation with no_output', async () => {
+    const cwd = makeWorktree();
+    const adapter = new ClaudeCodeAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-claude-silent-zero.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('no_output');
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(r.stdoutPath, 'utf-8')).toBe('');
+  });
 });
