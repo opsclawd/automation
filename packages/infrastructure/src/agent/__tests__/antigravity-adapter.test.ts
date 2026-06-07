@@ -203,4 +203,17 @@ describe('AntigravityAgentAdapter', () => {
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
     expect(r.exitCode).toBe(1);
   });
+
+  it('detects silent zero-exit as contract_violation with no_output', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-silent-zero.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('no_output');
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(r.stdoutPath, 'utf-8')).toBe('');
+  });
 });
