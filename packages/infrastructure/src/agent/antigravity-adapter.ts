@@ -39,6 +39,7 @@ export class AntigravityAgentAdapter implements AgentPort {
         ? { timeoutMsDefault: this.opts.timeoutMsDefault }
         : {}),
       ...(request.abortSignal ? { abortSignal: request.abortSignal } : {}),
+      startCommitSha: request.startCommitSha,
     });
   }
 }

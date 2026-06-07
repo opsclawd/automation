@@ -21,6 +21,7 @@ export interface ExternalCliRunInput {
   abortSignal?: AbortSignal;
   forceKillAfterDelayMs?: number;
   detached?: boolean;
+  startCommitSha?: string;
 }
 
 export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentInvocationResult> {
@@ -102,22 +103,17 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         }
       }
     } else if (outcome === 'success') {
-      if (!stdout.trim() && !stderr.trim()) {
-        outcome = 'contract_violation';
-        contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
-      } else {
-        const providerMatch = testProviderErrorPatterns(stderr);
-        if (providerMatch) {
-          outcome = 'failed';
-          contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-          const quotaLine = testQuotaPatterns(stderr);
-          if (quotaLine) {
-            stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
-            stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
-          } else {
-            stderr = `PROVIDER_ERROR: ${providerMatch}`;
-            stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
-          }
+      const providerMatch = testProviderErrorPatterns(stderr);
+      if (providerMatch) {
+        outcome = 'failed';
+        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+        const quotaLine = testQuotaPatterns(stderr);
+        if (quotaLine) {
+          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+        } else {
+          stderr = `PROVIDER_ERROR: ${providerMatch}`;
+          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
         }
       }
     }
@@ -148,6 +144,20 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     endCommitSha = execSync('git rev-parse HEAD', { cwd: input.cwd }).toString().trim();
   } catch {
     contractViolations = [...contractViolations, CONTRACT_VIOLATION_CODES.MISSING_COMMIT];
+  }
+
+  if (
+    outcome === 'success' &&
+    !contractViolations.length &&
+    input.startCommitSha &&
+    endCommitSha === input.startCommitSha &&
+    !stdout.trim() &&
+    !stderr.trim()
+  ) {
+    outcome = 'contract_violation';
+    contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
+    stderr = 'NO_OUTPUT: agent exited 0 with empty stdout and no git changes';
+    stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
   }
 
   const ret: AgentInvocationResult = {
