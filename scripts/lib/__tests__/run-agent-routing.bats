@@ -409,3 +409,20 @@ print(f'OK: compound -> {prof}')
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK: compound"* ]]
 }
+
+@test "run-agent.ts uses phaseProfiles for whole-pr-review phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
+    --phase whole-pr-review \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "whole-pr-review-test" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}
