@@ -64,6 +64,7 @@ TIMEOUT_REVIEW=600
 TIMEOUT_FIX=900
 TIMEOUT_PR_FIX=1200
 TIMEOUT_PLAN_REVIEW=600
+TIMEOUT_FIX_VALIDATE=600
 
 TIMEOUT_COMPOUND=600
 
@@ -86,6 +87,7 @@ MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
 PLAN_REVIEW_ENABLED=false
 MAX_PLAN_REVIEW_ITERATIONS=3
+MAX_FIX_VALIDATE_ITERATIONS=2
 JUDGMENT_AGENT_PROFILE=""
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
@@ -98,13 +100,14 @@ if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   fi
   _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
   _val=$(jq -r '.phases.planReview.judgmentAgent // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && JUDGMENT_AGENT_PROFILE="$_val"
+  _val=$(jq -r '.phases.fixValidate.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_VALIDATE_ITERATIONS="$_val"
 fi
 # Ensure the log target exists before the first log() call. The setup block
 # creates it later (around the "# ── setup" section), but we may log before
 # then on startup, and log() pipes through `tee -a` which fails fast with
 # set -euo pipefail if the directory is missing.
 mkdir -p "${ISSUES_DIR}"
-log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
+log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, fixValidate.maxIterations=${MAX_FIX_VALIDATE_ITERATIONS}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
 
 # Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
 # When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
@@ -160,7 +163,7 @@ _emit_phase_skipped() {
 _emit_skipped_until() {
   local target=$1
   local p found=false
-  for p in read_issue plan-design plan-write implement validate whole-pr-review fix-review compound create-pr; do
+  for p in read_issue plan-design plan-write implement validate fix-validate whole-pr-review fix-review compound create-pr; do
     if [[ "$p" == "$target" ]]; then found=true; break; fi
     _emit_phase_skipped "$p" "resume-detected"
   done
@@ -446,6 +449,10 @@ seed_excludes() {
     grep -qxF 'plan-review-passed.marker' "$exclude_file" || echo 'plan-review-passed.marker' >> "$exclude_file"
     grep -qxF 'plan-review-findings-iter-*.md' "$exclude_file" || echo 'plan-review-findings-iter-*.md' >> "$exclude_file"
     grep -qxF 'plan-review-judgment.md' "$exclude_file" || echo 'plan-review-judgment.md' >> "$exclude_file"
+    grep -qxF 'fix-validate-done.marker' "$exclude_file" || echo 'fix-validate-done.marker' >> "$exclude_file"
+    grep -qxF 'fix-validate-*.log' "$exclude_file" || echo 'fix-validate-*.log' >> "$exclude_file"
+    grep -qxF 'revalidate-fv-*.log' "$exclude_file" || echo 'revalidate-fv-*.log' >> "$exclude_file"
+    grep -qxF 'fix-validate-log.md' "$exclude_file" || echo 'fix-validate-log.md' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -490,6 +497,10 @@ plan-review-findings.md
 plan-review-passed.marker
 plan-review-findings-iter-*.md
 plan-review-judgment.md
+fix-validate-done.marker
+fix-validate-*.log
+revalidate-fv-*.log
+fix-validate-log.md
 EOF
 }
 
@@ -1006,7 +1017,12 @@ detect_phase() {
   elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
     echo "fix-review"
   elif [[ -f "${ISSUES_DIR}/validation.result" ]]; then
-    echo "whole-pr-review"
+    _vr=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)
+    if [[ "$_vr" == "passed" ]] || [[ -f "${ISSUES_DIR}/fix-validate-done.marker" ]]; then
+      echo "whole-pr-review"
+    else
+      echo "fix-validate"
+    fi
   elif [[ -f "${ISSUES_DIR}/plan.md" ]]; then
     if [[ -f "${ISSUES_DIR}/plan-review-passed.marker" ]]; then
       detect_resume_point
@@ -2707,6 +2723,12 @@ if [[ "$PHASE" == "validate" ]]; then
   mkdir -p "${ISSUES_DIR}"
   : > "${ISSUES_DIR}/validate.log"  # truncate; install + CLI append below
 
+  # Clean up stale fix-validate artifacts from any previous cycle. Without
+  # this, detect_phase would see a stale fix-validate-done.marker on resume
+  # after a new validation failure and incorrectly return whole-pr-review.
+  rm -f "${ISSUES_DIR}/fix-validate-done.marker"
+  rm -f "${ISSUES_DIR}"/fix-validate-*.log "${ISSUES_DIR}"/revalidate-fv-*.log "${ISSUES_DIR}/fix-validate-log.md"
+
   # Dependencies must be installed before the configured validation commands run.
   # Capture both output (to validate.log) and exit status; skip the CLI if install
   # fails so validation isn't run against a broken node_modules.
@@ -2770,7 +2792,7 @@ if [[ "$PHASE" == "validate" ]]; then
   fi
 
   _emit_phase_done "validate"
-  PHASE="whole-pr-review"
+  PHASE="fix-validate"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
