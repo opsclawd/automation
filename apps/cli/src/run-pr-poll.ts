@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import type { PollerTerminalState } from '@ai-sdlc/application';
-import { RepositoryId, RunId, PhaseName } from '@ai-sdlc/domain';
+import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import type { PollerTerminalState, RunRepositoryPort, EventBusPort } from '@ai-sdlc/application';
+import { createRun, RepositoryId, RunId, PhaseName, type RunStatus } from '@ai-sdlc/domain';
+import { existsSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 
 export interface PollArgs {
   prNumber: number;
@@ -70,6 +73,172 @@ export function exitCodeForTerminalState(state: PollerTerminalState): number {
   }
 }
 
+function runStatusForTerminalState(state: PollerTerminalState): RunStatus {
+  switch (state) {
+    case 'all_resolved':
+    case 'max_polls_reached':
+      return 'passed';
+    case 'blocked':
+      return 'cancelled';
+    case 'timed_out':
+      return 'failed';
+  }
+}
+
+export interface RunPollDeps {
+  eventBus: Pick<EventBusPort, 'subscribe'>;
+  runRepository: RunRepositoryPort;
+  buildPrReviewPoller: (opts: {
+    maxPolls: number;
+    pollIntervalMs: number;
+    readyMaxDays: number;
+    phaseStartedAt: Date;
+  }) => {
+    run(input: {
+      runId: RunId;
+      repoId: RepositoryId;
+      repoFullName: string;
+      prNumber: number;
+      cwd: string;
+      phaseId: PhaseName;
+    }): Promise<{ terminalState: PollerTerminalState; pollsRun: number }>;
+  };
+  stderr: NodeJS.WritableStream;
+  repoRoot: string;
+}
+
+export function formatEvent(event: OrchestratorEvent): string {
+  const tsMatch = event.timestamp.match(/T(\d{2}:\d{2}:\d{2})/);
+  const ts = tsMatch ? tsMatch[1] : event.timestamp.slice(0, 19);
+  const meta =
+    event.metadata && Object.keys(event.metadata).length > 0
+      ? ' ' +
+        Object.entries(event.metadata)
+          .map(([k, v]) => `${k}=${String(v)}`)
+          .join(' ')
+      : '';
+  return `[${ts}] [${event.type}] ${event.message}${meta}\n`;
+}
+
+export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number> {
+  // NOTE: process.env.AI_RUN_UUID fallback was removed intentionally.
+  // The bash shim (scripts/ai-pr-review-poll) is the sole source of run-id
+  // propagation via the --run-id CLI flag.
+  const runIdStr = args.runId ?? crypto.randomUUID();
+
+  deps.stderr.write(
+    `[run-pr-poll] PID: ${process.pid} PR: ${args.prNumber} max_polls: ${args.maxPolls} interval: ${args.pollIntervalSeconds}s\n`,
+  );
+
+  const existing = deps.runRepository.findByUuid(runIdStr);
+  let createdSyntheticRun = false;
+  if (!existing) {
+    const run = createRun({
+      uuid: runIdStr,
+      displayId: `poll-pr-${args.prNumber}-${runIdStr}`,
+      issueNumber: args.issueNumber ?? 0,
+      type: 'pr_review',
+      startedAt: new Date(),
+    });
+    try {
+      deps.runRepository.insertIfNoActive(run);
+      createdSyntheticRun = true;
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes('active run already exists'))) {
+        throw err;
+      }
+      // Another run is active for this issue — verify our UUID exists (race with orchestrator)
+      if (!deps.runRepository.findByUuid(runIdStr)) {
+        throw new Error(`Run insert failed and record not found for ${runIdStr}`);
+      }
+    }
+  }
+
+  let poller!: ReturnType<RunPollDeps['buildPrReviewPoller']>;
+  let unsubscribe: (() => void) | undefined;
+  try {
+    poller = deps.buildPrReviewPoller({
+      maxPolls: args.maxPolls,
+      pollIntervalMs: args.pollIntervalSeconds * 1000,
+      readyMaxDays: 7,
+      phaseStartedAt: new Date(),
+    });
+
+    unsubscribe = deps.eventBus.subscribe(runIdStr, (event) => {
+      try {
+        deps.stderr.write(formatEvent(event));
+      } catch {
+        // Best-effort: stderr write must not crash the poller
+      }
+    });
+  } catch (err) {
+    if (createdSyntheticRun) {
+      try {
+        deps.runRepository.updateStatusByUuid(runIdStr, {
+          status: 'failed',
+          completedAt: new Date(),
+        });
+      } catch {
+        // Best-effort: close the synthetic run so it does not appear active
+      }
+    }
+    throw err;
+  }
+
+  let exitCode = 3;
+
+  try {
+    const result = await poller.run({
+      runId: RunId(runIdStr),
+      repoId: RepositoryId(args.repoFullName),
+      repoFullName: args.repoFullName,
+      prNumber: args.prNumber,
+      cwd: args.cwd,
+      phaseId: PhaseName('post-pr-review'),
+    });
+    exitCode = exitCodeForTerminalState(result.terminalState);
+    deps.stderr.write(`[run-pr-poll] terminal=${result.terminalState} polls=${result.pollsRun}\n`);
+    if (createdSyntheticRun) {
+      try {
+        deps.runRepository.updateStatusByUuid(runIdStr, {
+          status: runStatusForTerminalState(result.terminalState),
+          completedAt: new Date(),
+        });
+      } catch {
+        // Best-effort: DB write failure must not overwrite a known terminal exit code
+      }
+    }
+  } catch (err) {
+    if (createdSyntheticRun) {
+      try {
+        deps.runRepository.updateStatusByUuid(runIdStr, {
+          status: 'failed',
+          completedAt: new Date(),
+        });
+      } catch {
+        // Best-effort: close the synthetic run so it does not appear active
+      }
+    }
+    throw err;
+  } finally {
+    try {
+      unsubscribe?.();
+    } catch {
+      // Best-effort: unsubscribe failure must not overwrite a successful poll result
+    }
+    for (const candidate of ['result.json', join('apps', 'cli', 'result.json')]) {
+      try {
+        const p = join(deps.repoRoot, candidate);
+        if (existsSync(p)) unlinkSync(p);
+      } catch {
+        // Best-effort cleanup
+      }
+    }
+  }
+
+  return exitCode;
+}
+
 async function main(): Promise<void> {
   const args = parsePollArgs(process.argv.slice(2));
   const repoRoot = process.env.REPO_ROOT ?? process.cwd();
@@ -78,23 +247,14 @@ async function main(): Promise<void> {
     scriptPath: 'scripts/ai-run-issue-v2',
     runStartupSweeps: false,
   });
-  const poller = container.buildPrReviewPoller({
-    maxPolls: args.maxPolls,
-    pollIntervalMs: args.pollIntervalSeconds * 1000,
-    readyMaxDays: 7,
-    phaseStartedAt: new Date(),
+  const exitCode = await runPoll(args, {
+    eventBus: container.eventBus,
+    runRepository: container.runRepository as RunPollDeps['runRepository'],
+    buildPrReviewPoller: container.buildPrReviewPoller,
+    stderr: process.stderr,
+    repoRoot,
   });
-  const runIdStr = args.runId ?? process.env.AI_RUN_UUID ?? crypto.randomUUID();
-  const result = await poller.run({
-    runId: RunId(runIdStr),
-    repoId: RepositoryId(args.repoFullName),
-    repoFullName: args.repoFullName,
-    prNumber: args.prNumber,
-    cwd: args.cwd,
-    phaseId: PhaseName('post-pr-review'),
-  });
-  process.stderr.write(`[run-pr-poll] terminal=${result.terminalState} polls=${result.pollsRun}\n`);
-  process.exit(exitCodeForTerminalState(result.terminalState));
+  process.exit(exitCode);
 }
 
 if (!process.env.VITEST) {
