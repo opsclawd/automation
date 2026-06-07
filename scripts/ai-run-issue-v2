@@ -3347,12 +3347,11 @@ Write code-review.md and review-findings-status.txt now."
 
   _re_review_prompt_file=$(mktemp)
   printf '%s' "$RE_REVIEW_PROMPT" > "$_re_review_prompt_file"
-  # NOTE: --phase quality-review is intentional — re-review is a quality-review
-  # re-run with updated context. There is no dedicated re-review profile; using
-  # quality-review keeps the same model selection (inspector profile). The
-  # --phase-id distinguishes this invocation in telemetry.
+  # Re-review uses whole-pr-review to route through the gemini profile, matching
+  # the model that produced the original findings. The --phase-id distinguishes
+  # this invocation in telemetry.
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-    --phase quality-review \
+    --phase whole-pr-review \
     --phase-id "re-review-${FIX_LOOP_COUNT}" \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
