@@ -226,6 +226,19 @@ describe('runPoll', () => {
     expect(deps.runRepository.updateStatusByUuid).not.toHaveBeenCalled();
   });
 
+  it('does not update status on success when run was pre-existing', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue({
+      uuid: 'existing',
+      displayId: 'existing-run',
+      status: 'running',
+    });
+
+    await runPoll(defaultArgs, deps);
+
+    expect(deps.runRepository.updateStatusByUuid).not.toHaveBeenCalled();
+  });
+
   it('skips poller when existing run is in terminal state', async () => {
     const deps = makeDeps();
     const pollerRun = vi.fn(async () => ({

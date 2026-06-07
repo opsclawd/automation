@@ -144,6 +144,7 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     );
     return 0;
   }
+  let createdSyntheticRun = false;
   if (!existing) {
     const run = createRun({
       uuid: runIdStr,
@@ -154,6 +155,7 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     });
     try {
       deps.runRepository.insert(run);
+      createdSyntheticRun = true;
     } catch (err) {
       if (!(err instanceof Error && err.message.includes('UNIQUE constraint failed'))) {
         throw err;
@@ -193,16 +195,18 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     });
     exitCode = exitCodeForTerminalState(result.terminalState);
     deps.stderr.write(`[run-pr-poll] terminal=${result.terminalState} polls=${result.pollsRun}\n`);
-    try {
-      deps.runRepository.updateStatusByUuid(runIdStr, {
-        status: runStatusForTerminalState(result.terminalState),
-        completedAt: new Date(),
-      });
-    } catch {
-      // Best-effort: DB write failure must not overwrite a known terminal exit code
+    if (createdSyntheticRun) {
+      try {
+        deps.runRepository.updateStatusByUuid(runIdStr, {
+          status: runStatusForTerminalState(result.terminalState),
+          completedAt: new Date(),
+        });
+      } catch {
+        // Best-effort: DB write failure must not overwrite a known terminal exit code
+      }
     }
   } catch (err) {
-    if (!existing) {
+    if (createdSyntheticRun) {
       try {
         deps.runRepository.updateStatusByUuid(runIdStr, {
           status: 'failed',
