@@ -5,10 +5,14 @@ import type { RunPollDeps } from '../run-pr-poll.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PollerTerminalState } from '@ai-sdlc/application';
 
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(() => false),
-  unlinkSync: vi.fn(),
-}));
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  return {
+    ...actual,
+    existsSync: vi.fn(() => false),
+    unlinkSync: vi.fn(),
+  };
+});
 
 const mockExistsSync = vi.mocked((await import('node:fs')).existsSync);
 const mockUnlinkSync = vi.mocked((await import('node:fs')).unlinkSync);
