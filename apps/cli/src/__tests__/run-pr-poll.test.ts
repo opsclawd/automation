@@ -194,7 +194,7 @@ describe('runPoll', () => {
     },
   );
 
-  it('does not update status when poller throws', async () => {
+  it('closes synthetic run as failed when poller throws', async () => {
     const deps = makeDeps();
     deps.buildPrReviewPoller = vi.fn(() => ({
       run: vi.fn(async () => {
@@ -203,7 +203,71 @@ describe('runPoll', () => {
     }));
 
     await expect(runPoll(defaultArgs, deps)).rejects.toThrow('boom');
+    expect(deps.runRepository.updateStatusByUuid).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'failed' }),
+    );
+  });
+
+  it('does not update status when poller throws and run was pre-existing', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue({
+      uuid: 'existing',
+      displayId: 'existing-run',
+      status: 'running',
+    });
+    deps.buildPrReviewPoller = vi.fn(() => ({
+      run: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+    }));
+
+    await expect(runPoll(defaultArgs, deps)).rejects.toThrow('boom');
     expect(deps.runRepository.updateStatusByUuid).not.toHaveBeenCalled();
+  });
+
+  it('skips poller when existing run is in terminal state', async () => {
+    const deps = makeDeps();
+    const pollerRun = vi.fn(async () => ({
+      terminalState: 'all_resolved' as PollerTerminalState,
+      pollsRun: 1,
+    }));
+    deps.buildPrReviewPoller = vi.fn(() => ({ run: pollerRun }));
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue({
+      uuid: 'existing',
+      displayId: 'existing-run',
+      status: 'passed',
+    });
+
+    const exitCode = await runPoll(defaultArgs, deps);
+
+    expect(exitCode).toBe(0);
+    expect(pollerRun).not.toHaveBeenCalled();
+    expect(deps.runRepository.insert).not.toHaveBeenCalled();
+  });
+
+  it('returns exit code 0 even when updateStatusByUuid throws on success', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.updateStatusByUuid as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error('database is locked');
+    });
+
+    const exitCode = await runPoll(defaultArgs, deps);
+
+    expect(exitCode).toBe(0);
+  });
+
+  it('swallows unsubscribe error and still returns exit code', async () => {
+    const deps = makeDeps();
+    deps.eventBus.subscribe = vi.fn(() => {
+      return () => {
+        throw new Error('channel closed');
+      };
+    });
+
+    const exitCode = await runPoll(defaultArgs, deps);
+
+    expect(exitCode).toBe(0);
   });
 
   it('inserts a run record when none exists (FK guard)', async () => {
@@ -226,6 +290,7 @@ describe('runPoll', () => {
     (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue({
       uuid: 'existing',
       displayId: 'existing-run',
+      status: 'running',
     });
 
     await runPoll(defaultArgs, deps);
@@ -237,7 +302,7 @@ describe('runPoll', () => {
     const deps = makeDeps();
     (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>)
       .mockReturnValueOnce(undefined)
-      .mockReturnValueOnce({ uuid: 'race-uuid', displayId: 'race-run' });
+      .mockReturnValueOnce({ uuid: 'race-uuid', displayId: 'race-run', status: 'running' });
     (deps.runRepository.insert as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error('UNIQUE constraint failed');
     });

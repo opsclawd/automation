@@ -138,6 +138,12 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
   );
 
   const existing = deps.runRepository.findByUuid(runIdStr);
+  if (existing && existing.status !== 'running') {
+    deps.stderr.write(
+      `[run-pr-poll] run ${runIdStr} already in terminal state: ${existing.status} — skipping\n`,
+    );
+    return 0;
+  }
   if (!existing) {
     const run = createRun({
       uuid: runIdStr,
@@ -174,6 +180,8 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     }
   });
 
+  let exitCode = 3;
+
   try {
     const result = await poller.run({
       runId: RunId(runIdStr),
@@ -183,14 +191,34 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
       cwd: args.cwd,
       phaseId: PhaseName('post-pr-review'),
     });
+    exitCode = exitCodeForTerminalState(result.terminalState);
     deps.stderr.write(`[run-pr-poll] terminal=${result.terminalState} polls=${result.pollsRun}\n`);
-    deps.runRepository.updateStatusByUuid(runIdStr, {
-      status: runStatusForTerminalState(result.terminalState),
-      completedAt: new Date(),
-    });
-    return exitCodeForTerminalState(result.terminalState);
+    try {
+      deps.runRepository.updateStatusByUuid(runIdStr, {
+        status: runStatusForTerminalState(result.terminalState),
+        completedAt: new Date(),
+      });
+    } catch {
+      // Best-effort: DB write failure must not overwrite a known terminal exit code
+    }
+  } catch (err) {
+    if (!existing) {
+      try {
+        deps.runRepository.updateStatusByUuid(runIdStr, {
+          status: 'failed',
+          completedAt: new Date(),
+        });
+      } catch {
+        // Best-effort: close the synthetic run so it does not appear active
+      }
+    }
+    throw err;
   } finally {
-    unsubscribe();
+    try {
+      unsubscribe();
+    } catch {
+      // Best-effort: unsubscribe failure must not overwrite a successful poll result
+    }
     for (const candidate of ['result.json', join('apps', 'cli', 'result.json')]) {
       try {
         const p = join(deps.repoRoot, candidate);
@@ -200,6 +228,8 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
       }
     }
   }
+
+  return exitCode;
 }
 
 async function main(): Promise<void> {
