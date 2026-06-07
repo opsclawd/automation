@@ -102,17 +102,22 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         }
       }
     } else if (outcome === 'success') {
-      const providerMatch = testProviderErrorPatterns(stderr);
-      if (providerMatch) {
-        outcome = 'failed';
-        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr);
-        if (quotaLine) {
-          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
-          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
-        } else {
-          stderr = `PROVIDER_ERROR: ${providerMatch}`;
-          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+      if (!stdout.trim() && !stderr.trim()) {
+        outcome = 'contract_violation';
+        contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
+      } else {
+        const providerMatch = testProviderErrorPatterns(stderr);
+        if (providerMatch) {
+          outcome = 'failed';
+          contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+          const quotaLine = testQuotaPatterns(stderr);
+          if (quotaLine) {
+            stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+            stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+          } else {
+            stderr = `PROVIDER_ERROR: ${providerMatch}`;
+            stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+          }
         }
       }
     }
