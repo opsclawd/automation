@@ -12,6 +12,7 @@ const PHASE_LABELS: Record<string, string> = {
   'plan-write': 'Plan Write',
   implement: 'Implement',
   validate: 'Validate',
+  'fix-validate': 'Fix Validate',
   'whole-pr-review': 'Whole-PR Review',
   'fix-review': 'Fix Review',
   compound: 'Compound',
