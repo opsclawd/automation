@@ -2,8 +2,8 @@
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
-import type { PollerTerminalState, RunRepositoryPort } from '@ai-sdlc/application';
-import { createRun, RepositoryId, RunId, PhaseName } from '@ai-sdlc/domain';
+import type { PollerTerminalState, RunRepositoryPort, EventBusPort } from '@ai-sdlc/application';
+import { createRun, RepositoryId, RunId, PhaseName, type Run } from '@ai-sdlc/domain';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -74,10 +74,8 @@ export function exitCodeForTerminalState(state: PollerTerminalState): number {
 }
 
 export interface RunPollDeps {
-  eventBus: {
-    subscribe(runUuid: string, listener: (event: OrchestratorEvent) => void): () => void;
-  };
-  runRepository: RunRepositoryPort & { insert(run: import('@ai-sdlc/domain').Run): void };
+  eventBus: Pick<EventBusPort, 'subscribe'>;
+  runRepository: RunRepositoryPort & { insert(run: Run): void };
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -98,7 +96,8 @@ export interface RunPollDeps {
 }
 
 export function formatEvent(event: OrchestratorEvent): string {
-  const ts = event.timestamp.replace(/^.*T(\d{2}:\d{2}:\d{2}).*$/, '$1');
+  const tsMatch = event.timestamp.match(/T(\d{2}:\d{2}:\d{2})/);
+  const ts = tsMatch ? tsMatch[1] : event.timestamp.slice(0, 19);
   const meta =
     event.metadata && Object.keys(event.metadata).length > 0
       ? ' ' +
@@ -110,6 +109,9 @@ export function formatEvent(event: OrchestratorEvent): string {
 }
 
 export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number> {
+  // NOTE: process.env.AI_RUN_UUID fallback was removed intentionally.
+  // The bash shim (scripts/ai-pr-review-poll) is the sole source of run-id
+  // propagation via the --run-id CLI flag.
   const runIdStr = args.runId ?? crypto.randomUUID();
 
   deps.stderr.write(
@@ -120,15 +122,21 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
   if (!existing) {
     const run = createRun({
       uuid: runIdStr,
-      displayId: `poll-pr-${args.prNumber}-${Date.now()}`,
+      displayId: `poll-pr-${args.prNumber}-${runIdStr}`,
       issueNumber: args.issueNumber ?? 0,
       type: 'pr_review',
       startedAt: new Date(),
     });
     try {
       deps.runRepository.insert(run);
-    } catch {
-      // Race: orchestrator may have inserted between findByUuid and insert — that's fine
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes('UNIQUE constraint failed'))) {
+        throw err;
+      }
+      // Race: orchestrator may have inserted between findByUuid and insert — verify
+      if (!deps.runRepository.findByUuid(runIdStr)) {
+        throw new Error(`Run insert failed and record not found for ${runIdStr}`);
+      }
     }
   }
 

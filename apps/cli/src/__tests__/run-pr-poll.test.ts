@@ -1,9 +1,17 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { parsePollArgs, exitCodeForTerminalState, runPoll, formatEvent } from '../run-pr-poll.js';
 import type { PollArgs } from '../run-pr-poll.js';
 import type { RunPollDeps } from '../run-pr-poll.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PollerTerminalState } from '@ai-sdlc/application';
+
+vi.mock('node:fs', () => ({
+  existsSync: vi.fn(() => false),
+  unlinkSync: vi.fn(),
+}));
+
+const mockExistsSync = vi.mocked((await import('node:fs')).existsSync);
+const mockUnlinkSync = vi.mocked((await import('node:fs')).unlinkSync);
 
 describe('parsePollArgs', () => {
   it('parses required + optional flags', () => {
@@ -137,6 +145,9 @@ const defaultArgs: PollArgs = {
 };
 
 describe('runPoll', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
   it('subscribes to eventBus and writes events to stderr', async () => {
     const deps = makeDeps();
     const listener = vi.fn();
@@ -190,7 +201,9 @@ describe('runPoll', () => {
 
   it('gracefully handles insert race (duplicate)', async () => {
     const deps = makeDeps();
-    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce({ uuid: 'race-uuid', displayId: 'race-run' });
     (deps.runRepository.insert as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error('UNIQUE constraint failed');
     });
@@ -198,6 +211,16 @@ describe('runPoll', () => {
     const exitCode = await runPoll(defaultArgs, deps);
 
     expect(exitCode).toBe(0);
+  });
+
+  it('re-throws non-UNIQUE insert errors', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (deps.runRepository.insert as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error('database is locked');
+    });
+
+    await expect(runPoll(defaultArgs, deps)).rejects.toThrow('database is locked');
   });
 
   it('unsubscribes from eventBus in finally block', async () => {
@@ -227,8 +250,18 @@ describe('runPoll', () => {
   it('cleans up result.json files', async () => {
     const deps = makeDeps();
     deps.repoRoot = '/tmp/test-cleanup';
-    const exitCode = await runPoll(defaultArgs, deps);
-    expect(exitCode).toBe(0);
+    mockExistsSync.mockImplementation((p: string) => {
+      return (
+        p === '/tmp/test-cleanup/result.json' || p === '/tmp/test-cleanup/apps/cli/result.json'
+      );
+    });
+
+    await runPoll(defaultArgs, deps);
+
+    expect(mockExistsSync).toHaveBeenCalledWith('/tmp/test-cleanup/result.json');
+    expect(mockExistsSync).toHaveBeenCalledWith('/tmp/test-cleanup/apps/cli/result.json');
+    expect(mockUnlinkSync).toHaveBeenCalledWith('/tmp/test-cleanup/result.json');
+    expect(mockUnlinkSync).toHaveBeenCalledWith('/tmp/test-cleanup/apps/cli/result.json');
   });
 
   it('writes startup banner with PID, PR, maxPolls, interval', async () => {
@@ -251,12 +284,12 @@ describe('formatEvent', () => {
       phase: 'post-pr-review',
       level: 'info',
       type: 'poll.start',
-      message: 'Starting poll pass 1',
+      message: 'poll.start',
       timestamp: '2026-06-07T14:30:00.000Z',
       metadata: { prNumber: 42 },
     };
     const line = formatEvent(event);
-    expect(line).toBe('[14:30:00] [poll.start] Starting poll pass 1 prNumber=42\n');
+    expect(line).toBe('[14:30:00] [poll.start] poll.start prNumber=42\n');
   });
 
   it('omits metadata section when empty', () => {
