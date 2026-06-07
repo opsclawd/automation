@@ -2971,9 +2971,14 @@ Start now."
       fi
     done
 
-    touch "${ISSUES_DIR}/fix-validate-done.marker"
-    _emit_phase_done "fix-validate"
-    PHASE="whole-pr-review"
+    if [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]] || \
+       grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
+      touch "${ISSUES_DIR}/fix-validate-done.marker"
+      _emit_phase_done "fix-validate"
+      PHASE="whole-pr-review"
+    else
+      orchestrator_fail "fix-validate loop exhausted without passing validation"
+    fi
   fi
 fi
 
