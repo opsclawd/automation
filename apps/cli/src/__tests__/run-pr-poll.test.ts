@@ -209,6 +209,34 @@ describe('runPoll', () => {
     );
   });
 
+  it('closes synthetic run as failed when buildPrReviewPoller throws', async () => {
+    const deps = makeDeps();
+    deps.buildPrReviewPoller = vi.fn(() => {
+      throw new Error('missing agent config');
+    });
+
+    await expect(runPoll(defaultArgs, deps)).rejects.toThrow('missing agent config');
+    expect(deps.runRepository.updateStatusByUuid).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'failed' }),
+    );
+  });
+
+  it('does not update status when buildPrReviewPoller throws and run was pre-existing', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue({
+      uuid: 'existing',
+      displayId: 'existing-run',
+      status: 'running',
+    });
+    deps.buildPrReviewPoller = vi.fn(() => {
+      throw new Error('missing agent config');
+    });
+
+    await expect(runPoll(defaultArgs, deps)).rejects.toThrow('missing agent config');
+    expect(deps.runRepository.updateStatusByUuid).not.toHaveBeenCalled();
+  });
+
   it('does not update status when poller throws and run was pre-existing', async () => {
     const deps = makeDeps();
     (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue({

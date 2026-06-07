@@ -167,20 +167,36 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     }
   }
 
-  const poller = deps.buildPrReviewPoller({
-    maxPolls: args.maxPolls,
-    pollIntervalMs: args.pollIntervalSeconds * 1000,
-    readyMaxDays: 7,
-    phaseStartedAt: new Date(),
-  });
+  let poller!: ReturnType<RunPollDeps['buildPrReviewPoller']>;
+  let unsubscribe!: () => void;
+  try {
+    poller = deps.buildPrReviewPoller({
+      maxPolls: args.maxPolls,
+      pollIntervalMs: args.pollIntervalSeconds * 1000,
+      readyMaxDays: 7,
+      phaseStartedAt: new Date(),
+    });
 
-  const unsubscribe = deps.eventBus.subscribe(runIdStr, (event) => {
-    try {
-      deps.stderr.write(formatEvent(event));
-    } catch {
-      // Best-effort: stderr write must not crash the poller
+    unsubscribe = deps.eventBus.subscribe(runIdStr, (event) => {
+      try {
+        deps.stderr.write(formatEvent(event));
+      } catch {
+        // Best-effort: stderr write must not crash the poller
+      }
+    });
+  } catch (err) {
+    if (createdSyntheticRun) {
+      try {
+        deps.runRepository.updateStatusByUuid(runIdStr, {
+          status: 'failed',
+          completedAt: new Date(),
+        });
+      } catch {
+        // Best-effort: close the synthetic run so it does not appear active
+      }
     }
-  });
+    throw err;
+  }
 
   let exitCode = 3;
 
@@ -219,7 +235,7 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     throw err;
   } finally {
     try {
-      unsubscribe();
+      unsubscribe?.();
     } catch {
       // Best-effort: unsubscribe failure must not overwrite a successful poll result
     }
