@@ -13,17 +13,11 @@ PR_NUMBER="${1:-}"
 ISSUE_NUM="${2:-}"
 MAX_POLLS="${3:-3}"
 POLL_INTERVAL="${4:-300}"
-OWNER_REPO="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")}"
 
 if [[ -z "$PR_NUMBER" ]]; then
   echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=3] [interval_sec=300]" >&2
   exit 1
 fi
-if [[ -z "$OWNER_REPO" ]]; then
-  echo "FATAL: could not determine owner/repo. Set OWNER_REPO=<owner>/<repo> and retry." >&2
-  exit 1
-fi
-
 if [[ -z "$ISSUE_NUM" ]]; then
   echo "FATAL: ISSUE_NUM is required. The poller must not run from the main checkout." >&2
   exit 1
@@ -31,6 +25,12 @@ fi
 POLL_CWD="${REPO_ROOT}/.ai-worktrees/issue-${ISSUE_NUM}"
 if [[ ! -d "$POLL_CWD" ]]; then
   echo "FATAL: worktree $POLL_CWD does not exist. Create it before polling." >&2
+  exit 1
+fi
+
+OWNER_REPO="${OWNER_REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")}"
+if [[ -z "$OWNER_REPO" ]]; then
+  echo "FATAL: could not determine owner/repo. Set OWNER_REPO=<owner>/<repo> and retry." >&2
   exit 1
 fi
 

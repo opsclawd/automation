@@ -27,7 +27,7 @@ exit 1
 SCRIPT
   chmod +x "$fake_bin/gh"
 
-  repo_root="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
+  repo_root="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   workdir="$repo_root/.ai-worktrees/issue-7"
   mkdir -p "$workdir"
   trap "rm -rf '$workdir'" EXIT
