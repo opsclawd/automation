@@ -2796,6 +2796,188 @@ if [[ "$PHASE" == "validate" ]]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PHASE: fix-validate (loop)
+# ═══════════════════════════════════════════════════════════════════════════
+FIX_VALIDATE_COUNT=0
+
+if [[ "$PHASE" == "fix-validate" ]]; then
+  _emit_phase_started "fix-validate"
+  LAST_PHASE="fix-validate"
+
+  if [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]]; then
+    info "Validation passed — skipping fix-validate loop."
+    emit_event "fix-validate" "info" "loop.skipped" \
+      "validation.result is passed; no fix needed" \
+      reason="validation-passed"
+    touch "${ISSUES_DIR}/fix-validate-done.marker"
+    _emit_phase_done "fix-validate"
+    PHASE="whole-pr-review"
+  elif grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
+    warn "Validation failure appears to be infrastructure-related — skipping fix-validate loop."
+    emit_event "fix-validate" "warn" "loop.skipped_infra" \
+      "validation failures appear infra-related; skipping fix agent" \
+      reason="infra-failure"
+    touch "${ISSUES_DIR}/fix-validate-done.marker"
+    _emit_phase_done "fix-validate"
+    PHASE="whole-pr-review"
+  else
+    while [[ "$PHASE" == "fix-validate" ]]; do
+      FIX_VALIDATE_COUNT=$((FIX_VALIDATE_COUNT + 1))
+
+      if [[ $FIX_VALIDATE_COUNT -gt $MAX_FIX_VALIDATE_ITERATIONS ]]; then
+        emit_event "fix-validate" "error" "loop.exhausted" \
+          "fix-validate hit max iterations" \
+          iterations="${FIX_VALIDATE_COUNT}"
+        warn "Fix-validate loop limit (${MAX_FIX_VALIDATE_ITERATIONS}) reached. Moving on."
+        break
+      fi
+
+      emit_event "fix-validate" "info" "loop.iteration.started" \
+        "fix-validate loop ${FIX_VALIDATE_COUNT}/${MAX_FIX_VALIDATE_ITERATIONS}" \
+        iteration="${FIX_VALIDATE_COUNT}" max="${MAX_FIX_VALIDATE_ITERATIONS}"
+
+      log "=== Phase: fix-validate (loop $FIX_VALIDATE_COUNT) ==="
+      ensure_worktree
+      cd "${WORKTREE_DIR}"
+      ensure_branch
+
+      FIX_VALIDATE_PROMPT="You are fixing validation failures.
+
+## CONTEXT
+You are working in: ${WORKTREE_DIR}
+Validation output: ./validation.md
+Plan: plan.md
+Task manifest: task-manifest.json
+
+## TASK
+Read the validation output in ./validation.md to understand which tests or checks failed.
+Run \`git diff origin/${BASE_BRANCH}...HEAD\` to see the current branch diff.
+Identify the failing tests or assertions and apply the minimal fix to make them pass.
+
+Rules:
+- Fix only what the validation output identifies as broken. Do not expand scope.
+- Do not rewrite working code for style preference.
+- Prefer updating stale references (renamed functions, changed contracts) over rewriting tests.
+- If a failure is caused by an infrastructure issue (quota, network), note it in ./fix-validate-log.md and stop.
+
+## ORCHESTRATOR ARTIFACTS — DO NOT DELETE
+The following files are orchestrator working artifacts excluded from git:
+- issue.md, issue.json, issue-comments.md
+- design.md, plan.md, implementation-log.md, validation.md, validation.result
+- *.result, *.log, *.marker files
+Do NOT delete or modify these files.
+
+## CRITICAL RULES
+- Do NOT ask questions.
+- Do NOT create a PR.
+- Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
+- After fixing, run: git add -A && git commit -m 'fix: validation failures for issue #${ISSUE_NUM} (loop ${FIX_VALIDATE_COUNT})'
+- Stop after fixing and committing.
+
+Start now."
+
+      _fv_prompt_file=$(mktemp)
+      _main_state_before=$(_capture_main_state)
+      printf '%s' "$FIX_VALIDATE_PROMPT" > "$_fv_prompt_file"
+      ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+        --phase fix-validate \
+        --cwd "$WORKTREE_DIR" \
+        --run-id "$RUN_ID" \
+        --repo-id "$REPO_ID" \
+        --repo-root "$REPO_ROOT" \
+        --phase-id "fix-validate-${FIX_VALIDATE_COUNT}" \
+        --step-id "${FIX_VALIDATE_COUNT}" \
+        --prompt-file "$_fv_prompt_file" \
+        --timeout-minutes $(( (TIMEOUT_FIX_VALIDATE + 59) / 60 )) \
+        --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+        2>&1 | tee -a "${ISSUES_DIR}/fix-validate-${FIX_VALIDATE_COUNT}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+      rm -f "$_fv_prompt_file"
+      if [[ $_tee_ec -ne 0 ]]; then
+        orchestrator_fail "tee failed writing log for fix-validate-${FIX_VALIDATE_COUNT} (exit $_tee_ec)"
+      fi
+      _guard_main_checkout "fix-validate-loop-${FIX_VALIDATE_COUNT}" "$_main_state_before"
+      check_branch_after_agent
+      if [[ $_agent_ec -ne 0 ]]; then
+        if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-validate-${FIX_VALIDATE_COUNT}.log" 2>/dev/null; then
+          warn "fix-validate agent blocked (loop ${FIX_VALIDATE_COUNT}) — stopping loop."
+        else
+          warn "fix-validate agent failed (exit $_agent_ec, loop ${FIX_VALIDATE_COUNT}) — stopping loop."
+        fi
+        emit_event "fix-validate" "warn" "loop.agent_failed" \
+          "fix-validate agent failed, stopping loop" \
+          iteration="${FIX_VALIDATE_COUNT}" exitCode="${_agent_ec}"
+        git -C "${WORKTREE_DIR}" reset --hard HEAD 2>/dev/null || true
+        break
+      fi
+
+      # ── re-validate via run-validation.ts ──────────────────────────────
+      log "=== Re-validating after fix-validate (loop $FIX_VALIDATE_COUNT) via run-validation.ts ==="
+      cd "${WORKTREE_DIR}"
+      ensure_branch
+      : > "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log"
+
+      # Pipeline in an if-condition is errexit-exempt (set -euo pipefail won't
+      # abort on exit 1 = expected validation failure), and PIPESTATUS reflects
+      # the pipeline — not a subsequent || true — so capture is safe in both branches.
+      if NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+          "$REPO_ROOT/apps/cli/src/run-validation.ts" \
+          --cwd "$WORKTREE_DIR" \
+          --run-id "$RUN_ID" \
+          --repo-id "$REPO_ID" \
+          --repo-root "$REPO_ROOT" \
+          --phase-id "fix-validate-revalidate-${FIX_VALIDATE_COUNT}" \
+          2>&1 | tee "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log"; then
+        _fv_pipe_status=("${PIPESTATUS[@]}")
+      else
+        _fv_pipe_status=("${PIPESTATUS[@]}")
+      fi
+      _REVALIDATE_EXIT=${_fv_pipe_status[0]}
+      _REVALIDATE_TEE_EC=${_fv_pipe_status[1]}
+      if [[ $_REVALIDATE_TEE_EC -ne 0 ]]; then
+        orchestrator_fail "tee failed writing revalidate log for fix-validate-${FIX_VALIDATE_COUNT} (exit $_REVALIDATE_TEE_EC)"
+      fi
+
+      cp "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log" "${ISSUES_DIR}/validation-fv-${FIX_VALIDATE_COUNT}.md"
+      cp "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log" "${WORKTREE_DIR}/validation.md"
+
+      # Mutation guard
+      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+        git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
+        rm -f "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log" "${ISSUES_DIR}/validation-fv-${FIX_VALIDATE_COUNT}.md"
+        orchestrator_fail "revalidate after fix-validate produced uncommitted changes — mutation not allowed"
+      fi
+
+      # Update validation.result from revalidate outcome (exit code from run-validation.ts)
+      if [[ $_REVALIDATE_EXIT -eq 0 ]]; then
+        echo "passed" > "${ISSUES_DIR}/validation.result"
+        info "Revalidation passed after fix-validate loop ${FIX_VALIDATE_COUNT}."
+        emit_event "fix-validate" "info" "loop.iteration.completed" \
+          "fix-validate loop ${FIX_VALIDATE_COUNT} completed (revalidate green)" \
+          iteration="${FIX_VALIDATE_COUNT}" status="passed"
+        break
+      else
+        echo "failed" > "${ISSUES_DIR}/validation.result"
+        warn "Revalidation did not pass after fix-validate loop ${FIX_VALIDATE_COUNT}."
+        emit_event "fix-validate" "info" "loop.iteration.completed" \
+          "fix-validate loop ${FIX_VALIDATE_COUNT} completed (revalidate red)" \
+          iteration="${FIX_VALIDATE_COUNT}" status="failed"
+        if grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
+          warn "Revalidation failure appears to be infrastructure-related — stopping loop."
+          emit_event "fix-validate" "warn" "loop.stopped_infra" \
+            "revalidation failures appear infra-related; stopping loop" \
+            reason="infra-failure" iteration="${FIX_VALIDATE_COUNT}"
+          break
+        fi
+      fi
+    done
+
+    touch "${ISSUES_DIR}/fix-validate-done.marker"
+    _emit_phase_done "fix-validate"
+    PHASE="whole-pr-review"
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
 # PHASE: whole-pr-review
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "whole-pr-review" ]]; then
