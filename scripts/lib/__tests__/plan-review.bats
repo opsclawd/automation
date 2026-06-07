@@ -551,6 +551,99 @@ PLAN
   grep -q "Known Limitations" "$TMPDIR_TEST/plan.md"
 }
 
+@test "run_plan_review_loop: iteration 1 calls reviewer with empty prev_findings" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  run_adversarial_reviewer() {
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  # 8 args total, 8th (prev_findings_path) should be empty
+  local _arg_count
+  _arg_count="$(sed -n '1p' "$_reviewer_args_file")"
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_arg_count" -eq 8 ]]
+  [[ "$_prev_findings_arg" == "" ]]
+}
+
+@test "run_plan_review_loop: iteration 2 receives prior iteration findings path" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  # 8th arg on iteration 2 should be the iter-1 archived findings path
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_prev_findings_arg" == "${TMPDIR_TEST}/plan-review-findings-iter-1.md" ]]
+}
+
+@test "run_plan_review_loop: final review pass receives last iteration findings" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    echo "### P1: Persistent finding" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1"
+  [[ $status -ne 0 ]]
+  # Final review (call #2) should receive iter-1 archived findings as 8th arg
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_prev_findings_arg" == "${TMPDIR_TEST}/plan-review-findings-iter-1.md" ]]
+}
+
+@test "run_plan_review_loop: prev_findings empty when prior iteration file missing" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() {
+    if [[ $_iter -eq 1 ]]; then
+      rm -f "${WORKTREE_DIR}/plan-review-findings-iter-1.md"
+    fi
+    return 0
+  }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  # 8th arg should be empty since iter-1 findings file was deleted
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_prev_findings_arg" == "" ]]
+}
+
 @test "_append_known_limitations: appends to existing section" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 # Plan
