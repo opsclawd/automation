@@ -33,10 +33,11 @@ _load_config_block() {
   ' "$SCRIPT_PATH")"
 }
 
-@test "defaults: when config file is missing, defaults are 5 and 10" {
+@test "defaults: when config file is missing, defaults are 5, 10, 2" {
   _load_config_block
   [ "$MAX_REVIEW_FIX_ITERATIONS" = "5" ]
   [ "$MAX_WHOLE_PR_FIX_ITERATIONS" = "10" ]
+  [ "$MAX_FIX_VALIDATE_ITERATIONS" = "2" ]
 }
 
 @test "reads reviewFix.maxIterations from config" {
@@ -75,4 +76,22 @@ _load_config_block() {
   _load_config_block
   [[ "$LOG_OUTPUT" == *"reviewFix.maxIterations=8"* ]]
   [[ "$LOG_OUTPUT" == *"wholePrFix.maxIterations=12"* ]]
+}
+
+@test "reads fixValidate.maxIterations from config" {
+  echo '{"phases":{"reviewFix":{"maxIterations":10},"implement":{"maxIterations":5},"fixValidate":{"maxIterations":3}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$MAX_FIX_VALIDATE_ITERATIONS" = "3" ]
+}
+
+@test "falls back to default when fixValidate key is absent" {
+  echo '{"phases":{"reviewFix":{"maxIterations":10},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [ "$MAX_FIX_VALIDATE_ITERATIONS" = "2" ]
+}
+
+@test "logs fixValidate.maxIterations on startup" {
+  echo '{"phases":{"reviewFix":{"maxIterations":8},"implement":{"maxIterations":5},"fixValidate":{"maxIterations":1}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  _load_config_block
+  [[ "$LOG_OUTPUT" == *"fixValidate.maxIterations=1"* ]]
 }
