@@ -12,6 +12,7 @@ const phasesSchema = z.object({
   // The implement phase runs each task once sequentially — no retry loop exists.
   implement: z.object({ maxIterations: z.number().int().positive() }),
   wholePrFix: z.object({ maxIterations: z.number().int().positive() }).optional(),
+  fixValidate: z.object({ maxIterations: z.number().int().positive() }).optional(),
   planReview: z
     .object({
       maxIterations: z.number().int().positive(),
