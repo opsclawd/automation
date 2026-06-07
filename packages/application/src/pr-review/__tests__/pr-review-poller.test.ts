@@ -75,8 +75,8 @@ const rateLimited = (): PollPassResult => ({
 });
 
 describe('PrReviewPoller', () => {
-  it('stops at the first all-resolved pass', async () => {
-    const { poller, events, terminalStates } = makePoller([resolved()]);
+  it('keeps polling after all-resolved to watch for follow-up comments', async () => {
+    const { poller, events } = makePoller([resolved()]);
     const result = await poller.run({
       runId,
       repoId,
@@ -85,12 +85,11 @@ describe('PrReviewPoller', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('all_resolved');
-    expect(result.pollsRun).toBe(1);
+    expect(result.terminalState).toBe('max_polls_reached');
+    expect(result.pollsRun).toBe(3);
     expect(
       events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.all_resolved'),
     ).toBe(true);
-    expect(terminalStates).toEqual([{ runId: String(runId), state: 'all_resolved' }]);
   });
 
   it('runs up to maxPolls then terminates as max_polls_reached', async () => {
@@ -141,12 +140,12 @@ describe('PrReviewPoller', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(scheduleCalls).toHaveLength(3);
+    expect(scheduleCalls).toHaveLength(5);
     expect(scheduleCalls[0].state).toBe('running');
     expect(scheduleCalls[0].nextPollAt).toBeInstanceOf(Date);
     expect(scheduleCalls[1].state).toBe('running');
     expect(scheduleCalls[1].nextPollAt).toBeInstanceOf(Date);
-    expect(scheduleCalls[2].state).toBe('all_resolved');
+    expect(scheduleCalls[4].state).toBe('max_polls_reached');
   });
 });
 
@@ -161,7 +160,7 @@ describe('PrReviewPoller — rate limit', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('all_resolved');
+    expect(result.terminalState).toBe('max_polls_reached');
     expect(sleeps).toContain(60_000);
     expect(
       events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.rate_limited'),
@@ -313,8 +312,8 @@ describe('PrReviewPoller — blocked early-stop', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('all_resolved');
-    expect(result.pollsRun).toBe(3);
+    expect(result.terminalState).toBe('max_polls_reached');
+    expect(result.pollsRun).toBe(5);
   });
 
   it('does NOT stop early when comments are still in pending state, even if current pass has blocked > 0 and processed = 0', async () => {
@@ -403,10 +402,10 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('all_resolved');
+    expect(result.terminalState).toBe('max_polls_reached');
     expect(result.pollsRun).toBe(3);
     expect(eventTypes).toContain('post-pr-review.poll.started');
-    expect(terminalStates).toEqual([{ state: 'all_resolved' }]);
+    expect(terminalStates).toEqual([{ state: 'max_polls_reached' }]);
   });
 
   it('does not run any polls if maxPolls budget is already exhausted', async () => {
@@ -501,9 +500,9 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('all_resolved');
-    expect(pollNumbers).toEqual([1]);
-    expect(result.pollsRun).toBe(1);
+    expect(result.terminalState).toBe('max_polls_reached');
+    expect(pollNumbers).toEqual([1, 2, 3]);
+    expect(result.pollsRun).toBe(3);
   });
 });
 
@@ -526,8 +525,8 @@ describe('PrReviewPoller — transient error recovery', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('all_resolved');
-    expect(result.pollsRun).toBe(1);
+    expect(result.terminalState).toBe('max_polls_reached');
+    expect(result.pollsRun).toBe(3);
     expect(sleeps).toContain(60_000);
     expect(
       events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.failed'),

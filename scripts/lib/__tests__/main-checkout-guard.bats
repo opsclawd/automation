@@ -479,23 +479,27 @@ teardown() {
 }
 
 @test "ai-pr-review-poll sources shared guard library" {
-  run grep -q 'source.*guard-main-checkout.sh' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
+  # Guard library sourcing now lives in the legacy script (M6-05 shim delegates to TS poller)
+  run grep -q 'source.*guard-main-checkout.sh' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll.legacy"
   [ "$status" -eq 0 ]
 }
 
 @test "ai-pr-review-poll has two _guard_main_checkout callsites" {
+  # Guard callsites now live in the legacy script (M6-05 shim delegates to TS poller)
   # Match callsites only (function invocation at start of indentation),
   # excluding the function definition itself and any references in comments.
-  callsite_count=$(grep -cE '^[[:space:]]+_guard_main_checkout\b' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll")
+  callsite_count=$(grep -cE '^[[:space:]]+_guard_main_checkout\b' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll.legacy")
   [ "$callsite_count" -eq 2 ]
 }
 
 @test "ai-pr-review-poll prompt forbids pushing to main" {
-  run grep -c 'Never push to main' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
+  # Prompt template now lives in the legacy script (M6-05 shim delegates to TS poller)
+  run grep -c 'Never push to main' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll.legacy"
   [ "$output" -eq 1 ]
 }
 
 @test "ai-pr-review-poll Step 3 template has branch-name comment" {
-  run grep -c 'Do NOT change this branch name' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
+  # Prompt template now lives in the legacy script (M6-05 shim delegates to TS poller)
+  run grep -c 'Do NOT change this branch name' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll.legacy"
   [ "$output" -eq 1 ]
 }

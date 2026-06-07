@@ -3661,6 +3661,7 @@ if [[ "$PHASE" == "done" ]]; then
   if [[ -n "$PR_NUM_VALUE" && "$PR_NUM_VALUE" != "unknown" ]]; then
     AI_RUN_EVENTS_FILE="${AI_RUN_EVENTS_FILE:-}" \
     AI_RUN_DISPLAY_ID="${AI_RUN_DISPLAY_ID:-}" \
+    AI_RUN_UUID="$RUN_ID" \
     nohup "${REPO_ROOT}/scripts/ai-pr-review-poll" "$PR_NUM_VALUE" "$ISSUE_NUM" 3 300 \
       >> "${ISSUES_DIR}/poll-pr.log" 2>&1 &
     POLL_PID=$!

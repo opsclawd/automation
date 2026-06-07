@@ -1,5 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
   openDatabase,
@@ -18,6 +26,7 @@ import {
   InMemoryEventBus,
   EventTailer,
   ProcessValidationAdapter,
+  GhCliAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -26,15 +35,20 @@ import {
   checkPid,
   RunValidation,
   PrReviewPoller,
+  ProcessPrReviewComments,
+  postPrReviewResultSchema,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
   type EventBusPort,
   type RunRepositoryPort,
   type TmpDirectoryFactory,
+  type GitPort,
+  type CreateWorktreeInput,
+  type PushInput,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName, RunId } from '@ai-sdlc/domain';
+import { AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -265,12 +279,234 @@ export function composeRoot(opts: ComposeOptions): Container {
     readyMaxDays: number;
     phaseStartedAt: Date;
   }): PrReviewPoller {
+    if (!agentRuntime) {
+      throw new ConfigError(
+        'agent config required for PR review poller; configure .ai-sdlc/config.yaml',
+      );
+    }
+    const ghAdapter = new GhCliAdapter({});
+    // GitPort audit: ProcessPrReviewComments only invokes git.diff, git.headCommitSha,
+    // and git.remoteRef. The remaining methods are stubs that throw with a clear
+    // message — they must not be called from the PR review poller flow. If a
+    // future change in ProcessPrReviewComments exercises them, this adapter must
+    // be extended to delegate to the real git CLI.
+    const gitAdapter: GitPort = {
+      async createWorktree(_input: CreateWorktreeInput): Promise<void> {
+        throw new Error(
+          'GitPort.createWorktree is not wired in compose poller (PR review flow does not create worktrees)',
+        );
+      },
+      async removeWorktree(_worktreePath: string): Promise<void> {
+        throw new Error(
+          'GitPort.removeWorktree is not wired in compose poller (PR review flow does not remove worktrees)',
+        );
+      },
+      async currentBranch(_cwd: string): Promise<string> {
+        throw new Error(
+          'GitPort.currentBranch is not wired in compose poller (PR review flow does not query branch)',
+        );
+      },
+      async headCommitSha(cwd: string): Promise<string> {
+        const { execFileSync } = await import('node:child_process');
+        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
+      },
+      async resetHard(_cwd: string, _commitSha: string): Promise<void> {
+        throw new Error(
+          'GitPort.resetHard is not wired in compose poller (PR review flow does not reset)',
+        );
+      },
+      async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
+        const { execFileSync } = await import('node:child_process');
+        const args = _head ? [`${_base}...${_head}`] : [_base];
+        try {
+          return execFileSync('git', ['diff', ...args], { cwd: _cwd }).toString();
+        } catch (err) {
+          process.stderr.write(
+            `[compose] git diff ${args.join(' ')} failed in ${_cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          return '';
+        }
+      },
+      async commit(_cwd: string, _message: string): Promise<string> {
+        throw new Error(
+          'GitPort.commit is not wired in compose poller (PR review flow does not commit via this adapter)',
+        );
+      },
+      async push(_input: PushInput): Promise<void> {
+        throw new Error(
+          'GitPort.push is not wired in compose poller (PR review flow does not push via this adapter)',
+        );
+      },
+      async remoteRef(input: {
+        cwd: string;
+        remote: string;
+        ref: string;
+      }): Promise<string | undefined> {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          const output = execFileSync('git', ['ls-remote', input.remote, input.ref], {
+            cwd: input.cwd,
+          })
+            .toString()
+            .trim();
+          return output.split(/\s+/)[0] || undefined;
+        } catch {
+          return undefined;
+        }
+      },
+    };
+    const processor = new ProcessPrReviewComments({
+      github: ghAdapter,
+      git: gitAdapter,
+      agent: agentRuntime,
+      prReviewRepo: prReviewRepository,
+      renderPrompt: async ({ cwd: _cwd, comments, diff, branch }) => {
+        const promptDir = join(baseTmpDir, 'pr-review-prompt');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(promptDir, 'prompt.md');
+        const content = [
+          '# PR Review Task',
+          '',
+          'Review and address the following PR review comments:',
+          '',
+          ...comments.map((c) => `- [commentId: ${c.commentId}] ${c.path}:${c.line} — ${c.body}`),
+          '',
+          '## Current Diff',
+          '',
+          diff,
+          '',
+          '## Instructions',
+          '',
+          'For each review comment, make a judgement call: is it technically valid?',
+          '',
+          'For comments that require code changes:',
+          '1. Edit the relevant source files',
+          '2. Stage and commit your changes:',
+          '   ```',
+          '   git add -A',
+          '   git commit -m "fix: address PR review feedback"',
+          '   ```',
+          `3. Push to the PR branch: \`git push origin '${branch.replace(/'/g, "'\\''")}'\``,
+          '',
+          'For comments assessed as invalid, no code changes are needed — include your reasoning in replyBody below.',
+          '',
+          'IMPORTANT: Do NOT post replies yourself (no `gh api` calls for replies). The orchestrator',
+          'handles posting replies from the replyBody fields in your result.json.',
+          '',
+          '## Required Output',
+          '',
+          'When done, write a `result.json` file with this exact shape:',
+          '```json',
+          '{',
+          '  "outcome": "ALL_DONE" | "NO_FIXES_NEEDED" | "PARTIAL" | "BLOCKED",',
+          '  "comments": [',
+          '    {',
+          '      "commentId": <number — must match a commentId from the list above>,',
+          '      "action": "fixed" | "no_fix" | "blocked",',
+          '      "replyBody": "<non-empty string explaining your decision>",',
+          '      "blockedReason": "<string — only when action is blocked>"',
+          '    }',
+          '  ]',
+          '}',
+          '```',
+          '',
+          'Every commentId from the list above MUST appear in the comments array.',
+        ].join('\n');
+        writeFileSync(promptPath, content, 'utf-8');
+        return promptPath;
+      },
+      extractResult: async (input) => {
+        try {
+          const absPath = input.resultJsonPath
+            ? join(input.cwd, input.resultJsonPath)
+            : join(input.cwd, 'result.json');
+          const raw = readFileSync(absPath, 'utf-8');
+          const parsed = JSON.parse(raw);
+          const result = postPrReviewResultSchema.safeParse(parsed);
+          if (!result.success) {
+            return { ok: false, reason: 'invalid', detail: result.error.message };
+          }
+          return { ok: true, result: result.data };
+        } catch (err) {
+          return { ok: false, reason: 'missing', detail: String(err) };
+        }
+      },
+      verifyCommitPushed: async ({ cwd, branch }) => {
+        try {
+          const headSha = await gitAdapter.headCommitSha(cwd);
+          if (!headSha) return false;
+          const remoteSha = await gitAdapter.remoteRef({ cwd, remote: 'origin', ref: branch });
+          return remoteSha === headSha;
+        } catch {
+          return false;
+        }
+      },
+      verifyBuildPasses: async ({ cwd }) => {
+        try {
+          const config = loadConfig(cwd);
+          if (!config.validation?.commands?.length) return true;
+          const buildCheckRunId = RunId(`pr-review-build-check-${randomUUID()}`);
+          const logDir = join(runsDir, buildCheckRunId);
+          const result = await runValidation.execute({
+            runId: buildCheckRunId,
+            phaseId: PhaseName('post-pr-review'),
+            cwd,
+            logDir,
+            commands: config.validation.commands,
+            timeoutSeconds: config.validation.timeout,
+          });
+          return result.passed;
+        } catch {
+          return false;
+        }
+      },
+      resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+      idFactory: () => randomUUID(),
+      now: () => new Date(),
+      maxIterations: 10,
+    });
+    // Wrap the in-memory bus so poll events are persisted to the database.
+    // In the detached CLI process there are no SSE subscribers, so without
+    // this wrapper post-pr-review.poll.* events would vanish.
+    const persistingEventBus: EventBusPort = {
+      subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
+      publish: (runUuid, event) => {
+        eventBus.publish(runUuid, event);
+        try {
+          eventRepository.insert({
+            runUuid,
+            ...(event.phase !== undefined ? { phase: event.phase } : {}),
+            level: event.level,
+            type: event.type,
+            message: event.message,
+            ...(event.metadata !== undefined
+              ? { metadata: event.metadata as Record<string, unknown> }
+              : {}),
+            timestamp: new Date(event.timestamp),
+          });
+        } catch {
+          // Best-effort: event persistence must not crash the poller
+        }
+      },
+    };
     return new PrReviewPoller({
       prReviewRepo: prReviewRepository,
-      processOnePass: async () => {
-        throw new Error('processOnePass not wired — wire ProcessPrReviewComments in M6-05');
+      processOnePass: async (input) => {
+        const output = await processor.execute(input);
+        const attempts = prReviewRepository.listPollAttempts(input.runId);
+        const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : undefined;
+        return {
+          result: {
+            outcome: output.outcome,
+            processed: output.processed,
+            blocked: output.blocked,
+            allResolved: output.allResolved,
+            rateLimited: false,
+          },
+          attempt: lastAttempt,
+        };
       },
-      eventBus,
+      eventBus: persistingEventBus,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => new Date(),
       maxPolls: opts.maxPolls,
