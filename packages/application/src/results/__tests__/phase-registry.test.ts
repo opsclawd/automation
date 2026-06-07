@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PHASE_RESULT_REGISTRY } from '../phase-registry.js';
 
 describe('PHASE_RESULT_REGISTRY', () => {
-  it('contains all 10 expected phases', () => {
+  it('contains all 11 expected phases', () => {
     const expected = [
       'plan-design',
       'plan-write',
@@ -14,6 +14,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
       'spec-review',
       'whole-pr-review',
       'compound',
+      'fix-validate',
     ];
     expect(Object.keys(PHASE_RESULT_REGISTRY).sort()).toEqual([...expected].sort());
   });
@@ -29,6 +30,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
     ['spec-review', true],
     ['whole-pr-review', true],
     ['compound', false],
+    ['fix-validate', false],
   ])('phase %s has retrySafe=%s', (phase, expected) => {
     expect(PHASE_RESULT_REGISTRY[phase].retrySafe).toBe(expected);
   });

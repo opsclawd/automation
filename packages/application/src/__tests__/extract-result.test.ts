@@ -89,6 +89,12 @@ const PHASE_TESTS: Array<{
     invalidJson: { bad: 'shape' },
     retrySafe: true,
   },
+  {
+    phase: 'fix-validate',
+    validJson: { result: 'fixed' },
+    invalidJson: { bad: 'shape' },
+    retrySafe: false,
+  },
 ];
 
 describe('extractResult', () => {

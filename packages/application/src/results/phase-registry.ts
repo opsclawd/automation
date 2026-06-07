@@ -9,6 +9,7 @@ import { postPrReviewResultSchema } from './schemas/post-pr-review.js';
 import { specReviewResultSchema } from './schemas/spec-review.js';
 import { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
 import { compoundResultSchema } from './schemas/compound.js';
+import { fixValidateResultSchema } from './schemas/fix-validate.js';
 
 export interface PhaseResultMeta {
   schema: ZodTypeAny;
@@ -26,4 +27,5 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'spec-review': { schema: specReviewResultSchema, retrySafe: true },
   'whole-pr-review': { schema: wholePrReviewResultSchema, retrySafe: true },
   compound: { schema: compoundResultSchema, retrySafe: false },
+  'fix-validate': { schema: fixValidateResultSchema, retrySafe: false },
 };
