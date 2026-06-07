@@ -389,7 +389,14 @@ run_plan_review_loop() {
     local _manifest_checksum_before
     _manifest_checksum_before=$(_checksum_file "${worktree_dir}/task-manifest.json")
     rm -f "${worktree_dir}/plan-review-findings.md"
-    run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration"
+    local _prev_findings=""
+    if [[ $iteration -gt 1 ]]; then
+      local _prev_iter=$((iteration - 1))
+      if [[ -f "${worktree_dir}/plan-review-findings-iter-${_prev_iter}.md" ]]; then
+        _prev_findings="${worktree_dir}/plan-review-findings-iter-${_prev_iter}.md"
+      fi
+    fi
+    run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration" "$_prev_findings"
     local reviewer_ec=$?
     if [[ $reviewer_ec -ne 0 ]]; then
       warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration}"
