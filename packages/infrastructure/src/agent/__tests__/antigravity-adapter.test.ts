@@ -203,4 +203,52 @@ describe('AntigravityAgentAdapter', () => {
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
     expect(r.exitCode).toBe(1);
   });
+
+  it('detects silent zero-exit as contract_violation with no_output', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-silent-zero.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('no_output');
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(r.stdoutPath, 'utf-8')).toBe('');
+  });
+
+  it('treats whitespace-only output as contract_violation with no_output', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-whitespace-only.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('no_output');
+    expect(r.exitCode).toBe(0);
+    expect(readFileSync(r.stdoutPath, 'utf-8').trim()).toBe('');
+  });
+
+  it('skips no_output check for artifact-only phases with expectedArtifacts', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-silent-zero.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd, { expectedArtifacts: ['result.md'] }));
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('no_output');
+  });
+
+  it('persists NO_OUTPUT diagnostic in stderr.log', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-silent-zero.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke(req(cwd));
+    expect(r.outcome).toBe('contract_violation');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
+  });
 });
