@@ -89,6 +89,12 @@ const PHASE_TESTS: Array<{
     invalidJson: { bad: 'shape' },
     retrySafe: true,
   },
+  {
+    phase: 'fix-validate',
+    validJson: { result: 'fixed' },
+    invalidJson: { bad: 'shape' },
+    retrySafe: false,
+  },
 ];
 
 describe('extractResult', () => {
@@ -102,6 +108,23 @@ describe('extractResult', () => {
         rerunContext: RERUN_CTX,
       }),
     ).rejects.toThrow("no result schema registered for phase 'nonexistent'");
+  });
+
+  it('resolves dynamic phase IDs like fix-validate-1 against the registry', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'r1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'fixed' }),
+    });
+    const agent = new FakeAgentPort();
+    const outcome = await extractResult({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      invocation: makeInvocation({ phaseId: PhaseName('fix-validate-1' as any) }),
+      ports: { artifacts, agent },
+      rerunContext: RERUN_CTX,
+    });
+    expect(outcome.ok).toBe(true);
   });
 
   describe.each(PHASE_TESTS)('phase=$phase', ({ phase, validJson, invalidJson, retrySafe }) => {

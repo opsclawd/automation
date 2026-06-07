@@ -144,3 +144,18 @@ OLDBLOCK
   # task-manifest.json must now be in the exclude file
   grep -qxF 'task-manifest.json' "$exclude_file"
 }
+
+@test "fix-validate artifacts are excluded from git after seed_excludes" {
+  local script_path
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
+  seed_excludes
+  cd "$WORKTREE_DIR"
+  echo "done" > fix-validate-done.marker
+  echo "log" > fix-validate-1.log
+  echo "log" > revalidate-fv-1.log
+  echo "log" > fix-validate-log.md
+  run git status --porcelain
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

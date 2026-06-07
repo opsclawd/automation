@@ -22,5 +22,7 @@ export { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
 export type { WholePrReviewResult } from './schemas/whole-pr-review.js';
 export { compoundResultSchema } from './schemas/compound.js';
 export type { CompoundResult } from './schemas/compound.js';
+export { fixValidateResultSchema } from './schemas/fix-validate.js';
+export type { FixValidateResult } from './schemas/fix-validate.js';
 export { extractResult } from './extract-result.js';
 export type { ExtractResultOutcome, ExtractResultInput, RerunContext } from './extract-result.js';
