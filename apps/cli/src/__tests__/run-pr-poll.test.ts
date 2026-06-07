@@ -267,7 +267,7 @@ describe('runPoll', () => {
     expect(deps.runRepository.updateStatusByUuid).not.toHaveBeenCalled();
   });
 
-  it('skips poller when existing run is in terminal state', async () => {
+  it('runs poller even when existing run is in terminal state', async () => {
     const deps = makeDeps();
     const pollerRun = vi.fn(async () => ({
       terminalState: 'all_resolved' as PollerTerminalState,
@@ -283,7 +283,7 @@ describe('runPoll', () => {
     const exitCode = await runPoll(defaultArgs, deps);
 
     expect(exitCode).toBe(0);
-    expect(pollerRun).not.toHaveBeenCalled();
+    expect(pollerRun).toHaveBeenCalled();
     expect(deps.runRepository.insert).not.toHaveBeenCalled();
   });
 
@@ -323,6 +323,7 @@ describe('runPoll', () => {
         status: 'running',
         issueNumber: 7,
       }),
+      process.pid,
     );
   });
 

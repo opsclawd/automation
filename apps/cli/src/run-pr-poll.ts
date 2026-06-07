@@ -94,7 +94,7 @@ function runStatusForTerminalState(state: PollerTerminalState): RunStatus {
 
 export interface RunPollDeps {
   eventBus: Pick<EventBusPort, 'subscribe'>;
-  runRepository: RunRepositoryPort & { insert(run: Run): void };
+  runRepository: RunRepositoryPort & { insert(run: Run, pid?: number): void };
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -138,12 +138,6 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
   );
 
   const existing = deps.runRepository.findByUuid(runIdStr);
-  if (existing && existing.status !== 'running') {
-    deps.stderr.write(
-      `[run-pr-poll] run ${runIdStr} already in terminal state: ${existing.status} — skipping\n`,
-    );
-    return 0;
-  }
   let createdSyntheticRun = false;
   if (!existing) {
     const run = createRun({
@@ -154,7 +148,7 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
       startedAt: new Date(),
     });
     try {
-      deps.runRepository.insert(run);
+      deps.runRepository.insert(run, process.pid);
       createdSyntheticRun = true;
     } catch (err) {
       if (!(err instanceof Error && err.message.includes('UNIQUE constraint failed'))) {
@@ -168,7 +162,7 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
   }
 
   let poller!: ReturnType<RunPollDeps['buildPrReviewPoller']>;
-  let unsubscribe!: () => void;
+  let unsubscribe: (() => void) | undefined;
   try {
     poller = deps.buildPrReviewPoller({
       maxPolls: args.maxPolls,
