@@ -119,7 +119,6 @@ function makeDeps(overrides: Partial<RunPollDeps> = {}): RunPollDeps {
     },
     runRepository: {
       findByUuid: vi.fn(() => undefined),
-      insert: vi.fn(),
       update: vi.fn(),
       insertIfNoActive: vi.fn(),
       findByIssueNumber: vi.fn(() => undefined),
@@ -288,7 +287,7 @@ describe('runPoll', () => {
 
     expect(exitCode).toBe(0);
     expect(pollerRun).toHaveBeenCalled();
-    expect(deps.runRepository.insert).not.toHaveBeenCalled();
+    expect(deps.runRepository.insertIfNoActive).not.toHaveBeenCalled();
   });
 
   it('returns exit code 0 even when updateStatusByUuid throws on success', async () => {
@@ -321,13 +320,12 @@ describe('runPoll', () => {
 
     await runPoll(defaultArgs, deps);
 
-    expect(deps.runRepository.insert).toHaveBeenCalledWith(
+    expect(deps.runRepository.insertIfNoActive).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'pr_review',
         status: 'running',
         issueNumber: 7,
       }),
-      process.pid,
     );
   });
 
@@ -341,7 +339,7 @@ describe('runPoll', () => {
 
     await runPoll(defaultArgs, deps);
 
-    expect(deps.runRepository.insert).not.toHaveBeenCalled();
+    expect(deps.runRepository.insertIfNoActive).not.toHaveBeenCalled();
   });
 
   it('gracefully handles insert race (duplicate)', async () => {
@@ -349,8 +347,8 @@ describe('runPoll', () => {
     (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>)
       .mockReturnValueOnce(undefined)
       .mockReturnValueOnce({ uuid: 'race-uuid', displayId: 'race-run', status: 'running' });
-    (deps.runRepository.insert as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      throw new Error('UNIQUE constraint failed');
+    (deps.runRepository.insertIfNoActive as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error('An active run already exists for issue 7');
     });
 
     const exitCode = await runPoll(defaultArgs, deps);
@@ -358,10 +356,10 @@ describe('runPoll', () => {
     expect(exitCode).toBe(0);
   });
 
-  it('re-throws non-UNIQUE insert errors', async () => {
+  it('re-throws non-active-run insertIfNoActive errors', async () => {
     const deps = makeDeps();
     (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
-    (deps.runRepository.insert as ReturnType<typeof vi.fn>).mockImplementation(() => {
+    (deps.runRepository.insertIfNoActive as ReturnType<typeof vi.fn>).mockImplementation(() => {
       throw new Error('database is locked');
     });
 

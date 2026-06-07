@@ -3,14 +3,7 @@ import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PollerTerminalState, RunRepositoryPort, EventBusPort } from '@ai-sdlc/application';
-import {
-  createRun,
-  RepositoryId,
-  RunId,
-  PhaseName,
-  type Run,
-  type RunStatus,
-} from '@ai-sdlc/domain';
+import { createRun, RepositoryId, RunId, PhaseName, type RunStatus } from '@ai-sdlc/domain';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -94,7 +87,7 @@ function runStatusForTerminalState(state: PollerTerminalState): RunStatus {
 
 export interface RunPollDeps {
   eventBus: Pick<EventBusPort, 'subscribe'>;
-  runRepository: RunRepositoryPort & { insert(run: Run, pid?: number): void };
+  runRepository: RunRepositoryPort;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -148,13 +141,13 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
       startedAt: new Date(),
     });
     try {
-      deps.runRepository.insert(run, process.pid);
+      deps.runRepository.insertIfNoActive(run);
       createdSyntheticRun = true;
     } catch (err) {
-      if (!(err instanceof Error && err.message.includes('UNIQUE constraint failed'))) {
+      if (!(err instanceof Error && err.message.includes('active run already exists'))) {
         throw err;
       }
-      // Race: orchestrator may have inserted between findByUuid and insert — verify
+      // Another run is active for this issue — verify our UUID exists (race with orchestrator)
       if (!deps.runRepository.findByUuid(runIdStr)) {
         throw new Error(`Run insert failed and record not found for ${runIdStr}`);
       }
