@@ -2859,6 +2859,7 @@ Start now."
       _fv_prompt_file=$(mktemp)
       _main_state_before=$(_capture_main_state)
       printf '%s' "$FIX_VALIDATE_PROMPT" > "$_fv_prompt_file"
+      : > "${ISSUES_DIR}/fix-validate-${FIX_VALIDATE_COUNT}.log"
       ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
         --phase fix-validate \
         --cwd "$WORKTREE_DIR" \
