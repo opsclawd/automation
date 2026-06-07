@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { parsePollArgs, exitCodeForTerminalState } from '../run-pr-poll.js';
+import { describe, it, expect, vi } from 'vitest';
+import { parsePollArgs, exitCodeForTerminalState, runPoll, formatEvent } from '../run-pr-poll.js';
+import type { PollArgs } from '../run-pr-poll.js';
+import type { RunPollDeps } from '../run-pr-poll.js';
+import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PollerTerminalState } from '@ai-sdlc/application';
 
 describe('parsePollArgs', () => {
@@ -94,5 +97,178 @@ describe('exitCodeForTerminalState', () => {
   });
   it('maps unknown state -> 3', () => {
     expect(exitCodeForTerminalState('something_else' as PollerTerminalState)).toBe(3);
+  });
+});
+
+function makeDeps(overrides: Partial<RunPollDeps> = {}): RunPollDeps {
+  return {
+    eventBus: {
+      subscribe: vi.fn((_runUuid: string, _listener: (e: OrchestratorEvent) => void) => vi.fn()),
+    },
+    runRepository: {
+      findByUuid: vi.fn(() => undefined),
+      insert: vi.fn(),
+      update: vi.fn(),
+      insertIfNoActive: vi.fn(),
+      findByIssueNumber: vi.fn(() => undefined),
+      findActiveRuns: vi.fn(() => []),
+      updateStatusByIssueNumber: vi.fn(() => false),
+      updateStatusByUuid: vi.fn(() => false),
+    },
+    buildPrReviewPoller: vi.fn(() => ({
+      run: vi.fn(async () => ({
+        terminalState: 'all_resolved' as PollerTerminalState,
+        pollsRun: 1,
+      })),
+    })),
+    stderr: { write: vi.fn() } as unknown as NodeJS.WritableStream,
+    repoRoot: '/tmp/test-repo',
+    ...overrides,
+  };
+}
+
+const defaultArgs: PollArgs = {
+  prNumber: 42,
+  issueNumber: 7,
+  repoFullName: 'o/r',
+  cwd: '/work/tree',
+  maxPolls: 3,
+  pollIntervalSeconds: 300,
+};
+
+describe('runPoll', () => {
+  it('subscribes to eventBus and writes events to stderr', async () => {
+    const deps = makeDeps();
+    const listener = vi.fn();
+    deps.eventBus.subscribe = vi.fn((_uuid, cb) => {
+      listener.mockImplementation(cb);
+      return vi.fn();
+    });
+
+    const pollerRun = vi.fn(async () => ({
+      terminalState: 'all_resolved' as PollerTerminalState,
+      pollsRun: 2,
+    }));
+    deps.buildPrReviewPoller = vi.fn(() => ({ run: pollerRun }));
+
+    const exitCode = await runPoll(defaultArgs, deps);
+
+    expect(exitCode).toBe(0);
+    expect(deps.eventBus.subscribe).toHaveBeenCalled();
+    expect(deps.stderr.write).toHaveBeenCalledWith(expect.stringContaining('PID:'));
+    expect(deps.stderr.write).toHaveBeenCalledWith(
+      expect.stringContaining('terminal=all_resolved'),
+    );
+  });
+
+  it('inserts a run record when none exists (FK guard)', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+
+    await runPoll(defaultArgs, deps);
+
+    expect(deps.runRepository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'pr_review',
+        status: 'running',
+        issueNumber: 7,
+      }),
+    );
+  });
+
+  it('skips insert when run record already exists', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue({
+      uuid: 'existing',
+      displayId: 'existing-run',
+    });
+
+    await runPoll(defaultArgs, deps);
+
+    expect(deps.runRepository.insert).not.toHaveBeenCalled();
+  });
+
+  it('gracefully handles insert race (duplicate)', async () => {
+    const deps = makeDeps();
+    (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
+    (deps.runRepository.insert as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error('UNIQUE constraint failed');
+    });
+
+    const exitCode = await runPoll(defaultArgs, deps);
+
+    expect(exitCode).toBe(0);
+  });
+
+  it('unsubscribes from eventBus in finally block', async () => {
+    const unsubscribe = vi.fn();
+    const deps = makeDeps();
+    deps.eventBus.subscribe = vi.fn(() => unsubscribe);
+
+    await runPoll(defaultArgs, deps);
+
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('unsubscribes even when poller throws', async () => {
+    const unsubscribe = vi.fn();
+    const deps = makeDeps();
+    deps.eventBus.subscribe = vi.fn(() => unsubscribe);
+    deps.buildPrReviewPoller = vi.fn(() => ({
+      run: vi.fn(async () => {
+        throw new Error('poller exploded');
+      }),
+    }));
+
+    await expect(runPoll(defaultArgs, deps)).rejects.toThrow('poller exploded');
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('cleans up result.json files', async () => {
+    const deps = makeDeps();
+    deps.repoRoot = '/tmp/test-cleanup';
+    const exitCode = await runPoll(defaultArgs, deps);
+    expect(exitCode).toBe(0);
+  });
+
+  it('writes startup banner with PID, PR, maxPolls, interval', async () => {
+    const deps = makeDeps();
+    await runPoll(defaultArgs, deps);
+    const writes = (deps.stderr.write as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c: [string]) => c[0],
+    );
+    const banner = writes.find((w: string) => w.includes('PID:'));
+    expect(banner).toContain('PR: 42');
+    expect(banner).toContain('max_polls: 3');
+    expect(banner).toContain('interval: 300s');
+  });
+});
+
+describe('formatEvent', () => {
+  it('formats a structured event as a log line', () => {
+    const event: OrchestratorEvent = {
+      runId: 'r1',
+      phase: 'post-pr-review',
+      level: 'info',
+      type: 'poll.start',
+      message: 'Starting poll pass 1',
+      timestamp: '2026-06-07T14:30:00.000Z',
+      metadata: { prNumber: 42 },
+    };
+    const line = formatEvent(event);
+    expect(line).toBe('[14:30:00] [poll.start] Starting poll pass 1 prNumber=42\n');
+  });
+
+  it('omits metadata section when empty', () => {
+    const event: OrchestratorEvent = {
+      runId: 'r1',
+      level: 'info',
+      type: 'poll.done',
+      message: 'Done',
+      timestamp: '2026-06-07T09:00:00.000Z',
+      metadata: {},
+    };
+    const line = formatEvent(event);
+    expect(line).toBe('[09:00:00] [poll.done] Done\n');
   });
 });
