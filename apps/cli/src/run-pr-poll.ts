@@ -3,7 +3,14 @@ import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PollerTerminalState, RunRepositoryPort, EventBusPort } from '@ai-sdlc/application';
-import { createRun, RepositoryId, RunId, PhaseName, type Run } from '@ai-sdlc/domain';
+import {
+  createRun,
+  RepositoryId,
+  RunId,
+  PhaseName,
+  type Run,
+  type RunStatus,
+} from '@ai-sdlc/domain';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -70,6 +77,18 @@ export function exitCodeForTerminalState(state: PollerTerminalState): number {
       return 2;
     default:
       return 3;
+  }
+}
+
+function runStatusForTerminalState(state: PollerTerminalState): RunStatus {
+  switch (state) {
+    case 'all_resolved':
+    case 'max_polls_reached':
+      return 'passed';
+    case 'blocked':
+      return 'cancelled';
+    case 'timed_out':
+      return 'failed';
   }
 }
 
@@ -165,6 +184,10 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
       phaseId: PhaseName('post-pr-review'),
     });
     deps.stderr.write(`[run-pr-poll] terminal=${result.terminalState} polls=${result.pollsRun}\n`);
+    deps.runRepository.updateStatusByUuid(runIdStr, {
+      status: runStatusForTerminalState(result.terminalState),
+      completedAt: new Date(),
+    });
     return exitCodeForTerminalState(result.terminalState);
   } finally {
     unsubscribe();

@@ -172,6 +172,40 @@ describe('runPoll', () => {
     );
   });
 
+  it.each([
+    ['all_resolved', 'passed'],
+    ['max_polls_reached', 'passed'],
+    ['blocked', 'cancelled'],
+    ['timed_out', 'failed'],
+  ] as const)(
+    'updates run status to %s when terminal state is %s',
+    async (terminalState, expectedStatus) => {
+      const deps = makeDeps();
+      deps.buildPrReviewPoller = vi.fn(() => ({
+        run: vi.fn(async () => ({ terminalState, pollsRun: 1 })),
+      }));
+
+      await runPoll(defaultArgs, deps);
+
+      expect(deps.runRepository.updateStatusByUuid).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: expectedStatus }),
+      );
+    },
+  );
+
+  it('does not update status when poller throws', async () => {
+    const deps = makeDeps();
+    deps.buildPrReviewPoller = vi.fn(() => ({
+      run: vi.fn(async () => {
+        throw new Error('boom');
+      }),
+    }));
+
+    await expect(runPoll(defaultArgs, deps)).rejects.toThrow('boom');
+    expect(deps.runRepository.updateStatusByUuid).not.toHaveBeenCalled();
+  });
+
   it('inserts a run record when none exists (FK guard)', async () => {
     const deps = makeDeps();
     (deps.runRepository.findByUuid as ReturnType<typeof vi.fn>).mockReturnValue(undefined);
