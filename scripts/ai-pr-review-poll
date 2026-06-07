@@ -57,6 +57,12 @@ mkdir -p "$POLL_TMPDIR"
 export TMPDIR="$POLL_TMPDIR"
 export SQLITE_TMPDIR="$POLL_TMPDIR"
 
+# Escape hatch: USE_LEGACY_POLL=1 runs the legacy bash poller (issue #230).
+if [[ "${USE_LEGACY_POLL:-0}" == "1" ]]; then
+  exec bash "${REPO_ROOT}/scripts/legacy/ai-pr-review-poll.legacy" \
+    "$PR_NUMBER" "$ISSUE_NUM" "$MAX_POLLS" "$POLL_INTERVAL"
+fi
+
 ARGS=(--pr "$PR_NUMBER" --repo "$OWNER_REPO" --cwd "$POLL_CWD"
       --max-polls "$MAX_POLLS" --interval-seconds "$POLL_INTERVAL")
 [[ -n "$ISSUE_NUM" ]] && ARGS+=(--issue "$ISSUE_NUM")
