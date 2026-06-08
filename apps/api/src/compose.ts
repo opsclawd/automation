@@ -47,7 +47,7 @@ import {
   type CreateWorktreeInput,
   type PushInput,
 } from '@ai-sdlc/application';
-import { ConfigError, loadConfig, type AgentConfig } from '@ai-sdlc/shared';
+import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import { AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
@@ -96,7 +96,10 @@ const classifyExitAdapter = (
  * Throws `ConfigError` if the phase is not configured or agent config is absent.
  */
 export function resolveProfileForPhase(agent: AgentConfig, phaseName: string): AgentProfileName {
-  const entry = agent.phaseProfiles[phaseName];
+  let entry = agent.phaseProfiles[phaseName];
+  if (!entry && PHASE_FALLBACKS[phaseName]) {
+    entry = agent.phaseProfiles[PHASE_FALLBACKS[phaseName]];
+  }
   if (!entry) {
     throw new ConfigError(`unknown phase '${phaseName}'`);
   }
