@@ -3,6 +3,7 @@ import type {
   GitHubIssue,
   PullRequest,
   PullRequestDetail,
+  PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
 } from '../ports/github-port.js';
@@ -26,6 +27,7 @@ export class FakeGitHubPort implements GitHubPort {
   }> = [];
   createdPrs: PullRequest[] = [];
   createdPrInputs: CreatePullRequestInput[] = [];
+  reviews = new Map<string, PullRequestReview[]>();
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);
@@ -100,5 +102,9 @@ export class FakeGitHubPort implements GitHubPort {
     labels: { add?: string[]; remove?: string[] },
   ): Promise<void> {
     this.labelChanges.push({ repoFullName, issueNumber, ...labels });
+  }
+
+  async listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]> {
+    return this.reviews.get(`${repoFullName}/${prNumber}`) ?? [];
   }
 }
