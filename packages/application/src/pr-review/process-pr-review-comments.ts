@@ -6,6 +6,7 @@ import {
   markProcessed,
   blockComment,
   isUnresolved,
+  resetForRetry,
   type PrReviewComment,
   type PollAttempt,
 } from '@ai-sdlc/domain';
@@ -33,7 +34,11 @@ export interface ProcessPrReviewDeps {
   }) => Promise<
     { ok: true; result: PostPrReviewResult } | { ok: false; reason: string; detail: string }
   >;
-  verifyCommitPushed: (input: { cwd: string; branch: string }) => Promise<boolean>;
+  verifyCommitPushed: (input: {
+    cwd: string;
+    branch: string;
+    startCommitSha: string;
+  }) => Promise<boolean>;
   verifyBuildPasses: (input: { cwd: string }) => Promise<boolean>;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
@@ -90,7 +95,7 @@ export class ProcessPrReviewComments {
     const unresolved = d.prReviewRepo.listComments(input.runId).filter((c) => isUnresolved(c));
 
     if (unresolved.length === 0) {
-      await this.verifyOrphaned(input);
+      await this.verifyOrphaned(input, undefined);
 
       const allComments = d.prReviewRepo.listComments(input.runId);
       const stillUnresolved = allComments.filter(isUnresolved);
@@ -179,7 +184,7 @@ export class ProcessPrReviewComments {
     const result = extracted.result;
 
     if (result.comments.length === 0 && result.outcome !== 'BLOCKED') {
-      await this.verifyOrphaned(input);
+      await this.verifyOrphaned(input, startCommitSha);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
         outcome: 'BLOCKED',
@@ -196,7 +201,7 @@ export class ProcessPrReviewComments {
         blocked++;
       }
 
-      await this.verifyOrphaned(input);
+      await this.verifyOrphaned(input, startCommitSha);
 
       this.recordPoll(input, startedAt, unresolved.length, 0, 'blocked');
       return {
@@ -230,7 +235,11 @@ export class ProcessPrReviewComments {
     let commitVerified = true;
     let buildVerified = true;
     if (hasFixedComments) {
-      commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
+      commitVerified = await d.verifyCommitPushed({
+        cwd: input.cwd,
+        branch: pr.headRefName,
+        startCommitSha,
+      });
       buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
     }
 
@@ -322,7 +331,7 @@ export class ProcessPrReviewComments {
     }
 
     if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0) {
-      await this.verifyOrphaned(input);
+      await this.verifyOrphaned(input, startCommitSha);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
         outcome: 'BLOCKED',
@@ -332,7 +341,7 @@ export class ProcessPrReviewComments {
       };
     }
 
-    blocked += await this.verifyOrphaned(input);
+    blocked += await this.verifyOrphaned(input, startCommitSha);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
@@ -358,7 +367,10 @@ export class ProcessPrReviewComments {
     };
   }
 
-  private async verifyOrphaned(input: ProcessPrReviewInput): Promise<number> {
+  private async verifyOrphaned(
+    input: ProcessPrReviewInput,
+    startCommitSha: string | undefined,
+  ): Promise<number> {
     const d = this.deps;
     const allComments = d.prReviewRepo.listComments(input.runId);
     const orphaned = allComments.filter((c) => c.state === 'replied' && !c.replyVerified);
@@ -367,7 +379,9 @@ export class ProcessPrReviewComments {
 
     const pr = await d.github.getPr(input.repoFullName, input.prNumber);
     const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const commitVerified = await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName });
+    const commitVerified = startCommitSha
+      ? await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName, startCommitSha })
+      : true;
     const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
 
     let blocked = 0;
@@ -381,10 +395,19 @@ export class ProcessPrReviewComments {
           remote: 'origin',
           ref: pr.headRefName,
         });
-        fixCommitOnRemote = remoteSha === c.commitSha;
+        if (remoteSha) {
+          fixCommitOnRemote = await d.git.isAncestor(input.cwd, c.commitSha, remoteSha);
+        } else {
+          fixCommitOnRemote = false;
+        }
+      }
+      let isNewerThanStart = true;
+      if (isFix && startCommitSha && c.commitSha) {
+        const commitsSinceStart = await d.git.logBetween(input.cwd, startCommitSha, c.commitSha);
+        isNewerThanStart = commitsSinceStart.length > 0;
       }
       const ok = isFix
-        ? fixCommitOnRemote && commitVerified && replyVerified && buildVerified
+        ? fixCommitOnRemote && isNewerThanStart && commitVerified && replyVerified && buildVerified
         : replyVerified;
 
       if (ok) {
@@ -400,12 +423,7 @@ export class ProcessPrReviewComments {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
         blocked++;
       } else {
-        d.prReviewRepo.upsertComment({
-          ...c,
-          attempts: c.attempts + 1,
-          lastPoll: input.pollNumber,
-          updatedAt: d.now(),
-        });
+        d.prReviewRepo.upsertComment(resetForRetry(c, { poll: input.pollNumber }));
       }
     }
     return blocked;

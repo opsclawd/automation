@@ -364,6 +364,41 @@ export function composeRoot(opts: ComposeOptions): Container {
           return undefined;
         }
       },
+      async isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+            cwd,
+            stdio: 'ignore',
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          const output = execFileSync('git', ['log', '--format=%H', `${base}...${head}`], {
+            cwd,
+          })
+            .toString()
+            .trim();
+          return output ? output.split('\n') : [];
+        } catch {
+          return [];
+        }
+      },
+      async fetchAndMerge(_cwd: string, _remote: string, _branch: string): Promise<void> {
+        throw new Error(
+          'GitPort.fetchAndMerge is not wired in compose poller (PR review flow does not fetch)',
+        );
+      },
+      async cleanUntracked(_cwd: string): Promise<void> {
+        throw new Error(
+          'GitPort.cleanUntracked is not wired in compose poller (PR review flow does not clean)',
+        );
+      },
     };
     const processor = new ProcessPrReviewComments({
       github: ghAdapter,
@@ -441,12 +476,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           return { ok: false, reason: 'missing', detail: String(err) };
         }
       },
-      verifyCommitPushed: async ({ cwd, branch }) => {
+      verifyCommitPushed: async ({ cwd, branch, startCommitSha }) => {
         try {
-          const headSha = await gitAdapter.headCommitSha(cwd);
-          if (!headSha) return false;
           const remoteSha = await gitAdapter.remoteRef({ cwd, remote: 'origin', ref: branch });
-          return remoteSha === headSha;
+          if (!remoteSha) return false;
+          const isAncestor = await gitAdapter.isAncestor(cwd, startCommitSha, remoteSha);
+          if (!isAncestor) return false;
+          const commits = await gitAdapter.logBetween(cwd, startCommitSha, remoteSha);
+          return commits.length > 0;
         } catch {
           return false;
         }

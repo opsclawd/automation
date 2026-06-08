@@ -694,7 +694,8 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
 
 describe('ProcessPrReviewComments — orphan verification uses remoteRef', () => {
   it('marks an orphaned fixed comment processed when the fix commit is on the remote', async () => {
-    const { deps, repo, github } = makeDeps();
+    const { deps, repo, github, git } = makeDeps();
+    git.ancestorResults.set('abc123|abc123', true);
     const seeded = createPrReviewComment({
       runId,
       prNumber: 5,
