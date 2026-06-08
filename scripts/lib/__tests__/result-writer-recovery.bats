@@ -164,3 +164,32 @@ teardown() {
   # Result should still be BLOCKED
   [ "$(cat "${WORKTREE_DIR}/implement-task-1.result")" = "BLOCKED" ]
 }
+
+@test "guard: validate_result_file identifies explicit BLOCKED (guard skips recovery)" {
+  # The guard in the main script uses validate_result_file to distinguish
+  # an explicit BLOCKED (written by the implementer) from a missing/invalid
+  # result file (where the fallback wrote BLOCKED). When the file contains
+  # an explicit BLOCKED, the guard skips recovery entirely.
+  echo "BLOCKED" > "${WORKTREE_DIR}/implement-task-1.result"
+  run validate_result_file "${WORKTREE_DIR}/implement-task-1.result" BLOCKED NEEDS_CONTEXT
+  [ "$status" -eq 0 ]
+}
+
+@test "guard: validate_result_file identifies explicit NEEDS_CONTEXT (guard skips recovery)" {
+  echo "NEEDS_CONTEXT" > "${WORKTREE_DIR}/implement-task-1.result"
+  run validate_result_file "${WORKTREE_DIR}/implement-task-1.result" BLOCKED NEEDS_CONTEXT
+  [ "$status" -eq 0 ]
+}
+
+@test "guard: validate_result_file rejects missing file (guard attempts recovery)" {
+  # When the result file doesn't exist (fallback path), validate_result_file
+  # returns 1, and the guard proceeds to SHA comparison + result-writer.
+  run validate_result_file "${WORKTREE_DIR}/implement-task-1.result" BLOCKED NEEDS_CONTEXT
+  [ "$status" -eq 1 ]
+}
+
+@test "guard: validate_result_file rejects invalid content (guard attempts recovery)" {
+  echo "GARBAGE" > "${WORKTREE_DIR}/implement-task-1.result"
+  run validate_result_file "${WORKTREE_DIR}/implement-task-1.result" BLOCKED NEEDS_CONTEXT
+  [ "$status" -eq 1 ]
+}
