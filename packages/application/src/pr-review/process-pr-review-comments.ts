@@ -344,6 +344,44 @@ export class ProcessPrReviewComments {
       }
     }
 
+    if (result.outcome === 'ALL_DONE' && uniqueComments.length < unresolved.length) {
+      const addressedCommentIds = new Set(uniqueComments.map((c) => c.commentId));
+      const omittedComments = unresolved.filter((c) => !addressedCommentIds.has(c.commentId));
+      for (const c of omittedComments) {
+        if (fixCommitSha && commitShaChanged) {
+          const fallbackBody = `This comment was addressed in commit ${fixCommitSha.slice(0, 7)}.`;
+          await d.github.replyToReviewComment(
+            input.repoFullName,
+            input.prNumber,
+            c.commentId,
+            fallbackBody,
+          );
+          d.prReviewRepo.insertReply({
+            id: d.idFactory(),
+            runId: input.runId,
+            prNumber: input.prNumber,
+            commentId: c.commentId,
+            body: fallbackBody,
+            postedAt: d.now(),
+            verified: false,
+          });
+          const existingComment = d.prReviewRepo.getComment(input.runId, c.commentId);
+          if (existingComment) {
+            d.prReviewRepo.upsertComment({
+              ...existingComment,
+              state: 'replied',
+              outcome: 'fixed',
+              commitSha: fixCommitSha,
+              attempts: existingComment.attempts + 1,
+              lastPoll: input.pollNumber,
+              updatedAt: d.now(),
+            });
+          }
+          repliedInThisPass.add(c.commentId);
+        }
+      }
+    }
+
     if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0) {
       await d.git.resetHard(input.cwd, 'HEAD');
       await d.git.cleanUntracked(input.cwd);

@@ -1015,6 +1015,55 @@ describe('ProcessPrReviewComments — APPROVED review filtering', () => {
   });
 });
 
+describe('ProcessPrReviewComments — Bug R fallback for omitted comment IDs', () => {
+  it('posts fallback replies for omitted comments when agent returns ALL_DONE with missing comment IDs', async () => {
+    const { deps, github } = makeDeps({
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'ALL_DONE',
+          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Fixed the typo.' }],
+        },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r1',
+        body: 'typo',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 2,
+        reviewer: 'r2',
+        body: 'bug',
+        createdAt: new Date(),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(github.repliesPosted.some((r) => r.commentId === 9001)).toBe(true);
+    expect(
+      github.repliesPosted.some((r) => r.commentId === 9002 && r.body.includes('commit')),
+    ).toBe(true);
+  });
+});
+
 describe('ProcessPrReviewComments — closed PR guard', () => {
   it('blocks without invoking the agent when the PR is closed', async () => {
     const { deps, github, repo, agent } = makeDeps();
