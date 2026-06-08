@@ -432,6 +432,39 @@ describe('ProcessPrReviewComments — multiple comments', () => {
 });
 
 describe('ProcessPrReviewComments — failed agent invocation', () => {
+  it('cleans up the worktree when the agent invocation fails', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult({ outcome: 'failed' })],
+    });
+    const git = new FakeGitPort();
+    git.headByCwd.set('/work/tree', 'abc123');
+    git.remoteRefs.set('origin/feat-x', 'abc123');
+    const { deps, github } = makeDeps({ agent, git });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(git.commits.length).toBe(0);
+    expect(git.cleanUntrackedCalls).toContain('/work/tree');
+  });
+
   it('records a failed poll and posts no replies when agent invocation fails', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult({ outcome: 'failed' })],

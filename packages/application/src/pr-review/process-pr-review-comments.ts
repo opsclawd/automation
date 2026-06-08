@@ -162,6 +162,8 @@ export class ProcessPrReviewComments {
     });
 
     if (invocation.outcome !== 'success') {
+      await d.git.resetHard(input.cwd, 'HEAD');
+      await d.git.cleanUntracked(input.cwd);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
         outcome: 'BLOCKED',
@@ -178,6 +180,8 @@ export class ProcessPrReviewComments {
     );
 
     if (!extracted.ok) {
+      await d.git.resetHard(input.cwd, 'HEAD');
+      await d.git.cleanUntracked(input.cwd);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
         outcome: 'BLOCKED',
@@ -190,6 +194,8 @@ export class ProcessPrReviewComments {
     const result = extracted.result;
 
     if (result.comments.length === 0 && result.outcome !== 'BLOCKED') {
+      await d.git.resetHard(input.cwd, 'HEAD');
+      await d.git.cleanUntracked(input.cwd);
       await this.verifyOrphaned(input, startCommitSha);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
@@ -201,6 +207,8 @@ export class ProcessPrReviewComments {
     }
 
     if (result.outcome === 'BLOCKED' && result.comments.length === 0) {
+      await d.git.resetHard(input.cwd, 'HEAD');
+      await d.git.cleanUntracked(input.cwd);
       let blocked = 0;
       for (const c of unresolved) {
         d.prReviewRepo.upsertComment(blockComment(c, 'agent returned global BLOCKED'));
@@ -337,6 +345,8 @@ export class ProcessPrReviewComments {
     }
 
     if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0) {
+      await d.git.resetHard(input.cwd, 'HEAD');
+      await d.git.cleanUntracked(input.cwd);
       await this.verifyOrphaned(input, startCommitSha);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
