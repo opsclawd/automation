@@ -70,10 +70,12 @@ export function resolveProfileName(
   if (values.phase) {
     let phaseName = values.phase;
     let entry = config.phaseProfiles[phaseName];
-    if (!entry && PHASE_FALLBACKS[phaseName]) {
+    if (!entry) {
       const fallback = PHASE_FALLBACKS[phaseName];
-      entry = config.phaseProfiles[fallback];
-      if (entry) phaseName = fallback;
+      if (fallback) {
+        entry = config.phaseProfiles[fallback];
+        if (entry) phaseName = fallback;
+      }
     }
     if (!entry) {
       return {
