@@ -2,14 +2,14 @@
   "outcome": "ALL_DONE",
   "comments": [
     {
-      "commentId": 3370410826,
+      "commentId": 3375128181,
       "action": "fixed",
-      "replyBody": "Fixed `parse_review_findings()` to use block-aware awk parsing instead of per-line grep. Each `###` or bold/severity-delimited finding is tracked as a block, and `**RESOLVED**` anywhere in the block (heading line OR subsequent `**Resolution:**` line) marks it as resolved. This handles both same-line and cross-line resolution markers."
+      "replyBody": "Fixed. Changed `local _base_sha_file` and `local _pre_sha _post_sha` to plain assignments (`_base_sha_file=...`, `_pre_sha=\"\" _post_sha=\"\"`) since this code runs in the top-level task loop, not inside a function. With `set -e`, the `local` would have caused the orchestrator to exit before the SHA guard or result-writer recovery could run."
     },
     {
-      "commentId": 3370412161,
+      "commentId": 3375128188,
       "action": "fixed",
-      "replyBody": "Replaced the per-line `grep | grep -v` approach with awk block tracking. The new implementation flushes findings at each `###` heading boundary, so `**RESOLVED**` on any line within a finding block (including `**Resolution:** ... **RESOLVED**`) correctly marks that finding as resolved. Added cross-line test cases covering the exact failure scenario described in this comment."
+      "replyBody": "Fixed. Added `\"result-writer\": { \"profile\": \"task-reviewer\", \"fallbackProfile\": \"junior\" }` to `.ai-orchestrator.json`'s `agent.phaseProfiles`. The `task-reviewer` profile (gemini-3.5-flash-low) is appropriate for this lightweight assessment task that just reads git diffs and writes a status word."
     }
   ]
 }

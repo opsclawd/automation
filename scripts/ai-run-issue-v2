@@ -866,7 +866,7 @@ run_result_writer() {
   local git_log
   git_log=$(git -C "$WORKTREE_DIR" log "${base_sha}..HEAD" --stat 2>/dev/null || echo "(no commits)")
   local git_diff
-  git_diff=$(git -C "$WORKTREE_DIR" diff "${base_sha}..HEAD" -- 2>/dev/null | head -500 || echo "(no diff)")
+  git_diff=$( { git -C "$WORKTREE_DIR" diff "${base_sha}..HEAD" -- 2>/dev/null || true; } | head -500 || echo "(no diff)")
 
   local RESULT_WRITER_PROMPT
   RESULT_WRITER_PROMPT="You are a result-file writer. The previous implementer agent committed work for Task ${task_num} but failed to write the result file.
@@ -909,6 +909,13 @@ Write the result now."
   rm -f "$_rw_prompt_file"
   check_branch_after_agent
 
+  if validate_result_file "$result_file" DONE DONE_WITH_CONCERNS BLOCKED; then
+    local val
+    val=$(read_result_value "$result_file")
+    log "  Result-writer: wrote ${val}"
+    return 0
+  fi
+
   if [[ $_rw_tee_ec -ne 0 ]]; then
     log "  Result-writer: tee failed (exit $_rw_tee_ec)"
     return 1
@@ -918,15 +925,8 @@ Write the result now."
     return 1
   fi
 
-  if validate_result_file "$result_file" DONE DONE_WITH_CONCERNS BLOCKED; then
-    local val
-    val=$(read_result_value "$result_file")
-    log "  Result-writer: wrote ${val}"
-    return 0
-  else
-    log "  Result-writer: result file missing or invalid after agent run"
-    return 1
-  fi
+  log "  Result-writer: result file missing or invalid after agent run"
+  return 1
 }
 
 # ── setup ─────────────────────────────────────────────────────────────────────
