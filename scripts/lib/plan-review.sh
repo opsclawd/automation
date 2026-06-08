@@ -262,7 +262,9 @@ This is a RE-review pass. You have previously reviewed this plan and produced fi
    design-level bugs introduced by the fixes.
 4. Do NOT flag new issues in unchanged sections of the plan unless they are
    severe correctness problems (P1-level) that you genuinely missed before.
-5. Do NOT re-litigate findings you previously accepted."
+5. Do NOT re-litigate findings you previously accepted.
+   - Findings resolved via the plan fixer are RESOLVED.
+   - Findings accepted as P2_ACKNOWLEDGED or PROCEED_WITH_CONCERNS are accepted and should not be re-flagged."
 fi
 
   local _reviewer_prompt_file

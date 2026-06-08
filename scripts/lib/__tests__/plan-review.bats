@@ -53,6 +53,11 @@ setup() {
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
+  eval "$(awk '
+    /^run_adversarial_reviewer\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
   LOG_OUTPUT=""
   log() { LOG_OUTPUT="${LOG_OUTPUT}$*\n"; }
   warn() { log "WARN: $*"; }
@@ -642,6 +647,65 @@ PLAN
   local _prev_findings_arg
   _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
   [[ "$_prev_findings_arg" == "" ]]
+}
+
+@test "run_adversarial_reviewer: prompt includes PREVIOUS FINDINGS when prev_findings_path set" {
+  _capture_main_state() { echo "main-state"; }
+  _guard_main_checkout() { :; }
+  check_branch_after_agent() { :; }
+  _PROMPT_CAPTURE_FILE="$TMPDIR_TEST/_prompt-capture.txt"
+  node() {
+    # Find the --prompt-file argument and capture its content
+    local args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "${args[$i]}" == "--prompt-file" ]]; then
+        cat "${args[$((i+1))]}" > "$_PROMPT_CAPTURE_FILE"
+        break
+      fi
+    done
+    return 0
+  }
+
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+Some content.
+PLAN
+  local _prev_findings="$TMPDIR_TEST/prev-findings.md"
+  echo "### P1: old finding" > "$_prev_findings"
+
+  run_adversarial_reviewer "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "2" "$_prev_findings"
+  [[ $status -eq 0 ]]
+  [[ -f "$_PROMPT_CAPTURE_FILE" ]]
+  grep -q "## PREVIOUS FINDINGS" "$_PROMPT_CAPTURE_FILE"
+  grep -q "Previous findings file: ${_prev_findings}" "$_PROMPT_CAPTURE_FILE"
+  grep -q "P2_ACKNOWLEDGED" "$_PROMPT_CAPTURE_FILE"
+}
+
+@test "run_adversarial_reviewer: prompt excludes PREVIOUS FINDINGS when prev_findings_path empty" {
+  _capture_main_state() { echo "main-state"; }
+  _guard_main_checkout() { :; }
+  check_branch_after_agent() { :; }
+  _PROMPT_CAPTURE_FILE="$TMPDIR_TEST/_prompt-capture.txt"
+  node() {
+    local args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "${args[$i]}" == "--prompt-file" ]]; then
+        cat "${args[$((i+1))]}" > "$_PROMPT_CAPTURE_FILE"
+        break
+      fi
+    done
+    return 0
+  }
+
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+Some content.
+PLAN
+
+  run_adversarial_reviewer "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1" ""
+  [[ $status -eq 0 ]]
+  [[ -f "$_PROMPT_CAPTURE_FILE" ]]
+  ! grep -q "## PREVIOUS FINDINGS" "$_PROMPT_CAPTURE_FILE"
 }
 
 @test "_append_known_limitations: appends to existing section" {
