@@ -491,7 +491,18 @@ export function composeRoot(opts: ComposeOptions): Container {
       verifyBuildPasses: async ({ cwd }) => {
         try {
           const config = loadConfig(cwd);
-          if (!config.validation?.commands?.length) return true;
+          if (!config.validation?.commands?.length) {
+            eventRepository.insert({
+              runUuid: '',
+              level: 'warn',
+              type: 'post-pr-review.build_verification_skipped',
+              message: 'build verification skipped: no validation.commands configured',
+              metadata: { cwd },
+              timestamp: new Date(),
+            });
+
+            return true;
+          }
           const buildCheckRunId = RunId(`pr-review-build-check-${randomUUID()}`);
           const logDir = join(runsDir, buildCheckRunId);
           const result = await runValidation.execute({
