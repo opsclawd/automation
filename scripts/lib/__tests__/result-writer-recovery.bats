@@ -193,3 +193,35 @@ teardown() {
   run validate_result_file "${WORKTREE_DIR}/implement-task-1.result" BLOCKED NEEDS_CONTEXT
   [ "$status" -eq 1 ]
 }
+
+@test "guard: pre-resolve capture detects missing file before fallback writes BLOCKED" {
+  # This is the critical scenario from the review: result file doesn't exist,
+  # validate_result_file returns 1 (_explicit_block=0), then resolve_result
+  # writes BLOCKED as fallback. The guard must use the pre-resolve state.
+  # Simulate: file missing → _explicit_block=0 → resolve_result writes BLOCKED
+  _explicit_block=0
+  if validate_result_file "${WORKTREE_DIR}/implement-task-1.result" BLOCKED NEEDS_CONTEXT; then
+    _explicit_block=1
+  fi
+  # _explicit_block should be 0 (file was missing)
+  [ "$_explicit_block" -eq 0 ]
+
+  # Now simulate resolve_result fallback writing BLOCKED
+  echo "BLOCKED" > "${WORKTREE_DIR}/implement-task-1.result"
+
+  # Verify: the file now contains BLOCKED (fallback wrote it), but
+  # _explicit_block is still 0 — recovery should proceed
+  [ "$(cat "${WORKTREE_DIR}/implement-task-1.result")" = "BLOCKED" ]
+  [ "$_explicit_block" -eq 0 ]
+}
+
+@test "guard: pre-resolve capture detects explicit BLOCKED before resolve_result" {
+  # Result file has explicit BLOCKED from implementer
+  echo "BLOCKED" > "${WORKTREE_DIR}/implement-task-1.result"
+  _explicit_block=0
+  if validate_result_file "${WORKTREE_DIR}/implement-task-1.result" BLOCKED NEEDS_CONTEXT; then
+    _explicit_block=1
+  fi
+  # _explicit_block should be 1 (file had explicit BLOCKED)
+  [ "$_explicit_block" -eq 1 ]
+}
