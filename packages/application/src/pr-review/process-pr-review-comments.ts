@@ -44,6 +44,8 @@ export interface ProcessPrReviewDeps {
   idFactory: () => string;
   now: () => Date;
   maxIterations: number;
+  baseBranch?: string; // e.g., 'main' — used for checkout guard
+  onWarning?: (message: string, metadata: Record<string, unknown>) => void;
 }
 
 export interface ProcessPrReviewInput {
@@ -150,6 +152,10 @@ export class ProcessPrReviewComments {
     const profile = d.resolveProfileForPhase('post-pr-review');
     const startCommitSha = await d.git.headCommitSha(input.cwd);
 
+    const mainShaBefore = d.baseBranch
+      ? await d.git.remoteRef({ cwd: input.cwd, remote: 'origin', ref: d.baseBranch })
+      : undefined;
+
     const invocation = await d.agent.invoke({
       profile,
       promptPath,
@@ -160,6 +166,22 @@ export class ProcessPrReviewComments {
       phaseId: input.phaseId as unknown as string,
       startCommitSha,
     });
+
+    if (d.baseBranch && mainShaBefore) {
+      const mainShaAfter = await d.git.remoteRef({
+        cwd: input.cwd,
+        remote: 'origin',
+        ref: d.baseBranch,
+      });
+      if (mainShaAfter && mainShaAfter !== mainShaBefore) {
+        d.onWarning?.('main branch changed during agent run', {
+          baseBranch: d.baseBranch,
+          shaBefore: mainShaBefore,
+          shaAfter: mainShaAfter,
+          prNumber: input.prNumber,
+        });
+      }
+    }
 
     if (invocation.outcome !== 'success') {
       await d.git.resetHard(input.cwd, 'HEAD');

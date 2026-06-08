@@ -136,6 +136,7 @@ export interface Container {
     pollIntervalMs: number;
     readyMaxDays: number;
     phaseStartedAt: Date;
+    baseBranch?: string;
   }) => PrReviewPoller;
 }
 
@@ -288,6 +289,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     pollIntervalMs: number;
     readyMaxDays: number;
     phaseStartedAt: Date;
+    baseBranch?: string;
   }): PrReviewPoller {
     if (!agentRuntime) {
       throw new ConfigError(
@@ -524,6 +526,20 @@ export function composeRoot(opts: ComposeOptions): Container {
       idFactory: () => randomUUID(),
       now: () => new Date(),
       maxIterations: 10,
+      baseBranch: opts.baseBranch ?? 'main',
+      onWarning: (message, metadata) => {
+        try {
+          eventRepository.insert({
+            runUuid: '',
+            phase: 'post-pr-review',
+            level: 'warn',
+            type: 'post-pr-review.main_checkout_guard',
+            message,
+            metadata,
+            timestamp: new Date(),
+          });
+        } catch {}
+      },
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without

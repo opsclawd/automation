@@ -25,4 +25,6 @@ export interface GitPort {
   logBetween(cwd: string, base: string, head: string): Promise<string[]>;
   fetchAndMerge(cwd: string, remote: string, branch: string): Promise<void>;
   cleanUntracked(cwd: string): Promise<void>;
+  /** Base branch name used for checkout guard and branch operations. */
+  baseBranch?: string;
 }
