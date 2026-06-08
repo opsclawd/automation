@@ -108,9 +108,9 @@ parse_review_findings() {
         in_block=0; sev=""; resolved=0
       }
       /^## Review Result:/ { next }
-      /^[[:space:]]*#{2,3}[[:space:]]/ || (tolower($0) ~ /^[[:space:]]*[-*][[:space:]]*\*\*p[12]\*\*/) || (tolower($0) ~ /^[[:space:]]*severity:[[:space:]]*p[12]($|[[:space:]])/) { flush(); in_block=1 }
-      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]+p1:/) || (tolower($0) ~ /\*\*p1\*\*/) || (tolower($0) ~ /^[[:space:]]*severity:[[:space:]]*p1($|[[:space:]])/) { sev="P1" }
-      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]+p2:/) || (tolower($0) ~ /\*\*p2\*\*/) || (tolower($0) ~ /^[[:space:]]*severity:[[:space:]]*p2($|[[:space:]])/) { sev="P2" }
+      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]+p1:/) || (tolower($0) ~ /^[[:space:]]*[-*][[:space:]]*\*\*p1\*\*/) || (tolower($0) ~ /^[[:space:]]*severity:[[:space:]]*p1($|[[:space:]])/) { flush(); in_block=1; sev="P1" }
+      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]+p2:/) || (tolower($0) ~ /^[[:space:]]*[-*][[:space:]]*\*\*p2\*\*/) || (tolower($0) ~ /^[[:space:]]*severity:[[:space:]]*p2($|[[:space:]])/) { flush(); in_block=1; sev="P2" }
+      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]/) && !in_block { flush(); in_block=1 }
       /\*\*RESOLVED\*\*/ || /— RESOLVED/ { resolved=1 }
       END { flush(); print p1+0, p2+0 }
     ' "$findings_file"
