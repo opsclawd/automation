@@ -33,6 +33,7 @@ export interface PrReviewPollerDeps {
     state: PollerTerminalState | 'running',
     nextPollAt?: Date,
   ) => Promise<void>;
+  quietPollsThreshold?: number; // default 3; consecutive quiet polls before early exit
 }
 
 export interface PrReviewPollerInput {
@@ -68,6 +69,7 @@ export class PrReviewPoller {
       meaningfulAttempts.length > 0 ? meaningfulAttempts[meaningfulAttempts.length - 1] : undefined;
     let consecutiveFailures = 0;
     let allResolvedEmitted = false;
+    let consecutiveQuietPolls = 0;
 
     for (let pollNumber = meaningfulAttempts.length + 1; pollNumber <= d.maxPolls; pollNumber++) {
       if (d.now() >= deadline) {
@@ -129,13 +131,23 @@ export class PrReviewPoller {
         blocked: pass.blocked,
       });
 
-      if (pass.allResolved && !allResolvedEmitted) {
-        allResolvedEmitted = true;
-        this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
-        // Do NOT return — keep watching so reviewers can add follow-up comments
-        // within the poll window. The loop terminates naturally at maxPolls or
-        // deadline, matching the legacy shell loop's "all resolved but keep
-        // polling" behavior.
+      if (pass.allResolved) {
+        if (!allResolvedEmitted) {
+          allResolvedEmitted = true;
+          this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
+        }
+        consecutiveQuietPolls++;
+      } else {
+        consecutiveQuietPolls = 0;
+      }
+      if (pass.processed > 0) {
+        consecutiveQuietPolls = 0;
+      }
+      const threshold = d.quietPollsThreshold ?? 3;
+      if (consecutiveQuietPolls >= threshold) {
+        const result: PrReviewPollerResult = { terminalState: 'all_resolved', pollsRun };
+        await d.recordTerminalState(lastAttempt, result.terminalState);
+        return result;
       }
 
       if (!pass.allResolved && pass.blocked > 0 && pass.processed === 0) {
