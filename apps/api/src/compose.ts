@@ -527,7 +527,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
       idFactory: () => randomUUID(),
       now: () => new Date(),
-      maxIterations: 10,
+      maxIterations: 30,
       baseBranch: opts.baseBranch ?? 'main',
       onWarning: (message, metadata, runId) => {
         try {
