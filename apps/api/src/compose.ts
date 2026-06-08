@@ -495,6 +495,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             try {
               eventRepository.insert({
                 runUuid: runId,
+                phase: 'post-pr-review',
                 level: 'warn',
                 type: 'post-pr-review.build_verification_skipped',
                 message: 'build verification skipped: no validation.commands configured',

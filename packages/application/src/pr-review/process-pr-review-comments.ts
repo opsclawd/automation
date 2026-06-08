@@ -40,7 +40,6 @@ export interface ProcessPrReviewDeps {
     startCommitSha: string;
   }) => Promise<boolean>;
   verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
-  onBuildVerificationSkipped?: (cwd: string) => void;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
