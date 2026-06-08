@@ -219,6 +219,39 @@ FINDINGS
   [[ "$output" == "P2_ACKNOWLEDGED" ]]
 }
 
+@test "parse_review_findings: matches Severity: P1 (case-insensitive)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+Severity: P1 — critical issue
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: matches SEVERITY: P2 (case-insensitive)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+SEVERITY: P2 — minor issue
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: ignores mid-text severity: P1 in body paragraph" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**Why this is wrong:** severity: P1 — the state machine advances past the error
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PASS" ]]
+}
+
 @test "parse_review_findings: ignores resolved P1 findings (same line)" {
   cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
 ## Review Result: FINDINGS
