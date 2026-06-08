@@ -99,12 +99,29 @@ parse_review_findings() {
     return
   fi
 
-  if grep -iE '(#{2,3}[[:space:]]+P1:|[[:space:]]\*\*P1\*\*|severity:[[:space:]]*P1($|[[:space:]]))' "$findings_file" | grep -qviE '\*\*RESOLVED\*\*|— RESOLVED'; then
+  local _p1_unresolved _p2_unresolved
+  read -r _p1_unresolved _p2_unresolved < <(
+    awk '
+      function flush() {
+        if (in_block && sev=="P1" && !resolved) p1++
+        if (in_block && sev=="P2" && !resolved) p2++
+        in_block=0; sev=""; resolved=0
+      }
+      /^## Review Result:/ { next }
+      /^[[:space:]]*#{2,3}[[:space:]]/ || /^[[:space:]]*[-*][[:space:]]*\*\*P[12]\*\*/ || /severity:[[:space:]]*P[12]($|[[:space:]])/ { flush(); in_block=1 }
+      /^[[:space:]]*#{2,3}[[:space:]]+P1:/ || /\*\*P1\*\*/ || /severity:[[:space:]]*P1($|[[:space:]])/ { sev="P1" }
+      /^[[:space:]]*#{2,3}[[:space:]]+P2:/ || /\*\*P2\*\*/ || /severity:[[:space:]]*P2($|[[:space:]])/ { sev="P2" }
+      /\*\*RESOLVED\*\*/ || /— RESOLVED/ { resolved=1 }
+      END { flush(); print p1+0, p2+0 }
+    ' "$findings_file"
+  )
+
+  if [[ "$_p1_unresolved" -gt 0 ]]; then
     echo "P1_FOUND"
     return
   fi
 
-  if grep -iE '(#{2,3}[[:space:]]+P2:|[[:space:]]\*\*P2\*\*|severity:[[:space:]]*P2($|[[:space:]]))' "$findings_file" | grep -qviE '\*\*RESOLVED\*\*|— RESOLVED'; then
+  if [[ "$_p2_unresolved" -gt 0 ]]; then
     echo "P2_ACKNOWLEDGED"
     return
   fi

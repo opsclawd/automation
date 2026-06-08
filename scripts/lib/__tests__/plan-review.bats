@@ -39,6 +39,11 @@ setup() {
   ' "$SCRIPT_PATH")"
 
   eval "$(awk '
+    /^run_adversarial_reviewer\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  eval "$(awk '
     /^_append_known_limitations\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
@@ -50,11 +55,6 @@ setup() {
 
   eval "$(awk '
     /^run_plan_review_judge\(\)/ { found=1 }
-    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
-  ' "$SCRIPT_PATH")"
-
-  eval "$(awk '
-    /^run_adversarial_reviewer\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
 
@@ -219,7 +219,7 @@ FINDINGS
   [[ "$output" == "P2_ACKNOWLEDGED" ]]
 }
 
-@test "parse_review_findings: ignores resolved P1 findings" {
+@test "parse_review_findings: ignores resolved P1 findings (same line)" {
   cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
 ## Review Result: FINDINGS
 
@@ -236,7 +236,7 @@ FINDINGS
   [[ "$output" == "P1_FOUND" ]]
 }
 
-@test "parse_review_findings: returns PASS when all P1s resolved" {
+@test "parse_review_findings: returns PASS when all P1s resolved (same line)" {
   cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
 ## Review Result: FINDINGS
 
@@ -252,13 +252,62 @@ FINDINGS
   [[ "$output" == "PASS" ]]
 }
 
-@test "parse_review_findings: returns P2_ACKNOWLEDGED when P1 resolved but P2 active" {
+@test "parse_review_findings: returns P2_ACKNOWLEDGED when P1 resolved but P2 active (same line)" {
   cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
 ## Review Result: FINDINGS
 
 ### P1: Bad transition — **RESOLVED**
 **Plan text:** > transition to IDLE
 **Resolution:** Fixed by plan fixer.
+
+### P2: Missing error message
+**Plan text:** > handle timeout
+**What is incomplete:** no user-facing message specified
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: ignores resolved P1 findings (cross-line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**What actually happens:** stays in RUNNING
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
+
+### P1: New unresolved finding
+**Plan text:** > retry logic
+**What actually happens:** infinite loop
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: returns PASS when all P1s resolved (cross-line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
+
+### P2: Missing logging
+**Plan text:** > log the event
+**Resolution:** Added logging.  **RESOLVED**
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PASS" ]]
+}
+
+@test "parse_review_findings: returns P2_ACKNOWLEDGED when P1 resolved but P2 active (cross-line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
 
 ### P2: Missing error message
 **Plan text:** > handle timeout
@@ -616,7 +665,6 @@ PLAN
 
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
   [[ $status -eq 0 ]]
-  # 8 args total, 8th (prev_findings_path) should be empty
   local _arg_count
   _arg_count="$(sed -n '1p' "$_reviewer_args_file")"
   local _prev_findings_arg
@@ -643,7 +691,6 @@ PLAN
 
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
   [[ $status -eq 0 ]]
-  # 8th arg on iteration 2 should be the iter-1 archived findings path
   local _prev_findings_arg
   _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
   [[ "$_prev_findings_arg" == "${TMPDIR_TEST}/plan-review-findings-iter-1.md" ]]
@@ -663,7 +710,6 @@ PLAN
 
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1"
   [[ $status -ne 0 ]]
-  # Final review (call #2) should receive iter-1 archived findings as 8th arg
   local _prev_findings_arg
   _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
   [[ "$_prev_findings_arg" == "${TMPDIR_TEST}/plan-review-findings-iter-1.md" ]]
@@ -692,7 +738,6 @@ PLAN
 
   run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
   [[ $status -eq 0 ]]
-  # 8th arg should be empty since iter-1 findings file was deleted
   local _prev_findings_arg
   _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
   [[ "$_prev_findings_arg" == "" ]]
@@ -704,7 +749,6 @@ PLAN
   check_branch_after_agent() { :; }
   _PROMPT_CAPTURE_FILE="$TMPDIR_TEST/_prompt-capture.txt"
   node() {
-    # Find the --prompt-file argument and capture its content
     local args=("$@")
     for ((i=0; i<${#args[@]}; i++)); do
       if [[ "${args[$i]}" == "--prompt-file" ]]; then
