@@ -2,14 +2,14 @@
   "outcome": "ALL_DONE",
   "comments": [
     {
-      "commentId": 3375128181,
+      "commentId": 3375149936,
       "action": "fixed",
-      "replyBody": "Fixed. Changed `local _base_sha_file` and `local _pre_sha _post_sha` to plain assignments (`_base_sha_file=...`, `_pre_sha=\"\" _post_sha=\"\"`) since this code runs in the top-level task loop, not inside a function. With `set -e`, the `local` would have caused the orchestrator to exit before the SHA guard or result-writer recovery could run."
+      "replyBody": "Fixed. Wrapped `git diff` in `{ git diff ... || true; }` before piping to `head -500` to prevent SIGPIPE under `set -o pipefail`. When the diff exceeds 500 lines, `head` closes the pipe early, causing `git diff` to exit 141. Without the wrapper, `pipefail` propagates 141 and `|| echo \"(no diff)\"` fires, silently discarding the diff. The `|| true` absorbs the SIGPIPE exit so `head` sees only the first 500 lines as intended."
     },
     {
-      "commentId": 3375128188,
+      "commentId": 3375149940,
       "action": "fixed",
-      "replyBody": "Fixed. Added `\"result-writer\": { \"profile\": \"task-reviewer\", \"fallbackProfile\": \"junior\" }` to `.ai-orchestrator.json`'s `agent.phaseProfiles`. The `task-reviewer` profile (gemini-3.5-flash-low) is appropriate for this lightweight assessment task that just reads git diffs and writes a status word."
+      "replyBody": "Fixed. Moved result file validation (`validate_result_file`) to run before the tee/agent exit checks. Now if the agent wrote a valid result file, the function returns 0 immediately — even if `tee` failed due to filesystem issues on `$ISSUES_DIR`. The result file lives in `$WORKTREE_DIR` (the agent's cwd), so a valid result from there should take priority over a log-write failure."
     }
   ]
 }
