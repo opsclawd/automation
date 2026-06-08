@@ -11,11 +11,11 @@ export REPO_ROOT
 
 PR_NUMBER="${1:-}"
 ISSUE_NUM="${2:-}"
-MAX_POLLS="${3:-3}"
+MAX_POLLS="${3:-30}"
 POLL_INTERVAL="${4:-300}"
 
 if [[ -z "$PR_NUMBER" ]]; then
-  echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=3] [interval_sec=300]" >&2
+  echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=30] [interval_sec=300]" >&2
   exit 1
 fi
 if [[ -z "$ISSUE_NUM" ]]; then

@@ -46,9 +46,9 @@ describe('parsePollArgs', () => {
     });
   });
 
-  it('defaults maxPolls=3 and pollIntervalSeconds=300 when omitted', () => {
+  it('defaults maxPolls=30 and pollIntervalSeconds=300 when omitted', () => {
     const r = parsePollArgs(['--pr', '5', '--repo', 'o/r', '--cwd', '/w']);
-    expect(r.maxPolls).toBe(3);
+    expect(r.maxPolls).toBe(30);
     expect(r.pollIntervalSeconds).toBe(300);
     expect(r.runId).toBeUndefined();
     expect(r.issueNumber).toBeUndefined();
