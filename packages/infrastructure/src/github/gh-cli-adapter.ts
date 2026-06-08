@@ -4,6 +4,7 @@ import type {
   GitHubIssue,
   PullRequestDetail,
   PullRequest,
+  PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
 } from '@ai-sdlc/application/ports';
@@ -129,6 +130,20 @@ export class GhCliAdapter implements GitHubPort {
       `repos/${repoFullName}/pulls/${prNumber}/comments`,
     ]);
     return this.parseComments(out, prNumber);
+  }
+
+  async listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]> {
+    const out = await this.run(['api', `repos/${repoFullName}/pulls/${prNumber}/reviews`]);
+    const command = `gh api repos/${repoFullName}/pulls/${prNumber}/reviews`;
+    const reviews = this.safeJsonParse<
+      Array<{ id: number; state: string; user: { login: string } | null }>
+    >(out, command);
+    const VALID_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENT', 'PENDING']);
+    return reviews.map((r) => ({
+      id: r.id,
+      state: (VALID_STATES.has(r.state) ? r.state : 'COMMENT') as PullRequestReview['state'],
+      user: r.user?.login ?? 'ghost',
+    }));
   }
 
   async listPrCommentsSince(
