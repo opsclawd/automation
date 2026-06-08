@@ -36,6 +36,7 @@ setup() {
 
   # Stubs for helpers referenced by run_result_writer
   log() { :; }
+  check_branch_after_agent() { :; }
   REPO_ROOT="$TMPDIR_TEST/repo"
   RUN_ID="test-run"
   REPO_ID="test/repo"
