@@ -350,6 +350,50 @@ FINDINGS
   [[ "$output" == "P2_ACKNOWLEDGED" ]]
 }
 
+@test "parse_review_findings: matches lowercase heading ### p1:" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### p1: bad transition
+**Plan text:** > transition to IDLE
+**What actually happens:** stays in RUNNING
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: matches lowercase heading ### p2:" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### p2: missing logging
+**Plan text:** > log the event
+**What is incomplete:** no logging specified
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: matches indented Severity: P1" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+  Severity: P1 — critical issue
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: matches lowercase bold **p1**" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+- **p1** bad transition
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
 @test "parse_review_findings: returns PROCEED_WITH_CONCERNS when sentinel present" {
   cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
 ## Review Result: PROCEED_WITH_CONCERNS
