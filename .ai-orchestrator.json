@@ -127,7 +127,8 @@
       "create-pr": { "profile": "junior", "fallbackProfile": "builder" },
       "arbitrate": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-review": { "profile": "architect", "fallbackProfile": "senior" },
-      "plan-fix": { "profile": "architect", "fallbackProfile": "senior" }
+      "plan-fix": { "profile": "architect", "fallbackProfile": "senior" },
+      "result-writer": { "profile": "task-reviewer", "fallbackProfile": "junior" }
     }
   }
 }

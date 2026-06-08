@@ -842,6 +842,93 @@ Write the result now."
   fi
 }
 
+run_result_writer() {
+  local task_num="$1"
+  local result_file="${WORKTREE_DIR}/implement-task-${task_num}.result"
+  local base_sha_file="${WORKTREE_DIR}/implement-task-${task_num}.basesha.log"
+
+  local base_sha
+  base_sha=$(cat "$base_sha_file" 2>/dev/null || echo "")
+  if [[ -z "$base_sha" ]]; then
+    log "  Result-writer: basesha.log missing or empty, skipping"
+    return 1
+  fi
+
+  local head_sha
+  head_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+  # Safety net: the caller guard already checks SHA equality, but this
+  # function may be called from other contexts.
+  if [[ "$head_sha" == "$base_sha" ]]; then
+    log "  Result-writer: HEAD unchanged, nothing to recover"
+    return 1
+  fi
+
+  local git_log
+  git_log=$(git -C "$WORKTREE_DIR" log "${base_sha}..HEAD" --stat 2>/dev/null || echo "(no commits)")
+  local git_diff
+  git_diff=$( { git -C "$WORKTREE_DIR" diff "${base_sha}..HEAD" -- 2>/dev/null || true; } | head -500 || echo "(no diff)")
+
+  local RESULT_WRITER_PROMPT
+  RESULT_WRITER_PROMPT="You are a result-file writer. The previous implementer agent committed work for Task ${task_num} but failed to write the result file.
+
+## Git Log (base → HEAD)
+${git_log}
+
+## Diff Summary (first 500 lines)
+${git_diff}
+
+## Your Task
+1. Read the task description from implement-task-${task_num}.md to understand requirements.
+2. Assess whether the committed changes implement Task ${task_num} sufficiently.
+3. Run the tests to verify correctness.
+4. Write EXACTLY ONE of these values to the result file: ${result_file}
+   - DONE — implementation is complete and reasonable
+   - DONE_WITH_CONCERNS — implementation works but has minor issues
+   - BLOCKED — implementation is incomplete or broken
+
+No other content in the file — just the status word.
+Do NOT modify any code or files other than the result file.
+
+Write the result now."
+
+  local _rw_prompt_file
+  _rw_prompt_file=$(mktemp)
+  printf '%s' "$RESULT_WRITER_PROMPT" > "$_rw_prompt_file"
+  log "  Result-writer: invoking agent to assess committed work for task ${task_num}..."
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+    --phase result-writer \
+    --phase-id "result-writer-task-${task_num}" \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
+    --prompt-file "$_rw_prompt_file" \
+    --timeout-minutes 1 \
+    --start-sha "$head_sha" \
+    2>&1 | tee -a "${ISSUES_DIR}/result-writer-task-${task_num}.log"; _rw_agent_ec=${PIPESTATUS[0]} _rw_tee_ec=${PIPESTATUS[1]}
+  rm -f "$_rw_prompt_file"
+  check_branch_after_agent
+
+  if validate_result_file "$result_file" DONE DONE_WITH_CONCERNS BLOCKED; then
+    local val
+    val=$(read_result_value "$result_file")
+    log "  Result-writer: wrote ${val}"
+    return 0
+  fi
+
+  if [[ $_rw_tee_ec -ne 0 ]]; then
+    log "  Result-writer: tee failed (exit $_rw_tee_ec)"
+    return 1
+  fi
+  if [[ $_rw_agent_ec -ne 0 ]]; then
+    log "  Result-writer: agent exited non-zero (exit $_rw_agent_ec), preserving original status"
+    return 1
+  fi
+
+  log "  Result-writer: result file missing or invalid after agent run"
+  return 1
+}
+
 # ── setup ─────────────────────────────────────────────────────────────────────
 # Stage issue data in a temp directory outside the worktree, so it survives
 # the rm-rf that happens before worktree creation on fresh runs.
@@ -2295,6 +2382,13 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       # pre-impl HEAD on a fresh run, but on resume it is the *post*-impl HEAD.
       echo "$BASE_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log"
       run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
+      # Capture whether the implementer wrote an explicit BLOCKED/NEEDS_CONTEXT
+      # BEFORE resolve_result's fallback mutates the file.
+      _result_file="${WORKTREE_DIR}/implement-task-${TASK_NUM}.result"
+      _explicit_block=0
+      if validate_result_file "$_result_file" BLOCKED NEEDS_CONTEXT; then
+        _explicit_block=1
+      fi
       IMPL_STATUS=$(resolve_result \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.md" \
@@ -2303,7 +2397,37 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       log "  Implementer status: ${IMPL_STATUS}"
 
       if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
-        orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
+        # Recovery: if the implementer committed work (HEAD advanced past base_sha)
+        # but failed to write the result file, try a narrow result-writer agent.
+        # Only recover when the result file was missing/invalid before
+        # resolve_result wrote the fallback — not when the implementer
+        # explicitly wrote BLOCKED or NEEDS_CONTEXT (genuine blocker).
+        if [[ $_explicit_block -eq 0 ]]; then
+          _base_sha_file="${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log"
+          if [[ -f "$_base_sha_file" ]]; then
+            _pre_sha="" _post_sha=""
+            _pre_sha=$(cat "$_base_sha_file" 2>/dev/null || echo "")
+            _post_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+            if [[ -n "$_pre_sha" && -n "$_post_sha" && "$_pre_sha" != "$_post_sha" ]]; then
+              log "  Agent committed work (SHA advanced) but result file is missing/invalid — attempting result-writer recovery"
+              if run_result_writer "$TASK_NUM"; then
+                IMPL_STATUS=$(resolve_result \
+                  "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
+                  "${WORKTREE_DIR}/implement-task-${TASK_NUM}.md" \
+                  DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT \
+                  "DONE")
+                log "  Post-recovery status: ${IMPL_STATUS}"
+              else
+                log "  Result-writer failed, preserving original ${IMPL_STATUS}"
+              fi
+            fi
+          fi
+        else
+          log "  Result file has explicit ${IMPL_STATUS} — not attempting recovery"
+        fi
+        if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
+          orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
+        fi
       fi
 
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
