@@ -219,6 +219,55 @@ FINDINGS
   [[ "$output" == "P2_ACKNOWLEDGED" ]]
 }
 
+@test "parse_review_findings: ignores resolved P1 findings" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition — **RESOLVED**
+**Plan text:** > transition to IDLE
+**What actually happens:** stays in RUNNING
+**Resolution:** Fixed by plan fixer.
+
+### P1: New unresolved finding
+**Plan text:** > retry logic
+**What actually happens:** infinite loop
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: returns PASS when all P1s resolved" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition — **RESOLVED**
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.
+
+### P2: Missing logging — **RESOLVED**
+**Plan text:** > log the event
+**Resolution:** Added logging.
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PASS" ]]
+}
+
+@test "parse_review_findings: returns P2_ACKNOWLEDGED when P1 resolved but P2 active" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition — **RESOLVED**
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.
+
+### P2: Missing error message
+**Plan text:** > handle timeout
+**What is incomplete:** no user-facing message specified
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
 @test "parse_review_findings: returns PROCEED_WITH_CONCERNS when sentinel present" {
   cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
 ## Review Result: PROCEED_WITH_CONCERNS

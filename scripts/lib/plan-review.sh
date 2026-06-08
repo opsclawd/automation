@@ -99,12 +99,12 @@ parse_review_findings() {
     return
   fi
 
-  if grep -qiE '(#{2,3}[[:space:]]+P1:|[[:space:]]\*\*P1\*\*|severity:[[:space:]]*P1($|[[:space:]]))' "$findings_file"; then
+  if grep -iE '(#{2,3}[[:space:]]+P1:|[[:space:]]\*\*P1\*\*|severity:[[:space:]]*P1($|[[:space:]]))' "$findings_file" | grep -qviE '\*\*RESOLVED\*\*|— RESOLVED'; then
     echo "P1_FOUND"
     return
   fi
 
-  if grep -qiE '(#{2,3}[[:space:]]+P2:|[[:space:]]\*\*P2\*\*|severity:[[:space:]]*P2($|[[:space:]]))' "$findings_file"; then
+  if grep -iE '(#{2,3}[[:space:]]+P2:|[[:space:]]\*\*P2\*\*|severity:[[:space:]]*P2($|[[:space:]]))' "$findings_file" | grep -qviE '\*\*RESOLVED\*\*|— RESOLVED'; then
     echo "P2_ACKNOWLEDGED"
     return
   fi
