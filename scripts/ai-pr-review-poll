@@ -59,6 +59,24 @@ if [[ "$ACTUAL_BRANCH" != "$PR_BRANCH" ]]; then
   exit 1
 fi
 
+# Auto-resolve AI_RUN_UUID from SQLite when not provided (Bug A).
+# Manual invocation without --run-id previously produced a random UUID
+# with no corresponding DB row, causing FK violations on every upsert.
+if [[ -z "${AI_RUN_UUID:-}" ]]; then
+  DB_PATH="${REPO_ROOT}/.ai-runs/orchestrator.sqlite"
+  if [[ ! -f "$DB_PATH" ]]; then
+    echo "FATAL: no AI_RUN_UUID and database not found at $DB_PATH" >&2
+    exit 1
+  fi
+  AI_RUN_UUID=$(sqlite3 "$DB_PATH" \
+    "SELECT uuid FROM runs WHERE issue_number = $ISSUE_NUM ORDER BY started_at DESC LIMIT 1" 2>/dev/null || true)
+  if [[ -z "$AI_RUN_UUID" ]]; then
+    echo "FATAL: no run found for issue #$ISSUE_NUM in $DB_PATH. Start a run first or set AI_RUN_UUID." >&2
+    exit 1
+  fi
+  export AI_RUN_UUID
+fi
+
 # Own our TMPDIR. The parent run (ai-run-issue-v2) injects a per-run TMPDIR
 # that gets deleted in its finally block. We need a poll-owned directory so
 # subprocesses (gh, git, agent) don't lose their tmp dir mid-poll.
