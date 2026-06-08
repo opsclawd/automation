@@ -856,6 +856,8 @@ run_result_writer() {
 
   local head_sha
   head_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+  # Safety net: the caller guard already checks SHA equality, but this
+  # function may be called from other contexts.
   if [[ "$head_sha" == "$base_sha" ]]; then
     log "  Result-writer: HEAD unchanged, nothing to recover"
     return 1
@@ -866,6 +868,7 @@ run_result_writer() {
   local git_diff
   git_diff=$(git -C "$WORKTREE_DIR" diff "${base_sha}..HEAD" -- 2>/dev/null | head -500 || echo "(no diff)")
 
+  local RESULT_WRITER_PROMPT
   RESULT_WRITER_PROMPT="You are a result-file writer. The previous implementer agent committed work for Task ${task_num} but failed to write the result file.
 
 ## Git Log (base → HEAD)
@@ -875,8 +878,10 @@ ${git_log}
 ${git_diff}
 
 ## Your Task
-1. Assess whether the committed changes implement Task ${task_num} sufficiently.
-2. Write EXACTLY ONE of these values to the result file: ${result_file}
+1. Read the task description from implement-task-${task_num}.md to understand requirements.
+2. Assess whether the committed changes implement Task ${task_num} sufficiently.
+3. Run the tests to verify correctness.
+4. Write EXACTLY ONE of these values to the result file: ${result_file}
    - DONE — implementation is complete and reasonable
    - DONE_WITH_CONCERNS — implementation works but has minor issues
    - BLOCKED — implementation is incomplete or broken
@@ -902,13 +907,14 @@ Write the result now."
     --start-sha "$head_sha" \
     2>&1 | tee -a "${ISSUES_DIR}/result-writer-task-${task_num}.log"; _rw_agent_ec=${PIPESTATUS[0]} _rw_tee_ec=${PIPESTATUS[1]}
   rm -f "$_rw_prompt_file"
+  check_branch_after_agent
 
   if [[ $_rw_tee_ec -ne 0 ]]; then
     log "  Result-writer: tee failed (exit $_rw_tee_ec)"
     return 1
   fi
   if [[ $_rw_agent_ec -ne 0 ]]; then
-    log "  Result-writer: agent exited non-zero (exit $_rw_agent_ec), preserving BLOCKED"
+    log "  Result-writer: agent exited non-zero (exit $_rw_agent_ec), preserving original status"
     return 1
   fi
 

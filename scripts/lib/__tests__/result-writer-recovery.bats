@@ -132,6 +132,25 @@ teardown() {
   [ "$new_status" = "DONE" ]
 }
 
+@test "guard: SHA advanced + result-writer writes DONE -> final status DONE (NEEDS_CONTEXT initial)" {
+  # Same as previous test but initial result is NEEDS_CONTEXT.
+  # Guard triggers for both BLOCKED and NEEDS_CONTEXT.
+  _MOCK_HEAD_SHA="def456"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  echo "NEEDS_CONTEXT" > "${WORKTREE_DIR}/implement-task-1.result"
+  touch "${WORKTREE_DIR}/implement-task-1.md"
+  _RESULT_WRITER_OUTPUT="DONE"
+  _RESULT_WRITER_EXIT=0
+
+  run_result_writer 1
+  local new_status
+  new_status=$(resolve_result \
+    "${WORKTREE_DIR}/implement-task-1.result" \
+    "${WORKTREE_DIR}/implement-task-1.md" \
+    DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT "DONE")
+  [ "$new_status" = "DONE" ]
+}
+
 @test "guard: SHA unchanged -> result-writer not invoked, BLOCKED preserved" {
   _MOCK_HEAD_SHA="abc123"
   echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
