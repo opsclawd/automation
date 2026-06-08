@@ -3,7 +3,7 @@ import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
-import { ConfigError, loadConfig } from '@ai-sdlc/shared';
+import { ConfigError, loadConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
@@ -68,7 +68,15 @@ export function resolveProfileName(
     return { ok: true, profileName: values.profile };
   }
   if (values.phase) {
-    const entry = config.phaseProfiles[values.phase];
+    let phaseName = values.phase;
+    let entry = config.phaseProfiles[phaseName];
+    if (!entry) {
+      const fallback = PHASE_FALLBACKS[phaseName];
+      if (fallback) {
+        entry = config.phaseProfiles[fallback];
+        if (entry) phaseName = fallback;
+      }
+    }
     if (!entry) {
       return {
         ok: false,
@@ -78,7 +86,7 @@ export function resolveProfileName(
     if (!entry.profile) {
       return {
         ok: false,
-        error: `phase '${values.phase}' has no profile configured`,
+        error: `phase '${phaseName}' has no profile configured`,
       };
     }
     return { ok: true, profileName: entry.profile };

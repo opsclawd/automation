@@ -192,6 +192,10 @@ export class AgentRuntimeRouter implements AgentPort {
     this.opts.invocationRepository.update(id, patch);
 
     // --- Adapter-level fallback only (caller-signalled is handled in invoke) ---
+    // NOTE: The router does NOT consult PHASE_FALLBACKS here. The caller (bash script)
+    // is responsible for passing --phase-id "fix-review-N" (not "whole-pr-fix-review-N")
+    // for the whole-PR fix-review loop. If --phase-id naming ever changes to match
+    // --phase, the router will need to consult PHASE_FALLBACKS for adapter-level fallback.
     const routingPhase = normalizeRoutingPhase(request.phaseId);
     if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
       const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
@@ -238,6 +242,8 @@ export class AgentRuntimeRouter implements AgentPort {
   }
 
   private shouldFallback(result: AgentInvocationResult, phaseId: string): boolean {
+    // NOTE: Does not consult PHASE_FALLBACKS — relies on caller passing a phaseId
+    // whose normalized form exists in phaseProfiles. See comment in dispatch().
     const routingPhase = normalizeRoutingPhase(phaseId);
     const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
     const triggers = phaseEntry?.fallbackTriggers ?? [

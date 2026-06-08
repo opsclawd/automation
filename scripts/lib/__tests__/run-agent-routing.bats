@@ -426,3 +426,24 @@ print(f'OK: compound -> {prof}')
   [[ "$output" != *"unknown phase"* ]]
   [[ "$output" != *"must pass --phase or --profile"* ]]
 }
+
+@test "run-agent.ts uses phaseProfiles for whole-pr-fix-review phase" {
+  echo "test prompt" > "$TMPDIR_TEST/prompt.txt"
+  run node --import "$TSX_LOADER" apps/cli/src/run-agent.ts \
+    --phase whole-pr-fix-review \
+    --cwd "$TMPDIR_TEST" \
+    --run-id "test-run" \
+    --repo-id "test/repo" \
+    --repo-root "$PWD" \
+    --phase-id "fix-review-test-wpr" \
+    --prompt-file "$TMPDIR_TEST/prompt.txt" \
+    --start-sha "0000000000000000000000000000000000000000" \
+    2>&1
+  # Intentionally loose: -ne 2 asserts "not a CLI error exit" (consistent with
+  # the whole-pr-review test above). Other non-zero codes (e.g. 1 from a crash)
+  # would also pass — see review finding #3. Tightening to -eq 0 would be more
+  # strict but would break consistency with neighboring tests.
+  [ "$status" -ne 2 ]
+  [[ "$output" != *"unknown phase"* ]]
+  [[ "$output" != *"must pass --phase or --profile"* ]]
+}

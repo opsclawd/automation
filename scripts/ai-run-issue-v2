@@ -3318,7 +3318,7 @@ Start now."
   _main_state_before=$(_capture_main_state)
   printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-    --phase fix-review \
+    --phase whole-pr-fix-review \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \

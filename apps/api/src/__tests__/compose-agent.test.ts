@@ -61,6 +61,45 @@ describe('resolveProfileForPhase', () => {
   it('throws ConfigError for an unknown phase', () => {
     expect(() => resolveProfileForPhase(baseConfig, 'mystery')).toThrow(ConfigError);
   });
+
+  it('falls back to fix-review when whole-pr-fix-review is not configured', () => {
+    const config = {
+      ...baseConfig,
+      phaseProfiles: {
+        'plan-design': { profile: 'opencode-frontier' },
+        'fix-review': { profile: 'opencode-frontier' },
+      },
+    };
+    const profile = resolveProfileForPhase(config, 'whole-pr-fix-review');
+    expect(profile).toBe(AgentProfileName('opencode-frontier'));
+  });
+
+  it('resolves whole-pr-fix-review when explicitly configured', () => {
+    const config = {
+      ...baseConfig,
+      profiles: {
+        ...baseConfig.profiles,
+        'pi-local': {
+          runtime: 'pi' as const,
+          provider: 'local',
+          model: 'q',
+          timeoutMinutes: 1,
+          contextLimitTokens: 64000,
+        },
+      },
+      phaseProfiles: {
+        'plan-design': { profile: 'opencode-frontier' },
+        'fix-review': { profile: 'opencode-frontier' },
+        'whole-pr-fix-review': { profile: 'pi-local' },
+      },
+    };
+    const profile = resolveProfileForPhase(config, 'whole-pr-fix-review');
+    expect(profile).toBe(AgentProfileName('pi-local'));
+  });
+
+  it('throws ConfigError when whole-pr-fix-review has no fallback', () => {
+    expect(() => resolveProfileForPhase(baseConfig, 'whole-pr-fix-review')).toThrow(ConfigError);
+  });
 });
 
 describe('compose agent wiring', () => {

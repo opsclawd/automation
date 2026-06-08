@@ -119,6 +119,7 @@
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "spec-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "fix-review": { "profile": "builder", "fallbackProfile": "junior" },
+      "whole-pr-fix-review": { "profile": "builder", "fallbackProfile": "junior" },
       "fix-validate": { "profile": "builder", "fallbackProfile": "junior" },
       "whole-pr-review": { "profile": "gemini", "fallbackProfile": "junior" },
       "post-pr-review": { "profile": "mimo-pro", "fallbackProfile": "junior" },
