@@ -39,6 +39,12 @@ export interface CreatePullRequestInput {
   draft?: boolean;
 }
 
+export interface PullRequestReview {
+  id: number;
+  state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENT' | 'PENDING';
+  user: string;
+}
+
 export interface GitHubPort {
   getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue>;
   getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail>;
@@ -61,4 +67,5 @@ export interface GitHubPort {
     issueNumber: number,
     labels: { add?: string[]; remove?: string[] },
   ): Promise<void>;
+  listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]>;
 }
