@@ -2384,7 +2384,30 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       log "  Implementer status: ${IMPL_STATUS}"
 
       if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
-        orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
+        # Recovery: if the implementer committed work (HEAD advanced past base_sha)
+        # but failed to write the result file, try a narrow result-writer agent.
+        local _base_sha_file="${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log"
+        if [[ -f "$_base_sha_file" ]]; then
+          local _pre_sha _post_sha
+          _pre_sha=$(cat "$_base_sha_file" 2>/dev/null || echo "")
+          _post_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+          if [[ -n "$_pre_sha" && -n "$_post_sha" && "$_pre_sha" != "$_post_sha" ]]; then
+            log "  Agent committed work (SHA advanced) but result is ${IMPL_STATUS} — attempting result-writer recovery"
+            if run_result_writer "$TASK_NUM"; then
+              IMPL_STATUS=$(resolve_result \
+                "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
+                "${WORKTREE_DIR}/implement-task-${TASK_NUM}.md" \
+                DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT \
+                "DONE")
+              log "  Post-recovery status: ${IMPL_STATUS}"
+            else
+              log "  Result-writer failed, preserving original ${IMPL_STATUS}"
+            fi
+          fi
+        fi
+        if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
+          orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
+        fi
       fi
 
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
