@@ -1,0 +1,146 @@
+#!/usr/bin/env bats
+
+# Tests for the SHA-comparison guard and run_result_writer recovery in
+# scripts/ai-run-issue-v2. Verifies that when resolve_result returns BLOCKED
+# for an implement-task, the guard checks HEAD vs base_sha and either invokes
+# the result-writer (HEAD advanced) or preserves BLOCKED (HEAD unchanged).
+
+setup() {
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
+  source "$SHARED_LIB"
+
+  # Extract run_result_writer via awk brace-counting.
+  eval "$(awk '
+    /^(run_result_writer)\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  TMPDIR_TEST="$(mktemp -d)"
+  WORKTREE_DIR="$TMPDIR_TEST/worktree"
+  mkdir -p "$WORKTREE_DIR"
+
+  # Stub git to return a controlled HEAD SHA
+  _MOCK_HEAD_SHA="aaa111"
+  git() { echo "$_MOCK_HEAD_SHA"; }
+
+  # Stub node/run-agent.ts to simulate the result-writer agent
+  _RESULT_WRITER_OUTPUT="DONE"
+  _RESULT_WRITER_EXIT=0
+  NODE_OPTIONS='--conditions=development'
+  node() {
+    # Simulate agent writing the result file
+    echo "$_RESULT_WRITER_OUTPUT" > "${WORKTREE_DIR}/implement-task-${_TASK_NUM:-1}.result"
+    return $_RESULT_WRITER_EXIT
+  }
+
+  # Stubs for helpers referenced by run_result_writer
+  log() { :; }
+  REPO_ROOT="$TMPDIR_TEST/repo"
+  RUN_ID="test-run"
+  REPO_ID="test/repo"
+  _TSX_LOADER="/dev/null"
+  ISSUES_DIR="$TMPDIR_TEST/issues"
+  mkdir -p "$ISSUES_DIR"
+  _TASK_NUM=1
+}
+
+teardown() {
+  rm -rf "$TMPDIR_TEST"
+}
+
+@test "run_result_writer: skips when basesha.log missing" {
+  run run_result_writer 1
+  [ "$status" -eq 1 ]
+}
+
+@test "run_result_writer: skips when basesha.log empty" {
+  echo "" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  run run_result_writer 1
+  [ "$status" -eq 1 ]
+}
+
+@test "run_result_writer: skips when HEAD equals base_sha (no commits)" {
+  _MOCK_HEAD_SHA="abc123"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  run run_result_writer 1
+  [ "$status" -eq 1 ]
+  # No result file should be written
+  [ ! -f "${WORKTREE_DIR}/implement-task-1.result" ]
+}
+
+@test "run_result_writer: invokes agent and succeeds when HEAD advanced" {
+  _MOCK_HEAD_SHA="def456"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  _RESULT_WRITER_OUTPUT="DONE"
+  _RESULT_WRITER_EXIT=0
+
+  run run_result_writer 1
+  [ "$status" -eq 0 ]
+  # Result file should contain DONE
+  [ "$(cat "${WORKTREE_DIR}/implement-task-1.result")" = "DONE" ]
+}
+
+@test "run_result_writer: preserves BLOCKED when result-writer writes BLOCKED" {
+  _MOCK_HEAD_SHA="def456"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  _RESULT_WRITER_OUTPUT="BLOCKED"
+  _RESULT_WRITER_EXIT=0
+
+  run run_result_writer 1
+  [ "$status" -eq 0 ]
+  [ "$(cat "${WORKTREE_DIR}/implement-task-1.result")" = "BLOCKED" ]
+}
+
+@test "run_result_writer: returns failure when agent exits non-zero" {
+  _MOCK_HEAD_SHA="def456"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  _RESULT_WRITER_OUTPUT=""
+  _RESULT_WRITER_EXIT=1
+
+  run run_result_writer 1
+  [ "$status" -eq 1 ]
+}
+
+@test "run_result_writer: returns failure when agent writes nothing" {
+  _MOCK_HEAD_SHA="def456"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  # Agent exits 0 but doesn't write a valid result
+  node() { return 0; }
+
+  run run_result_writer 1
+  [ "$status" -eq 1 ]
+}
+
+@test "guard: SHA advanced + result-writer writes DONE -> final status DONE" {
+  # Simulate the full guard flow: basesha exists, HEAD advanced,
+  # result-writer writes DONE, re-resolve returns DONE.
+  _MOCK_HEAD_SHA="def456"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  echo "DONE" > "${WORKTREE_DIR}/implement-task-1.result"
+  touch "${WORKTREE_DIR}/implement-task-1.md"
+  _RESULT_WRITER_OUTPUT="DONE"
+  _RESULT_WRITER_EXIT=0
+
+  # Simulate the guard: run_result_writer succeeds, then re-resolve
+  run_result_writer 1
+  local new_status
+  new_status=$(resolve_result \
+    "${WORKTREE_DIR}/implement-task-1.result" \
+    "${WORKTREE_DIR}/implement-task-1.md" \
+    DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT "DONE")
+  [ "$new_status" = "DONE" ]
+}
+
+@test "guard: SHA unchanged -> result-writer not invoked, BLOCKED preserved" {
+  _MOCK_HEAD_SHA="abc123"
+  echo "abc123" > "${WORKTREE_DIR}/implement-task-1.basesha.log"
+  echo "BLOCKED" > "${WORKTREE_DIR}/implement-task-1.result"
+
+  # Guard should NOT call run_result_writer when HEAD == base_sha
+  # (run_result_writer would return 1, preserving BLOCKED)
+  run run_result_writer 1
+  [ "$status" -eq 1 ]
+  # Result should still be BLOCKED
+  [ "$(cat "${WORKTREE_DIR}/implement-task-1.result")" = "BLOCKED" ]
+}
