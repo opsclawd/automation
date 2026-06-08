@@ -297,11 +297,11 @@ export function composeRoot(opts: ComposeOptions): Container {
       );
     }
     const ghAdapter = new GhCliAdapter({});
-    // GitPort audit: ProcessPrReviewComments only invokes git.diff, git.headCommitSha,
-    // and git.remoteRef. The remaining methods are stubs that throw with a clear
-    // message — they must not be called from the PR review poller flow. If a
-    // future change in ProcessPrReviewComments exercises them, this adapter must
-    // be extended to delegate to the real git CLI.
+    // GitPort audit: ProcessPrReviewComments uses git.diff, git.headCommitSha,
+    // git.remoteRef, git.isAncestor, git.logBetween, git.resetHard, and
+    // git.cleanUntracked. The remaining methods (createWorktree, removeWorktree,
+    // currentBranch, commit, push) are stubs that throw with a clear message
+    // — they must not be called from the PR review poller flow.
     const gitAdapter: GitPort = {
       async createWorktree(_input: CreateWorktreeInput): Promise<void> {
         throw new Error(
@@ -322,10 +322,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         const { execFileSync } = await import('node:child_process');
         return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
       },
-      async resetHard(_cwd: string, _commitSha: string): Promise<void> {
-        throw new Error(
-          'GitPort.resetHard is not wired in compose poller (PR review flow does not reset)',
-        );
+      async resetHard(cwd: string, commitSha: string): Promise<void> {
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('git', ['reset', '--hard', commitSha], { cwd });
       },
       async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
         const { execFileSync } = await import('node:child_process');
@@ -391,15 +390,18 @@ export function composeRoot(opts: ComposeOptions): Container {
           return [];
         }
       },
-      async fetchAndMerge(_cwd: string, _remote: string, _branch: string): Promise<void> {
-        throw new Error(
-          'GitPort.fetchAndMerge is not wired in compose poller (PR review flow does not fetch)',
-        );
+      async fetchAndMerge(cwd: string, remote: string, branch: string): Promise<void> {
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('git', ['fetch', remote, branch], { cwd });
+        try {
+          execFileSync('git', ['merge', '--ff-only', `${remote}/${branch}`], { cwd });
+        } catch {
+          execFileSync('git', ['merge', '--no-edit', `${remote}/${branch}`], { cwd });
+        }
       },
-      async cleanUntracked(_cwd: string): Promise<void> {
-        throw new Error(
-          'GitPort.cleanUntracked is not wired in compose poller (PR review flow does not clean)',
-        );
+      async cleanUntracked(cwd: string): Promise<void> {
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('git', ['clean', '-fd'], { cwd });
       },
     };
     const processor = new ProcessPrReviewComments({
