@@ -39,7 +39,8 @@ export interface ProcessPrReviewDeps {
     branch: string;
     startCommitSha: string;
   }) => Promise<boolean>;
-  verifyBuildPasses: (input: { cwd: string }) => Promise<boolean>;
+  verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+  onBuildVerificationSkipped?: (cwd: string) => void;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -254,7 +255,7 @@ export class ProcessPrReviewComments {
         branch: pr.headRefName,
         startCommitSha,
       });
-      buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
+      buildVerified = await d.verifyBuildPasses({ cwd: input.cwd, runId: input.runId });
     }
 
     for (const item of uniqueComments) {
@@ -436,7 +437,7 @@ export class ProcessPrReviewComments {
     const commitVerified = startCommitSha
       ? await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName, startCommitSha })
       : true;
-    const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
+    const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd, runId: input.runId });
 
     let blocked = 0;
     for (const c of orphaned) {

@@ -488,13 +488,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           return false;
         }
       },
-      verifyBuildPasses: async ({ cwd }) => {
+      verifyBuildPasses: async ({ cwd, runId }) => {
         try {
           const config = loadConfig(cwd);
           if (!config.validation?.commands?.length) {
             try {
               eventRepository.insert({
-                runUuid: '',
+                runUuid: runId,
                 level: 'warn',
                 type: 'post-pr-review.build_verification_skipped',
                 message: 'build verification skipped: no validation.commands configured',
