@@ -10,6 +10,9 @@ describe('normalizeRoutingPhase', () => {
   it.each([
     ['fix-review-1', 'fix-review'],
     ['fix-review-12', 'fix-review'],
+    ['whole-pr-fix-review-1', 'whole-pr-fix-review'],
+    ['whole-pr-fix-review-12', 'whole-pr-fix-review'],
+    ['whole-pr-fix-review-task-5', 'whole-pr-fix-review'],
     ['quality-review-task-1', 'quality-review'],
     ['quality-review-task-12', 'quality-review'],
     ['spec-review-task-7', 'spec-review'],
