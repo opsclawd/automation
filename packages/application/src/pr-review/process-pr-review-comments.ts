@@ -44,7 +44,6 @@ export interface ProcessPrReviewDeps {
   idFactory: () => string;
   now: () => Date;
   maxIterations: number;
-  onBuildVerificationSkipped?: (cwd: string) => void;
 }
 
 export interface ProcessPrReviewInput {
