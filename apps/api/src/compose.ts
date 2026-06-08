@@ -97,11 +97,18 @@ const classifyExitAdapter = (
  */
 export function resolveProfileForPhase(agent: AgentConfig, phaseName: string): AgentProfileName {
   let entry = agent.phaseProfiles[phaseName];
-  if (!entry && PHASE_FALLBACKS[phaseName]) {
-    entry = agent.phaseProfiles[PHASE_FALLBACKS[phaseName]];
+  if (!entry) {
+    const fallback = PHASE_FALLBACKS[phaseName];
+    if (fallback) {
+      entry = agent.phaseProfiles[fallback];
+      if (entry) phaseName = fallback;
+    }
   }
   if (!entry) {
     throw new ConfigError(`unknown phase '${phaseName}'`);
+  }
+  if (!entry.profile) {
+    throw new ConfigError(`phase '${phaseName}' has no profile configured`);
   }
   return AgentProfileName(entry.profile);
 }
