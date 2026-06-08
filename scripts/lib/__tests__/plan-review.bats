@@ -39,6 +39,11 @@ setup() {
   ' "$SCRIPT_PATH")"
 
   eval "$(awk '
+    /^run_adversarial_reviewer\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
+  ' "$SCRIPT_PATH")"
+
+  eval "$(awk '
     /^_append_known_limitations\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
   ' "$SCRIPT_PATH")"
@@ -212,6 +217,181 @@ severity: P2 — minor issue
 FINDINGS
   run parse_review_findings "$TMPDIR_TEST"
   [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: matches Severity: P1 (case-insensitive)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+Severity: P1 — critical issue
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: matches SEVERITY: P2 (case-insensitive)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+SEVERITY: P2 — minor issue
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: ignores mid-text severity: P1 in body paragraph" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**Why this is wrong:** severity: P1 — the state machine advances past the error
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PASS" ]]
+}
+
+@test "parse_review_findings: ignores resolved P1 findings (same line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition — **RESOLVED**
+**Plan text:** > transition to IDLE
+**What actually happens:** stays in RUNNING
+**Resolution:** Fixed by plan fixer.
+
+### P1: New unresolved finding
+**Plan text:** > retry logic
+**What actually happens:** infinite loop
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: returns PASS when all P1s resolved (same line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition — **RESOLVED**
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.
+
+### P2: Missing logging — **RESOLVED**
+**Plan text:** > log the event
+**Resolution:** Added logging.
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PASS" ]]
+}
+
+@test "parse_review_findings: returns P2_ACKNOWLEDGED when P1 resolved but P2 active (same line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition — **RESOLVED**
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.
+
+### P2: Missing error message
+**Plan text:** > handle timeout
+**What is incomplete:** no user-facing message specified
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: ignores resolved P1 findings (cross-line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**What actually happens:** stays in RUNNING
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
+
+### P1: New unresolved finding
+**Plan text:** > retry logic
+**What actually happens:** infinite loop
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: returns PASS when all P1s resolved (cross-line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
+
+### P2: Missing logging
+**Plan text:** > log the event
+**Resolution:** Added logging.  **RESOLVED**
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "PASS" ]]
+}
+
+@test "parse_review_findings: returns P2_ACKNOWLEDGED when P1 resolved but P2 active (cross-line)" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### P1: Bad transition
+**Plan text:** > transition to IDLE
+**Resolution:** Fixed by plan fixer.  **RESOLVED**
+
+### P2: Missing error message
+**Plan text:** > handle timeout
+**What is incomplete:** no user-facing message specified
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: matches lowercase heading ### p1:" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### p1: bad transition
+**Plan text:** > transition to IDLE
+**What actually happens:** stays in RUNNING
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: matches lowercase heading ### p2:" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+### p2: missing logging
+**Plan text:** > log the event
+**What is incomplete:** no logging specified
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P2_ACKNOWLEDGED" ]]
+}
+
+@test "parse_review_findings: matches indented Severity: P1" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+  Severity: P1 — critical issue
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
+}
+
+@test "parse_review_findings: matches lowercase bold **p1**" {
+  cat > "$TMPDIR_TEST/plan-review-findings.md" << 'FINDINGS'
+## Review Result: FINDINGS
+
+- **p1** bad transition
+FINDINGS
+  run parse_review_findings "$TMPDIR_TEST"
+  [[ "$output" == "P1_FOUND" ]]
 }
 
 @test "parse_review_findings: returns PROCEED_WITH_CONCERNS when sentinel present" {
@@ -549,6 +729,153 @@ PLAN
   [[ $status -eq 0 ]]
   [[ $_fixer_called -eq 0 ]]
   grep -q "Known Limitations" "$TMPDIR_TEST/plan.md"
+}
+
+@test "run_plan_review_loop: iteration 1 calls reviewer with empty prev_findings" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  run_adversarial_reviewer() {
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  local _arg_count
+  _arg_count="$(sed -n '1p' "$_reviewer_args_file")"
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_arg_count" -eq 8 ]]
+  [[ "$_prev_findings_arg" == "" ]]
+}
+
+@test "run_plan_review_loop: iteration 2 receives prior iteration findings path" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_prev_findings_arg" == "${TMPDIR_TEST}/plan-review-findings-iter-1.md" ]]
+}
+
+@test "run_plan_review_loop: final review pass receives last iteration findings" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    echo "### P1: Persistent finding" > "${WORKTREE_DIR}/plan-review-findings.md"
+    return 0
+  }
+  run_plan_fixer() { return 0; }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1"
+  [[ $status -ne 0 ]]
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_prev_findings_arg" == "${TMPDIR_TEST}/plan-review-findings-iter-1.md" ]]
+}
+
+@test "run_plan_review_loop: prev_findings empty when prior iteration file missing" {
+  local _reviewer_args_file="$TMPDIR_TEST/_reviewer-args.txt"
+  _iter=0
+  run_adversarial_reviewer() {
+    _iter=$((_iter + 1))
+    printf '%s\n' "$#" "$@" > "$_reviewer_args_file"
+    if [[ $_iter -eq 1 ]]; then
+      echo "### P1: Bad state transition" > "${WORKTREE_DIR}/plan-review-findings.md"
+    else
+      echo "## Review Result: PASS" > "${WORKTREE_DIR}/plan-review-findings.md"
+    fi
+    return 0
+  }
+  run_plan_fixer() {
+    if [[ $_iter -eq 1 ]]; then
+      rm -f "${WORKTREE_DIR}/plan-review-findings-iter-1.md"
+    fi
+    return 0
+  }
+  _iter=0
+
+  run run_plan_review_loop "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "5"
+  [[ $status -eq 0 ]]
+  local _prev_findings_arg
+  _prev_findings_arg="$(sed -n '9p' "$_reviewer_args_file")"
+  [[ "$_prev_findings_arg" == "" ]]
+}
+
+@test "run_adversarial_reviewer: prompt includes PREVIOUS FINDINGS when prev_findings_path set" {
+  _capture_main_state() { echo "main-state"; }
+  _guard_main_checkout() { :; }
+  check_branch_after_agent() { :; }
+  _PROMPT_CAPTURE_FILE="$TMPDIR_TEST/_prompt-capture.txt"
+  node() {
+    local args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "${args[$i]}" == "--prompt-file" ]]; then
+        cat "${args[$((i+1))]}" > "$_PROMPT_CAPTURE_FILE"
+        break
+      fi
+    done
+    return 0
+  }
+
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+Some content.
+PLAN
+  local _prev_findings="$TMPDIR_TEST/prev-findings.md"
+  echo "### P1: old finding" > "$_prev_findings"
+
+  run_adversarial_reviewer "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "2" "$_prev_findings"
+  [[ $status -eq 0 ]]
+  [[ -f "$_PROMPT_CAPTURE_FILE" ]]
+  grep -q "## PREVIOUS FINDINGS" "$_PROMPT_CAPTURE_FILE"
+  grep -q "Previous findings file: ${_prev_findings}" "$_PROMPT_CAPTURE_FILE"
+  grep -q "P2_ACKNOWLEDGED" "$_PROMPT_CAPTURE_FILE"
+}
+
+@test "run_adversarial_reviewer: prompt excludes PREVIOUS FINDINGS when prev_findings_path empty" {
+  _capture_main_state() { echo "main-state"; }
+  _guard_main_checkout() { :; }
+  check_branch_after_agent() { :; }
+  _PROMPT_CAPTURE_FILE="$TMPDIR_TEST/_prompt-capture.txt"
+  node() {
+    local args=("$@")
+    for ((i=0; i<${#args[@]}; i++)); do
+      if [[ "${args[$i]}" == "--prompt-file" ]]; then
+        cat "${args[$((i+1))]}" > "$_PROMPT_CAPTURE_FILE"
+        break
+      fi
+    done
+    return 0
+  }
+
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+# Plan
+Some content.
+PLAN
+
+  run_adversarial_reviewer "$TMPDIR_TEST" "$TMPDIR_TEST" "run-1" "repo-1" "main" "60" "1" ""
+  [[ $status -eq 0 ]]
+  [[ -f "$_PROMPT_CAPTURE_FILE" ]]
+  ! grep -q "## PREVIOUS FINDINGS" "$_PROMPT_CAPTURE_FILE"
 }
 
 @test "_append_known_limitations: appends to existing section" {

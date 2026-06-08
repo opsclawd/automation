@@ -99,12 +99,29 @@ parse_review_findings() {
     return
   fi
 
-  if grep -qiE '(#{2,3}[[:space:]]+P1:|[[:space:]]\*\*P1\*\*|severity:[[:space:]]*P1($|[[:space:]]))' "$findings_file"; then
+  local _p1_unresolved _p2_unresolved
+  read -r _p1_unresolved _p2_unresolved < <(
+    awk '
+      function flush() {
+        if (in_block && sev=="P1" && !resolved) p1++
+        if (in_block && sev=="P2" && !resolved) p2++
+        in_block=0; sev=""; resolved=0
+      }
+      /^## Review Result:/ { next }
+      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]+p1:/) || (tolower($0) ~ /^[[:space:]]*[-*][[:space:]]*\*\*p1\*\*/) || (tolower($0) ~ /^[[:space:]]*severity:[[:space:]]*p1($|[[:space:]])/) { flush(); in_block=1; sev="P1" }
+      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]+p2:/) || (tolower($0) ~ /^[[:space:]]*[-*][[:space:]]*\*\*p2\*\*/) || (tolower($0) ~ /^[[:space:]]*severity:[[:space:]]*p2($|[[:space:]])/) { flush(); in_block=1; sev="P2" }
+      (tolower($0) ~ /^[[:space:]]*#{2,3}[[:space:]]/) && !in_block { flush(); in_block=1 }
+      /\*\*RESOLVED\*\*/ || /— RESOLVED/ { resolved=1 }
+      END { flush(); print p1+0, p2+0 }
+    ' "$findings_file"
+  )
+
+  if [[ "$_p1_unresolved" -gt 0 ]]; then
     echo "P1_FOUND"
     return
   fi
 
-  if grep -qiE '(#{2,3}[[:space:]]+P2:|[[:space:]]\*\*P2\*\*|severity:[[:space:]]*P2($|[[:space:]]))' "$findings_file"; then
+  if [[ "$_p2_unresolved" -gt 0 ]]; then
     echo "P2_ACKNOWLEDGED"
     return
   fi
@@ -184,6 +201,7 @@ _append_known_limitations() {
 #   $5 — branch name
 #   $6 — timeout seconds
 #   $7 — iteration number (for logging)
+#   $8 — (optional) path to previous iteration's findings file; empty on first iteration
 run_adversarial_reviewer() {
   local worktree_dir="$1"
   local repo_root="$2"
@@ -192,6 +210,7 @@ run_adversarial_reviewer() {
   local branch="$5"
   local timeout_sec="$6"
   local iteration="$7"
+  local prev_findings_path="${8:-}"
 
   local issues_dir="$worktree_dir"
   local tsx_loader="${_TSX_LOADER:-tsx}"
@@ -244,6 +263,26 @@ Write findings to: ${worktree_dir}/plan-review-findings.md
 ## STOP RULE
 Stop after writing plan-review-findings.md. Do NOT modify any other file.
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${branch}."
+
+if [[ -n "$prev_findings_path" && -f "$prev_findings_path" ]]; then
+  REVIEWER_PROMPT+="
+
+## PREVIOUS FINDINGS
+Previous findings file: ${prev_findings_path}
+This is a RE-review pass. You have previously reviewed this plan and produced findings.
+## YOUR TASK
+1. Read the previous findings file first.
+2. For each prior finding, verify whether the plan fixer has resolved it:
+   - If resolved: note it as **RESOLVED** and move on.
+   - If not resolved: carry it forward as a finding in your new report.
+3. After verifying prior findings, scan the CHANGED sections of plan.md for new
+   design-level bugs introduced by the fixes.
+4. Do NOT flag new issues in unchanged sections of the plan unless they are
+   severe correctness problems (P1-level) that you genuinely missed before.
+5. Do NOT re-litigate findings you previously accepted.
+   - Findings resolved via the plan fixer are RESOLVED.
+   - Findings accepted as P2_ACKNOWLEDGED or PROCEED_WITH_CONCERNS are accepted and should not be re-flagged."
+fi
 
   local _reviewer_prompt_file
   _reviewer_prompt_file=$(mktemp)
@@ -369,7 +408,14 @@ run_plan_review_loop() {
     local _manifest_checksum_before
     _manifest_checksum_before=$(_checksum_file "${worktree_dir}/task-manifest.json")
     rm -f "${worktree_dir}/plan-review-findings.md"
-    run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration"
+    local _prev_findings=""
+    if [[ $iteration -gt 1 ]]; then
+      local _prev_iter=$((iteration - 1))
+      if [[ -f "${worktree_dir}/plan-review-findings-iter-${_prev_iter}.md" ]]; then
+        _prev_findings="${worktree_dir}/plan-review-findings-iter-${_prev_iter}.md"
+      fi
+    fi
+    run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration" "$_prev_findings"
     local reviewer_ec=$?
     if [[ $reviewer_ec -ne 0 ]]; then
       warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration}"
@@ -463,7 +509,11 @@ run_plan_review_loop() {
     local _manifest_checksum_before
     _manifest_checksum_before=$(_checksum_file "${worktree_dir}/task-manifest.json")
     rm -f "${worktree_dir}/plan-review-findings.md"
-    run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$_final_iter"
+    local _prev_findings=""
+    if [[ -f "${worktree_dir}/plan-review-findings-iter-${iteration}.md" ]]; then
+      _prev_findings="${worktree_dir}/plan-review-findings-iter-${iteration}.md"
+    fi
+    run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$_final_iter" "$_prev_findings"
     local reviewer_ec=$?
     if [[ $reviewer_ec -ne 0 ]]; then
       warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on final review pass"

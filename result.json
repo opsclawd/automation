@@ -1,0 +1,15 @@
+{
+  "outcome": "ALL_DONE",
+  "comments": [
+    {
+      "commentId": 3370410826,
+      "action": "fixed",
+      "replyBody": "Fixed `parse_review_findings()` to use block-aware awk parsing instead of per-line grep. Each `###` or bold/severity-delimited finding is tracked as a block, and `**RESOLVED**` anywhere in the block (heading line OR subsequent `**Resolution:**` line) marks it as resolved. This handles both same-line and cross-line resolution markers."
+    },
+    {
+      "commentId": 3370412161,
+      "action": "fixed",
+      "replyBody": "Replaced the per-line `grep | grep -v` approach with awk block tracking. The new implementation flushes findings at each `###` heading boundary, so `**RESOLVED**` on any line within a finding block (including `**Resolution:** ... **RESOLVED**`) correctly marks that finding as resolved. Added cross-line test cases covering the exact failure scenario described in this comment."
+    }
+  ]
+}
