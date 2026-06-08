@@ -143,6 +143,90 @@ describe('run-agent CLI logic', () => {
       const result = resolveProfileName(config, { phase: 'compound' });
       expect(result).toEqual({ ok: true, profileName: 'opencode-frontier' });
     });
+
+    describe('phase fallback resolution', () => {
+      it('resolves whole-pr-fix-review when explicitly configured', () => {
+        const configWithExplicit: ConfigForProfileResolution = {
+          profiles: {
+            'opencode-frontier': {
+              runtime: 'opencode',
+              provider: 'anthropic',
+              model: 'claude-opus-4.7',
+              timeoutMinutes: 60,
+            },
+            'pi-qwen-local': {
+              runtime: 'pi',
+              provider: 'local',
+              model: 'qwen3.6-27b',
+              timeoutMinutes: 30,
+            },
+          },
+          phaseProfiles: {
+            'fix-review': { profile: 'opencode-frontier' },
+            'whole-pr-fix-review': { profile: 'pi-qwen-local' },
+          },
+        };
+        const result = resolveProfileName(configWithExplicit, { phase: 'whole-pr-fix-review' });
+        expect(result).toEqual({ ok: true, profileName: 'pi-qwen-local' });
+      });
+
+      it('falls back to fix-review when whole-pr-fix-review is not configured', () => {
+        const configWithoutExplicit: ConfigForProfileResolution = {
+          profiles: {
+            'opencode-frontier': {
+              runtime: 'opencode',
+              provider: 'anthropic',
+              model: 'claude-opus-4.7',
+              timeoutMinutes: 60,
+            },
+          },
+          phaseProfiles: {
+            'fix-review': { profile: 'opencode-frontier' },
+          },
+        };
+        const result = resolveProfileName(configWithoutExplicit, { phase: 'whole-pr-fix-review' });
+        expect(result).toEqual({ ok: true, profileName: 'opencode-frontier' });
+      });
+
+      it('returns error when neither whole-pr-fix-review nor fix-review is configured', () => {
+        const configNoFallback: ConfigForProfileResolution = {
+          profiles: {
+            'opencode-frontier': {
+              runtime: 'opencode',
+              provider: 'anthropic',
+              model: 'claude-opus-4.7',
+              timeoutMinutes: 60,
+            },
+          },
+          phaseProfiles: {
+            'plan-design': { profile: 'opencode-frontier' },
+          },
+        };
+        const result = resolveProfileName(configNoFallback, { phase: 'whole-pr-fix-review' });
+        expect(result).toEqual({
+          ok: false,
+          error: 'unknown phase: whole-pr-fix-review (no entry in agent.phaseProfiles)',
+        });
+      });
+
+      it('falls back to fix-review profile even when fix-review has no fallbackProfile', () => {
+        const configMinimal: ConfigForProfileResolution = {
+          profiles: {
+            builder: {
+              runtime: 'opencode',
+              provider: 'anthropic',
+              model: 'claude-opus-4.7',
+              timeoutMinutes: 60,
+            },
+          },
+          phaseProfiles: {
+            'fix-review': { profile: 'builder' },
+          },
+        };
+        const result = resolveProfileName(configMinimal, { phase: 'whole-pr-fix-review' });
+        expect(result).toEqual({ ok: true, profileName: 'builder' });
+      });
+    });
   });
 
   describe('phaseToRunType', () => {
