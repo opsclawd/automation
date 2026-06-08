@@ -242,7 +242,7 @@ describe('ProcessPrReviewComments — dedup', () => {
 });
 
 describe('ProcessPrReviewComments — blocking', () => {
-  it('blocks a comment after two failed verification attempts', async () => {
+  it('blocks a comment when verification fails (build failed)', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [
         makeSuccessAgentResult(),
@@ -250,7 +250,7 @@ describe('ProcessPrReviewComments — blocking', () => {
         makeSuccessAgentResult(),
       ],
     });
-    const { deps, repo } = makeDeps({
+    const { deps, repo, github } = makeDeps({
       agent,
       verifyBuildPasses: async () => false,
       extractResult: async () => ({
@@ -262,7 +262,7 @@ describe('ProcessPrReviewComments — blocking', () => {
       }),
     });
     const uc = new ProcessPrReviewComments(deps);
-    await uc.execute({
+    const out = await uc.execute({
       runId,
       repoId,
       repoFullName: 'o/r',
@@ -272,20 +272,9 @@ describe('ProcessPrReviewComments — blocking', () => {
       pollNumber: 1,
     });
     const after1 = repo.getComment(runId, 9001);
-    expect(after1?.state).toBe('replied');
-    expect(after1?.attempts).toBe(1);
-    const out2 = await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 2,
-    });
-    const after2 = repo.getComment(runId, 9001);
-    expect(after2?.state).toBe('blocked');
-    expect(out2.blocked).toBe(1);
+    expect(after1?.state).toBe('blocked');
+    expect(out.blocked).toBe(1);
+    expect(github.repliesPosted).toHaveLength(1);
   });
 });
 
@@ -583,7 +572,7 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
   it('blocks a fixed comment when the agent did not produce a new commit', async () => {
     const git = new FakeGitPort();
     git.headByCwd.set('/work/tree', 'abc123');
-    git.remoteRefs.set('origin/feat-x', 'abc123');
+    git.remoteRefs.set('origin/feat-x', 'xyz789');
     const { deps, github, repo } = makeDeps({ git });
     github.comments.set('o/r/5', [
       {
@@ -607,10 +596,9 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
       pollNumber: 1,
     });
     expect(out.processed).toBe(0);
+    expect(out.blocked).toBe(1);
     const comment = repo.getComment(runId, 9001);
-    expect(comment?.state).toBe('replied');
-    expect(comment?.attempts).toBe(1);
-    expect(comment?.replyVerified).toBe(false);
+    expect(comment?.state).toBe('blocked');
   });
 });
 
@@ -695,11 +683,12 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
 
     expect(out1.allResolved).toBe(false);
     expect(out1.processed).toBe(0);
+    expect(out1.blocked).toBe(1);
     const comment = repo.getComment(runId, 9001);
-    expect(comment?.state).toBe('replied');
+    expect(comment?.state).toBe('blocked');
     expect(comment?.replyVerified).toBe(false);
     const poll = repo.latestPollAttempt(runId);
-    expect(poll?.terminalState).toBeUndefined();
+    expect(poll?.terminalState).toBe('blocked');
   });
 });
 
@@ -760,6 +749,68 @@ describe('ProcessPrReviewComments — orphan verification uses remoteRef', () =>
     });
 
     expect(out.outcome).toBe('NO_UNRESOLVED');
+    expect(out.allResolved).toBe(true);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe('processed');
+    expect(comment?.replyVerified).toBe(true);
+  });
+});
+
+describe('ProcessPrReviewComments — lenient reply verification', () => {
+  it('verifies a reply based on existence (inReplyToId match) even when body differs', async () => {
+    const { deps, github, repo } = makeDeps();
+    const seeded = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'rename foo',
+      now: new Date('2026-06-04T00:00:00Z'),
+    });
+    repo.upsertComment({
+      ...seeded,
+      state: 'replied',
+      replyId: 8888,
+      outcome: 'no_fix',
+      attempts: 1,
+      replyVerified: false,
+    });
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Not needed — trailing space gone ',
+        createdAt: new Date('2026-06-04T00:05:00Z'),
+        inReplyToId: 9001,
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 2,
+    });
+
     expect(out.allResolved).toBe(true);
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('processed');
@@ -849,7 +900,7 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
     });
 
     const after1 = repo.getComment(runId, 9001);
-    expect(after1?.state).toBe('replied');
+    expect(after1?.state).toBe('blocked');
     expect(after1?.replyVerified).toBe(false);
     expect(github.repliesPosted).toHaveLength(1);
 

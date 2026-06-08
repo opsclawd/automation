@@ -234,7 +234,6 @@ export class ProcessPrReviewComments {
       buildVerified = await d.verifyBuildPasses({ cwd: input.cwd });
     }
 
-    const replyBodies = new Map<number, string>();
     for (const item of uniqueComments) {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
       if (!existing || existing.state !== 'pending') continue;
@@ -271,7 +270,6 @@ export class ProcessPrReviewComments {
         verified: false,
       });
 
-      replyBodies.set(item.commentId, item.replyBody);
       const replied: PrReviewComment = {
         ...existing,
         state: 'replied',
@@ -295,10 +293,7 @@ export class ProcessPrReviewComments {
       const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
       if (!existing || existing.state !== 'replied') continue;
 
-      const expectedBody = replyBodies.get(item.commentId) ?? item.replyBody;
-      const githubReply = afterComments.find(
-        (c) => c.inReplyToId === item.commentId && c.body === expectedBody,
-      );
+      const githubReply = afterComments.find((c) => c.inReplyToId === item.commentId);
       const replyVerified = githubReply !== undefined;
       const repliedWithId = githubReply ? { ...existing, replyId: githubReply.id } : existing;
       if (githubReply) {
@@ -327,7 +322,7 @@ export class ProcessPrReviewComments {
     }
 
     if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0) {
-      await this.verifyOrphaned(input, repliedInThisPass);
+      await this.verifyOrphaned(input);
       this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
       return {
         outcome: 'BLOCKED',
@@ -337,7 +332,7 @@ export class ProcessPrReviewComments {
       };
     }
 
-    blocked += await this.verifyOrphaned(input, repliedInThisPass);
+    blocked += await this.verifyOrphaned(input);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
@@ -363,15 +358,10 @@ export class ProcessPrReviewComments {
     };
   }
 
-  private async verifyOrphaned(
-    input: ProcessPrReviewInput,
-    skipCommentIds: Set<number> = new Set(),
-  ): Promise<number> {
+  private async verifyOrphaned(input: ProcessPrReviewInput): Promise<number> {
     const d = this.deps;
     const allComments = d.prReviewRepo.listComments(input.runId);
-    const orphaned = allComments.filter(
-      (c) => c.state === 'replied' && !c.replyVerified && !skipCommentIds.has(c.commentId),
-    );
+    const orphaned = allComments.filter((c) => c.state === 'replied' && !c.replyVerified);
 
     if (orphaned.length === 0) return 0;
 
