@@ -25,6 +25,7 @@ interface RestComment {
   body: string;
   created_at: string;
   in_reply_to_id: number | null;
+  pull_request_review_id?: number;
 }
 
 export class GhCliAdapter implements GitHubPort {
@@ -177,6 +178,7 @@ export class GhCliAdapter implements GitHubPort {
       body: c.body,
       createdAt: new Date(c.created_at),
       ...(c.in_reply_to_id !== null ? { inReplyToId: c.in_reply_to_id } : {}),
+      ...(c.pull_request_review_id !== undefined ? { reviewId: c.pull_request_review_id } : {}),
     }));
   }
 

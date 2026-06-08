@@ -922,6 +922,66 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
   });
 });
 
+describe('ProcessPrReviewComments — APPROVED review filtering', () => {
+  it('excludes inline comments from APPROVED reviews', async () => {
+    const { deps, github, repo } = makeDeps({
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'ALL_DONE',
+          comments: [{ commentId: 9002, action: 'fixed', replyBody: 'Fixed the issue.' }],
+        },
+      }),
+    });
+    github.reviews.set('o/r/5', [{ id: 100, state: 'APPROVED' as const, user: 'approver' }]);
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'approver',
+        body: 'LGTM but minor nits',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+        reviewId: 100,
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 5,
+        reviewer: 'reviewer2',
+        body: 'please fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.processed).toBe(1);
+    expect(out.blocked).toBe(0);
+    expect(out.allResolved).toBe(true);
+
+    // Comment 9001 (from APPROVED review) should never have been fetched or processed
+    expect(repo.getComment(runId, 9001)).toBeUndefined();
+    expect(github.repliesPosted.some((r) => r.commentId === 9001)).toBe(false);
+
+    // Comment 9002 (not from an APPROVED review) was processed normally
+    expect(github.repliesPosted.some((r) => r.commentId === 9002)).toBe(true);
+    expect(repo.getComment(runId, 9002)?.state).toBe('processed');
+  });
+});
+
 describe('ProcessPrReviewComments — closed PR guard', () => {
   it('blocks without invoking the agent when the PR is closed', async () => {
     const { deps, github, repo, agent } = makeDeps();

@@ -73,7 +73,13 @@ export class ProcessPrReviewComments {
     const startedAt = d.now();
 
     const raw = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const reviewerComments = raw.filter((c) => c.inReplyToId === undefined);
+    const reviews = await d.github.listReviews(input.repoFullName, input.prNumber);
+    const approvedReviewIds = new Set(
+      reviews.filter((r) => r.state === 'APPROVED').map((r) => r.id),
+    );
+    const reviewerComments = raw.filter(
+      (c) => c.inReplyToId === undefined && !approvedReviewIds.has(c.reviewId ?? 0),
+    );
 
     for (const rc of reviewerComments) {
       if (!d.prReviewRepo.getComment(input.runId, rc.id)) {

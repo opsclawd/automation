@@ -28,6 +28,8 @@ export interface GitHubReviewComment {
   createdAt: Date;
   /** Present when this comment is itself a reply to another comment. */
   inReplyToId?: number;
+  /** The pull request review ID this inline comment belongs to (from pull_request_review_id). Used for APPROVED review filtering. */
+  reviewId?: number;
 }
 
 export interface CreatePullRequestInput {
