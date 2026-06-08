@@ -527,10 +527,10 @@ export function composeRoot(opts: ComposeOptions): Container {
       now: () => new Date(),
       maxIterations: 10,
       baseBranch: opts.baseBranch ?? 'main',
-      onWarning: (message, metadata) => {
+      onWarning: (message, metadata, runId) => {
         try {
           eventRepository.insert({
-            runUuid: '',
+            runUuid: runId,
             phase: 'post-pr-review',
             level: 'warn',
             type: 'post-pr-review.main_checkout_guard',

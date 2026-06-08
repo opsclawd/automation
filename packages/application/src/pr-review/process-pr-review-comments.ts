@@ -45,7 +45,7 @@ export interface ProcessPrReviewDeps {
   now: () => Date;
   maxIterations: number;
   baseBranch?: string; // e.g., 'main' — used for checkout guard
-  onWarning?: (message: string, metadata: Record<string, unknown>) => void;
+  onWarning?: (message: string, metadata: Record<string, unknown>, runId: string) => void;
 }
 
 export interface ProcessPrReviewInput {
@@ -174,12 +174,16 @@ export class ProcessPrReviewComments {
         ref: d.baseBranch,
       });
       if (mainShaAfter && mainShaAfter !== mainShaBefore) {
-        d.onWarning?.('main branch changed during agent run', {
-          baseBranch: d.baseBranch,
-          shaBefore: mainShaBefore,
-          shaAfter: mainShaAfter,
-          prNumber: input.prNumber,
-        });
+        d.onWarning?.(
+          'main branch changed during agent run',
+          {
+            baseBranch: d.baseBranch,
+            shaBefore: mainShaBefore,
+            shaAfter: mainShaAfter,
+            prNumber: input.prNumber,
+          },
+          input.runId as unknown as string,
+        );
       }
     }
 
