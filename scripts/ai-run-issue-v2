@@ -86,6 +86,8 @@ warn() { log "WARN: $*" >&2; }
 _ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
+MAX_FIX_REVIEW_RETRIES_PER_TASK=3
+MAX_FIX_REVIEW_TOTAL_TASKS=50
 PLAN_REVIEW_ENABLED=false
 MAX_PLAN_REVIEW_ITERATIONS=3
 MAX_FIX_VALIDATE_ITERATIONS=2
@@ -94,6 +96,8 @@ JUDGMENT_AGENT_PROFILE=""
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
   _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.wholePrFix.maxRetriesPerTask // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_REVIEW_RETRIES_PER_TASK="$_val"
+  _val=$(jq -r '.phases.wholePrFix.maxTotalTasks // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_REVIEW_TOTAL_TASKS="$_val"
   _val=$(jq -r '.phases.planReview.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
   if [[ "$_val" == "false" ]]; then
     PLAN_REVIEW_ENABLED=false
@@ -111,7 +115,7 @@ fi
 # then on startup, and log() pipes through `tee -a` which fails fast with
 # set -euo pipefail if the directory is missing.
 mkdir -p "${ISSUES_DIR}"
-log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, fixValidate.maxIterations=${MAX_FIX_VALIDATE_ITERATIONS}, fixValidate.enabled=${FIX_VALIDATE_ENABLED}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
+log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, wholePrFix.maxRetriesPerTask=${MAX_FIX_REVIEW_RETRIES_PER_TASK}, wholePrFix.maxTotalTasks=${MAX_FIX_REVIEW_TOTAL_TASKS}, fixValidate.maxIterations=${MAX_FIX_VALIDATE_ITERATIONS}, fixValidate.enabled=${FIX_VALIDATE_ENABLED}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
 
 # Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
 # When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
@@ -123,6 +127,8 @@ source "${REPO_ROOT}/scripts/lib/guard-main-checkout.sh"
 
 # shellcheck source=lib/parse_tasks_helpers.sh
 source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+# shellcheck source=lib/review-manifest-helpers.sh
+source "${REPO_ROOT}/scripts/lib/review-manifest-helpers.sh"
 # shellcheck source=lib/validation_result.sh
 source "${REPO_ROOT}/scripts/lib/validation_result.sh"
 
@@ -3418,12 +3424,14 @@ Write review-task-manifest.json and review-triage.md now."
     _copy_if_distinct "${WORKTREE_DIR}/review-task-manifest.json" "${ISSUES_DIR}/review-task-manifest.json"
     info "Review task manifest saved to ${ISSUES_DIR}/review-task-manifest.json"
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
+    # Validate the manifest is a JSON array; degrade if not
+    if ! jq -e 'type == "array"' "${ISSUES_DIR}/review-task-manifest.json" >/dev/null 2>&1; then
+      warn "review-task-manifest.json is not a valid JSON array; treating as empty"
+      echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
+      emit_event "review-triage" "warn" "manifest.invalid" \
+        "review-triage manifest was not a valid JSON array; degraded to empty" status="degraded"
+    fi
   else
-    # TODO(#240): once fix-review consumes the manifest, tighten this back to a
-    # hard failure (and add a `jq -e 'type == "array"'` validity check, mirroring
-    # plan-write's read_manifest fallback at the task-manifest.json site). Until a
-    # consumer exists, a missing manifest must NOT block a PR that already passed
-    # review/validation — degrade to an empty manifest and continue.
     warn "review-task-manifest.json not produced by review-triage; writing empty manifest"
     echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
     emit_event "review-triage" "warn" "manifest.missing" \
@@ -3498,6 +3506,36 @@ _revalidate_is_green() {
 
 if [[ "$PHASE" == "fix-review" ]]; then
 _emit_phase_started "fix-review"
+
+FIX_REVIEW_MANIFEST=""
+FIX_REVIEW_USE_LEGACY=0
+FIX_REVIEW_EMPTY=0
+
+_manifest_content=$(_validate_review_manifest "${ISSUES_DIR}/review-task-manifest.json" 2>/dev/null)
+_manifest_ec=$?
+if [[ $_manifest_ec -ne 0 ]]; then
+  case $_manifest_ec in
+    1) warn "review-task-manifest.json not found; falling back to legacy review.md path"
+       FIX_REVIEW_USE_LEGACY=1 ;;
+    2|3) warn "review-task-manifest.json is invalid; falling back to legacy review.md path"
+       FIX_REVIEW_USE_LEGACY=1 ;;
+  esac
+else
+  FIX_REVIEW_MANIFEST=$(echo "$_manifest_content" | _dedupe_manifest_ids)
+  FIX_REVIEW_TASK_COUNT=$(echo "$FIX_REVIEW_MANIFEST" | jq 'length')
+  if [[ "$FIX_REVIEW_TASK_COUNT" -eq 0 ]]; then
+    info "Empty review-task-manifest (nothing to fix). Exiting fix-review."
+    echo "ALL_FIXED" > "${ISSUES_DIR}/fix-status.txt"
+    emit_event "fix-review" "info" "phase.completed" \
+      "fix-review completed with empty manifest" \
+      status="ALL_FIXED"
+    FIX_REVIEW_EMPTY=1
+  fi
+fi
+
+if [[ "$FIX_REVIEW_EMPTY" -eq 1 ]]; then
+  : # skip straight to phase done
+elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
 
 while [[ "$PHASE" == "fix-review" ]]; do
   FIX_LOOP_COUNT=$((FIX_LOOP_COUNT + 1))
@@ -3835,6 +3873,246 @@ if [[ -f "${WORKTREE_DIR}/review-findings-status.txt" ]]; then
       "fix-review exited with unresolved findings; validation.result overridden to block ai:pr-ready" \
       status="$FINAL_REVIEW_STATUS"
   fi
+fi
+
+elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
+  FIX_REVIEW_ALL_FIXED=1
+  FIX_REVIEW_TASK_IDX=0
+
+  while IFS= read -r _task_json; do
+    _task_action=$(echo "$_task_json" | jq -r '.action // "fix"')
+
+    if [[ "$_task_action" != "fix" ]]; then
+      info "Skipping task $(echo "$_task_json" | jq -r '.id // "unknown"') (action=$_task_action)"
+      continue
+    fi
+
+    FIX_REVIEW_TASK_IDX=$((FIX_REVIEW_TASK_IDX + 1))
+    if [[ $FIX_REVIEW_TASK_IDX -gt $MAX_FIX_REVIEW_TOTAL_TASKS ]]; then
+      warn "fix-review task limit (${MAX_FIX_REVIEW_TOTAL_TASKS}) reached. Stopping."
+      break
+    fi
+    _task_id=$(echo "$_task_json" | jq -r --arg idx "$FIX_REVIEW_TASK_IDX" '.id // "task-\($idx)"')
+    _task_files=$(echo "$_task_json" | jq -r '.files | join(", ")')
+    _task_severity=$(echo "$_task_json" | jq -r '.severity // "medium"')
+    _task_description=$(echo "$_task_json" | jq -r '.description // ""')
+    _task_commit_msg=$(echo "$_task_json" | jq -r --arg default "fix: review finding ${_task_id}" '.commit_message // $default')
+    _task_verify=$(echo "$_task_json" | jq -r '.verify // ""')
+
+    _task_fixed=0
+    _prev_fp=""
+    for _retry in $(seq 1 "$MAX_FIX_REVIEW_RETRIES_PER_TASK"); do
+      log "=== Task $_task_id: fix-review attempt ${_retry}/${MAX_FIX_REVIEW_RETRIES_PER_TASK} ==="
+      emit_event "fix-review" "info" "task.attempt.started" \
+        "fix-review task $_task_id attempt $_retry/${MAX_FIX_REVIEW_RETRIES_PER_TASK}" \
+        task_id="$_task_id" attempt="${_retry}" max="${MAX_FIX_REVIEW_RETRIES_PER_TASK}"
+
+      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+        warn "Dirty worktree before task $_task_id — resetting to HEAD"
+        git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
+      fi
+
+      _task_finding_text=""
+      if [[ -f "${ISSUES_DIR}/review.md" ]]; then
+        _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review.md" 2>/dev/null || echo "")
+      fi
+      if [[ -z "$_task_finding_text" && -f "${ISSUES_DIR}/review-triage.md" ]]; then
+        _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
+      fi
+
+      FIX_PROMPT="You are fixing a single review finding.
+
+## CONTEXT
+You are working in: ${WORKTREE_DIR}
+Issue: issue.md
+Plan: plan.md
+Review finding ID: ${_task_id}
+Severity: ${_task_severity}
+Files to fix: ${_task_files}
+
+## FINDING
+${_task_description}
+
+${_task_finding_text}
+
+## YOUR TASK
+Fix ONLY the finding described above. Do not expand scope.
+Do not touch files not listed in the finding unless the fix necessarily requires it.
+
+## VERIFICATION
+${_task_verify}
+
+## COMMIT DISCIPLINE (CRITICAL)
+1. After fixing, commit your changes using: git add -A && git commit -m '${_task_commit_msg}'
+2. THEN write the result file.
+
+## MANDATORY RESULT FILE
+After committing, write EXACTLY ONE of these values to ./fix-review-task-${_task_id}.result:
+- FIXED          (you fixed the finding in code)
+- FAILED         (you could not fix the finding after reasonable attempts)
+- DONE_NO_FIXES_NEEDED  (the finding was invalid or already fixed)
+No other content in the file — just the status word.
+
+## CRITICAL RULES
+- Do NOT ask questions.
+- Do NOT rely on agent memory.
+- Do NOT create a PR.
+- Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
+- Load the receiving-code-review skill first.
+- You MUST commit BEFORE writing the result file.
+
+Start now."
+
+      _fix_prompt_file=$(mktemp)
+      _main_state_before=$(_capture_main_state)
+      printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
+      ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+        --phase fix-review \
+        --phase-id "fix-review-task-${_task_id}" \
+        --step-id "${_retry}" \
+        --cwd "$WORKTREE_DIR" \
+        --run-id "$RUN_ID" \
+        --repo-id "$REPO_ID" \
+        --repo-root "$REPO_ROOT" \
+        --prompt-file "$_fix_prompt_file" \
+        --timeout-minutes $(( (TIMEOUT_PR_FIX + 59) / 60 )) \
+        --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+        2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+      rm -f "$_fix_prompt_file"
+
+      if [[ $_tee_ec -ne 0 ]]; then
+        orchestrator_fail "tee failed writing log for fix-review-task-${_task_id} (exit $_tee_ec)"
+      fi
+      _guard_main_checkout "fix-review-task-${_task_id}" "$_main_state_before"
+      check_branch_after_agent
+
+      if [[ $_agent_ec -ne 0 ]]; then
+        if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-task-${_task_id}.log" 2>/dev/null; then
+          echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
+          emit_event "fix-review" "warn" "task.blocked" \
+            "fix-review task $_task_id is blocked" \
+            task_id="$_task_id"
+          break
+        else
+          case $_agent_ec in
+            2) warn "fix-review-task-${_task_id} config error or timeout (attempt ${_retry})" ;;
+            *) warn "fix-review-task-${_task_id} failed with exit code $_agent_ec (attempt ${_retry})" ;;
+          esac
+          if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
+            continue
+          fi
+          echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
+          break
+        fi
+      fi
+
+      log "=== Re-validating after fix for task $_task_id (attempt $_retry) ==="
+      cd "${WORKTREE_DIR}"
+      ensure_branch
+
+      {
+        echo "=== pnpm build ==="
+        timeout 120 pnpm build 2>&1 || echo "[build failed]"
+        echo ""
+        echo "=== pnpm lint ==="
+        timeout 120 pnpm lint 2>&1 || echo "[lint failed]"
+        echo ""
+        echo "=== pnpm typecheck ==="
+        timeout 120 pnpm typecheck 2>&1 || echo "[typecheck failed]"
+        echo ""
+        echo "=== pnpm test ==="
+        timeout 120 pnpm test 2>&1 || echo "[test failed]"
+        echo ""
+        echo "=== pnpm test:bash ==="
+        timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
+      } > >(tee "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log") 2>&1
+
+      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+        git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
+        warn "Revalidate produced uncommitted changes for task $_task_id — resetting"
+      fi
+
+      _task_result_file="${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
+      _task_status=$(resolve_result "$_task_result_file" "" FIXED FAILED DONE_NO_FIXES_NEEDED "FAILED")
+
+      if [[ "$_task_status" == "FIXED" || "$_task_status" == "DONE_NO_FIXES_NEEDED" ]]; then
+        if _revalidate_is_green "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"; then
+          _task_fixed=1
+          emit_event "fix-review" "info" "task.attempt.completed" \
+            "fix-review task $_task_id fixed (attempt $_retry)" \
+            task_id="$_task_id" attempt="${_retry}" status="$_task_status"
+          break
+        else
+          warn "Task $_task_id reports $_task_status but revalidate failed (attempt $_retry)"
+          if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
+            continue
+          fi
+          echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
+          break
+        fi
+      elif [[ "$_task_status" == "FAILED" ]]; then
+        # Fingerprint-based no-progress detection: capture the tree state (diff
+        # from base) to detect when the fix agent is making no progress across
+        # retries. Identical fingerprints mean the agent produced the same code
+        # (or no changes at all) on consecutive FAILED attempts.
+        _current_fp=$(git -C "${WORKTREE_DIR}" diff --patch "${BASE_BRANCH}" -- . 2>/dev/null | sha256sum | awk '{print $1}')
+        if [[ -n "$_prev_fp" && "$_current_fp" == "$_prev_fp" ]]; then
+          if _revalidate_is_green "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"; then
+            warn "Task $_task_id: fix produced identical diff as previous attempt (fingerprint match) and revalidate green — no progress, stopping retries"
+            emit_event "fix-review" "warn" "task.no_progress" \
+              "fix-review task $_task_id no progress detected via fingerprint" \
+              task_id="$_task_id" attempt="${_retry}" fingerprint="${_current_fp}"
+            break
+          fi
+          warn "Task $_task_id: fingerprint match but revalidate is red — continuing retry (refusing to early-exit with broken build/tests)"
+          emit_event "fix-review" "warn" "task.no_progress_blocked_red" \
+            "no-progress break suppressed because revalidate is red" \
+            task_id="$_task_id" attempt="${_retry}" fingerprint="${_current_fp}"
+        fi
+        _prev_fp="$_current_fp"
+        if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
+          continue
+        fi
+        break
+      else
+        warn "Task $_task_id has unexpected status: $_task_status"
+        if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
+          continue
+        fi
+        echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
+        break
+      fi
+    done
+
+    if [[ "$_task_fixed" -eq 1 ]]; then
+      info "Task $_task_id: FIXED"
+    else
+      warn "Task $_task_id: FAILED"
+      FIX_REVIEW_ALL_FIXED=0
+    fi
+  done <<< "$(echo "$FIX_REVIEW_MANIFEST" | jq -c '.[] | select(.action == "fix" or .action == null)')"
+
+  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
+    echo "ALL_FIXED" > "${ISSUES_DIR}/fix-status.txt"
+  else
+    echo "HAS_UNRESOLVED" > "${ISSUES_DIR}/fix-status.txt"
+    warn "fix-review completed with unresolved tasks — overriding validation.result to block ai:pr-ready."
+    echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
+    emit_event "fix-review" "warn" "phase.unresolved_findings" \
+      "fix-review exited with unresolved tasks; validation.result overridden" \
+      status="HAS_UNRESOLVED"
+  fi
+
+  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
+    _last_revalidate_log=$(ls -t "${ISSUES_DIR}"/revalidate-*-retry-*.log 2>/dev/null | head -1)
+    if [[ -n "$_last_revalidate_log" ]] && _revalidate_is_green "$_last_revalidate_log"; then
+      echo "passed" > "${ISSUES_DIR}/validation.result"
+    fi
+  fi
+
+  emit_event "fix-review" "info" "phase.completed" \
+    "fix-review manifest loop completed" \
+    all_fixed="${FIX_REVIEW_ALL_FIXED}"
 fi
 
 _emit_phase_done "fix-review"
