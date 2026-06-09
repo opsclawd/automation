@@ -3793,16 +3793,10 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
   FIX_REVIEW_TASK_IDX=0
 
   while IFS= read -r _task_json; do
-    _task_id=$(echo "$_task_json" | jq -r '.id // "task-\(++)"')
     _task_action=$(echo "$_task_json" | jq -r '.action // "fix"')
-    _task_files=$(echo "$_task_json" | jq -r '.files | join(", ")')
-    _task_severity=$(echo "$_task_json" | jq -r '.severity // "medium"')
-    _task_description=$(echo "$_task_json" | jq -r '.description // ""')
-    _task_commit_msg=$(echo "$_task_json" | jq -r --arg default "fix: review finding ${_task_id}" '.commit_message // $default')
-    _task_verify=$(echo "$_task_json" | jq -r '.verify // ""')
 
     if [[ "$_task_action" != "fix" ]]; then
-      info "Skipping task $_task_id (action=$_task_action)"
+      info "Skipping task $(echo "$_task_json" | jq -r '.id // "unknown"') (action=$_task_action)"
       continue
     fi
 
@@ -3811,6 +3805,12 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
       warn "fix-review task limit (${MAX_FIX_REVIEW_TOTAL_TASKS}) reached. Stopping."
       break
     fi
+    _task_id=$(echo "$_task_json" | jq -r --arg idx "$FIX_REVIEW_TASK_IDX" '.id // "task-\($idx)"')
+    _task_files=$(echo "$_task_json" | jq -r '.files | join(", ")')
+    _task_severity=$(echo "$_task_json" | jq -r '.severity // "medium"')
+    _task_description=$(echo "$_task_json" | jq -r '.description // ""')
+    _task_commit_msg=$(echo "$_task_json" | jq -r --arg default "fix: review finding ${_task_id}" '.commit_message // $default')
+    _task_verify=$(echo "$_task_json" | jq -r '.verify // ""')
 
     _task_fixed=0
     _prev_fp=""
@@ -3827,10 +3827,10 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
 
       _task_finding_text=""
       if [[ -f "${ISSUES_DIR}/review.md" ]]; then
-        _task_finding_text=$(grep -A 20 -i "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review.md" 2>/dev/null || echo "")
+        _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review.md" 2>/dev/null || echo "")
       fi
       if [[ -z "$_task_finding_text" && -f "${ISSUES_DIR}/review-triage.md" ]]; then
-        _task_finding_text=$(grep -A 20 -i "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
+        _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
       fi
 
       FIX_PROMPT="You are fixing a single review finding.
