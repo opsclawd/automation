@@ -2470,8 +2470,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     # means the implementer edited files without committing — block immediately
     # to prevent those edits being swept into the next task's commit.
     if [[ "$BASE_SHA" == "$HEAD_SHA" ]]; then
-      if ! git -C "$WORKTREE_DIR" diff --exit-code HEAD >/dev/null 2>&1; then
-        orchestrator_fail "Task ${TASK_NUM}: uncommitted tracked changes detected with no commits — implementer edited files without committing"
+      if [[ -n "$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null)" ]]; then
+        orchestrator_fail "Task ${TASK_NUM}: uncommitted changes detected with no commits — implementer modified or created files without committing"
       fi
       log "  Task ${TASK_NUM}: no commits made, clean worktree — skipping spec + quality reviews (auto-pass)"
       emit_event "implement" "info" "reviews.skipped_no_diff" \
