@@ -1744,6 +1744,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           1) orchestrator_fail "implement-task-${task_n} failed (contract violation)" ;;
           2) orchestrator_fail "implement-task-${task_n} failed (config error or timeout)" ;;
           3) orchestrator_fail "implement-task-${task_n} failed (unexpected error)" ;;
+          4) warn "implement-task-${task_n} had a provider error — checking for work..." ;;
           *) orchestrator_fail "implement-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
