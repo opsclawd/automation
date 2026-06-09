@@ -459,11 +459,13 @@ seed_excludes() {
     grep -qxF 'fix-validate-log.md' "$exclude_file" || echo 'fix-validate-log.md' >> "$exclude_file"
     grep -qxF 'review-task-manifest.json' "$exclude_file" || echo 'review-task-manifest.json' >> "$exclude_file"
     grep -qxF 'review-triage.md' "$exclude_file" || echo 'review-triage.md' >> "$exclude_file"
+    grep -qxF 'result.json' "$exclude_file" || echo 'result.json' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
 *.log
 *.result
+result.json
 code-review.md
 review.md
 design.md
