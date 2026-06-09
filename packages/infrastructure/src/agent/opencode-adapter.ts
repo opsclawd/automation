@@ -175,22 +175,12 @@ export class OpenCodeAgentAdapter implements AgentPort {
         contractViolations = [CONTRACT_VIOLATION_CODES.CANCELLED_BY_ORCHESTRATOR];
       }
     } else if (exitCode !== 0) {
+      // Plain non-zero exit. Provider/quota classification is NOT done here: any
+      // session-log provider/quota match is promoted to watchdogKilled above (see
+      // the postExit promotion) and handled in the `if (watchdogKilled)` branch,
+      // so by this point postExit holds no match. We never scan the process stderr
+      // (the agent transcript) — that's the #250/#255 false-positive source.
       outcome = 'failed';
-      // Provider/quota detection comes ONLY from opencode's own session log
-      // (postExit), never from the captured process stderr — stderr is the agent
-      // transcript and matching it false-positives on transcript content (#250,
-      // #255). A match here refines the classification to provider_error to drive
-      // model fallback.
-      const providerMatch = postExit?.providerMatch ?? null;
-      if (providerMatch) {
-        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(providerMatch);
-        if (quotaLine) {
-          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
-        } else {
-          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
-        }
-      }
     } else if (outcome === 'success') {
       // The agent exited 0 (success). We deliberately do NOT scan the captured
       // process stderr for provider/quota errors here: stderr is the agent TUI
