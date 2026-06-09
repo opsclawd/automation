@@ -4,7 +4,7 @@ import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
-import { existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 interface Flags {
@@ -146,6 +146,25 @@ function findRepoRoot(dir: string): string {
  * The --conditions=development flag enables workspace package resolution
  * of src/ rather than dist/ (all packages export a "development" condition).
  */
+export async function streamTranscript(
+  filePath: string | undefined,
+  destination: NodeJS.WritableStream,
+): Promise<void> {
+  if (!filePath || !existsSync(filePath)) return;
+  await new Promise<void>((resolve) => {
+    const source = createReadStream(filePath, { encoding: 'utf-8' });
+    source
+      .on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code !== 'ENOENT') {
+          console.error('Failed to stream adapter transcript:', err);
+        }
+        resolve();
+      })
+      .on('end', resolve)
+      .pipe(destination, { end: false });
+  });
+}
+
 async function main() {
   const { values } = parseArgs({
     options: {
@@ -293,22 +312,8 @@ async function main() {
       ...(values['step-id'] ? { stepId: values['step-id'] } : {}),
     });
 
-    try {
-      if (result.stdoutPath && existsSync(result.stdoutPath)) {
-        const adapterStdout = readFileSync(result.stdoutPath, 'utf-8');
-        if (adapterStdout) process.stdout.write(adapterStdout);
-      }
-    } catch {
-      /* ignore read errors */
-    }
-    try {
-      if (result.stderrPath && existsSync(result.stderrPath)) {
-        const adapterStderr = readFileSync(result.stderrPath, 'utf-8');
-        if (adapterStderr) process.stderr.write(adapterStderr);
-      }
-    } catch {
-      /* ignore read errors */
-    }
+    await streamTranscript(result.stdoutPath, process.stdout);
+    await streamTranscript(result.stderrPath, process.stderr);
 
     if (createdSynthetic) {
       c.runRepository.update(runId, {

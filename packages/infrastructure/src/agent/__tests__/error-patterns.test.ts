@@ -123,6 +123,12 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeNull();
   });
 
+  it('matches rate_limit_exceeded independently of HTTP status code', () => {
+    const result = testQuotaPatterns('error: rate_limit_exceeded for user');
+    expect(result).toBeTruthy();
+    expect(result).toContain('rate_limit_exceeded');
+  });
+
   it('returns null when no patterns match (default mode)', () => {
     expect(testQuotaPatterns('just some text without any quota or provider patterns')).toBeNull();
   });
@@ -237,6 +243,18 @@ describe('testProviderErrorPatterns', () => {
   it('does not match bare 503 in commit title (default mode)', () => {
     const result = testProviderErrorPatterns('fix: handle 503 error in retry logic');
     expect(result).toBeNull();
+  });
+
+  it('matches AI_APICallError independently of HTTP status code', () => {
+    const result = testProviderErrorPatterns('AI_APICallError: something went wrong');
+    expect(result).toBeTruthy();
+    expect(result).toContain('AI_APICallError');
+  });
+
+  it('matches RESOURCE_EXHAUSTED independently of HTTP status code', () => {
+    const result = testProviderErrorPatterns('RESOURCE_EXHAUSTED: limit reached');
+    expect(result).toBeTruthy();
+    expect(result).toContain('RESOURCE_EXHAUSTED');
   });
 
   it('returns null when no patterns match (default mode)', () => {
