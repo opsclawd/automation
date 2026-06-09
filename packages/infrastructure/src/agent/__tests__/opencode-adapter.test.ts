@@ -471,7 +471,16 @@ describe('OpenCodeAgentAdapter', () => {
     }
   }, 15000);
 
-  it('detects provider error in stderr when process exits 0', async () => {
+  // Provider/quota detection on stderr for an exit-0 run is intentionally
+  // restricted to structured `INFO/ERROR …T` log lines (#250). Unstructured
+  // provider-error JSON on raw stderr (the #183 "swallowed provider error on
+  // exit 0" arm) is no longer classified from stderr alone, because raw stderr
+  // is the agent transcript and matching it false-positives on transcript
+  // content (e.g. a `git log` line containing "429"), discarding completed work.
+  // The authoritative path for real provider/quota errors on exit 0 is the
+  // structured session-log scan — see the two "session log post-exit" tests
+  // below, which still classify provider_error / QUOTA_EXCEEDED.
+  it('does NOT classify unstructured provider-error JSON on stderr as provider_error (exit 0) — #250', async () => {
     const cwd = makeWorktree();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-provider-error.sh'),
@@ -487,10 +496,34 @@ describe('OpenCodeAgentAdapter', () => {
       phaseId: 'plan-design',
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
     });
-    expect(r.outcome).toBe('failed');
-    expect(r.contractViolations).toContain('provider_error');
-    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('provider_error');
     expect(r.exitCode).toBe(0);
+  });
+
+  it('does NOT discard a successful committed task whose transcript prints "429" via git log (exit 0) — #250 regression', async () => {
+    const cwd = makeWorktree();
+    const startSha = execSync('git rev-parse HEAD', { cwd }).toString().trim();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success-git-log-429.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement',
+      startCommitSha: startSha,
+    });
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('provider_error');
+    const stderrLog = readFileSync(r.stderrPath, 'utf-8');
+    expect(stderrLog).not.toContain('QUOTA_EXCEEDED');
+    // sanity: the agent really did emit the "429" line that used to trip the scan
+    expect(stderrLog).toContain('429');
   });
 
   it('does not mistakenly classify provider error text in stdout as provider_error', async () => {

@@ -146,6 +146,12 @@ export class OpenCodeAgentAdapter implements AgentPort {
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
+      // Non-zero exit: the run has already failed, so scanning raw stderr only
+      // refines the classification to provider_error (to drive model fallback).
+      // A false match here can't discard good work, so we keep the broader scan
+      // (preserves the #183 fallback path). The structuralOnly guard is applied
+      // only to the success branch below, where a false match would throw away a
+      // completed task (#250).
       const stderrProviderMatch = testProviderErrorPatterns(stderr);
       const postExitProviderMatch = postExit?.providerMatch ?? null;
       const providerMatch = stderrProviderMatch || postExitProviderMatch;
@@ -162,11 +168,19 @@ export class OpenCodeAgentAdapter implements AgentPort {
       }
     } else if (outcome === 'success') {
       const postExitProvider = !watchdogKilled && postExit ? postExit.providerMatch : null;
-      const providerMatch = testProviderErrorPatterns(stderr) || postExitProvider;
+      // The agent exited 0 (success). The captured process stderr is the agent
+      // TUI transcript (git log, grep hits, file dumps), so unstructured pattern
+      // matching false-positives on incidental strings — e.g. a `git log` line
+      // containing "429" — and would discard a completed task (#250). Restrict
+      // the stderr scan to structured `INFO/ERROR …T` log lines; the authoritative
+      // path for real provider/quota errors is the session-log postExit scan.
+      const providerMatch =
+        testProviderErrorPatterns(stderr, { structuralOnly: true }) || postExitProvider;
       if (providerMatch) {
         outcome = 'failed';
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr) || testQuotaPatterns(providerMatch);
+        const quotaLine =
+          testQuotaPatterns(stderr, { structuralOnly: true }) || testQuotaPatterns(providerMatch);
         if (quotaLine) {
           stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
           stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
