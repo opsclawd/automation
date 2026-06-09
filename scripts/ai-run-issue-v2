@@ -547,6 +547,32 @@ validate_review_artifacts() {
 # For non-infra failures, re-runs once immediately (backward compatible).
 # Uses ISSUES_DIR and WORKTREE_DIR from caller scope (dynamic bash globals
 # set by the orchestrator's main loop).
+# REVIEWER_PROVIDER_ERROR_PATTERNS: regex patterns matching provider/quota
+# errors in reviewer logs and adapter stderr artifacts.
+#
+# Pattern sources:
+#   AI_APICallError, AI_APIConnectionError, ProviderError:, APIError:
+#     — Vercel AI SDK / provider adapter error class names
+#   \bRESOURCE_EXHAUSTED\b
+#     — Google Cloud / Gemini quota exhaustion (gRPC status)
+#   HTTP[^ ]* 429, status.{0,10}429, 429 Too Many
+#     — Standard HTTP rate-limit responses
+#   rate_limit_exceeded
+#     — OpenAI / Anthropic rate-limit error body
+#   Usage limit reached
+#     — Provider dashboard / account-level usage caps
+#
+# These patterns are intentionally broad because they are the SECONDARY
+# detection path. The PRIMARY detection is the adapter-side watchdog
+# (opencode-adapter.ts) which scopes to service=llm|provider session-log
+# lines and prefixes matched stderr with PROVIDER_ERROR:/QUOTA_EXCEEDED:.
+# The bash-side patterns catch cases where adapter artifacts are missing
+# (e.g. adapter crashed before writing stderr.log).
+#
+# Advisory policy (#257): even when these patterns match, the orchestrator
+# must NOT hard-fail. The retry-with-backoff path attempts recovery; if
+# retries are exhausted, the run continues and downstream artifact
+# validation decides the outcome.
 REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|AI_APIConnectionError|ProviderError:|APIError:|\bRESOURCE_EXHAUSTED\b|HTTP[^ ]* 429|status.{0,10}429|429 Too Many|rate_limit_exceeded|Usage limit reached'
 
 # check_adapter_stderr_for_infra_error: grep all inv-*/stderr.log files in
