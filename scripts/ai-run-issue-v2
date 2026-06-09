@@ -3223,6 +3223,21 @@ if [[ "$PHASE" == "review-triage" ]]; then
     _emit_phase_done "review-triage"
     PHASE="fix-review"
   else
+  # Short-circuit: if review.md has no actionable findings, skip the agent call.
+  # Heuristic: look for severity markers (Critical/High/Medium/Low) that the
+  # whole-pr-review prompt produces. If none found, write empty manifest + stub
+  # summary and proceed directly to fix-review.
+  if ! grep -qiE '(^#+\s*)?(critical|high|medium|low)\b' "${ISSUES_DIR}/review.md" 2>/dev/null; then
+    info "review.md has no severity markers; writing empty manifest and skipping review-triage agent"
+    echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
+    printf '# Review Triage Summary\n\nNo actionable findings in review.md — empty manifest produced.\n' > "${ISSUES_DIR}/review-triage.md"
+    emit_event "review-triage" "info" "phase.short-circuited" \
+      "review-triage short-circuited (no findings)" status="short-circuited"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-triage.md" "summary"
+    _emit_phase_done "review-triage"
+    PHASE="fix-review"
+  else
   TRIAGE_PROMPT="You are triaging a code review.
 ## CONTEXT
 Your working directory: ${WORKTREE_DIR}
@@ -3271,6 +3286,14 @@ Write review-task-manifest.json and review-triage.md now."
     2>&1 | tee -a "${ISSUES_DIR}/review-triage.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_triage_prompt_file"
   _guard_main_checkout "review-triage" "$_main_state_before"
+  # Mutation guard: triage is a read-only phase — the agent must not modify
+  # tracked source files. Only check tracked-file diffs; untracked orchestrator
+  # artifacts (review-triage.md, review-task-manifest.json) are expected.
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
+    rm -f "${ISSUES_DIR}/review-triage.log"
+    orchestrator_fail "review-triage produced uncommitted changes — mutation not allowed"
+  fi
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review-triage (exit $_tee_ec)"
   fi
@@ -3307,6 +3330,7 @@ Write review-task-manifest.json and review-triage.md now."
   fi
   _emit_phase_done "review-triage"
   PHASE="fix-review"
+  fi  # end short-circuit else
   fi  # end review.md existence guard
 fi
 

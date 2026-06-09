@@ -1,0 +1,10 @@
+{
+  "outcome": "ALL_DONE",
+  "comments": [
+    {
+      "commentId": 3377969497,
+      "action": "fixed",
+      "replyBody": "Added review.md existence guard before the review-triage phase. The guard checks if review.md exists after ensure_worktree and before running the triage agent. If review.md is missing (e.g., whole-pr-review agent exited 0 without producing the file), the phase is skipped with an info log and control passes to fix-review. This matches the existing guard pattern in the fix-review phase (line 3365)."
+    }
+  ]
+}
