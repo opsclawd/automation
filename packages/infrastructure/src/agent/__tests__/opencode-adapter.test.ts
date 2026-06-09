@@ -881,6 +881,37 @@ describe('OpenCodeAgentAdapter', () => {
     expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
   });
 
+  it('surfaces the session-log transcript to stdoutPath when opencode emits no stdout (#255 observability)', async () => {
+    // opencode writes its transcript to the session log, not stdout/stderr — which
+    // left phase logs at 0 bytes. The adapter must surface the session log via
+    // stdoutPath so run-agent can stream it into the orchestrator's phase log.
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(
+        __dirname,
+        '..',
+        '__fixtures__',
+        'fake-opencode-session-log-provider-error.sh',
+      ),
+      artifactsDir: cwd,
+      logDir: makeLogDir(),
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    // The session log (which the fixture wrote) is now in stdoutPath, not lost.
+    const stdoutLog = readFileSync(r.stdoutPath, 'utf-8');
+    expect(stdoutLog).toContain('service=llm');
+    expect(stdoutLog).toContain('AI_APICallError');
+  });
+
   it('scopes detection to service=llm/provider lines — ignores quota patterns on other channels (#255)', async () => {
     // A structured (INFO/ERROR …T) line on a non-provider channel (e.g. a tool
     // event echoing file content) must NOT trip detection, even if it contains

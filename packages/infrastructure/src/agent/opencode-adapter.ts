@@ -62,7 +62,11 @@ export class OpenCodeAgentAdapter implements AgentPort {
     let watchdogInterval: NodeJS.Timeout | null = null;
     let timeoutSignal: AbortSignal | undefined;
     let isCanceled = false;
-    let postExit: { quotaMatch: string | null; providerMatch: string | null } | null = null;
+    let postExit: {
+      quotaMatch: string | null;
+      providerMatch: string | null;
+      transcript: string;
+    } | null = null;
     try {
       timeoutSignal =
         this.opts.timeoutMsDefault !== undefined
@@ -213,7 +217,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
         stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
       }
     }
-    writeFileSync(stdoutPath, stdout);
+    // opencode emits its transcript to its session log, not to stdout/stderr, so
+    // the captured streams are usually empty — which left phase logs at 0 bytes and
+    // failures undebuggable (#255). Surface the session-log transcript via stdoutPath
+    // (run-agent streams stdoutPath/stderrPath into the orchestrator's phase log)
+    // when the process produced no stdout of its own.
+    const transcript = stdout.trim().length > 0 ? stdout : (postExit?.transcript ?? '');
+    writeFileSync(stdoutPath, transcript);
     writeFileSync(stderrPath, stderrForLog);
 
     const ret: AgentInvocationResult = {
@@ -281,13 +291,20 @@ export class OpenCodeAgentAdapter implements AgentPort {
   ): {
     quotaMatch: string | null;
     providerMatch: string | null;
+    transcript: string;
   } {
     let quotaMatch: string | null = null;
     let providerMatch: string | null = null;
+    const transcripts: string[] = [];
 
     for (const logPath of this.candidateLogFiles(sessionLogDir, preexisting, cwd)) {
       try {
-        const content = OpenCodeAgentAdapter.providerLines(readFileSync(logPath, 'utf-8'));
+        const raw = readFileSync(logPath, 'utf-8');
+        if (!raw) continue;
+        // Keep the full log for the phase-log transcript (observability, #255);
+        // detection only looks at provider/LLM diagnostic lines.
+        transcripts.push(raw);
+        const content = OpenCodeAgentAdapter.providerLines(raw);
         if (!content) continue;
         if (!quotaMatch) {
           quotaMatch = testQuotaPatterns(content, { structuralOnly: true });
@@ -295,13 +312,12 @@ export class OpenCodeAgentAdapter implements AgentPort {
         if (!providerMatch) {
           providerMatch = testProviderErrorPatterns(content, { structuralOnly: true });
         }
-        if (quotaMatch && providerMatch) break;
       } catch {
         // File might be deleted between readdir and read — ignore
       }
     }
 
-    return { quotaMatch, providerMatch };
+    return { quotaMatch, providerMatch, transcript: transcripts.join('\n') };
   }
 
   private startWatchdog(
