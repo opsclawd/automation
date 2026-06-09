@@ -526,6 +526,42 @@ describe('OpenCodeAgentAdapter', () => {
     expect(stderrLog).toContain('429');
   });
 
+  it('does NOT discard a successful committed task whose transcript contains a structurally-valid error line (exit 0, no session log) — #250 layer 3 regression', async () => {
+    // The exact failure that killed #250 task 3 ("update provider-error fixtures
+    // to emit structural log lines"): the agent's transcript contained a valid
+    // `ERROR …T… AI_APICallError …` line, which structuralOnly could NOT filter
+    // because it is structurally valid. The success branch must trust only the
+    // session-log files, not the process-stderr transcript.
+    const cwd = makeWorktree();
+    const startSha = execSync('git rev-parse HEAD', { cwd }).toString().trim();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(
+        __dirname,
+        '..',
+        '__fixtures__',
+        'fake-opencode-success-structural-error-in-transcript.sh',
+      ),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement',
+      startCommitSha: startSha,
+    });
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('provider_error');
+    const stderrLog = readFileSync(r.stderrPath, 'utf-8');
+    expect(stderrLog).not.toContain('QUOTA_EXCEEDED');
+    expect(stderrLog).not.toContain('PROVIDER_ERROR');
+    // sanity: the structurally-valid error line really was present in the transcript
+    expect(stderrLog).toContain('AI_APICallError');
+  });
+
   it('does not mistakenly classify provider error text in stdout as provider_error', async () => {
     const cwd = makeWorktree();
     const startSha = execSync('git rev-parse HEAD', { cwd }).toString().trim();

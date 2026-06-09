@@ -167,28 +167,20 @@ export class OpenCodeAgentAdapter implements AgentPort {
         }
       }
     } else if (outcome === 'success') {
-      const postExitProvider = !watchdogKilled && postExit ? postExit.providerMatch : null;
-      // The agent exited 0 (success). The captured process stderr is the agent
-      // TUI transcript (git log, grep hits, file dumps), so unstructured pattern
-      // matching false-positives on incidental strings — e.g. a `git log` line
-      // containing "429" — and would discard a completed task (#250). Restrict
-      // the stderr scan to structured `INFO/ERROR …T` log lines; the authoritative
-      // path for real provider/quota errors is the session-log postExit scan.
-      const providerMatch =
-        testProviderErrorPatterns(stderr, { structuralOnly: true }) || postExitProvider;
-      if (providerMatch) {
-        outcome = 'failed';
-        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine =
-          testQuotaPatterns(stderr, { structuralOnly: true }) || testQuotaPatterns(providerMatch);
-        if (quotaLine) {
-          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
-          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
-        } else {
-          stderr = `PROVIDER_ERROR: ${providerMatch}`;
-          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
-        }
-      } else if (
+      // The agent exited 0 (success). We deliberately do NOT scan the captured
+      // process stderr for provider/quota errors here: stderr is the agent TUI
+      // transcript, and a task that works on error-handling code/fixtures
+      // legitimately prints provider-error-shaped strings — both unstructured
+      // ("429" in a `git log`) and structurally valid (`ERROR …T… AI_APICallError`)
+      // — so scanning it discards completed work (#250).
+      //
+      // Real provider/quota errors are detected upstream from opencode's own
+      // session-log files (scanSessionLogsPostExit → watchdogKilled, see lines
+      // ~97-123); if one fired we'd be in the watchdogKilled branch, not here.
+      // A provider error that surfaces ONLY on stderr (not the session log) is
+      // given up; the NO_OUTPUT heuristic below and downstream validation are the
+      // safety net.
+      if (
         request.phaseId.startsWith('implement') &&
         request.startCommitSha &&
         endCommitSha === request.startCommitSha &&
