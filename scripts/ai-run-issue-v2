@@ -3214,6 +3214,15 @@ if [[ "$PHASE" == "review-triage" ]]; then
   _emit_phase_started "review-triage"
   LAST_PHASE="review-triage"
   ensure_worktree
+
+  if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
+    info "No review.md found. Skipping review-triage phase."
+    emit_event "review-triage" "info" "phase.skipped" \
+      "review-triage skipped (no review.md)" \
+      status="skipped"
+    _emit_phase_done "review-triage"
+    PHASE="fix-review"
+  else
   TRIAGE_PROMPT="You are triaging a code review.
 ## CONTEXT
 Your working directory: ${WORKTREE_DIR}
@@ -3285,6 +3294,7 @@ Write review-task-manifest.json and review-triage.md now."
   fi
   _emit_phase_done "review-triage"
   PHASE="fix-review"
+  fi  # end review.md existence guard
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
