@@ -13,7 +13,11 @@ detect_phase() {
   elif [[ -f "${ISSUES_DIR}/compound.md" ]]; then
     echo "create-pr"
   elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
-    echo "fix-review"
+    if [[ -f "${ISSUES_DIR}/review-task-manifest.json" ]]; then
+      echo "fix-review"
+    else
+      echo "review-triage"
+    fi
   elif [[ -f "${ISSUES_DIR}/validation.result" ]]; then
     _vr=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)
     if [[ "$_vr" == "passed" ]] || [[ -f "${ISSUES_DIR}/fix-validate-done.marker" ]]; then

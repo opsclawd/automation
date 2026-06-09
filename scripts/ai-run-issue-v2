@@ -65,6 +65,7 @@ TIMEOUT_FIX=900
 TIMEOUT_PR_FIX=1200
 TIMEOUT_PLAN_REVIEW=600
 TIMEOUT_FIX_VALIDATE=600
+TIMEOUT_REVIEW_TRIAGE=300
 
 TIMEOUT_COMPOUND=600
 
@@ -166,7 +167,7 @@ _emit_phase_skipped() {
 _emit_skipped_until() {
   local target=$1
   local p found=false
-  for p in read_issue plan-design plan-write implement validate fix-validate whole-pr-review fix-review compound create-pr; do
+  for p in read_issue plan-design plan-write implement validate fix-validate whole-pr-review review-triage fix-review compound create-pr; do
     if [[ "$p" == "$target" ]]; then found=true; break; fi
     _emit_phase_skipped "$p" "resume-detected"
   done
@@ -456,11 +457,15 @@ seed_excludes() {
     grep -qxF 'fix-validate-*.log' "$exclude_file" || echo 'fix-validate-*.log' >> "$exclude_file"
     grep -qxF 'revalidate-fv-*.log' "$exclude_file" || echo 'revalidate-fv-*.log' >> "$exclude_file"
     grep -qxF 'fix-validate-log.md' "$exclude_file" || echo 'fix-validate-log.md' >> "$exclude_file"
+    grep -qxF 'review-task-manifest.json' "$exclude_file" || echo 'review-task-manifest.json' >> "$exclude_file"
+    grep -qxF 'review-triage.md' "$exclude_file" || echo 'review-triage.md' >> "$exclude_file"
+    grep -qxF 'result.json' "$exclude_file" || echo 'result.json' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
 *.log
 *.result
+result.json
 code-review.md
 review.md
 design.md
@@ -504,6 +509,8 @@ fix-validate-done.marker
 fix-validate-*.log
 revalidate-fv-*.log
 fix-validate-log.md
+review-task-manifest.json
+review-triage.md
 EOF
 }
 
@@ -3200,7 +3207,155 @@ Write code-review.md now."
   fi
 
   _emit_phase_done "whole-pr-review"
+  PHASE="review-triage"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE: review-triage
+#
+# Produces review-task-manifest.json (consumed by fix-review in #240) and
+# review-triage.md. This is the producer side; the per-task fix loop that
+# reads the manifest is implemented in #240 (fix-review task loop refactor).
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# review-task-manifest.json schema (per-issue #239 spec):
+#   Array of objects, one per finding. Fields:
+#     id:             string — finding ID from review (e.g. "C1", "H4", "M5").
+#                     Use source review IDs where available; fallback to "task-N".
+#     severity:       "critical" | "high" | "medium" | "low"
+#     files:          string[] — scoped list of affected file paths
+#     action:         "fix" | "defer" | "skip"
+#     title:          string — one-line summary
+#     description:    string — what to fix and where (file path, line refs)
+#     verify:         string — suggested verification step
+#     commit_message: string — suggested commit message for the fix
+#
+# review-triage.md: human-readable summary (totals, by-severity counts,
+#   fix/defer/skip breakdown).
+# ═══════════════════════════════════════════════════════════════════════════
+if [[ "$PHASE" == "review-triage" ]]; then
+  log "=== Phase: review-triage ==="
+  _emit_phase_started "review-triage"
+  LAST_PHASE="review-triage"
+  ensure_worktree
+
+  if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
+    info "No review.md found. Skipping review-triage phase."
+    emit_event "review-triage" "info" "phase.skipped" \
+      "review-triage skipped (no review.md)" \
+      status="skipped"
+    _emit_phase_done "review-triage"
+    PHASE="fix-review"
+  else
+  # Short-circuit: if review.md has no actionable findings, skip the agent call.
+  # Heuristic: look for severity markers (Critical/High/Medium/Low) that the
+  # whole-pr-review prompt produces. If none found, write empty manifest + stub
+  # summary and proceed directly to fix-review.
+  if ! grep -qiE '(^#+\s*)?(critical|high|medium|low)\b' "${ISSUES_DIR}/review.md" 2>/dev/null; then
+    info "review.md has no severity markers; writing empty manifest and skipping review-triage agent"
+    echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
+    printf '# Review Triage Summary\n\nNo actionable findings in review.md — empty manifest produced.\n' > "${ISSUES_DIR}/review-triage.md"
+    emit_event "review-triage" "info" "phase.short-circuited" \
+      "review-triage short-circuited (no findings)" status="short-circuited"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-triage.md" "summary"
+    _emit_phase_done "review-triage"
+    PHASE="fix-review"
+  else
+  TRIAGE_PROMPT="You are triaging a code review.
+## CONTEXT
+Your working directory: ${WORKTREE_DIR}
+Code review: review.md
+## TASK
+Read ./review.md and produce two files:
+1. ./review-task-manifest.json — a JSON array of actionable fix tasks. Each task object has:
+   - \"id\": string — finding ID from the review, preserving the source ID format (e.g. \"C1\", \"H4\", \"M5\"). If the source review has no C/H/M prefix convention, use \"task-N\".
+   - \"severity\": \"critical\" | \"high\" | \"medium\" | \"low\"
+   - \"files\": array of scoped file paths affected by this finding (e.g. [\"src/foo.ts\", \"src/bar.ts\"])
+   - \"action\": \"fix\" | \"defer\" | \"skip\"
+   - \"title\": one-line summary
+   - \"description\": what to fix and where (file path, line refs)
+   - \"verify\": suggested verification step (e.g. \"run pnpm test\", \"check that X no longer appears in Y\")
+   - \"commit_message\": suggested commit message for when the fix is complete (e.g. \"fix(scope): description\")
+2. ./review-triage.md — a human-readable summary with:
+   - Total findings count
+   - Counts by severity
+   - Tasks to fix now (critical, high, all bugs, missing tests)
+   - Tasks deferred (low severity, cosmetic, style)
+   - Tasks skipped (orchestrator-internal artifacts)
+## TRIAGE RULES
+- action=fix: all critical/high findings, medium bugs, medium missing-tests
+- action=defer: low severity, cosmetic/style improvements
+- action=skip: findings about orchestrator artifacts (*.log, *.result, *.marker, task-manifest.json, arbiter-*, plan-review-*, fix-validate-*)
+- If review.md is empty or has no actionable findings, output an empty array []
+## CRITICAL RULES
+- Do NOT modify any code files.
+- Do NOT run git commands.
+- Output ONLY review-task-manifest.json and review-triage.md.
+- Stop after writing both files.
+Write review-task-manifest.json and review-triage.md now."
+  _main_state_before=$(_capture_main_state)
+  _triage_prompt_file=$(mktemp)
+  printf '%s' "$TRIAGE_PROMPT" > "$_triage_prompt_file"
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+    --phase review-triage \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
+    --phase-id review-triage \
+    --prompt-file "$_triage_prompt_file" \
+    --timeout-minutes $(( (TIMEOUT_REVIEW_TRIAGE + 59) / 60 )) \
+    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${ISSUES_DIR}/review-triage.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+  rm -f "$_triage_prompt_file"
+  _guard_main_checkout "review-triage" "$_main_state_before"
+  # Mutation guard: triage is a read-only phase — the agent must not modify
+  # tracked source files. Only check tracked-file diffs; untracked orchestrator
+  # artifacts (review-triage.md, review-task-manifest.json) are expected.
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
+    rm -f "${ISSUES_DIR}/review-triage.log"
+    orchestrator_fail "review-triage produced uncommitted changes — mutation not allowed"
+  fi
+  if [[ $_tee_ec -ne 0 ]]; then
+    orchestrator_fail "tee failed writing log for review-triage (exit $_tee_ec)"
+  fi
+  if [[ $_agent_ec -ne 0 ]]; then
+    case $_agent_ec in
+      1) orchestrator_fail "review-triage failed (contract violation)" ;;
+      2) orchestrator_fail "review-triage failed (config error or timeout)" ;;
+      3) orchestrator_fail "review-triage failed (unexpected error)" ;;
+      *) orchestrator_fail "review-triage failed (unknown exit code $_agent_ec)" ;;
+    esac
+  fi
+  if [[ -f "${WORKTREE_DIR}/review-task-manifest.json" ]]; then
+    cp "${WORKTREE_DIR}/review-task-manifest.json" "${ISSUES_DIR}/review-task-manifest.json"
+    info "Review task manifest saved to ${ISSUES_DIR}/review-task-manifest.json"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
+  else
+    # TODO(#240): once fix-review consumes the manifest, tighten this back to a
+    # hard failure (and add a `jq -e 'type == "array"'` validity check, mirroring
+    # plan-write's read_manifest fallback at the task-manifest.json site). Until a
+    # consumer exists, a missing manifest must NOT block a PR that already passed
+    # review/validation — degrade to an empty manifest and continue.
+    warn "review-task-manifest.json not produced by review-triage; writing empty manifest"
+    echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
+    emit_event "review-triage" "warn" "manifest.missing" \
+      "review-triage produced no manifest; defaulting to empty" status="degraded"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
+  fi
+  if [[ -f "${WORKTREE_DIR}/review-triage.md" ]]; then
+    cp "${WORKTREE_DIR}/review-triage.md" "${ISSUES_DIR}/review-triage.md"
+    info "Review triage summary saved to ${ISSUES_DIR}/review-triage.md"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-triage.md" "summary"
+  else
+    warn "review-triage.md not found in worktree after review-triage phase"
+  fi
+  _emit_phase_done "review-triage"
   PHASE="fix-review"
+  fi  # end short-circuit else
+  fi  # end review.md existence guard
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -122,6 +122,7 @@
       "whole-pr-fix-review": { "profile": "builder", "fallbackProfile": "junior" },
       "fix-validate": { "profile": "builder", "fallbackProfile": "junior" },
       "whole-pr-review": { "profile": "gemini", "fallbackProfile": "junior" },
+      "review-triage": { "profile": "architect", "fallbackProfile": "senior" },
       "post-pr-review": { "profile": "mimo-pro", "fallbackProfile": "junior" },
       "compound": { "profile": "junior", "fallbackProfile": "builder" },
       "extract": { "profile": "junior", "fallbackProfile": "builder" },
