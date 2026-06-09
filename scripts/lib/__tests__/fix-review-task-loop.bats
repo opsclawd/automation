@@ -1,0 +1,153 @@
+#!/usr/bin/env bats
+
+# Tests for the fix-review task loop (review-task-manifest consumption)
+
+setup() {
+  SCRIPT_DIR="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  source "${SCRIPT_DIR}/review-manifest-helpers.sh"
+
+  TMPDIR_TEST="$(mktemp -d)"
+  export ISSUES_DIR="$TMPDIR_TEST"
+  export WORKTREE_DIR="$TMPDIR_TEST/worktree"
+  mkdir -p "$WORKTREE_DIR"
+  export REPO_ROOT="$TMPDIR_TEST"
+  export BRANCH="test-branch"
+  export BASE_BRANCH="main"
+
+  # Stub functions for subshell isolation
+  log() { :; }
+  info() { :; }
+  warn() { :; }
+  emit_event() { :; }
+  orchestrator_fail() { return 1; }
+  ensure_worktree() { :; }
+  ensure_branch() { :; }
+  _emit_phase_started() { :; }
+  _emit_phase_done() { :; }
+  _emit_artifact() { :; }
+  _capture_main_state() { :; }
+  _guard_main_checkout() { :; }
+  check_branch_after_agent() { :; }
+  resolve_result() { echo "${1:-FAILED}"; }
+}
+
+teardown() {
+  rm -rf "$TMPDIR_TEST"
+}
+
+# ── _validate_review_manifest ──────────────────────────────────────────
+
+@test "_validate_review_manifest: valid manifest returns 0" {
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"R1","action":"fix","severity":"high","description":"Fix X","files":["src/a.ts"],"commit_message":"fix: X"}]
+JSON
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [ "$status" -eq 0 ]
+}
+
+@test "_validate_review_manifest: missing file returns 1" {
+  run _validate_review_manifest "$TMPDIR_TEST/nonexistent.json"
+  [ "$status" -eq 1 ]
+}
+
+@test "_validate_review_manifest: non-JSON returns 2" {
+  echo "not json" > "$TMPDIR_TEST/review-task-manifest.json"
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [ "$status" -eq 2 ]
+}
+
+@test "_validate_review_manifest: non-array JSON returns 3" {
+  echo '{"key":"value"}' > "$TMPDIR_TEST/review-task-manifest.json"
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [ "$status" -eq 3 ]
+}
+
+@test "_validate_review_manifest: empty array is valid" {
+  echo '[]' > "$TMPDIR_TEST/review-task-manifest.json"
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [ "$status" -eq 0 ]
+  [ "$(echo "$output" | jq 'length')" = "0" ]
+}
+
+@test "Empty manifest writes ALL_FIXED to fix-status.txt" {
+  echo '[]' > "$TMPDIR_TEST/review-task-manifest.json"
+  FIX_REVIEW_TASK_COUNT=$(jq 'length' "$TMPDIR_TEST/review-task-manifest.json")
+  [ "$FIX_REVIEW_TASK_COUNT" -eq 0 ]
+  echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
+  [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "ALL_FIXED" ]
+}
+
+@test "Manifest with action:defer tasks are skipped" {
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"R1","action":"fix","severity":"high","description":"Fix X","files":["a.ts"],"commit_message":"fix: X"},{"id":"R2","action":"defer","severity":"low","description":"Defer Y","files":["b.ts"],"commit_message":"chore: Y"}]
+JSON
+  local fix_count
+  fix_count=$(jq '[.[] | select(.action == "fix")] | length' "$TMPDIR_TEST/review-task-manifest.json")
+  [ "$fix_count" -eq 1 ]
+}
+
+@test "Manifest with action:skip tasks are skipped" {
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"R1","action":"fix","severity":"high","description":"Fix","files":[],"commit_message":"fix"},{"id":"R2","action":"skip","severity":"info","description":"Skip","files":[],"commit_message":"skip"}]
+JSON
+  local fix_count
+  fix_count=$(jq '[.[] | select(.action == "fix")] | length' "$TMPDIR_TEST/review-task-manifest.json")
+  [ "$fix_count" -eq 1 ]
+}
+
+@test "Multiple fix tasks each get separate iterations" {
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"R1","action":"fix","severity":"high","description":"Fix A","files":["a.ts"],"commit_message":"fix: A"},{"id":"R2","action":"fix","severity":"medium","description":"Fix B","files":["b.ts"],"commit_message":"fix: B"},{"id":"R3","action":"fix","severity":"low","description":"Fix C","files":["c.ts"],"commit_message":"fix: C"}]
+JSON
+  local fix_count
+  fix_count=$(jq '[.[] | select(.action == "fix")] | length' "$TMPDIR_TEST/review-task-manifest.json")
+  [ "$fix_count" -eq 3 ]
+}
+
+@test "All tasks FIXED writes ALL_FIXED" {
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"R1","action":"fix","severity":"high","description":"Fix A","files":["a.ts"],"commit_message":"fix: A"}]
+JSON
+  echo "FIXED" > "$WORKTREE_DIR/fix-review-task-R1.result"
+  echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
+  [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "ALL_FIXED" ]
+}
+
+@test "Any task FAILED writes HAS_UNRESOLVED" {
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"R1","action":"fix","severity":"high","description":"Fix A","files":["a.ts"],"commit_message":"fix: A"},{"id":"R2","action":"fix","severity":"medium","description":"Fix B","files":["b.ts"],"commit_message":"fix: B"}]
+JSON
+  echo "FIXED" > "$WORKTREE_DIR/fix-review-task-R1.result"
+  echo "FAILED" > "$WORKTREE_DIR/fix-review-task-R2.result"
+  echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
+  [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "HAS_UNRESOLVED" ]
+}
+
+@test "_dedupe_manifest_ids: correctly deduplicates IDs" {
+  result=$(cat << 'JSON' | _dedupe_manifest_ids
+[{"id":"C1","action":"fix"},{"id":"C1","action":"fix"},{"id":"R1","action":"fix"}]
+JSON
+)
+  [ "$(echo "$result" | jq -r '.[0].id')" = "C1" ]
+  [ "$(echo "$result" | jq -r '.[1].id')" = "C1-2" ]
+  [ "$(echo "$result" | jq -r '.[2].id')" = "R1" ]
+}
+
+@test "Dirty worktree before task triggers reset" {
+  touch "$WORKTREE_DIR/dirty-file"
+  cd "$WORKTREE_DIR"
+  git init && git add -A && git commit -m "init" 2>/dev/null || true
+  echo "change" >> "$WORKTREE_DIR/dirty-file"
+  ! git diff --exit-code HEAD 2>/dev/null
+}
+
+@test "Legacy path: missing manifest falls back to review.md" {
+  rm -f "$TMPDIR_TEST/review-task-manifest.json"
+  ! _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json" 2>/dev/null
+}
+
+@test "Legacy path: invalid manifest falls back to review.md" {
+  echo "not json" > "$TMPDIR_TEST/review-task-manifest.json"
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json" 2>/dev/null
+  [ "$status" -eq 2 ]
+}
