@@ -25,3 +25,10 @@ teardown() {
   run detect_phase
   [ "$output" = "fix-review" ]
 }
+
+@test "detect_phase: no review.md and no manifest falls through past review-triage" {
+  touch "${ISSUES_DIR}/validation.result"
+  echo "passed" > "${ISSUES_DIR}/validation.result"
+  run detect_phase
+  [ "$output" = "whole-pr-review" ]
+}

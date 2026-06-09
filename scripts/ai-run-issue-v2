@@ -3188,6 +3188,26 @@ fi
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: review-triage
+#
+# Produces review-task-manifest.json (consumed by fix-review in #240) and
+# review-triage.md. This is the producer side; the per-task fix loop that
+# reads the manifest is implemented in #240 (fix-review task loop refactor).
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# review-task-manifest.json schema (per-issue #239 spec):
+#   Array of objects, one per finding. Fields:
+#     id:             string — finding ID from review (e.g. "C1", "H4", "M5").
+#                     Use source review IDs where available; fallback to "task-N".
+#     severity:       "critical" | "high" | "medium" | "low"
+#     files:          string[] — scoped list of affected file paths
+#     action:         "fix" | "defer" | "skip"
+#     title:          string — one-line summary
+#     description:    string — what to fix and where (file path, line refs)
+#     verify:         string — suggested verification step
+#     commit_message: string — suggested commit message for the fix
+#
+# review-triage.md: human-readable summary (totals, by-severity counts,
+#   fix/defer/skip breakdown).
 # ═══════════════════════════════════════════════════════════════════════════
 if [[ "$PHASE" == "review-triage" ]]; then
   log "=== Phase: review-triage ==="
@@ -3201,12 +3221,14 @@ Code review: review.md
 ## TASK
 Read ./review.md and produce two files:
 1. ./review-task-manifest.json — a JSON array of actionable fix tasks. Each task object has:
-   - \"id\": string (e.g. \"task-1\")
+   - \"id\": string — finding ID from the review, preserving the source ID format (e.g. \"C1\", \"H4\", \"M5\"). If the source review has no C/H/M prefix convention, use \"task-N\".
    - \"severity\": \"critical\" | \"high\" | \"medium\" | \"low\"
-   - \"category\": \"bug\" | \"missing-test\" | \"security\" | \"performance\" | \"style\" | \"other\"
+   - \"files\": array of scoped file paths affected by this finding (e.g. [\"src/foo.ts\", \"src/bar.ts\"])
+   - \"action\": \"fix\" | \"defer\" | \"skip\"
    - \"title\": one-line summary
    - \"description\": what to fix and where (file path, line refs)
-   - \"action\": \"fix\" | \"defer\" | \"skip\"
+   - \"verify\": suggested verification step (e.g. \"run pnpm test\", \"check that X no longer appears in Y\")
+   - \"commit_message\": suggested commit message for when the fix is complete (e.g. \"fix(scope): description\")
 2. ./review-triage.md — a human-readable summary with:
    - Total findings count
    - Counts by severity
@@ -3254,7 +3276,7 @@ Write review-task-manifest.json and review-triage.md now."
     info "Review task manifest saved to ${ISSUES_DIR}/review-task-manifest.json"
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
   else
-    warn "review-task-manifest.json not found in worktree after review-triage phase"
+    orchestrator_fail "review-task-manifest.json not found in worktree after review-triage phase"
   fi
   if [[ -f "${WORKTREE_DIR}/review-triage.md" ]]; then
     cp "${WORKTREE_DIR}/review-triage.md" "${ISSUES_DIR}/review-triage.md"
