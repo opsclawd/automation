@@ -631,8 +631,14 @@ rerun_reviewer_with_retry() {
       attempt=$((attempt + 1))
       delay=60
     done
-    log "  ${reviewer_type}-review-task-${task_n} exhausted infra-error retries"
-    return 1
+    log "  ${reviewer_type}-review-task-${task_n} exhausted infra-error retries — advisory: letting downstream validation decide"
+    warn "${reviewer_type}-review-task-${task_n}: provider error retries exhausted, continuing (downstream validation will judge)"
+    # Advisory policy (#257): provider-error detection must never be the sole
+    # cause of a stopped run. Returning 0 lets the caller skip its
+    # orchestrator_fail fallback. Downstream artifact validation
+    # (validate_review_artifacts → resolve_result) will catch the missing
+    # artifacts and fail via the normal contract-violation path if needed.
+    return 0
   else
     # Non-infra failure: single immediate re-run (backward compatible)
     log "  Non-infra failure, re-running once immediately"
