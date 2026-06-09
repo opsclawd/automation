@@ -100,6 +100,29 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeTruthy();
   });
 
+  it('matches 429 with HTTP prefix (default mode)', () => {
+    const result = testQuotaPatterns('HTTP 429 Too Many Requests');
+    expect(result).toBeTruthy();
+    expect(result).toContain('HTTP 429');
+  });
+
+  it('matches 429 with statusCode prefix (default mode)', () => {
+    const result = testQuotaPatterns('"statusCode": 429 rate limit exceeded');
+    expect(result).toBeTruthy();
+  });
+
+  it('does not match bare 429 in arbitrary text (default mode)', () => {
+    const result = testQuotaPatterns('fix: scope 429 error pattern to HTTP contexts (#245)');
+    expect(result).toBeNull();
+  });
+
+  it('does not match bare 429 in git log output (default mode)', () => {
+    const result = testQuotaPatterns(
+      'de9307c feat: add manifest-validation helper functions (#240)',
+    );
+    expect(result).toBeNull();
+  });
+
   it('returns null when no patterns match (default mode)', () => {
     expect(testQuotaPatterns('just some text without any quota or provider patterns')).toBeNull();
   });
@@ -193,6 +216,27 @@ describe('testProviderErrorPatterns', () => {
     const result = testProviderErrorPatterns(text);
     expect(result).toBeTruthy();
     expect(result).toContain('ProviderError');
+  });
+
+  it('matches 500 with HTTP prefix (default mode)', () => {
+    const result = testProviderErrorPatterns('HTTP 500 Internal Server Error');
+    expect(result).toBeTruthy();
+    expect(result).toContain('HTTP 500');
+  });
+
+  it('matches 503 with status prefix (default mode)', () => {
+    const result = testProviderErrorPatterns('status 503 service unavailable error');
+    expect(result).toBeTruthy();
+  });
+
+  it('does not match bare 500 in arbitrary text (default mode)', () => {
+    const result = testProviderErrorPatterns('line 500 of the file has an error');
+    expect(result).toBeNull();
+  });
+
+  it('does not match bare 503 in commit title (default mode)', () => {
+    const result = testProviderErrorPatterns('fix: handle 503 error in retry logic');
+    expect(result).toBeNull();
   });
 
   it('returns null when no patterns match (default mode)', () => {
