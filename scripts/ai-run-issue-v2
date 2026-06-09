@@ -600,6 +600,10 @@ check_adapter_stderr_for_infra_error() {
 }
 
 rerun_reviewer_with_retry() {
+  # Caller MUST have downstream artifact validation after this function returns 0
+  # when infra-error retries are exhausted — the return-0 policy means the caller
+  # skips its orchestrator_fail fallback. See advisory policy (#257) at the bottom
+  # of this function.
   local reviewer_type="$1"  # "spec" or "quality"
   local task_n="$2"
   local task_title="$3"
@@ -867,6 +871,7 @@ Write the result now."
       1) warn "extract-${phase} failed (contract violation)" ;;
       2) warn "extract-${phase} failed (config error or timeout)" ;;
       3) warn "extract-${phase} failed (unexpected error)" ;;
+      4) warn "extract-${phase} had a provider error" ;;
       *) warn "extract-${phase} failed (unknown exit code $_agent_ec)" ;;
     esac
     if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/extract-${phase}.log" 2>/dev/null; then

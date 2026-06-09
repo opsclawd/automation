@@ -137,6 +137,7 @@ function findRepoRoot(dir: string): string {
  *   1 — contract violation (M4-04 validateAgentContract failed or M4-05 extractResult failed)
  *   2 — config error (unknown phase, unknown profile, missing required flags) or timeout
  *   3 — adapter spawn failure (unexpected error)
+ *   4 — advisory: provider/quota error only (warn-and-continue, not a hard failure)
  *
  * Usage (from Bash):
  *   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx apps/cli/src/run-agent.ts \
