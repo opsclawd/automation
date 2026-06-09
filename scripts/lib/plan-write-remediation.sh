@@ -26,11 +26,13 @@
 # that are hidden by unrelated exclude rules.
 #
 # Returns 0 if a misplaced plan was found and moved, 1 otherwise.
-_detect_ignored_misplaced_plan() {
-  if [[ ! -f "${WORKTREE_DIR}/plan.md" ]]; then
+_detect_ignored_misplaced_artifact() {
+  local _name="$1"
+  local _phase="${2:-plan-write}"
+  if [[ ! -f "${WORKTREE_DIR}/${_name}" ]]; then
     local _misplaced=""
     local _raw=""
-    _raw=$(find "$WORKTREE_DIR" -name plan.md -mindepth 2 \
+    _raw=$(find "$WORKTREE_DIR" -name "$_name" -mindepth 2 \
       -not -path '*/node_modules/*' \
       -not -path '*/.next/*' \
       -not -path '*/.cache/*' \
@@ -52,10 +54,10 @@ _detect_ignored_misplaced_plan() {
     if [[ -n "$_misplaced" ]]; then
       local _v_file="${WORKTREE_DIR}/${_misplaced}"
       if [[ -f "$_v_file" ]]; then
-        warn "plan-write agent wrote plan to ignored path: ${_misplaced} -- moving to plan.md"
-        emit_event "plan-write" "warn" "plan_written.removed_mispath" \
-          "auto-remediated ignored mispathed plan" src="${_misplaced}"
-        mv "$_v_file" "${WORKTREE_DIR}/plan.md"
+        warn "agent wrote ${_name} to ignored path: ${_misplaced} -- moving to ${_name}"
+        emit_event "$_phase" "warn" "plan_written.removed_mispath" \
+          "auto-remediated ignored mispathed artifact" src="${_misplaced}" artifact="${_name}"
+        mv "$_v_file" "${WORKTREE_DIR}/${_name}"
         local _wt_norm="${WORKTREE_DIR%/}"
         local _v_dir
         _v_dir=$(dirname "$_v_file")
@@ -70,9 +72,14 @@ _detect_ignored_misplaced_plan() {
   return 1
 }
 
+_detect_ignored_misplaced_plan()    { _detect_ignored_misplaced_artifact "plan.md" "plan-write"; }
+
 # After calling:
 #   _all_violations is cleared on successful remediation (empty string).
-_remediate_plan_write_violations() {
+_remediate_misplaced_artifact() {
+  local _name="$1"
+  local _pattern="$2"
+  local _phase="${3:-plan-write}"
   if [[ -n "$_all_violations" ]]; then
     if [[ -z "$_main_checkout_violations" ]]; then
       local _v_count
@@ -81,13 +88,13 @@ _remediate_plan_write_violations() {
         local _trimmed_violations
         read -r _trimmed_violations <<< "$_worktree_violations"
         local _v_file="${WORKTREE_DIR}/${_trimmed_violations}"
-        if [[ "$_v_file" == *.md && -f "$_v_file" && ! -f "${WORKTREE_DIR}/plan.md" ]] \
-            && echo "$_trimmed_violations" | grep -qi 'plan' \
+        if [[ "$_v_file" == *.md && -f "$_v_file" && ! -f "${WORKTREE_DIR}/${_name}" ]] \
+            && echo "$_trimmed_violations" | grep -qi "$_pattern" \
             && ! git -C "$WORKTREE_DIR" ls-files --error-unmatch -- "$_trimmed_violations" >/dev/null 2>&1; then
-          warn "plan-write wrote plan to wrong path: ${_trimmed_violations} -- moving to plan.md"
-          emit_event "plan-write" "warn" "plan_written.removed_mispath" \
-            "auto-remediated mispathed plan" src="${_trimmed_violations}"
-          mv "$_v_file" "${WORKTREE_DIR}/plan.md"
+          warn "agent wrote ${_name} to wrong path: ${_trimmed_violations} -- moving to ${_name}"
+          emit_event "$_phase" "warn" "plan_written.removed_mispath" \
+            "auto-remediated mispathed artifact" src="${_trimmed_violations}" artifact="${_name}"
+          mv "$_v_file" "${WORKTREE_DIR}/${_name}"
           local _wt_norm="${WORKTREE_DIR%/}"
           local _v_dir
           _v_dir=$(dirname "$_v_file")
@@ -101,3 +108,5 @@ _remediate_plan_write_violations() {
     fi
   fi
 }
+
+_remediate_plan_write_violations()  { _remediate_misplaced_artifact "plan.md" "plan" "plan-write"; }
