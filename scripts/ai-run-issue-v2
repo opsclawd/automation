@@ -2467,8 +2467,14 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     # code quality. This covers verification-only tasks (run tests, check output)
     # that legitimately produce no diff. The validate phase still runs after all
     # tasks complete and will catch any real implementation gaps.
+    # Guard: require a clean worktree before auto-passing. Equal SHAs with a
+    # dirty working tree means the implementer edited files but forgot to commit,
+    # which would corrupt the next task's commit range if left uncommitted.
     if [[ "$BASE_SHA" == "$HEAD_SHA" ]]; then
-      log "  Task ${TASK_NUM}: no commits made — skipping quality review (auto-QUALITY_PASS)"
+      if ! git -C "$WORKTREE_DIR" diff --exit-code HEAD >/dev/null 2>&1; then
+        orchestrator_fail "Task ${TASK_NUM}: uncommitted tracked changes detected with no commits — implementer edited files without committing"
+      fi
+      log "  Task ${TASK_NUM}: no commits made, clean worktree — skipping quality review (auto-QUALITY_PASS)"
       emit_event "implement" "info" "quality_review.skipped_no_diff" \
         "Quality review skipped: task made no commits" taskNum="$TASK_NUM"
       printf 'QUALITY_PASS' > "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result"
