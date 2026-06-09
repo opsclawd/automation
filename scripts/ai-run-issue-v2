@@ -1119,7 +1119,7 @@ _lint_plan_verification() {
   fi
 
   local validation_tasks
-  validation_tasks=$(grep -iE '##+ .*Task [0-9]+.*(validation suite|full validation|run validation|make.*green|make (tests|suite|CI|build) pass|fix failing test)' "$plan_file" 2>/dev/null || true)
+  validation_tasks=$(grep -iE '##+ .*Task [0-9]+.*(validation suite|full validation|run validation|make.*green|make (tests|suite|CI|build) pass|fix failing test|final verif|run.*verif|verif.*only|standalone verif|verif.*task|verif.*step)' "$plan_file" 2>/dev/null || true)
   if [[ -n "$validation_tasks" ]]; then
     while IFS= read -r task_line; do
       warn "plan.lint: validation-suite task detected — validation runs automatically after all implement tasks: ${task_line}"

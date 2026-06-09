@@ -179,3 +179,29 @@ PLAN
   _lint_plan_verification
   [[ "$EMIT_EVENT_ARGS" != *"plan.lint.validation_task"* ]]
 }
+
+@test "lint: final verification task emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 6: Final verification
+
+### Validation
+Run: `pnpm test:bash`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
+
+@test "lint: run verification task emits warning" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 5: Run verification
+
+### Validation
+Run: `bash -n scripts/ai-run-issue-v2 && pnpm test:bash`
+PLAN
+
+  EMIT_EVENT_ARGS=""
+  _lint_plan_verification
+  [[ "$EMIT_EVENT_ARGS" == *"plan.lint.validation_task"* ]]
+}
