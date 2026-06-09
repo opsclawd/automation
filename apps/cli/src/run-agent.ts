@@ -4,7 +4,7 @@ import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 interface Flags {
@@ -292,6 +292,23 @@ async function main() {
       ...(abortSignal ? { abortSignal } : {}),
       ...(values['step-id'] ? { stepId: values['step-id'] } : {}),
     });
+
+    try {
+      if (result.stdoutPath && existsSync(result.stdoutPath)) {
+        const adapterStdout = readFileSync(result.stdoutPath, 'utf-8');
+        if (adapterStdout) process.stdout.write(adapterStdout);
+      }
+    } catch {
+      /* ignore read errors */
+    }
+    try {
+      if (result.stderrPath && existsSync(result.stderrPath)) {
+        const adapterStderr = readFileSync(result.stderrPath, 'utf-8');
+        if (adapterStderr) process.stderr.write(adapterStderr);
+      }
+    } catch {
+      /* ignore read errors */
+    }
 
     if (createdSynthetic) {
       c.runRepository.update(runId, {
