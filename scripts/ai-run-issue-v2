@@ -3255,6 +3255,7 @@ Read ./review.md and produce two files:
 - Output ONLY review-task-manifest.json and review-triage.md.
 - Stop after writing both files.
 Write review-task-manifest.json and review-triage.md now."
+  _main_state_before=$(_capture_main_state)
   _triage_prompt_file=$(mktemp)
   printf '%s' "$TRIAGE_PROMPT" > "$_triage_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
@@ -3269,6 +3270,7 @@ Write review-task-manifest.json and review-triage.md now."
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/review-triage.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_triage_prompt_file"
+  _guard_main_checkout "review-triage" "$_main_state_before"
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review-triage (exit $_tee_ec)"
   fi
@@ -3291,6 +3293,8 @@ Write review-task-manifest.json and review-triage.md now."
     cp "${WORKTREE_DIR}/review-triage.md" "${ISSUES_DIR}/review-triage.md"
     info "Review triage summary saved to ${ISSUES_DIR}/review-triage.md"
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-triage.md" "summary"
+  else
+    warn "review-triage.md not found in worktree after review-triage phase"
   fi
   _emit_phase_done "review-triage"
   PHASE="fix-review"

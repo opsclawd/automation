@@ -26,7 +26,7 @@ teardown() {
   [ "$output" = "fix-review" ]
 }
 
-@test "detect_phase: no review.md and no manifest falls through past review-triage" {
+@test "detect_phase: validation passed without review.md goes to whole-pr-review" {
   touch "${ISSUES_DIR}/validation.result"
   echo "passed" > "${ISSUES_DIR}/validation.result"
   run detect_phase
