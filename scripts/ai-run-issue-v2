@@ -2462,8 +2462,30 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result" \
           "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md"
     IMPL_REPORT=$(cat "${ISSUES_DIR}/implement-task-${TASK_NUM}.log" 2>/dev/null || echo "")
-    run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
-    run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
+    # Skip both spec and quality reviews when the task made no commits — there
+    # is no code diff for either reviewer to assess. This covers verification-only
+    # tasks (run tests, check output) that legitimately produce no diff.
+    # The validate phase runs after all tasks complete and is the real safety net.
+    # Guard: require a clean worktree first. Equal SHAs with dirty tracked files
+    # means the implementer edited files without committing — block immediately
+    # to prevent those edits being swept into the next task's commit.
+    if [[ "$BASE_SHA" == "$HEAD_SHA" ]]; then
+      if [[ -n "$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+        orchestrator_fail "Task ${TASK_NUM}: uncommitted tracked changes detected with no commits — implementer modified files without committing"
+      fi
+      log "  Task ${TASK_NUM}: no commits made, clean worktree — skipping spec + quality reviews (auto-pass)"
+      emit_event "implement" "info" "reviews.skipped_no_diff" \
+        "Spec and quality reviews skipped: task made no commits" taskNum="$TASK_NUM"
+      printf 'SPEC_PASS'    > "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.result"
+      printf 'No code changes in this task — spec review not applicable.' \
+        > "${WORKTREE_DIR}/spec-review-task-${TASK_NUM}.md"
+      printf 'QUALITY_PASS' > "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.result"
+      printf 'No code changes in this task — quality review not applicable.' \
+        > "${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md"
+    else
+      run_spec_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$IMPL_REPORT"
+      run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
+    fi
 
     # Validate review artifacts: .result without .md = invalid agent contract
     # Both files are written by the agent to WORKTREE_DIR using relative paths.
