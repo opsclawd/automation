@@ -1305,6 +1305,7 @@ Write design.md now."
   _plan_prompt_file=$(mktemp)
   printf '%s' "$BRAINSTORM_PROMPT" > "$_plan_prompt_file"
   _main_state_before=$(_capture_main_state)
+  _worktree_sha_before=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-design \
     --cwd "$WORKTREE_DIR" \
@@ -1321,7 +1322,41 @@ Write design.md now."
     orchestrator_fail "tee failed writing log for plan-design (exit $_tee_ec)"
   fi
 
+  _pre_was_dirty=0
+  _expected_sha=""
+  if [[ -n "$_main_state_before" ]]; then
+    IFS='|' read -r _expected_sha _pre_was_dirty _ <<< "$_main_state_before"
+  fi
+
+  _main_checkout_violations=""
+  if [[ $_pre_was_dirty -eq 0 ]]; then
+    _main_checkout_violations=$({
+      git -C "$REPO_ROOT" diff --name-only 2>/dev/null
+      git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
+      git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+      if [[ -n "$_expected_sha" ]]; then
+        git -C "$REPO_ROOT" diff --name-only "$_expected_sha"..HEAD 2>/dev/null
+      fi
+    } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
+  fi
+
   _guard_main_checkout "plan-design" "$_main_state_before"
+
+  _detect_ignored_misplaced_artifact "design.md" "plan-design" || true
+
+  _worktree_violations=$({
+    git -C "$WORKTREE_DIR" diff --name-only HEAD 2>/dev/null
+    git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    if [[ -n "$_worktree_sha_before" ]]; then
+      git -C "$WORKTREE_DIR" diff --name-only "$_worktree_sha_before"..HEAD 2>/dev/null
+    fi
+  } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
+
+  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _remediate_misplaced_artifact "design.md" "design" "plan-design"
+  if [[ -n "$_all_violations" ]]; then
+    orchestrator_fail "plan-design agent modified source files (contract violation): ${_all_violations}"
+  fi
 
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
