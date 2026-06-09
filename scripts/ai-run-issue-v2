@@ -3287,7 +3287,16 @@ Write review-task-manifest.json and review-triage.md now."
     info "Review task manifest saved to ${ISSUES_DIR}/review-task-manifest.json"
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
   else
-    orchestrator_fail "review-task-manifest.json not found in worktree after review-triage phase"
+    # TODO(#240): once fix-review consumes the manifest, tighten this back to a
+    # hard failure (and add a `jq -e 'type == "array"'` validity check, mirroring
+    # plan-write's read_manifest fallback at the task-manifest.json site). Until a
+    # consumer exists, a missing manifest must NOT block a PR that already passed
+    # review/validation — degrade to an empty manifest and continue.
+    warn "review-task-manifest.json not produced by review-triage; writing empty manifest"
+    echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
+    emit_event "review-triage" "warn" "manifest.missing" \
+      "review-triage produced no manifest; defaulting to empty" status="degraded"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
   fi
   if [[ -f "${WORKTREE_DIR}/review-triage.md" ]]; then
     cp "${WORKTREE_DIR}/review-triage.md" "${ISSUES_DIR}/review-triage.md"
