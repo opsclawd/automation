@@ -3183,6 +3183,85 @@ Write code-review.md now."
   fi
 
   _emit_phase_done "whole-pr-review"
+  PHASE="review-triage"
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE: review-triage
+# ═══════════════════════════════════════════════════════════════════════════
+if [[ "$PHASE" == "review-triage" ]]; then
+  log "=== Phase: review-triage ==="
+  _emit_phase_started "review-triage"
+  LAST_PHASE="review-triage"
+  ensure_worktree
+  TRIAGE_PROMPT="You are triaging a code review.
+## CONTEXT
+Your working directory: ${WORKTREE_DIR}
+Code review: review.md
+## TASK
+Read ./review.md and produce two files:
+1. ./review-task-manifest.json — a JSON array of actionable fix tasks. Each task object has:
+   - \"id\": string (e.g. \"task-1\")
+   - \"severity\": \"critical\" | \"high\" | \"medium\" | \"low\"
+   - \"category\": \"bug\" | \"missing-test\" | \"security\" | \"performance\" | \"style\" | \"other\"
+   - \"title\": one-line summary
+   - \"description\": what to fix and where (file path, line refs)
+   - \"action\": \"fix\" | \"defer\" | \"skip\"
+2. ./review-triage.md — a human-readable summary with:
+   - Total findings count
+   - Counts by severity
+   - Tasks to fix now (critical, high, all bugs, missing tests)
+   - Tasks deferred (low severity, cosmetic, style)
+   - Tasks skipped (orchestrator-internal artifacts)
+## TRIAGE RULES
+- action=fix: all critical/high findings, medium bugs, medium missing-tests
+- action=defer: low severity, cosmetic/style improvements
+- action=skip: findings about orchestrator artifacts (*.log, *.result, *.marker, task-manifest.json, arbiter-*, plan-review-*, fix-validate-*)
+- If review.md is empty or has no actionable findings, output an empty array []
+## CRITICAL RULES
+- Do NOT modify any code files.
+- Do NOT run git commands.
+- Output ONLY review-task-manifest.json and review-triage.md.
+- Stop after writing both files.
+Write review-task-manifest.json and review-triage.md now."
+  _triage_prompt_file=$(mktemp)
+  printf '%s' "$TRIAGE_PROMPT" > "$_triage_prompt_file"
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+    --phase review-triage \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
+    --phase-id review-triage \
+    --prompt-file "$_triage_prompt_file" \
+    --timeout-minutes $(( (TIMEOUT_REVIEW_TRIAGE + 59) / 60 )) \
+    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    2>&1 | tee -a "${ISSUES_DIR}/review-triage.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+  rm -f "$_triage_prompt_file"
+  if [[ $_tee_ec -ne 0 ]]; then
+    orchestrator_fail "tee failed writing log for review-triage (exit $_tee_ec)"
+  fi
+  if [[ $_agent_ec -ne 0 ]]; then
+    case $_agent_ec in
+      1) orchestrator_fail "review-triage failed (contract violation)" ;;
+      2) orchestrator_fail "review-triage failed (config error or timeout)" ;;
+      3) orchestrator_fail "review-triage failed (unexpected error)" ;;
+      *) orchestrator_fail "review-triage failed (unknown exit code $_agent_ec)" ;;
+    esac
+  fi
+  if [[ -f "${WORKTREE_DIR}/review-task-manifest.json" ]]; then
+    cp "${WORKTREE_DIR}/review-task-manifest.json" "${ISSUES_DIR}/review-task-manifest.json"
+    info "Review task manifest saved to ${ISSUES_DIR}/review-task-manifest.json"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
+  else
+    warn "review-task-manifest.json not found in worktree after review-triage phase"
+  fi
+  if [[ -f "${WORKTREE_DIR}/review-triage.md" ]]; then
+    cp "${WORKTREE_DIR}/review-triage.md" "${ISSUES_DIR}/review-triage.md"
+    info "Review triage summary saved to ${ISSUES_DIR}/review-triage.md"
+    _emit_artifact "review-triage" "${ISSUES_DIR}/review-triage.md" "summary"
+  fi
+  _emit_phase_done "review-triage"
   PHASE="fix-review"
 fi
 
