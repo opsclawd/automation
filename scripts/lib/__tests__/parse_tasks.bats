@@ -715,16 +715,14 @@ PLAN
   [[ "$result" == *"parsed 1 tasks but plan declares 5"* ]]
 }
 
-@test "validate_task_list: fails when no manifest and no declared count" {
+@test "validate_task_list: passes when no manifest and no declared count (prose fallback)" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Do something
 ## Task 2: Do another thing
 PLAN
   emit_event() { true; }
-  set +e
-  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
-  set -e
-  [[ "$result" == *"no task-manifest.json and no <!-- task-count:"* ]]
+  run validate_task_list "$TMPDIR_TEST/plan.md" 2
+  [[ $status -eq 0 ]]
 }
 
 @test "validate_task_list: fails on gap in task numbers" {

@@ -265,8 +265,8 @@ validate_task_list() {
       return 1
     fi
   else
-    echo "no task-manifest.json and no <!-- task-count: N --> comment — cannot verify task count"
-    return 1
+    emit_event "implement" "warn" "sanity_check.no_declared_count" \
+      "no task-manifest.json and no task-count comment — falling back to sequential/dup checks"
   fi
 
   local seq_result
