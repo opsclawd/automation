@@ -65,6 +65,7 @@ TIMEOUT_FIX=900
 TIMEOUT_PR_FIX=1200
 TIMEOUT_PLAN_REVIEW=600
 TIMEOUT_FIX_VALIDATE=600
+TIMEOUT_REVIEW_TRIAGE=300
 
 TIMEOUT_COMPOUND=600
 
@@ -166,7 +167,7 @@ _emit_phase_skipped() {
 _emit_skipped_until() {
   local target=$1
   local p found=false
-  for p in read_issue plan-design plan-write implement validate fix-validate whole-pr-review fix-review compound create-pr; do
+  for p in read_issue plan-design plan-write implement validate fix-validate whole-pr-review review-triage fix-review compound create-pr; do
     if [[ "$p" == "$target" ]]; then found=true; break; fi
     _emit_phase_skipped "$p" "resume-detected"
   done
