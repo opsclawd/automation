@@ -2,7 +2,7 @@ export const QUOTA_PATTERNS = [
   /Usage limit reached/i,
   /"statusCode":\s*429/,
   /rate_limit_exceeded/i,
-  /\b429\b/,
+  /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
 ] as const;
 
@@ -11,7 +11,7 @@ export const PROVIDER_ERROR_PATTERNS = [
   /AI_APIConnectionError/,
   /\bProviderError:/i,
   /\bAPIError:/i,
-  /\b5\d{2}\b.*error/i,
+  /\b(?:status(?:Code)?|HTTP)\D{0,12}5\d{2}\b.*error/i,
   /RESOURCE_EXHAUSTED/i,
   ...QUOTA_PATTERNS,
 ] as const;

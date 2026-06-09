@@ -1,9 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { PassThrough } from 'node:stream';
 import {
   validateRequiredFlags,
   exitCodeForOutcome,
   resolveProfileName,
   phaseToRunType,
+  streamTranscript,
   type ConfigForProfileResolution,
 } from '../run-agent.js';
 
@@ -241,6 +246,58 @@ describe('run-agent CLI logic', () => {
     it('returns pr_review for unknown phases', () => {
       expect(phaseToRunType('implement')).toBe('pr_review');
       expect(phaseToRunType('review')).toBe('pr_review');
+    });
+  });
+
+  describe('streamTranscript', () => {
+    let tmpDir: string;
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'run-agent-test-'));
+    });
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('pipes file contents to destination stream', async () => {
+      const filePath = join(tmpDir, 'stdout.log');
+      writeFileSync(filePath, 'hello from adapter');
+      const dest = new PassThrough();
+      const chunks: string[] = [];
+      dest.on('data', (chunk: string) => chunks.push(chunk));
+      await streamTranscript(filePath, dest);
+      expect(chunks.join('')).toBe('hello from adapter');
+    });
+
+    it('resolves immediately when filePath is undefined', async () => {
+      const dest = new PassThrough();
+      const chunks: string[] = [];
+      dest.on('data', (chunk: string) => chunks.push(chunk));
+      await streamTranscript(undefined, dest);
+      expect(chunks).toEqual([]);
+    });
+
+    it('resolves immediately when file does not exist', async () => {
+      const dest = new PassThrough();
+      const chunks: string[] = [];
+      dest.on('data', (chunk: string) => chunks.push(chunk));
+      await streamTranscript(join(tmpDir, 'nonexistent.log'), dest);
+      expect(chunks).toEqual([]);
+    });
+
+    it('logs non-ENOENT errors to console.error', async () => {
+      const filePath = join(tmpDir, 'unreadable.log');
+      writeFileSync(filePath, 'data');
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const dest = new PassThrough();
+      const { chmodSync } = await import('node:fs');
+      try {
+        chmodSync(filePath, 0o000);
+        await streamTranscript(filePath, dest);
+        expect(errorSpy).toHaveBeenCalled();
+      } finally {
+        chmodSync(filePath, 0o644);
+        errorSpy.mockRestore();
+      }
     });
   });
 });

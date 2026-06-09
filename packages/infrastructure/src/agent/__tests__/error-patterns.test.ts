@@ -70,14 +70,14 @@ describe('testQuotaPatterns', () => {
 
   it('matches quota pattern in unstructured text (default mode)', () => {
     const result = testQuotaPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|HTTP 429|quota.*exceed'",
     );
     expect(result).toBeTruthy();
   });
 
   it('matches 429 in unstructured bash variable assignment (default mode)', () => {
     const result = testQuotaPatterns(
-      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, statusCode 429, quota exceeded), retry up to 2 times with',
     );
     expect(result).toBeTruthy();
   });
@@ -98,6 +98,35 @@ describe('testQuotaPatterns', () => {
       'ERROR 2026-05-28T23:00:02.000Z +0ms service=llm "statusCode": 429 Too Many Requests',
     );
     expect(result).toBeTruthy();
+  });
+
+  it('matches 429 with HTTP prefix (default mode)', () => {
+    const result = testQuotaPatterns('HTTP 429 Too Many Requests');
+    expect(result).toBeTruthy();
+    expect(result).toContain('HTTP 429');
+  });
+
+  it('matches 429 with statusCode prefix (default mode)', () => {
+    const result = testQuotaPatterns('"statusCode": 429 rate limit exceeded');
+    expect(result).toBeTruthy();
+  });
+
+  it('does not match bare 429 in arbitrary text (default mode)', () => {
+    const result = testQuotaPatterns('fix: scope 429 error pattern to HTTP contexts (#245)');
+    expect(result).toBeNull();
+  });
+
+  it('does not match bare 429 in git log output (default mode)', () => {
+    const result = testQuotaPatterns(
+      'de9307c feat: add manifest-validation helper functions (#240)',
+    );
+    expect(result).toBeNull();
+  });
+
+  it('matches rate_limit_exceeded independently of HTTP status code', () => {
+    const result = testQuotaPatterns('error: rate_limit_exceeded for user');
+    expect(result).toBeTruthy();
+    expect(result).toContain('rate_limit_exceeded');
   });
 
   it('returns null when no patterns match (default mode)', () => {
@@ -193,6 +222,39 @@ describe('testProviderErrorPatterns', () => {
     const result = testProviderErrorPatterns(text);
     expect(result).toBeTruthy();
     expect(result).toContain('ProviderError');
+  });
+
+  it('matches 500 with HTTP prefix (default mode)', () => {
+    const result = testProviderErrorPatterns('HTTP 500 Internal Server Error');
+    expect(result).toBeTruthy();
+    expect(result).toContain('HTTP 500');
+  });
+
+  it('matches 503 with status prefix (default mode)', () => {
+    const result = testProviderErrorPatterns('status 503 service unavailable error');
+    expect(result).toBeTruthy();
+  });
+
+  it('does not match bare 500 in arbitrary text (default mode)', () => {
+    const result = testProviderErrorPatterns('line 500 of the file has an error');
+    expect(result).toBeNull();
+  });
+
+  it('does not match bare 503 in commit title (default mode)', () => {
+    const result = testProviderErrorPatterns('fix: handle 503 error in retry logic');
+    expect(result).toBeNull();
+  });
+
+  it('matches AI_APICallError independently of HTTP status code', () => {
+    const result = testProviderErrorPatterns('AI_APICallError: something went wrong');
+    expect(result).toBeTruthy();
+    expect(result).toContain('AI_APICallError');
+  });
+
+  it('matches RESOURCE_EXHAUSTED independently of HTTP status code', () => {
+    const result = testProviderErrorPatterns('RESOURCE_EXHAUSTED: limit reached');
+    expect(result).toBeTruthy();
+    expect(result).toContain('RESOURCE_EXHAUSTED');
   });
 
   it('returns null when no patterns match (default mode)', () => {
