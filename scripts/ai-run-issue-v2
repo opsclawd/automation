@@ -129,6 +129,9 @@ source "${REPO_ROOT}/scripts/lib/validation_result.sh"
 # shellcheck source=lib/plan-review.sh
 source "${REPO_ROOT}/scripts/lib/plan-review.sh"
 
+# shellcheck source=lib/copy-artifact.sh
+source "${REPO_ROOT}/scripts/lib/copy-artifact.sh"
+
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
 # Invariant: _emit_phase_started must always be called before _emit_phase_done
 # in the same phase block. orchestrator_fail always exits the script, so a
@@ -3330,7 +3333,9 @@ Write review-task-manifest.json and review-triage.md now."
     esac
   fi
   if [[ -f "${WORKTREE_DIR}/review-task-manifest.json" ]]; then
-    cp "${WORKTREE_DIR}/review-task-manifest.json" "${ISSUES_DIR}/review-task-manifest.json"
+    # _copy_if_distinct: ISSUES_DIR == WORKTREE_DIR here, so the agent already
+    # wrote the manifest to the destination; a plain `cp X X` errors and aborts.
+    _copy_if_distinct "${WORKTREE_DIR}/review-task-manifest.json" "${ISSUES_DIR}/review-task-manifest.json"
     info "Review task manifest saved to ${ISSUES_DIR}/review-task-manifest.json"
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
   else
@@ -3346,7 +3351,7 @@ Write review-task-manifest.json and review-triage.md now."
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
   fi
   if [[ -f "${WORKTREE_DIR}/review-triage.md" ]]; then
-    cp "${WORKTREE_DIR}/review-triage.md" "${ISSUES_DIR}/review-triage.md"
+    _copy_if_distinct "${WORKTREE_DIR}/review-triage.md" "${ISSUES_DIR}/review-triage.md"
     info "Review triage summary saved to ${ISSUES_DIR}/review-triage.md"
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-triage.md" "summary"
   else
