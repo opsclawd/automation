@@ -123,6 +123,8 @@ source "${REPO_ROOT}/scripts/lib/guard-main-checkout.sh"
 
 # shellcheck source=lib/parse_tasks_helpers.sh
 source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+# shellcheck source=lib/review-manifest-helpers.sh
+source "${REPO_ROOT}/scripts/lib/review-manifest-helpers.sh"
 # shellcheck source=lib/validation_result.sh
 source "${REPO_ROOT}/scripts/lib/validation_result.sh"
 

@@ -3,6 +3,7 @@
 setup() {
   SCRIPT_DIR="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
   source "${SCRIPT_DIR}/parse_tasks_helpers.sh"
+  source "${SCRIPT_DIR}/review-manifest-helpers.sh"
 
   TMPDIR_TEST="$(mktemp -d)"
   export ISSUES_DIR="$TMPDIR_TEST"
@@ -1047,4 +1048,72 @@ PLAN
   [[ "$result" == *"Task 2"* ]]
   [[ "$result" == *"prose tasks not in manifest"* ]]
   [[ "$result" == *"Task 3"* ]]
+}
+
+# ── _validate_review_manifest tests ────────────────────────────────────────
+
+@test "_validate_review_manifest: returns 0 for valid manifest array" {
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"R1","action":"fix","severity":"high","description":"Fix X","files":["src/a.ts"],"commit_message":"fix: X"}]
+JSON
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [[ $status -eq 0 ]]
+}
+
+@test "_validate_review_manifest: returns 1 for missing file" {
+  run _validate_review_manifest "$TMPDIR_TEST/nonexistent.json"
+  [[ $status -eq 1 ]]
+}
+
+@test "_validate_review_manifest: returns 2 for invalid JSON" {
+  echo "not json" > "$TMPDIR_TEST/review-task-manifest.json"
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [[ $status -eq 2 ]]
+}
+
+@test "_validate_review_manifest: returns 3 for non-array JSON" {
+  echo '{"key": "value"}' > "$TMPDIR_TEST/review-task-manifest.json"
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [[ $status -eq 3 ]]
+}
+
+@test "_validate_review_manifest: returns 0 for empty array" {
+  echo '[]' > "$TMPDIR_TEST/review-task-manifest.json"
+  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
+  [[ $status -eq 0 ]]
+}
+
+# ── _dedupe_manifest_ids tests ─────────────────────────────────────────────
+
+@test "_dedupe_manifest_ids: appends suffix to duplicate ids" {
+  result=$(cat << 'JSON' | _dedupe_manifest_ids
+[{"id":"C1","action":"fix"},{"id":"C1","action":"skip"}]
+JSON
+)
+  [[ $(echo "$result" | jq -r '.[0].id') == "C1" ]]
+  [[ $(echo "$result" | jq -r '.[1].id') == "C1-2" ]]
+}
+
+@test "_dedupe_manifest_ids: leaves unique ids unchanged" {
+  result=$(cat << 'JSON' | _dedupe_manifest_ids
+[{"id":"R1","action":"fix"},{"id":"R2","action":"fix"}]
+JSON
+)
+  [[ $(echo "$result" | jq -r '.[0].id') == "R1" ]]
+  [[ $(echo "$result" | jq -r '.[1].id') == "R2" ]]
+}
+
+@test "_dedupe_manifest_ids: handles triple duplicate" {
+  result=$(cat << 'JSON' | _dedupe_manifest_ids
+[{"id":"X1","action":"fix"},{"id":"X1","action":"fix"},{"id":"X1","action":"skip"}]
+JSON
+)
+  [[ $(echo "$result" | jq -r '.[0].id') == "X1" ]]
+  [[ $(echo "$result" | jq -r '.[1].id') == "X1-2" ]]
+  [[ $(echo "$result" | jq -r '.[2].id') == "X1-3" ]]
+}
+
+@test "_dedupe_manifest_ids: passes through non-array input unchanged" {
+  result=$(echo '{"key":"value"}' | _dedupe_manifest_ids)
+  [[ "$(echo "$result" | jq -r '.key')" == "value" ]]
 }
