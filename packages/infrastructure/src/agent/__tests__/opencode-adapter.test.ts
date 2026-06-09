@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -20,21 +20,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitForSessionLogDir(
-  artifactsDir: string,
-  timeoutMs = 3000,
-): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const entries = readdirSync(artifactsDir);
-    const invDir = entries.find((d) => d.startsWith('inv-'));
-    if (invDir) {
-      const slDir = join(artifactsDir, invDir, 'session-log');
-      if (existsSync(slDir)) return slDir;
-    }
-    await sleep(50);
-  }
-  return null;
+// A controlled stand-in for opencode's real session-log dir
+// (${XDG_DATA_HOME:-~/.local/share}/opencode/log). The adapter scans whatever
+// `logDir` is injected and passes it to the child via OPENCODE_SESSION_LOG_DIR,
+// so the fake fixtures write here too.
+function makeLogDir(): string {
+  return mkdtempSync(join(tmpdir(), 'opencode-log-'));
 }
 
 describe('OpenCodeAgentAdapter', () => {
@@ -324,22 +315,21 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('kills child process on quota pattern in session log', async () => {
     const cwd = makeWorktree();
+    const logDir = makeLogDir();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
+      logDir,
       quotaPollMs: 500,
     });
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(async () => {
-        const slDir = await waitForSessionLogDir(cwd);
-        if (slDir) {
-          writeFileSync(
-            join(slDir, '2026-05-28T225115.log'),
-            'INFO  2026-05-28T22:51:15.000Z +0ms service=llm msg=normal\nERROR 2026-05-28T22:51:16.000Z +0ms service=llm Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
-          );
-        }
+      timer = setTimeout(() => {
+        writeFileSync(
+          join(logDir, '2026-05-28T225115.log'),
+          'INFO  2026-05-28T22:51:15.000Z +0ms service=llm msg=normal\nERROR 2026-05-28T22:51:16.000Z +0ms service=llm Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54\n',
+        );
         resolve();
       }, 800);
     });
@@ -390,22 +380,21 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('does not kill child on quota-like strings in non-structural log content (Issue #182 regression)', async () => {
     const cwd = makeWorktree();
+    const logDir = makeLogDir();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
+      logDir,
       quotaPollMs: 500,
       timeoutMsDefault: 3000,
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(async () => {
-        const slDir = await waitForSessionLogDir(cwd);
-        if (slDir) {
-          writeFileSync(
-            join(slDir, '2026-05-28T225115.log'),
-            "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'\n",
-          );
-        }
+      timer = setTimeout(() => {
+        writeFileSync(
+          join(logDir, '2026-05-28T225115.log'),
+          "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'\n",
+        );
         resolve();
       }, 800);
     });
@@ -430,25 +419,24 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('detects quota pattern appended to existing log file', async () => {
     const cwd = makeWorktree();
+    const logDir = makeLogDir();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
+      logDir,
       quotaPollMs: 500,
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
       timer = setTimeout(async () => {
-        const slDir = await waitForSessionLogDir(cwd);
-        if (slDir) {
-          const logFile = join(slDir, '2026-05-28T230000.log');
-          writeFileSync(logFile, 'Previous session content\nNothing relevant here\n');
-          await sleep(600);
-          writeFileSync(
-            logFile,
-            'ERROR 2026-05-28T23:00:02.000Z +0ms service=llm New: "statusCode": 429 Too Many Requests\n',
-            { flag: 'a' },
-          );
-        }
+        const logFile = join(logDir, '2026-05-28T230000.log');
+        writeFileSync(logFile, 'Previous session content\nNothing relevant here\n');
+        await sleep(600);
+        writeFileSync(
+          logFile,
+          'ERROR 2026-05-28T23:00:02.000Z +0ms service=llm New: "statusCode": 429 Too Many Requests\n',
+          { flag: 'a' },
+        );
         resolve();
       }, 800);
     });
@@ -651,11 +639,19 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.outcome).toBe('success');
   });
 
-  it('detects provider error in stderr when process exits nonzero', async () => {
+  // #255: provider/quota detection comes ONLY from opencode's own session log,
+  // never the captured process stderr (the agent transcript). A nonzero exit
+  // whose provider-error JSON appears only on stderr is a plain failure — not
+  // classified provider_error — because matching the transcript false-positives
+  // on agent content. Real provider errors land in the session log (see the
+  // "session log post-exit" tests).
+  it('does NOT classify provider-error JSON on stderr as provider_error (nonzero exit) — #255', async () => {
     const cwd = makeWorktree();
+    const logDir = makeLogDir();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-nonzero-provider-error.sh'),
       artifactsDir: cwd,
+      logDir,
     });
     const r = await adapter.invoke({
       profile: AgentProfileName('opencode-frontier'),
@@ -668,8 +664,7 @@ describe('OpenCodeAgentAdapter', () => {
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
     });
     expect(r.outcome).toBe('failed');
-    expect(r.contractViolations).toContain('provider_error');
-    expect(readFileSync(r.stderrPath, 'utf-8')).toContain('PROVIDER_ERROR');
+    expect(r.contractViolations).not.toContain('provider_error');
     expect(r.exitCode).toBe(1);
   });
 
@@ -683,6 +678,7 @@ describe('OpenCodeAgentAdapter', () => {
         'fake-opencode-session-log-crofai-quota.sh',
       ),
       artifactsDir: cwd,
+      logDir: makeLogDir(),
     });
     const r = await adapter.invoke({
       profile: AgentProfileName('opencode-frontier'),
@@ -710,6 +706,7 @@ describe('OpenCodeAgentAdapter', () => {
         'fake-opencode-session-log-provider-error.sh',
       ),
       artifactsDir: cwd,
+      logDir: makeLogDir(),
     });
     const r = await adapter.invoke({
       profile: AgentProfileName('opencode-frontier'),
@@ -729,21 +726,20 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('kills child process on provider error pattern in session log (watchdog)', async () => {
     const cwd = makeWorktree();
+    const logDir = makeLogDir();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
+      logDir,
       quotaPollMs: 500,
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(async () => {
-        const slDir = await waitForSessionLogDir(cwd);
-        if (slDir) {
-          writeFileSync(
-            join(slDir, '2026-06-03T120000.log'),
-            'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=normal\nERROR 2026-06-03T12:00:01.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://crof.ai/v1/chat/completions","statusCode":500}\n',
-          );
-        }
+      timer = setTimeout(() => {
+        writeFileSync(
+          join(logDir, '2026-06-03T120000.log'),
+          'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=normal\nERROR 2026-06-03T12:00:01.000Z +0ms service=llm {"name":"AI_APICallError","url":"https://crof.ai/v1/chat/completions","statusCode":500}\n',
+        );
         resolve();
       }, 800);
     });
@@ -772,22 +768,21 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('does not kill child on normal log content in session log (no false positive)', async () => {
     const cwd = makeWorktree();
+    const logDir = makeLogDir();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
+      logDir,
       quotaPollMs: 200,
       timeoutMsDefault: 2000,
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
-      timer = setTimeout(async () => {
-        const slDir = await waitForSessionLogDir(cwd);
-        if (slDir) {
-          writeFileSync(
-            join(slDir, '2026-06-03T120000.log'),
-            'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=normal operation\nINFO  2026-06-03T12:00:01.000Z +0ms service=llm msg=processing\n',
-          );
-        }
+      timer = setTimeout(() => {
+        writeFileSync(
+          join(logDir, '2026-06-03T120000.log'),
+          'INFO  2026-06-03T12:00:00.000Z +0ms service=llm msg=normal operation\nINFO  2026-06-03T12:00:01.000Z +0ms service=llm msg=processing\n',
+        );
         resolve();
       }, 300);
     });
@@ -814,26 +809,25 @@ describe('OpenCodeAgentAdapter', () => {
 
   it('handles multi-byte characters in session log content correctly (byte offset regression)', async () => {
     const cwd = makeWorktree();
+    const logDir = makeLogDir();
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
       artifactsDir: cwd,
+      logDir,
       quotaPollMs: 500,
       timeoutMsDefault: 8000,
     });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const injectionPromise = new Promise<void>((resolve) => {
       timer = setTimeout(async () => {
-        const slDir = await waitForSessionLogDir(cwd);
-        if (slDir) {
-          const logFile = join(slDir, '2026-06-03T120000.log');
-          writeFileSync(logFile, 'INFO 2026-06-03T11:59:00.000Z 你好世界 — résumé naïve café 🚀\n');
-          await sleep(600);
-          writeFileSync(
-            logFile,
-            'ERROR 2026-06-03T12:00:04.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}\n',
-            { flag: 'a' },
-          );
-        }
+        const logFile = join(logDir, '2026-06-03T120000.log');
+        writeFileSync(logFile, 'INFO 2026-06-03T11:59:00.000Z 你好世界 — résumé naïve café 🚀\n');
+        await sleep(600);
+        writeFileSync(
+          logFile,
+          'ERROR 2026-06-03T12:00:04.000Z +0ms service=llm {"error":{"code":401,"message":"Not Enough Credits","type":"unauthorized"}}\n',
+          { flag: 'a' },
+        );
         resolve();
       }, 800);
     });
@@ -851,6 +845,110 @@ describe('OpenCodeAgentAdapter', () => {
       expect(r.outcome).toBe('failed');
       expect(readFileSync(r.stderrPath, 'utf-8')).toContain('QUOTA_EXCEEDED');
       expect(readFileSync(r.stderrPath, 'utf-8')).toContain('Not Enough Credits');
+    } finally {
+      clearTimeout(timer);
+      await injectionPromise;
+    }
+  }, 15000);
+
+  it('ignores a pre-existing quota log in the shared dir — only scans files created by this run (#198/#255)', async () => {
+    // The real log dir is shared across all repos/worktrees. A quota error logged
+    // by a PRIOR or concurrent run (present before we spawn) must not be attributed
+    // to this invocation.
+    const cwd = makeWorktree();
+    const logDir = makeLogDir();
+    writeFileSync(
+      join(logDir, '2026-06-03T010101.log'),
+      'ERROR 2026-06-03T01:01:01.000Z +0ms service=llm "statusCode": 429 Too Many Requests\n',
+    );
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+      logDir,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('success');
+    expect(r.contractViolations).not.toContain('provider_error');
+    expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
+  });
+
+  it('surfaces the session-log transcript to stdoutPath when opencode emits no stdout (#255 observability)', async () => {
+    // opencode writes its transcript to the session log, not stdout/stderr — which
+    // left phase logs at 0 bytes. The adapter must surface the session log via
+    // stdoutPath so run-agent can stream it into the orchestrator's phase log.
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(
+        __dirname,
+        '..',
+        '__fixtures__',
+        'fake-opencode-session-log-provider-error.sh',
+      ),
+      artifactsDir: cwd,
+      logDir: makeLogDir(),
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    // The session log (which the fixture wrote) is now in stdoutPath, not lost.
+    const stdoutLog = readFileSync(r.stdoutPath, 'utf-8');
+    expect(stdoutLog).toContain('service=llm');
+    expect(stdoutLog).toContain('AI_APICallError');
+  });
+
+  it('scopes detection to service=llm/provider lines — ignores quota patterns on other channels (#255)', async () => {
+    // A structured (INFO/ERROR …T) line on a non-provider channel (e.g. a tool
+    // event echoing file content) must NOT trip detection, even if it contains
+    // a quota-shaped string.
+    const cwd = makeWorktree();
+    const logDir = makeLogDir();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-slow.sh'),
+      artifactsDir: cwd,
+      logDir,
+      quotaPollMs: 200,
+      timeoutMsDefault: 2000,
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const injectionPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        writeFileSync(
+          join(logDir, '2026-06-03T120000.log'),
+          'ERROR 2026-06-03T12:00:00.000Z +0ms service=tool.registry read "statusCode": 429 in fixture file\n',
+        );
+        resolve();
+      }, 300);
+    });
+    try {
+      const r = await adapter.invoke({
+        profile: AgentProfileName('opencode-frontier'),
+        promptPath: '/dev/null',
+        expectedArtifacts: [],
+        cwd,
+        runId: '00000000-0000-0000-0000-000000000001',
+        repoId: 'r',
+        phaseId: 'plan-design',
+        startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+      });
+      expect(r.outcome).toBe('timeout');
+      expect(r.contractViolations).not.toContain('provider_error');
+      expect(readFileSync(r.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
     } finally {
       clearTimeout(timer);
       await injectionPromise;
