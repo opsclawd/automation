@@ -1,17 +1,29 @@
 import { execa } from 'execa';
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 
+// opencode emits provider/LLM diagnostics on these service channels. Quota /
+// provider-error detection is scoped to these lines so it keys on opencode's OWN
+// runtime responses (real 429s, auth failures) and never on agent transcript
+// content (e.g. a file the agent read, or a `git log` line containing "429").
+const PROVIDER_LOG_SERVICES = /service=(?:llm|provider)\b/;
+
 export interface OpenCodeAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
   timeoutMsDefault?: number;
   quotaPollMs?: number;
+  // Override the directory scanned for opencode's session log. Defaults to
+  // opencode's real location, ${XDG_DATA_HOME:-~/.local/share}/opencode/log —
+  // the dir opencode actually writes to (it does NOT honor OPENCODE_SESSION_LOG_DIR).
+  // Tests inject a temp dir here.
+  logDir?: string;
 }
 
 export class OpenCodeAgentAdapter implements AgentPort {
@@ -30,8 +42,16 @@ export class OpenCodeAgentAdapter implements AgentPort {
     mkdirSync(invocationDir, { recursive: true });
     const stdoutPath = join(invocationDir, 'stdout.log');
     const stderrPath = join(invocationDir, 'stderr.log');
-    const sessionLogDir = join(invocationDir, 'session-log');
+    // opencode writes its session log to ${XDG_DATA_HOME:-~/.local/share}/opencode/log
+    // and ignores OPENCODE_SESSION_LOG_DIR (verified: 0 refs in the binary). Scan the
+    // real location. Redirecting XDG_DATA_HOME is NOT an option — it would orphan
+    // opencode's auth.json / opencode.db (both live under the data home). See #255.
+    const xdgDataHome = process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share');
+    const sessionLogDir = this.opts.logDir ?? join(xdgDataHome, 'opencode', 'log');
     mkdirSync(sessionLogDir, { recursive: true });
+    // Snapshot pre-existing logs so we only attribute files created by THIS run —
+    // the real log dir is shared across all repos/worktrees (the #198 cross-talk source).
+    const preexistingLogs = this.snapshotLogFiles(sessionLogDir);
 
     const start = Date.now();
     let outcome: AgentInvocationResult['outcome'] = 'success';
@@ -62,6 +82,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
         const modelArg = request.provider ? `${request.provider}/${request.model}` : request.model;
         args.push('--model', modelArg);
       }
+      // OPENCODE_SESSION_LOG_DIR is a no-op for real opencode (it derives the log
+      // dir from XDG_DATA_HOME). We still pass it so the test fixtures — which
+      // stand in for opencode and DO honor it — write to the dir we scan. In
+      // production it is harmless: opencode writes to sessionLogDir anyway.
       const childEnv: Record<string, string> = {
         OPENCODE_SESSION_LOG_DIR: sessionLogDir,
       };
@@ -77,6 +101,8 @@ export class OpenCodeAgentAdapter implements AgentPort {
       watchdogInterval = this.startWatchdog(
         child as ReturnType<typeof execa>,
         sessionLogDir,
+        preexistingLogs,
+        request.cwd,
         (match: string, type: 'quota' | 'provider') => {
           watchdogKilled = true;
           watchdogKilledType = type;
@@ -87,7 +113,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       const r = await child;
       if (watchdogInterval !== null) clearInterval(watchdogInterval);
 
-      postExit = this.scanSessionLogsPostExit(sessionLogDir);
+      postExit = this.scanSessionLogsPostExit(sessionLogDir, preexistingLogs, request.cwd);
 
       stdout = r.stdout ?? '';
       stderr = r.stderr ?? '';
@@ -146,20 +172,15 @@ export class OpenCodeAgentAdapter implements AgentPort {
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
-      // Non-zero exit: the run has already failed, so scanning raw stderr only
-      // refines the classification to provider_error (to drive model fallback).
-      // A false match here can't discard good work, so we keep the broader scan
-      // (preserves the #183 fallback path). The structuralOnly guard is applied
-      // only to the success branch below, where a false match would throw away a
-      // completed task (#250).
-      const stderrProviderMatch = testProviderErrorPatterns(stderr);
-      const postExitProviderMatch = postExit?.providerMatch ?? null;
-      const providerMatch = stderrProviderMatch || postExitProviderMatch;
+      // Provider/quota detection comes ONLY from opencode's own session log
+      // (postExit), never from the captured process stderr — stderr is the agent
+      // transcript and matching it false-positives on transcript content (#250,
+      // #255). A match here refines the classification to provider_error to drive
+      // model fallback.
+      const providerMatch = postExit?.providerMatch ?? null;
       if (providerMatch) {
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const stderrQuotaLine = testQuotaPatterns(stderr);
-        const postExitQuotaLine = postExitProviderMatch && testQuotaPatterns(postExitProviderMatch);
-        const quotaLine = stderrQuotaLine || postExitQuotaLine;
+        const quotaLine = testQuotaPatterns(providerMatch);
         if (quotaLine) {
           stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
         } else {
@@ -210,40 +231,74 @@ export class OpenCodeAgentAdapter implements AgentPort {
     return ret;
   }
 
-  private scanSessionLogsPostExit(sessionLogDir: string): {
+  // Filenames of *.log present in the shared log dir before we spawned opencode.
+  private snapshotLogFiles(dir: string): Set<string> {
+    try {
+      return new Set(readdirSync(dir).filter((f) => f.endsWith('.log')));
+    } catch {
+      return new Set();
+    }
+  }
+
+  // Log files created by THIS invocation: new since the pre-spawn snapshot. The
+  // log dir is shared across all repos/worktrees, so when concurrent invocations
+  // create several, prefer the ones whose content references this invocation's
+  // cwd (the #198 cross-talk disambiguator). If none match (e.g. opencode logged
+  // a different cwd — see #249), fall back to all new files rather than attributing
+  // to nothing.
+  private candidateLogFiles(dir: string, preexisting: Set<string>, cwd: string): string[] {
+    let names: string[];
+    try {
+      names = readdirSync(dir).filter((f) => f.endsWith('.log') && !preexisting.has(f));
+    } catch {
+      return [];
+    }
+    if (names.length <= 1) return names.map((f) => join(dir, f));
+    const cwdMatches = names.filter((f) => {
+      try {
+        return readFileSync(join(dir, f), 'utf-8').includes(cwd);
+      } catch {
+        return false;
+      }
+    });
+    return (cwdMatches.length > 0 ? cwdMatches : names).map((f) => join(dir, f));
+  }
+
+  // Restrict scanned text to opencode's provider/LLM diagnostic lines so detection
+  // keys on opencode's own runtime responses (real 429s, auth failures), never on
+  // agent transcript content that happens to contain error-shaped strings (#255).
+  private static providerLines(content: string): string {
+    return content
+      .split('\n')
+      .filter((l) => PROVIDER_LOG_SERVICES.test(l))
+      .join('\n');
+  }
+
+  private scanSessionLogsPostExit(
+    sessionLogDir: string,
+    preexisting: Set<string>,
+    cwd: string,
+  ): {
     quotaMatch: string | null;
     providerMatch: string | null;
   } {
     let quotaMatch: string | null = null;
     let providerMatch: string | null = null;
 
-    try {
-      if (!statSync(sessionLogDir).isDirectory()) return { quotaMatch: null, providerMatch: null };
-    } catch {
-      return { quotaMatch: null, providerMatch: null };
-    }
-
-    try {
-      const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
-      for (const f of files) {
-        try {
-          const logPath = join(sessionLogDir, f);
-          const buf = readFileSync(logPath);
-          const newContent = buf.toString('utf-8');
-          if (!newContent) continue;
-          if (!quotaMatch) {
-            quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
-          }
-          if (!providerMatch) {
-            providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
-          }
-          if (quotaMatch && providerMatch) break;
-        } catch {
-          // File might be deleted between stat and read — ignore
+    for (const logPath of this.candidateLogFiles(sessionLogDir, preexisting, cwd)) {
+      try {
+        const content = OpenCodeAgentAdapter.providerLines(readFileSync(logPath, 'utf-8'));
+        if (!content) continue;
+        if (!quotaMatch) {
+          quotaMatch = testQuotaPatterns(content, { structuralOnly: true });
         }
+        if (!providerMatch) {
+          providerMatch = testProviderErrorPatterns(content, { structuralOnly: true });
+        }
+        if (quotaMatch && providerMatch) break;
+      } catch {
+        // File might be deleted between readdir and read — ignore
       }
-    } catch {
-      // Directory might be deleted — ignore
     }
 
     return { quotaMatch, providerMatch };
@@ -252,46 +307,42 @@ export class OpenCodeAgentAdapter implements AgentPort {
   private startWatchdog(
     child: ReturnType<typeof execa>,
     sessionLogDir: string,
+    preexisting: Set<string>,
+    cwd: string,
     onKilled: (match: string, type: 'quota' | 'provider') => void,
   ): NodeJS.Timeout | null {
     const pollMs = this.opts.quotaPollMs ?? 2000;
     const logOffsets = new Map<string, number>();
 
     return setInterval(() => {
-      try {
-        const files = readdirSync(sessionLogDir).filter((f) => f.endsWith('.log'));
-        if (files.length === 0) return;
+      for (const logPath of this.candidateLogFiles(sessionLogDir, preexisting, cwd)) {
+        try {
+          const prevOffset = logOffsets.get(logPath) ?? 0;
+          const size = statSync(logPath).size;
+          if (size <= prevOffset) continue;
 
-        for (const f of files) {
-          try {
-            const logPath = join(sessionLogDir, f);
+          const buf = readFileSync(logPath);
+          logOffsets.set(logPath, buf.length);
+          const content = OpenCodeAgentAdapter.providerLines(
+            buf.subarray(prevOffset).toString('utf-8'),
+          );
+          if (!content) continue;
 
-            const prevOffset = logOffsets.get(logPath) ?? 0;
-            const size = statSync(logPath).size;
-            if (size <= prevOffset) continue;
-
-            const buf = readFileSync(logPath);
-            const newContent = buf.subarray(prevOffset).toString('utf-8');
-            logOffsets.set(logPath, buf.length);
-
-            const quotaMatch = testQuotaPatterns(newContent, { structuralOnly: true });
-            if (quotaMatch) {
-              onKilled(quotaMatch, 'quota');
-              child.kill('SIGKILL');
-              return;
-            }
-            const providerMatch = testProviderErrorPatterns(newContent, { structuralOnly: true });
-            if (providerMatch) {
-              onKilled(providerMatch, 'provider');
-              child.kill('SIGKILL');
-              return;
-            }
-          } catch {
-            // File might be deleted between stat and read — ignore
+          const quotaMatch = testQuotaPatterns(content, { structuralOnly: true });
+          if (quotaMatch) {
+            onKilled(quotaMatch, 'quota');
+            child.kill('SIGKILL');
+            return;
           }
+          const providerMatch = testProviderErrorPatterns(content, { structuralOnly: true });
+          if (providerMatch) {
+            onKilled(providerMatch, 'provider');
+            child.kill('SIGKILL');
+            return;
+          }
+        } catch {
+          // File might be deleted between readdir and read — ignore
         }
-      } catch {
-        // Directory might be deleted — ignore
       }
     }, pollMs);
   }
