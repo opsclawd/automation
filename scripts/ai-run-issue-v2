@@ -1938,6 +1938,8 @@ Files changed (see git diff ${base_sha}..${head_sha})
 ## Your Job
 Run: git diff ${base_sha}..${head_sha}
 
+**If the diff is empty** (base and head are the same SHA, or no files changed), this task made no code changes — it was verification-only. Write QUALITY_PASS immediately. Do NOT run tests, grep files, or explore the codebase. Just write the two output files and stop.
+
 First, check if the diff contains code changes (*.ts, *.tsx, *.js, *.jsx, *.py, etc.) or is documentation-only (*.md, *.txt, *.rst, etc.). Then review accordingly:
 
 **If the diff contains code changes**, review for:
