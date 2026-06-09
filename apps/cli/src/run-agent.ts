@@ -51,6 +51,14 @@ export function exitCodeForOutcome(
     // cancelled_by_orchestrator and maps to exit 2 (timeout) so the
     // Bash orchestrator_fail path fires as designed.
     if (result.contractViolations.includes('cancelled_by_orchestrator')) return 2;
+    // Advisory: provider/quota error only — not a hard failure.
+    // The orchestrator treats exit 4 as warn-and-continue, letting
+    // existing work-existence checks (NO_OUTPUT, missing commit) decide.
+    if (
+      result.contractViolations.includes('provider_error') &&
+      result.contractViolations.length === 1
+    )
+      return 4;
     // All other runtime failures map to exit 3 (unexpected error).
     return 3;
   }
@@ -129,6 +137,7 @@ function findRepoRoot(dir: string): string {
  *   1 — contract violation (M4-04 validateAgentContract failed or M4-05 extractResult failed)
  *   2 — config error (unknown phase, unknown profile, missing required flags) or timeout
  *   3 — adapter spawn failure (unexpected error)
+ *   4 — advisory: provider/quota error only (warn-and-continue, not a hard failure)
  *
  * Usage (from Bash):
  *   NODE_OPTIONS='--conditions=development' pnpm --filter @ai-sdlc/cli exec tsx apps/cli/src/run-agent.ts \

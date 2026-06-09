@@ -547,6 +547,32 @@ validate_review_artifacts() {
 # For non-infra failures, re-runs once immediately (backward compatible).
 # Uses ISSUES_DIR and WORKTREE_DIR from caller scope (dynamic bash globals
 # set by the orchestrator's main loop).
+# REVIEWER_PROVIDER_ERROR_PATTERNS: regex patterns matching provider/quota
+# errors in reviewer logs and adapter stderr artifacts.
+#
+# Pattern sources:
+#   AI_APICallError, AI_APIConnectionError, ProviderError:, APIError:
+#     — Vercel AI SDK / provider adapter error class names
+#   \bRESOURCE_EXHAUSTED\b
+#     — Google Cloud / Gemini quota exhaustion (gRPC status)
+#   HTTP[^ ]* 429, status.{0,10}429, 429 Too Many
+#     — Standard HTTP rate-limit responses
+#   rate_limit_exceeded
+#     — OpenAI / Anthropic rate-limit error body
+#   Usage limit reached
+#     — Provider dashboard / account-level usage caps
+#
+# These patterns are intentionally broad because they are the SECONDARY
+# detection path. The PRIMARY detection is the adapter-side watchdog
+# (opencode-adapter.ts) which scopes to service=llm|provider session-log
+# lines and prefixes matched stderr with PROVIDER_ERROR:/QUOTA_EXCEEDED:.
+# The bash-side patterns catch cases where adapter artifacts are missing
+# (e.g. adapter crashed before writing stderr.log).
+#
+# Advisory policy (#257): even when these patterns match, the orchestrator
+# must NOT hard-fail. The retry-with-backoff path attempts recovery; if
+# retries are exhausted, the run continues and downstream artifact
+# validation decides the outcome.
 REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|AI_APIConnectionError|ProviderError:|APIError:|\bRESOURCE_EXHAUSTED\b|HTTP[^ ]* 429|status.{0,10}429|429 Too Many|rate_limit_exceeded|Usage limit reached'
 
 # check_adapter_stderr_for_infra_error: grep all inv-*/stderr.log files in
@@ -574,6 +600,10 @@ check_adapter_stderr_for_infra_error() {
 }
 
 rerun_reviewer_with_retry() {
+  # Caller MUST have downstream artifact validation after this function returns 0
+  # when infra-error retries are exhausted — the return-0 policy means the caller
+  # skips its orchestrator_fail fallback. See advisory policy (#257) at the bottom
+  # of this function.
   local reviewer_type="$1"  # "spec" or "quality"
   local task_n="$2"
   local task_title="$3"
@@ -631,8 +661,14 @@ rerun_reviewer_with_retry() {
       attempt=$((attempt + 1))
       delay=60
     done
-    log "  ${reviewer_type}-review-task-${task_n} exhausted infra-error retries"
-    return 1
+    log "  ${reviewer_type}-review-task-${task_n} exhausted infra-error retries — advisory: letting downstream validation decide"
+    warn "${reviewer_type}-review-task-${task_n}: provider error retries exhausted, continuing (downstream validation will judge)"
+    # Advisory policy (#257): provider-error detection must never be the sole
+    # cause of a stopped run. Returning 0 lets the caller skip its
+    # orchestrator_fail fallback. Downstream artifact validation
+    # (validate_review_artifacts → resolve_result) will catch the missing
+    # artifacts and fail via the normal contract-violation path if needed.
+    return 0
   else
     # Non-infra failure: single immediate re-run (backward compatible)
     log "  Non-infra failure, re-running once immediately"
@@ -835,6 +871,7 @@ Write the result now."
       1) warn "extract-${phase} failed (contract violation)" ;;
       2) warn "extract-${phase} failed (config error or timeout)" ;;
       3) warn "extract-${phase} failed (unexpected error)" ;;
+      4) warn "extract-${phase} had a provider error" ;;
       *) warn "extract-${phase} failed (unknown exit code $_agent_ec)" ;;
     esac
     if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/extract-${phase}.log" 2>/dev/null; then
@@ -1328,6 +1365,7 @@ Write design.md now."
       1) orchestrator_fail "plan-design failed (contract violation)" ;;
       2) orchestrator_fail "plan-design failed (config error or timeout)" ;;
       3) orchestrator_fail "plan-design failed (unexpected error)" ;;
+      4) warn "plan-design had a provider error — checking for design doc..." ;;
       *) orchestrator_fail "plan-design failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -1496,6 +1534,7 @@ Write plan.md and task-manifest.json now."
       1) orchestrator_fail "plan-write failed (contract violation)" ;;
       2) orchestrator_fail "plan-write failed (config error or timeout)" ;;
       3) orchestrator_fail "plan-write failed (unexpected error)" ;;
+      4) warn "plan-write had a provider error — checking for plan file..." ;;
       *) orchestrator_fail "plan-write failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -1744,6 +1783,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           1) orchestrator_fail "implement-task-${task_n} failed (contract violation)" ;;
           2) orchestrator_fail "implement-task-${task_n} failed (config error or timeout)" ;;
           3) orchestrator_fail "implement-task-${task_n} failed (unexpected error)" ;;
+          4) warn "implement-task-${task_n} had a provider error — checking for work..." ;;
           *) orchestrator_fail "implement-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -1895,6 +1935,7 @@ ${history_excerpt}"
         case $_agent_ec in
           1) warn "spec-review-task-${task_n} exited with code 1 (contract violation) — validation will attempt retry" ;;
           3) warn "spec-review-task-${task_n} exited with code 3 (unexpected error) — validation will attempt retry" ;;
+          4) warn "spec-review-task-${task_n} had a provider error — validation will attempt retry" ;;
           *) orchestrator_fail "spec-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -2057,6 +2098,7 @@ ${history_excerpt}"
         case $_agent_ec in
           1) warn "quality-review-task-${task_n} exited with code 1 (contract violation) — validation will attempt retry" ;;
           3) warn "quality-review-task-${task_n} exited with code 3 (unexpected error) — validation will attempt retry" ;;
+          4) warn "quality-review-task-${task_n} had a provider error — validation will attempt retry" ;;
           *) orchestrator_fail "quality-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -2168,6 +2210,7 @@ ${history_excerpt}"
           1) orchestrator_fail "fix-review-task-${task_n} failed (contract violation)" ;;
           2) orchestrator_fail "fix-review-task-${task_n} failed (config error or timeout)" ;;
           3) orchestrator_fail "fix-review-task-${task_n} failed (unexpected error)" ;;
+          4) warn "fix-review-task-${task_n} had a provider error — checking for work..." ;;
           *) orchestrator_fail "fix-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -3192,6 +3235,7 @@ Write code-review.md now."
       1) orchestrator_fail "review failed (contract violation)" ;;
       2) orchestrator_fail "review failed (config error or timeout)" ;;
       3) orchestrator_fail "review failed (unexpected error)" ;;
+      4) warn "review had a provider error — checking for review artifacts..." ;;
       *) orchestrator_fail "review failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -3329,6 +3373,7 @@ Write review-task-manifest.json and review-triage.md now."
       1) orchestrator_fail "review-triage failed (contract violation)" ;;
       2) orchestrator_fail "review-triage failed (config error or timeout)" ;;
       3) orchestrator_fail "review-triage failed (unexpected error)" ;;
+      4) warn "review-triage had a provider error — checking for triage output..." ;;
       *) orchestrator_fail "review-triage failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -3525,6 +3570,7 @@ Start now."
         1) orchestrator_fail "fix-review failed (contract violation)" ;;
         2) orchestrator_fail "fix-review failed (config error or timeout)" ;;
         3) orchestrator_fail "fix-review failed (unexpected error)" ;;
+        4) warn "fix-review had a provider error — checking for work..." ;;
         *) orchestrator_fail "fix-review failed (unknown exit code $_agent_ec)" ;;
       esac
     fi
@@ -3682,6 +3728,7 @@ Write code-review.md and review-findings-status.txt now."
         1) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (contract violation)" ;;
         2) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (config error or timeout)" ;;
         3) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unexpected error)" ;;
+        4) warn "re-review-${FIX_LOOP_COUNT} had a provider error — checking for review artifacts..." ;;
         *) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unknown exit code $_agent_ec)" ;;
       esac
     fi
@@ -3833,6 +3880,7 @@ Start now."
           1) orchestrator_fail "compound failed (contract violation)" ;;
           2) orchestrator_fail "compound failed (config error or timeout)" ;;
           3) orchestrator_fail "compound failed (unexpected error)" ;;
+          4) warn "compound had a provider error — checking for draft..." ;;
           *) orchestrator_fail "compound failed (unknown exit code $_agent_ec)" ;;
         esac
       fi

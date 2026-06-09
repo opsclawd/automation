@@ -83,6 +83,24 @@ describe('run-agent CLI logic', () => {
       ).toBe(3);
     });
 
+    it('returns 4 for failed with only provider_error (advisory)', () => {
+      expect(
+        exitCodeForOutcome({
+          outcome: 'failed',
+          contractViolations: ['provider_error'],
+        }),
+      ).toBe(4);
+    });
+
+    it('returns 3 for failed with provider_error and other violations', () => {
+      expect(
+        exitCodeForOutcome({
+          outcome: 'failed',
+          contractViolations: ['provider_error', 'no_output'],
+        }),
+      ).toBe(3);
+    });
+
     it('returns 3 for arbitrary unknown outcome', () => {
       expect(exitCodeForOutcome({ outcome: 'nonexistent-outcome', contractViolations: [] })).toBe(
         3,
