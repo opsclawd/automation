@@ -70,14 +70,14 @@ describe('testQuotaPatterns', () => {
 
   it('matches quota pattern in unstructured text (default mode)', () => {
     const result = testQuotaPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|HTTP 429|quota.*exceed'",
     );
     expect(result).toBeTruthy();
   });
 
   it('matches 429 in unstructured bash variable assignment (default mode)', () => {
     const result = testQuotaPatterns(
-      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, 429, quota exceeded), retry up to 2 times with',
+      'QUOTA_EXCEEDED: RESOURCE_EXHAUSTED, statusCode 429, quota exceeded), retry up to 2 times with',
     );
     expect(result).toBeTruthy();
   });
