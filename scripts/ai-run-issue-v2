@@ -3198,6 +3198,7 @@ Write code-review.md now."
       1) orchestrator_fail "review failed (contract violation)" ;;
       2) orchestrator_fail "review failed (config error or timeout)" ;;
       3) orchestrator_fail "review failed (unexpected error)" ;;
+      4) warn "review had a provider error — checking for review artifacts..." ;;
       *) orchestrator_fail "review failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -3335,6 +3336,7 @@ Write review-task-manifest.json and review-triage.md now."
       1) orchestrator_fail "review-triage failed (contract violation)" ;;
       2) orchestrator_fail "review-triage failed (config error or timeout)" ;;
       3) orchestrator_fail "review-triage failed (unexpected error)" ;;
+      4) warn "review-triage had a provider error — checking for triage output..." ;;
       *) orchestrator_fail "review-triage failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -3689,6 +3691,7 @@ Write code-review.md and review-findings-status.txt now."
         1) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (contract violation)" ;;
         2) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (config error or timeout)" ;;
         3) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unexpected error)" ;;
+        4) warn "re-review-${FIX_LOOP_COUNT} had a provider error — checking for review artifacts..." ;;
         *) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unknown exit code $_agent_ec)" ;;
       esac
     fi
@@ -3840,6 +3843,7 @@ Start now."
           1) orchestrator_fail "compound failed (contract violation)" ;;
           2) orchestrator_fail "compound failed (config error or timeout)" ;;
           3) orchestrator_fail "compound failed (unexpected error)" ;;
+          4) warn "compound had a provider error — checking for draft..." ;;
           *) orchestrator_fail "compound failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
