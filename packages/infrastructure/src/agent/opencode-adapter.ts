@@ -167,29 +167,20 @@ export class OpenCodeAgentAdapter implements AgentPort {
         }
       }
     } else if (outcome === 'success') {
-      // The agent exited 0 (success). Provider/quota detection here trusts ONLY
-      // opencode's own session-log files (postExit) — NEVER the captured process
-      // stderr. Process stderr is the agent TUI transcript, and a task that works
-      // on error-handling code/fixtures legitimately prints provider-error-shaped
-      // strings — both unstructured ("429" in a git log) and structurally valid
-      // (`ERROR …T… AI_APICallError …`) — so scanning it discards completed work
-      // (#250). The session log is opencode's runtime diagnostic stream, physically
-      // separate from agent content, so it remains authoritative. A real provider
-      // error that surfaces only on stderr (not the session log) is given up here;
-      // the NO_OUTPUT heuristic below and downstream validation are the safety net.
-      const providerMatch = !watchdogKilled && postExit ? postExit.providerMatch : null;
-      if (providerMatch) {
-        outcome = 'failed';
-        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(providerMatch);
-        if (quotaLine) {
-          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
-          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
-        } else {
-          stderr = `PROVIDER_ERROR: ${providerMatch}`;
-          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
-        }
-      } else if (
+      // The agent exited 0 (success). We deliberately do NOT scan the captured
+      // process stderr for provider/quota errors here: stderr is the agent TUI
+      // transcript, and a task that works on error-handling code/fixtures
+      // legitimately prints provider-error-shaped strings — both unstructured
+      // ("429" in a `git log`) and structurally valid (`ERROR …T… AI_APICallError`)
+      // — so scanning it discards completed work (#250).
+      //
+      // Real provider/quota errors are detected upstream from opencode's own
+      // session-log files (scanSessionLogsPostExit → watchdogKilled, see lines
+      // ~97-123); if one fired we'd be in the watchdogKilled branch, not here.
+      // A provider error that surfaces ONLY on stderr (not the session log) is
+      // given up; the NO_OUTPUT heuristic below and downstream validation are the
+      // safety net.
+      if (
         request.phaseId.startsWith('implement') &&
         request.startCommitSha &&
         endCommitSha === request.startCommitSha &&
