@@ -7,7 +7,7 @@
     "skip": [],
     "reviewFix": { "maxIterations": 10 },
     "implement": { "maxIterations": 5 },
-    "wholePrFix": { "maxIterations": 10 },
+    "wholePrFix": { "maxIterations": 10, "maxRetriesPerTask": 3, "maxTotalTasks": 50 },
     "fixValidate": { "maxIterations": 2 },
     "planReview": { "maxIterations": 5, "enabled": true }
   },
