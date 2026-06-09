@@ -1898,6 +1898,7 @@ ${history_excerpt}"
         case $_agent_ec in
           1) warn "spec-review-task-${task_n} exited with code 1 (contract violation) — validation will attempt retry" ;;
           3) warn "spec-review-task-${task_n} exited with code 3 (unexpected error) — validation will attempt retry" ;;
+          4) warn "spec-review-task-${task_n} had a provider error — validation will attempt retry" ;;
           *) orchestrator_fail "spec-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -2060,6 +2061,7 @@ ${history_excerpt}"
         case $_agent_ec in
           1) warn "quality-review-task-${task_n} exited with code 1 (contract violation) — validation will attempt retry" ;;
           3) warn "quality-review-task-${task_n} exited with code 3 (unexpected error) — validation will attempt retry" ;;
+          4) warn "quality-review-task-${task_n} had a provider error — validation will attempt retry" ;;
           *) orchestrator_fail "quality-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -2171,6 +2173,7 @@ ${history_excerpt}"
           1) orchestrator_fail "fix-review-task-${task_n} failed (contract violation)" ;;
           2) orchestrator_fail "fix-review-task-${task_n} failed (config error or timeout)" ;;
           3) orchestrator_fail "fix-review-task-${task_n} failed (unexpected error)" ;;
+          4) warn "fix-review-task-${task_n} had a provider error — checking for work..." ;;
           *) orchestrator_fail "fix-review-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
       fi
@@ -3528,6 +3531,7 @@ Start now."
         1) orchestrator_fail "fix-review failed (contract violation)" ;;
         2) orchestrator_fail "fix-review failed (config error or timeout)" ;;
         3) orchestrator_fail "fix-review failed (unexpected error)" ;;
+        4) warn "fix-review had a provider error — checking for work..." ;;
         *) orchestrator_fail "fix-review failed (unknown exit code $_agent_ec)" ;;
       esac
     fi
