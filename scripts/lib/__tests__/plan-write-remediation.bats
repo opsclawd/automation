@@ -323,3 +323,82 @@ teardown() {
   run grep -cE '^[[:space:]]+_remediate_plan_write_violations$' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [[ "$output" -eq 1 ]]
 }
+
+@test "_detect_ignored_misplaced_artifact moves design.md from subdir" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'design.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Misplaced Design" > "${WORKTREE_DIR}/docs/design.md"
+  run _detect_ignored_misplaced_artifact "design.md" "plan-design"
+  [[ "$status" -eq 0 ]]
+  [[ -f "${WORKTREE_DIR}/design.md" ]]
+  [[ ! -f "${WORKTREE_DIR}/docs/design.md" ]]
+  run cat "${WORKTREE_DIR}/design.md"
+  [[ "$output" == "# Misplaced Design" ]]
+}
+
+@test "_detect_ignored_misplaced_artifact no-ops when artifact already exists" {
+  git -C "$WORKTREE_DIR" init
+  git -C "$WORKTREE_DIR" config user.email "test@test.com"
+  git -C "$WORKTREE_DIR" config user.name "Test"
+  mkdir -p "${WORKTREE_DIR}/.git/info"
+  echo 'design.md' >> "${WORKTREE_DIR}/.git/info/exclude"
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Existing" > "${WORKTREE_DIR}/design.md"
+  echo "# Misplaced" > "${WORKTREE_DIR}/docs/design.md"
+  run _detect_ignored_misplaced_artifact "design.md" "plan-design"
+  [[ "$status" -eq 1 ]]
+  run cat "${WORKTREE_DIR}/design.md"
+  [[ "$output" == "# Existing" ]]
+}
+
+@test "_remediate_misplaced_artifact moves design.md from worktree violation" {
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Design content" > "${WORKTREE_DIR}/docs/design-draft.md"
+  _main_checkout_violations=""
+  _worktree_violations="docs/design-draft.md "
+  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _remediate_misplaced_artifact "design.md" "design" "plan-design"
+  [[ -z "$_all_violations" ]]
+  [[ -f "${WORKTREE_DIR}/design.md" ]]
+  [[ ! -f "${WORKTREE_DIR}/docs/design-draft.md" ]]
+}
+
+@test "_remediate_misplaced_artifact does not remediate when main checkout has violations" {
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Design" > "${WORKTREE_DIR}/docs/design.md"
+  _main_checkout_violations="something.ts "
+  _worktree_violations="docs/design.md "
+  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _remediate_misplaced_artifact "design.md" "design" "plan-design"
+  [[ -n "$_all_violations" ]]
+  [[ ! -f "${WORKTREE_DIR}/design.md" ]]
+}
+
+@test "_remediate_misplaced_artifact does not remediate multiple violations" {
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# A" > "${WORKTREE_DIR}/docs/design-a.md"
+  echo "# B" > "${WORKTREE_DIR}/docs/design-b.md"
+  _main_checkout_violations=""
+  _worktree_violations="docs/design-a.md docs/design-b.md "
+  _all_violations="${_worktree_violations}"
+  _remediate_misplaced_artifact "design.md" "design" "plan-design"
+  [[ -n "$_all_violations" ]]
+  [[ ! -f "${WORKTREE_DIR}/design.md" ]]
+}
+
+@test "_remediate_misplaced_artifact does not remediate when design.md already exists" {
+  mkdir -p "${WORKTREE_DIR}/docs"
+  echo "# Existing" > "${WORKTREE_DIR}/design.md"
+  echo "# Stray" > "${WORKTREE_DIR}/docs/stray-design.md"
+  _main_checkout_violations=""
+  _worktree_violations="docs/stray-design.md "
+  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _remediate_misplaced_artifact "design.md" "design" "plan-design"
+  [[ -n "$_all_violations" ]]
+  run cat "${WORKTREE_DIR}/design.md"
+  [[ "$output" == "# Existing" ]]
+}
