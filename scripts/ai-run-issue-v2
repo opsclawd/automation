@@ -3339,12 +3339,14 @@ Write review-task-manifest.json and review-triage.md now."
     cp "${WORKTREE_DIR}/review-task-manifest.json" "${ISSUES_DIR}/review-task-manifest.json"
     info "Review task manifest saved to ${ISSUES_DIR}/review-task-manifest.json"
     _emit_artifact "review-triage" "${ISSUES_DIR}/review-task-manifest.json" "manifest"
+    # Validate the manifest is a JSON array; degrade if not
+    if ! jq -e 'type == "array"' "${ISSUES_DIR}/review-task-manifest.json" >/dev/null 2>&1; then
+      warn "review-task-manifest.json is not a valid JSON array; treating as empty"
+      echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
+      emit_event "review-triage" "warn" "manifest.invalid" \
+        "review-triage manifest was not a valid JSON array; degraded to empty" status="degraded"
+    fi
   else
-    # TODO(#240): once fix-review consumes the manifest, tighten this back to a
-    # hard failure (and add a `jq -e 'type == "array"'` validity check, mirroring
-    # plan-write's read_manifest fallback at the task-manifest.json site). Until a
-    # consumer exists, a missing manifest must NOT block a PR that already passed
-    # review/validation — degrade to an empty manifest and continue.
     warn "review-task-manifest.json not produced by review-triage; writing empty manifest"
     echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
     emit_event "review-triage" "warn" "manifest.missing" \
