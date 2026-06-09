@@ -3419,43 +3419,6 @@ _revalidate_is_green() {
   ! grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "$file"
 }
 
-_validate_review_manifest() {
-  local manifest_path="$1"
-  if [[ ! -f "$manifest_path" ]]; then
-    return 1
-  fi
-  if ! jq -e '.' "$manifest_path" >/dev/null 2>&1; then
-    echo "review-task-manifest.json is not valid JSON" >&2
-    return 2
-  fi
-  if ! jq -e 'type == "array"' "$manifest_path" >/dev/null 2>&1; then
-    echo "review-task-manifest.json is not a JSON array" >&2
-    return 3
-  fi
-  jq '.' "$manifest_path"
-  return 0
-}
-
-_dedupe_manifest_ids() {
-  jq '
-    if type != "array" then . else
-      . as $tasks |
-      reduce range(0; ($tasks | length)) as $i (
-        {seen: {}, result: []};
-        $tasks[$i] as $task |
-        ($task.id // "task-\($i+1)") as $id |
-        if .seen[$id] // 0 > 0 then
-          .seen[$id] += 1 |
-          .result += [$task | .id = "\($id)-\(.seen[$id])"]
-        else
-          .seen[$id] = 1 |
-          .result += [$task]
-        end
-      ) | .result
-    end
-  '
-}
-
 if [[ "$PHASE" == "fix-review" ]]; then
 _emit_phase_started "fix-review"
 
@@ -3463,15 +3426,17 @@ FIX_REVIEW_MANIFEST=""
 FIX_REVIEW_USE_LEGACY=0
 FIX_REVIEW_EMPTY=0
 
-if ! _validate_review_manifest "${ISSUES_DIR}/review-task-manifest.json" >/dev/null 2>&1; then
-  case $? in
+_manifest_content=$(_validate_review_manifest "${ISSUES_DIR}/review-task-manifest.json" 2>/dev/null)
+_manifest_ec=$?
+if [[ $_manifest_ec -ne 0 ]]; then
+  case $_manifest_ec in
     1) warn "review-task-manifest.json not found; falling back to legacy review.md path"
        FIX_REVIEW_USE_LEGACY=1 ;;
     2|3) warn "review-task-manifest.json is invalid; falling back to legacy review.md path"
        FIX_REVIEW_USE_LEGACY=1 ;;
   esac
 else
-  FIX_REVIEW_MANIFEST=$(_validate_review_manifest "${ISSUES_DIR}/review-task-manifest.json" | _dedupe_manifest_ids)
+  FIX_REVIEW_MANIFEST=$(echo "$_manifest_content" | _dedupe_manifest_ids)
   FIX_REVIEW_TASK_COUNT=$(echo "$FIX_REVIEW_MANIFEST" | jq 'length')
   if [[ "$FIX_REVIEW_TASK_COUNT" -eq 0 ]]; then
     info "Empty review-task-manifest (nothing to fix). Exiting fix-review."
@@ -3833,7 +3798,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
     _task_files=$(echo "$_task_json" | jq -r '.files | join(", ")')
     _task_severity=$(echo "$_task_json" | jq -r '.severity // "medium"')
     _task_description=$(echo "$_task_json" | jq -r '.description // ""')
-    _task_commit_msg=$(echo "$_task_json" | jq -r ".commit_message // \"fix: review finding ${_task_id}\"")
+    _task_commit_msg=$(echo "$_task_json" | jq -r --arg default "fix: review finding ${_task_id}" '.commit_message // $default')
     _task_verify=$(echo "$_task_json" | jq -r '.verify // ""')
 
     if [[ "$_task_action" != "fix" ]]; then

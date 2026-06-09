@@ -35,40 +35,6 @@ teardown() {
   rm -rf "$TMPDIR_TEST"
 }
 
-# ── _validate_review_manifest ──────────────────────────────────────────
-
-@test "_validate_review_manifest: valid manifest returns 0" {
-  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
-[{"id":"R1","action":"fix","severity":"high","description":"Fix X","files":["src/a.ts"],"commit_message":"fix: X"}]
-JSON
-  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
-  [ "$status" -eq 0 ]
-}
-
-@test "_validate_review_manifest: missing file returns 1" {
-  run _validate_review_manifest "$TMPDIR_TEST/nonexistent.json"
-  [ "$status" -eq 1 ]
-}
-
-@test "_validate_review_manifest: non-JSON returns 2" {
-  echo "not json" > "$TMPDIR_TEST/review-task-manifest.json"
-  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
-  [ "$status" -eq 2 ]
-}
-
-@test "_validate_review_manifest: non-array JSON returns 3" {
-  echo '{"key":"value"}' > "$TMPDIR_TEST/review-task-manifest.json"
-  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
-  [ "$status" -eq 3 ]
-}
-
-@test "_validate_review_manifest: empty array is valid" {
-  echo '[]' > "$TMPDIR_TEST/review-task-manifest.json"
-  run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json"
-  [ "$status" -eq 0 ]
-  [ "$(echo "$output" | jq 'length')" = "0" ]
-}
-
 @test "Empty manifest writes ALL_FIXED to fix-status.txt" {
   echo '[]' > "$TMPDIR_TEST/review-task-manifest.json"
   FIX_REVIEW_TASK_COUNT=$(jq 'length' "$TMPDIR_TEST/review-task-manifest.json")
@@ -121,16 +87,6 @@ JSON
   echo "FAILED" > "$WORKTREE_DIR/fix-review-task-R2.result"
   echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
   [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "HAS_UNRESOLVED" ]
-}
-
-@test "_dedupe_manifest_ids: correctly deduplicates IDs" {
-  result=$(cat << 'JSON' | _dedupe_manifest_ids
-[{"id":"C1","action":"fix"},{"id":"C1","action":"fix"},{"id":"R1","action":"fix"}]
-JSON
-)
-  [ "$(echo "$result" | jq -r '.[0].id')" = "C1" ]
-  [ "$(echo "$result" | jq -r '.[1].id')" = "C1-2" ]
-  [ "$(echo "$result" | jq -r '.[2].id')" = "R1" ]
 }
 
 @test "Dirty worktree before task triggers reset" {
