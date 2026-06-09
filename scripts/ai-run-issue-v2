@@ -4003,11 +4003,17 @@ Start now."
         # (or no changes at all) on consecutive FAILED attempts.
         _current_fp=$(git -C "${WORKTREE_DIR}" diff --patch "${BASE_BRANCH}" -- . 2>/dev/null | sha256sum | awk '{print $1}')
         if [[ -n "$_prev_fp" && "$_current_fp" == "$_prev_fp" ]]; then
-          warn "Task $_task_id: fix produced identical diff as previous attempt (fingerprint match) — no progress, stopping retries"
-          emit_event "fix-review" "warn" "task.no_progress" \
-            "fix-review task $_task_id no progress detected via fingerprint" \
+          if _revalidate_is_green "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"; then
+            warn "Task $_task_id: fix produced identical diff as previous attempt (fingerprint match) and revalidate green — no progress, stopping retries"
+            emit_event "fix-review" "warn" "task.no_progress" \
+              "fix-review task $_task_id no progress detected via fingerprint" \
+              task_id="$_task_id" attempt="${_retry}" fingerprint="${_current_fp}"
+            break
+          fi
+          warn "Task $_task_id: fingerprint match but revalidate is red — continuing retry (refusing to early-exit with broken build/tests)"
+          emit_event "fix-review" "warn" "task.no_progress_blocked_red" \
+            "no-progress break suppressed because revalidate is red" \
             task_id="$_task_id" attempt="${_retry}" fingerprint="${_current_fp}"
-          break
         fi
         _prev_fp="$_current_fp"
         if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
