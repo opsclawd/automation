@@ -3512,6 +3512,8 @@ while [[ "$PHASE" == "fix-review" ]]; do
     break
   fi
 
+  # Clear any stale self-report from a prior iteration so a missing write
+  # this iteration falls back to running the re-review agent (fail-safe).
   rm -f "${WORKTREE_DIR}/fix-status.txt"
 
   FIX_PROMPT="You are fixing code review findings.
@@ -3594,6 +3596,7 @@ Start now."
     fi
   fi
 
+  # ── re-validate ────────────────────────────────────────────────────────────
   log "=== Re-validating after fix (loop $FIX_LOOP_COUNT) ==="
   cd "${WORKTREE_DIR}"
   ensure_branch
@@ -3617,6 +3620,11 @@ Start now."
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
 
+  # Mutation guard (revalidate): the fix agent commits before this block,
+  # so the worktree should be clean. If the validation commands themselves
+  # mutate tracked files (e.g., a build step rewriting generated output),
+  # the result would be uncommitted — and validation.result=passed from a
+  # dirty worktree means CI/reviewers see different code than what was tested.
   if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
     git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
     rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" \
@@ -3624,6 +3632,10 @@ Start now."
     orchestrator_fail "revalidate phase produced uncommitted changes after fix — mutation not allowed"
   fi
 
+  # Propagate revalidate state into validation.result so the create-pr phase
+  # (which labels ai:pr-ready vs ai:needs-human-review based on this file)
+  # reflects the current build/lint/typecheck/test status — not the stale
+  # result from the pre-loop validate phase.
   if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
     echo "passed" > "${ISSUES_DIR}/validation.result"
   else
@@ -3631,9 +3643,21 @@ Start now."
     warn "Revalidate after fix loop ${FIX_LOOP_COUNT} did not pass — validation.result set to failed."
   fi
 
+  # ── deterministic gate: skip re-review agent on the happy path ────────────
+  # The re-review agent is the heaviest step in this loop (full agent + skill
+  # load + re-reads source). Skip it ONLY when:
+  #   (a) the fix agent self-reports ALL_FIXED (the strict value — no
+  #       invalid/skip/out-of-scope claims this iteration; every finding was
+  #       actually fixed in code), AND
+  #   (b) revalidate is green.
+  # Any NEEDS_REVIEW value (including all skip/invalid claims) falls through
+  # to the independent re-reviewer, so the fix agent cannot self-approve
+  # findings it decided to skip.
   FIX_STATUS_FILE="${WORKTREE_DIR}/fix-status.txt"
   FIX_AGENT_STATUS=""
   if [[ -f "$FIX_STATUS_FILE" ]]; then
+    # Read file directly with head (bounded read, no upstream producer that
+    # could SIGPIPE under pipefail) — see SIGPIPE gotcha note at top of file.
     FIX_AGENT_STATUS=$(head -c 64 "$FIX_STATUS_FILE" 2>/dev/null | tr -d '[:space:]')
   fi
   if [[ "$FIX_AGENT_STATUS" == "ALL_FIXED" ]] \
@@ -3649,6 +3673,7 @@ Start now."
     break
   fi
 
+  # ── re-review ──────────────────────────────────────────────────────────────
   log "=== Re-reviewing after fix (loop $FIX_LOOP_COUNT) ==="
 
   RE_REVIEW_PROMPT="You are re-reviewing code after fixes were applied.
@@ -3694,6 +3719,9 @@ Write code-review.md and review-findings-status.txt now."
 
   _re_review_prompt_file=$(mktemp)
   printf '%s' "$RE_REVIEW_PROMPT" > "$_re_review_prompt_file"
+  # Re-review uses whole-pr-review to route through the gemini profile, matching
+  # the model that produced the original findings. The --phase-id distinguishes
+  # this invocation in telemetry.
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase whole-pr-review \
     --phase-id "re-review-${FIX_LOOP_COUNT}" \
@@ -3725,10 +3753,12 @@ Write code-review.md and review-findings-status.txt now."
     fi
   fi
 
+  # Copy updated review
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
   fi
 
+  # Check if all findings are resolved using resolve_result (primary: .result file, fallback: extractor, tertiary: assume unresolved)
   REVIEW_STATUS=$(resolve_result \
     "${WORKTREE_DIR}/review-findings-status.txt" \
     "${ISSUES_DIR}/review.md" \
@@ -3743,6 +3773,12 @@ Write code-review.md and review-findings-status.txt now."
     break
   fi
 
+  # No-progress detector: if the unresolved finding set is identical to the
+  # previous iteration, the loop is stuck (typically on a finding the fix agent
+  # cannot or will not address). Break instead of churning to the iteration cap.
+  # But only break when revalidate is GREEN — if it's red, there's still
+  # something objectively broken (build/lint/typecheck/test failed) and we
+  # should keep trying until MAX_ITERATIONS rather than ship a broken branch.
   NEW_UNRESOLVED_FP=$(_unresolved_fingerprint "${ISSUES_DIR}/review.md")
   if [[ -n "$PREV_UNRESOLVED_FP" && "$NEW_UNRESOLVED_FP" == "$PREV_UNRESOLVED_FP" ]]; then
     if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
@@ -3768,6 +3804,12 @@ Write code-review.md and review-findings-status.txt now."
     iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
 done
 
+# Post-loop guard: refuse to let create-pr label this PR as ai:pr-ready when
+# the fix loop exited with unresolved findings. Covers ALL exit paths from
+# the while loop — no-progress break, MAX_ITERATIONS exhaustion, or any other
+# future early-break that leaves review-findings-status.txt as HAS_UNRESOLVED.
+# Without this, a finding the fix agent cannot resolve would still ship as
+# pr-ready as long as build/lint/typecheck/test are green.
 if [[ -f "${WORKTREE_DIR}/review-findings-status.txt" ]]; then
   FINAL_REVIEW_STATUS=$(head -c 64 "${WORKTREE_DIR}/review-findings-status.txt" 2>/dev/null | tr -d '[:space:]')
   if [[ "$FINAL_REVIEW_STATUS" == "HAS_UNRESOLVED" ]]; then
@@ -3804,6 +3846,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
     fi
 
     _task_fixed=0
+    _prev_fp=""
     for _retry in $(seq 1 "$MAX_FIX_REVIEW_RETRIES_PER_TASK"); do
       log "=== Task $_task_id: fix-review attempt ${_retry}/${MAX_FIX_REVIEW_RETRIES_PER_TASK} ==="
       emit_event "fix-review" "info" "task.attempt.started" \
@@ -3954,10 +3997,19 @@ Start now."
           break
         fi
       elif [[ "$_task_status" == "FAILED" ]]; then
-        if _revalidate_is_green "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"; then
-          warn "Task $_task_id FAILED with green revalidate — no-progress detected, stopping retries"
+        # Fingerprint-based no-progress detection: capture the tree state (diff
+        # from base) to detect when the fix agent is making no progress across
+        # retries. Identical fingerprints mean the agent produced the same code
+        # (or no changes at all) on consecutive FAILED attempts.
+        _current_fp=$(git -C "${WORKTREE_DIR}" diff --patch "${BASE_BRANCH}" -- . 2>/dev/null | sha256sum | awk '{print $1}')
+        if [[ -n "$_prev_fp" && "$_current_fp" == "$_prev_fp" ]]; then
+          warn "Task $_task_id: fix produced identical diff as previous attempt (fingerprint match) — no progress, stopping retries"
+          emit_event "fix-review" "warn" "task.no_progress" \
+            "fix-review task $_task_id no progress detected via fingerprint" \
+            task_id="$_task_id" attempt="${_retry}" fingerprint="${_current_fp}"
           break
         fi
+        _prev_fp="$_current_fp"
         if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
           continue
         fi
