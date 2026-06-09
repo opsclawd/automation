@@ -457,6 +457,8 @@ seed_excludes() {
     grep -qxF 'fix-validate-*.log' "$exclude_file" || echo 'fix-validate-*.log' >> "$exclude_file"
     grep -qxF 'revalidate-fv-*.log' "$exclude_file" || echo 'revalidate-fv-*.log' >> "$exclude_file"
     grep -qxF 'fix-validate-log.md' "$exclude_file" || echo 'fix-validate-log.md' >> "$exclude_file"
+    grep -qxF 'review-task-manifest.json' "$exclude_file" || echo 'review-task-manifest.json' >> "$exclude_file"
+    grep -qxF 'review-triage.md' "$exclude_file" || echo 'review-triage.md' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -505,6 +507,8 @@ fix-validate-done.marker
 fix-validate-*.log
 revalidate-fv-*.log
 fix-validate-log.md
+review-task-manifest.json
+review-triage.md
 EOF
 }
 
