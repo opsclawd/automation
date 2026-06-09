@@ -336,6 +336,7 @@ teardown() {
   [[ "$status" -eq 0 ]]
   [[ -f "${WORKTREE_DIR}/design.md" ]]
   [[ ! -f "${WORKTREE_DIR}/docs/design.md" ]]
+  [[ ! -d "${WORKTREE_DIR}/docs" ]]
   run cat "${WORKTREE_DIR}/design.md"
   [[ "$output" == "# Misplaced Design" ]]
 }
@@ -365,6 +366,7 @@ teardown() {
   [[ -z "$_all_violations" ]]
   [[ -f "${WORKTREE_DIR}/design.md" ]]
   [[ ! -f "${WORKTREE_DIR}/docs/design-draft.md" ]]
+  [[ ! -d "${WORKTREE_DIR}/docs" ]]
 }
 
 @test "_remediate_misplaced_artifact does not remediate when main checkout has violations" {
