@@ -1328,6 +1328,7 @@ Write design.md now."
       1) orchestrator_fail "plan-design failed (contract violation)" ;;
       2) orchestrator_fail "plan-design failed (config error or timeout)" ;;
       3) orchestrator_fail "plan-design failed (unexpected error)" ;;
+      4) warn "plan-design had a provider error — checking for design doc..." ;;
       *) orchestrator_fail "plan-design failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
@@ -1496,6 +1497,7 @@ Write plan.md and task-manifest.json now."
       1) orchestrator_fail "plan-write failed (contract violation)" ;;
       2) orchestrator_fail "plan-write failed (config error or timeout)" ;;
       3) orchestrator_fail "plan-write failed (unexpected error)" ;;
+      4) warn "plan-write had a provider error — checking for plan file..." ;;
       *) orchestrator_fail "plan-write failed (unknown exit code $_agent_ec)" ;;
     esac
   fi
