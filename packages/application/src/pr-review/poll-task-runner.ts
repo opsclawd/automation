@@ -116,6 +116,15 @@ export class PollTaskRunner {
 
     const result = extracted.result;
 
+    if (result.commentId !== comment.commentId) {
+      return {
+        commentId: comment.commentId,
+        action: 'failed',
+        processed: false,
+        blocked: false,
+      };
+    }
+
     // 4. Post reply
     await d.github.replyToReviewComment(
       input.repoFullName,

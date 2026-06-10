@@ -205,4 +205,24 @@ describe('PollTaskRunner — failure isolation', () => {
     expect(out.action).toBe('failed');
     expect(out.processed).toBe(false);
   });
+
+  it('returns failed when result.commentId does not match input comment', async () => {
+    const { deps, github } = makeDeps({
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9999, action: 'fixed', replyBody: 'Renamed.' },
+      }),
+    });
+    const runner = new PollTaskRunner(deps);
+
+    const out = await runner.execute(makeInput());
+
+    expect(out).toEqual({
+      commentId: 9001,
+      action: 'failed',
+      processed: false,
+      blocked: false,
+    });
+    expect(github.repliesPosted).toHaveLength(0);
+  });
 });
