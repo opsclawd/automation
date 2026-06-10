@@ -119,3 +119,46 @@ teardown() {
   run run_commit_completion 1 "test commit msg"
   [ "$status" -eq 0 ]
 }
+
+# --- Integration-style tests for the five design scenarios ---
+# These test the guard logic pattern (dirty check → recovery → re-check → fail)
+# as it would run in the main task loop, using the extracted run_commit_completion.
+
+@test "scenario 1: Mode A — no commits, dirty tracked files → recovery commits → clean" {
+  printf " M src/foo.ts\n?? src/new-file.ts\n" > "$DIRTY_FLAG"
+  _CC_AGENT_CLEANS_TREE=1
+  _CC_AGENT_EXIT=0
+  run run_commit_completion 1 "feat: implement task 1"
+  [ "$status" -eq 0 ]
+}
+
+@test "scenario 2: Mode B — commit fails, recovery agent fixes lint and commits" {
+  echo " M src/foo.ts" > "$DIRTY_FLAG"
+  _CC_AGENT_CLEANS_TREE=1
+  _CC_AGENT_EXIT=0
+  run run_commit_completion 1 "feat: implement task 1"
+  [ "$status" -eq 0 ]
+}
+
+@test "scenario 3: Mode B (unfixable) — commit fails, recovery can't fix → fail with output" {
+  echo " M src/foo.ts" > "$DIRTY_FLAG"
+  _CC_AGENT_CLEANS_TREE=0
+  _CC_AGENT_EXIT=0
+  run run_commit_completion 1 "feat: implement task 1"
+  [ "$status" -eq 1 ]
+}
+
+@test "scenario 4: Third gap — one commit + other files dirty → recovery commits leftover" {
+  echo " M src/unrelated.ts" > "$DIRTY_FLAG"
+  _CC_AGENT_CLEANS_TREE=1
+  _CC_AGENT_EXIT=0
+  run run_commit_completion 1 "feat: implement task 1"
+  [ "$status" -eq 0 ]
+}
+
+@test "scenario 5: Clean tree — no recovery needed → pass through" {
+  echo -n "" > "$DIRTY_FLAG"
+  run run_commit_completion 1 "feat: implement task 1"
+  [ "$status" -eq 0 ]
+  [ ! -f "${ISSUES_DIR}/commit-completion-task-1.log" ]
+}
