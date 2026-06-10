@@ -3537,6 +3537,122 @@ else
   fi
 fi
 
+# ── Cohesive architect pass (optional) ─────────────────────────────────
+# Runs a single read-only agent to produce review-fix-plan.json with
+# cross-task constraint analysis before the per-task fix loop begins.
+FIX_REVIEW_ARCHITECT_PLAN=""
+if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 && "$FIX_REVIEW_ARCHITECT_ENABLED" == "true" ]]; then
+  _has_fix_tasks=$(echo "$FIX_REVIEW_MANIFEST" | jq '[.[] | select(.action == "fix" or .action == null)] | length')
+  if [[ "$_has_fix_tasks" -gt 0 ]]; then
+    info "Running cohesive architect pass before fix loop..."
+    emit_event "fix-review" "info" "architect_pass_started" \
+      "cohesive architect pass starting" \
+      task_count="$_has_fix_tasks"
+
+    ARCHITECT_PROMPT="You are a cohesive architect analyzing review findings before fix implementation.
+
+## CONTEXT
+Your working directory: ${WORKTREE_DIR}
+
+## TASK
+Read the following files:
+1. ./review-task-manifest.json — the full manifest of review findings
+2. ./review.md — the detailed code review
+3. ./review-triage.md — the triage summary
+
+Then run: git diff HEAD
+
+Analyze ALL tasks with action=fix or action=null. For each task:
+1. Identify cross-task dependencies and constraint conflicts
+2. Produce a concrete fix approach that accounts for ALL constraints
+3. List specific constraints the fix must satisfy
+4. Note which other tasks this depends on (informational)
+
+## OUTPUT
+Write ./review-fix-plan.json with this exact structure:
+{
+  \"version\": 1,
+  \"tasks\": [
+    {
+      \"task_id\": \"<task_id from manifest>\",
+      \"approach\": \"<concrete fix strategy>\",
+      \"conflicts_resolved\": [\"<IDs of contradictions this resolves>\"],
+      \"constraints\": [\"<hard constraints the fix must satisfy>\"],
+      \"depends_on\": [\"<other task IDs this interacts with>\"]
+    }
+  ]
+}
+
+Only include tasks that have action=fix or action=null. Skip defer/skip tasks.
+
+## CRITICAL RULES
+- Do NOT modify any code files.
+- Do NOT run git commands other than 'git diff HEAD'.
+- Output ONLY review-fix-plan.json.
+- Stop after writing the file."
+
+    _architect_prompt_file=$(mktemp)
+    printf '%s' "$ARCHITECT_PROMPT" > "$_architect_prompt_file"
+    _architect_ec=0
+    ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+      --phase fix-review-architect \
+      --cwd "$WORKTREE_DIR" \
+      --run-id "$RUN_ID" \
+      --repo-id "$REPO_ID" \
+      --repo-root "$REPO_ROOT" \
+      --phase-id fix-review-architect \
+      --prompt-file "$_architect_prompt_file" \
+      --timeout-minutes $(( (TIMEOUT_FIX_REVIEW_ARCHITECT + 59) / 60 )) \
+      --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+      2>&1 | tee -a "${ISSUES_DIR}/fix-review-architect.log"; _architect_ec=${PIPESTATUS[0]}
+    rm -f "$_architect_prompt_file"
+
+    # Mutation guard: architect is a read-only phase
+    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+      git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
+      rm -f "${ISSUES_DIR}/fix-review-architect.log"
+      warn "Architect pass produced uncommitted changes — discarding plan, proceeding without"
+      emit_event "fix-review" "warn" "architect_pass_failed" \
+        "architect pass mutated code — plan discarded" \
+        reason="mutation"
+    elif [[ $_architect_ec -ne 0 ]]; then
+      warn "Architect pass failed (exit $_architect_ec) — proceeding without plan"
+      emit_event "fix-review" "warn" "architect_pass_failed" \
+        "architect pass failed" \
+        reason="exit_code" exit_code="$_architect_ec"
+    elif [[ -f "${WORKTREE_DIR}/review-fix-plan.json" ]]; then
+      # Validate structure
+      if jq -e '.version and (.tasks | type == "array")' "${WORKTREE_DIR}/review-fix-plan.json" >/dev/null 2>&1; then
+        FIX_REVIEW_ARCHITECT_PLAN="${WORKTREE_DIR}/review-fix-plan.json"
+        info "Architect pass completed — plan saved to ${FIX_REVIEW_ARCHITECT_PLAN}"
+        emit_event "fix-review" "info" "architect_pass_completed" \
+          "architect pass completed" \
+          tasks="$(jq '.tasks | length' "${WORKTREE_DIR}/review-fix-plan.json")"
+      else
+        warn "Architect pass produced invalid plan structure — proceeding without"
+        emit_event "fix-review" "warn" "architect_pass_failed" \
+          "architect pass produced invalid plan structure" \
+          reason="invalid_structure"
+      fi
+    else
+      warn "Architect pass produced no plan file — proceeding without"
+      emit_event "fix-review" "warn" "architect_pass_failed" \
+        "architect pass produced no plan file" \
+        reason="no_output"
+    fi
+  else
+    emit_event "fix-review" "info" "architect_pass_skipped" \
+      "architect pass skipped (no fix tasks)" \
+      reason="no_fix_tasks"
+  fi
+else
+  if [[ "$FIX_REVIEW_ARCHITECT_ENABLED" != "true" ]]; then
+    emit_event "fix-review" "info" "architect_pass_skipped" \
+      "architect pass skipped (disabled in config)" \
+      reason="disabled"
+  fi
+fi
+
 if [[ "$FIX_REVIEW_EMPTY" -eq 1 ]]; then
   : # skip straight to phase done
 elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
