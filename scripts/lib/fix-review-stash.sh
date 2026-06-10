@@ -27,7 +27,7 @@ _stash_and_conditionally_commit() {
   fi
 
   # Stash uncommitted changes (tracked + untracked)
-  git -C "$worktree_dir" stash push -m "fix-review-task-${task_id}-revalidate-artifacts" 2>/dev/null || true
+  git -C "$worktree_dir" stash push -u -m "fix-review-task-${task_id}-revalidate-artifacts" 2>/dev/null || true
 
   # Determine if revalidation passed
   local _green=0
