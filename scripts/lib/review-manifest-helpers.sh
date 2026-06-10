@@ -50,5 +50,5 @@ _extract_architect_plan_entry() {
   if ! jq -e '.tasks | type == "array"' "$plan_path" >/dev/null 2>&1; then
     return 0
   fi
-  jq --arg tid "$task_id" '.tasks[] | select(.task_id == $tid)' "$plan_path" 2>/dev/null || echo ""
+  jq --arg tid "$task_id" 'first(.tasks[] | select(.task_id == $tid)) // empty' "$plan_path" 2>/dev/null || echo ""
 }
