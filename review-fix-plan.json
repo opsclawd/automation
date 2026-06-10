@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "task_id": "C1",
+      "approach": "The current verifyCommitPushed in compose.ts:505-521 already accepts an optional commitSha parameter and, when provided, checks isAncestor(commitSha, remoteSha) then logBetween(startCommitSha, commitSha). The callers in process-pr-review-comments.ts already pass commitSha when available (line 313-316 for toVerify, line 534-537 for orphaned). The remaining gap: when commitSha is NOT provided (fallback path at compose.ts:515-518), verifyCommitPushed falls back to checking startCommitSha..remoteSha which is the cross-run contamination vector. Fix: (1) In process-pr-review-comments.ts, ensure verifyCommitPushed is ALWAYS called with commitSha by using fixCommitSha for the commit-verified check at line 316 (already done). (2) Remove the commitSha-less fallback branch in compose.ts:515-518 or make it return false — if no specific commit to verify, the check should not pass. (3) In verifyOrphaned (line 533-538), the call already passes c.commitSha — add a guard: if c.commitSha is undefined, return false (don't verify orphaned comments with no commit SHA against the generic startCommitSha..remoteSha range). This ensures verification is always anchored to a specific commit authored in this pass.",
+      "conflicts_resolved": ["C2"],
+      "constraints": [
+        "verifyCommitPushed must only return true when a specific commit from THIS run is on the remote",
+        "The commitSha-less fallback branch must not allow unrelated descendant commits to pass verification",
+        "Must not break the toVerify loop or orphan path that already passes commitSha correctly",
+        "Layer boundary: changes to compose.ts (infra wiring) only, no application-layer imports"
+      ],
+      "depends_on": ["C2", "M5"]
+    },
+    {
+      "task_id": "C2",
+      "approach": "This is the same root cause as C1 — the commitSha-less fallback in verifyCommitPushed accepts any descendant. The fix is the same: remove or make-false the branch at compose.ts:515-518 that checks startCommitSha..remoteSha without a specific commitSha. If verifyCommitPushed is called without commitSha, it should return false (or the caller must be fixed to always provide one). The only callers are processOnePass (which always has fixCommitSha when hasFixedComments is true) and verifyOrphaned (which passes c.commitSha). Guard both callers: if no commitSha is available, skip verification (treat as unverified). This is resolved together with C1.",
+      "conflicts_resolved": ["C1"],
+      "constraints": [
+        "verifyCommitPushed without commitSha must return false, not check startCommitSha..remoteSha",
+        "Compose.ts is the only legal wiring point for this adapter",
+        "Must not introduce new layer violations"
+      ],
+      "depends_on": ["C1", "M5"]
+    },
+    {
+      "task_id": "H1",
+      "approach": "The current code at process-pr-review-comments.ts:420 calls verifyOrphaned BEFORE the Bug R fallback at line 422-459. The fallback marks omitted comments as 'replied' with replyVerified:false, but verifyOrphaned has already run. The fix at lines 462-489 adds a second verification pass for toVerify items (which includes fallback items pushed at line 457). This is already in the code. HOWEVER, verifyOrphaned at line 420 runs before the fallback and does not see the fallback's freshly-replied comments. The fix: move the verifyOrphaned call (line 420) to AFTER the fallback block (after line 459), so it processes both normal and fallback replied comments in one pass. This eliminates the need for the separate toVerify re-check at lines 462-489 (verifyOrphaned already does the same work for orphaned/replied+unverified comments). Simplification: move verifyOrphaned after the fallback, remove the duplicate verification at 462-489.",
+      "conflicts_resolved": ["H3"],
+      "constraints": [
+        "verifyOrphaned must see all replied+unverified comments including fallback replies",
+        "allResolved must be computed AFTER all verification (fallback + orphaned) completes",
+        "The processed count must include fallback replies that get verified"
+      ],
+      "depends_on": ["H3", "M4", "M10"]
+    },
+    {
+      "task_id": "H2",
+      "approach": "The code at process-pr-review-comments.ts:160-223 already has BOTH a remote-ref guard (lines 157-200) AND a local checkout guard (lines 202-223). The local guard captures repoRoot's HEAD via execFileSync before agent invocation (line 164) and compares after (line 205). This was implemented in the recent fix pass. The review finding H2 appears to describe the pre-fix state. However, the remaining gap: the local guard uses execFileSync directly inside process-pr-review-comments.ts (application layer), which violates the layer boundary (application must not import node:child_process). Fix: define a new port method on GitPort (e.g., headCommitShaOf) that takes a cwd and returns the HEAD SHA, then call it from the application layer. Remove the direct execFileSync imports at lines 163 and 204. Wire the port in compose.ts to use execFileSync. The remote-ref guard at lines 157-200 is already correctly implemented using d.git.remoteRef.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "Application layer MUST NOT import node:child_process directly — use a port",
+        "Both remote and local main checkout guards must remain functional",
+        "The local guard is best-effort: missing repoRoot or baseBranch means guard is silently skipped",
+        "Must satisfy pnpm depcruise layer checks"
+      ],
+      "depends_on": ["M3"]
+    },
+    {
+      "task_id": "H3",
+      "approach": "When the Bug R fallback fires and posts replies for omitted comments, those replies are added to toVerify (line 457) and processed in the verification loop at lines 462-489, which increments processed++ on success. After the H1 fix (moving verifyOrphaned after the fallback), the fallback comments will also be counted via verifyOrphaned's markProcessed path. Ensure that processed is incremented in both paths: the direct toVerify loop (line 486) and verifyOrphaned's ok branch (which calls markProcessed but does NOT increment the caller's processed counter — it returns a blocked count). Fix: verifyOrphaned returns blocked count but the comments it marks as processed are not counted in the caller's processed variable. After moving verifyOrphaned post-fallback, add tracking: count how many comments transition from replied→processed during verifyOrphaned and add to processed. Or simpler: after verifyOrphaned, re-count processed from the repo (comments in 'processed' state for this runId) minus the pre-verifyOrphaned processed count.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "out.processed must reflect ALL comments marked processed in this pass, including fallback replies",
+        "PollAttempt.commentsProcessed must be accurate for metrics/observability",
+        "The existing test 'posts fallback replies for omitted comments' must be updated to assert out.processed > 0"
+      ],
+      "depends_on": ["H1"]
+    },
+    {
+      "task_id": "H4",
+      "approach": "In pr-review-poller.ts:141-151, the blocked early-stop at lines 146-151 now checks pass.blocked > 0 && pass.processed === 0 BEFORE incrementing consecutiveQuietPolls. This is already implemented correctly in the current code. When allResolved=true and blocked>0 and processed=0, the poller emits 'blocked' terminal and returns immediately (lines 148-150). The quiet-poll increment at line 152 only runs if the blocked check does NOT trigger. The review finding H4 describes the pre-fix state. Verify the logic is correct: the blocked check at line 146 fires before consecutiveQuietPolls++ at line 152, so blocked takes precedence over quiet-poll all_resolved. If the current code is correct, H4 is already fixed. Verify by re-reading lines 146-152.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "When allResolved=true AND blocked>0 AND processed=0, terminal state must be 'blocked', not 'all_resolved'",
+        "The quiet-poll exit must only fire when blocked=0",
+        "Existing poller tests must pass after any changes"
+      ],
+      "depends_on": ["M2"]
+    },
+    {
+      "task_id": "H5",
+      "approach": "The current code at pr-review-poller.ts:74-75 already computes effectiveMaxPolls = Math.max(d.maxPolls, meaningfulAttempts.length + 1), ensuring at least one new pass on re-entry. The loop at line 78-79 uses effectiveMaxPolls. This appears already fixed. Verify: if meaningfulAttempts.length=30 and maxPolls=30, effectiveMaxPolls=31, so the loop runs once. The review finding H5 describes the pre-fix state. Confirm the current implementation is correct and the fix is already in place.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "Re-entry against an exhausted run must produce at least one new pass",
+        "The effectiveMaxPolls computation must not allow infinite loops",
+        "The bash shim should document the re-entry behavior"
+      ],
+      "depends_on": []
+    },
+    {
+      "task_id": "M1",
+      "approach": "In scripts/ai-pr-review-poll, before the sqlite3 query at line 71-72 that interpolates $ISSUE_NUM, add a validation check: [[ \"$ISSUE_NUM\" =~ ^[0-9]+$ ]] || { echo \"ERROR: ISSUE_NUM must be a positive integer, got: $ISSUE_NUM\" >&2; exit 1; }. Place this after the existing empty-check (lines 21-24) and before the sqlite3 invocation. This is a defense-in-depth measure — the script already requires ISSUE_NUM to be set.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "Validation must reject non-numeric ISSUE_NUM before SQL interpolation",
+        "Must not break existing invocations that pass valid numeric issue numbers",
+        "Error message must be clear and exit non-zero"
+      ],
+      "depends_on": []
+    },
+    {
+      "task_id": "M2",
+      "approach": "In pr-review-poller.ts:160-168, the quiet-poll terminal exit now emits a 'post-pr-review.poll.terminal' event at line 161 with terminalState:'all_resolved'. This is already implemented. The emit call publishes via the event bus, which compose.ts wraps with a persisting event bus (lines 578-590) that persists to the event repository. SSE subscribers will see this event. Verify the event is actually received by checking: (1) the emit at line 161 fires, (2) the event bus publish propagates, (3) the persisting bus writes to the DB. If the current code already does this, M2 is fixed.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "A public terminal event must be emitted when quiet-poll exit fires",
+        "The event must be observable via the event repository for SSE subscribers",
+        "Must not duplicate the all_resolved event that fires at line 144"
+      ],
+      "depends_on": ["H4"]
+    },
+    {
+      "task_id": "M3",
+      "approach": "In process-pr-review-comments.ts, replace the three occurrences of 'input.runId as unknown as string' with String(input.runId). The call sites are at line 177 (agent.invoke runId param — already uses String(input.runId)), line 198 (onWarning call — already uses String(input.runId)), line 217 (second onWarning call — already uses String(input.runId)). The current code ALREADY uses String(input.runId) at these sites based on the latest read. If the as unknown as string casts are still present elsewhere, replace them. Also check the ProcessPrReviewDeps.onWarning type signature — it accepts runId: string which is correct.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "Must not use 'as unknown as string' casts — use String() conversion",
+        "Must pass pnpm -r typecheck after changes",
+        "The onWarning callback type must accept a plain string for runId"
+      ],
+      "depends_on": []
+    },
+    {
+      "task_id": "M4",
+      "approach": "In the Bug R fallback block (process-pr-review-comments.ts:422-459), when posting a reply for an omitted comment that attributes fixCommitSha, add a warning event via d.onWarning for observability. The warning should note that the fallback is attributing fixCommitSha to a comment the agent did not explicitly address. This provides an audit trail for false-positive attributions without requiring the complex diff-range check (parsing git show --stat). Add the warning before the replyToReviewComment call. Example: d.onWarning?.('fallback reply attributes fix commit to omitted comment', { commentId: c.commentId, fixCommitSha, prNumber: input.prNumber }, String(input.runId)).",
+      "conflicts_resolved": [],
+      "constraints": [
+        "Must not require parsing git diff output in the application layer (would need a new port)",
+        "The warning must be emitted BEFORE the reply is posted, so the event is visible even if the reply fails",
+        "Must not change the functional behavior of the fallback — only adds observability"
+      ],
+      "depends_on": ["H1"]
+    },
+    {
+      "task_id": "M5",
+      "approach": "In compose.ts:402-413, the logBetween implementation currently uses two-dot syntax: git log --format=%H ${base}..${head} (line 405). The review finding says it uses three-dot, but the current code shows two-dot. This appears already fixed. Verify by re-reading the exact line. If the current code is ${base}..${head} (two-dot), M5 is fixed. If it is ${base}...${head} (three-dot), change to two-dot. The fake test double must also return the correct range semantics.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "logBetween must use two-dot (A..B) range semantics, not three-dot (A...B) symmetric diff",
+        "For A an ancestor of B, logBetween(A, B) must return [B] (and any intermediate commits)",
+        "For A == B, logBetween(A, B) must return []",
+        "The fake test double must match the real implementation's semantics"
+      ],
+      "depends_on": ["C1", "C2"]
+    },
+    {
+      "task_id": "M6",
+      "approach": "In compose.ts:388-400, the isAncestor implementation already logs stderr via process.stderr.write on failure (lines 396-398). This appears already fixed. The catch block writes: [compose] git merge-base --is-ancestor ${ancestor} ${descendant} failed in ${cwd}: ${err.message}. Verify this is correct and the error information is observable. If the current code already logs the error, M6 is fixed.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "isAncestor must log stderr/error info when git merge-base fails",
+        "Must not throw — must return false on failure",
+        "Log must include ancestor SHA, descendant SHA, and cwd for debugging"
+      ],
+      "depends_on": []
+    },
+    {
+      "task_id": "M7",
+      "approach": "Audit all callers of PrReviewPoller.run() in apps/api/src to ensure the new 'all_resolved' terminal state is handled alongside 'max_polls_reached', 'blocked', and 'timed_out'. Search for references to PrReviewPoller, PollerTerminalState, or terminalState in apps/api/src. The key concern: any code that branches on terminalState === 'max_polls_reached' must also handle 'all_resolved'. The all_resolved state should be treated as a successful completion (equivalent to max_polls_reached but with better semantics). If no callers branch on specific terminal states beyond logging, this is a documentation-only change.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "All downstream consumers must handle 'all_resolved' as a valid terminal state",
+        "all_resolved should be treated as a successful/completed state, not an error",
+        "Must not break existing phase advancement logic"
+      ],
+      "depends_on": ["H4", "M2"]
+    },
+    {
+      "task_id": "M9",
+      "approach": "Add a new test in process-pr-review-comments.test.ts after the existing 'cleans up the worktree when the agent invocation fails' test. The new test should set up a successful agent invocation (outcome: 'success', valid result.json with ALL_DONE), then assert that git.resetHardCalls and git.cleanUntrackedCalls are empty (or do not include the worktree path). This verifies the cleanup path is NOT triggered on the happy path.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "Must use the same test helper patterns as existing tests in the file",
+        "Must assert git.cleanUntrackedCalls is empty (or does not contain the worktree cwd)",
+        "Must also assert git.resetHardCalls is empty",
+        "Must pass pnpm test"
+      ],
+      "depends_on": []
+    },
+    {
+      "task_id": "M10",
+      "approach": "Cache the result of listReviewComments at the top of execute() (after line 78 where raw is fetched) and pass the cached result to verifyOrphaned instead of having it call listReviewComments again at line 526. The current flow calls listReviewComments at: (1) line 78 (top of execute), (2) line 373 (afterComments for toVerify), (3) line 464 (afterCommentsVerify for fallback verification), (4) line 526 (inside verifyOrphaned). Fix: store the result of line 78 in a variable, reuse it for the toVerify loop (line 373) and fallback verification (line 464), and pass it as a parameter to verifyOrphaned. This reduces 4 API calls to 1-2 per pass. Note: lines 373 and 464 fetch AFTER the agent has posted replies, so they need a fresh fetch — these cannot use the pre-agent cache. But lines 78 and 526 (verifyOrphaned) could potentially share if verifyOrphaned is called at the right time. Minimal fix: pass the afterComments from line 373 to verifyOrphaned instead of re-fetching at line 526. This eliminates 1 call.",
+      "conflicts_resolved": [],
+      "constraints": [
+        "The first fetch (line 78) is pre-agent — used for filtering only",
+        "The second fetch (line 373) is post-agent — used for toVerify reply verification",
+        "verifyOrphaned (line 526) needs post-reply data — can reuse the second fetch",
+        "Must not introduce stale data: if verifyOrphaned runs after fallback replies, it needs the latest data"
+      ],
+      "depends_on": ["H1"]
+    }
+  ]
+}

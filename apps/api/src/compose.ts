@@ -512,10 +512,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const isNewer = await gitAdapter.logBetween(cwd, startCommitSha, commitSha);
             return isNewer.length > 0;
           }
-          const isAncestor = await gitAdapter.isAncestor(cwd, startCommitSha, remoteSha);
-          if (!isAncestor) return false;
-          const commits = await gitAdapter.logBetween(cwd, startCommitSha, remoteSha);
-          return commits.length > 0;
+          return false;
         } catch {
           return false;
         }

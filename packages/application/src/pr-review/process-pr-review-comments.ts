@@ -530,13 +530,16 @@ export class ProcessPrReviewComments {
     for (const c of orphaned) {
       const replyVerified = afterComments.some((rc) => rc.inReplyToId === c.commentId);
       const isFix = c.outcome === 'fixed';
-      const commitVerified = startCommitSha
-        ? await d.verifyCommitPushed(
-            c.commitSha
-              ? { cwd: input.cwd, branch: pr.headRefName, startCommitSha, commitSha: c.commitSha }
-              : { cwd: input.cwd, branch: pr.headRefName, startCommitSha },
-          )
-        : true;
+      const commitVerified = !startCommitSha
+        ? true
+        : c.commitSha
+          ? await d.verifyCommitPushed({
+              cwd: input.cwd,
+              branch: pr.headRefName,
+              startCommitSha,
+              commitSha: c.commitSha,
+            })
+          : !isFix;
       let fixCommitOnRemote = true;
       if (isFix && c.commitSha) {
         const remoteSha = await d.git.remoteRef({

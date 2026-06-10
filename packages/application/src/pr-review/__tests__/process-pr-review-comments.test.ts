@@ -1137,3 +1137,129 @@ describe('ProcessPrReviewComments — closed PR guard', () => {
     expect(agent.invocations.length).toBe(0);
   });
 });
+
+describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha (C1)', () => {
+  it('rejects verification when a different agent run pushed the commit', async () => {
+    const sharedStart = 'sharedStartSha';
+    const agentACommit = 'aaa111fix';
+    const agentBCommit = 'bbb222fix';
+
+    const git = new TwoShaGitPort(sharedStart, agentACommit);
+    const verifyCalls: Array<{
+      cwd: string;
+      branch: string;
+      startCommitSha: string;
+      commitSha?: string;
+    }> = [];
+    const { deps, github, repo } = makeDeps({
+      git,
+      verifyCommitPushed: async (input) => {
+        verifyCalls.push(input);
+        return input.commitSha === agentBCommit;
+      },
+    });
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Fixed.',
+        createdAt: new Date('2026-06-04T00:05:00Z'),
+        inReplyToId: 9001,
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(verifyCalls.length).toBe(2);
+    expect(verifyCalls[0].commitSha).toBe(agentACommit);
+    expect(verifyCalls[0].startCommitSha).toBe(sharedStart);
+    expect(verifyCalls[1].commitSha).toBe(agentACommit);
+
+    expect(out.processed).toBe(0);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).not.toBe('processed');
+  });
+
+  it('accepts verification when the correct agent run pushed the commit', async () => {
+    const sharedStart = 'sharedStartSha';
+    const agentBCommit = 'bbb222fix';
+
+    const git = new TwoShaGitPort(sharedStart, agentBCommit);
+    const verifyCalls: Array<{
+      cwd: string;
+      branch: string;
+      startCommitSha: string;
+      commitSha?: string;
+    }> = [];
+    const { deps, github, repo } = makeDeps({
+      git,
+      verifyCommitPushed: async (input) => {
+        verifyCalls.push(input);
+        return input.commitSha === agentBCommit;
+      },
+    });
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Fixed.',
+        createdAt: new Date('2026-06-04T00:05:00Z'),
+        inReplyToId: 9001,
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(verifyCalls.length).toBe(1);
+    expect(verifyCalls[0].commitSha).toBe(agentBCommit);
+    expect(verifyCalls[0].startCommitSha).toBe(sharedStart);
+
+    expect(out.processed).toBe(1);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe('processed');
+  });
+});
