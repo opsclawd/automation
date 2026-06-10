@@ -16,6 +16,7 @@ import type { AgentPort } from '../ports/agent-port.js';
 import type { AgentProfileName } from '../ports/agent-invocation-types.js';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
 import type { PostPrReviewResult } from '../results/schemas/post-pr-review.js';
+import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
 
 export interface ProcessPrReviewDeps {
   github: GitHubPort;
@@ -33,6 +34,18 @@ export interface ProcessPrReviewDeps {
     cwd: string;
   }) => Promise<
     { ok: true; result: PostPrReviewResult } | { ok: false; reason: string; detail: string }
+  >;
+  renderTaskPrompt: (input: {
+    cwd: string;
+    comment: PrReviewComment;
+    diff: string;
+    branch: string;
+  }) => Promise<string>;
+  extractTaskResult: (input: {
+    resultJsonPath?: string;
+    cwd: string;
+  }) => Promise<
+    { ok: true; result: PollTaskResult } | { ok: false; reason: string; detail: string }
   >;
   verifyCommitPushed: (input: {
     cwd: string;
@@ -542,6 +555,24 @@ export class ProcessPrReviewComments {
       }
     }
     return { blocked, newlyProcessed };
+  }
+
+  private generateManifest(
+    comments: PrReviewComment[],
+  ): import('../results/schemas/poll-task-manifest.js').PollTaskManifest {
+    return {
+      version: 1,
+      taskCount: comments.length,
+      tasks: comments.map((c, i) => ({
+        id: `comment-${c.commentId}`,
+        commentId: c.commentId,
+        path: c.path,
+        line: c.line,
+        body: c.body,
+        reviewer: c.reviewer,
+        priority: i + 1,
+      })),
+    };
   }
 
   private recordPoll(
