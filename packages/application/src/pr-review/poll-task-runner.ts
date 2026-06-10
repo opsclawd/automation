@@ -65,6 +65,9 @@ export class PollTaskRunner {
     const d = this.deps;
     const { comment } = input;
 
+    await d.git.resetHard(input.cwd, 'HEAD');
+    await d.git.cleanUntracked(input.cwd);
+
     // 1. Render single-comment prompt
     const promptPath = await d.renderTaskPrompt({
       cwd: input.cwd,

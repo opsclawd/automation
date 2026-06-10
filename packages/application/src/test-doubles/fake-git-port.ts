@@ -35,6 +35,7 @@ export class FakeGitPort implements GitPort {
   }
 
   async resetHard(cwd: string, commitSha: string): Promise<void> {
+    if (commitSha === 'HEAD') return;
     this.headByCwd.set(cwd, commitSha);
   }
 
