@@ -33,6 +33,18 @@ function makeSuccessAgentResult(
   };
 }
 
+// Models real HEAD progression: every read returns a fresh SHA, so each agent
+// "commit" looks like a distinct new commit. Robust for multi-task passes where
+// several comments each produce their own commit. (replaces call-count fixtures — M3)
+class IncrementingShaGitPort extends FakeGitPort {
+  private n = 0;
+  override async headCommitSha(_cwd: string): Promise<string> {
+    return `sha-${++this.n}`;
+  }
+}
+
+// Two-SHA before/after model, used by tests that specifically assert SHA
+// anchoring of commit verification (C1/C2).
 class TwoShaGitPort extends FakeGitPort {
   private callCount = 0;
   constructor(
@@ -55,7 +67,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   agent: FakeAgentPort;
 } {
   const github = new FakeGitHubPort();
-  const git = new TwoShaGitPort('abc123', 'def456');
+  const git = new IncrementingShaGitPort();
   const repo = new FakePrReviewRepository();
   const agent = new FakeAgentPort({
     'post-pr-review-profile': [makeSuccessAgentResult()],
@@ -81,18 +93,22 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   git.remoteRefs.set('origin/feat-x', 'abc123');
 
   let replyCounter = 0;
+  // Mirror production: the prompt is rendered per comment and the agent's
+  // result.json carries that comment's id, so the extracted result's
+  // commentId always matches the comment being processed.
+  let currentCommentId = 9001;
   const deps: ProcessPrReviewDeps = {
     github,
     git,
     agent,
     prReviewRepo: repo,
-    renderPrompt: async () => '/tmp/prompt.md',
-    extractResult: async () => ({
+    renderTaskPrompt: async ({ comment }) => {
+      currentCommentId = comment.commentId;
+      return '/tmp/prompt.md';
+    },
+    extractTaskResult: async () => ({
       ok: true,
-      result: {
-        outcome: 'ALL_DONE',
-        comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' }],
-      },
+      result: { commentId: currentCommentId, action: 'fixed', replyBody: 'Renamed foo to bar.' },
     }),
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => true,
@@ -243,22 +259,14 @@ describe('ProcessPrReviewComments — dedup', () => {
 describe('ProcessPrReviewComments — blocking', () => {
   it('blocks a comment when verification fails (build failed)', async () => {
     const agent = new FakeAgentPort({
-      'post-pr-review-profile': [
-        makeSuccessAgentResult(),
-        makeSuccessAgentResult(),
-        makeSuccessAgentResult(),
-        makeSuccessAgentResult(),
-      ],
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
     const { deps, repo, github } = makeDeps({
       agent,
       verifyBuildPasses: async () => false,
-      extractResult: async () => ({
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'PARTIAL',
-          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'attempted fix' }],
-        },
+        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
       }),
     });
     const uc = new ProcessPrReviewComments(deps);
@@ -285,17 +293,26 @@ describe('ProcessPrReviewComments — blocking', () => {
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
     expect(out.blocked).toBe(1);
-    expect(github.repliesPosted).toHaveLength(2);
+    // Only one reply is ever posted, even across retry polls (idempotent — H1).
+    expect(github.repliesPosted).toHaveLength(1);
   });
 });
 
 describe('ProcessPrReviewComments — invalid result', () => {
-  it('records a failed poll and posts no replies when extractResult fails', async () => {
+  it('blocks the comment after retries and posts no replies when extractTaskResult fails', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
     const { deps, github, repo } = makeDeps({
-      extractResult: async () => ({
+      agent,
+      extractTaskResult: async () => ({
         ok: false,
         reason: 'invalid_result',
-        detail: 'result.json missing outcome field',
+        detail: 'result.json missing action field',
       }),
     });
     github.comments.set('o/r/5', [
@@ -319,24 +336,22 @@ describe('ProcessPrReviewComments — invalid result', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('BLOCKED');
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.blocked).toBe(1);
     expect(github.repliesPosted).toHaveLength(0);
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
     const poll = repo.latestPollAttempt(runId);
-    expect(poll?.status).toBe('failed');
+    expect(poll?.status).toBe('completed');
+    expect(poll?.terminalState).toBe('blocked');
   });
 });
 
 describe('ProcessPrReviewComments — no_fix action', () => {
   it('marks a no_fix comment processed without commit/build verification', async () => {
     const { deps, github, repo } = makeDeps({
-      extractResult: async () => ({
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'NO_FIXES_NEEDED',
-          comments: [
-            { commentId: 9001, action: 'no_fix', replyBody: 'Intentional design choice.' },
-          ],
-        },
+        result: { commentId: 9001, action: 'no_fix', replyBody: 'Intentional design choice.' },
       }),
     });
     github.comments.set('o/r/5', [
@@ -360,7 +375,7 @@ describe('ProcessPrReviewComments — no_fix action', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('NO_FIXES_NEEDED');
+    expect(out.outcome).toBe('ALL_DONE');
     expect(out.processed).toBe(1);
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('processed');
@@ -374,23 +389,34 @@ describe('ProcessPrReviewComments — no_fix action', () => {
 });
 
 describe('ProcessPrReviewComments — multiple comments', () => {
-  it('processes a mix of fixed and no_fix comments in one pass', async () => {
+  it('processes a mix of fixed, no_fix, and blocked comments in one pass', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
+    // Keyed by comment id (not call order): the result returned matches whichever
+    // comment is currently being processed, mirroring production. (M3)
+    const resultsById: Record<
+      number,
+      { action: 'fixed' | 'no_fix' | 'blocked'; replyBody: string; blockedReason?: string }
+    > = {
+      9001: { action: 'fixed', replyBody: 'Fixed the typo.' },
+      9002: { action: 'no_fix', replyBody: 'Intentional.' },
+      9003: { action: 'blocked', replyBody: 'Cannot fix safely.', blockedReason: 'unsafe change' },
+    };
+    let activeCommentId = 0;
     const { deps, github, repo } = makeDeps({
-      extractResult: async () => ({
+      agent,
+      renderTaskPrompt: async ({ comment }) => {
+        activeCommentId = comment.commentId;
+        return '/tmp/prompt.md';
+      },
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'PARTIAL',
-          comments: [
-            { commentId: 9001, action: 'fixed', replyBody: 'Fixed the typo.' },
-            { commentId: 9002, action: 'no_fix', replyBody: 'Intentional.' },
-            {
-              commentId: 9003,
-              action: 'blocked',
-              replyBody: 'Cannot fix safely.',
-              blockedReason: 'unsafe change',
-            },
-          ],
-        },
+        result: { commentId: activeCommentId, ...resultsById[activeCommentId]! },
       }),
     });
     github.comments.set('o/r/5', [
@@ -433,7 +459,7 @@ describe('ProcessPrReviewComments — multiple comments', () => {
       pollNumber: 1,
     });
 
-    expect(out.outcome).toBe('PARTIAL');
+    expect(out.outcome).toBe('ALL_DONE');
     expect(out.processed).toBe(2);
     expect(out.blocked).toBe(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
@@ -443,14 +469,18 @@ describe('ProcessPrReviewComments — multiple comments', () => {
 });
 
 describe('ProcessPrReviewComments — failed agent invocation', () => {
-  it('cleans up the worktree when the agent invocation fails', async () => {
+  it('makes no commit and blocks the comment when the agent invocation fails', async () => {
     const agent = new FakeAgentPort({
-      'post-pr-review-profile': [makeSuccessAgentResult({ outcome: 'failed' })],
+      'post-pr-review-profile': [
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+      ],
     });
     const git = new FakeGitPort();
     git.headByCwd.set('/work/tree', 'abc123');
     git.remoteRefs.set('origin/feat-x', 'abc123');
-    const { deps, github } = makeDeps({ agent, git });
+    const { deps, github, repo } = makeDeps({ agent, git });
     github.comments.set('o/r/5', [
       {
         id: 9001,
@@ -473,75 +503,93 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
       pollNumber: 1,
     });
     expect(git.commits.length).toBe(0);
-    expect(git.cleanUntrackedCalls).toContain('/work/tree');
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
   });
 
-  it('records a failed poll and posts no replies when agent invocation fails', async () => {
-    const agent = new FakeAgentPort({
-      'post-pr-review-profile': [makeSuccessAgentResult({ outcome: 'failed' })],
-    });
-    const { deps, github, repo } = makeDeps({ agent });
-    github.comments.set('o/r/5', [
-      {
-        id: 9001,
-        prNumber: 5,
-        path: 'a.ts',
-        line: 3,
-        reviewer: 'octocat',
-        body: 'fix this',
-        createdAt: new Date('2026-06-04T00:00:00Z'),
-      },
-    ]);
-    const uc = new ProcessPrReviewComments(deps);
-    const out = await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 1,
-    });
-    expect(out.outcome).toBe('BLOCKED');
-    expect(github.repliesPosted).toHaveLength(0);
-    const poll = repo.latestPollAttempt(runId);
-    expect(poll?.status).toBe('failed');
-  });
-
-  it('blocks when agent invocation times out', async () => {
-    const agent = new FakeAgentPort({
-      'post-pr-review-profile': [makeSuccessAgentResult({ outcome: 'timeout' })],
-    });
-    const { deps, github, repo } = makeDeps({ agent });
-    github.comments.set('o/r/5', [
-      {
-        id: 9001,
-        prNumber: 5,
-        path: 'a.ts',
-        line: 3,
-        reviewer: 'octocat',
-        body: 'fix this',
-        createdAt: new Date('2026-06-04T00:00:00Z'),
-      },
-    ]);
-    const uc = new ProcessPrReviewComments(deps);
-    const out = await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 1,
-    });
-    expect(out.outcome).toBe('BLOCKED');
-    expect(github.repliesPosted).toHaveLength(0);
-    expect(repo.latestPollAttempt(runId)?.status).toBe('failed');
-  });
-
-  it('blocks when agent invocation has contract violations', async () => {
+  it('blocks the comment and posts no replies when agent invocation fails', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+      ],
+    });
+    const { deps, github, repo } = makeDeps({ agent });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.blocked).toBe(1);
+    expect(github.repliesPosted).toHaveLength(0);
+    const poll = repo.latestPollAttempt(runId);
+    expect(poll?.terminalState).toBe('blocked');
+  });
+
+  it('blocks the comment when agent invocation times out', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult({ outcome: 'timeout' }),
+        makeSuccessAgentResult({ outcome: 'timeout' }),
+        makeSuccessAgentResult({ outcome: 'timeout' }),
+      ],
+    });
+    const { deps, github, repo } = makeDeps({ agent });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.blocked).toBe(1);
+    expect(github.repliesPosted).toHaveLength(0);
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
+  });
+
+  it('blocks the comment when agent invocation has contract violations', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult({
+          outcome: 'contract_violation',
+          contractViolations: ['missing result.json'],
+        }),
+        makeSuccessAgentResult({
+          outcome: 'contract_violation',
+          contractViolations: ['missing result.json'],
+        }),
         makeSuccessAgentResult({
           outcome: 'contract_violation',
           contractViolations: ['missing result.json'],
@@ -570,20 +618,23 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('BLOCKED');
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.blocked).toBe(1);
     expect(github.repliesPosted).toHaveLength(0);
-    expect(repo.latestPollAttempt(runId)?.status).toBe('failed');
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
   });
 });
 
-describe('ProcessPrReviewComments — empty non-blocked manifest', () => {
-  it('fails the pass when agent returns empty comments with unresolved comments pending', async () => {
-    const { deps, github, repo } = makeDeps({
-      extractResult: async () => ({
-        ok: true,
-        result: { outcome: 'NO_FIXES_NEEDED', comments: [] },
-      }),
+describe('ProcessPrReviewComments — per-task retry budget', () => {
+  it('retries a failing task MAX_TASK_RETRIES times before blocking the comment', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+      ],
     });
+    const { deps, github, repo } = makeDeps({ agent });
     github.comments.set('o/r/5', [
       {
         id: 9001,
@@ -605,10 +656,9 @@ describe('ProcessPrReviewComments — empty non-blocked manifest', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('BLOCKED');
-    expect(github.repliesPosted).toHaveLength(0);
-    const poll = repo.latestPollAttempt(runId);
-    expect(poll?.status).toBe('failed');
+    expect(agent.invocations.length).toBe(3);
+    expect(out.blocked).toBe(1);
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
   });
 });
 
@@ -660,12 +710,17 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
   });
 });
 
-describe('ProcessPrReviewComments — top-level BLOCKED outcome', () => {
-  it('blocks all unresolved comments when agent returns BLOCKED with empty comments', async () => {
+describe('ProcessPrReviewComments — agent blocks a comment', () => {
+  it('blocks a comment when the agent returns a blocked action', async () => {
     const { deps, github, repo } = makeDeps({
-      extractResult: async () => ({
+      extractTaskResult: async () => ({
         ok: true,
-        result: { outcome: 'BLOCKED', comments: [] },
+        result: {
+          commentId: 9001,
+          action: 'blocked',
+          replyBody: 'Cannot fix this safely.',
+          blockedReason: 'blocked by agent',
+        },
       }),
     });
     github.comments.set('o/r/5', [
@@ -689,12 +744,12 @@ describe('ProcessPrReviewComments — top-level BLOCKED outcome', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('BLOCKED');
+    expect(out.outcome).toBe('ALL_DONE');
     expect(out.blocked).toBe(1);
     expect(out.processed).toBe(0);
     expect(out.allResolved).toBe(false);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
-    expect(github.repliesPosted).toHaveLength(0);
+    expect(github.repliesPosted).toHaveLength(1);
     const poll = repo.latestPollAttempt(runId);
     expect(poll?.terminalState).toBe('blocked');
   });
@@ -708,12 +763,9 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
     const { deps, github, repo } = makeDeps({
       agent,
       verifyBuildPasses: async () => false,
-      extractResult: async () => ({
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'PARTIAL',
-          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'attempted fix' }],
-        },
+        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
       }),
     });
     github.comments.set('o/r/5', [
@@ -888,17 +940,17 @@ describe('ProcessPrReviewComments — lenient reply verification', () => {
   });
 });
 
-describe('ProcessPrReviewComments — stale comment IDs', () => {
-  it('fails the pass when agent returns non-empty comments but none match pending', async () => {
-    const { deps, github, repo } = makeDeps({
-      extractResult: async () => ({
-        ok: true,
-        result: {
-          outcome: 'ALL_DONE',
-          comments: [{ commentId: 9999, action: 'fixed', replyBody: 'Fixed stale.' }],
-        },
-      }),
+describe('ProcessPrReviewComments — per-task failure isolation', () => {
+  it('blocks the failing comment while still processing the succeeding one', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult({ outcome: 'failed' }),
+        makeSuccessAgentResult(),
+      ],
     });
+    const { deps, github, repo } = makeDeps({ agent });
     github.comments.set('o/r/5', [
       {
         id: 9001,
@@ -906,7 +958,16 @@ describe('ProcessPrReviewComments — stale comment IDs', () => {
         path: 'a.ts',
         line: 3,
         reviewer: 'octocat',
-        body: 'rename foo',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 10,
+        reviewer: 'reviewer2',
+        body: 'rename bar',
         createdAt: new Date('2026-06-04T00:00:00Z'),
       },
     ]);
@@ -920,13 +981,12 @@ describe('ProcessPrReviewComments — stale comment IDs', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('BLOCKED');
-    expect(out.processed).toBe(0);
-    expect(out.blocked).toBe(0);
-    expect(out.allResolved).toBe(false);
-    expect(github.repliesPosted).toHaveLength(0);
-    const poll = repo.latestPollAttempt(runId);
-    expect(poll?.status).toBe('failed');
+
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.processed).toBe(1);
+    expect(out.blocked).toBe(1);
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
+    expect(repo.getComment(runId, 9002)?.state).toBe('processed');
   });
 });
 
@@ -938,12 +998,9 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
     const { deps, github, repo } = makeDeps({
       agent,
       verifyBuildPasses: async () => false,
-      extractResult: async () => ({
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'PARTIAL',
-          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'attempted fix' }],
-        },
+        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
       }),
     });
     github.comments.set('o/r/5', [
@@ -984,7 +1041,8 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
       pollNumber: 2,
     });
 
-    expect(github.repliesPosted).toHaveLength(2);
+    // Still exactly one reply after the second poll — no duplicate (H1).
+    expect(github.repliesPosted).toHaveLength(1);
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
     expect(after2?.replyVerified).toBe(false);
@@ -993,15 +1051,7 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
 
 describe('ProcessPrReviewComments — APPROVED review filtering', () => {
   it('excludes inline comments from APPROVED reviews', async () => {
-    const { deps, github, repo } = makeDeps({
-      extractResult: async () => ({
-        ok: true,
-        result: {
-          outcome: 'ALL_DONE',
-          comments: [{ commentId: 9002, action: 'fixed', replyBody: 'Fixed the issue.' }],
-        },
-      }),
-    });
+    const { deps, github, repo } = makeDeps();
     github.reviews.set('o/r/5', [{ id: 100, state: 'APPROVED' as const, user: 'approver' }]);
     github.comments.set('o/r/5', [
       {
@@ -1051,17 +1101,12 @@ describe('ProcessPrReviewComments — APPROVED review filtering', () => {
   });
 });
 
-describe('ProcessPrReviewComments — Bug R fallback for omitted comment IDs', () => {
-  it('posts fallback replies for omitted comments when agent returns ALL_DONE with missing comment IDs', async () => {
-    const { deps, github } = makeDeps({
-      extractResult: async () => ({
-        ok: true,
-        result: {
-          outcome: 'ALL_DONE',
-          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Fixed the typo.' }],
-        },
-      }),
+describe('ProcessPrReviewComments — every comment gets its own task', () => {
+  it('processes every unresolved comment independently (no comment can be omitted)', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
+    const { deps, github, repo } = makeDeps({ agent });
     github.comments.set('o/r/5', [
       {
         id: 9001,
@@ -1093,22 +1138,18 @@ describe('ProcessPrReviewComments — Bug R fallback for omitted comment IDs', (
       pollNumber: 1,
     });
     expect(out.outcome).toBe('ALL_DONE');
+    expect(out.processed).toBe(2);
     expect(github.repliesPosted.some((r) => r.commentId === 9001)).toBe(true);
-    expect(
-      github.repliesPosted.some((r) => r.commentId === 9002 && r.body.includes('commit')),
-    ).toBe(true);
+    expect(github.repliesPosted.some((r) => r.commentId === 9002)).toBe(true);
+    expect(repo.getComment(runId, 9001)?.state).toBe('processed');
+    expect(repo.getComment(runId, 9002)?.state).toBe('processed');
   });
 
-  it('verifyOrphaned verifies fallback replies and sets allResolved=true', async () => {
-    const { deps, github, git } = makeDeps({
-      extractResult: async () => ({
-        ok: true,
-        result: {
-          outcome: 'ALL_DONE',
-          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Fixed the typo.' }],
-        },
-      }),
+  it('resolves every comment independently and reports allResolved', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
+    const { deps, github } = makeDeps({ agent });
     github.comments.set('o/r/5', [
       {
         id: 9001,
@@ -1129,9 +1170,6 @@ describe('ProcessPrReviewComments — Bug R fallback for omitted comment IDs', (
         createdAt: new Date(),
       },
     ]);
-    git.remoteRefs.set('origin/feat-x', 'def456');
-    git.ancestorResults.set('def456|def456', true);
-    git.logBetweenResults.set('abc123|def456', ['def456']);
 
     const uc = new ProcessPrReviewComments(deps);
     const out = await uc.execute({
@@ -1146,10 +1184,61 @@ describe('ProcessPrReviewComments — Bug R fallback for omitted comment IDs', (
 
     expect(out.outcome).toBe('ALL_DONE');
     expect(out.allResolved).toBe(true);
-    expect(
-      github.repliesPosted.some((r) => r.commentId === 9002 && r.body.includes('commit')),
-    ).toBe(true);
+    expect(github.resolvedThreads.some((t) => t.commentId === 9001)).toBe(true);
     expect(github.resolvedThreads.some((t) => t.commentId === 9002)).toBe(true);
+  });
+});
+
+describe('ProcessPrReviewComments — start SHA advances per task (M1)', () => {
+  it('verifies a later task against the previous task’s commit, not the stale poll-start SHA', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const verifyCalls: Array<{ startCommitSha: string; commitSha?: string }> = [];
+    const { deps, github } = makeDeps({
+      agent,
+      verifyCommitPushed: async (input) => {
+        verifyCalls.push({ startCommitSha: input.startCommitSha, commitSha: input.commitSha });
+        return true;
+      },
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r1',
+        body: 'first',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 2,
+        reviewer: 'r2',
+        body: 'second',
+        createdAt: new Date(),
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(verifyCalls).toHaveLength(2);
+    // The second task must anchor to the first task's commit, proving the start
+    // SHA advanced rather than staying pinned to the poll-start HEAD.
+    expect(verifyCalls[1]!.startCommitSha).toBe(verifyCalls[0]!.commitSha);
+    expect(verifyCalls[1]!.startCommitSha).not.toBe(verifyCalls[0]!.startCommitSha);
   });
 });
 
@@ -1282,9 +1371,9 @@ describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha
     });
 
     expect(verifyCalls.length).toBe(2);
-    expect(verifyCalls[0].commitSha).toBe(agentACommit);
-    expect(verifyCalls[0].startCommitSha).toBe(sharedStart);
-    expect(verifyCalls[1].commitSha).toBe(agentACommit);
+    expect(verifyCalls[0]!.commitSha).toBe(agentACommit);
+    expect(verifyCalls[0]!.startCommitSha).toBe(sharedStart);
+    expect(verifyCalls[1]!.commitSha).toBe(agentACommit);
 
     expect(out.processed).toBe(0);
     const comment = repo.getComment(runId, 9001);
@@ -1344,8 +1433,8 @@ describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha
     });
 
     expect(verifyCalls.length).toBe(1);
-    expect(verifyCalls[0].commitSha).toBe(agentBCommit);
-    expect(verifyCalls[0].startCommitSha).toBe(sharedStart);
+    expect(verifyCalls[0]!.commitSha).toBe(agentBCommit);
+    expect(verifyCalls[0]!.startCommitSha).toBe(sharedStart);
 
     expect(out.processed).toBe(1);
     const comment = repo.getComment(runId, 9001);
@@ -1406,8 +1495,8 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
     });
 
     expect(verifyCalls.length).toBeGreaterThanOrEqual(1);
-    expect(verifyCalls[0].commitSha).toBe(agentCommit);
-    expect(verifyCalls[0].startCommitSha).toBe('startSha');
+    expect(verifyCalls[0]!.commitSha).toBe(agentCommit);
+    expect(verifyCalls[0]!.startCommitSha).toBe('startSha');
 
     expect(out.processed).toBe(0);
     const comment = repo.getComment(runId, 9001);
@@ -1464,13 +1553,10 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
       git,
       agent,
       prReviewRepo: repo,
-      renderPrompt: async () => '/tmp/prompt.md',
-      extractResult: async () => ({
+      renderTaskPrompt: async () => '/tmp/prompt.md',
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'ALL_DONE',
-          comments: [],
-        },
+        result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
       }),
       verifyCommitPushed: async (input) => {
         if (!input.commitSha) verifyCalledWithoutCommitSha = true;
@@ -1546,13 +1632,10 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
       git,
       agent,
       prReviewRepo: repo,
-      renderPrompt: async () => '/tmp/prompt.md',
-      extractResult: async () => ({
+      renderTaskPrompt: async () => '/tmp/prompt.md',
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'ALL_DONE',
-          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' }],
-        },
+        result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
       }),
       verifyCommitPushed: async () => true,
       verifyBuildPasses: async () => true,
@@ -1624,13 +1707,10 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
       git,
       agent,
       prReviewRepo: repo,
-      renderPrompt: async () => '/tmp/prompt.md',
-      extractResult: async () => ({
+      renderTaskPrompt: async () => '/tmp/prompt.md',
+      extractTaskResult: async () => ({
         ok: true,
-        result: {
-          outcome: 'ALL_DONE',
-          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' }],
-        },
+        result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
       }),
       verifyCommitPushed: async () => true,
       verifyBuildPasses: async () => true,
