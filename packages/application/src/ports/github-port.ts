@@ -22,12 +22,14 @@ export interface GitHubReviewComment {
   id: number;
   prNumber: number;
   path: string;
-  line: number;
+  line: number | null;
   reviewer: string;
   body: string;
   createdAt: Date;
   /** Present when this comment is itself a reply to another comment. */
   inReplyToId?: number;
+  /** The pull request review ID this inline comment belongs to (from pull_request_review_id). Used for APPROVED review filtering. */
+  reviewId?: number;
 }
 
 export interface CreatePullRequestInput {
@@ -37,6 +39,12 @@ export interface CreatePullRequestInput {
   title: string;
   body: string;
   draft?: boolean;
+}
+
+export interface PullRequestReview {
+  id: number;
+  state: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENT' | 'PENDING';
+  user: string;
 }
 
 export interface GitHubPort {
@@ -61,4 +69,5 @@ export interface GitHubPort {
     issueNumber: number,
     labels: { add?: string[]; remove?: string[] },
   ): Promise<void>;
+  listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]>;
 }

@@ -54,7 +54,7 @@ function makePoller(passes: PollPassResult[], overrides: Partial<PrReviewPollerD
 
 const resolved = (): PollPassResult => ({
   outcome: 'ALL_DONE',
-  processed: 1,
+  processed: 0,
   blocked: 0,
   allResolved: true,
   rateLimited: false,
@@ -75,8 +75,50 @@ const rateLimited = (): PollPassResult => ({
 });
 
 describe('PrReviewPoller', () => {
-  it('keeps polling after all-resolved to watch for follow-up comments', async () => {
-    const { poller, events } = makePoller([resolved()]);
+  it('exits all_resolved after 3 consecutive quiet polls', async () => {
+    const { poller, events } = makePoller([resolved(), resolved(), resolved()]);
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(result.pollsRun).toBe(3);
+    expect(
+      events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.all_resolved'),
+    ).toBe(true);
+  });
+
+  it('resets consecutiveQuietPolls when processed > 0', async () => {
+    const processed = (): PollPassResult => ({
+      outcome: 'ALL_DONE',
+      processed: 1,
+      blocked: 0,
+      allResolved: true,
+      rateLimited: false,
+    });
+    const { poller } = makePoller([resolved(), processed(), resolved(), resolved(), resolved()], {
+      maxPolls: 10,
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(result.pollsRun).toBe(5);
+  });
+
+  it('reaches max_polls_reached when quiet poll threshold is never met', async () => {
+    const { poller } = makePoller([partial(), resolved(), partial(), resolved(), partial()], {
+      maxPolls: 5,
+    });
     const result = await poller.run({
       runId,
       repoId,
@@ -86,10 +128,7 @@ describe('PrReviewPoller', () => {
       phaseId: PhaseName('post-pr-review'),
     });
     expect(result.terminalState).toBe('max_polls_reached');
-    expect(result.pollsRun).toBe(3);
-    expect(
-      events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.all_resolved'),
-    ).toBe(true);
+    expect(result.pollsRun).toBe(5);
   });
 
   it('runs up to maxPolls then terminates as max_polls_reached', async () => {
@@ -145,13 +184,15 @@ describe('PrReviewPoller', () => {
     expect(scheduleCalls[0].nextPollAt).toBeInstanceOf(Date);
     expect(scheduleCalls[1].state).toBe('running');
     expect(scheduleCalls[1].nextPollAt).toBeInstanceOf(Date);
-    expect(scheduleCalls[4].state).toBe('max_polls_reached');
+    expect(scheduleCalls[4].state).toBe('all_resolved');
   });
 });
 
 describe('PrReviewPoller — rate limit', () => {
   it('backs off and retries the same poll number on rate limit', async () => {
-    const { poller, sleeps, events } = makePoller([rateLimited(), resolved()]);
+    const { poller, sleeps, events } = makePoller([rateLimited(), resolved()], {
+      quietPollsThreshold: 999,
+    });
     const result = await poller.run({
       runId,
       repoId,
@@ -303,6 +344,7 @@ describe('PrReviewPoller — blocked early-stop', () => {
     });
     const { poller } = makePoller([mixed(), mixed(), resolved()], {
       maxPolls: 5,
+      quietPollsThreshold: 999,
     });
     const result = await poller.run({
       runId,
@@ -408,7 +450,7 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
     expect(terminalStates).toEqual([{ state: 'max_polls_reached' }]);
   });
 
-  it('does not run any polls if maxPolls budget is already exhausted', async () => {
+  it('runs at least one poll on re-entry even when maxPolls budget is exhausted', async () => {
     const repo = new FakePrReviewRepository();
     const eventTypes: string[] = [];
 
@@ -426,10 +468,21 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
       });
     }
 
+    let passCount = 0;
     const deps: PrReviewPollerDeps = {
       prReviewRepo: repo,
       processOnePass: async () => {
-        throw new Error('should not be called');
+        passCount++;
+        return {
+          result: {
+            outcome: 'NO_UNRESOLVED' as const,
+            processed: 0,
+            blocked: 0,
+            allResolved: true,
+            rateLimited: false,
+          },
+          attempt: undefined,
+        };
       },
       eventBus: {
         publish: (_runUuid: string, event: unknown) =>
@@ -452,9 +505,9 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('max_polls_reached');
-    expect(result.pollsRun).toBe(3);
-    expect(eventTypes).not.toContain('post-pr-review.poll.started');
+    expect(passCount).toBe(1);
+    expect(result.pollsRun).toBe(4);
+    expect(eventTypes).toContain('post-pr-review.poll.started');
   });
 
   it('does not count rate_limited attempts toward poll budget on resume', async () => {
@@ -490,6 +543,7 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
       readyMaxDays: 7,
       phaseStartedAt: clock,
       recordTerminalState: async () => {},
+      quietPollsThreshold: 999,
     };
     const poller = new PrReviewPoller(deps);
     const result = await poller.run({
@@ -511,6 +565,7 @@ describe('PrReviewPoller — transient error recovery', () => {
     let callCount = 0;
     const { poller, sleeps, events } = makePoller([], {
       maxPolls: 3,
+      quietPollsThreshold: 999,
       processOnePass: async () => {
         callCount++;
         if (callCount === 1) throw new Error('GitHub API timeout');

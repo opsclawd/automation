@@ -11,6 +11,7 @@ export type {
   GitHubIssue,
   PullRequest,
   PullRequestDetail,
+  PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
 } from './github-port.js';

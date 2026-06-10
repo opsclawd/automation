@@ -7,6 +7,10 @@ export class FakeGitPort implements GitPort {
   commits: Array<{ cwd: string; message: string; sha: string }> = [];
   pushes: PushInput[] = [];
   remoteRefs = new Map<string, string>();
+  ancestorResults = new Map<string, boolean>();
+  logBetweenResults = new Map<string, string[]>();
+  cleanUntrackedCalls: string[] = [];
+  headCommitShaOfResults = new Map<string, string | undefined>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -56,5 +60,21 @@ export class FakeGitPort implements GitPort {
   }): Promise<string | undefined> {
     const key = `${input.remote}/${input.ref}`;
     return this.remoteRefs.get(key);
+  }
+
+  async isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+    return this.ancestorResults.get(`${ancestor}|${descendant}`) ?? false;
+  }
+
+  async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
+    return this.logBetweenResults.get(`${base}|${head}`) ?? [];
+  }
+
+  async cleanUntracked(cwd: string): Promise<void> {
+    this.cleanUntrackedCalls.push(cwd);
+  }
+
+  async headCommitShaOf(cwd: string): Promise<string | undefined> {
+    return this.headCommitShaOfResults.get(cwd);
   }
 }

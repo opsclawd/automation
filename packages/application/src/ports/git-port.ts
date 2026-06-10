@@ -21,4 +21,8 @@ export interface GitPort {
   commit(cwd: string, message: string): Promise<string>;
   push(input: PushInput): Promise<void>;
   remoteRef(input: { cwd: string; remote: string; ref: string }): Promise<string | undefined>;
+  isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean>;
+  logBetween(cwd: string, base: string, head: string): Promise<string[]>;
+  cleanUntracked(cwd: string): Promise<void>;
+  headCommitShaOf(cwd: string): Promise<string | undefined>;
 }

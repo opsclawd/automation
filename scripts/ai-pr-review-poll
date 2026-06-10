@@ -11,15 +11,19 @@ export REPO_ROOT
 
 PR_NUMBER="${1:-}"
 ISSUE_NUM="${2:-}"
-MAX_POLLS="${3:-3}"
+MAX_POLLS="${3:-30}"
 POLL_INTERVAL="${4:-300}"
 
 if [[ -z "$PR_NUMBER" ]]; then
-  echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=3] [interval_sec=300]" >&2
+  echo "Usage: $0 <PR_NUMBER> [issue_num] [max_polls=30] [interval_sec=300]" >&2
   exit 1
 fi
 if [[ -z "$ISSUE_NUM" ]]; then
   echo "FATAL: ISSUE_NUM is required. The poller must not run from the main checkout." >&2
+  exit 1
+fi
+if [[ ! "$ISSUE_NUM" =~ ^[0-9]+$ ]]; then
+  echo "FATAL: ISSUE_NUM must be a positive integer (got '$ISSUE_NUM')." >&2
   exit 1
 fi
 # Escape hatch: USE_LEGACY_POLL=1 runs the legacy bash poller (issue #230).
@@ -57,6 +61,42 @@ ACTUAL_BRANCH=$(git -C "$POLL_CWD" symbolic-ref --short HEAD 2>/dev/null || echo
 if [[ "$ACTUAL_BRANCH" != "$PR_BRANCH" ]]; then
   echo "FATAL: worktree $POLL_CWD is on '${ACTUAL_BRANCH}', expected '${PR_BRANCH}'. Refusing to poll from wrong branch." >&2
   exit 1
+fi
+
+# Sync the worktree to the remote PR branch before polling (Bug L).
+# Without this the agent runs against a stale checkout. Use --ff-only so we
+# never create a merge commit or leave a conflicted tree mid-poll. A
+# fast-forward can fail for several reasons (branches diverged, or a dirty
+# worktree from a prior crashed run); we let git's own error through and warn
+# generically rather than asserting a specific cause. Continuing is safe: any
+# unmerged state makes the agent's later push non-ff, which the poller already
+# handles as a retry.
+if ! git -C "$POLL_CWD" fetch origin "$PR_BRANCH" 2>/dev/null; then
+  echo "WARN: could not fetch origin/${PR_BRANCH}; polling against current checkout." >&2
+elif ! git -C "$POLL_CWD" merge --ff-only "origin/${PR_BRANCH}"; then
+  echo "WARN: could not fast-forward to origin/${PR_BRANCH}; polling against current checkout." >&2
+fi
+
+# Auto-resolve AI_RUN_UUID from SQLite when not provided (Bug A).
+# Manual invocation without --run-id previously produced a random UUID
+# with no corresponding DB row, causing FK violations on every upsert.
+if [[ -z "${AI_RUN_UUID:-}" ]]; then
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "FATAL: sqlite3 is not installed or not on PATH. Install it or set AI_RUN_UUID." >&2
+    exit 1
+  fi
+  DB_PATH="${REPO_ROOT}/.ai-runs/orchestrator.sqlite"
+  if [[ ! -f "$DB_PATH" ]]; then
+    echo "FATAL: no AI_RUN_UUID and database not found at $DB_PATH" >&2
+    exit 1
+  fi
+  AI_RUN_UUID=$(sqlite3 "$DB_PATH" \
+    "SELECT uuid FROM runs WHERE issue_number = $ISSUE_NUM ORDER BY started_at DESC LIMIT 1" 2>/dev/null || true)
+  if [[ -z "$AI_RUN_UUID" ]]; then
+    echo "FATAL: no run found for issue #$ISSUE_NUM in $DB_PATH. Start a run first or set AI_RUN_UUID." >&2
+    exit 1
+  fi
+  export AI_RUN_UUID
 fi
 
 # Own our TMPDIR. The parent run (ai-run-issue-v2) injects a per-run TMPDIR

@@ -51,7 +51,7 @@ export function parsePollArgs(argv: string[]): PollArgs {
     ...(values.issue ? { issueNumber: requirePositiveInt(values.issue, '--issue') } : {}),
     repoFullName: values.repo,
     cwd: values.cwd,
-    maxPolls: values['max-polls'] ? requirePositiveInt(values['max-polls'], '--max-polls') : 3,
+    maxPolls: values['max-polls'] ? requirePositiveInt(values['max-polls'], '--max-polls') : 30,
     pollIntervalSeconds: values['interval-seconds']
       ? requirePositiveInt(values['interval-seconds'], '--interval-seconds')
       : 300,

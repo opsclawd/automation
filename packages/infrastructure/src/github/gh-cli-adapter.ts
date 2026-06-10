@@ -4,6 +4,7 @@ import type {
   GitHubIssue,
   PullRequestDetail,
   PullRequest,
+  PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
 } from '@ai-sdlc/application/ports';
@@ -24,6 +25,7 @@ interface RestComment {
   body: string;
   created_at: string;
   in_reply_to_id: number | null;
+  pull_request_review_id?: number;
 }
 
 export class GhCliAdapter implements GitHubPort {
@@ -131,6 +133,20 @@ export class GhCliAdapter implements GitHubPort {
     return this.parseComments(out, prNumber);
   }
 
+  async listReviews(repoFullName: string, prNumber: number): Promise<PullRequestReview[]> {
+    const out = await this.run(['api', `repos/${repoFullName}/pulls/${prNumber}/reviews`]);
+    const command = `gh api repos/${repoFullName}/pulls/${prNumber}/reviews`;
+    const reviews = this.safeJsonParse<
+      Array<{ id: number; state: string; user: { login: string } | null }>
+    >(out, command);
+    const VALID_STATES = new Set(['APPROVED', 'CHANGES_REQUESTED', 'COMMENT', 'PENDING']);
+    return reviews.map((r) => ({
+      id: r.id,
+      state: (VALID_STATES.has(r.state) ? r.state : 'COMMENT') as PullRequestReview['state'],
+      user: r.user?.login ?? 'ghost',
+    }));
+  }
+
   async listPrCommentsSince(
     repoFullName: string,
     prNumber: number,
@@ -157,11 +173,12 @@ export class GhCliAdapter implements GitHubPort {
       id: c.id,
       prNumber,
       path: c.path,
-      line: c.line ?? 0,
+      line: c.line ?? null,
       reviewer: c.user?.login ?? 'ghost',
       body: c.body,
       createdAt: new Date(c.created_at),
       ...(c.in_reply_to_id !== null ? { inReplyToId: c.in_reply_to_id } : {}),
+      ...(c.pull_request_review_id !== undefined ? { reviewId: c.pull_request_review_id } : {}),
     }));
   }
 

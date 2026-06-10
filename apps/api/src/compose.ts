@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -136,6 +137,7 @@ export interface Container {
     pollIntervalMs: number;
     readyMaxDays: number;
     phaseStartedAt: Date;
+    baseBranch?: string;
   }) => PrReviewPoller;
 }
 
@@ -231,6 +233,24 @@ export function composeRoot(opts: ComposeOptions): Container {
   const startIssueRun = new StartIssueRun(deps);
   const cancelRun = new CancelRun({ runRepository });
 
+  // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
+  let resolvedDefaultBranch = 'main';
+  try {
+    const out = execFileSync('gh', [
+      'repo',
+      'view',
+      '--json',
+      'defaultBranchRef',
+      '-q',
+      '.defaultBranchRef.name',
+    ])
+      .toString()
+      .trim();
+    if (out) resolvedDefaultBranch = out;
+  } catch {
+    // Best-effort: fall back to 'main'
+  }
+
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   try {
@@ -288,6 +308,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     pollIntervalMs: number;
     readyMaxDays: number;
     phaseStartedAt: Date;
+    baseBranch?: string;
+    repoRoot?: string;
   }): PrReviewPoller {
     if (!agentRuntime) {
       throw new ConfigError(
@@ -295,11 +317,11 @@ export function composeRoot(opts: ComposeOptions): Container {
       );
     }
     const ghAdapter = new GhCliAdapter({});
-    // GitPort audit: ProcessPrReviewComments only invokes git.diff, git.headCommitSha,
-    // and git.remoteRef. The remaining methods are stubs that throw with a clear
-    // message — they must not be called from the PR review poller flow. If a
-    // future change in ProcessPrReviewComments exercises them, this adapter must
-    // be extended to delegate to the real git CLI.
+    // GitPort audit: ProcessPrReviewComments uses git.diff, git.headCommitSha,
+    // git.headCommitShaOf, git.remoteRef, git.isAncestor, git.logBetween,
+    // git.resetHard, and git.cleanUntracked. The remaining methods
+    // (createWorktree, removeWorktree, currentBranch, commit, push) are stubs that throw with a clear message
+    // — they must not be called from the PR review poller flow.
     const gitAdapter: GitPort = {
       async createWorktree(_input: CreateWorktreeInput): Promise<void> {
         throw new Error(
@@ -320,10 +342,20 @@ export function composeRoot(opts: ComposeOptions): Container {
         const { execFileSync } = await import('node:child_process');
         return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
       },
-      async resetHard(_cwd: string, _commitSha: string): Promise<void> {
-        throw new Error(
-          'GitPort.resetHard is not wired in compose poller (PR review flow does not reset)',
-        );
+      // Best-effort variant of headCommitSha: returns undefined instead of
+      // throwing so the main-checkout drift guard can silently skip when the
+      // repo root is missing or not a git dir, rather than failing the poll.
+      async headCommitShaOf(cwd: string): Promise<string | undefined> {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
+        } catch {
+          return undefined;
+        }
+      },
+      async resetHard(cwd: string, commitSha: string): Promise<void> {
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('git', ['reset', '--hard', commitSha], { cwd });
       },
       async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
         const { execFileSync } = await import('node:child_process');
@@ -363,6 +395,37 @@ export function composeRoot(opts: ComposeOptions): Container {
         } catch {
           return undefined;
         }
+      },
+      async isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+            cwd,
+          });
+          return true;
+        } catch (err) {
+          process.stderr.write(
+            `[compose] git merge-base --is-ancestor ${ancestor} ${descendant} failed in ${cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          return false;
+        }
+      },
+      async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          const output = execFileSync('git', ['log', '--format=%H', `${base}..${head}`], {
+            cwd,
+          })
+            .toString()
+            .trim();
+          return output ? output.split('\n') : [];
+        } catch {
+          return [];
+        }
+      },
+      async cleanUntracked(cwd: string): Promise<void> {
+        const { execFileSync } = await import('node:child_process');
+        execFileSync('git', ['clean', '-fd'], { cwd });
       },
     };
     const processor = new ProcessPrReviewComments({
@@ -441,20 +504,38 @@ export function composeRoot(opts: ComposeOptions): Container {
           return { ok: false, reason: 'missing', detail: String(err) };
         }
       },
-      verifyCommitPushed: async ({ cwd, branch }) => {
+      verifyCommitPushed: async ({ cwd, branch, startCommitSha, commitSha }) => {
         try {
-          const headSha = await gitAdapter.headCommitSha(cwd);
-          if (!headSha) return false;
           const remoteSha = await gitAdapter.remoteRef({ cwd, remote: 'origin', ref: branch });
-          return remoteSha === headSha;
+          if (!remoteSha) return false;
+          if (commitSha) {
+            const onRemote = await gitAdapter.isAncestor(cwd, commitSha, remoteSha);
+            if (!onRemote) return false;
+            const isNewer = await gitAdapter.logBetween(cwd, startCommitSha, commitSha);
+            return isNewer.length > 0;
+          }
+          return false;
         } catch {
           return false;
         }
       },
-      verifyBuildPasses: async ({ cwd }) => {
+      verifyBuildPasses: async ({ cwd, runId }) => {
         try {
           const config = loadConfig(cwd);
-          if (!config.validation?.commands?.length) return true;
+          if (!config.validation?.commands?.length) {
+            try {
+              eventRepository.insert({
+                runUuid: runId,
+                phase: 'post-pr-review',
+                level: 'warn',
+                type: 'post-pr-review.build_verification_skipped',
+                message: 'build verification skipped: no validation.commands configured',
+                metadata: { cwd },
+                timestamp: new Date(),
+              });
+            } catch {}
+            return true;
+          }
           const buildCheckRunId = RunId(`pr-review-build-check-${randomUUID()}`);
           const logDir = join(runsDir, buildCheckRunId);
           const result = await runValidation.execute({
@@ -473,7 +554,21 @@ export function composeRoot(opts: ComposeOptions): Container {
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
       idFactory: () => randomUUID(),
       now: () => new Date(),
-      maxIterations: 10,
+      baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
+      repoRoot: opts.repoRoot,
+      onWarning: (message, metadata, runId) => {
+        try {
+          eventRepository.insert({
+            runUuid: runId,
+            phase: 'post-pr-review',
+            level: 'warn',
+            type: 'post-pr-review.main_checkout_guard',
+            message,
+            metadata,
+            timestamp: new Date(),
+          });
+        } catch {}
+      },
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without
