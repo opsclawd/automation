@@ -134,6 +134,8 @@ source "${REPO_ROOT}/scripts/lib/guard-main-checkout.sh"
 source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
 # shellcheck source=lib/review-manifest-helpers.sh
 source "${REPO_ROOT}/scripts/lib/review-manifest-helpers.sh"
+# shellcheck source=lib/fix-review-stash.sh
+source "${REPO_ROOT}/scripts/lib/fix-review-stash.sh"
 # shellcheck source=lib/validation_result.sh
 source "${REPO_ROOT}/scripts/lib/validation_result.sh"
 
@@ -4225,10 +4227,11 @@ Start now."
         timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
       } > >(tee "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log") 2>&1
 
-      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
-        git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
-        warn "Revalidate produced uncommitted changes for task $_task_id — resetting"
-      fi
+      _stash_and_conditionally_commit \
+        "${WORKTREE_DIR}" \
+        "$_task_id" \
+        "fix: task ${_task_id} (auto-committed after green revalidate)" \
+        "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"
 
       _task_result_file="${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
       _task_status=$(resolve_result "$_task_result_file" "" FIXED FAILED DONE_NO_FIXES_NEEDED "FAILED")
