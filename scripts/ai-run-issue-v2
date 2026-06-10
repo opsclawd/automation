@@ -3852,11 +3852,13 @@ Start now."
 
   cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
 
-  # Mutation guard (revalidate): the fix agent commits before this block,
-  # so the worktree should be clean. If the validation commands themselves
-  # mutate tracked files (e.g., a build step rewriting generated output),
-  # the result would be uncommitted — and validation.result=passed from a
-  # dirty worktree means CI/reviewers see different code than what was tested.
+  # Revalidation dirty-tree guard: agent work during the fix task may leave
+  # uncommitted changes. _stash_and_conditionally_commit stashes them, checks
+  # whether revalidation passed (green) or failed (red), then either commits
+  # the stash (green — preserving the agent's work) or retains the stash and
+  # lets the orchestrator_fail below fire (red — preserving the state for
+  # debugging). Unlike the old invariant (always fail on dirty), a green
+  # revalidation with uncommitted changes is now accepted and committed.
   if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
     _stash_and_conditionally_commit \
       "${WORKTREE_DIR}" \
