@@ -52,3 +52,10 @@ _extract_architect_plan_entry() {
   fi
   jq --arg tid "$task_id" 'first(.tasks[] | select(.task_id == $tid)) // empty' "$plan_path" 2>/dev/null || echo ""
 }
+
+_escape_for_grep() {
+  # Escape all non-alphanumeric, non-hyphen, non-underscore characters
+  # for use as a literal grep pattern. Safe for POSIX sed (no bracket-class
+  # collating-symbol pitfalls).
+  printf '%s' "$1" | sed 's/[^[:alnum:]_-]/\\&/g'
+}
