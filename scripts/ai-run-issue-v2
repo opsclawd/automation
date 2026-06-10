@@ -2635,6 +2635,31 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         fi
       fi
 
+      # Commit-verification guard: if the implementer reported DONE (or
+      # DONE_WITH_CONCERNS) but the worktree has uncommitted changes, invoke
+      # the commit-completion agent to recover. This catches:
+      #   Mode A — commit skipped/forgotten
+      #   Mode B — commit rejected by pre-commit hook
+      #   Third gap — one commit made but other files left dirty
+      if [[ "$IMPL_STATUS" == "DONE" || "$IMPL_STATUS" == "DONE_WITH_CONCERNS" ]]; then
+        _dirty_tree=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "")
+        if [[ -n "$_dirty_tree" ]]; then
+          warn "Task ${TASK_NUM}: implementer reported ${IMPL_STATUS} but worktree has uncommitted changes — attempting commit-completion recovery"
+          log "  Dirty files:\n${_dirty_tree}"
+          if run_commit_completion "$TASK_NUM" "$COMMIT_MSG"; then
+            log "  Task ${TASK_NUM}: commit-completion recovery succeeded"
+          else
+            _post_recovery_dirty=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "(git status failed)")
+            _hook_log_tail=$(tail -50 "${ISSUES_DIR}/commit-completion-task-${TASK_NUM}.log" 2>/dev/null || echo "(no log)")
+            orchestrator_fail "Task ${TASK_NUM}: implementer reported ${IMPL_STATUS} but worktree has uncommitted changes after recovery attempt. Dirty files:
+${_post_recovery_dirty}
+
+Recovery agent output (last 50 lines):
+${_hook_log_tail}"
+          fi
+        fi
+      fi
+
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
       # Persist the post-impl head too, so a later resume into this task's review
       # uses THIS task's tip — not the branch tip, which may already carry later
