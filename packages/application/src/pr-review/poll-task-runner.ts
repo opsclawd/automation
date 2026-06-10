@@ -183,17 +183,7 @@ export class PollTaskRunner {
       buildVerified = await d.verifyBuildPasses({ cwd: input.cwd, runId: String(input.runId) });
     }
 
-    // 6. Insert reply + mark replied
-    d.prReviewRepo.insertReply({
-      id: d.idFactory(),
-      runId: input.runId,
-      prNumber: input.prNumber,
-      commentId: comment.commentId,
-      body: result.replyBody,
-      postedAt: d.now(),
-      verified: false,
-    });
-
+    // 6. Mark replied
     const replied: PrReviewComment = {
       ...comment,
       state: 'replied',
@@ -224,6 +214,15 @@ export class PollTaskRunner {
       buildVerified;
 
     if (noFixOk || fixOk) {
+      d.prReviewRepo.insertReply({
+        id: d.idFactory(),
+        runId: input.runId,
+        prNumber: input.prNumber,
+        commentId: comment.commentId,
+        body: result.replyBody,
+        postedAt: d.now(),
+        verified: true,
+      });
       d.prReviewRepo.upsertComment(
         markProcessed(replied, {
           commitVerified: result.action === 'fixed' ? commitVerified : true,
