@@ -99,7 +99,6 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
     resolveProfileForPhase: () => 'post-pr-review-profile' as never,
     idFactory: () => `id-${++replyCounter}`,
     now: () => new Date('2026-06-04T00:10:00Z'),
-    maxIterations: 10,
     ...overrides,
   };
   return { deps, github, git, repo, agent };

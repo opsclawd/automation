@@ -450,7 +450,7 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
     expect(terminalStates).toEqual([{ state: 'max_polls_reached' }]);
   });
 
-  it('does not run any polls if maxPolls budget is already exhausted', async () => {
+  it('runs at least one poll on re-entry even when maxPolls budget is exhausted', async () => {
     const repo = new FakePrReviewRepository();
     const eventTypes: string[] = [];
 
@@ -468,10 +468,21 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
       });
     }
 
+    let passCount = 0;
     const deps: PrReviewPollerDeps = {
       prReviewRepo: repo,
       processOnePass: async () => {
-        throw new Error('should not be called');
+        passCount++;
+        return {
+          result: {
+            outcome: 'NO_UNRESOLVED' as const,
+            processed: 0,
+            blocked: 0,
+            allResolved: true,
+            rateLimited: false,
+          },
+          attempt: undefined,
+        };
       },
       eventBus: {
         publish: (_runUuid: string, event: unknown) =>
@@ -494,9 +505,9 @@ describe('PrReviewPoller — resume from persisted poll attempts', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('max_polls_reached');
-    expect(result.pollsRun).toBe(3);
-    expect(eventTypes).not.toContain('post-pr-review.poll.started');
+    expect(passCount).toBe(1);
+    expect(result.pollsRun).toBe(4);
+    expect(eventTypes).toContain('post-pr-review.poll.started');
   });
 
   it('does not count rate_limited attempts toward poll budget on resume', async () => {
