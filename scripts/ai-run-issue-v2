@@ -3872,6 +3872,14 @@ Start now."
             "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
       orchestrator_fail "revalidate phase produced uncommitted changes after fix — mutation not allowed"
     fi
+    # Guard: if the tree is still dirty after _stash_and_conditionally_commit,
+    # the commit failed (stash pop succeeded but commit didn't). A subsequent
+    # reset --hard would destroy the agent's work. Fail the phase.
+    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+      rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" \
+            "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
+      orchestrator_fail "revalidate: commit failed after stash pop, tree dirty — agent work not committed"
+    fi
   fi
 
   # Propagate revalidate state into validation.result so the create-pr phase
@@ -4242,6 +4250,15 @@ Start now."
         "$_task_id" \
         "fix: task ${_task_id} (auto-committed after green revalidate)" \
         "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"
+
+      # Guard: if the stash was consumed (pop succeeded) but commit failed,
+      # the tree is dirty with staged changes. A subsequent retry or task
+      # would reset --hard and destroy the agent's work. Mark FAILED so the
+      # dirty-tree guard at the top of the next iteration handles it safely.
+      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+        warn "Task $_task_id: commit failed, tree dirty — marking task as FAILED"
+        echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
+      fi
 
       _task_result_file="${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
       _task_status=$(resolve_result "$_task_result_file" "" FIXED FAILED DONE_NO_FIXES_NEEDED "FAILED")
