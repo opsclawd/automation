@@ -539,7 +539,7 @@ export class ProcessPrReviewComments {
               startCommitSha,
               commitSha: c.commitSha,
             })
-          : !isFix;
+          : false;
       let fixCommitOnRemote = true;
       if (isFix && c.commitSha) {
         const remoteSha = await d.git.remoteRef({
