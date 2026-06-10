@@ -55,9 +55,16 @@ JSON
 }
 
 # ── Architect pass behavior stubs ───────────────────────────────────────
-# These test the data flow logic, not the agent invocation itself.
+# These tests validate expected variable/data-flow states for the architect
+# pass skip-condition logic. They do NOT exercise the actual conditional
+# branches in ai-run-issue-v2 — those are covered by integration runs.
+# The assertions here verify the preconditions that the script's control
+# flow depends on (e.g., "when enabled=false, the plan is empty").
 
 @test "Architect pass is skipped when architectPass.enabled is false" {
+  # Smoke test: confirm the variable states that would cause the script's
+  # conditional (`[[ "$FIX_REVIEW_ARCHITECT_ENABLED" != "true" ]]`) to skip.
+  # Regression coverage for the actual branch lives in integration tests.
   FIX_REVIEW_USE_LEGACY=0
   FIX_REVIEW_EMPTY=0
   FIX_REVIEW_ARCHITECT_ENABLED=false
@@ -68,6 +75,9 @@ JSON
 }
 
 @test "Architect pass is skipped when manifest has no fix tasks" {
+  # Smoke test: confirm jq filtering produces zero fix tasks for a defer-only
+  # manifest. The actual conditional branch in ai-run-issue-v2 is tested via
+  # integration runs.
   FIX_REVIEW_USE_LEGACY=0
   FIX_REVIEW_EMPTY=0
   FIX_REVIEW_ARCHITECT_ENABLED=true
