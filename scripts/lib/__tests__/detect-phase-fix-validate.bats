@@ -55,6 +55,30 @@ teardown() {
   [ "$output" = "custom-phase" ]
 }
 
+@test "detect_phase: validation.result=passed with matching SHA stays on whole-pr-review" {
+  echo "passed" > "${ISSUES_DIR}/validation.result"
+  echo "abc123" > "${ISSUES_DIR}/validation.headsha"
+  git() { echo "abc123"; }
+  export -f git
+  run detect_phase
+  [ "$output" = "whole-pr-review" ]
+}
+
+@test "detect_phase: validation.result=passed with mismatched SHA goes to validate" {
+  echo "passed" > "${ISSUES_DIR}/validation.result"
+  echo "abc123" > "${ISSUES_DIR}/validation.headsha"
+  git() { echo "def456"; }
+  export -f git
+  run detect_phase
+  [ "$output" = "validate" ]
+}
+
+@test "detect_phase: validation.result=passed without headsha file goes to validate" {
+  echo "passed" > "${ISSUES_DIR}/validation.result"
+  run detect_phase
+  [ "$output" = "validate" ]
+}
+
 @test "ai-run-issue-v2 sources detect-phase.sh" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   run grep -q 'source.*detect-phase.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
