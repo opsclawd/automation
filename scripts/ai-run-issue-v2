@@ -4040,7 +4040,28 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
         _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
       fi
 
+      # Load architect plan entry for this task (if available)
+      _task_plan_section=""
+      if [[ -n "$FIX_REVIEW_ARCHITECT_PLAN" ]]; then
+        _plan_entry=$(_extract_architect_plan_entry "$FIX_REVIEW_ARCHITECT_PLAN" "$_task_id")
+        if [[ -n "$_plan_entry" ]]; then
+          _plan_approach=$(echo "$_plan_entry" | jq -r '.approach // ""')
+          _plan_constraints=$(echo "$_plan_entry" | jq -r '.constraints // [] | join("\n- ")' 2>/dev/null)
+          _plan_conflicts=$(echo "$_plan_entry" | jq -r '.conflicts_resolved // [] | join(", ")' 2>/dev/null)
+          _plan_depends=$(echo "$_plan_entry" | jq -r '.depends_on // [] | join(", ")' 2>/dev/null)
+          _task_plan_section="## CROSS-TASK FIX PLAN (from cohesive architect analysis)
+Approach: ${_plan_approach}
+$([ -n "$_plan_conflicts" ] && echo "Conflicts resolved: ${_plan_conflicts}" || true)
+$([ -n "$_plan_constraints" ] && printf 'Constraints:\n- %s' "$_plan_constraints" || true)
+$([ -n "$_plan_depends" ] && echo "Depends on: ${_plan_depends}" || true)
+"
+        fi
+      fi
+
       FIX_PROMPT="You are fixing a single review finding.
+
+## CROSS-TASK FIX PLAN
+${_task_plan_section:-No plan entry — fix independently.}
 
 ## CONTEXT
 You are working in: ${WORKTREE_DIR}
