@@ -125,13 +125,20 @@ export class PollTaskRunner {
       };
     }
 
-    // 4. Post reply
-    await d.github.replyToReviewComment(
-      input.repoFullName,
-      input.prNumber,
-      comment.commentId,
-      result.replyBody,
-    );
+    // 4. Post reply — idempotent. A comment can be reprocessed after a failed
+    // verification (reset to pending on a later poll), so posting unconditionally
+    // would accumulate one duplicate reply per attempt. Only post if this comment
+    // has no reply on GitHub yet. (Finding H1)
+    const repliesBefore = await d.github.listReviewComments(input.repoFullName, input.prNumber);
+    const alreadyReplied = repliesBefore.some((c) => c.inReplyToId === comment.commentId);
+    if (!alreadyReplied) {
+      await d.github.replyToReviewComment(
+        input.repoFullName,
+        input.prNumber,
+        comment.commentId,
+        result.replyBody,
+      );
+    }
 
     if (result.action === 'blocked') {
       d.prReviewRepo.insertReply({

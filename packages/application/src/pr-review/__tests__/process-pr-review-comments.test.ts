@@ -81,15 +81,22 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   git.remoteRefs.set('origin/feat-x', 'abc123');
 
   let replyCounter = 0;
+  // Mirror production: the prompt is rendered per comment and the agent's
+  // result.json carries that comment's id, so the extracted result's
+  // commentId always matches the comment being processed.
+  let currentCommentId = 9001;
   const deps: ProcessPrReviewDeps = {
     github,
     git,
     agent,
     prReviewRepo: repo,
-    renderTaskPrompt: async () => '/tmp/prompt.md',
+    renderTaskPrompt: async ({ comment }) => {
+      currentCommentId = comment.commentId;
+      return '/tmp/prompt.md';
+    },
     extractTaskResult: async () => ({
       ok: true,
-      result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
+      result: { commentId: currentCommentId, action: 'fixed', replyBody: 'Renamed foo to bar.' },
     }),
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => true,
@@ -274,7 +281,8 @@ describe('ProcessPrReviewComments — blocking', () => {
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
     expect(out.blocked).toBe(1);
-    expect(github.repliesPosted).toHaveLength(2);
+    // Only one reply is ever posted, even across retry polls (idempotent — H1).
+    expect(github.repliesPosted).toHaveLength(1);
   });
 });
 
@@ -1014,7 +1022,8 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
       pollNumber: 2,
     });
 
-    expect(github.repliesPosted).toHaveLength(2);
+    // Still exactly one reply after the second poll — no duplicate (H1).
+    expect(github.repliesPosted).toHaveLength(1);
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
     expect(after2?.replyVerified).toBe(false);
