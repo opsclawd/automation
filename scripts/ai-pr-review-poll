@@ -63,6 +63,18 @@ if [[ "$ACTUAL_BRANCH" != "$PR_BRANCH" ]]; then
   exit 1
 fi
 
+# Sync the worktree to the remote PR branch before polling (Bug L).
+# Without this the agent runs against a stale checkout. Use --ff-only: if the
+# local and remote branches have diverged, warn and continue rather than
+# creating a merge commit or leaving a conflicted tree mid-poll. A divergence
+# means the agent's later push will be non-ff and fail verification, which the
+# poller already handles as a retry — far safer than auto-merging here.
+if ! git -C "$POLL_CWD" fetch origin "$PR_BRANCH" 2>/dev/null; then
+  echo "WARN: could not fetch origin/${PR_BRANCH}; polling against current checkout." >&2
+elif ! git -C "$POLL_CWD" merge --ff-only "origin/${PR_BRANCH}" >/dev/null 2>&1; then
+  echo "WARN: worktree diverged from origin/${PR_BRANCH}; not fast-forwarding." >&2
+fi
+
 # Auto-resolve AI_RUN_UUID from SQLite when not provided (Bug A).
 # Manual invocation without --run-id previously produced a random UUID
 # with no corresponding DB row, causing FK violations on every upsert.
