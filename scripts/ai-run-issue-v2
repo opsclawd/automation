@@ -3006,6 +3006,9 @@ if [[ "$PHASE" == "validate" ]]; then
     warn "Validation had failures (check validation.md / .ai-runs/<run>/validate/ for details)"
   else
     info "Validation passed"
+    # Record HEAD SHA for resume guard — only on success so detect_phase
+    # forces re-validation when the branch has changed.
+    git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
   fi
 
   _emit_phase_done "validate"
