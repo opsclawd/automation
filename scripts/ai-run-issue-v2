@@ -109,6 +109,7 @@ if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
   _val=$(jq -r '.phases.planReview.judgmentAgent // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && JUDGMENT_AGENT_PROFILE="$_val"
   _val=$(jq -r '.phases.fixValidate.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_VALIDATE_ITERATIONS="$_val"
+  # Opt-out only for these two: default is true; only "false" in config disables.
   _val=$(jq -r '.phases.fixValidate.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
   [[ "$_val" == "false" ]] && FIX_VALIDATE_ENABLED=false
   _val=$(jq -r '.phases.wholePrFix.architectPass.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
