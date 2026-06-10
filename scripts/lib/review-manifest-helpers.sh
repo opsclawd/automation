@@ -54,8 +54,15 @@ _extract_architect_plan_entry() {
 }
 
 _escape_for_grep() {
-  # Escape all non-alphanumeric, non-hyphen, non-underscore characters
-  # for use as a literal grep pattern. Safe for POSIX sed (no bracket-class
-  # collating-symbol pitfalls).
-  printf '%s' "$1" | sed 's/[^[:alnum:]_-]/\\&/g'
+  # Escape only regex metacharacters for use as a literal grep pattern.
+  # Avoids over-escaping which would break grep -w word-boundary matching
+  # (backslash is not a word constituent).
+  printf '%s' "$1" | sed \
+    -e 's/\\/\\\\/g' \
+    -e 's/\[/\\[/g' \
+    -e 's/\]/\\]/g' \
+    -e 's/\./\\./g' \
+    -e 's/\*/\\*/g' \
+    -e 's/\^/\\^/g' \
+    -e 's/\$/\\$/g'
 }
