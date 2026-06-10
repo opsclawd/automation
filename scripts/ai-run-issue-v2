@@ -1763,7 +1763,22 @@ not write, modify, stage, or commit them in this run.
 2. Implement exactly what Task ${task_n} specifies — nothing more.
 3. Write tests following TDD where applicable, scoped to Task ${task_n}.
 4. Verify Task ${task_n}'s implementation works.
-5. Run: git add -A && git commit -m '${commit_msg}'
+5. Commit your work:
+   a. Record HEAD before: PRE_HEAD=$(git rev-parse HEAD)
+   b. Run: git add -A && git commit -m '${commit_msg}'
+   c. Verify the commit landed:
+      - If git commit exits non-zero, the pre-commit hook failed. Read the
+        hook/lint output, FIX the reported errors, and retry the commit.
+        Never report DONE with a failed or skipped commit.
+      - After a successful commit, confirm HEAD advanced:
+        [ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE"; exit 1; }
+      - Confirm clean worktree:
+        [ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }
+   d. HARD RULE: Never infer commit success from git log. Git log shows
+      OTHER tasks' commits. Only git rev-parse HEAD + git status --porcelain
+      prove YOUR commit landed.
+   e. If you cannot get the commit to land (hook failure you can't fix),
+      report BLOCKED with the hook output — never DONE.
 6. Self-review before reporting back, including the scope check below.
 
 ## Questions?
@@ -1775,6 +1790,8 @@ and document them.
 - Scope: Run \`git diff --stat HEAD~1\` mentally — does every changed
   file belong to Task ${task_n} alone? If any file is for a later task,
   REMOVE it from the commit before reporting DONE.
+- Commit integrity: Did I verify HEAD advanced after my commit? Is
+  git status --porcelain empty? (See step 5c/d.)
 - Completeness: Did I implement everything Task ${task_n} specifies?
 - Quality: Is the code clean and maintainable?
 - Discipline: Did I avoid overbuilding?
