@@ -340,7 +340,7 @@ export class ProcessPrReviewComments {
         ...existing,
         state: 'replied',
         outcome: item.action === 'fixed' ? 'fixed' : 'no_fix',
-        attempts: existing.attempts,
+        attempts: existing.attempts + 1,
         lastPoll: input.pollNumber,
         updatedAt: d.now(),
       };
@@ -429,7 +429,7 @@ export class ProcessPrReviewComments {
               state: 'replied',
               outcome: 'fixed',
               commitSha: fixCommitSha,
-              attempts: existingComment.attempts,
+              attempts: existingComment.attempts + 1,
               lastPoll: input.pollNumber,
               updatedAt: d.now(),
             });
@@ -439,7 +439,7 @@ export class ProcessPrReviewComments {
       }
     }
 
-    const orphanResult = await this.verifyOrphaned(input, startCommitSha, repliedInThisPass);
+    const orphanResult = await this.verifyOrphaned(input, startCommitSha);
     blocked += orphanResult.blocked;
     processed += orphanResult.newlyProcessed;
 
@@ -470,13 +470,10 @@ export class ProcessPrReviewComments {
   private async verifyOrphaned(
     input: ProcessPrReviewInput,
     startCommitSha: string | undefined,
-    skipCommentIds: Set<number> = new Set(),
   ): Promise<{ blocked: number; newlyProcessed: number }> {
     const d = this.deps;
     const allComments = d.prReviewRepo.listComments(input.runId);
-    const orphaned = allComments.filter(
-      (c) => c.state === 'replied' && !c.replyVerified && !skipCommentIds.has(c.commentId),
-    );
+    const orphaned = allComments.filter((c) => c.state === 'replied' && !c.replyVerified);
 
     if (orphaned.length === 0) return { blocked: 0, newlyProcessed: 0 };
 
@@ -532,7 +529,7 @@ export class ProcessPrReviewComments {
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
         newlyProcessed++;
-      } else if (c.attempts >= BLOCK_THRESHOLD) {
+      } else if (c.attempts + 1 >= BLOCK_THRESHOLD) {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
         blocked++;
       } else {
