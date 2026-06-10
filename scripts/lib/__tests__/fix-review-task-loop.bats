@@ -135,7 +135,8 @@ JSON
 @test "_escape_for_grep escapes regex metacharacters" {
   run _escape_for_grep 'R1.*'
   [ "$status" -eq 0 ]
-  echo "$output" | grep -qF '\'
+  run grep -qF '\' <<< "$output"
+  [ "$status" -eq 0 ]
 }
 
 @test "_escape_for_grep output matches original via grep -F" {
