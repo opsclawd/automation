@@ -3555,23 +3555,21 @@ if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 ]]; then
   cd "${WORKTREE_DIR}"
   ensure_branch
 
+  _preflight_exit=0
   echo "=== pnpm install ===" > "$_preflight_log"
   if ! timeout 120 pnpm install --frozen-lockfile 2>&1 | tee -a "$_preflight_log" | tail -10; then
     echo "[install failed]" >> "$_preflight_log"
     _preflight_exit=1
   else
-    if NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+    NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
         "$REPO_ROOT/apps/cli/src/run-validation.ts" \
         --cwd "$WORKTREE_DIR" \
         --run-id "$RUN_ID" \
         --repo-id "$REPO_ID" \
         --repo-root "$REPO_ROOT" \
         --phase-id fix-review-preflight \
-        2>&1 | tee -a "$_preflight_log"; then
-      _preflight_exit=${PIPESTATUS[0]}
-    else
-      _preflight_exit=${PIPESTATUS[0]}
-    fi
+        2>&1 | tee -a "$_preflight_log"
+    _preflight_exit=${PIPESTATUS[0]}
   fi
 
   if [[ $_preflight_exit -ne 0 ]]; then
