@@ -3180,6 +3180,7 @@ Start now."
       # Update validation.result from revalidate outcome (exit code from run-validation.ts)
       if [[ $_REVALIDATE_EXIT -eq 0 ]]; then
         echo "passed" > "${ISSUES_DIR}/validation.result"
+        git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
         info "Revalidation passed after fix-validate loop ${FIX_VALIDATE_COUNT}."
         emit_event "fix-validate" "info" "loop.iteration.completed" \
           "fix-validate loop ${FIX_VALIDATE_COUNT} completed (revalidate green)" \
@@ -3561,15 +3562,22 @@ if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 ]]; then
     echo "[install failed]" >> "$_preflight_log"
     _preflight_exit=1
   else
-    NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+    # Pipeline in an if-condition is errexit-exempt (set -euo pipefail won't
+    # abort on exit 1 = expected validation failure), and PIPESTATUS reflects
+    # the pipeline — not a subsequent || true — so capture is safe in both branches.
+    if NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
         "$REPO_ROOT/apps/cli/src/run-validation.ts" \
         --cwd "$WORKTREE_DIR" \
         --run-id "$RUN_ID" \
         --repo-id "$REPO_ID" \
         --repo-root "$REPO_ROOT" \
         --phase-id fix-review-preflight \
-        2>&1 | tee -a "$_preflight_log"
-    _preflight_exit=${PIPESTATUS[0]}
+        2>&1 | tee -a "$_preflight_log"; then
+      _preflight_pipe_status=("${PIPESTATUS[@]}")
+    else
+      _preflight_pipe_status=("${PIPESTATUS[@]}")
+    fi
+    _preflight_exit=${_preflight_pipe_status[0]}
   fi
 
   if [[ $_preflight_exit -ne 0 ]]; then
