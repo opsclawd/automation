@@ -33,4 +33,17 @@ export class FakeAgentPort implements AgentPort {
     }
     return response;
   }
+
+  clearQueue(profile: string): void {
+    this.queues.delete(profile);
+  }
+
+  enqueue(profile: string, response: FakeAgentResponse): void {
+    const queue = this.queues.get(profile);
+    if (queue) {
+      queue.push(response);
+    } else {
+      this.queues.set(profile, [response]);
+    }
+  }
 }
