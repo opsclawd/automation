@@ -9,7 +9,6 @@ export class FakeGitPort implements GitPort {
   remoteRefs = new Map<string, string>();
   ancestorResults = new Map<string, boolean>();
   logBetweenResults = new Map<string, string[]>();
-  fetchAndMergeCalls: Array<{ cwd: string; remote: string; branch: string }> = [];
   cleanUntrackedCalls: string[] = [];
   headCommitShaOfResults = new Map<string, string | undefined>();
 
@@ -69,10 +68,6 @@ export class FakeGitPort implements GitPort {
 
   async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
     return this.logBetweenResults.get(`${base}|${head}`) ?? [];
-  }
-
-  async fetchAndMerge(cwd: string, remote: string, branch: string): Promise<void> {
-    this.fetchAndMergeCalls.push({ cwd, remote, branch });
   }
 
   async cleanUntracked(cwd: string): Promise<void> {

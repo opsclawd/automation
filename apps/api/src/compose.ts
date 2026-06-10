@@ -342,6 +342,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         const { execFileSync } = await import('node:child_process');
         return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
       },
+      // Best-effort variant of headCommitSha: returns undefined instead of
+      // throwing so the main-checkout drift guard can silently skip when the
+      // repo root is missing or not a git dir, rather than failing the poll.
       async headCommitShaOf(cwd: string): Promise<string | undefined> {
         try {
           const { execFileSync } = await import('node:child_process');
@@ -418,15 +421,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           return output ? output.split('\n') : [];
         } catch {
           return [];
-        }
-      },
-      async fetchAndMerge(cwd: string, remote: string, branch: string): Promise<void> {
-        const { execFileSync } = await import('node:child_process');
-        execFileSync('git', ['fetch', remote, branch], { cwd });
-        try {
-          execFileSync('git', ['merge', '--ff-only', `${remote}/${branch}`], { cwd });
-        } catch {
-          execFileSync('git', ['merge', '--no-edit', `${remote}/${branch}`], { cwd });
         }
       },
       async cleanUntracked(cwd: string): Promise<void> {

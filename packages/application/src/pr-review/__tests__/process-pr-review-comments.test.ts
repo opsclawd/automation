@@ -1480,7 +1480,6 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),
-      maxIterations: 10,
     };
 
     const uc = new ProcessPrReviewComments(deps);
@@ -1560,7 +1559,6 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),
-      maxIterations: 10,
       baseBranch: 'main',
       repoRoot: '/repo/root',
       onWarning: (message, metadata) => {
@@ -1639,7 +1637,6 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),
-      maxIterations: 10,
       baseBranch: 'main',
       repoRoot: '/repo/root',
       onWarning: (message, metadata) => {
