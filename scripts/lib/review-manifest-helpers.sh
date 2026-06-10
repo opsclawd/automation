@@ -64,11 +64,11 @@ _extract_architect_plan_entry() {
 # matching — backslash is not a word constituent.
 _escape_for_grep() {
   printf '%s' "$1" | sed \
-    -e 's/\\/\\\\/g' \
     -e 's/\[/\\[/g' \
     -e 's/\]/\\]/g' \
     -e 's/\./\\./g' \
     -e 's/\*/\\*/g' \
     -e 's/\^/\\^/g' \
-    -e 's/\$/\\$/g'
+    -e 's/\$/\\$/g' \
+    -e 's/\\/\\\\/g'
 }
