@@ -118,3 +118,9 @@ JSON
   [ -f "${ISSUES_DIR}/fix-review-baseline.log" ]
   [ "$(cat "${ISSUES_DIR}/fix-review-baseline.log")" = "test-suite failed: 3 errors" ]
 }
+
+@test "ai-run-issue-v2 contains pre-flight baseline check" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -q 'fix-review-preflight' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+}

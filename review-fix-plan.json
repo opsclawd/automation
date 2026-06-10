@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "task_id": "1",
+      "approach": "Merge with task 2 into a single atomic refactor of the pre-flight block. Replace lines 3558-3574 in scripts/ai-run-issue-v2 with: (1) initialize _preflight_exit=0 BEFORE the if block, (2) remove the nested if/else that wraps the validation pipeline, (3) capture PIPESTATUS once after the pipeline in the else branch. The refactored block should match the existing validate-phase pattern (lines 2953-2973) which uses _pipe_status array capture in both branches of an if-pipeline-condition. Specifically: keep the outer if/else for pnpm install success/failure, but in the else branch run the validation pipeline directly (not inside a nested if/else) and capture PIPESTATUS[0] once. The result: _preflight_exit=0 init before the block, _preflight_exit=1 in the install-failed branch, single _preflight_exit=${PIPESTATUS[0]} after the validation pipeline.",
+      "conflicts_resolved": ["2"],
+      "constraints": [
+        "_preflight_exit must be initialized to 0 before the if block to satisfy set -euo pipefail (set -u will fail on unset vars)",
+        "PIPESTATUS must be captured immediately after the pipeline — any intervening command destroys it",
+        "The refactored code must produce identical behavior: _preflight_exit=1 on install failure, _preflight_exit=${PIPESTATUS[0]} from the validation pipeline otherwise",
+        "Must not change the outer guard condition (FIX_REVIEW_USE_LEGACY -eq 0 && FIX_REVIEW_EMPTY -eq 0)",
+        "Must preserve the log file path, tee -a behavior, and event emission unchanged",
+        "Must match the validate-phase pattern at lines 2953-2973 for consistency (that block uses _pipe_status array, but single var is acceptable since the pre-flight block only needs PIPESTATUS[0])"
+      ],
+      "depends_on": ["2"]
+    },
+    {
+      "task_id": "2",
+      "approach": "Handled atomically with task 1 — the refactor in task 1's approach eliminates the redundant PIPESTATUS capture by removing the nested if/else around the validation pipeline. After task 1's fix, there will be exactly one PIPESTATUS capture in the else branch, matching the 25 other occurrences in the script. No separate commit needed; bundle with task 1.",
+      "conflicts_resolved": ["1"],
+      "constraints": [
+        "Same constraints as task 1 since they share the same code block",
+        "After fix, grep -c '_preflight_exit=\\${PIPESTATUS' scripts/ai-run-issue-v2 must return 1 (not 2)"
+      ],
+      "depends_on": ["1"]
+    },
+    {
+      "task_id": "3",
+      "approach": "Add a new bats test to scripts/lib/__tests__/fix-review-task-loop.bats that verifies the string 'fix-review-preflight' exists in the real ai-run-issue-v2 script. This is a presence/structural test that ensures the pre-flight block hasn't been accidentally deleted. Place it after the existing pre-flight test (after line 119). The test should: (1) resolve REAL_REPO_ROOT from BATS_TEST_DIRNAME (../../..), (2) grep for 'fix-review-preflight' in scripts/ai-run-issue-v2, (3) assert status 0. Do NOT modify the existing stub-based test — it tests a different thing (stub function behavior).",
+      "conflicts_resolved": [],
+      "constraints": [
+        "Must use the same REAL_REPO_ROOT resolution pattern as detect-phase-fix-validate.bats: $(cd \"$BATS_TEST_DIRNAME/../../..\" && pwd)",
+        "Test must pass after tasks 1/2 are applied (the string 'fix-review-preflight' must still be present)",
+        "Must not modify the existing stub-based _preflight_validate test",
+        "Test name should be descriptive: 'ai-run-issue-v2 contains pre-flight baseline check'"
+      ],
+      "depends_on": ["1", "2"]
+    }
+  ]
+}
