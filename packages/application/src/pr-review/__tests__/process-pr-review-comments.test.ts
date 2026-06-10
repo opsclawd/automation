@@ -1062,6 +1062,59 @@ describe('ProcessPrReviewComments — Bug R fallback for omitted comment IDs', (
       github.repliesPosted.some((r) => r.commentId === 9002 && r.body.includes('commit')),
     ).toBe(true);
   });
+
+  it('verifyOrphaned verifies fallback replies and sets allResolved=true', async () => {
+    const { deps, github, git } = makeDeps({
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'ALL_DONE',
+          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Fixed the typo.' }],
+        },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r1',
+        body: 'typo',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 2,
+        reviewer: 'r2',
+        body: 'bug',
+        createdAt: new Date(),
+      },
+    ]);
+    git.remoteRefs.set('origin/feat-x', 'def456');
+    git.ancestorResults.set('def456|def456', true);
+    git.logBetweenResults.set('abc123|def456', ['def456']);
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.allResolved).toBe(true);
+    expect(
+      github.repliesPosted.some((r) => r.commentId === 9002 && r.body.includes('commit')),
+    ).toBe(true);
+    expect(github.resolvedThreads.some((t) => t.commentId === 9002)).toBe(true);
+  });
 });
 
 describe('ProcessPrReviewComments — closed PR guard', () => {
