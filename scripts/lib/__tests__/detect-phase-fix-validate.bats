@@ -19,6 +19,9 @@ teardown() {
 
 @test "detect_phase: validation.result=passed goes to whole-pr-review" {
   echo "passed" > "${ISSUES_DIR}/validation.result"
+  echo "abc123" > "${ISSUES_DIR}/validation.headsha"
+  git() { echo "abc123"; }
+  export -f git
   run detect_phase
   [ "$output" = "whole-pr-review" ]
 }
@@ -32,6 +35,9 @@ teardown() {
 @test "detect_phase: validation.result=failed with marker goes to whole-pr-review" {
   echo "failed" > "${ISSUES_DIR}/validation.result"
   touch "${ISSUES_DIR}/fix-validate-done.marker"
+  echo "abc123" > "${ISSUES_DIR}/validation.headsha"
+  git() { echo "abc123"; }
+  export -f git
   run detect_phase
   [ "$output" = "whole-pr-review" ]
 }
@@ -39,6 +45,9 @@ teardown() {
 @test "detect_phase: validation.result=unresolved-review with marker goes to whole-pr-review" {
   echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
   touch "${ISSUES_DIR}/fix-validate-done.marker"
+  echo "abc123" > "${ISSUES_DIR}/validation.headsha"
+  git() { echo "abc123"; }
+  export -f git
   run detect_phase
   [ "$output" = "whole-pr-review" ]
 }
