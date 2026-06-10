@@ -156,6 +156,36 @@ teardown() {
   [ "$stash_count" -eq 0 ]
 }
 
+@test "_stash_and_conditionally_commit skips commit on conflict markers in working tree" {
+  # Simulate a stash pop that left conflict markers by introducing
+  # conflict marker text into the working tree.
+  cat > "$FIXTURE_REPO/conflict.ts" << 'EOF'
+function foo() {
+<<<<<<< HEAD
+  return "main";
+=======
+  return "feature";
+>>>>>>> feature-branch
+}
+EOF
+  git -C "$FIXTURE_REPO" add conflict.ts
+
+  _events=()
+  emit_event() { _events+=("$3"); }
+
+  _stash_and_conditionally_commit "$FIXTURE_REPO" "T5" "fix: T5" "$TMPDIR_TEST/revalidate-pass.log"
+
+  # Should NOT have committed
+  run git -C "$FIXTURE_REPO" log --oneline -1
+  [[ "$output" != *"fix: T5"* ]]
+
+  # Should have emitted stash_conflict event
+  [[ " ${_events[*]} " == *" task.stash_conflict "* ]]
+
+  # Working tree should still have the file
+  [ -f "$FIXTURE_REPO/conflict.ts" ]
+}
+
 @test "_stash_and_conditionally_commit works when _revalidate_is_green is not defined" {
   # Unset the function if it exists
   unset -f _revalidate_is_green 2>/dev/null || true

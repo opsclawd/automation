@@ -46,12 +46,34 @@ _stash_and_conditionally_commit() {
     # Revalidation passed — the stash likely contains the agent's fix.
     # Pop and commit on behalf of the agent.
     if git -C "$worktree_dir" stash pop 2>/dev/null; then
-      git -C "$worktree_dir" add -A 2>/dev/null
-      git -C "$worktree_dir" commit -m "$commit_msg" 2>/dev/null || true
-      if declare -F emit_event >/dev/null 2>&1; then
-        emit_event "fix-review" "info" "task.work_committed" \
-          "fix-review task ${task_id}: uncommitted work committed after green revalidate" \
-          task_id="$task_id"
+      # Check for unresolved conflicts before committing
+      if git -C "$worktree_dir" diff --check HEAD 2>/dev/null; then
+        git -C "$worktree_dir" add -A 2>/dev/null
+        if git -C "$worktree_dir" commit -m "$commit_msg" 2>/dev/null; then
+          if declare -F emit_event >/dev/null 2>&1; then
+            emit_event "fix-review" "info" "task.work_committed" \
+              "fix-review task ${task_id}: uncommitted work committed after green revalidate" \
+              task_id="$task_id"
+          fi
+        else
+          if declare -F warn >/dev/null 2>&1; then
+            warn "Task ${task_id}: commit failed after stash pop"
+          fi
+          if declare -F emit_event >/dev/null 2>&1; then
+            emit_event "fix-review" "warn" "task.commit_failed" \
+              "fix-review task ${task_id}: commit failed after stash pop" \
+              task_id="$task_id"
+          fi
+        fi
+      else
+        if declare -F warn >/dev/null 2>&1; then
+          warn "Task ${task_id}: stash pop left conflict markers — skipping commit"
+        fi
+        if declare -F emit_event >/dev/null 2>&1; then
+          emit_event "fix-review" "warn" "task.stash_conflict" \
+            "fix-review task ${task_id}: stash pop left conflict markers — skipping commit" \
+            task_id="$task_id"
+        fi
       fi
     else
       if declare -F warn >/dev/null 2>&1; then
