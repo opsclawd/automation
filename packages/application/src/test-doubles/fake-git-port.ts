@@ -11,6 +11,7 @@ export class FakeGitPort implements GitPort {
   logBetweenResults = new Map<string, string[]>();
   fetchAndMergeCalls: Array<{ cwd: string; remote: string; branch: string }> = [];
   cleanUntrackedCalls: string[] = [];
+  headCommitShaOfResults = new Map<string, string | undefined>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -76,5 +77,9 @@ export class FakeGitPort implements GitPort {
 
   async cleanUntracked(cwd: string): Promise<void> {
     this.cleanUntrackedCalls.push(cwd);
+  }
+
+  async headCommitShaOf(cwd: string): Promise<string | undefined> {
+    return this.headCommitShaOfResults.get(cwd);
   }
 }

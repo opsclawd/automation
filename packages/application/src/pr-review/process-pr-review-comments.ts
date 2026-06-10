@@ -157,17 +157,8 @@ export class ProcessPrReviewComments {
     const mainShaBefore = d.baseBranch
       ? await d.git.remoteRef({ cwd: input.cwd, remote: 'origin', ref: d.baseBranch })
       : undefined;
-    let localMainShaBefore: string | undefined;
-    if (d.repoRoot && d.baseBranch) {
-      try {
-        const { execFileSync } = await import('node:child_process');
-        localMainShaBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d.repoRoot })
-          .toString()
-          .trim();
-      } catch {
-        // Best-effort: local checkout guard is advisory
-      }
-    }
+    const localMainShaBefore =
+      d.repoRoot && d.baseBranch ? await d.git.headCommitShaOf(d.repoRoot) : undefined;
 
     const invocation = await d.agent.invoke({
       profile,
@@ -200,25 +191,18 @@ export class ProcessPrReviewComments {
       }
     }
     if (d.repoRoot && d.baseBranch && localMainShaBefore) {
-      try {
-        const { execFileSync } = await import('node:child_process');
-        const localMainShaAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d.repoRoot })
-          .toString()
-          .trim();
-        if (localMainShaAfter !== localMainShaBefore) {
-          d.onWarning?.(
-            'local main checkout changed during agent run',
-            {
-              baseBranch: d.baseBranch,
-              shaBefore: localMainShaBefore,
-              shaAfter: localMainShaAfter,
-              prNumber: input.prNumber,
-            },
-            String(input.runId),
-          );
-        }
-      } catch {
-        // Best-effort: local checkout guard is advisory
+      const localMainShaAfter = await d.git.headCommitShaOf(d.repoRoot);
+      if (localMainShaAfter && localMainShaAfter !== localMainShaBefore) {
+        d.onWarning?.(
+          'local main checkout changed during agent run',
+          {
+            baseBranch: d.baseBranch,
+            shaBefore: localMainShaBefore,
+            shaAfter: localMainShaAfter,
+            prNumber: input.prNumber,
+          },
+          String(input.runId),
+        );
       }
     }
 

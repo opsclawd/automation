@@ -318,9 +318,9 @@ export function composeRoot(opts: ComposeOptions): Container {
     }
     const ghAdapter = new GhCliAdapter({});
     // GitPort audit: ProcessPrReviewComments uses git.diff, git.headCommitSha,
-    // git.remoteRef, git.isAncestor, git.logBetween, git.resetHard, and
-    // git.cleanUntracked. The remaining methods (createWorktree, removeWorktree,
-    // currentBranch, commit, push) are stubs that throw with a clear message
+    // git.headCommitShaOf, git.remoteRef, git.isAncestor, git.logBetween,
+    // git.resetHard, and git.cleanUntracked. The remaining methods
+    // (createWorktree, removeWorktree, currentBranch, commit, push) are stubs that throw with a clear message
     // — they must not be called from the PR review poller flow.
     const gitAdapter: GitPort = {
       async createWorktree(_input: CreateWorktreeInput): Promise<void> {
@@ -341,6 +341,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       async headCommitSha(cwd: string): Promise<string> {
         const { execFileSync } = await import('node:child_process');
         return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
+      },
+      async headCommitShaOf(cwd: string): Promise<string | undefined> {
+        try {
+          const { execFileSync } = await import('node:child_process');
+          return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
+        } catch {
+          return undefined;
+        }
       },
       async resetHard(cwd: string, commitSha: string): Promise<void> {
         const { execFileSync } = await import('node:child_process');

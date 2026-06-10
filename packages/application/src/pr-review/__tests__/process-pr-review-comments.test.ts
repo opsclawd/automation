@@ -1463,3 +1463,165 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
     expect(comment?.state).not.toBe('processed');
   });
 });
+
+describe('ProcessPrReviewComments — local main checkout guard', () => {
+  it('emits a warning when local main checkout HEAD changes during agent run', async () => {
+    const git = new FakeGitPort();
+    git.headByCwd.set('/work/tree', 'abc123');
+    git.remoteRefs.set('origin/feat-x', 'abc123');
+
+    let headShaOfCalls = 0;
+    git.headCommitShaOfResults.set('/repo/root', 'aaa111');
+    const originalHeadCommitShaOf = git.headCommitShaOf.bind(git);
+    git.headCommitShaOf = async (cwd: string) => {
+      if (cwd === '/repo/root') {
+        headShaOfCalls++;
+        return headShaOfCalls <= 1 ? 'aaa111' : 'bbb222';
+      }
+      return originalHeadCommitShaOf(cwd);
+    };
+
+    const github = new FakeGitHubPort();
+    const repo = new FakePrReviewRepository();
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult()],
+    });
+
+    github.prs.set('o/r/5', {
+      number: 5,
+      url: 'https://x/pr/5',
+      state: 'open',
+      headRefName: 'feat-x',
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+
+    const warnings: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    const deps: ProcessPrReviewDeps = {
+      github,
+      git,
+      agent,
+      prReviewRepo: repo,
+      renderPrompt: async () => '/tmp/prompt.md',
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'ALL_DONE',
+          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' }],
+        },
+      }),
+      verifyCommitPushed: async () => true,
+      verifyBuildPasses: async () => true,
+      resolveProfileForPhase: () => 'post-pr-review-profile' as never,
+      idFactory: () => 'id-1',
+      now: () => new Date('2026-06-04T00:10:00Z'),
+      maxIterations: 10,
+      baseBranch: 'main',
+      repoRoot: '/repo/root',
+      onWarning: (message, metadata) => {
+        warnings.push({ message, metadata });
+      },
+    };
+
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(warnings).toContainEqual({
+      message: 'local main checkout changed during agent run',
+      metadata: expect.objectContaining({
+        baseBranch: 'main',
+        shaBefore: 'aaa111',
+        shaAfter: 'bbb222',
+        prNumber: 5,
+      }),
+    });
+  });
+
+  it('does not emit a warning when local main checkout HEAD is unchanged', async () => {
+    const git = new FakeGitPort();
+    git.headByCwd.set('/work/tree', 'abc123');
+    git.remoteRefs.set('origin/feat-x', 'abc123');
+    git.headCommitShaOfResults.set('/repo/root', 'aaa111');
+
+    const github = new FakeGitHubPort();
+    const repo = new FakePrReviewRepository();
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult()],
+    });
+
+    github.prs.set('o/r/5', {
+      number: 5,
+      url: 'https://x/pr/5',
+      state: 'open',
+      headRefName: 'feat-x',
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+
+    const warnings: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    const deps: ProcessPrReviewDeps = {
+      github,
+      git,
+      agent,
+      prReviewRepo: repo,
+      renderPrompt: async () => '/tmp/prompt.md',
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'ALL_DONE',
+          comments: [{ commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' }],
+        },
+      }),
+      verifyCommitPushed: async () => true,
+      verifyBuildPasses: async () => true,
+      resolveProfileForPhase: () => 'post-pr-review-profile' as never,
+      idFactory: () => 'id-1',
+      now: () => new Date('2026-06-04T00:10:00Z'),
+      maxIterations: 10,
+      baseBranch: 'main',
+      repoRoot: '/repo/root',
+      onWarning: (message, metadata) => {
+        warnings.push({ message, metadata });
+      },
+    };
+
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(warnings).toEqual([]);
+  });
+});
