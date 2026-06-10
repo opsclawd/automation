@@ -4091,10 +4091,10 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
 
       _task_finding_text=""
       if [[ -f "${ISSUES_DIR}/review.md" ]]; then
-        _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review.md" 2>/dev/null || echo "")
+        _task_finding_text=$(grep -A 20 -i -w "$(_escape_for_grep "$_task_id")" "${ISSUES_DIR}/review.md" 2>/dev/null || echo "")
       fi
       if [[ -z "$_task_finding_text" && -f "${ISSUES_DIR}/review-triage.md" ]]; then
-        _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
+        _task_finding_text=$(grep -A 20 -i -w "$(_escape_for_grep "$_task_id")" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
       fi
 
       # Load architect plan entry for this task (if available)
