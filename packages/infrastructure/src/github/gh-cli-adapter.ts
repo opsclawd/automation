@@ -173,7 +173,7 @@ export class GhCliAdapter implements GitHubPort {
       id: c.id,
       prNumber,
       path: c.path,
-      line: c.line ?? 0,
+      line: c.line ?? null,
       reviewer: c.user?.login ?? 'ghost',
       body: c.body,
       createdAt: new Date(c.created_at),

@@ -38,6 +38,7 @@ export interface ProcessPrReviewDeps {
     cwd: string;
     branch: string;
     startCommitSha: string;
+    commitSha?: string;
   }) => Promise<boolean>;
   verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
@@ -45,6 +46,7 @@ export interface ProcessPrReviewDeps {
   now: () => Date;
   maxIterations: number;
   baseBranch?: string; // e.g., 'main' — used for checkout guard
+  repoRoot?: string | undefined; // repo root for local checkout guard (Bug Q)
   onWarning?: (message: string, metadata: Record<string, unknown>, runId: string) => void;
 }
 
@@ -91,7 +93,7 @@ export class ProcessPrReviewComments {
             prNumber: input.prNumber,
             commentId: rc.id,
             path: rc.path,
-            line: rc.line,
+            line: rc.line ?? 0,
             reviewer: rc.reviewer,
             body: rc.body,
             now: d.now(),
@@ -155,15 +157,26 @@ export class ProcessPrReviewComments {
     const mainShaBefore = d.baseBranch
       ? await d.git.remoteRef({ cwd: input.cwd, remote: 'origin', ref: d.baseBranch })
       : undefined;
+    let localMainShaBefore: string | undefined;
+    if (d.repoRoot && d.baseBranch) {
+      try {
+        const { execFileSync } = await import('node:child_process');
+        localMainShaBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d.repoRoot })
+          .toString()
+          .trim();
+      } catch {
+        // Best-effort: local checkout guard is advisory
+      }
+    }
 
     const invocation = await d.agent.invoke({
       profile,
       promptPath,
       expectedArtifacts: ['result.json'],
       cwd: input.cwd,
-      runId: input.runId as unknown as string,
-      repoId: input.repoId as unknown as string,
-      phaseId: input.phaseId as unknown as string,
+      runId: String(input.runId),
+      repoId: String(input.repoId),
+      phaseId: String(input.phaseId),
       startCommitSha,
     });
 
@@ -182,8 +195,30 @@ export class ProcessPrReviewComments {
             shaAfter: mainShaAfter,
             prNumber: input.prNumber,
           },
-          input.runId as unknown as string,
+          String(input.runId),
         );
+      }
+    }
+    if (d.repoRoot && d.baseBranch && localMainShaBefore) {
+      try {
+        const { execFileSync } = await import('node:child_process');
+        const localMainShaAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: d.repoRoot })
+          .toString()
+          .trim();
+        if (localMainShaAfter !== localMainShaBefore) {
+          d.onWarning?.(
+            'local main checkout changed during agent run',
+            {
+              baseBranch: d.baseBranch,
+              shaBefore: localMainShaBefore,
+              shaAfter: localMainShaAfter,
+              prNumber: input.prNumber,
+            },
+            String(input.runId),
+          );
+        }
+      } catch {
+        // Best-effort: local checkout guard is advisory
       }
     }
 
@@ -275,11 +310,10 @@ export class ProcessPrReviewComments {
     let commitVerified = true;
     let buildVerified = true;
     if (hasFixedComments) {
-      commitVerified = await d.verifyCommitPushed({
-        cwd: input.cwd,
-        branch: pr.headRefName,
-        startCommitSha,
-      });
+      const commitPushedInput = fixCommitSha
+        ? { cwd: input.cwd, branch: pr.headRefName, startCommitSha, commitSha: fixCommitSha }
+        : { cwd: input.cwd, branch: pr.headRefName, startCommitSha };
+      commitVerified = await d.verifyCommitPushed(commitPushedInput);
       buildVerified = await d.verifyBuildPasses({ cwd: input.cwd, runId: input.runId });
     }
 
@@ -370,11 +404,27 @@ export class ProcessPrReviewComments {
       }
     }
 
+    if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0 && toVerify.length === 0) {
+      await d.git.resetHard(input.cwd, 'HEAD');
+      await d.git.cleanUntracked(input.cwd);
+      await this.verifyOrphaned(input, startCommitSha);
+      this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
+      return {
+        outcome: 'BLOCKED',
+        processed: 0,
+        blocked: 0,
+        allResolved: false,
+      };
+    }
+
+    blocked += await this.verifyOrphaned(input, startCommitSha);
+
+    // Bug R fallback: post replies for omitted comment IDs when agent returned ALL_DONE
     if (result.outcome === 'ALL_DONE' && uniqueComments.length < unresolved.length) {
       const addressedCommentIds = new Set(uniqueComments.map((c) => c.commentId));
       const omittedComments = unresolved.filter((c) => !addressedCommentIds.has(c.commentId));
       for (const c of omittedComments) {
-        if (fixCommitSha && commitShaChanged) {
+        if (fixCommitSha && commitShaChanged && commitVerified) {
           const fallbackBody = `This comment was addressed in commit ${fixCommitSha.slice(0, 7)}.`;
           await d.github.replyToReviewComment(
             input.repoFullName,
@@ -404,24 +454,39 @@ export class ProcessPrReviewComments {
             });
           }
           repliedInThisPass.add(c.commentId);
+          toVerify.push({ commentId: c.commentId, action: 'fixed', replyBody: fallbackBody });
         }
       }
     }
 
-    if (processed === 0 && blocked === 0 && repliedInThisPass.size === 0) {
-      await d.git.resetHard(input.cwd, 'HEAD');
-      await d.git.cleanUntracked(input.cwd);
-      await this.verifyOrphaned(input, startCommitSha);
-      this.recordPoll(input, startedAt, unresolved.length, 0, undefined, 'failed');
-      return {
-        outcome: 'BLOCKED',
-        processed: 0,
-        blocked: 0,
-        allResolved: false,
-      };
-    }
+    // Verify fallback replies in the same pass
+    if (toVerify.length > 0) {
+      const afterCommentsVerify = await d.github.listReviewComments(
+        input.repoFullName,
+        input.prNumber,
+      );
+      for (const item of toVerify) {
+        const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
+        if (!existing || existing.state !== 'replied') continue;
 
-    blocked += await this.verifyOrphaned(input, startCommitSha);
+        const githubReply = afterCommentsVerify.find((c) => c.inReplyToId === item.commentId);
+        if (githubReply) {
+          d.prReviewRepo.upsertComment({ ...existing, replyId: githubReply.id });
+          d.prReviewRepo.upsertComment(
+            markProcessed(
+              { ...existing, replyId: githubReply.id },
+              {
+                commitVerified: item.action === 'fixed' ? commitVerified : true,
+                replyVerified: true,
+                buildVerified: item.action === 'fixed' ? buildVerified : true,
+              },
+            ),
+          );
+          await d.github.resolveReviewThread(input.repoFullName, input.prNumber, item.commentId);
+          processed++;
+        }
+      }
+    }
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
@@ -459,15 +524,19 @@ export class ProcessPrReviewComments {
 
     const pr = await d.github.getPr(input.repoFullName, input.prNumber);
     const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const commitVerified = startCommitSha
-      ? await d.verifyCommitPushed({ cwd: input.cwd, branch: pr.headRefName, startCommitSha })
-      : true;
     const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd, runId: input.runId });
 
     let blocked = 0;
     for (const c of orphaned) {
       const replyVerified = afterComments.some((rc) => rc.inReplyToId === c.commentId);
       const isFix = c.outcome === 'fixed';
+      const commitVerified = startCommitSha
+        ? await d.verifyCommitPushed(
+            c.commitSha
+              ? { cwd: input.cwd, branch: pr.headRefName, startCommitSha, commitSha: c.commitSha }
+              : { cwd: input.cwd, branch: pr.headRefName, startCommitSha },
+          )
+        : true;
       let fixCommitOnRemote = true;
       if (isFix && c.commitSha) {
         const remoteSha = await d.git.remoteRef({
@@ -486,6 +555,7 @@ export class ProcessPrReviewComments {
         const commitsSinceStart = await d.git.logBetween(input.cwd, startCommitSha, c.commitSha);
         isNewerThanStart = commitsSinceStart.length > 0;
       }
+      // Asymmetric: 'fixed' comments require commit/build verification; 'no_fix' only needs reply visible
       const ok = isFix
         ? fixCommitOnRemote && isNewerThanStart && commitVerified && replyVerified && buildVerified
         : replyVerified;

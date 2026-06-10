@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -232,6 +233,24 @@ export function composeRoot(opts: ComposeOptions): Container {
   const startIssueRun = new StartIssueRun(deps);
   const cancelRun = new CancelRun({ runRepository });
 
+  // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
+  let resolvedDefaultBranch = 'main';
+  try {
+    const out = execFileSync('gh', [
+      'repo',
+      'view',
+      '--json',
+      'defaultBranchRef',
+      '-q',
+      '.defaultBranchRef.name',
+    ])
+      .toString()
+      .trim();
+    if (out) resolvedDefaultBranch = out;
+  } catch {
+    // Best-effort: fall back to 'main'
+  }
+
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   try {
@@ -290,6 +309,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     readyMaxDays: number;
     phaseStartedAt: Date;
     baseBranch?: string;
+    repoRoot?: string;
   }): PrReviewPoller {
     if (!agentRuntime) {
       throw new ConfigError(
@@ -370,17 +390,19 @@ export function composeRoot(opts: ComposeOptions): Container {
           const { execFileSync } = await import('node:child_process');
           execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
             cwd,
-            stdio: 'ignore',
           });
           return true;
-        } catch {
+        } catch (err) {
+          process.stderr.write(
+            `[compose] git merge-base --is-ancestor ${ancestor} ${descendant} failed in ${cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
           return false;
         }
       },
       async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
         try {
           const { execFileSync } = await import('node:child_process');
-          const output = execFileSync('git', ['log', '--format=%H', `${base}...${head}`], {
+          const output = execFileSync('git', ['log', '--format=%H', `${base}..${head}`], {
             cwd,
           })
             .toString()
@@ -480,10 +502,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           return { ok: false, reason: 'missing', detail: String(err) };
         }
       },
-      verifyCommitPushed: async ({ cwd, branch, startCommitSha }) => {
+      verifyCommitPushed: async ({ cwd, branch, startCommitSha, commitSha }) => {
         try {
           const remoteSha = await gitAdapter.remoteRef({ cwd, remote: 'origin', ref: branch });
           if (!remoteSha) return false;
+          if (commitSha) {
+            const onRemote = await gitAdapter.isAncestor(cwd, commitSha, remoteSha);
+            if (!onRemote) return false;
+            const isNewer = await gitAdapter.logBetween(cwd, startCommitSha, commitSha);
+            return isNewer.length > 0;
+          }
           const isAncestor = await gitAdapter.isAncestor(cwd, startCommitSha, remoteSha);
           if (!isAncestor) return false;
           const commits = await gitAdapter.logBetween(cwd, startCommitSha, remoteSha);
@@ -528,7 +556,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       idFactory: () => randomUUID(),
       now: () => new Date(),
       maxIterations: 30,
-      baseBranch: opts.baseBranch ?? 'main',
+      baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
+      repoRoot: opts.repoRoot,
       onWarning: (message, metadata, runId) => {
         try {
           eventRepository.insert({

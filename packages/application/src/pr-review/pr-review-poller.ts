@@ -71,7 +71,14 @@ export class PrReviewPoller {
     let allResolvedEmitted = false;
     let consecutiveQuietPolls = 0;
 
-    for (let pollNumber = meaningfulAttempts.length + 1; pollNumber <= d.maxPolls; pollNumber++) {
+    // Bug B: on re-entry, ensure at least one new pass even if existing attempts >= maxPolls
+    const effectiveMaxPolls = Math.max(d.maxPolls, meaningfulAttempts.length + 1);
+
+    for (
+      let pollNumber = meaningfulAttempts.length + 1;
+      pollNumber <= effectiveMaxPolls;
+      pollNumber++
+    ) {
       if (d.now() >= deadline) {
         this.emit(input, 'post-pr-review.poll.timed_out', 'warn', { pollNumber });
         const result = { terminalState: 'timed_out' as const, pollsRun };
@@ -136,6 +143,12 @@ export class PrReviewPoller {
           allResolvedEmitted = true;
           this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
         }
+        if (pass.blocked > 0 && pass.processed === 0) {
+          this.emit(input, 'post-pr-review.poll.blocked', 'warn', { pollsRun });
+          const result = { terminalState: 'blocked' as const, pollsRun };
+          await d.recordTerminalState(lastAttempt, result.terminalState);
+          return result;
+        }
         consecutiveQuietPolls++;
       } else {
         consecutiveQuietPolls = 0;
@@ -143,8 +156,13 @@ export class PrReviewPoller {
       if (pass.processed > 0) {
         consecutiveQuietPolls = 0;
       }
-      const threshold = d.quietPollsThreshold ?? 3;
+      const threshold = Math.max(1, d.quietPollsThreshold ?? 3);
       if (consecutiveQuietPolls >= threshold) {
+        this.emit(input, 'post-pr-review.poll.terminal', 'info', {
+          terminalState: 'all_resolved',
+          pollsRun,
+          consecutiveQuietPolls,
+        });
         const result: PrReviewPollerResult = { terminalState: 'all_resolved', pollsRun };
         await d.recordTerminalState(lastAttempt, result.terminalState);
         return result;
@@ -162,7 +180,7 @@ export class PrReviewPoller {
         }
       }
 
-      if (pollNumber < d.maxPolls) {
+      if (pollNumber < effectiveMaxPolls) {
         const cappedMs = Math.max(
           0,
           Math.min(d.pollIntervalMs, deadline.getTime() - d.now().getTime()),

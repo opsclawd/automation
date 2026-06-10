@@ -22,6 +22,10 @@ if [[ -z "$ISSUE_NUM" ]]; then
   echo "FATAL: ISSUE_NUM is required. The poller must not run from the main checkout." >&2
   exit 1
 fi
+if [[ ! "$ISSUE_NUM" =~ ^[0-9]+$ ]]; then
+  echo "FATAL: ISSUE_NUM must be a positive integer (got '$ISSUE_NUM')." >&2
+  exit 1
+fi
 # Escape hatch: USE_LEGACY_POLL=1 runs the legacy bash poller (issue #230).
 # Must run before the branch-gating check below: the legacy poller has its own
 # bootstrap that syncs the worktree to the PR branch
@@ -63,6 +67,10 @@ fi
 # Manual invocation without --run-id previously produced a random UUID
 # with no corresponding DB row, causing FK violations on every upsert.
 if [[ -z "${AI_RUN_UUID:-}" ]]; then
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "FATAL: sqlite3 is not installed or not on PATH. Install it or set AI_RUN_UUID." >&2
+    exit 1
+  fi
   DB_PATH="${REPO_ROOT}/.ai-runs/orchestrator.sqlite"
   if [[ ! -f "$DB_PATH" ]]; then
     echo "FATAL: no AI_RUN_UUID and database not found at $DB_PATH" >&2

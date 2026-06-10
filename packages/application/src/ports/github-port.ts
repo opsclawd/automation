@@ -22,7 +22,7 @@ export interface GitHubReviewComment {
   id: number;
   prNumber: number;
   path: string;
-  line: number;
+  line: number | null;
   reviewer: string;
   body: string;
   createdAt: Date;
