@@ -37,7 +37,7 @@ import {
   RunValidation,
   PrReviewPoller,
   ProcessPrReviewComments,
-  postPrReviewResultSchema,
+  pollTaskResultSchema,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
@@ -433,16 +433,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderPrompt: async ({ cwd: _cwd, comments, diff, branch }) => {
+      renderTaskPrompt: async ({ cwd: _cwd, comment, diff, branch }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
-        const promptPath = join(promptDir, 'prompt.md');
+        const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
         const content = [
-          '# PR Review Task',
+          '# PR Review Comment Task',
           '',
-          'Review and address the following PR review comments:',
+          'Address the following PR review comment:',
           '',
-          ...comments.map((c) => `- [commentId: ${c.commentId}] ${c.path}:${c.line} — ${c.body}`),
+          `- [commentId: ${comment.commentId}] ${comment.path}:${comment.line} — ${comment.body}`,
           '',
           '## Current Diff',
           '',
@@ -450,52 +450,40 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           '## Instructions',
           '',
-          'For each review comment, make a judgement call: is it technically valid?',
+          'Make a judgement call: is this comment technically valid?',
           '',
-          'For comments that require code changes:',
+          'If a code change is required:',
           '1. Edit the relevant source files',
-          '2. Stage and commit your changes:',
-          '   ```',
-          '   git add -A',
-          '   git commit -m "fix: address PR review feedback"',
-          '   ```',
-          `3. Push to the PR branch: \`git push origin '${branch.replace(/'/g, "'\\''")}'\``,
+          '2. Stage and commit: `git add -A && git commit -m "fix: address PR review feedback"`',
+          `3. Push: \`git push origin '${branch.replace(/'/g, "'\\''")}'\``,
           '',
-          'For comments assessed as invalid, no code changes are needed — include your reasoning in replyBody below.',
+          'If the comment is invalid, include your reasoning in replyBody.',
           '',
-          'IMPORTANT: Do NOT post replies yourself (no `gh api` calls for replies). The orchestrator',
-          'handles posting replies from the replyBody fields in your result.json.',
+          'IMPORTANT: Do NOT post replies yourself. The orchestrator handles posting.',
           '',
           '## Required Output',
           '',
-          'When done, write a `result.json` file with this exact shape:',
+          'Write a `result.json` file:',
           '```json',
           '{',
-          '  "outcome": "ALL_DONE" | "NO_FIXES_NEEDED" | "PARTIAL" | "BLOCKED",',
-          '  "comments": [',
-          '    {',
-          '      "commentId": <number — must match a commentId from the list above>,',
-          '      "action": "fixed" | "no_fix" | "blocked",',
-          '      "replyBody": "<non-empty string explaining your decision>",',
-          '      "blockedReason": "<string — only when action is blocked>"',
-          '    }',
-          '  ]',
+          '  "commentId": <number>,',
+          '  "action": "fixed" | "no_fix" | "blocked",',
+          '  "replyBody": "<non-empty string>",',
+          '  "blockedReason": "<string — only when action is blocked>"',
           '}',
           '```',
-          '',
-          'Every commentId from the list above MUST appear in the comments array.',
         ].join('\n');
         writeFileSync(promptPath, content, 'utf-8');
         return promptPath;
       },
-      extractResult: async (input) => {
+      extractTaskResult: async (input) => {
         try {
           const absPath = input.resultJsonPath
             ? join(input.cwd, input.resultJsonPath)
             : join(input.cwd, 'result.json');
           const raw = readFileSync(absPath, 'utf-8');
           const parsed = JSON.parse(raw);
-          const result = postPrReviewResultSchema.safeParse(parsed);
+          const result = pollTaskResultSchema.safeParse(parsed);
           if (!result.success) {
             return { ok: false, reason: 'invalid', detail: result.error.message };
           }

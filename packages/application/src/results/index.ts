@@ -24,5 +24,7 @@ export { compoundResultSchema } from './schemas/compound.js';
 export type { CompoundResult } from './schemas/compound.js';
 export { fixValidateResultSchema } from './schemas/fix-validate.js';
 export type { FixValidateResult } from './schemas/fix-validate.js';
+export { pollTaskResultSchema } from './schemas/poll-task-result.js';
+export type { PollTaskResult } from './schemas/poll-task-result.js';
 export { extractResult } from './extract-result.js';
 export type { ExtractResultOutcome, ExtractResultInput, RerunContext } from './extract-result.js';
