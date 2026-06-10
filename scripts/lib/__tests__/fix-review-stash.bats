@@ -124,16 +124,36 @@ teardown() {
   [[ " ${_events[*]} " == *" task.stash_retained "* ]]
 }
 
-@test "_stash_and_conditionally_commit handles untracked files" {
-  echo "untracked-agent-work" > "$FIXTURE_REPO/new-file.ts"
+@test "_stash_and_conditionally_commit handles staged new files" {
+  echo "staged-agent-work" > "$FIXTURE_REPO/new-file.ts"
   git -C "$FIXTURE_REPO" add new-file.ts
 
   run _stash_and_conditionally_commit "$FIXTURE_REPO" "T3" "fix: T3" "$TMPDIR_TEST/revalidate-pass.log"
   [ "$status" -eq 0 ]
 
-  # The untracked file should be committed
+  # The staged new file should be committed
   run git -C "$FIXTURE_REPO" show HEAD --name-only --format=''
   [[ "$output" == *"new-file.ts"* ]]
+}
+
+@test "_stash_and_conditionally_commit returns early for truly untracked files" {
+  echo "untracked-agent-work" > "$FIXTURE_REPO/untracked.ts"
+
+  run _stash_and_conditionally_commit "$FIXTURE_REPO" "T3" "fix: T3" "$TMPDIR_TEST/revalidate-pass.log"
+  [ "$status" -eq 0 ]
+
+  # Truly untracked files are not detected by git diff HEAD, so the
+  # function returns early — the file should remain on disk uncommitted.
+  run git -C "$FIXTURE_REPO" log --oneline -1
+  [[ "$output" != *"fix: T3"* ]]
+
+  # File should still exist on disk
+  [ -f "$FIXTURE_REPO/untracked.ts" ]
+
+  # No stash should have been created
+  local stash_count
+  stash_count=$(git -C "$FIXTURE_REPO" stash list | wc -l)
+  [ "$stash_count" -eq 0 ]
 }
 
 @test "_stash_and_conditionally_commit works when _revalidate_is_green is not defined" {
