@@ -989,6 +989,93 @@ Write the result now."
   return 1
 }
 
+# run_commit_completion — recovery agent for dirty tree after DONE.
+# When the implementer reports DONE but the worktree has uncommitted changes,
+# this agent commits the leftover work and fixes pre-commit hook failures.
+run_commit_completion() {
+  local task_n="$1"
+  local commit_msg="$2"
+  local task_log="${ISSUES_DIR}/commit-completion-task-${task_n}.log"
+
+  local dirty_files
+  dirty_files=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "")
+  if [[ -z "$dirty_files" ]]; then
+    log "  Commit-completion: worktree is clean, nothing to recover"
+    return 0
+  fi
+
+  local head_before
+  head_before=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+
+  local COMMIT_COMPLETION_PROMPT
+  COMMIT_COMPLETION_PROMPT="You are a commit-completion agent. The previous implementer reported DONE for Task ${task_n} but left uncommitted changes in the worktree.
+
+## Uncommitted files
+${dirty_files}
+
+## Your Task
+1. Run: git add -A && git commit -m '${commit_msg}'
+2. If the pre-commit hook fails:
+   a. Read the hook/lint output carefully.
+   b. FIX the reported lint/format errors in the source files.
+   c. Retry: git add -A && git commit -m '${commit_msg}'
+   d. Repeat until the commit lands or you determine the error is unfixable.
+3. After a successful commit, verify:
+   - git rev-parse HEAD advanced past ${head_before}
+   - git status --porcelain is empty
+4. If you cannot get the commit to land after reasonable attempts, report what went wrong.
+
+HARD RULE: Do NOT modify any code beyond fixing lint/format errors reported by the pre-commit hook. Do NOT implement new features or change behavior. Your only job is to commit the existing dirty tree."
+
+  local _cc_prompt_file
+  _cc_prompt_file=$(mktemp)
+  printf '%s' "$COMMIT_COMPLETION_PROMPT" > "$_cc_prompt_file"
+  log "  Commit-completion: invoking agent for task ${task_n}..."
+  emit_event "implement" "info" "commit_recovery.attempted" \
+    "Commit-completion agent invoked for task ${task_n}" taskNum="$task_n"
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+    --phase commit-completion \
+    --phase-id "commit-completion-task-${task_n}" \
+    --cwd "$WORKTREE_DIR" \
+    --run-id "$RUN_ID" \
+    --repo-id "$REPO_ID" \
+    --repo-root "$REPO_ROOT" \
+    --prompt-file "$_cc_prompt_file" \
+    --timeout-minutes 2 \
+    --start-sha "$head_before" \
+    2>&1 | tee -a "$task_log"; _cc_agent_ec=${PIPESTATUS[0]} _cc_tee_ec=${PIPESTATUS[1]}
+  if [[ "$_cc_tee_ec" -ne 0 ]]; then
+    rm -f "$_cc_prompt_file"
+    emit_event "implement" "error" "commit_recovery.failed" \
+      "Commit-completion tee failed (ec=${_cc_tee_ec}) for task ${task_n}" taskNum="$task_n"
+    echo "tee failed (ec=${_cc_tee_ec}) — log file may be corrupt" >&2
+    return 1
+  fi
+  rm -f "$_cc_prompt_file"
+  check_branch_after_agent
+
+  # Re-check dirtiness regardless of agent exit code
+  local still_dirty
+  still_dirty=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "")
+
+  if [[ -z "$still_dirty" ]]; then
+    log "  Commit-completion: worktree is clean after recovery"
+    emit_event "implement" "info" "commit_recovery.succeeded" \
+      "Commit-completion recovered task ${task_n}" taskNum="$task_n"
+    return 0
+  fi
+
+  # Recovery failed — capture diagnostics
+  local hook_output
+  hook_output=$(tail -50 "$task_log" 2>/dev/null || echo "(no log)")
+  log "  Commit-completion: worktree still dirty after recovery"
+  emit_event "implement" "error" "commit_recovery.failed" \
+    "Commit-completion failed for task ${task_n}" taskNum="$task_n"
+  echo "$still_dirty" >&2
+  echo "$hook_output" >&2
+  return 1
+}
+
 # ── setup ─────────────────────────────────────────────────────────────────────
 # Stage issue data in a temp directory outside the worktree, so it survives
 # the rm-rf that happens before worktree creation on fresh runs.
