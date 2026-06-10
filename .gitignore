@@ -10,6 +10,14 @@ ai/
 .review-context/
 *.result
 *.log
+# Per-run orchestrator artifacts written at the repo/worktree root. These must
+# never be tracked: the validate phase rewrites *.headsha each run, which would
+# otherwise dirty the tree and trip the read-only phase mutation guards.
+*.headsha
+/review-fix-plan.json
+/review-task-manifest.json
+/review-triage.md
+/code-review.md
 .review-context/
 .DS_Store
 test-results/
