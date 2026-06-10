@@ -529,7 +529,7 @@ export class ProcessPrReviewComments {
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
         newlyProcessed++;
-      } else if (c.attempts + 1 >= BLOCK_THRESHOLD) {
+      } else if (c.attempts >= BLOCK_THRESHOLD) {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
         blocked++;
       } else {
