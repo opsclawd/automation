@@ -417,8 +417,6 @@ export class ProcessPrReviewComments {
       };
     }
 
-    blocked += await this.verifyOrphaned(input, startCommitSha);
-
     // Bug R fallback: post replies for omitted comment IDs when agent returned ALL_DONE
     if (result.outcome === 'ALL_DONE' && uniqueComments.length < unresolved.length) {
       const addressedCommentIds = new Set(uniqueComments.map((c) => c.commentId));
@@ -454,39 +452,11 @@ export class ProcessPrReviewComments {
             });
           }
           repliedInThisPass.add(c.commentId);
-          toVerify.push({ commentId: c.commentId, action: 'fixed', replyBody: fallbackBody });
         }
       }
     }
 
-    // Verify fallback replies in the same pass
-    if (toVerify.length > 0) {
-      const afterCommentsVerify = await d.github.listReviewComments(
-        input.repoFullName,
-        input.prNumber,
-      );
-      for (const item of toVerify) {
-        const existing = d.prReviewRepo.getComment(input.runId, item.commentId);
-        if (!existing || existing.state !== 'replied') continue;
-
-        const githubReply = afterCommentsVerify.find((c) => c.inReplyToId === item.commentId);
-        if (githubReply) {
-          d.prReviewRepo.upsertComment({ ...existing, replyId: githubReply.id });
-          d.prReviewRepo.upsertComment(
-            markProcessed(
-              { ...existing, replyId: githubReply.id },
-              {
-                commitVerified: item.action === 'fixed' ? commitVerified : true,
-                replyVerified: true,
-                buildVerified: item.action === 'fixed' ? buildVerified : true,
-              },
-            ),
-          );
-          await d.github.resolveReviewThread(input.repoFullName, input.prNumber, item.commentId);
-          processed++;
-        }
-      }
-    }
+    blocked += await this.verifyOrphaned(input, startCommitSha);
 
     const allComments = d.prReviewRepo.listComments(input.runId);
     const stillUnresolved = allComments.filter(isUnresolved);
