@@ -1263,3 +1263,150 @@ describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha
     expect(comment?.state).toBe('processed');
   });
 });
+
+describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / squash-merge (C2)', () => {
+  it('does not mark comment processed when a squash-merge replaced the branch tip with unrelated commits', async () => {
+    const agentCommit = 'agentFixSha';
+
+    const git = new TwoShaGitPort('startSha', agentCommit);
+    const verifyCalls: Array<{
+      cwd: string;
+      branch: string;
+      startCommitSha: string;
+      commitSha?: string;
+    }> = [];
+    const { deps, github, repo } = makeDeps({
+      git,
+      verifyCommitPushed: async (input) => {
+        verifyCalls.push(input);
+        return false;
+      },
+    });
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Fixed.',
+        createdAt: new Date('2026-06-04T00:05:00Z'),
+        inReplyToId: 9001,
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(verifyCalls.length).toBeGreaterThanOrEqual(1);
+    expect(verifyCalls[0].commitSha).toBe(agentCommit);
+    expect(verifyCalls[0].startCommitSha).toBe('startSha');
+
+    expect(out.processed).toBe(0);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).not.toBe('processed');
+  });
+
+  it('does not mark comment processed when no commitSha is available (orphaned without fix)', async () => {
+    const git = new FakeGitPort();
+    const repo = new FakePrReviewRepository();
+    const github = new FakeGitHubPort();
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult()],
+    });
+
+    const seeded = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'rename foo',
+      now: new Date('2026-06-04T00:00:00Z'),
+    });
+    repo.upsertComment({
+      ...seeded,
+      state: 'replied',
+      outcome: 'fixed',
+      attempts: 1,
+      replyVerified: false,
+    });
+
+    github.prs.set('o/r/5', {
+      number: 5,
+      headRefName: 'feat-x',
+      state: 'open',
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    git.remoteRefs.set('origin/feat-x', 'remotesha');
+
+    let verifyCalledWithoutCommitSha = false;
+    const deps: ProcessPrReviewDeps = {
+      github,
+      git,
+      agent,
+      prReviewRepo: repo,
+      renderPrompt: async () => '/tmp/prompt.md',
+      extractResult: async () => ({
+        ok: true,
+        result: {
+          outcome: 'ALL_DONE',
+          comments: [],
+        },
+      }),
+      verifyCommitPushed: async (input) => {
+        if (!input.commitSha) verifyCalledWithoutCommitSha = true;
+        return false;
+      },
+      verifyBuildPasses: async () => true,
+      resolveProfileForPhase: () => 'post-pr-review-profile' as never,
+      idFactory: () => 'id-1',
+      now: () => new Date('2026-06-04T00:10:00Z'),
+      maxIterations: 10,
+    };
+
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(verifyCalledWithoutCommitSha).toBe(false);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).not.toBe('processed');
+  });
+});
