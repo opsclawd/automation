@@ -33,6 +33,18 @@ function makeSuccessAgentResult(
   };
 }
 
+// Models real HEAD progression: every read returns a fresh SHA, so each agent
+// "commit" looks like a distinct new commit. Robust for multi-task passes where
+// several comments each produce their own commit. (replaces call-count fixtures — M3)
+class IncrementingShaGitPort extends FakeGitPort {
+  private n = 0;
+  override async headCommitSha(_cwd: string): Promise<string> {
+    return `sha-${++this.n}`;
+  }
+}
+
+// Two-SHA before/after model, used by tests that specifically assert SHA
+// anchoring of commit verification (C1/C2).
 class TwoShaGitPort extends FakeGitPort {
   private callCount = 0;
   constructor(
@@ -55,7 +67,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   agent: FakeAgentPort;
 } {
   const github = new FakeGitHubPort();
-  const git = new TwoShaGitPort('abc123', 'def456');
+  const git = new IncrementingShaGitPort();
   const repo = new FakePrReviewRepository();
   const agent = new FakeAgentPort({
     'post-pr-review-profile': [makeSuccessAgentResult()],
@@ -385,20 +397,27 @@ describe('ProcessPrReviewComments — multiple comments', () => {
         makeSuccessAgentResult(),
       ],
     });
-    const results = [
-      { commentId: 9001, action: 'fixed' as const, replyBody: 'Fixed the typo.' },
-      { commentId: 9002, action: 'no_fix' as const, replyBody: 'Intentional.' },
-      {
-        commentId: 9003,
-        action: 'blocked' as const,
-        replyBody: 'Cannot fix safely.',
-        blockedReason: 'unsafe change',
-      },
-    ];
-    let call = 0;
+    // Keyed by comment id (not call order): the result returned matches whichever
+    // comment is currently being processed, mirroring production. (M3)
+    const resultsById: Record<
+      number,
+      { action: 'fixed' | 'no_fix' | 'blocked'; replyBody: string; blockedReason?: string }
+    > = {
+      9001: { action: 'fixed', replyBody: 'Fixed the typo.' },
+      9002: { action: 'no_fix', replyBody: 'Intentional.' },
+      9003: { action: 'blocked', replyBody: 'Cannot fix safely.', blockedReason: 'unsafe change' },
+    };
+    let activeCommentId = 0;
     const { deps, github, repo } = makeDeps({
       agent,
-      extractTaskResult: async () => ({ ok: true, result: results[call++]! }),
+      renderTaskPrompt: async ({ comment }) => {
+        activeCommentId = comment.commentId;
+        return '/tmp/prompt.md';
+      },
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: activeCommentId, ...resultsById[activeCommentId]! },
+      }),
     });
     github.comments.set('o/r/5', [
       {
@@ -1167,6 +1186,59 @@ describe('ProcessPrReviewComments — every comment gets its own task', () => {
     expect(out.allResolved).toBe(true);
     expect(github.resolvedThreads.some((t) => t.commentId === 9001)).toBe(true);
     expect(github.resolvedThreads.some((t) => t.commentId === 9002)).toBe(true);
+  });
+});
+
+describe('ProcessPrReviewComments — start SHA advances per task (M1)', () => {
+  it('verifies a later task against the previous task’s commit, not the stale poll-start SHA', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const verifyCalls: Array<{ startCommitSha: string; commitSha?: string }> = [];
+    const { deps, github } = makeDeps({
+      agent,
+      verifyCommitPushed: async (input) => {
+        verifyCalls.push({ startCommitSha: input.startCommitSha, commitSha: input.commitSha });
+        return true;
+      },
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'r1',
+        body: 'first',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 2,
+        reviewer: 'r2',
+        body: 'second',
+        createdAt: new Date(),
+      },
+    ]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(verifyCalls).toHaveLength(2);
+    // The second task must anchor to the first task's commit, proving the start
+    // SHA advanced rather than staying pinned to the poll-start HEAD.
+    expect(verifyCalls[1]!.startCommitSha).toBe(verifyCalls[0]!.commitSha);
+    expect(verifyCalls[1]!.startCommitSha).not.toBe(verifyCalls[0]!.startCommitSha);
   });
 });
 

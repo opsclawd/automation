@@ -158,10 +158,16 @@ export class ProcessPrReviewComments {
     const taskRunner = new PollTaskRunner(d);
     const taskResults: PollTaskOutput[] = [];
     const MAX_TASK_RETRIES = 3;
+    // Each task's agent may commit, advancing HEAD. Later tasks must verify
+    // against the HEAD as of when they start, not the stale poll-start SHA. (M1)
+    let runningStartSha = startCommitSha;
 
     for (const task of manifest.tasks) {
-      const comment = unresolved.find((c) => c.commentId === task.commentId);
-      if (!comment) continue;
+      // Re-read live state: a comment may have been resolved or blocked since the
+      // manifest was built (e.g. by a prior poll's orphan verification). Only
+      // process comments that are still pending. (M2)
+      const comment = d.prReviewRepo.getComment(input.runId, task.commentId);
+      if (!comment || comment.state !== 'pending') continue;
 
       let lastOutput: PollTaskOutput | undefined;
       for (let attempt = 1; attempt <= MAX_TASK_RETRIES; attempt++) {
@@ -171,7 +177,7 @@ export class ProcessPrReviewComments {
             comment,
             diff,
             branch: pr.headRefName,
-            startCommitSha,
+            startCommitSha: runningStartSha,
           });
           if (lastOutput.action !== 'failed') break;
         } catch {
@@ -200,6 +206,9 @@ export class ProcessPrReviewComments {
         }
       }
       if (lastOutput) {
+        // The agent committed during a fixed task, so HEAD moved — advance the
+        // start SHA so the next task verifies against this task's commit. (M1)
+        if (lastOutput.commitSha) runningStartSha = lastOutput.commitSha;
         taskResults.push(lastOutput);
       }
     }

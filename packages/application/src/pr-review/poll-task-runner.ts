@@ -56,6 +56,9 @@ export interface PollTaskOutput {
   action: 'fixed' | 'no_fix' | 'blocked' | 'failed';
   processed: boolean;
   blocked: boolean;
+  // HEAD after the agent's commit for a fixed task. Lets the caller advance the
+  // start SHA so subsequent tasks verify against this task's commit. (M1)
+  commitSha?: string;
 }
 
 export class PollTaskRunner {
@@ -234,6 +237,7 @@ export class PollTaskRunner {
         action: result.action,
         processed: true,
         blocked: false,
+        ...(fixCommitSha !== undefined ? { commitSha: fixCommitSha } : {}),
       };
     }
 
@@ -243,6 +247,7 @@ export class PollTaskRunner {
       action: result.action,
       processed: false,
       blocked: false,
+      ...(fixCommitSha !== undefined ? { commitSha: fixCommitSha } : {}),
     };
   }
 }
