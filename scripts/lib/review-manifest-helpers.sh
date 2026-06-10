@@ -40,3 +40,15 @@ _dedupe_manifest_ids() {
     end
   '
 }
+
+_extract_architect_plan_entry() {
+  local plan_path="$1"
+  local task_id="$2"
+  if [[ ! -f "$plan_path" ]]; then
+    return 0
+  fi
+  if ! jq -e '.tasks | type == "array"' "$plan_path" >/dev/null 2>&1; then
+    return 0
+  fi
+  jq --arg tid "$task_id" '.tasks[] | select(.task_id == $tid)' "$plan_path" 2>/dev/null || echo ""
+}
