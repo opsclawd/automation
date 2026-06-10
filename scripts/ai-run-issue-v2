@@ -3532,11 +3532,17 @@ if [[ $_manifest_ec -ne 0 ]]; then
 else
   FIX_REVIEW_MANIFEST=$(echo "$_manifest_content" | _dedupe_manifest_ids)
   FIX_REVIEW_TASK_COUNT=$(echo "$FIX_REVIEW_MANIFEST" | jq 'length')
-  if [[ "$FIX_REVIEW_TASK_COUNT" -eq 0 ]]; then
-    info "Empty review-task-manifest (nothing to fix). Exiting fix-review."
+  # Count actionable tasks, not total findings. A manifest where every finding
+  # is deferred/skipped (zero action=fix) has nothing to fix and must take the
+  # empty path — otherwise the task loop runs a bogus empty iteration and the
+  # post-loop revalidate-log lookup crashes the run (no revalidate logs exist).
+  FIX_REVIEW_FIX_COUNT=$(echo "$FIX_REVIEW_MANIFEST" |
+    jq '[.[] | select(.action == "fix" or .action == null)] | length')
+  if [[ "$FIX_REVIEW_FIX_COUNT" -eq 0 ]]; then
+    info "No actionable fix tasks in review-task-manifest (${FIX_REVIEW_TASK_COUNT} finding(s), all deferred/skipped). Nothing to fix; exiting fix-review."
     echo "ALL_FIXED" > "${ISSUES_DIR}/fix-status.txt"
     emit_event "fix-review" "info" "phase.completed" \
-      "fix-review completed with empty manifest" \
+      "fix-review completed: no actionable fix tasks" \
       status="ALL_FIXED"
     FIX_REVIEW_EMPTY=1
   fi
@@ -4302,7 +4308,10 @@ Start now."
   fi
 
   if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
-    _last_revalidate_log=$(ls -t "${ISSUES_DIR}"/revalidate-*-retry-*.log 2>/dev/null | head -1)
+    # `|| true`: with no matching files, ls exits 2 and pipefail propagates it,
+    # which under set -e would kill the run. Defensive even though the empty-path
+    # short-circuit above should keep us out of this branch when nothing ran.
+    _last_revalidate_log=$(ls -t "${ISSUES_DIR}"/revalidate-*-retry-*.log 2>/dev/null | head -1 || true)
     if [[ -n "$_last_revalidate_log" ]] && _revalidate_is_green "$_last_revalidate_log"; then
       echo "passed" > "${ISSUES_DIR}/validation.result"
     fi
