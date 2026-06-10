@@ -3607,7 +3607,9 @@ Only include tasks that have action=fix or action=null. Skip defer/skip tasks.
       2>&1 | tee -a "${ISSUES_DIR}/fix-review-architect.log"; _architect_ec=${PIPESTATUS[0]}
     rm -f "$_architect_prompt_file"
 
-    # Mutation guard: architect is a read-only phase
+    # Mutation guard: architect is a read-only phase.
+    # Only tracked-file diffs trigger this — untracked output files (review-fix-plan.json)
+    # are expected and not considered mutations.
     if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
       git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
       rm -f "${ISSUES_DIR}/fix-review-architect.log"
