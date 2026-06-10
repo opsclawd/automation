@@ -273,6 +273,7 @@ export class ProcessPrReviewComments {
     let processed = 0;
     let blocked = 0;
     const repliedInThisPass = new Set<number>();
+    const processedInThisPass = new Set<number>();
     const toVerify: Array<{
       commentId: number;
       action: 'fixed' | 'no_fix';
@@ -384,6 +385,7 @@ export class ProcessPrReviewComments {
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, item.commentId);
         processed++;
+        processedInThisPass.add(item.commentId);
       }
     }
 
@@ -439,7 +441,7 @@ export class ProcessPrReviewComments {
       }
     }
 
-    const orphanResult = await this.verifyOrphaned(input, startCommitSha);
+    const orphanResult = await this.verifyOrphaned(input, startCommitSha, processedInThisPass);
     blocked += orphanResult.blocked;
     processed += orphanResult.newlyProcessed;
 
@@ -470,10 +472,13 @@ export class ProcessPrReviewComments {
   private async verifyOrphaned(
     input: ProcessPrReviewInput,
     startCommitSha: string | undefined,
+    skipCommentIds: Set<number> = new Set(),
   ): Promise<{ blocked: number; newlyProcessed: number }> {
     const d = this.deps;
     const allComments = d.prReviewRepo.listComments(input.runId);
-    const orphaned = allComments.filter((c) => c.state === 'replied' && !c.replyVerified);
+    const orphaned = allComments.filter(
+      (c) => c.state === 'replied' && !c.replyVerified && !skipCommentIds.has(c.commentId),
+    );
 
     if (orphaned.length === 0) return { blocked: 0, newlyProcessed: 0 };
 
