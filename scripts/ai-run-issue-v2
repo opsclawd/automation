@@ -3541,6 +3541,51 @@ else
   fi
 fi
 
+# ── Pre-flight baseline check ────────────────────────────────────────
+# Verify the test suite is green before entering the task loop. If the
+# baseline is already broken, every task revalidation will fail — wasting
+# agent invocations. Fail fast instead.
+if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 ]]; then
+  info "Running pre-flight baseline check..."
+  emit_event "fix-review" "info" "preflight.started" \
+    "running pre-flight baseline validation"
+
+  _preflight_log="${ISSUES_DIR}/fix-review-baseline.log"
+  ensure_worktree
+  cd "${WORKTREE_DIR}"
+  ensure_branch
+
+  echo "=== pnpm install ===" > "$_preflight_log"
+  if ! timeout 120 pnpm install --frozen-lockfile 2>&1 | tee -a "$_preflight_log" | tail -10; then
+    echo "[install failed]" >> "$_preflight_log"
+    _preflight_exit=1
+  else
+    if NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+        "$REPO_ROOT/apps/cli/src/run-validation.ts" \
+        --cwd "$WORKTREE_DIR" \
+        --run-id "$RUN_ID" \
+        --repo-id "$REPO_ID" \
+        --repo-root "$REPO_ROOT" \
+        --phase-id fix-review-preflight \
+        2>&1 | tee -a "$_preflight_log"; then
+      _preflight_exit=${PIPESTATUS[0]}
+    else
+      _preflight_exit=${PIPESTATUS[0]}
+    fi
+  fi
+
+  if [[ $_preflight_exit -ne 0 ]]; then
+    emit_event "fix-review" "error" "preflight.failed" \
+      "fix-review baseline check failed — test suite is not green" \
+      exitCode="$_preflight_exit"
+    orchestrator_fail "fix-review baseline check failed — test suite is not green before entering task loop. See fix-review-baseline.log for details."
+  fi
+
+  info "Pre-flight baseline check passed."
+  emit_event "fix-review" "info" "preflight.passed" \
+    "fix-review baseline check passed"
+fi
+
 # ── Cohesive architect pass (optional) ─────────────────────────────────
 # Runs a single read-only agent to produce review-fix-plan.json with
 # cross-task constraint analysis before the per-task fix loop begins.
