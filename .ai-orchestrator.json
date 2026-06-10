@@ -7,7 +7,12 @@
     "skip": [],
     "reviewFix": { "maxIterations": 10 },
     "implement": { "maxIterations": 5 },
-    "wholePrFix": { "maxIterations": 10, "maxRetriesPerTask": 3, "maxTotalTasks": 50 },
+    "wholePrFix": {
+      "maxIterations": 10,
+      "maxRetriesPerTask": 3,
+      "maxTotalTasks": 50,
+      "architectPass": { "enabled": true }
+    },
     "fixValidate": { "maxIterations": 2 },
     "planReview": { "maxIterations": 5, "enabled": true }
   },
@@ -130,7 +135,8 @@
       "arbitrate": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-review": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-fix": { "profile": "architect", "fallbackProfile": "senior" },
-      "result-writer": { "profile": "task-reviewer", "fallbackProfile": "junior" }
+      "result-writer": { "profile": "task-reviewer", "fallbackProfile": "junior" },
+      "fix-review-architect": { "profile": "architect", "fallbackProfile": "senior" }
     }
   }
 }

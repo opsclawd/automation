@@ -66,6 +66,7 @@ TIMEOUT_PR_FIX=1200
 TIMEOUT_PLAN_REVIEW=600
 TIMEOUT_FIX_VALIDATE=600
 TIMEOUT_REVIEW_TRIAGE=300
+TIMEOUT_FIX_REVIEW_ARCHITECT=600
 
 TIMEOUT_COMPOUND=600
 
@@ -92,6 +93,7 @@ PLAN_REVIEW_ENABLED=false
 MAX_PLAN_REVIEW_ITERATIONS=3
 MAX_FIX_VALIDATE_ITERATIONS=2
 FIX_VALIDATE_ENABLED=true
+FIX_REVIEW_ARCHITECT_ENABLED=true
 JUDGMENT_AGENT_PROFILE=""
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
@@ -107,15 +109,18 @@ if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
   _val=$(jq -r '.phases.planReview.judgmentAgent // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && JUDGMENT_AGENT_PROFILE="$_val"
   _val=$(jq -r '.phases.fixValidate.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_VALIDATE_ITERATIONS="$_val"
+  # Opt-out only for these two: default is true; only "false" in config disables.
   _val=$(jq -r '.phases.fixValidate.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
   [[ "$_val" == "false" ]] && FIX_VALIDATE_ENABLED=false
+  _val=$(jq -r '.phases.wholePrFix.architectPass.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
+  [[ "$_val" == "false" ]] && FIX_REVIEW_ARCHITECT_ENABLED=false
 fi
 # Ensure the log target exists before the first log() call. The setup block
 # creates it later (around the "# ── setup" section), but we may log before
 # then on startup, and log() pipes through `tee -a` which fails fast with
 # set -euo pipefail if the directory is missing.
 mkdir -p "${ISSUES_DIR}"
-log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, wholePrFix.maxRetriesPerTask=${MAX_FIX_REVIEW_RETRIES_PER_TASK}, wholePrFix.maxTotalTasks=${MAX_FIX_REVIEW_TOTAL_TASKS}, fixValidate.maxIterations=${MAX_FIX_VALIDATE_ITERATIONS}, fixValidate.enabled=${FIX_VALIDATE_ENABLED}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
+log "Config: reviewFix.maxIterations=${MAX_REVIEW_FIX_ITERATIONS}, wholePrFix.maxIterations=${MAX_WHOLE_PR_FIX_ITERATIONS}, wholePrFix.maxRetriesPerTask=${MAX_FIX_REVIEW_RETRIES_PER_TASK}, wholePrFix.maxTotalTasks=${MAX_FIX_REVIEW_TOTAL_TASKS}, fixValidate.maxIterations=${MAX_FIX_VALIDATE_ITERATIONS}, fixValidate.enabled=${FIX_VALIDATE_ENABLED}, architectPass.enabled=${FIX_REVIEW_ARCHITECT_ENABLED}, planReview.enabled=${PLAN_REVIEW_ENABLED}, planReview.maxIterations=${MAX_PLAN_REVIEW_ITERATIONS}, planReview.judgmentAgent=${JUDGMENT_AGENT_PROFILE:-<unset>}"
 
 # Structured event helper — emits JSON lines to $AI_RUN_EVENTS_FILE.
 # When AI_RUN_EVENTS_FILE is unset (standalone Bash run), emit_event is a no-op.
@@ -3533,6 +3538,124 @@ else
   fi
 fi
 
+# ── Cohesive architect pass (optional) ─────────────────────────────────
+# Runs a single read-only agent to produce review-fix-plan.json with
+# cross-task constraint analysis before the per-task fix loop begins.
+FIX_REVIEW_ARCHITECT_PLAN=""
+if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 && "$FIX_REVIEW_ARCHITECT_ENABLED" == "true" ]]; then
+  _has_fix_tasks=$(echo "$FIX_REVIEW_MANIFEST" | jq '[.[] | select(.action == "fix" or .action == null)] | length')
+  if [[ "$_has_fix_tasks" -gt 0 ]]; then
+    info "Running cohesive architect pass before fix loop..."
+    emit_event "fix-review" "info" "architect_pass_started" \
+      "cohesive architect pass starting" \
+      task_count="$_has_fix_tasks"
+
+    ARCHITECT_PROMPT="You are a cohesive architect analyzing review findings before fix implementation.
+
+## CONTEXT
+Your working directory: ${WORKTREE_DIR}
+
+## TASK
+Read the following files:
+1. ./review-task-manifest.json — the full manifest of review findings
+2. ./review.md — the detailed code review
+3. ./review-triage.md — the triage summary
+
+Then run: git diff HEAD
+
+Analyze ALL tasks with action=fix or action=null. For each task:
+1. Identify cross-task dependencies and constraint conflicts
+2. Produce a concrete fix approach that accounts for ALL constraints
+3. List specific constraints the fix must satisfy
+4. Note which other tasks this depends on (informational)
+
+## OUTPUT
+Write ./review-fix-plan.json with this exact structure:
+{
+  \"version\": 1,
+  \"tasks\": [
+    {
+      \"task_id\": \"<task_id from manifest>\",
+      \"approach\": \"<concrete fix strategy>\",
+      \"conflicts_resolved\": [\"<IDs of contradictions this resolves>\"],
+      \"constraints\": [\"<hard constraints the fix must satisfy>\"],
+      \"depends_on\": [\"<other task IDs this interacts with>\"]
+    }
+  ]
+}
+
+Only include tasks that have action=fix or action=null. Skip defer/skip tasks.
+
+## CRITICAL RULES
+- Do NOT modify any code files.
+- Do NOT run git commands other than 'git diff HEAD'.
+- Output ONLY review-fix-plan.json.
+- Stop after writing the file."
+
+    _architect_prompt_file=$(mktemp)
+    printf '%s' "$ARCHITECT_PROMPT" > "$_architect_prompt_file"
+    _architect_ec=0
+    ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
+      --phase fix-review-architect \
+      --cwd "$WORKTREE_DIR" \
+      --run-id "$RUN_ID" \
+      --repo-id "$REPO_ID" \
+      --repo-root "$REPO_ROOT" \
+      --phase-id fix-review-architect \
+      --prompt-file "$_architect_prompt_file" \
+      --timeout-minutes $(( (TIMEOUT_FIX_REVIEW_ARCHITECT + 59) / 60 )) \
+      --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+      2>&1 | tee -a "${ISSUES_DIR}/fix-review-architect.log"; _architect_ec=${PIPESTATUS[0]}
+    rm -f "$_architect_prompt_file"
+
+    # Mutation guard: architect is a read-only phase.
+    # Only tracked-file diffs trigger this — untracked output files (review-fix-plan.json)
+    # are expected and not considered mutations.
+    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+      git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
+      rm -f "${ISSUES_DIR}/fix-review-architect.log"
+      warn "Architect pass produced uncommitted changes — discarding plan, proceeding without"
+      emit_event "fix-review" "warn" "architect_pass_failed" \
+        "architect pass mutated code — plan discarded" \
+        reason="mutation"
+    elif [[ $_architect_ec -ne 0 ]]; then
+      warn "Architect pass failed (exit $_architect_ec) — proceeding without plan"
+      emit_event "fix-review" "warn" "architect_pass_failed" \
+        "architect pass failed" \
+        reason="exit_code" exit_code="$_architect_ec"
+    elif [[ -f "${WORKTREE_DIR}/review-fix-plan.json" ]]; then
+      # Validate structure
+      if jq -e '.version and (.tasks | type == "array")' "${WORKTREE_DIR}/review-fix-plan.json" >/dev/null 2>&1; then
+        FIX_REVIEW_ARCHITECT_PLAN="${WORKTREE_DIR}/review-fix-plan.json"
+        info "Architect pass completed — plan saved to ${FIX_REVIEW_ARCHITECT_PLAN}"
+        emit_event "fix-review" "info" "architect_pass_completed" \
+          "architect pass completed" \
+          tasks="$(jq '.tasks | length' "${WORKTREE_DIR}/review-fix-plan.json")"
+      else
+        warn "Architect pass produced invalid plan structure — proceeding without"
+        emit_event "fix-review" "warn" "architect_pass_failed" \
+          "architect pass produced invalid plan structure" \
+          reason="invalid_structure"
+      fi
+    else
+      warn "Architect pass produced no plan file — proceeding without"
+      emit_event "fix-review" "warn" "architect_pass_failed" \
+        "architect pass produced no plan file" \
+        reason="no_output"
+    fi
+  else
+    emit_event "fix-review" "info" "architect_pass_skipped" \
+      "architect pass skipped (no fix tasks)" \
+      reason="no_fix_tasks"
+  fi
+else
+  if [[ "$FIX_REVIEW_ARCHITECT_ENABLED" != "true" ]]; then
+    emit_event "fix-review" "info" "architect_pass_skipped" \
+      "architect pass skipped (disabled in config)" \
+      reason="disabled"
+  fi
+fi
+
 if [[ "$FIX_REVIEW_EMPTY" -eq 1 ]]; then
   : # skip straight to phase done
 elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
@@ -3920,7 +4043,28 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
         _task_finding_text=$(grep -A 20 -i -w "$(echo "$_task_id" | sed 's/[][.*^$/\\]/\\&/g')" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
       fi
 
+      # Load architect plan entry for this task (if available)
+      _task_plan_section=""
+      if [[ -n "$FIX_REVIEW_ARCHITECT_PLAN" ]]; then
+        _plan_entry=$(_extract_architect_plan_entry "$FIX_REVIEW_ARCHITECT_PLAN" "$_task_id")
+        if [[ -n "$_plan_entry" ]]; then
+          _plan_approach=$(echo "$_plan_entry" | jq -r '.approach // ""' 2>/dev/null)
+          _plan_constraints=$(echo "$_plan_entry" | jq -r '.constraints // [] | join("\n- ")' 2>/dev/null)
+          _plan_conflicts=$(echo "$_plan_entry" | jq -r '.conflicts_resolved // [] | join(", ")' 2>/dev/null)
+          _plan_depends=$(echo "$_plan_entry" | jq -r '.depends_on // [] | join(", ")' 2>/dev/null)
+          _task_plan_section="## CROSS-TASK FIX PLAN (from cohesive architect analysis)
+Approach: ${_plan_approach}
+$([ -n "$_plan_conflicts" ] && echo "Conflicts resolved: ${_plan_conflicts}" || true)
+$([ -n "$_plan_constraints" ] && printf 'Constraints:\n- %s' "$_plan_constraints" || true)
+$([ -n "$_plan_depends" ] && echo "Depends on: ${_plan_depends}" || true)
+"
+        fi
+      fi
+
       FIX_PROMPT="You are fixing a single review finding.
+
+## CROSS-TASK FIX PLAN
+${_task_plan_section:-No plan entry — fix independently.}
 
 ## CONTEXT
 You are working in: ${WORKTREE_DIR}
