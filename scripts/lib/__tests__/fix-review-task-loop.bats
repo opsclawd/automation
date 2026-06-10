@@ -107,3 +107,20 @@ JSON
   run _validate_review_manifest "$TMPDIR_TEST/review-task-manifest.json" 2>/dev/null
   [ "$status" -eq 2 ]
 }
+
+@test "fix-review: pre-flight validation failure writes baseline log and fails" {
+  _preflight_validate() { return 1; }
+  export -f _preflight_validate
+  _preflight_output="test-suite failed: 3 errors"
+  if ! _preflight_validate; then
+    echo "$_preflight_output" > "${ISSUES_DIR}/fix-review-baseline.log"
+  fi
+  [ -f "${ISSUES_DIR}/fix-review-baseline.log" ]
+  [ "$(cat "${ISSUES_DIR}/fix-review-baseline.log")" = "test-suite failed: 3 errors" ]
+}
+
+@test "ai-run-issue-v2 contains pre-flight baseline check" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -q 'fix-review-preflight' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+}

@@ -29,6 +29,9 @@ teardown() {
 @test "detect_phase: validation passed without review.md goes to whole-pr-review" {
   touch "${ISSUES_DIR}/validation.result"
   echo "passed" > "${ISSUES_DIR}/validation.result"
+  echo "abc123" > "${ISSUES_DIR}/validation.headsha"
+  git() { echo "abc123"; }
+  export -f git
   run detect_phase
   [ "$output" = "whole-pr-review" ]
 }

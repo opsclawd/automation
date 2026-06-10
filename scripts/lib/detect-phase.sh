@@ -21,7 +21,14 @@ detect_phase() {
   elif [[ -f "${ISSUES_DIR}/validation.result" ]]; then
     _vr=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)
     if [[ "$_vr" == "passed" ]] || [[ -f "${ISSUES_DIR}/fix-validate-done.marker" ]]; then
-      echo "whole-pr-review"
+      # SHA guard: re-validate if branch HEAD changed since last successful validate
+      _stored_sha=$(cat "${ISSUES_DIR}/validation.headsha" 2>/dev/null || echo "")
+      _current_sha=$(git -C "${WORKTREE_DIR:-.}" rev-parse HEAD 2>/dev/null || echo "")
+      if [[ -z "$_stored_sha" ]] || [[ "$_stored_sha" != "$_current_sha" ]]; then
+        echo "validate"
+      else
+        echo "whole-pr-review"
+      fi
     else
       echo "fix-validate"
     fi
