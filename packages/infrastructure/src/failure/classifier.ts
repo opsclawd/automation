@@ -60,6 +60,11 @@ const PATTERNS: Pattern[] = [
       /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis (?:BLOCKED|NEEDS_CONTEXT)\b|fix review is blocked|ai:blocked|blocked from previous phase|reviews failing|review loop hit max|exited review loop)/i,
     suggestedAction: 'The agent blocked itself — review the prompt and the reported reason.',
   },
+  {
+    kind: 'agent_incomplete',
+    regex: /implementer did not complete|implementer incomplete|no result file.*no commits/i,
+    suggestedAction: 'The implementer did not complete — retry the task.',
+  },
 ];
 
 const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
@@ -164,7 +169,7 @@ export function classifyExit(input: ClassifyExitInput): Failure {
       kind: best.pattern.kind,
       message: message || `Detected ${best.pattern.kind}`,
       exitCode: input.exitCode,
-      canRetry: false,
+      canRetry: best.pattern.kind === 'agent_incomplete',
       suggestedAction: best.pattern.suggestedAction,
       artifacts: input.artifacts ?? [],
       detectedAt: input.detectedAt ?? new Date(),
@@ -298,10 +303,26 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
   } else if (/blocked/i.test(reason)) {
     kind = 'agent_blocked';
     suggestedAction = 'The agent blocked itself — review the prompt and the reported reason.';
+    // The /blocked/i check above (line 303) takes precedence over agent_incomplete below
+    // (line 307). If a reason contains both "blocked" and "implementer did not complete",
+    // the result is agent_blocked (non-retryable). This ordering is intentional: an explicit
+    // BLOCKED declaration is treated as terminal even if the reason also mentions incomplete
+    // work. In practice the orchestrator never emits both strings in the same reason, so
+    // this is a defense-in-depth measure, not a runtime concern.
+  } else if (/implementer did not complete|no result file.*no commits/i.test(reason)) {
+    kind = 'agent_incomplete';
+    suggestedAction = 'The implementer did not complete — retry the task.';
   } else if (e.phase === 'validate' && command !== undefined) {
     kind = 'validation_failed';
     message = `${command} exited ${metaExit ?? input.exitCode}`;
     suggestedAction = 'Open the validate phase logs and rerun the failing command locally.';
+    // Catch-all: unmatched events fall through to log scraping (classifyExit line 150+),
+    // which handles agent_incomplete via pattern matching (line 173 sets canRetry when
+    // kind === 'agent_incomplete'). The explicit agent_incomplete rule above (lines 307-309)
+    // catches all known patterns before reaching here. canRetry at line 323 is already
+    // set to kind === 'agent_incomplete' for matched rules, so the plan's proposed
+    // fallback canRetry change is unnecessary. If a new reason format needs retryable
+    // handling, add it to the regex at line 307 rather than relying on a catch-all.
   } else {
     return null;
   }
@@ -311,7 +332,7 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
     kind,
     message: message || `Detected ${kind}`,
     exitCode: metaExit ?? input.exitCode,
-    canRetry: false,
+    canRetry: kind === 'agent_incomplete',
     suggestedAction,
     artifacts: input.artifacts ?? [],
     detectedAt: new Date(e.timestamp),

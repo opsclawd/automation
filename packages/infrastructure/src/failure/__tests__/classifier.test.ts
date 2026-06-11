@@ -302,6 +302,41 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('agent_blocked');
   });
 
+  it('returns agent_incomplete when log contains "implementer did not complete"', () => {
+    const result = classifyExit({
+      runUuid: 'u1',
+      exitCode: 1,
+      combinedLogTail: 'Task 3: implementer did not complete — no result file, no commits',
+    });
+    expect(result.kind).toBe('agent_incomplete');
+  });
+
+  it('returns agent_incomplete with canRetry: true', () => {
+    const result = classifyExit({
+      runUuid: 'u1',
+      exitCode: 1,
+      combinedLogTail: 'Task 3: implementer did not complete — no result file, no commits',
+    });
+    expect(result.canRetry).toBe(true);
+  });
+
+  it('agent_incomplete is distinct from agent_blocked', () => {
+    const blocked = classifyExit({
+      runUuid: 'u1',
+      exitCode: 1,
+      combinedLogTail: 'Task 3 is BLOCKED: missing dependency',
+    });
+    const incomplete = classifyExit({
+      runUuid: 'u2',
+      exitCode: 1,
+      combinedLogTail: 'Task 3: implementer did not complete — no result file, no commits',
+    });
+    expect(blocked.kind).toBe('agent_blocked');
+    expect(blocked.canRetry).toBe(false);
+    expect(incomplete.kind).toBe('agent_incomplete');
+    expect(incomplete.canRetry).toBe(true);
+  });
+
   it('returns command_failed for exit 1 with no sentinel match', () => {
     const f = classifyExit({
       exitCode: 1,
@@ -837,6 +872,22 @@ describe('classifyExit with events (M2-06)', () => {
       ],
     });
     expect(failure.kind).toBe('agent_blocked');
+  });
+  it('returns agent_incomplete with canRetry: true for phase.failed with reason containing "implementer did not complete"', () => {
+    const result = classifyExit({
+      runUuid: 'u1',
+      exitCode: 1,
+      combinedLogTail: '',
+      events: [
+        ev({
+          phase: 'implement',
+          message: 'Task 3: implementer did not complete — no result file, no commits',
+          metadata: { reason: 'Task 3: implementer did not complete — no result file, no commits' },
+        }),
+      ],
+    });
+    expect(result.kind).toBe('agent_incomplete');
+    expect(result.canRetry).toBe(true);
   });
   it('falls back to log scraping when no terminal event present', () => {
     const failure = classifyExit({

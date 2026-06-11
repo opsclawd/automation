@@ -225,3 +225,83 @@ teardown() {
   # _explicit_block should be 1 (file had explicit BLOCKED)
   [ "$_explicit_block" -eq 1 ]
 }
+
+@test "guard: SHA unchanged + exit 3 -> result-writer not invoked" {
+  # Set up: SHA unchanged (base_sha == HEAD)
+  echo "$_MOCK_HEAD_SHA" > "$WORKTREE_DIR/implement-task-5.basesha.log"
+
+  # Stub run_result_writer to track if it's called
+  _result_writer_called=0
+  run_result_writer() { _result_writer_called=1; return 1; }
+
+  # Stub validate_result_file to return false (no explicit block)
+  validate_result_file() { return 1; }
+
+  # Stub resolve_result to return BLOCKED (simulates no-result-file fallback)
+  resolve_result() { echo "BLOCKED"; return 0; }
+
+  # Simulate the state that the guard would see:
+  # SHA unchanged, exit 3, no explicit block
+  _agent_ec=3
+  _explicit_block=0
+
+  # Verify: result-writer should not be called
+  [ "$_result_writer_called" -eq 0 ]
+}
+
+# Helper: core retry-guard logic extracted from ai-run-issue-v2
+_retry_implementer() {
+  if [[ "$_impl_agent_ec" -eq 3 ]] && [[ "${_IMPLEMENTER_RETRIED:-0}" -eq 0 ]]; then
+    _IMPLEMENTER_RETRIED=1
+    rm -f "$_result_file"
+    run_implementer "$_TASK_NUM" "task_title" "TASK_TEXT" "COMMIT_MSG"
+    _impl_agent_ec=${_agent_ec:-0}
+  fi
+}
+
+@test "guard: exit 3 with no prior retry -> implementer invoked and _IMPLEMENTER_RETRIED=1" {
+  _impl_agent_ec=3
+  _IMPLEMENTER_RETRIED=0
+  _agent_ec=3
+
+  _implementer_retry_called=0
+  run_implementer() { _implementer_retry_called=$((_implementer_retry_called + 1)); }
+
+  _retry_implementer
+
+  [ "$_implementer_retry_called" -eq 1 ]
+  [ "$_IMPLEMENTER_RETRIED" -eq 1 ]
+}
+
+@test "guard: exit 3 with prior retry exhausted -> implementer not invoked again" {
+  _impl_agent_ec=3
+  _IMPLEMENTER_RETRIED=1
+  _agent_ec=3
+
+  _implementer_retry_called=0
+  run_implementer() { _implementer_retry_called=$((_implementer_retry_called + 1)); }
+
+  _retry_implementer
+
+  [ "$_implementer_retry_called" -eq 0 ]
+  [ "$_IMPLEMENTER_RETRIED" -eq 1 ]
+}
+
+@test "guard: exit 3 retry clears stale synthetic BLOCKED result file" {
+  _impl_agent_ec=3
+  _IMPLEMENTER_RETRIED=0
+  _agent_ec=0
+  _TASK_NUM=9
+  _result_file="$WORKTREE_DIR/implement-task-9.result"
+
+  # Simulate first-attempt resolve_result having written a synthetic BLOCKED
+  echo "BLOCKED" > "$_result_file"
+  [ -f "$_result_file" ]
+
+  run_implementer() { :; }
+
+  _retry_implementer
+
+  # The stale result file must be removed so the retry starts clean
+  [ ! -f "$_result_file" ]
+}

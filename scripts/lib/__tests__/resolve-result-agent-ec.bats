@@ -104,3 +104,29 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "PARTIAL" ]
 }
+
+@test "agent ec=3, no result file, implement task: fallback is BLOCKED" {
+  local result_file="$TMPDIR_TEST/implement-task-7.result"
+  local source_file="$TMPDIR_TEST/implement-task-7.md"
+  rm -f "$result_file"
+  touch "$source_file"
+
+  run resolve_result "$result_file" "$source_file" --agent-ec 3 \
+    DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT "DONE"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "BLOCKED" ]
+  [ "$(cat "$result_file")" = "BLOCKED" ]
+}
+
+@test "agent ec=0, no result file, no source, implement task: fallback is BLOCKED" {
+  local result_file="$TMPDIR_TEST/implement-task-8.result"
+  local source_file="$TMPDIR_TEST/implement-task-8.md"
+  rm -f "$result_file" "$source_file"
+
+  run resolve_result "$result_file" "$source_file" \
+    DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT "DONE"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "BLOCKED" ]
+}

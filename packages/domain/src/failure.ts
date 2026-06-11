@@ -4,6 +4,7 @@ export type FailureKind =
   | 'missing_artifact'
   | 'invalid_result'
   | 'agent_blocked'
+  | 'agent_incomplete'
   | 'agent_contract_violation'
   | 'branch_changed'
   | 'validation_failed'

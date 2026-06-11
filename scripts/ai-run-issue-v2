@@ -1940,7 +1940,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         case $_agent_ec in
           1) orchestrator_fail "implement-task-${task_n} failed (contract violation)" ;;
           2) orchestrator_fail "implement-task-${task_n} failed (config error or timeout)" ;;
-          3) orchestrator_fail "implement-task-${task_n} failed (unexpected error)" ;;
+          3) warn "implement-task-${task_n} had an unexpected error (exit 3) — will attempt recovery" ;;
           4) warn "implement-task-${task_n} had a provider error — checking for work..." ;;
           *) orchestrator_fail "implement-task-${task_n} failed (unknown exit code $_agent_ec)" ;;
         esac
@@ -2574,6 +2574,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
+    _IMPLEMENTER_RETRIED=0
     # Track whether we implemented this session. On a resume directly into review
     # (DID_IMPLEMENT=0) later tasks may be stacked on the branch tip, so we must
     # not refresh the persisted head marker with that tip after fixes.
@@ -2593,6 +2594,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       # pre-impl HEAD on a fresh run, but on resume it is the *post*-impl HEAD.
       echo "$BASE_SHA" > "${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log"
       run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
+      _impl_agent_ec=${_agent_ec:-0}
       # Capture whether the implementer wrote an explicit BLOCKED/NEEDS_CONTEXT
       # BEFORE resolve_result's fallback mutates the file.
       _result_file="${WORKTREE_DIR}/implement-task-${TASK_NUM}.result"
@@ -2603,16 +2605,12 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       IMPL_STATUS=$(resolve_result \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
         "${WORKTREE_DIR}/implement-task-${TASK_NUM}.md" \
+        --agent-ec "$_impl_agent_ec" \
         DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT \
         "DONE")
-      log "  Implementer status: ${IMPL_STATUS}"
+      log "  Implementer status: ${IMPL_STATUS} (exit ${_impl_agent_ec})"
 
       if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
-        # Recovery: if the implementer committed work (HEAD advanced past base_sha)
-        # but failed to write the result file, try a narrow result-writer agent.
-        # Only recover when the result file was missing/invalid before
-        # resolve_result wrote the fallback — not when the implementer
-        # explicitly wrote BLOCKED or NEEDS_CONTEXT (genuine blocker).
         if [[ $_explicit_block -eq 0 ]]; then
           _base_sha_file="${WORKTREE_DIR}/implement-task-${TASK_NUM}.basesha.log"
           if [[ -f "$_base_sha_file" ]]; then
@@ -2631,12 +2629,55 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
               else
                 log "  Result-writer failed, preserving original ${IMPL_STATUS}"
               fi
+            elif [[ "$_impl_agent_ec" -eq 3 || "$_impl_agent_ec" -eq 4 ]]; then
+              # No commits, exit 3 (infra crash) or exit 4 (provider error) — retry implementer once
+              if [[ "${_IMPLEMENTER_RETRIED:-0}" -eq 0 ]]; then
+                _IMPLEMENTER_RETRIED=1
+                log "  Implementer exited with infra/provider error (exit 3/4) with no commits — retrying once"
+                # Clear the stale synthetic BLOCKED that resolve_result wrote
+                # on the first attempt; otherwise a retry that writes DONE to
+                # the .md but not the .result file would be resolved as the
+                # old BLOCKED (the extractor is bypassed when a valid result
+                # file exists).
+                rm -f "$_result_file"
+                run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
+                _impl_agent_ec=${_agent_ec:-0}
+                _explicit_block=0
+                if validate_result_file "$_result_file" BLOCKED NEEDS_CONTEXT; then
+                  _explicit_block=1
+                fi
+                IMPL_STATUS=$(resolve_result \
+                  "${WORKTREE_DIR}/implement-task-${TASK_NUM}.result" \
+                  "${WORKTREE_DIR}/implement-task-${TASK_NUM}.md" \
+                  --agent-ec "$_impl_agent_ec" \
+                  DONE DONE_WITH_CONCERNS BLOCKED NEEDS_CONTEXT \
+                  "DONE")
+                log "  Post-retry status: ${IMPL_STATUS} (exit ${_impl_agent_ec})"
+              fi
+            fi
+          fi
+          # Re-check _explicit_block after retry — the retry may have
+          # produced a genuine explicit BLOCKED. If so, treat it as
+          # terminal (same as the else branch below).
+          if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
+            if [[ $_explicit_block -eq 1 ]]; then
+              log "  Retry produced explicit ${IMPL_STATUS} — treating as terminal"
+              orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
+            else
+              _commits_msg="no result file, no commits"
+              if [[ -f "$_base_sha_file" ]]; then
+                _pre_sha=$(cat "$_base_sha_file" 2>/dev/null || echo "")
+                _post_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+                if [[ -n "$_pre_sha" && -n "$_post_sha" && "$_pre_sha" != "$_post_sha" ]]; then
+                  _commits_msg="with commits but no valid result file"
+                fi
+              fi
+              log "  Task ${TASK_NUM}: implementer did not complete — ${_commits_msg} (agent_incomplete)"
+              orchestrator_fail "Task ${TASK_NUM}: implementer did not complete — ${_commits_msg}"
             fi
           fi
         else
           log "  Result file has explicit ${IMPL_STATUS} — not attempting recovery"
-        fi
-        if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
           orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
         fi
       fi
