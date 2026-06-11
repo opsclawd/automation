@@ -169,6 +169,8 @@ export class ProcessPrReviewComments {
       const comment = d.prReviewRepo.getComment(input.runId, task.commentId);
       if (!comment || comment.state !== 'pending') continue;
 
+      runningStartSha = await d.git.headCommitSha(input.cwd);
+
       let lastOutput: PollTaskOutput | undefined;
       for (let attempt = 1; attempt <= MAX_TASK_RETRIES; attempt++) {
         try {
@@ -206,9 +208,6 @@ export class ProcessPrReviewComments {
         }
       }
       if (lastOutput) {
-        // The agent committed during a fixed task, so HEAD moved — advance the
-        // start SHA so the next task verifies against this task's commit. (M1)
-        if (lastOutput.commitSha) runningStartSha = lastOutput.commitSha;
         taskResults.push(lastOutput);
       }
     }
