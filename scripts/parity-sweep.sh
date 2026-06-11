@@ -57,7 +57,7 @@ fi
 while IFS='|' read -r pr_num _; do
   [[ -z "$pr_num" ]] && continue
   labels="$(gh api "repos/$REPO/issues/${pr_num}/labels" -q '.[].name' 2>/dev/null)" || true
-  if echo "$labels" | grep -q 'no-parity-impact'; then
+  if echo "$labels" | grep -Fqx 'no-parity-impact'; then
     echo "$pr_num" >> "$labeled_file"
   fi
 done < "$candidates_file"
