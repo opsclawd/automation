@@ -146,6 +146,31 @@ JSON
   [ "$status" -eq 0 ]
 }
 
+@test "_escape_for_grep exits 0 for representative task IDs" {
+  for tid in H1 R1 C1 R2-1 "task-42"; do
+    run _escape_for_grep "$tid"
+    [ "$status" -eq 0 ]
+  done
+}
+
+@test "_escape_for_grep escapes regex metacharacters" {
+  run _escape_for_grep 'R1.*'
+  [ "$status" -eq 0 ]
+  run grep -qF '\' <<< "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "_escape_for_grep output matches original via grep -F" {
+  local escaped
+  escaped=$(_escape_for_grep "H1")
+  echo "H1" | grep -qF "$escaped"
+}
+
+@test "original sed expression fails (regression guard for issue-272)" {
+  run bash -c 'echo "H1" | sed "s/[][.*^$/\\\\]/\\\\&/g"'
+  [ "$status" -ne 0 ]
+}
+
 @test "ai-run-issue-v2 per-task loop uses stash-and-commit instead of reset --hard" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   run grep -c '_stash_and_conditionally_commit' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"

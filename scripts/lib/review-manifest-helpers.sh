@@ -52,3 +52,23 @@ _extract_architect_plan_entry() {
   fi
   jq --arg tid "$task_id" 'first(.tasks[] | select(.task_id == $tid)) // empty' "$plan_path" 2>/dev/null || echo ""
 }
+
+# _escape_for_grep PATTERN
+#
+# Escape regex metacharacters for use as a literal grep pattern.
+#
+# Task IDs must match [[:alnum:]_-] (constrained identifiers from the JSON
+# manifest). The escaping below only touches regex metacharacters, so the
+# backslash never appears in output for well-formed IDs. If a task ID ever
+# contained a backslash, the escaped form would break `grep -w` word-boundary
+# matching — backslash is not a word constituent.
+_escape_for_grep() {
+  printf '%s' "$1" | sed \
+    -e 's/\[/\\[/g' \
+    -e 's/\]/\\]/g' \
+    -e 's/\./\\./g' \
+    -e 's/\*/\\*/g' \
+    -e 's/\^/\\^/g' \
+    -e 's/\$/\\$/g' \
+    -e 's/\\/\\\\/g'
+}
