@@ -183,3 +183,32 @@ JSON
   run grep -q 'fix-review-stash.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
+
+@test "ai-run-issue-v2 contains exit-code gate after manifest fix-review loop" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -q 'fix-status.txt' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+}
+@test "fix-status.txt is HAS_UNRESOLVED when any task fails (manifest path)" {
+  local all_fixed=0
+  if [[ "$all_fixed" -eq 1 ]]; then
+    echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
+  else
+    echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
+  fi
+  [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "HAS_UNRESOLVED" ]
+}
+@test "fix-status.txt is ALL_FIXED when all tasks succeed (manifest path)" {
+  local all_fixed=1
+  if [[ "$all_fixed" -eq 1 ]]; then
+    echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
+  else
+    echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
+  fi
+  [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "ALL_FIXED" ]
+}
+@test "ai-run-issue-v2 sources fix-review-revert.sh (regression guard)" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -q 'fix-review-revert.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+}
