@@ -2645,7 +2645,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
         _dirty_tree=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "")
         if [[ -n "$_dirty_tree" ]]; then
           warn "Task ${TASK_NUM}: implementer reported ${IMPL_STATUS} but worktree has uncommitted changes — attempting commit-completion recovery"
-          log "  Dirty files:\n${_dirty_tree}"
+          log "  Dirty files:
+${_dirty_tree}"
           if run_commit_completion "$TASK_NUM" "$COMMIT_MSG"; then
             log "  Task ${TASK_NUM}: commit-completion recovery succeeded"
           else
