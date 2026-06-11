@@ -210,35 +210,6 @@ describe('PollTaskRunner — failure isolation', () => {
     expect(out.processed).toBe(false);
   });
 
-  describe('PollTaskRunner — timeout scaling', () => {
-    it('computes timeoutMs using min(30, 10 + 5 * N) * 60_000 formula', async () => {
-      const { deps, agent } = makeDeps();
-      const runner = new PollTaskRunner(deps);
-      await runner.execute(makeInput({ unresolvedCommentCount: 3 }));
-      expect(agent.invocations).toHaveLength(1);
-      // min(30, 10 + 5*3) = min(30, 25) = 25 → 25 * 60_000 = 1_500_000
-      expect(agent.invocations[0].timeoutMs).toBe(1_500_000);
-    });
-
-    it('caps timeout at 30 minutes for large comment counts', async () => {
-      const { deps, agent } = makeDeps();
-      const runner = new PollTaskRunner(deps);
-      await runner.execute(makeInput({ unresolvedCommentCount: 10 }));
-      expect(agent.invocations).toHaveLength(1);
-      // min(30, 10 + 5*10) = min(30, 60) = 30 → 30 * 60_000 = 1_800_000
-      expect(agent.invocations[0].timeoutMs).toBe(1_800_000);
-    });
-
-    it('uses 10-minute floor for 0 comments', async () => {
-      const { deps, agent } = makeDeps();
-      const runner = new PollTaskRunner(deps);
-      await runner.execute(makeInput({ unresolvedCommentCount: 0 }));
-      expect(agent.invocations).toHaveLength(1);
-      // min(30, 10 + 0) = 10 → 10 * 60_000 = 600_000
-      expect(agent.invocations[0].timeoutMs).toBe(600_000);
-    });
-  });
-
   it('returns failed when result.commentId does not match input comment', async () => {
     const { deps, github } = makeDeps({
       extractTaskResult: async () => ({
@@ -257,5 +228,34 @@ describe('PollTaskRunner — failure isolation', () => {
       blocked: false,
     });
     expect(github.repliesPosted).toHaveLength(0);
+  });
+});
+
+describe('PollTaskRunner — timeout scaling', () => {
+  it('computes timeoutMs using min(30, 10 + 5 * N) * 60_000 formula', async () => {
+    const { deps, agent } = makeDeps();
+    const runner = new PollTaskRunner(deps);
+    await runner.execute(makeInput({ unresolvedCommentCount: 3 }));
+    expect(agent.invocations).toHaveLength(1);
+    // min(30, 10 + 5*3) = min(30, 25) = 25 → 25 * 60_000 = 1_500_000
+    expect(agent.invocations[0].timeoutMs).toBe(1_500_000);
+  });
+
+  it('caps timeout at 30 minutes for large comment counts', async () => {
+    const { deps, agent } = makeDeps();
+    const runner = new PollTaskRunner(deps);
+    await runner.execute(makeInput({ unresolvedCommentCount: 10 }));
+    expect(agent.invocations).toHaveLength(1);
+    // min(30, 10 + 5*10) = min(30, 60) = 30 → 30 * 60_000 = 1_800_000
+    expect(agent.invocations[0].timeoutMs).toBe(1_800_000);
+  });
+
+  it('uses 10-minute floor for 0 comments', async () => {
+    const { deps, agent } = makeDeps();
+    const runner = new PollTaskRunner(deps);
+    await runner.execute(makeInput({ unresolvedCommentCount: 0 }));
+    expect(agent.invocations).toHaveLength(1);
+    // min(30, 10 + 0) = 10 → 10 * 60_000 = 600_000
+    expect(agent.invocations[0].timeoutMs).toBe(600_000);
   });
 });
