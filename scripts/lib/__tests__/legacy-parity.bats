@@ -59,3 +59,45 @@ setup() {
   [ "$(jq '[.[] | select(.action=="fix" or .action==null)] | length' <<< "$mixed")" -eq 1 ]
   [ "$(jq '[.[] | select(.action=="fix" or .action==null)] | length' <<< "$empty")" -eq 0 ]
 }
+
+# Invariant: revalidation after a fix never DISCARDS uncommitted agent work —
+#   the per-task loop stashes and conditionally commits instead of `reset --hard`.
+# Source: #281 (was #271). Deeper coverage: fix-review-stash.bats.
+# Failure prevented: revalidate `reset --hard` deleted an uncommitted fix the
+#   agent had produced but not yet committed.
+# TS-port contract: whatever performs post-agent cleanup in TS must preserve
+#   uncommitted work (stash/commit), never blind-reset.
+@test "parity[#281]: fix-review preserves uncommitted work (stash-and-commit, not reset --hard)" {
+  run grep -c '_stash_and_conditionally_commit' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+}
+
+# Invariant: fix-review escapes review-task IDs safely when pulling the finding
+#   text into the agent prompt (no malformed inline sed).
+# Source: #283 (was #272). Deeper coverage: fix-review-task-loop.bats (_escape_for_grep).
+# Failure prevented: the malformed sed expression aborted, so retries ran blind
+#   to the comment they were fixing.
+# TS-port contract: fix-review must reliably carry the finding's text into the
+#   prompt for the comment being fixed (the bash regex itself does not port).
+@test "parity[#283]: fix-review uses safe task-id escaping, not the malformed sed" {
+  run grep -c '_escape_for_grep' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # The malformed expression that crashed must not return.
+  run grep -F 's/[][.*^$/\\]/\\&/g' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -ne 0 ]
+}
+
+# Invariant: agent prompt strings never let the orchestrator expand embedded
+#   shell — literal snippets are escaped.
+# Source: #287 (encoding of #284). Deeper coverage: implementer-prompt.bats; the
+#   durable TS form is tracked in #288.
+# Failure prevented: an unescaped PRE_HEAD reference in IMPLEMENTER_PROMPT was
+#   expanded under set -u -> "PRE_HEAD: unbound variable" -> implement crashed.
+# TS-port contract: prompt construction must be smoke-tested so an undefined
+#   interpolation can never crash the orchestrator (see #288).
+@test "parity[#287]: agent prompts do not let the orchestrator expand PRE_HEAD" {
+  run grep -nF '"$PRE_HEAD"' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -ne 0 ]
+}
