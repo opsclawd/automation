@@ -2634,6 +2634,12 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
               if [[ "${_IMPLEMENTER_RETRIED:-0}" -eq 0 ]]; then
                 _IMPLEMENTER_RETRIED=1
                 log "  Implementer exited with infra/provider error (exit 3/4) with no commits — retrying once"
+                # Clear the stale synthetic BLOCKED that resolve_result wrote
+                # on the first attempt; otherwise a retry that writes DONE to
+                # the .md but not the .result file would be resolved as the
+                # old BLOCKED (the extractor is bypassed when a valid result
+                # file exists).
+                rm -f "$_result_file"
                 run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
                 _impl_agent_ec=${_agent_ec:-0}
                 _explicit_block=0

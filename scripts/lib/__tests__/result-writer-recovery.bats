@@ -249,10 +249,11 @@ teardown() {
   [ "$_result_writer_called" -eq 0 ]
 }
 
-# Helper: core retry-guard logic extracted from ai-run-issue-v2:2631-2649
+# Helper: core retry-guard logic extracted from ai-run-issue-v2
 _retry_implementer() {
   if [[ "$_impl_agent_ec" -eq 3 ]] && [[ "${_IMPLEMENTER_RETRIED:-0}" -eq 0 ]]; then
     _IMPLEMENTER_RETRIED=1
+    rm -f "$_result_file"
     run_implementer "$_TASK_NUM" "task_title" "TASK_TEXT" "COMMIT_MSG"
     _impl_agent_ec=${_agent_ec:-0}
   fi
@@ -284,4 +285,23 @@ _retry_implementer() {
 
   [ "$_implementer_retry_called" -eq 0 ]
   [ "$_IMPLEMENTER_RETRIED" -eq 1 ]
+}
+
+@test "guard: exit 3 retry clears stale synthetic BLOCKED result file" {
+  _impl_agent_ec=3
+  _IMPLEMENTER_RETRIED=0
+  _agent_ec=0
+  _TASK_NUM=9
+  _result_file="$WORKTREE_DIR/implement-task-9.result"
+
+  # Simulate first-attempt resolve_result having written a synthetic BLOCKED
+  echo "BLOCKED" > "$_result_file"
+  [ -f "$_result_file" ]
+
+  run_implementer() { :; }
+
+  _retry_implementer
+
+  # The stale result file must be removed so the retry starts clean
+  [ ! -f "$_result_file" ]
 }
