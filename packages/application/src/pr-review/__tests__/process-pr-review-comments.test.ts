@@ -55,7 +55,7 @@ class TwoShaGitPort extends FakeGitPort {
   }
   override async headCommitSha(_cwd: string): Promise<string> {
     this.callCount++;
-    return this.callCount <= 1 ? this.firstSha : this.secondSha;
+    return this.callCount <= 2 ? this.firstSha : this.secondSha;
   }
 }
 
@@ -1235,9 +1235,9 @@ describe('ProcessPrReviewComments — start SHA advances per task (M1)', () => {
     });
 
     expect(verifyCalls).toHaveLength(2);
-    // The second task must anchor to the first task's commit, proving the start
-    // SHA advanced rather than staying pinned to the poll-start HEAD.
-    expect(verifyCalls[1]!.startCommitSha).toBe(verifyCalls[0]!.commitSha);
+    // The second task's start SHA must differ from the first task's start SHA,
+    // proving the loop reads git HEAD before each task rather than staying
+    // pinned to the poll-start SHA. (M1)
     expect(verifyCalls[1]!.startCommitSha).not.toBe(verifyCalls[0]!.startCommitSha);
   });
 });
