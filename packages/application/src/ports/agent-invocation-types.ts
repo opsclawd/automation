@@ -26,6 +26,7 @@ export interface AgentInvocationRequest {
   };
   fallbackOfInvocationId?: AgentInvocationId;
   fallbackReason?: string;
+  timeoutMs?: number;
 }
 
 export interface AgentInvocationResult {
