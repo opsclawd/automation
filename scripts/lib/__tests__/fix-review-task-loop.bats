@@ -212,3 +212,9 @@ JSON
   run grep -q 'fix-review-revert.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
+
+@test "ai-run-issue-v2 clears validation.result at fix-review phase start" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -A5 '_emit_phase_started "fix-review"' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [[ "$output" == *"validation.result"* ]]
+}

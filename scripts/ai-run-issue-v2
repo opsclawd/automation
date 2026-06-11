@@ -3697,6 +3697,12 @@ _revalidate_is_green() {
 if [[ "$PHASE" == "fix-review" ]]; then
 _emit_phase_started "fix-review"
 
+  # Clear validation.result at fix-review start to prevent a stale "passed"
+  # from the validate phase carrying forward. If fix-review fails to write
+  # a new result, the create-pr label gating at lines 4878-4886 will see an
+  # empty/absent value and apply ai:needs-human-review instead of ai:pr-ready.
+  echo "" > "${ISSUES_DIR}/validation.result"
+
 FIX_REVIEW_MANIFEST=""
 FIX_REVIEW_USE_LEGACY=0
 FIX_REVIEW_EMPTY=0
