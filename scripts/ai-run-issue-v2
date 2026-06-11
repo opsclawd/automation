@@ -136,6 +136,8 @@ source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
 source "${REPO_ROOT}/scripts/lib/review-manifest-helpers.sh"
 # shellcheck source=lib/fix-review-stash.sh
 source "${REPO_ROOT}/scripts/lib/fix-review-stash.sh"
+# shellcheck source=lib/fix-review-revert.sh
+source "${REPO_ROOT}/scripts/lib/fix-review-revert.sh"
 # shellcheck source=lib/validation_result.sh
 source "${REPO_ROOT}/scripts/lib/validation_result.sh"
 
@@ -4281,6 +4283,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
 
     _task_fixed=0
     _prev_fp=""
+    _pre_task_head=$(git -C "${WORKTREE_DIR}" rev-parse HEAD)
     for _retry in $(seq 1 "$MAX_FIX_REVIEW_RETRIES_PER_TASK"); do
       log "=== Task $_task_id: fix-review attempt ${_retry}/${MAX_FIX_REVIEW_RETRIES_PER_TASK} ==="
       emit_event "fix-review" "info" "task.attempt.started" \
@@ -4442,6 +4445,12 @@ Start now."
         warn "Task $_task_id: commit failed, tree dirty — marking task as FAILED"
         echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
       fi
+
+      _revert_task_commits \
+        "${WORKTREE_DIR}" \
+        "$_task_id" \
+        "$_pre_task_head" \
+        "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"
 
       _task_result_file="${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
       _task_status=$(resolve_result "$_task_result_file" "" FIXED FAILED DONE_NO_FIXES_NEEDED "FAILED")
