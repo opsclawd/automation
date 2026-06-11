@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "$0")/lib/parity-common.sh"
+
 BASE_REF="${BASE_REF:-main}"
-
-WATCHED_EXACT=(
-  "scripts/ai-run-issue-v2"
-  "scripts/ai-pr-review-poll"
-  "apps/cli/src/run-agent.ts"
-)
-
-WATCHED_PREFIXES=(
-  "scripts/lib/"
-  "packages/infrastructure/src/agent/"
-)
 
 PARITY_TEST_PATTERNS=(
   "scripts/lib/__tests__/legacy-parity.bats"
@@ -29,24 +20,6 @@ gh_view_body() {
     pr_body=""
   fi
   printf '%s\n' "$pr_body"
-}
-
-match_watched() {
-  local file="$1"
-  for exact in "${WATCHED_EXACT[@]}"; do
-    if [[ "$file" = "$exact" ]]; then
-      return 0
-    fi
-  done
-  for prefix in "${WATCHED_PREFIXES[@]}"; do
-    if [[ "$file" = "$prefix"* ]]; then
-      if [[ "$prefix" = "scripts/lib/" ]] && [[ "$file" = "scripts/lib/__tests__/"* ]]; then
-        continue
-      fi
-      return 0
-    fi
-  done
-  return 1
 }
 
 match_parity_test() {
