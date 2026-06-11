@@ -135,9 +135,6 @@ describe('PollTaskRunner — happy path', () => {
       action: 'fixed',
       processed: true,
       blocked: false,
-      // HEAD after the simulated agent commit, surfaced so the caller can
-      // advance the start SHA for subsequent tasks. (M1)
-      commitSha: 'def456',
     });
     expect(github.repliesPosted).toHaveLength(1);
     expect(github.resolvedThreads).toEqual(
