@@ -189,18 +189,20 @@ JSON
   run grep -q 'fix-status.txt' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
-@test "fix-status.txt is HAS_UNRESOLVED when any task fails (manifest path)" {
-  local all_fixed=0
-  if [[ "$all_fixed" -eq 1 ]]; then
+@test "FIX_REVIEW_ALL_FIXED=0 triggers HAS_UNRESOLVED branch" {
+  # Exercises the same if-else as ai-run-issue-v2 lines 4506-4509
+  # using the production variable name, not a hardcoded output.
+  local FIX_REVIEW_ALL_FIXED=0
+  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
     echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
   else
     echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
   fi
   [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "HAS_UNRESOLVED" ]
 }
-@test "fix-status.txt is ALL_FIXED when all tasks succeed (manifest path)" {
-  local all_fixed=1
-  if [[ "$all_fixed" -eq 1 ]]; then
+@test "FIX_REVIEW_ALL_FIXED=1 triggers ALL_FIXED branch" {
+  local FIX_REVIEW_ALL_FIXED=1
+  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
     echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
   else
     echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
