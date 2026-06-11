@@ -62,8 +62,7 @@ const PATTERNS: Pattern[] = [
   },
   {
     kind: 'agent_incomplete',
-    regex:
-      /implementer did not complete|implementer incomplete|no result file.*no commits|agent_incomplete/i,
+    regex: /implementer did not complete|implementer incomplete|no result file.*no commits/i,
     suggestedAction: 'The implementer did not complete — retry the task.',
   },
 ];
