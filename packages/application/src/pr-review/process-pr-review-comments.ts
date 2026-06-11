@@ -178,6 +178,7 @@ export class ProcessPrReviewComments {
             diff,
             branch: pr.headRefName,
             startCommitSha: runningStartSha,
+            unresolvedCommentCount: unresolved.length,
           });
           if (lastOutput.action !== 'failed') break;
         } catch {
