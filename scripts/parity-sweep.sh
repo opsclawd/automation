@@ -31,7 +31,7 @@ fi
 # Filter to commits that touched watched paths
 while IFS=' ' read -r sha rest; do
   [[ -z "$sha" ]] && continue
-  pr_num="$(echo "$rest" | grep -oP '\(#\K[0-9]+(?=\))' || true)"
+  pr_num="$(echo "$rest" | grep -oP '\(#\K[0-9]+(?=\))' | head -n1 || true)"
   [[ -z "$pr_num" ]] && continue
   diff_files="$(git diff --name-only "${sha}^..${sha}" 2>/dev/null)" || true
   while IFS= read -r file; do
