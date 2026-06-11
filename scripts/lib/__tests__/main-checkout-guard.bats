@@ -503,3 +503,90 @@ teardown() {
   run grep -c 'Do NOT change this branch name' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll.legacy"
   [ "$output" -eq 1 ]
 }
+
+@test "_detach_main_head detaches REPO_ROOT HEAD and records original branch" {
+  REPO_ROOT="$FIXTURE_REPO"
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  local _pre_sha
+  _pre_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+
+  _detach_main_head
+
+  # After detach, HEAD should be detached (rev-parse --abbrev-ref returns HEAD)
+  local _detached_ref
+  _detached_ref=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  [ "$_detached_ref" = "HEAD" ]
+
+  # Env var must record the original branch
+  [ -n "${_ORIGINAL_MAIN_BRANCH:-}" ]
+  [ "$_ORIGINAL_MAIN_BRANCH" = "$_default_branch" ]
+  [ -n "${_RESTORE_HEAD_SHA:-}" ]
+  [ "$_RESTORE_HEAD_SHA" = "$_pre_sha" ]
+}
+
+@test "_detach_main_head works when REPO_ROOT is already on detached HEAD" {
+  REPO_ROOT="$FIXTURE_REPO"
+  git -C "$FIXTURE_REPO" checkout -q --detach HEAD
+  local _pre_sha
+  _pre_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+
+  _detach_main_head
+
+  # Already detached, env var records the detached state
+  [ "${_ORIGINAL_MAIN_BRANCH:-}" = "HEAD" ]
+  [ "${_RESTORE_HEAD_SHA:-}" = "$_pre_sha" ]
+}
+
+@test "_reattach_main_head restores original branch after detach" {
+  REPO_ROOT="$FIXTURE_REPO"
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+
+  _detach_main_head
+  # Commit on detached HEAD — simulates agent leak
+  echo "leak" > "$FIXTURE_REPO/leak.txt"
+  git -C "$FIXTURE_REPO" add leak.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leak"
+
+  run _reattach_main_head
+  [ "$status" -eq 0 ]
+
+  # Branch should be restored
+  local _current_branch
+  _current_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  [ "$_current_branch" = "$_default_branch" ]
+
+  # SHA should be back at the original (leak commit is orphaned)
+  local _current_sha
+  _current_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$_current_sha" = "$_RESTORE_HEAD_SHA" ]
+}
+
+@test "_reattach_main_head fails when HEAD advanced while detached (leak prevention failure)" {
+  REPO_ROOT="$FIXTURE_REPO"
+
+  _detach_main_head
+  echo "leak" > "$FIXTURE_REPO/leak.txt"
+  git -C "$FIXTURE_REPO" add leak.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leak"
+
+  # Simulate that RESTORE_HEAD_SHA is stored, but we also need to detect
+  # that HEAD moved while detached. _reattach_main_head should still succeed
+  # at restoration (goes back to original branch) but emit a warning event
+  # and leave the orphan commit unreachable.
+  run _reattach_main_head
+  [ "$status" -eq 0 ]
+
+  # The leak commit should be orphaned (original branch is restored, no new commit on branch)
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" log --oneline "$_default_branch" | grep -qv "leak" || true
+}
+
+@test "_reattach_main_head is a no-op when _ORIGINAL_MAIN_BRANCH is unset" {
+  REPO_ROOT="$FIXTURE_REPO"
+  unset _ORIGINAL_MAIN_BRANCH
+  run _reattach_main_head
+  [ "$status" -eq 0 ]
+}

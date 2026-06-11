@@ -148,3 +148,47 @@ _guard_main_checkout() {
     fi
   fi
 }
+
+_detach_main_head() {
+  local _main_branch
+  _main_branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+  _ORIGINAL_MAIN_BRANCH="$_main_branch"
+  _RESTORE_HEAD_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+  emit_event "main-checkout" "info" "main.detach" \
+    "Detaching REPO_ROOT HEAD (was on ${_main_branch} @ ${_RESTORE_HEAD_SHA:0:7})" \
+    originalBranch="$_main_branch" originalSha="$_RESTORE_HEAD_SHA"
+  git -C "$REPO_ROOT" checkout -q --detach HEAD 2>/dev/null || {
+    warn "Failed to detach REPO_ROOT HEAD from ${_main_branch}"
+    return 1
+  }
+}
+
+_reattach_main_head() {
+  if [[ -z "${_ORIGINAL_MAIN_BRANCH:-}" ]]; then
+    return 0
+  fi
+  local _detached_sha
+  _detached_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -n "${_RESTORE_HEAD_SHA:-}" && "$_detached_sha" != "$_RESTORE_HEAD_SHA" ]]; then
+    warn "REPO_ROOT HEAD advanced while detached (${_RESTORE_HEAD_SHA:0:7} → ${_detached_sha:0:7}) — leak committed; restoration will orphan it"
+    emit_event "main-checkout" "warn" "main.detach_head_moved" \
+      "HEAD advanced while REPO_ROOT was detached; orphan commit(s) will be garbage collected" \
+      restoreSha="$_RESTORE_HEAD_SHA" detachedSha="$_detached_sha"
+  fi
+  if [[ "$_ORIGINAL_MAIN_BRANCH" == "HEAD" ]]; then
+    git -C "$REPO_ROOT" checkout -q --detach "$_RESTORE_HEAD_SHA" 2>/dev/null || {
+      warn "Failed to re-detach REPO_ROOT HEAD"
+      return 1
+    }
+  else
+    git -C "$REPO_ROOT" checkout -q "$_ORIGINAL_MAIN_BRANCH" 2>/dev/null || {
+      warn "Failed to restore REPO_ROOT to branch ${_ORIGINAL_MAIN_BRANCH}"
+      return 1
+    }
+  fi
+  local _restored_branch="$_ORIGINAL_MAIN_BRANCH"
+  unset _ORIGINAL_MAIN_BRANCH _RESTORE_HEAD_SHA
+  emit_event "main-checkout" "info" "main.reattach" \
+    "Restored REPO_ROOT branch to ${_restored_branch}" \
+    originalBranch="$_restored_branch"
+}

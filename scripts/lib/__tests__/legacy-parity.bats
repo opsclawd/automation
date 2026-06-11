@@ -160,3 +160,57 @@ setup() {
   run cat "$repo/app.ts"
   [ "$output" = "good-fix" ] || { echo "expected green revalidate to preserve fix, got: $output"; false; }
 }
+
+# Invariant: _detach_main_head detaches REPO_ROOT HEAD and records the
+#   original branch in _ORIGINAL_MAIN_BRANCH so _reattach_main_head can
+#   restore it at run end. The detach/reattach pair guarantees no agent
+#   commit can advance main (commits on detached HEAD become orphaned).
+# Source: #295.
+# Failure prevented: agent commits leaked onto local main, diverging from
+#   origin (e.g. fix/CI commit 6645816 in #290).
+# TS-port contract: the TS orchestrator must detach REPO_ROOT HEAD before
+#   agent invocations and restore afterward. Any commit made while detached
+#   must be unreachable after restoration. Runtime-agnostic — pure git
+#   plumbing (rev-parse HEAD, rev-parse --abbrev-ref, checkout --detach).
+@test "parity[#295]: detached HEAD prevents commits from advancing main branch" {
+  local repo="$BATS_TEST_TMPDIR/detach-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  local _default_branch
+  _default_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  local _pre_sha
+  _pre_sha=$(git -C "$repo" rev-parse HEAD)
+
+  # Detach HEAD (mirrors _detach_main_head)
+  git -C "$repo" checkout -q --detach HEAD
+
+  # Simulate agent leak: commit on detached HEAD
+  echo "leaked" > "$repo/leak.txt"
+  git -C "$repo" add leak.txt
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m "leak on detached"
+  local _leaked_sha
+  _leaked_sha=$(git -C "$repo" rev-parse HEAD)
+  [ "$_leaked_sha" != "$_pre_sha" ]
+
+  # Restore branch (mirrors _reattach_main_head)
+  git -C "$repo" checkout -q "$_default_branch"
+
+  # Branch must be back at the pre-run SHA — main was never advanced
+  local _final_sha
+  _final_sha=$(git -C "$repo" rev-parse HEAD)
+  [ "$_final_sha" = "$_pre_sha" ]
+
+  # The leaked commit is orphaned (unreachable from any branch)
+  if ! git -C "$repo" merge-base --is-ancestor "$_leaked_sha" "$_default_branch" 2>/dev/null; then
+    : # expected — leaked commit is not an ancestor of main
+  else
+    echo "FATAL: leaked commit is reachable from main branch — detach failed to prevent leak"
+    false
+  fi
+}
