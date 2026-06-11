@@ -9,6 +9,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Fetch base ref for parity gate
+        if: github.event_name == 'pull_request'
+        run: git fetch origin "${{ github.base_ref }}" --depth=1
       - name: Check parity test coverage
         if: github.event_name == 'pull_request'
         run: bash scripts/check-parity-coverage.sh
