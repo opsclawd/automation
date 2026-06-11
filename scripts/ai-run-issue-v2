@@ -1559,6 +1559,7 @@ The plan MUST include:
 - Verification commands must be scoped to the files/paths explicitly changed by each task. Do NOT use whole-file grep/rg on files where the task only changes a subset — scope to specific line ranges or file sections.
 - Prefer making verification an acceptance criterion of implementing tasks rather than a standalone \"Full verification\" task. If a standalone verification task is necessary, its verification commands must reference only files/paths explicitly in scope for that task.
 - HARD RULE: DO NOT create standalone tasks whose purpose is \"run the validation suite\", \"make CI green\", \"fix failing tests\", \"run full validation\", or any variant thereof. Validation runs automatically after ALL implement tasks complete (dedicated validate phase). If a test file needs updating, that is its own implementation task with the test file explicitly in scope — NOT a validation task.
+- PARITY COVERAGE: If a task modifies a *watched legacy path* — scripts/ai-run-issue-v2, scripts/ai-pr-review-poll, anything under scripts/lib/ (except __tests__/), apps/cli/src/run-agent.ts, apps/cli/src/run-pr-poll.ts, or anything under packages/infrastructure/src/agent/ — that SAME task MUST also add or extend a parity[#<issue>] characterization test in scripts/lib/__tests__/legacy-parity.bats pinning the behavioral invariant the change establishes. List scripts/lib/__tests__/legacy-parity.bats in that task's files, and describe the invariant to pin (what runtime behavior must survive the TypeScript cutover — see issue #210). EXCEPTION: purely non-behavioral edits (comments, log/wording changes, formatting) need no parity test; say so explicitly in the task so the implementer can declare 'no-parity-impact' in the PR body. CI rejects a PR that touches a watched path without a parity test or that declaration.
 
 ## TASK MANIFEST SCHEMA
 
@@ -1850,6 +1851,19 @@ report DONE. Do not 'continue' into the next task.
 
 You may READ files associated with later tasks for context, but you must
 not write, modify, stage, or commit them in this run.
+
+## PARITY COVERAGE
+If your task's scope includes a *watched legacy path* (the plan will say so —
+scripts/ai-run-issue-v2, scripts/ai-pr-review-poll, scripts/lib/* except
+__tests__/, apps/cli/src/run-agent.ts, apps/cli/src/run-pr-poll.ts, or
+packages/infrastructure/src/agent/*), your commit MUST also add or extend the
+parity[#<issue>] test in scripts/lib/__tests__/legacy-parity.bats that the plan
+specifies, pinning the invariant your change establishes. Mirror the existing
+tests in that file: document the invariant, its source issue, the failure it
+prevents, and the TS-port contract; prefer runtime-agnostic assertions
+(git/filesystem state, pure decisions). Do NOT report DONE for such a task
+without it — the CI parity gate will reject the PR. If the plan marked the
+change parity-neutral, no test is needed.
 
 ## Your Job
 
