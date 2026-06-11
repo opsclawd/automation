@@ -53,14 +53,14 @@ function makePoller(passes: PollPassResult[], overrides: Partial<PrReviewPollerD
 }
 
 const resolved = (): PollPassResult => ({
-  outcome: 'ALL_DONE',
+  outcome: 'ALL_RESOLVED',
   processed: 0,
   blocked: 0,
   allResolved: true,
   rateLimited: false,
 });
 const partial = (): PollPassResult => ({
-  outcome: 'PARTIAL',
+  outcome: 'PARTIAL_PROGRESS',
   processed: 0,
   blocked: 0,
   allResolved: false,
@@ -94,7 +94,7 @@ describe('PrReviewPoller', () => {
 
   it('resets consecutiveQuietPolls when processed > 0', async () => {
     const processed = (): PollPassResult => ({
-      outcome: 'ALL_DONE',
+      outcome: 'ALL_RESOLVED',
       processed: 1,
       blocked: 0,
       allResolved: true,
@@ -272,7 +272,7 @@ describe('PrReviewPoller — global timeout', () => {
 });
 
 const allBlocked = (): PollPassResult => ({
-  outcome: 'PARTIAL',
+  outcome: 'PARTIAL_PROGRESS',
   processed: 0,
   blocked: 1,
   allResolved: false,
@@ -336,7 +336,7 @@ describe('PrReviewPoller — blocked early-stop', () => {
 
   it('does not stop early when a pass has both processed and blocked comments', async () => {
     const mixed = (): PollPassResult => ({
-      outcome: 'PARTIAL',
+      outcome: 'PARTIAL_PROGRESS',
       processed: 1,
       blocked: 1,
       allResolved: false,
