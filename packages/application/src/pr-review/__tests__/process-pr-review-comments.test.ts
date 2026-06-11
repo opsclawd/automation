@@ -135,7 +135,7 @@ describe('ProcessPrReviewComments — happy path', () => {
       pollNumber: 1,
     });
 
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('ALL_RESOLVED');
     expect(out.processed).toBe(1);
     expect(out.blocked).toBe(0);
     expect(out.allResolved).toBe(true);
@@ -336,7 +336,7 @@ describe('ProcessPrReviewComments — invalid result', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
     expect(out.blocked).toBe(1);
     expect(github.repliesPosted).toHaveLength(0);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
@@ -375,7 +375,7 @@ describe('ProcessPrReviewComments — no_fix action', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('ALL_RESOLVED');
     expect(out.processed).toBe(1);
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('processed');
@@ -459,7 +459,7 @@ describe('ProcessPrReviewComments — multiple comments', () => {
       pollNumber: 1,
     });
 
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
     expect(out.processed).toBe(2);
     expect(out.blocked).toBe(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
@@ -536,7 +536,7 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
     expect(out.blocked).toBe(1);
     expect(github.repliesPosted).toHaveLength(0);
     const poll = repo.latestPollAttempt(runId);
@@ -573,7 +573,7 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
     expect(out.blocked).toBe(1);
     expect(github.repliesPosted).toHaveLength(0);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
@@ -618,7 +618,7 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
     expect(out.blocked).toBe(1);
     expect(github.repliesPosted).toHaveLength(0);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
@@ -744,7 +744,7 @@ describe('ProcessPrReviewComments — agent blocks a comment', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
     expect(out.blocked).toBe(1);
     expect(out.processed).toBe(0);
     expect(out.allResolved).toBe(false);
@@ -982,7 +982,7 @@ describe('ProcessPrReviewComments — per-task failure isolation', () => {
       pollNumber: 1,
     });
 
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('PARTIAL_PROGRESS');
     expect(out.processed).toBe(1);
     expect(out.blocked).toBe(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
@@ -1086,7 +1086,7 @@ describe('ProcessPrReviewComments — APPROVED review filtering', () => {
       pollNumber: 1,
     });
 
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('ALL_RESOLVED');
     expect(out.processed).toBe(1);
     expect(out.blocked).toBe(0);
     expect(out.allResolved).toBe(true);
@@ -1137,7 +1137,7 @@ describe('ProcessPrReviewComments — every comment gets its own task', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('ALL_RESOLVED');
     expect(out.processed).toBe(2);
     expect(github.repliesPosted.some((r) => r.commentId === 9001)).toBe(true);
     expect(github.repliesPosted.some((r) => r.commentId === 9002)).toBe(true);
@@ -1182,7 +1182,7 @@ describe('ProcessPrReviewComments — every comment gets its own task', () => {
       pollNumber: 1,
     });
 
-    expect(out.outcome).toBe('ALL_DONE');
+    expect(out.outcome).toBe('ALL_RESOLVED');
     expect(out.allResolved).toBe(true);
     expect(github.resolvedThreads.some((t) => t.commentId === 9001)).toBe(true);
     expect(github.resolvedThreads.some((t) => t.commentId === 9002)).toBe(true);
