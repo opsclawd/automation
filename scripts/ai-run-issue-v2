@@ -2653,8 +2653,16 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
           # If still BLOCKED/NEEDS_CONTEXT after recovery attempts, emit
           # agent_incomplete log for the classifier and fail.
           if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
-            log "  Task ${TASK_NUM}: implementer did not complete — no result file, no commits (agent_incomplete)"
-            orchestrator_fail "Task ${TASK_NUM}: implementer did not complete — no result file, no commits"
+            _commits_msg="no result file, no commits"
+            if [[ -f "$_base_sha_file" ]]; then
+              _pre_sha=$(cat "$_base_sha_file" 2>/dev/null || echo "")
+              _post_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+              if [[ -n "$_pre_sha" && -n "$_post_sha" && "$_pre_sha" != "$_post_sha" ]]; then
+                _commits_msg="with commits but no valid result file"
+              fi
+            fi
+            log "  Task ${TASK_NUM}: implementer did not complete — ${_commits_msg} (agent_incomplete)"
+            orchestrator_fail "Task ${TASK_NUM}: implementer did not complete — ${_commits_msg}"
           fi
         else
           log "  Result file has explicit ${IMPL_STATUS} — not attempting recovery"
