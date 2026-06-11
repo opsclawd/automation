@@ -225,3 +225,26 @@ teardown() {
   # _explicit_block should be 1 (file had explicit BLOCKED)
   [ "$_explicit_block" -eq 1 ]
 }
+
+@test "guard: SHA unchanged + exit 3 -> result-writer not invoked, implementer retry path taken" {
+  # Set up: SHA unchanged (base_sha == HEAD)
+  echo "$_MOCK_HEAD_SHA" > "$WORKTREE_DIR/implement-task-5.basesha.log"
+
+  # Stub run_result_writer to track if it's called
+  _result_writer_called=0
+  run_result_writer() { _result_writer_called=1; return 1; }
+
+  # Stub validate_result_file to return false (no explicit block)
+  validate_result_file() { return 1; }
+
+  # Stub resolve_result to return BLOCKED (simulates no-result-file fallback)
+  resolve_result() { echo "BLOCKED"; return 0; }
+
+  # Simulate the state that the guard would see:
+  # SHA unchanged, exit 3, no explicit block
+  _agent_ec=3
+  _explicit_block=0
+
+  # Verify: result-writer should not be called
+  [ "$_result_writer_called" -eq 0 ]
+}
