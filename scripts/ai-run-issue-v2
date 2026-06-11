@@ -2656,19 +2656,25 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
               fi
             fi
           fi
-          # If still BLOCKED/NEEDS_CONTEXT after recovery attempts, emit
-          # agent_incomplete log for the classifier and fail.
+          # Re-check _explicit_block after retry — the retry may have
+          # produced a genuine explicit BLOCKED. If so, treat it as
+          # terminal (same as the else branch below).
           if [[ "$IMPL_STATUS" == "BLOCKED" || "$IMPL_STATUS" == "NEEDS_CONTEXT" ]]; then
-            _commits_msg="no result file, no commits"
-            if [[ -f "$_base_sha_file" ]]; then
-              _pre_sha=$(cat "$_base_sha_file" 2>/dev/null || echo "")
-              _post_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
-              if [[ -n "$_pre_sha" && -n "$_post_sha" && "$_pre_sha" != "$_post_sha" ]]; then
-                _commits_msg="with commits but no valid result file"
+            if [[ $_explicit_block -eq 1 ]]; then
+              log "  Retry produced explicit ${IMPL_STATUS} — treating as terminal"
+              orchestrator_fail "Task ${TASK_NUM} is ${IMPL_STATUS}. Fix the blocker and re-run."
+            else
+              _commits_msg="no result file, no commits"
+              if [[ -f "$_base_sha_file" ]]; then
+                _pre_sha=$(cat "$_base_sha_file" 2>/dev/null || echo "")
+                _post_sha=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+                if [[ -n "$_pre_sha" && -n "$_post_sha" && "$_pre_sha" != "$_post_sha" ]]; then
+                  _commits_msg="with commits but no valid result file"
+                fi
               fi
+              log "  Task ${TASK_NUM}: implementer did not complete — ${_commits_msg} (agent_incomplete)"
+              orchestrator_fail "Task ${TASK_NUM}: implementer did not complete — ${_commits_msg}"
             fi
-            log "  Task ${TASK_NUM}: implementer did not complete — ${_commits_msg} (agent_incomplete)"
-            orchestrator_fail "Task ${TASK_NUM}: implementer did not complete — ${_commits_msg}"
           fi
         else
           log "  Result file has explicit ${IMPL_STATUS} — not attempting recovery"
