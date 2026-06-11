@@ -215,6 +215,64 @@ describe('AgentRuntimeRouter', () => {
     expect(row?.outcome).toBe('timeout');
   });
 
+  it('uses request.timeoutMs when provided, overriding profile timeout', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = {
+      async invoke(_req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        return {
+          runtime: 'opencode',
+          provider: 'a',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    } satisfies AgentPort;
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-timeout-override',
+      readPromptChars: () => 0,
+    });
+    await router.invoke(req({ timeoutMs: 900_000 }));
+    const row = inv.findById(AgentInvocationId('inv-timeout-override'));
+    expect(row?.timeoutMs).toBe(900_000);
+  });
+
+  it('falls back to profile timeout when request.timeoutMs is undefined', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'a',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        }),
+      },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-no-override',
+      readPromptChars: () => 0,
+    });
+    await router.invoke(req());
+    const row = inv.findById(AgentInvocationId('inv-no-override'));
+    // profile timeoutMinutes is 1 → 60_000 ms
+    expect(row?.timeoutMs).toBe(60_000);
+  });
+
   it('works with only opencode registered (pi is optional)', async () => {
     const inv = new FakeAgentInvocationPort();
     const router = new AgentRuntimeRouter({
