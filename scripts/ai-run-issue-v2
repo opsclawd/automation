@@ -2574,6 +2574,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     HEAD_SHA=""
     REVIEW_LOOPS=0
     CONTRADICTION_RETRIED=0
+    _IMPLEMENTER_RETRIED=0
     # Track whether we implemented this session. On a resume directly into review
     # (DID_IMPLEMENT=0) later tasks may be stacked on the branch tip, so we must
     # not refresh the persisted head marker with that tip after fixes.
