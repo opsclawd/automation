@@ -77,6 +77,8 @@ export class AgentRuntimeRouter implements AgentPort {
 
     const { provider: effectiveProvider, model: effectiveModel } = this.effectiveProfile(profile);
 
+    const effectiveTimeoutMs = request.timeoutMs ?? profile.timeoutMinutes * 60_000;
+
     const id = AgentInvocationId(this.idFactory());
     const startedAt = this.clock();
     const promptChars = this.readPromptChars(request.promptPath);
@@ -94,7 +96,7 @@ export class AgentRuntimeRouter implements AgentPort {
       stderrPath: '',
       startedAt,
       startCommitSha: request.startCommitSha,
-      timeoutMs: profile.timeoutMinutes * 60_000,
+      timeoutMs: effectiveTimeoutMs,
       contractViolations: [],
     };
     if (request.stepId) {
@@ -107,8 +109,8 @@ export class AgentRuntimeRouter implements AgentPort {
 
     let profileTimeoutSignal: AbortSignal | undefined;
     const signals: AbortSignal[] = [];
-    if (profile.timeoutMinutes > 0) {
-      profileTimeoutSignal = AbortSignal.timeout(profile.timeoutMinutes * 60_000);
+    if (effectiveTimeoutMs > 0) {
+      profileTimeoutSignal = AbortSignal.timeout(effectiveTimeoutMs);
       signals.push(profileTimeoutSignal);
     }
     if (request.abortSignal) {
