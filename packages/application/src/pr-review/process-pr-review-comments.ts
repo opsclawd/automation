@@ -62,7 +62,7 @@ export interface ProcessPrReviewInput {
 }
 
 export interface ProcessPrReviewOutput {
-  outcome: 'ALL_DONE' | 'BLOCKED' | 'NO_UNRESOLVED';
+  outcome: 'ALL_RESOLVED' | 'PARTIAL_PROGRESS' | 'BLOCKED' | 'NO_UNRESOLVED';
   processed: number;
   blocked: number;
   allResolved: boolean;
@@ -273,11 +273,11 @@ export class ProcessPrReviewComments {
       terminal = 'all_resolved';
     }
 
-    let outcome: 'ALL_DONE' | 'BLOCKED';
+    let outcome: 'ALL_RESOLVED' | 'PARTIAL_PROGRESS' | 'BLOCKED';
     if (processed > 0 && stillUnresolved.length === 0 && !hasRepliedUnverified && !hasBlocked) {
-      outcome = 'ALL_DONE';
+      outcome = 'ALL_RESOLVED';
     } else if (processed > 0 || blocked > 0) {
-      outcome = 'ALL_DONE';
+      outcome = 'PARTIAL_PROGRESS';
     } else {
       outcome = 'BLOCKED';
     }
