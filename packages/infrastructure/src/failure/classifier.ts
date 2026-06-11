@@ -60,6 +60,12 @@ const PATTERNS: Pattern[] = [
       /(?:agent reported BLOCKED|[Pp]hase '[^']+' is blocked|\bis (?:BLOCKED|NEEDS_CONTEXT)\b|fix review is blocked|ai:blocked|blocked from previous phase|reviews failing|review loop hit max|exited review loop)/i,
     suggestedAction: 'The agent blocked itself — review the prompt and the reported reason.',
   },
+  {
+    kind: 'agent_incomplete',
+    regex:
+      /implementer did not complete|implementer incomplete|no result file.*no commits|agent_incomplete/i,
+    suggestedAction: 'The implementer did not complete — retry the task.',
+  },
 ];
 
 const PHASE_REGEX = /(?:=== Phase:|starting phase|PHASE=)\s*([a-z_-]+)/gi;
@@ -164,7 +170,7 @@ export function classifyExit(input: ClassifyExitInput): Failure {
       kind: best.pattern.kind,
       message: message || `Detected ${best.pattern.kind}`,
       exitCode: input.exitCode,
-      canRetry: false,
+      canRetry: best.pattern.kind === 'agent_incomplete',
       suggestedAction: best.pattern.suggestedAction,
       artifacts: input.artifacts ?? [],
       detectedAt: input.detectedAt ?? new Date(),
@@ -298,6 +304,9 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
   } else if (/blocked/i.test(reason)) {
     kind = 'agent_blocked';
     suggestedAction = 'The agent blocked itself — review the prompt and the reported reason.';
+  } else if (/implementer did not complete|no result file.*no commits/i.test(reason)) {
+    kind = 'agent_incomplete';
+    suggestedAction = 'The implementer did not complete — retry the task.';
   } else if (e.phase === 'validate' && command !== undefined) {
     kind = 'validation_failed';
     message = `${command} exited ${metaExit ?? input.exitCode}`;
@@ -311,7 +320,7 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
     kind,
     message: message || `Detected ${kind}`,
     exitCode: metaExit ?? input.exitCode,
-    canRetry: false,
+    canRetry: kind === 'agent_incomplete',
     suggestedAction,
     artifacts: input.artifacts ?? [],
     detectedAt: new Date(e.timestamp),
