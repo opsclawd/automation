@@ -124,6 +124,16 @@ run_check() {
   [[ "$output" = *"No watched paths changed"* ]]
 }
 
+@test "excludes packages/infrastructure/src/agent/__tests__/ from watched paths" {
+  mkdir -p "$FIXTURE_REPO/packages/infrastructure/src/agent/__tests__"
+  echo "change" >> "$FIXTURE_REPO/packages/infrastructure/src/agent/__tests__/example.ts"
+  git -C "$FIXTURE_REPO" add packages/infrastructure/src/agent/__tests__/example.ts
+  git -C "$FIXTURE_REPO" commit -q -m "test only"
+  run_check
+  [ "$status" -eq 0 ]
+  [[ "$output" = *"No watched paths changed"* ]]
+}
+
 @test "watches packages/infrastructure/src/agent/ prefix" {
   echo "change" >> "$FIXTURE_REPO/packages/infrastructure/src/agent/claude-code-adapter.ts"
   git -C "$FIXTURE_REPO" add packages/infrastructure/src/agent/claude-code-adapter.ts

@@ -22,7 +22,8 @@ match_watched() {
   done
   for prefix in "${WATCHED_PREFIXES[@]}"; do
     if [[ "$file" = "$prefix"* ]]; then
-      if [[ "$prefix" = "scripts/lib/" ]] && [[ "$file" = "scripts/lib/__tests__/"* ]]; then
+      local rel="${file#"$prefix"}"
+      if [[ "$rel" = "__tests__/"* ]]; then
         continue
       fi
       return 0
