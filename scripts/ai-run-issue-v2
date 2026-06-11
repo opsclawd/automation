@@ -136,6 +136,8 @@ source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
 source "${REPO_ROOT}/scripts/lib/review-manifest-helpers.sh"
 # shellcheck source=lib/fix-review-stash.sh
 source "${REPO_ROOT}/scripts/lib/fix-review-stash.sh"
+# shellcheck source=lib/fix-review-revert.sh
+source "${REPO_ROOT}/scripts/lib/fix-review-revert.sh"
 # shellcheck source=lib/validation_result.sh
 source "${REPO_ROOT}/scripts/lib/validation_result.sh"
 
@@ -3695,6 +3697,12 @@ _revalidate_is_green() {
 if [[ "$PHASE" == "fix-review" ]]; then
 _emit_phase_started "fix-review"
 
+  # Clear validation.result at fix-review start to prevent a stale "passed"
+  # from the validate phase carrying forward. If fix-review fails to write
+  # a new result, the create-pr label gating at lines 4878-4886 will see an
+  # empty/absent value and apply ai:needs-human-review instead of ai:pr-ready.
+  echo "" > "${ISSUES_DIR}/validation.result"
+
 FIX_REVIEW_MANIFEST=""
 FIX_REVIEW_USE_LEGACY=0
 FIX_REVIEW_EMPTY=0
@@ -4281,6 +4289,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
 
     _task_fixed=0
     _prev_fp=""
+    _pre_task_head=$(git -C "${WORKTREE_DIR}" rev-parse HEAD)
     for _retry in $(seq 1 "$MAX_FIX_REVIEW_RETRIES_PER_TASK"); do
       log "=== Task $_task_id: fix-review attempt ${_retry}/${MAX_FIX_REVIEW_RETRIES_PER_TASK} ==="
       emit_event "fix-review" "info" "task.attempt.started" \
@@ -4443,6 +4452,12 @@ Start now."
         echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
       fi
 
+      _revert_task_commits \
+        "${WORKTREE_DIR}" \
+        "$_task_id" \
+        "$_pre_task_head" \
+        "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"
+
       _task_result_file="${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
       _task_status=$(resolve_result "$_task_result_file" "" FIXED FAILED DONE_NO_FIXES_NEEDED "FAILED")
 
@@ -4527,6 +4542,22 @@ Start now."
   emit_event "fix-review" "info" "phase.completed" \
     "fix-review manifest loop completed" \
     all_fixed="${FIX_REVIEW_ALL_FIXED}"
+
+  # Gate: exit 1 when fix-review has unresolved findings or a red branch.
+  # This prevents proceeding to compound/create-pr when the run is not clean.
+  # The legacy path (FIX_REVIEW_USE_LEGACY=1) is out of scope for this gate.
+  if [[ -f "${ISSUES_DIR}/fix-status.txt" ]]; then
+    _fix_status=$(cat "${ISSUES_DIR}/fix-status.txt" 2>/dev/null)
+    if [[ "$_fix_status" == "HAS_UNRESOLVED" ]]; then
+      orchestrator_fail "fix-review: unresolved findings remain — cannot create PR"
+    fi
+    if [[ "$_fix_status" == "ALL_FIXED" ]]; then
+      _last_revalidate_log_gate=$(ls -t "${ISSUES_DIR}"/revalidate-*-retry-*.log 2>/dev/null | head -1 || true)
+      if [[ -n "$_last_revalidate_log_gate" ]] && ! _revalidate_is_green "$_last_revalidate_log_gate"; then
+        orchestrator_fail "fix-review: all tasks fixed but final revalidate is red — branch is broken"
+      fi
+    fi
+  fi
 fi
 
 _emit_phase_done "fix-review"

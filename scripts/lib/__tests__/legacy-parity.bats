@@ -101,3 +101,62 @@ setup() {
   run grep -nF '"$PRE_HEAD"' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -ne 0 ]
 }
+
+# Invariant: when revalidate is RED after a fix-review task, the commits that
+#   task produced are reverted — a red revalidate can never ship as a "passed"
+#   run carrying the bad commits. When revalidate is GREEN, commits are kept.
+# Source: #274 (run reported passed + shipped a PR even though fix-review tasks
+#   failed and revalidate was red). Helper: scripts/lib/fix-review-revert.sh.
+#   Deeper coverage: fix-review-revert.bats.
+# Failure prevented: fix-review applied a task commit, revalidate went red, and
+#   the run still labelled itself passed and opened a PR with the broken commit.
+# TS-port contract: the TS fix-review loop must, on a red revalidate, undo the
+#   task's commits before deciding outcome (revert/audit-commit, not leave them
+#   on the branch). Runtime-agnostic — driven by the real _revalidate_is_green
+#   decision + git HEAD state.
+@test "parity[#274]: fix-review reverts task commits when revalidate is red" {
+  source "$REPO_ROOT/scripts/lib/fix-review-revert.sh"
+  warn() { :; }
+  emit_event() { :; }
+  # Mirror the real _revalidate_is_green (ai-run-issue-v2): red iff the log
+  # contains a "[<stage> failed]" marker.
+  _revalidate_is_green() {
+    local file=$1
+    [[ -f "$file" ]] || return 1
+    ! grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "$file"
+  }
+
+  local repo="$BATS_TEST_TMPDIR/wt"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  local pre_head
+  pre_head=$(git -C "$repo" rev-parse HEAD)
+  echo "broken-by-fix" > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m "fix-review task C1"
+
+  # Red revalidate -> the task's change must be reverted out of the tree.
+  local red_log="$BATS_TEST_TMPDIR/revalidate-red.log"
+  printf '=== pnpm test ===\n[test failed]\n' > "$red_log"
+  _revert_task_commits "$repo" "C1" "$pre_head" "$red_log"
+  run cat "$repo/app.ts"
+  [ "$output" = "base" ] || { echo "expected revert to restore base content, got: $output"; false; }
+
+  # Green revalidate on a fresh task commit -> commit is preserved.
+  local pre_head2
+  pre_head2=$(git -C "$repo" rev-parse HEAD)
+  echo "good-fix" > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m "fix-review task C2"
+  local green_log="$BATS_TEST_TMPDIR/revalidate-green.log"
+  printf '=== pnpm test ===\n' > "$green_log"
+  _revert_task_commits "$repo" "C2" "$pre_head2" "$green_log"
+  run cat "$repo/app.ts"
+  [ "$output" = "good-fix" ] || { echo "expected green revalidate to preserve fix, got: $output"; false; }
+}

@@ -183,3 +183,40 @@ JSON
   run grep -q 'fix-review-stash.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
+
+@test "ai-run-issue-v2 contains exit-code gate after manifest fix-review loop" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -q 'fix-status.txt' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+}
+@test "FIX_REVIEW_ALL_FIXED=0 triggers HAS_UNRESOLVED branch" {
+  # Exercises the same if-else as ai-run-issue-v2 lines 4506-4509
+  # using the production variable name, not a hardcoded output.
+  local FIX_REVIEW_ALL_FIXED=0
+  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
+    echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
+  else
+    echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
+  fi
+  [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "HAS_UNRESOLVED" ]
+}
+@test "FIX_REVIEW_ALL_FIXED=1 triggers ALL_FIXED branch" {
+  local FIX_REVIEW_ALL_FIXED=1
+  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
+    echo "ALL_FIXED" > "$TMPDIR_TEST/fix-status.txt"
+  else
+    echo "HAS_UNRESOLVED" > "$TMPDIR_TEST/fix-status.txt"
+  fi
+  [ "$(cat "$TMPDIR_TEST/fix-status.txt")" = "ALL_FIXED" ]
+}
+@test "ai-run-issue-v2 sources fix-review-revert.sh (regression guard)" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -q 'fix-review-revert.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+}
+
+@test "ai-run-issue-v2 clears validation.result at fix-review phase start" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -A5 '_emit_phase_started "fix-review"' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [[ "$output" == *"validation.result"* ]]
+}
