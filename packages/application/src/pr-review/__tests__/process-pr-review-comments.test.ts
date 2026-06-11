@@ -1738,3 +1738,60 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
     expect(warnings).toEqual([]);
   });
 });
+
+describe('ProcessPrReviewComments — timeout scaling', () => {
+  it('scales agent timeout with unresolved comment count', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
+    const { deps, github } = makeDeps({ agent });
+    // 3 unresolved comments
+    github.comments.set('o/r/5', [
+      {
+        id: 1001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 1002,
+        prNumber: 5,
+        path: 'b.ts',
+        line: 10,
+        reviewer: 'reviewer2',
+        body: 'fix that',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+      {
+        id: 1003,
+        prNumber: 5,
+        path: 'c.ts',
+        line: 5,
+        reviewer: 'reviewer3',
+        body: 'fix the other',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const svc = new ProcessPrReviewComments(deps);
+    await svc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    // Each invocation should have timeoutMs = min(30, 10 + 5*3) * 60_000 = 1_500_000
+    for (const inv of agent.invocations) {
+      expect(inv.timeoutMs).toBe(1_500_000);
+    }
+  });
+});

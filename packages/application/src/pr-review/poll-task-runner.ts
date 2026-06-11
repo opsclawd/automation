@@ -49,6 +49,7 @@ export interface PollTaskInput {
   diff: string;
   branch: string;
   startCommitSha: string;
+  unresolvedCommentCount: number;
 }
 
 export interface PollTaskOutput {
@@ -78,6 +79,7 @@ export class PollTaskRunner {
 
     // 2. Invoke agent
     const profile = d.resolveProfileForPhase('post-pr-review');
+    const timeoutMs = Math.min(30, 10 + 5 * input.unresolvedCommentCount) * 60_000;
     const invocation = await d.agent.invoke({
       profile,
       promptPath,
@@ -87,6 +89,7 @@ export class PollTaskRunner {
       repoId: String(input.repoId),
       phaseId: String(input.phaseId),
       startCommitSha: input.startCommitSha,
+      timeoutMs,
     });
 
     if (invocation.outcome !== 'success') {
