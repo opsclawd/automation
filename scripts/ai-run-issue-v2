@@ -1043,7 +1043,7 @@ HARD RULE: Do NOT modify any code beyond fixing lint/format errors reported by t
     --prompt-file "$_cc_prompt_file" \
     --timeout-minutes 2 \
     --start-sha "$head_before" \
-    2>&1 | tee -a "$task_log"; _cc_agent_ec=${PIPESTATUS[0]} _cc_tee_ec=${PIPESTATUS[1]}
+    2>&1 | tee -a "$task_log"; _cc_tee_ec=${PIPESTATUS[1]}
   if [[ "$_cc_tee_ec" -ne 0 ]]; then
     rm -f "$_cc_prompt_file"
     emit_event "implement" "error" "commit_recovery.failed" \
