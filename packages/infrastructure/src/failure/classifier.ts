@@ -303,6 +303,12 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
   } else if (/blocked/i.test(reason)) {
     kind = 'agent_blocked';
     suggestedAction = 'The agent blocked itself — review the prompt and the reported reason.';
+    // The /blocked/i check above (line 303) takes precedence over agent_incomplete below
+    // (line 307). If a reason contains both "blocked" and "implementer did not complete",
+    // the result is agent_blocked (non-retryable). This ordering is intentional: an explicit
+    // BLOCKED declaration is treated as terminal even if the reason also mentions incomplete
+    // work. In practice the orchestrator never emits both strings in the same reason, so
+    // this is a defense-in-depth measure, not a runtime concern.
   } else if (/implementer did not complete|no result file.*no commits/i.test(reason)) {
     kind = 'agent_incomplete';
     suggestedAction = 'The implementer did not complete — retry the task.';
