@@ -1036,6 +1036,7 @@ HARD RULE: Do NOT modify any code beyond fixing lint/format errors reported by t
   log "  Commit-completion: invoking agent for task ${task_n}..."
   emit_event "implement" "info" "commit_recovery.attempted" \
     "Commit-completion agent invoked for task ${task_n}" taskNum="$task_n"
+  # ! prevents set -e from aborting on agent failure; PIPESTATUS below captures raw exit codes
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase commit-completion \
     --phase-id "commit-completion-task-${task_n}" \
