@@ -2629,11 +2629,11 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
               else
                 log "  Result-writer failed, preserving original ${IMPL_STATUS}"
               fi
-            elif [[ "$_impl_agent_ec" -eq 3 ]]; then
-              # No commits, exit 3 (infra crash) — retry implementer once
+            elif [[ "$_impl_agent_ec" -eq 3 || "$_impl_agent_ec" -eq 4 ]]; then
+              # No commits, exit 3 (infra crash) or exit 4 (provider error) — retry implementer once
               if [[ "${_IMPLEMENTER_RETRIED:-0}" -eq 0 ]]; then
                 _IMPLEMENTER_RETRIED=1
-                log "  Implementer crashed (exit 3) with no commits — retrying once"
+                log "  Implementer exited with infra/provider error (exit 3/4) with no commits — retrying once"
                 run_implementer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$COMMIT_MSG"
                 _impl_agent_ec=${_agent_ec:-0}
                 _explicit_block=0
