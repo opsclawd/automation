@@ -91,7 +91,7 @@ fi
 {
   echo "::error::Parity test coverage required — this PR changes legacy paths but adds no parity test."
   echo "Offending paths: $(IFS=, ; echo "${watched_paths[*]}")"
-  echo "See: https://github.com/anomalyco/ai-sdlc-orchestrator/issues/210 (parity matrix)"
+  echo "See: ${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-opsclawd/automation}/issues/210 (parity matrix)"
   echo "Add a parity test in scripts/lib/__tests__/legacy-parity.bats, or declare no-parity-impact in the PR body."
 } >&2
 exit 1

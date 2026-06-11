@@ -4,12 +4,21 @@ set -euo pipefail
 source "$(dirname "$0")/lib/parity-common.sh"
 
 WINDOW="${WINDOW:-7d}"
-if [[ "$WINDOW" != "all" ]] && ! [[ "$WINDOW" =~ ^[0-9]+[dhmswmy]$ ]]; then
-  echo "::error::Invalid WINDOW format: $WINDOW (expected e.g. 7d, 30d, or 'all')"
+if [[ "$WINDOW" != "all" ]] && ! [[ "$WINDOW" =~ ^[0-9]+[dwhmy]$ ]]; then
+  echo "::error::Invalid WINDOW format: $WINDOW (expected e.g. 7d, 30d, 12h, or 'all')"
   exit 1
 fi
+# git approxidate does NOT read bare "7d" as 7 days; normalize to a phrase it
+# understands ("7 days ago"), or the window silently under-scans.
+SINCE_EXPR=""
+if [[ "$WINDOW" != "all" ]]; then
+  case "${WINDOW##*[0-9]}" in
+    d) _unit=days ;; w) _unit=weeks ;; h) _unit=hours ;; m) _unit=minutes ;; y) _unit=years ;;
+  esac
+  SINCE_EXPR="${WINDOW%[dwhmy]} ${_unit} ago"
+fi
 ISSUE_NUM=210
-REPO="${GITHUB_REPOSITORY:-anomalyco/ai-sdlc-orchestrator}"
+REPO="${GITHUB_REPOSITORY:-opsclawd/automation}"
 MARKER="<!-- parity-sweep -->"
 SWEEP_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -25,7 +34,7 @@ trap 'rm -f "$candidates_file" "$covered_file" "$candidate_prs" "$labeled_file" 
 if [[ "$WINDOW" = "all" ]]; then
   git log origin/main --format="%H %s" --no-merges > "$candidates_file"
 else
-  git log origin/main --since="$WINDOW" --format="%H %s" --no-merges > "$candidates_file"
+  git log origin/main --since="$SINCE_EXPR" --format="%H %s" --no-merges > "$candidates_file"
 fi
 
 # Filter to commits that touched watched paths
@@ -49,7 +58,9 @@ cp "$candidate_prs" "$candidates_file"
 # --- Covered: PRs referenced in parity tests ---
 parity_test_files="$(grep -rl 'Source: #\|parity\[\#' scripts/lib/__tests__/legacy-parity.bats scripts/lib/__tests__/parity-*.bats 2>/dev/null || true)"
 if [[ -n "$parity_test_files" ]]; then
-  grep -ohE 'Source: #[0-9]+|parity\[#[0-9]+\]' $parity_test_files 2>/dev/null | \
+  # Grab every #NNN on any line that references parity sources, so multi-ref
+  # tags like `parity[#279/#280]` or `Source: #279 / #280` are all captured.
+  grep -hE 'Source: #|parity\[#' $parity_test_files 2>/dev/null | \
     grep -oP '#\K[0-9]+' | sort -n | uniq > "$covered_file"
 fi
 
