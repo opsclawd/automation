@@ -311,6 +311,13 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
     kind = 'validation_failed';
     message = `${command} exited ${metaExit ?? input.exitCode}`;
     suggestedAction = 'Open the validate phase logs and rerun the failing command locally.';
+    // Catch-all: unmatched events fall through to log scraping (classifyExit line 150+),
+    // which handles agent_incomplete via pattern matching (line 173 sets canRetry when
+    // kind === 'agent_incomplete'). The explicit agent_incomplete rule above (lines 307-309)
+    // catches all known patterns before reaching here. canRetry at line 323 is already
+    // set to kind === 'agent_incomplete' for matched rules, so the plan's proposed
+    // fallback canRetry change is unnecessary. If a new reason format needs retryable
+    // handling, add it to the regex at line 307 rather than relying on a catch-all.
   } else {
     return null;
   }
