@@ -1806,6 +1806,8 @@ if [[ "$PHASE" == "implement" ]]; then
     local task_title="$2"
     local task_text="$3"
     local commit_msg="$4"
+    local _cc_msg
+    _cc_msg="${commit_msg//\'/\'\\\'\'}"
     local output_log="${ISSUES_DIR}/implement-task-${task_n}.log"
     local impl_status="unknown"
 
