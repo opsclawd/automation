@@ -146,9 +146,6 @@ LOG
   git -C "$FIXTURE_REPO" add conflict.ts
   git -C "$FIXTURE_REPO" commit -q -m "add conflict.ts"
 
-  local post_add_head
-  post_add_head=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
-
   # Simulate a merge conflict scenario: modify the file after the commit
   # but before revert — git revert with uncommitted changes to the same file
   # would fail with conflicts
