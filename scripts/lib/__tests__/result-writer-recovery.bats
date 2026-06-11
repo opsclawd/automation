@@ -226,7 +226,7 @@ teardown() {
   [ "$_explicit_block" -eq 1 ]
 }
 
-@test "guard: SHA unchanged + exit 3 -> result-writer not invoked, implementer retry path taken" {
+@test "guard: SHA unchanged + exit 3 -> result-writer not invoked" {
   # Set up: SHA unchanged (base_sha == HEAD)
   echo "$_MOCK_HEAD_SHA" > "$WORKTREE_DIR/implement-task-5.basesha.log"
 
@@ -247,4 +247,41 @@ teardown() {
 
   # Verify: result-writer should not be called
   [ "$_result_writer_called" -eq 0 ]
+}
+
+# Helper: core retry-guard logic extracted from ai-run-issue-v2:2631-2649
+_retry_implementer() {
+  if [[ "$_impl_agent_ec" -eq 3 ]] && [[ "${_IMPLEMENTER_RETRIED:-0}" -eq 0 ]]; then
+    _IMPLEMENTER_RETRIED=1
+    run_implementer "$_TASK_NUM" "task_title" "TASK_TEXT" "COMMIT_MSG"
+    _impl_agent_ec=${_agent_ec:-0}
+  fi
+}
+
+@test "guard: exit 3 with no prior retry -> implementer invoked and _IMPLEMENTER_RETRIED=1" {
+  _impl_agent_ec=3
+  _IMPLEMENTER_RETRIED=0
+  _agent_ec=3
+
+  _implementer_retry_called=0
+  run_implementer() { _implementer_retry_called=$((_implementer_retry_called + 1)); }
+
+  _retry_implementer
+
+  [ "$_implementer_retry_called" -eq 1 ]
+  [ "$_IMPLEMENTER_RETRIED" -eq 1 ]
+}
+
+@test "guard: exit 3 with prior retry exhausted -> implementer not invoked again" {
+  _impl_agent_ec=3
+  _IMPLEMENTER_RETRIED=1
+  _agent_ec=3
+
+  _implementer_retry_called=0
+  run_implementer() { _implementer_retry_called=$((_implementer_retry_called + 1)); }
+
+  _retry_implementer
+
+  [ "$_implementer_retry_called" -eq 0 ]
+  [ "$_IMPLEMENTER_RETRIED" -eq 1 ]
 }
