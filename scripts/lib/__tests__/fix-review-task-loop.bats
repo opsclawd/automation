@@ -61,6 +61,27 @@ JSON
   [ "$fix_count" -eq 1 ]
 }
 
+@test "Manifest where all findings are deferred has zero actionable fix tasks" {
+  # Regression: an all-deferred manifest must be treated as nothing-to-fix
+  # (zero action=fix), not fall into the task loop. Mirrors the production
+  # FIX_REVIEW_FIX_COUNT expression in ai-run-issue-v2.
+  cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
+[{"id":"1","action":"defer","severity":"low","description":"D1","files":["a.bats"],"commit_message":"x"},{"id":"2","action":"defer","severity":"low","description":"D2","files":["a.bats"],"commit_message":"y"},{"id":"3","action":"defer","severity":"low","description":"D3","files":["a.bats"],"commit_message":"z"}]
+JSON
+  local fix_count
+  fix_count=$(jq '[.[] | select(.action == "fix" or .action == null)] | length' "$TMPDIR_TEST/review-task-manifest.json")
+  [ "$fix_count" -eq 0 ]
+}
+
+@test "revalidate-log lookup does not crash under set -euo pipefail when no logs exist" {
+  # Regression: ls exits 2 on no-match and pipefail propagates it; without
+  # `|| true` this killed the run on the nothing-to-fix path.
+  set -euo pipefail
+  local last
+  last=$(ls -t "$TMPDIR_TEST"/revalidate-*-retry-*.log 2>/dev/null | head -1 || true)
+  [ -z "$last" ]
+}
+
 @test "Multiple fix tasks each get separate iterations" {
   cat > "$TMPDIR_TEST/review-task-manifest.json" << 'JSON'
 [{"id":"R1","action":"fix","severity":"high","description":"Fix A","files":["a.ts"],"commit_message":"fix: A"},{"id":"R2","action":"fix","severity":"medium","description":"Fix B","files":["b.ts"],"commit_message":"fix: B"},{"id":"R3","action":"fix","severity":"low","description":"Fix C","files":["c.ts"],"commit_message":"fix: C"}]
@@ -148,4 +169,17 @@ JSON
 @test "original sed expression fails (regression guard for issue-272)" {
   run bash -c 'echo "H1" | sed "s/[][.*^$/\\\\]/\\\\&/g"'
   [ "$status" -ne 0 ]
+}
+
+@test "ai-run-issue-v2 per-task loop uses stash-and-commit instead of reset --hard" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -c '_stash_and_conditionally_commit' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+}
+
+@test "ai-run-issue-v2 sources fix-review-stash.sh" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  run grep -q 'fix-review-stash.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
 }
