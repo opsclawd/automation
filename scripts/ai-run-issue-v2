@@ -1857,16 +1857,16 @@ not write, modify, stage, or commit them in this run.
 3. Write tests following TDD where applicable, scoped to Task ${task_n}.
 4. Verify Task ${task_n}'s implementation works.
 5. Commit your work:
-   a. Record HEAD before: PRE_HEAD=$(git rev-parse HEAD)
+   a. Record HEAD before: PRE_HEAD=\$(git rev-parse HEAD)
    b. Run: git add -A && git commit -m '${_cc_msg}'
    c. Verify the commit landed:
       - If git commit exits non-zero, the pre-commit hook failed. Read the
         hook/lint output, FIX the reported errors, and retry the commit.
         Never report DONE with a failed or skipped commit.
       - After a successful commit, confirm HEAD advanced:
-        [ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE"; exit 1; }
+        [ \"\$(git rev-parse HEAD)\" != \"\$PRE_HEAD\" ] || { echo \"COMMIT DID NOT ADVANCE\"; exit 1; }
       - Confirm clean worktree:
-        [ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }
+        [ -z \"\$(git status --porcelain)\" ] || { echo \"WORKTREE DIRTY AFTER COMMIT\"; exit 1; }
    d. HARD RULE: Never infer commit success from git log. Git log shows
       OTHER tasks' commits. Only git rev-parse HEAD + git status --porcelain
       prove YOUR commit landed.
