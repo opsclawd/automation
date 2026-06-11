@@ -4,6 +4,10 @@ set -euo pipefail
 source "$(dirname "$0")/lib/parity-common.sh"
 
 WINDOW="${WINDOW:-7d}"
+if [[ "$WINDOW" != "all" ]] && ! [[ "$WINDOW" =~ ^[0-9]+[dhmswmy]$ ]]; then
+  echo "::error::Invalid WINDOW format: $WINDOW (expected e.g. 7d, 30d, or 'all')"
+  exit 1
+fi
 ISSUE_NUM=210
 REPO="${GITHUB_REPOSITORY:-anomalyco/ai-sdlc-orchestrator}"
 MARKER="<!-- parity-sweep -->"
