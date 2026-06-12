@@ -34,6 +34,12 @@ export interface PrReviewPollerDeps {
     nextPollAt?: Date,
   ) => Promise<void>;
   quietPollsThreshold?: number; // default 3; consecutive quiet polls before early exit
+  /** Called when a poll resolves all comments (or only blocked remain with nothing in-flight).
+   *  Receives the poller input for context. Returns the reactivation action.
+   *  Defaults to undefined → returns all_resolved immediately (backward compat). */
+  onAllResolved?: (input: PrReviewPollerInput) => Promise<'reactivate' | 'stay_ready' | 'timeout'>;
+  /** Maximum reactivation cycles within one poller invocation. */
+  maxReactivations?: number;
 }
 
 export interface PrReviewPollerInput {
@@ -45,7 +51,12 @@ export interface PrReviewPollerInput {
   phaseId: PhaseName;
 }
 
-export type PollerTerminalState = 'all_resolved' | 'max_polls_reached' | 'blocked' | 'timed_out';
+export type PollerTerminalState =
+  | 'all_resolved'
+  | 'max_polls_reached'
+  | 'blocked'
+  | 'timed_out'
+  | 'cancelled';
 
 export interface PrReviewPollerResult {
   terminalState: PollerTerminalState;
@@ -143,12 +154,6 @@ export class PrReviewPoller {
           allResolvedEmitted = true;
           this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
         }
-        if (pass.blocked > 0 && pass.processed === 0) {
-          this.emit(input, 'post-pr-review.poll.blocked', 'warn', { pollsRun });
-          const result = { terminalState: 'blocked' as const, pollsRun };
-          await d.recordTerminalState(lastAttempt, result.terminalState);
-          return result;
-        }
         consecutiveQuietPolls++;
       } else {
         consecutiveQuietPolls = 0;
@@ -163,9 +168,7 @@ export class PrReviewPoller {
           pollsRun,
           consecutiveQuietPolls,
         });
-        const result: PrReviewPollerResult = { terminalState: 'all_resolved', pollsRun };
-        await d.recordTerminalState(lastAttempt, result.terminalState);
-        return result;
+        return await this.enterReadyLoop(input, pollsRun, lastAttempt);
       }
 
       if (!pass.allResolved && pass.blocked > 0 && pass.processed === 0) {
@@ -174,9 +177,7 @@ export class PrReviewPoller {
           .some((c) => c.state === 'replied' || c.state === 'pending');
         if (!hasActiveWork) {
           this.emit(input, 'post-pr-review.poll.blocked', 'warn', { pollsRun });
-          const result = { terminalState: 'blocked' as const, pollsRun };
-          await d.recordTerminalState(lastAttempt, result.terminalState);
-          return result;
+          return await this.enterReadyLoop(input, pollsRun, lastAttempt);
         }
       }
 
@@ -199,12 +200,67 @@ export class PrReviewPoller {
     }
 
     const anyBlocked = d.prReviewRepo.listComments(input.runId).some((c) => c.state === 'blocked');
-    const terminal: PollerTerminalState = anyBlocked ? 'blocked' : 'max_polls_reached';
-    this.emit(input, `post-pr-review.poll.${terminal}`, terminal === 'blocked' ? 'warn' : 'info', {
-      pollsRun,
-    });
+    if (anyBlocked) {
+      this.emit(input, 'post-pr-review.poll.blocked_and_ready', 'warn', { pollsRun });
+      return await this.enterReadyLoop(input, pollsRun, lastAttempt);
+    }
+    const terminal: PollerTerminalState = 'max_polls_reached';
+    this.emit(input, 'post-pr-review.poll.max_polls_reached', 'info', { pollsRun });
     await d.recordTerminalState(lastAttempt, terminal);
     return { terminalState: terminal, pollsRun };
+  }
+
+  private async enterReadyLoop(
+    input: PrReviewPollerInput,
+    pollsRun: number,
+    lastAttempt: PollAttempt | undefined,
+  ): Promise<PrReviewPollerResult> {
+    const d = this.deps;
+    const check = d.onAllResolved;
+    const maxReact = d.maxReactivations ?? 0;
+    if (!check || maxReact < 1) {
+      await d.recordTerminalState(lastAttempt, 'all_resolved');
+      return { terminalState: 'all_resolved', pollsRun };
+    }
+    let reactivations = 0;
+    while (reactivations < maxReact) {
+      const action = await check(input);
+      this.emit(input, `post-pr-review.ready.${action}`, 'info', { reactivations });
+      if (action === 'timeout') {
+        await d.recordTerminalState(lastAttempt, 'cancelled');
+        return { terminalState: 'cancelled', pollsRun };
+      }
+      if (action === 'stay_ready') {
+        await d.recordTerminalState(lastAttempt, 'all_resolved');
+        return { terminalState: 'all_resolved', pollsRun };
+      }
+      reactivations++;
+      let pass: PollPassResult;
+      try {
+        const res = await d.processOnePass({
+          ...input,
+          pollNumber: d.maxPolls + reactivations,
+        });
+        pass = res.result;
+        if (res.attempt) {
+          lastAttempt = res.attempt;
+        }
+      } catch (err) {
+        this.emit(input, 'post-pr-review.ready.process_failed', 'warn', {
+          reactivations,
+          error: String(err),
+        });
+        await d.recordTerminalState(lastAttempt, 'all_resolved');
+        return { terminalState: 'all_resolved', pollsRun };
+      }
+      pollsRun++;
+      if (!pass.allResolved) {
+        await d.recordTerminalState(lastAttempt, 'max_polls_reached');
+        return { terminalState: 'max_polls_reached', pollsRun };
+      }
+    }
+    await d.recordTerminalState(lastAttempt, 'all_resolved');
+    return { terminalState: 'all_resolved', pollsRun };
   }
 
   private emit(

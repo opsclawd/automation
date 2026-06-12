@@ -280,7 +280,7 @@ const allBlocked = (): PollPassResult => ({
 });
 
 describe('PrReviewPoller — blocked early-stop', () => {
-  it('stops immediately as blocked when no comments are in-flight and a pass produces blocked > 0 with processed = 0', async () => {
+  it('enters READY (not blocked terminal) when no comments are in-flight and a pass produces blocked > 0 with processed = 0', async () => {
     const { poller, repo } = makePoller([allBlocked()], { maxPolls: 5 });
     const c = createPrReviewComment({
       runId,
@@ -302,8 +302,7 @@ describe('PrReviewPoller — blocked early-stop', () => {
       cwd: '/w',
       phaseId: PhaseName('post-pr-review'),
     });
-    expect(result.terminalState).toBe('blocked');
-    expect(result.pollsRun).toBe(1);
+    expect(result.terminalState).toBe('all_resolved');
   });
 
   it('does NOT stop early when comments are still in replied state, even if current pass has blocked > 0 and processed = 0', async () => {
@@ -667,5 +666,131 @@ describe('PrReviewPoller — transient error recovery', () => {
     expect(
       events.filter((e) => (e.event as { type: string }).type === 'post-pr-review.poll.failed'),
     ).toHaveLength(1);
+  });
+});
+
+describe('PrReviewPoller — READY + reactivation', () => {
+  it('after all_resolved, reactivates and resumes when new activity is detected', async () => {
+    const decisions = ['reactivate', 'stay_ready'] as const;
+    let di = 0;
+    const { poller } = makePoller([resolved(), resolved()], {
+      onAllResolved: async () => {
+        const action = decisions[Math.min(di++, decisions.length - 1)];
+        return action;
+      },
+      maxReactivations: 2,
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(di).toBeGreaterThanOrEqual(1);
+  });
+  it('returns cancelled when reactivation check returns timeout', async () => {
+    const { poller } = makePoller([resolved()], {
+      onAllResolved: async () => 'timeout',
+      maxReactivations: 1,
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('cancelled');
+  });
+  it('returns max_polls_reached when reactivated pass has unresolved work', async () => {
+    const { poller } = makePoller([resolved(), partial()], {
+      onAllResolved: async () => 'reactivate',
+      maxReactivations: 1,
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('max_polls_reached');
+  });
+  it('stops reactivation after maxReactivations cycles', async () => {
+    const { poller } = makePoller([resolved(), resolved(), resolved(), resolved()], {
+      onAllResolved: async () => 'reactivate',
+      maxReactivations: 2,
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+  });
+});
+describe('PrReviewPoller — blocked enters READY (not terminal)', () => {
+  it('enters READY when a pass has only blocked and no in-flight', async () => {
+    const { poller, repo } = makePoller([allBlocked()], {
+      maxPolls: 5,
+      onAllResolved: async () => 'stay_ready',
+      maxReactivations: 1,
+    });
+    const c = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 1,
+      reviewer: 'octocat',
+      body: 'x',
+      now: new Date(),
+    });
+    repo.upsertComment(blockComment(c, 'agent blocked'));
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+  });
+  it('fallback blocked at poll budget exhaustion enters READY', async () => {
+    const { poller, repo } = makePoller([partial(), partial(), partial()], {
+      maxPolls: 3,
+      onAllResolved: async () => 'stay_ready',
+      maxReactivations: 1,
+    });
+    // Budget exhausted, comment is blocked, no inflight
+    const c = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9002,
+      path: 'b.ts',
+      line: 2,
+      reviewer: 'octocat',
+      body: 'y',
+      now: new Date(),
+    });
+    repo.upsertComment(blockComment(c, 'agent blocked'));
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
   });
 });
