@@ -686,9 +686,6 @@ rerun_reviewer_with_retry() {
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
 
-  # Layer 3: attempt to recover artifacts from wrong paths before retrying
-  recover_off_contract_review_artifacts "$reviewer_type" "$task_n" || true
-
   if $is_infra_error; then
     local max_retries=2
     local delay=30
@@ -722,8 +719,6 @@ rerun_reviewer_with_retry() {
       rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
-      # Layer 3: recover artifacts from wrong paths before next retry
-      recover_off_contract_review_artifacts "$reviewer_type" "$task_n" || true
       attempt=$((attempt + 1))
       delay=60
     done
