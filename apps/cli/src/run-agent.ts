@@ -4,7 +4,7 @@ import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
-import { createReadStream, existsSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 interface Flags {
@@ -185,6 +185,40 @@ export async function streamTranscript(
   });
 }
 
+export function persistTranscript(
+  result: Pick<AgentInvocationResult, 'outcome' | 'stdoutPath' | 'stderrPath'>,
+  phaseId: string,
+  cwd: string,
+  log?: (msg: string, ...args: string[]) => void,
+): string[] {
+  const persisted: string[] = [];
+  if (result.outcome === 'success') return persisted;
+  const aiRunsDir = join(cwd, '.ai-runs');
+  mkdirSync(aiRunsDir, { recursive: true });
+  const ts = Date.now();
+  const transcriptDest = join(aiRunsDir, `agent-transcript-${phaseId}-${ts}.log`);
+  const stderrDest = join(aiRunsDir, `agent-stderr-${phaseId}-${ts}.log`);
+  const logger = log ?? ((msg, ...args) => console.error(msg, ...args));
+  try {
+    if (result.stdoutPath && existsSync(result.stdoutPath)) {
+      copyFileSync(result.stdoutPath, transcriptDest);
+      logger('Agent transcript saved to:', transcriptDest);
+      persisted.push(transcriptDest);
+    }
+  } catch (_e) {
+    logger('Failed to persist agent stdout transcript:', String(_e));
+  }
+  try {
+    if (result.stderrPath && existsSync(result.stderrPath)) {
+      copyFileSync(result.stderrPath, stderrDest);
+      persisted.push(stderrDest);
+    }
+  } catch (_e) {
+    logger('Failed to persist agent stderr:', String(_e));
+  }
+  return persisted;
+}
+
 async function main() {
   const { values } = parseArgs({
     options: {
@@ -344,6 +378,10 @@ async function main() {
 
     await streamTranscript(result.stdoutPath, process.stdout);
     await streamTranscript(result.stderrPath, process.stderr);
+
+    if (result.outcome !== 'success') {
+      persistTranscript(result, values['phase-id']!, values.cwd!);
+    }
 
     if (createdSynthetic) {
       c.runRepository.update(runId, {

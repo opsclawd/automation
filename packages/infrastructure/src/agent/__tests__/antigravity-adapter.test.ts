@@ -232,6 +232,7 @@ describe('AntigravityAgentAdapter', () => {
 
   it('skips no_output check for artifact-only phases with expectedArtifacts', async () => {
     const cwd = makeWorktree();
+    writeFileSync(join(cwd, 'result.md'), 'ok');
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-silent-zero.sh'),
       artifactsDir: cwd,

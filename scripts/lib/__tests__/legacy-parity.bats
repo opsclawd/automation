@@ -412,6 +412,101 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
+# Invariant: the runtime enforces artifact existence when `--expected-artifacts`
+# is declared. When the agent exits 0 but the expected file is absent, the
+# outcome is contract_violation (exit 1) rather than success (exit 0).
+# Source: #297 (Part 1).
+# Failure prevented: a recoverable agent miss (model generates text but never
+#   calls Write) is treated as unrecoverable orchestrator_fail because the
+#   runtime never checked whether the declared artifact existed.
+# TS-port contract: the runtime MUST check existsSync on each declared
+#   expectedArtifact after agent exit and set outcome=contract_violation +
+#   missing_required_artifact if any is absent.
+@test "parity[#297]: runtime enforces artifact existence when --expected-artifacts declared" {
+  local runner="$REPO_ROOT/packages/infrastructure/src/agent/external-cli-runner.ts"
+
+  # existsSync must be imported
+  run grep -c "existsSync" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # MISSING_REQUIRED_ARTIFACT code must be referenced in the enforcement block
+  run grep -c "MISSING_REQUIRED_ARTIFACT" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # outcome must be set to contract_violation in the enforcement block
+  # (>=2: existing NO_OUTPUT block + new artifact block)
+  run grep -c "outcome = 'contract_violation'" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  # The enforcement check must reference input.expectedArtifacts
+  # (>=3: type field + NO_OUTPUT guard + enforcement check)
+  run grep -c "expectedArtifacts" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 3 ]
+}
+
+# Invariant: plan-review retries the reviewer on contract_violation (exit 1)
+# rather than immediately calling orchestrator_fail. Non-retryable exits (2, 3)
+# still fail immediately.
+# Source: #297 (Part 1).
+# Failure prevented: a recoverable agent miss (model writes zero files) is
+#   treated as unrecoverable failure, wasting compute and requiring manual re-run.
+# TS-port contract: the TS plan-review orchestrator MUST retry the reviewer
+#   on contract_violation outcomes rather than failing immediately.
+@test "parity[#297]: plan-review retries reviewer on contract_violation (exit 1)" {
+  local pr="$REPO_ROOT/scripts/lib/plan-review.sh"
+  # Retry loop must exist in the reviewer error-handling path
+  run grep -c "retry" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Must distinguish exit 1 from other non-zero exits for retryability
+  run grep -c "reviewer_ec -eq 1" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Must have a bounded retry count parameter
+  run grep -c "reviewer_retries" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Must still call orchestrator_fail when retries exhausted
+  run grep -c "retries exhausted" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
+
+# Invariant: the CLI persists agent stdout/stderr to .ai-runs/ in the worktree
+# when the agent outcome is not success, so failures are post-mortemable.
+# Source: #297 (Part 2).
+# Failure prevented: an agent run that fails with zero durable transcript
+#   cannot be post-mortemed. The transcript path must be surfaced in stderr.
+# TS-port contract: the TS run-agent MUST copy stdoutPath/stderrPath to
+#   .ai-runs/ on non-success outcomes and log the path.
+@test "parity[#297]: agent transcript persisted to .ai-runs/ on non-success outcomes" {
+  local cli="$REPO_ROOT/apps/cli/src/run-agent.ts"
+
+  # Must import copyFileSync
+  run grep -c "copyFileSync" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must reference .ai-runs as the persistence directory
+  run grep -c ".ai-runs" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must check outcome !== 'success' before persisting
+  run grep -c "outcome !== 'success'" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must surface the transcript path via console.error
+  run grep -c "Agent transcript saved to:" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
+
 # Invariant: _lint_task_size warns (via emit_event) when a task-manifest entry
 #   targets an oversized test file — line count > _TASK_SPLIT_MAX_LINES or
 #   test-case count > _TASK_SPLIT_MAX_CASES. When _TASK_SPLIT_BLOCK is true,
