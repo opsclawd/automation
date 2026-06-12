@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
@@ -160,6 +160,19 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
     stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
     writeFileSync(stderrPath, stderrForLog);
+  }
+
+  if (outcome === 'success' && input.expectedArtifacts?.length) {
+    for (const artifact of input.expectedArtifacts) {
+      const artifactPath = join(input.cwd, artifact);
+      if (!existsSync(artifactPath)) {
+        outcome = 'contract_violation';
+        contractViolations = [CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT];
+        stderrForLog = `MISSING_REQUIRED_ARTIFACT: ${artifact}\n${stderrForLog}`;
+        writeFileSync(stderrPath, stderrForLog);
+        break;
+      }
+    }
   }
 
   const ret: AgentInvocationResult = {

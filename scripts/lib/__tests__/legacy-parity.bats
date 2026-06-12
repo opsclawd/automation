@@ -411,3 +411,39 @@ setup() {
   run git -C "$repo" merge-base --is-ancestor "$_leak_sha" "$_branch"
   [ "$status" -ne 0 ]
 }
+
+# Invariant: the runtime enforces artifact existence when `--expected-artifacts`
+# is declared. When the agent exits 0 but the expected file is absent, the
+# outcome is contract_violation (exit 1) rather than success (exit 0).
+# Source: #297 (Part 1).
+# Failure prevented: a recoverable agent miss (model generates text but never
+#   calls Write) is treated as unrecoverable orchestrator_fail because the
+#   runtime never checked whether the declared artifact existed.
+# TS-port contract: the runtime MUST check existsSync on each declared
+#   expectedArtifact after agent exit and set outcome=contract_violation +
+#   missing_required_artifact if any is absent.
+@test "parity[#297]: runtime enforces artifact existence when --expected-artifacts declared" {
+  local runner="$REPO_ROOT/packages/infrastructure/src/agent/external-cli-runner.ts"
+
+  # existsSync must be imported
+  run grep -c "existsSync" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # MISSING_REQUIRED_ARTIFACT code must be referenced in the enforcement block
+  run grep -c "MISSING_REQUIRED_ARTIFACT" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # outcome must be set to contract_violation in the enforcement block
+  # (>=2: existing NO_OUTPUT block + new artifact block)
+  run grep -c "outcome = 'contract_violation'" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  # The enforcement check must reference input.expectedArtifacts
+  # (>=3: type field + NO_OUTPUT guard + enforcement check)
+  run grep -c "expectedArtifacts" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 3 ]
+}
