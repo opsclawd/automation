@@ -102,7 +102,7 @@ recover_off_contract_review_artifacts() {
     log "  Recovered ${reviewer_type}-review-task-${task_n}.md from ${found_md}"
     recovered=true
   fi
-  if $recovered; then
+  if $recovered || [[ -f "$expected_result" || -f "$expected_md" ]]; then
     return 0
   fi
   return 1
