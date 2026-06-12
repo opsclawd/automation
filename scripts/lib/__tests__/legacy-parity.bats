@@ -636,3 +636,39 @@ JSON
     false
   }
 }
+
+
+# Invariant: the opencode adapter enforces artifact existence when
+# expectedArtifacts is declared. When the agent exits 0 but the expected file
+# is absent, the outcome is contract_violation (exit 1) rather than success.
+# Source: #297 (PR review comment on opencode adapter path).
+# Failure prevented: a recoverable agent miss (model generates text but never
+#   writes the expected artifact) is treated as success because the opencode
+#   adapter never checked whether the declared artifact existed.
+# TS-port contract: the opencode adapter MUST check existsSync on each declared
+#   expectedArtifact after agent exit and set outcome=contract_violation +
+#   missing_required_artifact if any is absent.
+@test "parity[#297]: opencode adapter enforces artifact existence when expectedArtifacts declared" {
+  local adapter="$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+
+  # existsSync must be imported
+  run grep -c "existsSync" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # MISSING_REQUIRED_ARTIFACT code must be referenced in the enforcement block
+  run grep -c "MISSING_REQUIRED_ARTIFACT" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # outcome must be set to contract_violation in the enforcement block
+  # (>=2: existing NO_OUTPUT block + new artifact block)
+  run grep -c "outcome = 'contract_violation'" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  # The enforcement check must reference request.expectedArtifacts
+  run grep -c "expectedArtifacts" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
