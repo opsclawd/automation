@@ -214,3 +214,95 @@ setup() {
     false
   fi
 }
+
+  # Invariant: _guard_main_checkout aborts the run (via orchestrator_fail) when
+  #   REPO_ROOT is mutated by an agent, rather than silently auto-resetting.
+  #   Auto-reset is only used as a legacy fallback when orchestrator_fail is
+  #   not defined (e.g. ai-pr-review-poll.legacy).
+  # Source: #295.
+  # Failure prevented: agent leaks silently auto-cleaned, masking the underlying
+  #   bug and allowing the run to continue in a corrupted state (e.g. commit
+  #   6645816 in #290).
+  # TS-port contract: the TS orchestrator guard must hard-fail on any detected
+  #   REPO_ROOT mutation (branch switch, HEAD advance, dirty tree) and must
+  #   never silently auto-reset.
+  @test "parity[#295]: guard hard-fails on REPO_ROOT mutation when orchestrator_fail is defined" {
+    source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+    source "$REPO_ROOT/scripts/lib/emit_event.sh"
+    warn() { :; }
+
+    local repo="$BATS_TEST_TMPDIR/gf"
+    mkdir -p "$repo"
+    git -C "$repo" init -q
+    git -C "$repo" config user.email "t@t"
+    git -C "$repo" config user.name "t"
+    echo base > "$repo/app.ts"
+    git -C "$repo" add app.ts
+    git -C "$repo" commit -q -m init
+
+    export REPO_ROOT="$repo"
+    export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt"
+    mkdir -p "$WORKTREE_DIR"
+    export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/events.jsonl"
+    : > "$AI_RUN_EVENTS_FILE"
+
+    local _fail_called=false
+    local _fail_reason=""
+    orchestrator_fail() { _fail_called=true; _fail_reason="$1"; return 1; }
+
+    local pre_state
+    pre_state=$(_capture_main_state)
+
+    echo "# leaked by agent" >> "$repo/.gitignore"
+
+    _guard_main_checkout "test" "$pre_state" || true
+
+    [ "$_fail_called" = "true" ]
+    [[ "$_fail_reason" == *"Main checkout guard"* ]]
+
+    if grep -q "leaked by agent" "$repo/.gitignore" 2>/dev/null; then
+      : # expected — untracked file still present, guard did not auto-reset
+    else
+      echo "FATAL: guard auto-reset the leak despite orchestrator_fail being defined"
+      false
+    fi
+  }
+
+# Invariant: when pre-state was dirty, the guard does NOT abort even
+#   with orchestrator_fail defined — the dirty state predates the agent
+#   and is intentional developer work that must be preserved.
+# Source: #295 (extending #132 regression guardrail).
+@test "parity[#295]: guard skips hard-fail when pre-agent state was already dirty" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/gf2"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  export REPO_ROOT="$repo"
+  export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt2"
+  mkdir -p "$WORKTREE_DIR"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/events2.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _fail_called=false
+  orchestrator_fail() { _fail_called=true; return 1; }
+
+  echo "dev edit" >> "$repo/app.ts"
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  echo "more changes" >> "$repo/app.ts"
+
+  _guard_main_checkout "test" "$pre_state" || true
+
+  [ "$_fail_called" = "false" ]
+}

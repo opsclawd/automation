@@ -36,6 +36,19 @@ _capture_main_state() {
   printf '%s|%s|%s' "$sha" "$was_dirty" "$branch"
 }
 
+# Internal: call orchestrator_fail if defined, otherwise return 0 (caller handles
+# the legacy auto-reset). orchestrator_fail exits in production but returns 1 in
+# BATS stubs, so callers MUST propagate: _guard_fail_or_warn ... || return $?
+_guard_fail_or_warn() {
+  local reason="$1"
+  local guard_label="$2"
+  if declare -F orchestrator_fail >/dev/null 2>&1; then
+    orchestrator_fail "Main checkout guard: ${reason} (phase: ${guard_label})"
+    return 1
+  fi
+  return 0
+}
+
 _guard_main_checkout() {
   local guard_label="${1:-agent}"
   local pre_state="${2:-}"
@@ -75,6 +88,7 @@ _guard_main_checkout() {
         expectedSha="$expected_sha" actualSha="$actual_sha"
       return 0
     fi
+    _guard_fail_or_warn "leak detected: HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" || return $?
     warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
     if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
       git -C "$REPO_ROOT" checkout -q "$pre_branch" 2>/dev/null || true
@@ -117,6 +131,7 @@ _guard_main_checkout() {
         "Main checkout dirty pre-agent; guard skipped to preserve local work" \
         pollIteration="${POLL_COUNT:-0}"
     else
+      _guard_fail_or_warn "leak detected: working tree is dirty" "$guard_label" || return $?
       warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
       git -C "$REPO_ROOT" reset --hard HEAD 2>/dev/null || true
       git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
