@@ -2922,6 +2922,9 @@ ${_hook_log_tail}"
     fi
 
     # Validate quality-review artifacts
+    # Layer 3: attempt artifact recovery first
+    recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
+    # Layer 2: validate artifacts + verdict
     QUALITY_CORRECTIVE_WARNING=""
     validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL
     local quality_vcode=$?
@@ -3042,6 +3045,9 @@ ${_hook_log_tail}"
       fi
 
       # Validate quality-review artifacts
+      # Layer 3: attempt artifact recovery first
+      recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
+      # Layer 2: validate artifacts + verdict
       QUALITY_CORRECTIVE_WARNING=""
       validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL
       local quality_vcode=$?
