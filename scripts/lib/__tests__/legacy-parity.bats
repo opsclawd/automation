@@ -880,3 +880,23 @@ JSON
   run git -C "$repo" diff --exit-code HEAD -- . "${_art_excl[@]}"
   [ "$status" -ne 0 ]
 }
+
+# Invariant: guard_artifact_clean() is called inside _stash_and_conditionally_commit
+#   before git add -A, so the orchestrator-created commit in fix-review-stash.sh
+#   cannot sweep up known artifacts even if info/exclude is incomplete.
+# Source: #280.
+# Failure prevented: the orchestrator's own git add -A in _stash_and_conditionally_commit
+#   stages artifacts (e.g. validation.headsha), committing them to the PR branch.
+# TS-port contract: the TS fix-review stash/commit path must also exclude known
+#   artifacts before staging.
+@test "parity[#280]: guard_artifact_clean is called before git add -A in fix-review-stash.sh" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  local stash="$REPO_ROOT/scripts/lib/fix-review-stash.sh"
+  # guard_artifact_clean must appear before git add -A
+  local _guard_line _add_line
+  _guard_line=$(grep -n 'guard_artifact_clean' "$stash" | head -1 | cut -d: -f1)
+  _add_line=$(grep -n 'git.*add -A' "$stash" | head -1 | cut -d: -f1)
+  [[ -n "$_guard_line" ]]
+  [[ -n "$_add_line" ]]
+  [[ "$_guard_line" -lt "$_add_line" ]]
+}

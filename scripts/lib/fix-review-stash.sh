@@ -26,6 +26,12 @@ _stash_and_conditionally_commit() {
     return 0  # Tree is clean, nothing to do
   fi
 
+  # Remove known orchestrator artifacts from the worktree before stashing or
+  # committing, so they cannot be swept into the agent's work (#280).
+  if declare -F guard_artifact_clean >/dev/null 2>&1; then
+    guard_artifact_clean "$worktree_dir"
+  fi
+
   # Stash uncommitted changes (tracked + untracked)
   git -C "$worktree_dir" stash push -u -m "fix-review-task-${task_id}-revalidate-artifacts" 2>/dev/null || true
 
