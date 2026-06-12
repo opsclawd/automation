@@ -12,20 +12,10 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
  * (run-repository.ts). Both definitions must stay in sync manually.
  * If a new field is added to one, add it to the other as well.
  */
-export interface RunRecord {
-  uuid: string;
-  displayId: string;
-  issueNumber: number;
-  type: Run['type'];
-  status: RunStatus;
-  completedPhases: string[];
-  startedAt: Date;
-  completedAt?: Date;
-  failureReason?: string;
+export interface RunRecord extends Run {
   exitCode?: number;
   durationMs?: number;
   pid?: number;
-  currentPhase?: string;
 }
 
 export interface RunRepositoryUpdatePatch {

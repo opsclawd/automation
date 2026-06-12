@@ -51,7 +51,7 @@ import {
   type PushInput,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
-import { type Run, AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
+import { AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -639,7 +639,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             lastSeenActivityAt,
             newestCommentAt,
           });
-          const run = record as Run;
+          const run = record;
           applyReactivation(run, decision, {
             runRepository,
             eventBus: persistingEventBus,
