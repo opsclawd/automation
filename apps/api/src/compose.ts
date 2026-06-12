@@ -622,8 +622,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       },
       onAllResolved: async (input) => {
         try {
-          const record = runRepository.findByUuid(String(input.runId));
-          if (!record || record.status !== 'waiting') return 'stay_ready';
+          let record = runRepository.findByUuid(String(input.runId));
+          if (!record) return 'stay_ready';
+          // Transition running → waiting so existing runs (non-synthetic poll
+          // path) can enter the reactivation check. The synthetic path does
+          // this in runStatusForTerminalState before the poller starts.
+          if (record.status === 'running') {
+            runRepository.update(record.uuid, { status: 'waiting' });
+            record = { ...record, status: 'waiting' };
+          }
+          if (record.status !== 'waiting') return 'stay_ready';
           const comments = await ghAdapter.listReviewComments(input.repoFullName, input.prNumber);
           const reviewerComments = comments;
           const newestCommentAt = reviewerComments.reduce(
