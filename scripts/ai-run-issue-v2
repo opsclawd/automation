@@ -115,6 +115,16 @@ if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.phases.wholePrFix.architectPass.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
   [[ "$_val" == "false" ]] && FIX_REVIEW_ARCHITECT_ENABLED=false
 fi
+# ── Task size splitting thresholds ─────────────────────────────────────────────
+_TASK_SPLIT_MAX_LINES=500
+_TASK_SPLIT_MAX_CASES=10
+_TASK_SPLIT_BLOCK=false
+if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
+  _val=$(jq -r '.taskSplitting.maxTestFileLines // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_LINES="$_val"
+  _val=$(jq -r '.taskSplitting.maxTestCases // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_CASES="$_val"
+  _val=$(jq -r '.taskSplitting.blockOversizedTasks // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null)
+  [[ "$_val" == "true" ]] && _TASK_SPLIT_BLOCK=true
+fi
 # Ensure the log target exists before the first log() call. The setup block
 # creates it later (around the "# ── setup" section), but we may log before
 # then on startup, and log() pipes through `tee -a` which fails fast with
