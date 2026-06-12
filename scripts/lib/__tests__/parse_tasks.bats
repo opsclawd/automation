@@ -1201,6 +1201,65 @@ JSON
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
 }
 
+@test "_lint_task_size: counts multiline test declarations correctly" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=5
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-multiline"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local case_file="${test_dir}/multiline-cases.test.ts"
+  cat > "$case_file" << 'TS'
+describe('suite', () => {
+  it('first test',
+    async () => {
+      expect(true).toBe(true);
+    })
+
+  it('second test',
+    () => {
+      expect(true).toBe(true);
+    })
+
+  test('third test',
+    async () => {
+      expect(true).toBe(true);
+    })
+
+  test.skip('fourth test',
+    () => {
+      expect(true).toBe(true);
+    })
+
+  it.skip('fifth test',
+    async () => {
+      expect(true).toBe(true);
+    })
+
+  it.only('sixth test',
+    () => {
+      expect(true).toBe(true);
+    })
+})
+TS
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update multiline tests", "files": ["multiline-cases.test.ts"] }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+
+  jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
+}
+
 @test "_lint_task_size: skips tasks with no files field" {
   local test_dir
   test_dir=$(mktemp -d)
