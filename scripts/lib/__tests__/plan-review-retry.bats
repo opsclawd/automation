@@ -42,6 +42,12 @@ setup() {
 
   TMPDIR_TEST="$(mktemp -d)"
   WORKTREE_DIR="$TMPDIR_TEST"
+  git init "$TMPDIR_TEST" >/dev/null
+  git -C "$TMPDIR_TEST" config user.email "test@test.com"
+  git -C "$TMPDIR_TEST" config user.name "Test"
+  git -C "$TMPDIR_TEST" commit --allow-empty -m "init" >/dev/null
+  printf '.attempt\n.reviewer_attempt\nplan-review-findings-iter-*.md\n' >> "$TMPDIR_TEST/.gitignore"
+  git -C "$TMPDIR_TEST" add .gitignore && git -C "$TMPDIR_TEST" commit -m "ignore test artifacts" >/dev/null
 }
 
 teardown() {
