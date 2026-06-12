@@ -348,14 +348,16 @@ setup() {
   [ "$detach_line" -lt "$phase_line" ]
 }
 
-# Invariant: run-agent.ts rejects `--cwd` equal to `--repo-root` (REPO_ROOT).
-#   Running an agent with cwd=REPO_ROOT allows stray writes/commits to corrupt
-#   the main checkout. The guard catches mutations after the fact, but cwd
-#   validation prevents the pre-condition entirely.
+# Invariant: run-agent.ts rejects `--cwd` equal to `--repo-root` (REPO_ROOT)
+#   when a worktree is configured. Running an agent with cwd=REPO_ROOT allows
+#   stray writes/commits to corrupt the main checkout. The guard catches
+#   mutations after the fact, but cwd validation prevents the pre-condition
+#   entirely. Scoped to worktree-only to allow legitimate REPO_ROOT callers
+#   (e.g. consolidation workflows).
 # Source: #295.
 # TS-port contract: this invariant is already in TypeScript — it does not port.
 #   The test verifies the current implementation holds.
-@test "parity[#295]: run-agent.ts rejects cwd equal to repo-root" {
+@test "parity[#295]: run-agent.ts rejects cwd equal to repo-root when worktree expected" {
   # Check that the validation logic exists in the source
   run grep -c "agent cwd must not be REPO_ROOT" "$REPO_ROOT/apps/cli/src/run-agent.ts"
   [ "$status" -eq 0 ]
@@ -372,6 +374,10 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
   run grep -c "resolve.*values.*repo-root" "$REPO_ROOT/apps/cli/src/run-agent.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Verify the guard is scoped to worktree presence (not unconditional)
+  run grep -c "values\['worktree-dir'\] || process.env.POLL_WORKTREE" "$REPO_ROOT/apps/cli/src/run-agent.ts"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }

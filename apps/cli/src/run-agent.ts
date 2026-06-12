@@ -20,6 +20,7 @@ interface Flags {
   'expected-artifacts'?: string;
   'timeout-minutes'?: string;
   'start-sha'?: string;
+  'worktree-dir'?: string;
 }
 
 export type ConfigForProfileResolution = {
@@ -211,10 +212,12 @@ async function main() {
   // its own pnpm-workspace.yaml, producing the wrong root for DB lookups).
   const repoRoot = values['repo-root'] ?? findRepoRoot(values.cwd!);
 
-  // Agent cwd must never be REPO_ROOT (the main checkout on main).
-  // Running agents in REPO_ROOT allows stray writes and commits to corrupt
-  // the main branch. Use a worktree directory instead.
-  if (values['repo-root'] && values.cwd) {
+  // Agent cwd must never be REPO_ROOT when a worktree is expected (the main
+  // checkout on main). Running agents in REPO_ROOT allows stray writes and
+  // commits to corrupt the main branch. Use a worktree directory instead.
+  // Skip this check when no worktree is configured (e.g. consolidation
+  // workflows that intentionally run from REPO_ROOT).
+  if (values['repo-root'] && values.cwd && (values['worktree-dir'] || process.env.POLL_WORKTREE)) {
     const resolvedCwd = resolve(values.cwd);
     const resolvedRepoRoot = resolve(values['repo-root']);
     if (resolvedCwd === resolvedRepoRoot) {
