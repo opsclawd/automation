@@ -40,6 +40,10 @@ export interface PrReviewPollerDeps {
   onAllResolved?: (input: PrReviewPollerInput) => Promise<'reactivate' | 'stay_ready' | 'timeout'>;
   /** Maximum reactivation cycles within one poller invocation. */
   maxReactivations?: number;
+  /** Called when enterReadyLoop exits after at least one reactivation. Reverts the run
+   *  from running back to waiting so the run does not remain stuck as running when the
+   *  poller exits with a resting state. */
+  revertRunStatus?: (runId: RunId) => Promise<void>;
 }
 
 export interface PrReviewPollerInput {
@@ -223,17 +227,21 @@ export class PrReviewPoller {
       return { terminalState: 'all_resolved', pollsRun };
     }
     let reactivations = 0;
+    let wasReactivated = false;
     while (reactivations < maxReact) {
       const action = await check(input);
       this.emit(input, `post-pr-review.ready.${action}`, 'info', { reactivations });
       if (action === 'timeout') {
+        // applyReactivation already set run to cancelled — no revert needed
         await d.recordTerminalState(lastAttempt, 'cancelled');
         return { terminalState: 'cancelled', pollsRun };
       }
       if (action === 'stay_ready') {
+        // onAllResolved already handled the running→waiting transition — no revert needed
         await d.recordTerminalState(lastAttempt, 'all_resolved');
         return { terminalState: 'all_resolved', pollsRun };
       }
+      wasReactivated = true;
       reactivations++;
       let pass: PollPassResult;
       try {
@@ -250,14 +258,23 @@ export class PrReviewPoller {
           reactivations,
           error: String(err),
         });
+        if (wasReactivated) {
+          await d.revertRunStatus?.(input.runId);
+        }
         await d.recordTerminalState(lastAttempt, 'all_resolved');
         return { terminalState: 'all_resolved', pollsRun };
       }
       pollsRun++;
       if (!pass.allResolved) {
+        if (wasReactivated) {
+          await d.revertRunStatus?.(input.runId);
+        }
         await d.recordTerminalState(lastAttempt, 'max_polls_reached');
         return { terminalState: 'max_polls_reached', pollsRun };
       }
+    }
+    if (wasReactivated) {
+      await d.revertRunStatus?.(input.runId);
     }
     await d.recordTerminalState(lastAttempt, 'all_resolved');
     return { terminalState: 'all_resolved', pollsRun };

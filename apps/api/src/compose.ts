@@ -662,6 +662,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           return 'stay_ready';
         }
       },
+      revertRunStatus: async (runId) => {
+        runRepository.update(String(runId), { status: 'waiting' });
+      },
       maxReactivations: 100,
     });
   }
