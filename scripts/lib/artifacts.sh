@@ -72,8 +72,10 @@ guard_artifact_clean() {
   while IFS= read -r _artifact; do
     [[ -z "$_artifact" ]] && continue
 
-    # 1. Untracked / uncommitted: just delete it.
-    rm -f "${worktree_dir}/${_artifact}"
+    # 1. Untracked / uncommitted: just delete it (if not tracked by git).
+    if ! git -C "$worktree_dir" ls-files --error-unmatch -- "$_artifact" >/dev/null 2>&1; then
+      rm -f "${worktree_dir}/${_artifact}"
+    fi
 
     # 2. Staged but not committed: unstage and delete.
     if git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | grep -qxF "$_artifact"; then
