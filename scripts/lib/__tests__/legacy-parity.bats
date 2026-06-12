@@ -160,3 +160,254 @@ setup() {
   run cat "$repo/app.ts"
   [ "$output" = "good-fix" ] || { echo "expected green revalidate to preserve fix, got: $output"; false; }
 }
+
+# Invariant: _detach_main_head detaches REPO_ROOT HEAD and records the
+#   original branch in _ORIGINAL_MAIN_BRANCH so _reattach_main_head can
+#   restore it at run end. The detach/reattach pair guarantees no agent
+#   commit can advance main (commits on detached HEAD become orphaned).
+# Source: #295.
+# Failure prevented: agent commits leaked onto local main, diverging from
+#   origin (e.g. fix/CI commit 6645816 in #290).
+# TS-port contract: the TS orchestrator must detach REPO_ROOT HEAD before
+#   agent invocations and restore afterward. Any commit made while detached
+#   must be unreachable after restoration. Runtime-agnostic — pure git
+#   plumbing (rev-parse HEAD, rev-parse --abbrev-ref, checkout --detach).
+@test "parity[#295]: detached HEAD prevents commits from advancing main branch" {
+  local repo="$BATS_TEST_TMPDIR/detach-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  local _default_branch
+  _default_branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  local _pre_sha
+  _pre_sha=$(git -C "$repo" rev-parse HEAD)
+
+  # Detach HEAD (mirrors _detach_main_head)
+  git -C "$repo" checkout -q --detach HEAD
+
+  # Simulate agent leak: commit on detached HEAD
+  echo "leaked" > "$repo/leak.txt"
+  git -C "$repo" add leak.txt
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m "leak on detached"
+  local _leaked_sha
+  _leaked_sha=$(git -C "$repo" rev-parse HEAD)
+  [ "$_leaked_sha" != "$_pre_sha" ]
+
+  # Restore branch (mirrors _reattach_main_head)
+  git -C "$repo" checkout -q "$_default_branch"
+
+  # Branch must be back at the pre-run SHA — main was never advanced
+  local _final_sha
+  _final_sha=$(git -C "$repo" rev-parse HEAD)
+  [ "$_final_sha" = "$_pre_sha" ]
+
+  # The leaked commit is orphaned (unreachable from any branch)
+  if ! git -C "$repo" merge-base --is-ancestor "$_leaked_sha" "$_default_branch" 2>/dev/null; then
+    : # expected — leaked commit is not an ancestor of main
+  else
+    echo "FATAL: leaked commit is reachable from main branch — detach failed to prevent leak"
+    false
+  fi
+}
+
+# Invariant: _guard_main_checkout aborts the run (via orchestrator_fail) when
+#   REPO_ROOT is mutated by an agent, rather than silently auto-resetting.
+#   Auto-reset is only used as a legacy fallback when orchestrator_fail is
+#   not defined (e.g. ai-pr-review-poll.legacy).
+# Source: #295.
+# Failure prevented: agent leaks silently auto-cleaned, masking the underlying
+#   bug and allowing the run to continue in a corrupted state (e.g. commit
+#   6645816 in #290).
+# TS-port contract: the TS orchestrator guard must hard-fail on any detected
+#   REPO_ROOT mutation (branch switch, HEAD advance, dirty tree) and must
+#   never silently auto-reset.
+@test "parity[#295]: guard hard-fails on REPO_ROOT mutation when orchestrator_fail is defined" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/gf"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  export REPO_ROOT="$repo"
+  export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt"
+  mkdir -p "$WORKTREE_DIR"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/events.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _fail_called=false
+  local _fail_reason=""
+  orchestrator_fail() { _fail_called=true; _fail_reason="$1"; return 1; }
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  echo "# leaked by agent" >> "$repo/.gitignore"
+
+  _guard_main_checkout "test" "$pre_state" || true
+
+  [ "$_fail_called" = "true" ]
+  [[ "$_fail_reason" == *"Main checkout guard"* ]]
+
+  if grep -q "leaked by agent" "$repo/.gitignore" 2>/dev/null; then
+    : # expected — untracked file still present, guard did not auto-reset
+  else
+    echo "FATAL: guard auto-reset the leak despite orchestrator_fail being defined"
+    false
+  fi
+}
+
+# Invariant: when pre-state was dirty, the guard does NOT abort even
+#   with orchestrator_fail defined — the dirty state predates the agent
+#   and is intentional developer work that must be preserved.
+# Source: #295 (extending #132 regression guardrail).
+@test "parity[#295]: guard skips hard-fail when pre-agent state was already dirty" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/gf2"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  export REPO_ROOT="$repo"
+  export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt2"
+  mkdir -p "$WORKTREE_DIR"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/events2.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _fail_called=false
+  orchestrator_fail() { _fail_called=true; return 1; }
+
+  echo "dev edit" >> "$repo/app.ts"
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  echo "more changes" >> "$repo/app.ts"
+
+  _guard_main_checkout "test" "$pre_state" || true
+
+  [ "$_fail_called" = "false" ]
+}
+
+# Invariant: the on-exit sequence ai-run-issue-v2 runs (reattach REPO_ROOT
+#   branch, then run the guard) restores the main checkout to its original
+#   branch and SHA, even when an agent left REPO_ROOT on a different branch.
+#   Mirrors _trap_on_exit: reattach first, guard second (defense-in-depth).
+# Source: #295.
+# Failure prevented: a run that crashes/exits mid-phase leaving REPO_ROOT on a
+#   stray branch or detached HEAD — the operator's main checkout is corrupted.
+# TS-port contract: whatever the TS orchestrator runs on exit must leave
+#   REPO_ROOT on its pre-run branch at its pre-run SHA. Runtime-agnostic — git
+#   branch/SHA state after driving the real _detach/_reattach/_guard functions.
+@test "parity[#295]: on-exit reattach+guard restores REPO_ROOT branch after a run" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
+  orchestrator_fail() { return 1; }
+
+  local repo="$BATS_TEST_TMPDIR/exit-restore"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  export REPO_ROOT="$repo"
+  export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt-exit"
+  mkdir -p "$WORKTREE_DIR"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/ev-exit.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _branch _sha
+  _branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  _sha=$(git -C "$repo" rev-parse HEAD)
+
+  # Snapshot pre-detach state, as ai-run-issue-v2 does for the EXIT trap.
+  local _exit_pre_state
+  _exit_pre_state=$(_capture_main_state)
+
+  _detach_main_head
+  # Simulate an agent that switched the main checkout onto a stray branch.
+  git -C "$repo" checkout -q -b agent-stray
+
+  # The trap's documented sequence: reattach first, then guard.
+  _reattach_main_head
+  _guard_main_checkout "exit-trap" "$_exit_pre_state" || true
+
+  # REPO_ROOT must be back on its original branch at its original SHA.
+  [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" = "$_branch" ]
+  [ "$(git -C "$repo" rev-parse HEAD)" = "$_sha" ]
+}
+
+# Invariant: _detach_main_head detaches REPO_ROOT HEAD so an agent commit lands
+#   on a detached HEAD (orphaned), and _reattach_main_head returns to the
+#   original branch WITHOUT advancing it. This is the mechanism that stops a
+#   leaked commit from moving main.
+# Source: #295.
+# Failure prevented: agent commits leaked onto local main, diverging from origin
+#   (e.g. commit 6645816 in #290).
+# TS-port contract: the TS detach/restore must leave the original branch at its
+#   pre-run SHA after an agent commits, with the leaked commit unreachable.
+#   Runtime-agnostic — drives the real _detach_main_head/_reattach_main_head.
+@test "parity[#295]: _detach_main_head/_reattach_main_head keep main at its pre-run SHA" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/detach-fns"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  export REPO_ROOT="$repo"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/ev-detach.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _branch _pre_sha
+  _branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  _pre_sha=$(git -C "$repo" rev-parse HEAD)
+
+  _detach_main_head
+  [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" = "HEAD" ]   # detached
+
+  # Agent commits while detached.
+  echo leak > "$repo/leak.txt"
+  git -C "$repo" add leak.txt
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m "agent leak"
+  local _leak_sha
+  _leak_sha=$(git -C "$repo" rev-parse HEAD)
+  [ "$_leak_sha" != "$_pre_sha" ]
+
+  _reattach_main_head
+
+  # Original branch restored and NOT advanced.
+  [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" = "$_branch" ]
+  [ "$(git -C "$repo" rev-parse HEAD)" = "$_pre_sha" ]
+  # The leaked commit is unreachable from the restored branch (orphaned).
+  run git -C "$repo" merge-base --is-ancestor "$_leak_sha" "$_branch"
+  [ "$status" -ne 0 ]
+}

@@ -36,6 +36,19 @@ _capture_main_state() {
   printf '%s|%s|%s' "$sha" "$was_dirty" "$branch"
 }
 
+# Internal: call orchestrator_fail if defined, otherwise return 0 (caller handles
+# the legacy auto-reset). orchestrator_fail exits in production but returns 1 in
+# BATS stubs, so callers MUST propagate: _guard_fail_or_warn ... || return $?
+_guard_fail_or_warn() {
+  local reason="$1"
+  local guard_label="$2"
+  if declare -F orchestrator_fail >/dev/null 2>&1; then
+    orchestrator_fail "Main checkout guard: ${reason} (phase: ${guard_label})"
+    return 1
+  fi
+  return 0
+}
+
 _guard_main_checkout() {
   local guard_label="${1:-agent}"
   local pre_state="${2:-}"
@@ -75,6 +88,15 @@ _guard_main_checkout() {
         expectedSha="$expected_sha" actualSha="$actual_sha"
       return 0
     fi
+    _guard_fail_or_warn "leak detected: HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" || return $?
+    # ── Legacy auto-reset path ──────────────────────────────────
+    # The warn/revert/reset code below is only reached when
+    # orchestrator_fail is NOT defined (legacy mode without the
+    # orchestrator framework). When orchestrator_fail IS defined:
+    #   - Production: orchestrator_fail calls exit(1), so this
+    #     code is unreachable (dead).
+    #   - BATS tests: the stub returns 1, and || return $?
+    #     above short-circuits before reaching here.
     warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
     if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
       git -C "$REPO_ROOT" checkout -q "$pre_branch" 2>/dev/null || true
@@ -117,6 +139,11 @@ _guard_main_checkout() {
         "Main checkout dirty pre-agent; guard skipped to preserve local work" \
         pollIteration="${POLL_COUNT:-0}"
     else
+      _guard_fail_or_warn "leak detected: working tree is dirty" "$guard_label" || return $?
+      # ── Legacy auto-reset path ──────────────────────────────
+      # Same as the HEAD-moved block above: this dirty-tree
+      # auto-reset is only reachable when orchestrator_fail is
+      # not defined. See comment above for the full explanation.
       warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
       git -C "$REPO_ROOT" reset --hard HEAD 2>/dev/null || true
       git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
@@ -147,4 +174,48 @@ _guard_main_checkout() {
         pollIteration="${POLL_COUNT:-0}"
     fi
   fi
+}
+
+_detach_main_head() {
+  local _main_branch
+  _main_branch=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+  _ORIGINAL_MAIN_BRANCH="$_main_branch"
+  _RESTORE_HEAD_SHA=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+  emit_event "main-checkout" "info" "main.detach" \
+    "Detaching REPO_ROOT HEAD (was on ${_main_branch} @ ${_RESTORE_HEAD_SHA:0:7})" \
+    originalBranch="$_main_branch" originalSha="$_RESTORE_HEAD_SHA"
+  git -C "$REPO_ROOT" checkout -q --detach HEAD 2>/dev/null || {
+    warn "Failed to detach REPO_ROOT HEAD from ${_main_branch}"
+    return 1
+  }
+}
+
+_reattach_main_head() {
+  if [[ -z "${_ORIGINAL_MAIN_BRANCH:-}" ]]; then
+    return 0
+  fi
+  local _detached_sha
+  _detached_sha=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+  if [[ -n "${_RESTORE_HEAD_SHA:-}" && "$_detached_sha" != "$_RESTORE_HEAD_SHA" ]]; then
+    warn "REPO_ROOT HEAD advanced while detached (${_RESTORE_HEAD_SHA:0:7} → ${_detached_sha:0:7}) — leak committed; restoration will orphan it"
+    emit_event "main-checkout" "warn" "main.detach_head_moved" \
+      "HEAD advanced while REPO_ROOT was detached; orphan commit(s) will be garbage collected" \
+      restoreSha="$_RESTORE_HEAD_SHA" detachedSha="$_detached_sha"
+  fi
+  if [[ "$_ORIGINAL_MAIN_BRANCH" == "HEAD" ]]; then
+    git -C "$REPO_ROOT" checkout -q --detach "$_RESTORE_HEAD_SHA" 2>/dev/null || {
+      warn "Failed to re-detach REPO_ROOT HEAD"
+      return 1
+    }
+  else
+    git -C "$REPO_ROOT" checkout -q "$_ORIGINAL_MAIN_BRANCH" 2>/dev/null || {
+      warn "Failed to restore REPO_ROOT to branch ${_ORIGINAL_MAIN_BRANCH}"
+      return 1
+    }
+  fi
+  local _restored_branch="$_ORIGINAL_MAIN_BRANCH"
+  unset _ORIGINAL_MAIN_BRANCH _RESTORE_HEAD_SHA
+  emit_event "main-checkout" "info" "main.reattach" \
+    "Restored REPO_ROOT branch to ${_restored_branch}" \
+    originalBranch="$_restored_branch"
 }

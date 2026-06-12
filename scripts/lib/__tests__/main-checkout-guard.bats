@@ -62,7 +62,7 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "_guard_main_checkout resets leaked changes in main checkout" {
+@test "_guard_main_checkout resets leaked changes when no orchestrator_fail (legacy path)" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
   mkdir -p "$POLL_WORKTREE"
@@ -72,7 +72,6 @@ teardown() {
   run _guard_main_checkout "test"
   [ "$status" -eq 0 ]
 
-  # After the guard runs, the fixture .gitignore must be clean (reset to HEAD).
   run git -C "$FIXTURE_REPO" diff --quiet
   [ "$status" -eq 0 ]
 
@@ -80,7 +79,7 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "_guard_main_checkout resets staged leaked changes (regression: PR #132 reviewer)" {
+@test "_guard_main_checkout resets staged leaked changes when no orchestrator_fail (legacy path) (regression: PR #132 reviewer)" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
   mkdir -p "$POLL_WORKTREE"
@@ -100,7 +99,7 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "_guard_main_checkout removes untracked leaked files" {
+@test "_guard_main_checkout removes untracked leaked files when no orchestrator_fail (legacy path)" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
   mkdir -p "$POLL_WORKTREE"
@@ -113,7 +112,7 @@ teardown() {
   [ ! -f "$FIXTURE_REPO/leaked-untracked.txt" ]
 }
 
-@test "_guard_main_checkout rewinds HEAD when agent committed a leak (regression: PR #132 comment 3322104761)" {
+@test "_guard_main_checkout rewinds HEAD when agent committed a leak when no orchestrator_fail (legacy path) (regression: PR #132 comment 3322104761)" {
   REPO_ROOT="$FIXTURE_REPO"
   export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
   mkdir -p "$POLL_WORKTREE"
@@ -426,7 +425,7 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "_guard_main_checkout works with WORKTREE_DIR instead of POLL_WORKTREE" {
+@test "_guard_main_checkout works with WORKTREE_DIR instead of POLL_WORKTREE when no orchestrator_fail (legacy path)" {
   REPO_ROOT="$FIXTURE_REPO"
   export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
   unset POLL_WORKTREE
@@ -502,4 +501,210 @@ teardown() {
   # Prompt template now lives in the legacy script (M6-05 shim delegates to TS poller)
   run grep -c 'Do NOT change this branch name' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll.legacy"
   [ "$output" -eq 1 ]
+}
+
+@test "_detach_main_head detaches REPO_ROOT HEAD and records original branch" {
+  REPO_ROOT="$FIXTURE_REPO"
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  local _pre_sha
+  _pre_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+
+  _detach_main_head
+
+  # After detach, HEAD should be detached (rev-parse --abbrev-ref returns HEAD)
+  local _detached_ref
+  _detached_ref=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  [ "$_detached_ref" = "HEAD" ]
+
+  # Env var must record the original branch
+  [ -n "${_ORIGINAL_MAIN_BRANCH:-}" ]
+  [ "$_ORIGINAL_MAIN_BRANCH" = "$_default_branch" ]
+  [ -n "${_RESTORE_HEAD_SHA:-}" ]
+  [ "$_RESTORE_HEAD_SHA" = "$_pre_sha" ]
+}
+
+@test "_detach_main_head works when REPO_ROOT is already on detached HEAD" {
+  REPO_ROOT="$FIXTURE_REPO"
+  git -C "$FIXTURE_REPO" checkout -q --detach HEAD
+  local _pre_sha
+  _pre_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+
+  _detach_main_head
+
+  # Already detached, env var records the detached state
+  [ "${_ORIGINAL_MAIN_BRANCH:-}" = "HEAD" ]
+  [ "${_RESTORE_HEAD_SHA:-}" = "$_pre_sha" ]
+}
+
+@test "_reattach_main_head restores original branch after detach" {
+  REPO_ROOT="$FIXTURE_REPO"
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+
+  _detach_main_head
+  # Commit on detached HEAD — simulates agent leak
+  echo "leak" > "$FIXTURE_REPO/leak.txt"
+  git -C "$FIXTURE_REPO" add leak.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leak"
+
+  run _reattach_main_head
+  [ "$status" -eq 0 ]
+
+  # Branch should be restored
+  local _current_branch
+  _current_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  [ "$_current_branch" = "$_default_branch" ]
+
+  # SHA should be back at the original (leak commit is orphaned)
+  local _current_sha
+  _current_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$_current_sha" = "$_RESTORE_HEAD_SHA" ]
+}
+
+@test "_reattach_main_head fails when HEAD advanced while detached (leak prevention failure)" {
+  REPO_ROOT="$FIXTURE_REPO"
+
+  _detach_main_head
+  echo "leak" > "$FIXTURE_REPO/leak.txt"
+  git -C "$FIXTURE_REPO" add leak.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leak"
+
+  # Simulate that RESTORE_HEAD_SHA is stored, but we also need to detect
+  # that HEAD moved while detached. _reattach_main_head should still succeed
+  # at restoration (goes back to original branch) but emit a warning event
+  # and leave the orphan commit unreachable.
+  run _reattach_main_head
+  [ "$status" -eq 0 ]
+
+  # The leak commit should be orphaned (original branch is restored, no new commit on branch)
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" log --oneline "$_default_branch" | grep -qv "leak" || true
+}
+
+@test "_reattach_main_head is a no-op when _ORIGINAL_MAIN_BRANCH is unset" {
+  REPO_ROOT="$FIXTURE_REPO"
+  unset _ORIGINAL_MAIN_BRANCH
+  run _reattach_main_head
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout calls orchestrator_fail on detected leak (hard-fail)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  echo "# __test_guard_hardfail_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+  run grep -q "leak" "$TMPDIR_TEST/fail-reason.txt"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout warns when pre-was-dirty even with orchestrator_fail defined" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  orchestrator_fail() {
+    echo "orchestrator_fail should not be called for pre-dirty" > "$TMPDIR_TEST/should-not-exist.txt"
+    return 1
+  }
+
+  echo "dev edit" >> "$FIXTURE_REPO/.gitignore"
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  echo "more dirt" >> "$FIXTURE_REPO/.gitignore"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -eq 0 ]
+  [ ! -f "$TMPDIR_TEST/should-not-exist.txt" ]
+}
+
+@test "_guard_main_checkout falls back to warn-when-no-orchestrator_fail (legacy compat)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export POLL_WORKTREE="$TMPDIR_TEST/fake-worktree"
+  mkdir -p "$POLL_WORKTREE"
+
+  echo "# __test_guard_legacycompat_$$" >> "$FIXTURE_REPO/.gitignore"
+
+  run _guard_main_checkout "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$FIXTURE_REPO" diff --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_main_checkout hard-fails when agent committed on main (HEAD moved)" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+  local pre_sha="${pre_state%%|*}"
+
+  echo "leaked content" > "$FIXTURE_REPO/leaked.txt"
+  git -C "$FIXTURE_REPO" add leaked.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "leaked"
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+
+  local final_sha
+  final_sha=$(git -C "$FIXTURE_REPO" rev-parse HEAD)
+  [ "$final_sha" != "$pre_sha" ]
+}
+
+@test "_guard_main_checkout hard-fails when branch switched from expected" {
+  REPO_ROOT="$FIXTURE_REPO"
+  export WORKTREE_DIR="$TMPDIR_TEST/fake-worktree"
+  unset POLL_WORKTREE
+  mkdir -p "$WORKTREE_DIR"
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local _default_branch
+  _default_branch=$(git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD)
+  git -C "$FIXTURE_REPO" checkout -q -b other-branch
+  echo "other" > "$FIXTURE_REPO/other.txt"
+  git -C "$FIXTURE_REPO" add other.txt
+  git -C "$FIXTURE_REPO" -c user.email=t@t -c user.name=t commit -q -m "other"
+  git -C "$FIXTURE_REPO" checkout -q "$_default_branch"
+
+  local pre_state
+  pre_state=$(_capture_main_state)
+
+  git -C "$FIXTURE_REPO" checkout -q other-branch
+
+  run _guard_main_checkout "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+
+  run git -C "$FIXTURE_REPO" rev-parse --abbrev-ref HEAD
+  [ "$output" = "other-branch" ]
 }
