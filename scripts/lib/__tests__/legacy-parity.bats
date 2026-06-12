@@ -29,17 +29,12 @@ setup() {
 # TS-port contract: the TS orchestrator must never stage/commit these paths.
 #   Runtime-agnostic — pure git index state.
 @test "parity[#279/#280]: per-run orchestrator artifacts are never tracked" {
-  local artifacts=(
-    validation.headsha
-    review-fix-plan.json
-    review-task-manifest.json
-    review-triage.md
-    code-review.md
-  )
-  for f in "${artifacts[@]}"; do
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
     run git -C "$REPO_ROOT" ls-files --error-unmatch -- "$f"
     [ "$status" -ne 0 ] || { echo "artifact is tracked (must be ignored): $f"; false; }
-  done
+  done < <(orchestrator_artifact_paths)
 }
 
 # Invariant: a review-task manifest whose findings are ALL deferred/skipped has
