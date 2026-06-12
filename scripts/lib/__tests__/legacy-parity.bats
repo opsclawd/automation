@@ -807,3 +807,36 @@ JSON
   [[ "$output" == *"compound-draft.md"* ]]
   [[ "$output" == *"result.json"* ]]
 }
+
+# Invariant: guard_artifact_clean() removes a staged artifact from the index
+#   so it cannot enter a commit even if .gitignore misses it.
+# Source: #280.
+# Failure prevented: an agent force-adds an artifact (git add -f), it enters
+#   the index, and the next commit ships it in the PR.
+# TS-port contract: the TS orchestrator's post-phase cleanup must also
+#   unstage and delete known artifact paths.
+@test "parity[#280]: guard_artifact_clean unstages a staged artifact" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  warn() { :; }
+  emit_event() { :; }
+  local repo="$BATS_TEST_TMPDIR/gac-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+  # Simulate an agent force-adding an artifact
+  echo "abc123" > "$repo/validation.headsha"
+  git -C "$repo" add -f validation.headsha
+  # Verify it is staged
+  git -C "$repo" diff --cached --name-only | grep -qxF "validation.headsha"
+  # Run the guard
+  guard_artifact_clean "$repo"
+  # Verify it is no longer staged
+  run git -C "$repo" diff --cached --name-only
+  ! grep -qxF "validation.headsha" <<< "$output"
+  # Verify the file was deleted from disk
+  [ ! -f "$repo/validation.headsha" ]
+}

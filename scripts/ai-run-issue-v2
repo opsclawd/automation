@@ -146,6 +146,8 @@ source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
 source "${REPO_ROOT}/scripts/lib/review-manifest-helpers.sh"
 # shellcheck source=lib/fix-review-stash.sh
 source "${REPO_ROOT}/scripts/lib/fix-review-stash.sh"
+# shellcheck source=lib/artifacts.sh
+source "${REPO_ROOT}/scripts/lib/artifacts.sh"
 # shellcheck source=lib/fix-review-revert.sh
 source "${REPO_ROOT}/scripts/lib/fix-review-revert.sh"
 # shellcheck source=lib/validation_result.sh
@@ -3261,6 +3263,10 @@ with open(path, 'w') as f:
 
   done <<< "$TASKS"
 
+  # Remove any orchestrator artifacts that the implement agents may have
+  # staged or committed, before transitioning to the read-only phases.
+  guard_artifact_clean "${WORKTREE_DIR}" "origin/${BASE_BRANCH}"
+
   _emit_phase_done "implement"
   PHASE="validate"
 fi
@@ -3545,6 +3551,10 @@ Start now."
         fi
       fi
     done
+
+    # Remove any orchestrator artifacts that the fix-validate agents may have
+    # staged or committed.
+    guard_artifact_clean "${WORKTREE_DIR}" "origin/${BASE_BRANCH}"
 
     if [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]] || \
        grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
@@ -4864,6 +4874,10 @@ Start now."
       fi
     fi
   fi
+
+  # Safety net: remove any non-compound-draft artifacts the compound agent
+  # may have staged or committed (compound-draft.md is handled above).
+  guard_artifact_clean "${WORKTREE_DIR}" "origin/${BASE_BRANCH}"
 
   _emit_phase_done "compound"
   PHASE="create-pr"
