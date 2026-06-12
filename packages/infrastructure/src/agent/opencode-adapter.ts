@@ -355,6 +355,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       ...(usage ? { usage: { ...usage, provider: effectiveProvider, model: effectiveModel } } : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
+    if (request.stepId) ret.stepId = request.stepId;
     // Set resultJsonPath so downstream extraction uses the explicit path rather
     // than falling back to a hardcoded 'result.json' (#311).
     if (ret.outcome === 'success' && request.expectedArtifacts.includes('result.json')) {
