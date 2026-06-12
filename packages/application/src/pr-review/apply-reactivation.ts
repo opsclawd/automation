@@ -49,7 +49,8 @@ export function applyReactivation(
       return next;
     }
     case 'stay_ready':
-    default:
       return run;
+    default:
+      throw new Error(`Unknown reactivation action: ${(decision as { action: string }).action}`);
   }
 }

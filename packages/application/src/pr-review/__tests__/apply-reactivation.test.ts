@@ -71,6 +71,14 @@ describe('applyReactivation', () => {
     expect((events[0] as { type: string }).type).toBe('post-pr-review.run.timed_out');
   });
 
+  it('unknown action -> throws', () => {
+    const deps = makeDeps();
+    const unknown = { action: 'bogus_action' as never, reason: 'unknown' };
+    expect(() => applyReactivation(readyRun(), unknown, deps)).toThrow(
+      'Unknown reactivation action: bogus_action',
+    );
+  });
+
   it('stay_ready -> run unchanged, not persisted, no event', () => {
     const updates: Array<unknown> = [];
     const events: Array<unknown> = [];
