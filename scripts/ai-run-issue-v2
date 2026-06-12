@@ -122,7 +122,7 @@ _TASK_SPLIT_BLOCK=false
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
   _val=$(jq -r '.taskSplitting.maxTestFileLines // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_LINES="$_val"
   _val=$(jq -r '.taskSplitting.maxTestCases // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_CASES="$_val"
-  _val=$(jq -r '.taskSplitting.blockOversizedTasks // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null)
+  _val=$(jq -r '.taskSplitting.blockOversizedTasks // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
   [[ "$_val" == "true" ]] && _TASK_SPLIT_BLOCK=true
 fi
 # Ensure the log target exists before the first log() call. The setup block
