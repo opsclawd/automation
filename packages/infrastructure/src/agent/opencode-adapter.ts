@@ -206,25 +206,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
         stderr = 'NO_OUTPUT: agent exited 0 with empty stdout and no git changes';
         stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
       }
-
-      // Enforce expected artifacts: when the agent exits 0 but a declared
-      // expectedArtifact is absent, downgrade to contract_violation so the
-      // orchestrator can retry instead of silently succeeding.
-      if (outcome === 'success' && request.expectedArtifacts?.length) {
-        for (const artifact of request.expectedArtifacts) {
-          const artifactPath = join(request.cwd, artifact);
-          if (!existsSync(artifactPath)) {
-            outcome = 'contract_violation';
-            contractViolations = [
-              ...contractViolations,
-              CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
-            ];
-            stderr = `MISSING_REQUIRED_ARTIFACT: ${artifact}`;
-            stderrForLog = `MISSING_REQUIRED_ARTIFACT: ${artifact}\n${stderrForLog}`;
-            break;
-          }
-        }
-      }
     }
     if (outcome === 'success' && request.expectedArtifacts?.length) {
       for (const artifact of request.expectedArtifacts) {
