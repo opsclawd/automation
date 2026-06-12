@@ -677,3 +677,31 @@ JSON
   run validate_review_artifacts "${test_dir}/quality-review-task-1.result" "${test_dir}/quality-review-task-1.md" QUALITY_PASS QUALITY_FAIL
   [ "$status" -ne 0 ]
 }
+
+# Invariant: When a reviewer writes artifacts to a wrong path (e.g.,
+#   docs/spec-vs-implementation-reviews/), the recovery scanner copies them
+#   to the expected path so the retry and downstream consumers can find them.
+# Source: #305 (was #286 hard-failure — artifacts at wrong path).
+# Failure prevented: Reviewer wrote .result/.md to docs/ subdirectory;
+#   orchestrator couldn't find them, burned retries, hard-failed.
+# TS-port contract: the TS orchestrator must also scan for and recover
+#   artifacts written to off-contract paths within the worktree.
+@test "parity[#305]: recover_off_contract_review_artifacts recovers from docs/ subdirectory" {
+  source "${REPO_ROOT}/scripts/lib/review-contract.sh"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  WORKTREE_DIR="$test_dir"
+  log() { :; }
+  # Simulate off-contract write: reviewer wrote to docs/spec-vs-implementation-reviews/
+  mkdir -p "${test_dir}/docs/spec-vs-implementation-reviews"
+  echo "SPEC_FAIL" > "${test_dir}/docs/spec-vs-implementation-reviews/TASK-3.result"
+  echo "## Findings" > "${test_dir}/docs/spec-vs-implementation-reviews/TASK-3-spec-vs-implementation.md"
+  # Also create a .md with the expected pattern name (the actual #286 case used a different .md name)
+  echo "Findings here" > "${test_dir}/docs/TASK-3-task-3.md"
+  run recover_off_contract_review_artifacts "spec" "3"
+  [ "$status" -eq 0 ]
+  # The .result should be recovered
+  [ -f "${test_dir}/spec-review-task-3.result" ]
+  [ "$(cat "${test_dir}/spec-review-task-3.result")" = "SPEC_FAIL" ]
+}
