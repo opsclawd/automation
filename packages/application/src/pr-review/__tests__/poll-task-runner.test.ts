@@ -185,6 +185,30 @@ describe('PollTaskRunner — happy path', () => {
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('blocked');
   });
+
+  it('forwards resultJsonPath from agent invocation to extractTaskResult', async () => {
+    let capturedResultJsonPath: string | undefined;
+    let capturedCwd = '';
+    const { deps, git } = makeDeps({
+      extractTaskResult: async (input) => {
+        capturedResultJsonPath = input.resultJsonPath;
+        capturedCwd = input.cwd;
+        return {
+          ok: true,
+          result: { commentId: 9001, action: 'fixed', replyBody: 'done.' },
+        };
+      },
+    });
+    git.headByCwd.set('/work/tree', 'def456');
+    git.remoteRefs.set('origin/feat-x', 'def456');
+    git.ancestorResults.set('def456|def456', true);
+    git.logBetweenResults.set('abc123|def456', ['def456']);
+    const runner = new PollTaskRunner(deps);
+    const out = await runner.execute(makeInput());
+    expect(out.processed).toBe(true);
+    expect(capturedResultJsonPath).toBe('/tmp/result.json');
+    expect(capturedCwd).toBe('/work/tree');
+  });
 });
 
 describe('PollTaskRunner — failure isolation', () => {

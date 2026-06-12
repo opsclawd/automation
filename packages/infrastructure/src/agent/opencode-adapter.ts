@@ -1,5 +1,13 @@
 import { execa } from 'execa';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -24,6 +32,10 @@ export interface OpenCodeAdapterOptions {
   // the dir opencode actually writes to (it does NOT honor OPENCODE_SESSION_LOG_DIR).
   // Tests inject a temp dir here.
   logDir?: string;
+  // Root of the git repository. When set, stray-recovery also scans
+  // <repoRoot>/apps/cli/ for artifacts that drifted to the main checkout
+  // outside the worktree (cwd). The worktree path is always checked first.
+  repoRoot?: string;
 }
 
 export class OpenCodeAgentAdapter implements AgentPort {
@@ -90,9 +102,24 @@ export class OpenCodeAgentAdapter implements AgentPort {
       // dir from XDG_DATA_HOME). We still pass it so the test fixtures — which
       // stand in for opencode and DO honor it — write to the dir we scan. In
       // production it is harmless: opencode writes to sessionLogDir anyway.
-      const childEnv: Record<string, string> = {
+      const childEnv: Record<string, string | undefined> = {
         OPENCODE_SESSION_LOG_DIR: sessionLogDir,
+        PWD: request.cwd,
+        INIT_CWD: undefined,
       };
+      // Pre-launch cleanup: remove any pre-existing result.json from known stray
+      // locations in repoRoot to prevent recovery of stale artifacts from previous
+      // invocations (#311, PR#312 review feedback).
+      if (this.opts.repoRoot && request.expectedArtifacts?.length) {
+        for (const artifact of request.expectedArtifacts) {
+          for (const stray of ['apps/cli']) {
+            const strayPath = join(this.opts.repoRoot, stray, artifact);
+            if (existsSync(strayPath)) {
+              rmSync(strayPath);
+            }
+          }
+        }
+      }
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
@@ -210,7 +237,43 @@ export class OpenCodeAgentAdapter implements AgentPort {
     if (outcome === 'success' && request.expectedArtifacts?.length) {
       for (const artifact of request.expectedArtifacts) {
         const artifactPath = join(request.cwd, artifact);
-        if (!existsSync(artifactPath)) {
+        if (existsSync(artifactPath)) {
+          continue;
+        }
+        // Defense-in-depth: scan known stray locations for artifacts stranded by
+        // opencode session-directory drift (#311). If found, copy to the expected
+        // path so the orchestrator can consume it.
+        let recovered = false;
+        const strayLocations = ['apps/cli'];
+        for (const stray of strayLocations) {
+          const worktreePath = join(request.cwd, stray, artifact);
+          if (existsSync(worktreePath)) {
+            try {
+              const artifactPath = join(request.cwd, artifact);
+              writeFileSync(artifactPath, readFileSync(worktreePath));
+              recovered = true;
+              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from worktree ${stray}/${artifact}\n${stderrForLog}`;
+            } catch (err) {
+              stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from worktree ${stray}/${artifact}: ${err}\n${stderrForLog}`;
+            }
+            break;
+          }
+          if (this.opts.repoRoot) {
+            const repoPath = join(this.opts.repoRoot, stray, artifact);
+            if (existsSync(repoPath)) {
+              try {
+                const artifactPath = join(request.cwd, artifact);
+                writeFileSync(artifactPath, readFileSync(repoPath));
+                recovered = true;
+                stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot ${stray}/${artifact}\n${stderrForLog}`;
+              } catch (err) {
+                stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from repoRoot ${stray}/${artifact}: ${err}\n${stderrForLog}`;
+              }
+              break;
+            }
+          }
+        }
+        if (!recovered) {
           outcome = 'contract_violation';
           contractViolations = [
             ...contractViolations,
@@ -242,6 +305,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
       outcome,
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
+    // Set resultJsonPath so downstream extraction uses the explicit path rather
+    // than falling back to a hardcoded 'result.json' (#311).
+    if (ret.outcome === 'success' && request.expectedArtifacts.includes('result.json')) {
+      const artifactPath = join(request.cwd, 'result.json');
+      if (existsSync(artifactPath)) {
+        ret.resultJsonPath = 'result.json';
+      }
+    }
     return ret;
   }
 

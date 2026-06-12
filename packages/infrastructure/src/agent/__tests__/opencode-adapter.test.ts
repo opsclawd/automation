@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import { OpenCodeAgentAdapter } from '../opencode-adapter.js';
 
 function makeWorktree(): string {
@@ -1036,4 +1037,157 @@ describe('OpenCodeAgentAdapter', () => {
       await injectionPromise;
     }
   }, 15000);
+
+  it('passes PWD=request.cwd and removes INIT_CWD from child env', async () => {
+    const cwd = makeWorktree();
+    const envLogFile = join(__dirname, '..', '__fixtures__', 'last-env.txt');
+    if (existsSync(envLogFile)) rmSync(envLogFile);
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-env-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(result.outcome).toBe('success');
+    const envLog = readFileSync(envLogFile, 'utf-8');
+    // PWD should be set to the request cwd
+    expect(envLog).toContain(`PWD=${cwd}`);
+    // INIT_CWD should be <unset> (the fixture writes <unset> when var is empty/missing)
+    expect(envLog).toContain('INIT_CWD=<unset>');
+    if (existsSync(envLogFile)) rmSync(envLogFile);
+  });
+
+  it('recovers result.json from known stray location (apps/cli/) and emits DRIFT_WARNING', async () => {
+    const cwd = makeWorktree();
+    const strayDir = join(cwd, 'apps', 'cli');
+    mkdirSync(strayDir, { recursive: true });
+    writeFileSync(
+      join(strayDir, 'result.json'),
+      '{"commentId":1,"action":"fixed","replyBody":"ok"}',
+    );
+    // Confirm it is NOT at the expected worktree-root path
+    expect(existsSync(join(cwd, 'result.json'))).toBe(false);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(r.resultJsonPath).toBe('result.json');
+    expect(existsSync(join(cwd, 'result.json'))).toBe(true);
+    expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toContain('"commentId":1');
+    const stderrLog = readFileSync(r.stderrPath, 'utf-8');
+    expect(stderrLog).toContain('DRIFT_WARNING');
+    expect(stderrLog).toContain('apps/cli/result.json');
+  });
+
+  it('resultJsonPath is set on success when result.json exists at the expected path', async () => {
+    const cwd = makeWorktree();
+    writeFileSync(join(cwd, 'result.json'), '{"commentId":2,"action":"no_fix","replyBody":"ok"}');
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(r.resultJsonPath).toBe('result.json');
+    // No DRIFT_WARNING when artifact is at the expected location
+    const stderrLog = readFileSync(r.stderrPath, 'utf-8');
+    expect(stderrLog).not.toContain('DRIFT_WARNING');
+  });
+
+  it('resultJsonPath is absent on contract_violation when artifact is missing', async () => {
+    const cwd = makeWorktree();
+    // No result.json written anywhere — not in cwd, not passed repoRoot
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(r.resultJsonPath).toBeUndefined();
+  });
+
+  it('cleans stale result.json from repoRoot stray location pre-launch', async () => {
+    const cwd = makeWorktree();
+    const repoRoot = mkdtempSync(join(tmpdir(), 'opencode-repoRoot-'));
+    execSync('git init -q', { cwd: repoRoot });
+    execSync('git config user.email t@test', { cwd: repoRoot });
+    execSync('git config user.name t', { cwd: repoRoot });
+    writeFileSync(join(repoRoot, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: repoRoot });
+    // Place a stale result.json at the repoRoot stray path (simulates previous run)
+    const strayDir = join(repoRoot, 'apps', 'cli');
+    mkdirSync(strayDir, { recursive: true });
+    writeFileSync(
+      join(strayDir, 'result.json'),
+      '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}',
+    );
+    expect(existsSync(join(strayDir, 'result.json'))).toBe(true);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+      repoRoot,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    // Pre-launch cleanup removed the stale file, and fake-opencode-success.sh
+    // writes no fresh artifact, so the adapter reports contract_violation
+    expect(existsSync(join(strayDir, 'result.json'))).toBe(false);
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(r.resultJsonPath).toBeUndefined();
+  });
 });
