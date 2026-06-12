@@ -2901,10 +2901,9 @@ ${_hook_log_tail}"
     # Layer 2: validate artifacts + verdict
     SPEC_CORRECTIVE_WARNING=""
     validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL
-    local spec_vcode=$?
+    spec_vcode=$?
     if [[ $spec_vcode -ne 0 ]]; then
       if [[ $spec_vcode -eq 2 ]]; then
-        local spec_verdict
         spec_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
         SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
       fi
@@ -2921,10 +2920,9 @@ ${_hook_log_tail}"
     # Layer 2: validate artifacts + verdict
     QUALITY_CORRECTIVE_WARNING=""
     validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL
-    local quality_vcode=$?
+    quality_vcode=$?
     if [[ $quality_vcode -ne 0 ]]; then
       if [[ $quality_vcode -eq 2 ]]; then
-        local quality_verdict
         quality_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
         QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
       fi
@@ -3022,10 +3020,9 @@ ${_hook_log_tail}"
       # Layer 2: validate artifacts + verdict
       SPEC_CORRECTIVE_WARNING=""
       validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL
-      local spec_vcode=$?
+      spec_vcode=$?
       if [[ $spec_vcode -ne 0 ]]; then
         if [[ $spec_vcode -eq 2 ]]; then
-          local spec_verdict
           spec_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
           SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
         fi
@@ -3042,10 +3039,9 @@ ${_hook_log_tail}"
       # Layer 2: validate artifacts + verdict
       QUALITY_CORRECTIVE_WARNING=""
       validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL
-      local quality_vcode=$?
+      quality_vcode=$?
       if [[ $quality_vcode -ne 0 ]]; then
         if [[ $quality_vcode -eq 2 ]]; then
-          local quality_verdict
           quality_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
           QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
         fi
