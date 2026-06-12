@@ -279,7 +279,7 @@ describe('ProcessPrReviewComments — blocking', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
+    expect(repo.getComment(runId, 9001)?.state).toBe('replied');
 
     const out = await uc.execute({
       runId,
@@ -626,7 +626,7 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
 });
 
 describe('ProcessPrReviewComments — per-task retry budget', () => {
-  it('retries a failing task MAX_TASK_RETRIES times before blocking the comment', async () => {
+  it('retries a failing task ESCALATION_BUDGET times before blocking the comment', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [
         makeSuccessAgentResult({ outcome: 'failed' }),
@@ -692,7 +692,7 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
+    expect(repo.getComment(runId, 9001)?.state).toBe('replied');
 
     const out = await uc.execute({
       runId,
@@ -790,7 +790,7 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
+    expect(repo.getComment(runId, 9001)?.state).toBe('replied');
 
     const out1 = await uc.execute({
       runId,
@@ -1027,7 +1027,7 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
     });
 
     const after1 = repo.getComment(runId, 9001);
-    expect(after1?.state).toBe('pending');
+    expect(after1?.state).toBe('replied');
     expect(after1?.replyVerified).toBe(false);
     expect(github.repliesPosted).toHaveLength(1);
 
@@ -1385,6 +1385,9 @@ describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha
     const agentBCommit = 'bbb222fix';
 
     const git = new TwoShaGitPort(sharedStart, agentBCommit);
+    git.remoteRefs.set('origin/feat-x', agentBCommit);
+    git.ancestorResults.set(`${agentBCommit}|${agentBCommit}`, true);
+    git.logBetweenResults.set(`${sharedStart}|${agentBCommit}`, [agentBCommit]);
     const verifyCalls: Array<{
       cwd: string;
       branch: string;
