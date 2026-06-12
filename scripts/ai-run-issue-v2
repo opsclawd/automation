@@ -4247,7 +4247,8 @@ Start now."
       "${WORKTREE_DIR}" \
       "legacy-${FIX_LOOP_COUNT}" \
       "fix: loop ${FIX_LOOP_COUNT} (auto-committed after green revalidate)" \
-      "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"
+      "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" \
+      "origin/${BASE_BRANCH}"
     # If revalidation failed, the stash is retained (tree clean, no commit).
     # Fail the phase as before — the stash preserves the work for debugging.
     if [[ -f "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" ]] && grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
@@ -4635,7 +4636,8 @@ Start now."
         "${WORKTREE_DIR}" \
         "$_task_id" \
         "fix: task ${_task_id} (auto-committed after green revalidate)" \
-        "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"
+        "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log" \
+        "origin/${BASE_BRANCH}"
 
       # Guard: if the stash was consumed (pop succeeded) but commit failed,
       # the tree is dirty with staged changes. A subsequent retry or task

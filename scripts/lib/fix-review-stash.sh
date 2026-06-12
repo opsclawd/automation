@@ -9,11 +9,14 @@
 # The function checks whether _revalidate_is_green() is available; if not,
 # it falls back to checking the log file directly for "[* failed]" markers.
 
-# _stash_and_conditionally_commit WORKTREE_DIR TASK_ID COMMIT_MSG REVALIDATE_LOG
+# _stash_and_conditionally_commit WORKTREE_DIR TASK_ID COMMIT_MSG REVALIDATE_LOG [BASE_BRANCH]
 #
 # Stash uncommitted changes after revalidation. If revalidation passed,
 # pop the stash and commit on behalf of the agent. If revalidation failed,
 # keep the stash for debugging.
+#
+# BASE_BRANCH (optional, e.g. origin/main) is forwarded to guard_artifact_clean
+# so committed orchestrator artifacts are also detected and removed (#280).
 #
 # Returns 0 always (never fails the caller).
 _stash_and_conditionally_commit() {
@@ -21,6 +24,7 @@ _stash_and_conditionally_commit() {
   local task_id=$2
   local commit_msg=$3
   local revalidate_log=$4
+  local base_branch=${5:-}
 
   if git -C "$worktree_dir" diff --exit-code HEAD 2>/dev/null; then
     return 0  # Tree is clean, nothing to do
@@ -29,7 +33,7 @@ _stash_and_conditionally_commit() {
   # Remove known orchestrator artifacts from the worktree before stashing or
   # committing, so they cannot be swept into the agent's work (#280).
   if declare -F guard_artifact_clean >/dev/null 2>&1; then
-    guard_artifact_clean "$worktree_dir"
+    guard_artifact_clean "$worktree_dir" "$base_branch"
   fi
 
   # Stash uncommitted changes (tracked + untracked)
