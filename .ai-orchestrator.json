@@ -20,6 +20,11 @@
     "readyMaxDays": 7,
     "invocationMaxMinutes": 30
   },
+  "taskSplitting": {
+    "maxTestFileLines": 500,
+    "maxTestCases": 10,
+    "blockOversizedTasks": false
+  },
   "agent": {
     "defaultProfile": "builder",
     "profiles": {
