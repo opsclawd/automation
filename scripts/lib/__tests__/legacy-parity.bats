@@ -215,58 +215,58 @@ setup() {
   fi
 }
 
-  # Invariant: _guard_main_checkout aborts the run (via orchestrator_fail) when
-  #   REPO_ROOT is mutated by an agent, rather than silently auto-resetting.
-  #   Auto-reset is only used as a legacy fallback when orchestrator_fail is
-  #   not defined (e.g. ai-pr-review-poll.legacy).
-  # Source: #295.
-  # Failure prevented: agent leaks silently auto-cleaned, masking the underlying
-  #   bug and allowing the run to continue in a corrupted state (e.g. commit
-  #   6645816 in #290).
-  # TS-port contract: the TS orchestrator guard must hard-fail on any detected
-  #   REPO_ROOT mutation (branch switch, HEAD advance, dirty tree) and must
-  #   never silently auto-reset.
-  @test "parity[#295]: guard hard-fails on REPO_ROOT mutation when orchestrator_fail is defined" {
-    source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
-    source "$REPO_ROOT/scripts/lib/emit_event.sh"
-    warn() { :; }
+# Invariant: _guard_main_checkout aborts the run (via orchestrator_fail) when
+#   REPO_ROOT is mutated by an agent, rather than silently auto-resetting.
+#   Auto-reset is only used as a legacy fallback when orchestrator_fail is
+#   not defined (e.g. ai-pr-review-poll.legacy).
+# Source: #295.
+# Failure prevented: agent leaks silently auto-cleaned, masking the underlying
+#   bug and allowing the run to continue in a corrupted state (e.g. commit
+#   6645816 in #290).
+# TS-port contract: the TS orchestrator guard must hard-fail on any detected
+#   REPO_ROOT mutation (branch switch, HEAD advance, dirty tree) and must
+#   never silently auto-reset.
+@test "parity[#295]: guard hard-fails on REPO_ROOT mutation when orchestrator_fail is defined" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
 
-    local repo="$BATS_TEST_TMPDIR/gf"
-    mkdir -p "$repo"
-    git -C "$repo" init -q
-    git -C "$repo" config user.email "t@t"
-    git -C "$repo" config user.name "t"
-    echo base > "$repo/app.ts"
-    git -C "$repo" add app.ts
-    git -C "$repo" commit -q -m init
+  local repo="$BATS_TEST_TMPDIR/gf"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
 
-    export REPO_ROOT="$repo"
-    export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt"
-    mkdir -p "$WORKTREE_DIR"
-    export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/events.jsonl"
-    : > "$AI_RUN_EVENTS_FILE"
+  export REPO_ROOT="$repo"
+  export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt"
+  mkdir -p "$WORKTREE_DIR"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/events.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
 
-    local _fail_called=false
-    local _fail_reason=""
-    orchestrator_fail() { _fail_called=true; _fail_reason="$1"; return 1; }
+  local _fail_called=false
+  local _fail_reason=""
+  orchestrator_fail() { _fail_called=true; _fail_reason="$1"; return 1; }
 
-    local pre_state
-    pre_state=$(_capture_main_state)
+  local pre_state
+  pre_state=$(_capture_main_state)
 
-    echo "# leaked by agent" >> "$repo/.gitignore"
+  echo "# leaked by agent" >> "$repo/.gitignore"
 
-    _guard_main_checkout "test" "$pre_state" || true
+  _guard_main_checkout "test" "$pre_state" || true
 
-    [ "$_fail_called" = "true" ]
-    [[ "$_fail_reason" == *"Main checkout guard"* ]]
+  [ "$_fail_called" = "true" ]
+  [[ "$_fail_reason" == *"Main checkout guard"* ]]
 
-    if grep -q "leaked by agent" "$repo/.gitignore" 2>/dev/null; then
-      : # expected — untracked file still present, guard did not auto-reset
-    else
-      echo "FATAL: guard auto-reset the leak despite orchestrator_fail being defined"
-      false
-    fi
-  }
+  if grep -q "leaked by agent" "$repo/.gitignore" 2>/dev/null; then
+    : # expected — untracked file still present, guard did not auto-reset
+  else
+    echo "FATAL: guard auto-reset the leak despite orchestrator_fail being defined"
+    false
+  fi
+}
 
 # Invariant: when pre-state was dirty, the guard does NOT abort even
 #   with orchestrator_fail defined — the dirty state predates the agent
@@ -307,12 +307,13 @@ setup() {
   [ "$_fail_called" = "false" ]
 }
 
-# Invariant: ai-run-issue-v2 installs an EXIT trap that fires the guard and
-#   restores REPO_ROOT branch on every exit path (normal completion, crash,
-#   orchestrator_fail). This closes the gap where a run crash between phases
-#   leaves REPO_ROOT on detached HEAD or with leaked mutations.
+# Implementation-presence check: ai-run-issue-v2 must install an EXIT trap that
+#   fires the guard and restores REPO_ROOT branch on every exit path. The
+#   behavioral contract (trap actually fires on exit) is verified by the
+#   runtime-agnostic parity tests above. This check pins the structural
+#   invariant so a refactor that removes the trap is caught early.
 # Source: #295.
-@test "parity[#295]: ai-run-issue-v2 has EXIT trap that covers guard + branch restore" {
+@test "implementation-presence[#295]: ai-run-issue-v2 has EXIT trap that covers guard + branch restore" {
   # Verify trap registration exists and calls _trap_on_exit (or equivalent)
   run grep -c 'trap.*_trap_on_exit.*EXIT' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
@@ -330,11 +331,13 @@ setup() {
   [ "$output" -ge 1 ]
 }
 
-# Invariant: ai-run-issue-v2 detaches REPO_ROOT HEAD before the first agent
-#   phase runs. _detach_main_head is called after configuration loading and
-#   before detect_phase.
+# Implementation-presence check: ai-run-issue-v2 must detach REPO_ROOT HEAD
+#   before the first agent phase runs. The behavioral contract (detached HEAD
+#   prevents commits from advancing main) is verified by the runtime-agnostic
+#   parity test above. This check pins the structural invariant so a refactor
+#   that removes the detach call is caught early.
 # Source: #295.
-@test "parity[#295]: ai-run-issue-v2 calls _detach_main_head before first agent phase" {
+@test "implementation-presence[#295]: ai-run-issue-v2 calls _detach_main_head before first agent phase" {
   # Verify _detach_main_head is called at least once
   run grep -c '_detach_main_head' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
@@ -348,16 +351,13 @@ setup() {
   [ "$detach_line" -lt "$phase_line" ]
 }
 
-# Invariant: run-agent.ts rejects `--cwd` equal to `--repo-root` (REPO_ROOT)
-#   when a worktree is configured. Running an agent with cwd=REPO_ROOT allows
-#   stray writes/commits to corrupt the main checkout. The guard catches
-#   mutations after the fact, but cwd validation prevents the pre-condition
-#   entirely. Scoped to worktree-only to allow legitimate REPO_ROOT callers
-#   (e.g. consolidation workflows).
+# Implementation-presence check: run-agent.ts must reject --cwd equal to
+#   --repo-root when a worktree is configured. The behavioral contract is
+#   inherent in TypeScript (process.exit(2) is the only path). This check
+#   pins the structural invariant so a refactor that removes the validation
+#   is caught early. Not a parity invariant — does not port to TS.
 # Source: #295.
-# TS-port contract: this invariant is already in TypeScript — it does not port.
-#   The test verifies the current implementation holds.
-@test "parity[#295]: run-agent.ts rejects cwd equal to repo-root when worktree expected" {
+@test "implementation-presence[#295]: run-agent.ts rejects cwd equal to repo-root when worktree expected" {
   # Check that the validation logic exists in the source
   run grep -c "agent cwd must not be REPO_ROOT" "$REPO_ROOT/apps/cli/src/run-agent.ts"
   [ "$status" -eq 0 ]

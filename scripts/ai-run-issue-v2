@@ -1112,6 +1112,7 @@ _trap_on_exit() {
   if declare -F _reattach_main_head >/dev/null 2>&1; then
     _reattach_main_head || warn "EXIT trap: failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
   fi
+
   if declare -F _guard_main_checkout >/dev/null 2>&1; then
     # P2-F2: pass pre-detach state so the guard can detect HEAD advancement
     # from leaked commits if _reattach_main_head above failed. The pre-state
@@ -1119,7 +1120,7 @@ _trap_on_exit() {
     # guard calls capture their own state independently. Since _reattach_main_head
     # runs first in this trap (restoring the branch or orphaning agent commits),
     # HEAD-movement detection here is primarily a defense-in-depth fallback.
-    _guard_main_checkout "exit-trap" "${_EXIT_TRAP_PRE_STATE:-}" 2>/dev/null || true
+    _guard_main_checkout "exit-trap" "${_EXIT_TRAP_PRE_STATE:-}" || true
   fi
   cleanup_staging
   exit $_exit_code
