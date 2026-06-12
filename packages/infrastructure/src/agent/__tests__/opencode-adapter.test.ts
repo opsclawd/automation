@@ -1150,7 +1150,7 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.resultJsonPath).toBeUndefined();
   });
 
-  it('recovers result.json from repoRoot stray location when not in worktree', async () => {
+  it('cleans stale result.json from repoRoot stray location pre-launch', async () => {
     const cwd = makeWorktree();
     const repoRoot = mkdtempSync(join(tmpdir(), 'opencode-repoRoot-'));
     execSync('git init -q', { cwd: repoRoot });
@@ -1158,14 +1158,14 @@ describe('OpenCodeAgentAdapter', () => {
     execSync('git config user.name t', { cwd: repoRoot });
     writeFileSync(join(repoRoot, 'README.md'), 'x');
     execSync('git add . && git commit -q -m init', { cwd: repoRoot });
+    // Place a stale result.json at the repoRoot stray path (simulates previous run)
     const strayDir = join(repoRoot, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
     writeFileSync(
       join(strayDir, 'result.json'),
       '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}',
     );
-    // Confirm it is NOT at the worktree path
-    expect(existsSync(join(cwd, 'result.json'))).toBe(false);
+    expect(existsSync(join(strayDir, 'result.json'))).toBe(true);
 
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
@@ -1183,13 +1183,11 @@ describe('OpenCodeAgentAdapter', () => {
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
     });
 
-    expect(r.outcome).toBe('success');
-    expect(r.resultJsonPath).toBe('result.json');
-    expect(existsSync(join(cwd, 'result.json'))).toBe(true);
-    expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toContain('repoRoot');
-    const stderrLog = readFileSync(r.stderrPath, 'utf-8');
-    expect(stderrLog).toContain('DRIFT_WARNING');
-    expect(stderrLog).toContain('repoRoot');
-    expect(stderrLog).toContain('apps/cli/result.json');
+    // Pre-launch cleanup removed the stale file, and fake-opencode-success.sh
+    // writes no fresh artifact, so the adapter reports contract_violation
+    expect(existsSync(join(strayDir, 'result.json'))).toBe(false);
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(r.resultJsonPath).toBeUndefined();
   });
 });

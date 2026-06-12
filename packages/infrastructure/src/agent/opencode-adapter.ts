@@ -1,5 +1,13 @@
 import { execa } from 'execa';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -99,6 +107,19 @@ export class OpenCodeAgentAdapter implements AgentPort {
         PWD: request.cwd,
         INIT_CWD: undefined,
       };
+      // Pre-launch cleanup: remove any pre-existing result.json from known stray
+      // locations in repoRoot to prevent recovery of stale artifacts from previous
+      // invocations (#311, PR#312 review feedback).
+      if (this.opts.repoRoot && request.expectedArtifacts?.length) {
+        for (const artifact of request.expectedArtifacts) {
+          for (const stray of ['apps/cli']) {
+            const strayPath = join(this.opts.repoRoot, stray, artifact);
+            if (existsSync(strayPath)) {
+              rmSync(strayPath);
+            }
+          }
+        }
+      }
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
@@ -227,19 +248,27 @@ export class OpenCodeAgentAdapter implements AgentPort {
         for (const stray of strayLocations) {
           const worktreePath = join(request.cwd, stray, artifact);
           if (existsSync(worktreePath)) {
-            const artifactPath = join(request.cwd, artifact);
-            writeFileSync(artifactPath, readFileSync(worktreePath));
-            recovered = true;
-            stderrForLog = `DRIFT_WARNING: ${artifact} recovered from worktree ${stray}/${artifact}\n${stderrForLog}`;
+            try {
+              const artifactPath = join(request.cwd, artifact);
+              writeFileSync(artifactPath, readFileSync(worktreePath));
+              recovered = true;
+              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from worktree ${stray}/${artifact}\n${stderrForLog}`;
+            } catch (err) {
+              stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from worktree ${stray}/${artifact}: ${err}\n${stderrForLog}`;
+            }
             break;
           }
           if (this.opts.repoRoot) {
             const repoPath = join(this.opts.repoRoot, stray, artifact);
             if (existsSync(repoPath)) {
-              const artifactPath = join(request.cwd, artifact);
-              writeFileSync(artifactPath, readFileSync(repoPath));
-              recovered = true;
-              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot ${stray}/${artifact}\n${stderrForLog}`;
+              try {
+                const artifactPath = join(request.cwd, artifact);
+                writeFileSync(artifactPath, readFileSync(repoPath));
+                recovered = true;
+                stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot ${stray}/${artifact}\n${stderrForLog}`;
+              } catch (err) {
+                stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from repoRoot ${stray}/${artifact}: ${err}\n${stderrForLog}`;
+              }
               break;
             }
           }
