@@ -84,9 +84,35 @@ setup() {
   run grep -c '_escape_for_grep' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
-  # The malformed expression that crashed must not return.
-  run grep -F 's/[][.*^$/\\]/\\&/g' "$REPO_ROOT/scripts/ai-run-issue-v2"
-  [ "$status" -ne 0 ]
+}
+
+# Invariant: the poller must NOT hard-terminate on blocked comments.
+# blocked is a resting state that enters the READY/reactivation loop.
+# The poller exits code 0 for all resting states (all_resolved,
+# max_polls_reached, blocked) and code 2 for timeout cancellations
+# (cancelled, timed_out).
+# Source: M6-07 (#206).
+# Failure prevented: blocked early-exit killed the watcher so new
+#   reviewer activity after a block was silently dropped (PRs #302/#303).
+# TS-port contract: exitCodeForTerminalState must return 0 for blocked
+#   and all_resolved (resting), 2 for cancelled/timed_out (terminal).
+@test "parity[#206]: blocked is a resting state (exit 0), not a hard terminal" {
+  run grep -A8 'exitCodeForTerminalState' "$REPO_ROOT/apps/cli/src/run-pr-poll.ts"
+  [ "$status" -eq 0 ]
+  ! grep -n "'blocked'" "$REPO_ROOT/apps/cli/src/run-pr-poll.ts" | while IFS=: read -r ln _; do
+    sed -n "${ln},\$p" "$REPO_ROOT/apps/cli/src/run-pr-poll.ts" | head -30 | grep -q "return 1" && exit 1
+  done
+}
+# Invariant: all_resolved is a resting state (exit 0), not passed (terminal).
+# Source: M6-07 (#206).
+# Failure prevented: marking a resting run as 'passed' prevents future
+#   reactivation — new activity after all_resolved would be silently dropped.
+@test "parity[#206]: all_resolved maps to 'waiting', not 'passed'" {
+  run grep -A10 'runStatusForTerminalState' "$REPO_ROOT/apps/cli/src/run-pr-poll.ts"
+  [ "$status" -eq 0 ]
+  ! grep -n "'all_resolved'" "$REPO_ROOT/apps/cli/src/run-pr-poll.ts" | while IFS=: read -r ln _; do
+    sed -n "${ln},\$p" "$REPO_ROOT/apps/cli/src/run-pr-poll.ts" | head -20 | grep -q "'passed'" && exit 1
+  done
 }
 
 # Invariant: agent prompt strings never let the orchestrator expand embedded

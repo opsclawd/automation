@@ -95,17 +95,20 @@ describe('parsePollArgs', () => {
 });
 
 describe('exitCodeForTerminalState', () => {
-  it('maps all_resolved -> 0', () => {
+  it('maps all_resolved -> 0 (resting, not terminal)', () => {
     expect(exitCodeForTerminalState('all_resolved' as PollerTerminalState)).toBe(0);
   });
   it('maps max_polls_reached -> 0 (resting, not a failure)', () => {
     expect(exitCodeForTerminalState('max_polls_reached' as PollerTerminalState)).toBe(0);
   });
-  it('maps blocked -> 1', () => {
-    expect(exitCodeForTerminalState('blocked' as PollerTerminalState)).toBe(1);
+  it('maps blocked -> 0 (resting, no longer a hard terminal)', () => {
+    expect(exitCodeForTerminalState('blocked' as PollerTerminalState)).toBe(0);
   });
   it('maps timed_out -> 2', () => {
     expect(exitCodeForTerminalState('timed_out' as PollerTerminalState)).toBe(2);
+  });
+  it('maps cancelled -> 2 (terminal timeout)', () => {
+    expect(exitCodeForTerminalState('cancelled' as PollerTerminalState)).toBe(2);
   });
   it('maps unknown state -> 3', () => {
     expect(exitCodeForTerminalState('something_else' as PollerTerminalState)).toBe(3);
@@ -176,13 +179,14 @@ describe('runPoll', () => {
   });
 
   it.each([
-    ['all_resolved', 'passed'],
-    ['max_polls_reached', 'passed'],
-    ['blocked', 'cancelled'],
-    ['timed_out', 'failed'],
+    ['all_resolved', 'waiting', 'update'],
+    ['max_polls_reached', 'waiting', 'update'],
+    ['blocked', 'waiting', 'update'],
+    ['cancelled', 'cancelled', 'updateStatusByUuid'],
+    ['timed_out', 'cancelled', 'updateStatusByUuid'],
   ] as const)(
     'updates run status to %s when terminal state is %s',
-    async (terminalState, expectedStatus) => {
+    async (terminalState, expectedStatus, expectedMethod) => {
       const deps = makeDeps();
       deps.buildPrReviewPoller = vi.fn(() => ({
         run: vi.fn(async () => ({ terminalState, pollsRun: 1 })),
@@ -190,10 +194,17 @@ describe('runPoll', () => {
 
       await runPoll(defaultArgs, deps);
 
-      expect(deps.runRepository.updateStatusByUuid).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({ status: expectedStatus }),
-      );
+      if (expectedMethod === 'update') {
+        expect(deps.runRepository.update).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({ status: expectedStatus }),
+        );
+      } else {
+        expect(deps.runRepository.updateStatusByUuid).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.objectContaining({ status: expectedStatus }),
+        );
+      }
     },
   );
 

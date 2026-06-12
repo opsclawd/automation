@@ -63,9 +63,9 @@ export function exitCodeForTerminalState(state: PollerTerminalState): number {
   switch (state) {
     case 'all_resolved':
     case 'max_polls_reached':
-      return 0;
     case 'blocked':
-      return 1;
+      return 0;
+    case 'cancelled':
     case 'timed_out':
       return 2;
     default:
@@ -77,11 +77,11 @@ function runStatusForTerminalState(state: PollerTerminalState): RunStatus {
   switch (state) {
     case 'all_resolved':
     case 'max_polls_reached':
-      return 'passed';
     case 'blocked':
-      return 'cancelled';
+      return 'waiting';
+    case 'cancelled':
     case 'timed_out':
-      return 'failed';
+      return 'cancelled';
   }
 }
 
@@ -200,10 +200,16 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     deps.stderr.write(`[run-pr-poll] terminal=${result.terminalState} polls=${result.pollsRun}\n`);
     if (createdSyntheticRun) {
       try {
-        deps.runRepository.updateStatusByUuid(runIdStr, {
-          status: runStatusForTerminalState(result.terminalState),
-          completedAt: new Date(),
-        });
+        const status = runStatusForTerminalState(result.terminalState);
+        if (status === 'cancelled') {
+          deps.runRepository.updateStatusByUuid(runIdStr, {
+            status,
+            completedAt: new Date(),
+            failureReason: 'readyMaxDays exceeded',
+          });
+        } else {
+          deps.runRepository.update(runIdStr, { status });
+        }
       } catch {
         // Best-effort: DB write failure must not overwrite a known terminal exit code
       }
