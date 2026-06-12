@@ -447,3 +447,31 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" -ge 3 ]
 }
+
+# Invariant: plan-review retries the reviewer on contract_violation (exit 1)
+# rather than immediately calling orchestrator_fail. Non-retryable exits (2, 3)
+# still fail immediately.
+# Source: #297 (Part 1).
+# Failure prevented: a recoverable agent miss (model writes zero files) is
+#   treated as unrecoverable failure, wasting compute and requiring manual re-run.
+# TS-port contract: the TS plan-review orchestrator MUST retry the reviewer
+#   on contract_violation outcomes rather than failing immediately.
+@test "parity[#297]: plan-review retries reviewer on contract_violation (exit 1)" {
+  local pr="$REPO_ROOT/scripts/lib/plan-review.sh"
+  # Retry loop must exist in the reviewer error-handling path
+  run grep -c "retry" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Must distinguish exit 1 from other non-zero exits for retryability
+  run grep -c "reviewer_ec -eq 1" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Must have a bounded retry count parameter
+  run grep -c "reviewer_retries" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Must still call orchestrator_fail when retries exhausted
+  run grep -c "retries exhausted" "$pr"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}

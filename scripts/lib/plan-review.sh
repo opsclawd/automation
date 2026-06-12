@@ -384,6 +384,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 #   $5 — branch name
 #   $6 — timeout seconds
 #   $7 — max iterations
+#   $8 — (optional) reviewer retries per iteration (default 2)
 # Returns 0 if plan passes, 1 if max iterations reached without convergence.
 run_plan_review_loop() {
   local worktree_dir="$1"
@@ -393,6 +394,7 @@ run_plan_review_loop() {
   local branch="$5"
   local timeout_sec="$6"
   local max_iter="$7"
+  local reviewer_retries="${8:-2}"
 
   local iteration=0
   local status=""
@@ -419,10 +421,37 @@ run_plan_review_loop() {
     run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration" "$_prev_findings"
     local reviewer_ec=$?
     if [[ $reviewer_ec -ne 0 ]]; then
-      warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration}"
-      emit_event "plan-review" "error" "plan_review.reviewer_failed" \
-        "Reviewer agent failed on iteration ${iteration}" iteration="$iteration" exit_code="$reviewer_ec"
-      orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
+      if [[ $reviewer_ec -eq 1 ]]; then
+        local retry=0
+        local retry_passed=0
+        while [[ $retry -lt $reviewer_retries ]]; do
+          retry=$((retry + 1))
+          warn "Reviewer contract violation (exit 1) on iteration ${iteration} — retry ${retry}/${reviewer_retries}"
+          emit_event "plan-review" "warn" "plan_review.reviewer_retry" \
+            "Retrying reviewer after contract violation" iteration="$iteration" retry="$retry" max_retries="$reviewer_retries"
+          rm -f "${worktree_dir}/plan-review-findings.md"
+          run_adversarial_reviewer "$worktree_dir" "$repo_root" "$run_id" "$repo_id" "$branch" "$timeout_sec" "$iteration" "$_prev_findings"
+          reviewer_ec=$?
+          if [[ $reviewer_ec -eq 0 ]]; then
+            retry_passed=1
+            break
+          fi
+          if [[ $reviewer_ec -ne 1 ]]; then
+            break
+          fi
+        done
+        if [[ $retry_passed -eq 0 ]]; then
+          warn "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on iteration ${iteration}"
+          emit_event "plan-review" "error" "plan_review.reviewer_failed" \
+            "Reviewer agent failed on iteration ${iteration} after retries" iteration="$iteration" exit_code="$reviewer_ec" retries="$retry"
+          orchestrator_fail "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on iteration ${iteration} — agent contract violation, retries exhausted"
+        fi
+      else
+        warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration}"
+        emit_event "plan-review" "error" "plan_review.reviewer_failed" \
+          "Reviewer agent failed on iteration ${iteration}" iteration="$iteration" exit_code="$reviewer_ec"
+        orchestrator_fail "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration} — agent invocation error, not plan non-convergence"
+      fi
     fi
     _check_review_worktree_violations "$worktree_dir" "$_pre_review_sha" '^plan-review-findings\.md$'
     _check_excluded_file_integrity "${worktree_dir}/plan.md" "$_plan_checksum_before" "plan.md"
