@@ -785,3 +785,25 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+# Invariant: orchestrator_artifact_paths() returns the canonical artifact
+#   filename list (source of truth). The list is source-controlled and any
+#   new root-level orchestrator artifact MUST be added here first.
+# Source: #280.
+# Failure prevented: artifact lists in .gitignore, seed_excludes, mutation
+#   guards, and agent prompts drift independently.
+# TS-port contract: the TS orchestrator must reference the same canonical
+#   list (or a port of it) for its equivalent guards.
+@test "parity[#280]: orchestrator_artifact_paths returns expected canonical entries" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  run orchestrator_artifact_paths
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"validation.headsha"* ]]
+  [[ "$output" == *"review-fix-plan.json"* ]]
+  [[ "$output" == *"review-task-manifest.json"* ]]
+  [[ "$output" == *"review-triage.md"* ]]
+  [[ "$output" == *"code-review.md"* ]]
+  [[ "$output" == *"task-manifest.json"* ]]
+  [[ "$output" == *"compound-draft.md"* ]]
+  [[ "$output" == *"result.json"* ]]
+}
