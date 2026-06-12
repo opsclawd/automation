@@ -1110,7 +1110,7 @@ _trap_on_exit() {
   # re-trigger the EXIT trap.  Reattaching first guarantees REPO_ROOT is
   # restored even when the guard aborts the run.
   if declare -F _reattach_main_head >/dev/null 2>&1; then
-    _reattach_main_head 2>/dev/null || warn "EXIT trap: failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
+    _reattach_main_head || warn "EXIT trap: failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
   fi
   if declare -F _guard_main_checkout >/dev/null 2>&1; then
     # P2-F2: pass pre-detach state so the guard can detect HEAD advancement
