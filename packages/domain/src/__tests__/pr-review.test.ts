@@ -4,11 +4,9 @@ import {
   createPrReviewComment,
   markReplied,
   markProcessed,
-  resetForRetry,
   blockComment,
   isUnresolved,
   CommentStateError,
-  type PrReviewComment,
 } from '../pr-review.js';
 
 const base = () =>
@@ -114,38 +112,13 @@ describe('PrReviewComment state machine', () => {
     ).toThrow(/reply not verified/i);
   });
 
-  it('resetForRetry sends replied back to pending and clears stale fields', () => {
-    const replied = markReplied(base(), {
-      replyId: 555,
-      outcome: 'fixed',
-      commitSha: 'abc',
-      poll: 1,
-    });
-    const retried = resetForRetry(replied, { poll: 2 });
-    expect(retried.state).toBe('pending');
-    expect(retried.attempts).toBe(1);
-    expect(retried.replyId).toBeUndefined();
-    expect(retried.outcome).toBeUndefined();
-    expect(retried.commitSha).toBeUndefined();
-    expect(retried.blockedReason).toBeUndefined();
-    expect(retried.commitVerified).toBe(false);
-    expect(retried.replyVerified).toBe(false);
-    expect(retried.buildVerified).toBe(false);
-  });
-
-  it('resetForRetry throws if not in replied state', () => {
-    expect(() => resetForRetry(base(), { poll: 1 })).toThrow(/cannot reset.*retry/i);
-  });
-
-  it('blockComment after 2 unresolved attempts', () => {
-    let c: PrReviewComment = markReplied(base(), {
+  it('blockComment from replied state', () => {
+    const c = markReplied(base(), {
       replyId: 1,
       outcome: 'fixed',
       commitSha: 'a',
       poll: 1,
     });
-    c = resetForRetry(c, { poll: 2 });
-    c = markReplied(c, { replyId: 2, outcome: 'fixed', commitSha: 'b', poll: 2 });
     const blocked = blockComment(c, 'verification failed twice');
     expect(blocked.state).toBe('blocked');
     expect(blocked.blockedReason).toBe('verification failed twice');

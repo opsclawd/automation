@@ -138,23 +138,6 @@ function stripOptionalFields(c: PrReviewComment): PrReviewComment {
   };
 }
 
-export function resetForRetry(c: PrReviewComment, input: { poll: number }): PrReviewComment {
-  if (c.state !== 'replied') {
-    throw new CommentStateError(
-      `cannot reset comment ${c.commentId} for retry: current state is ${c.state}, expected replied`,
-    );
-  }
-  return {
-    ...stripOptionalFields(c),
-    state: 'pending',
-    lastPoll: input.poll,
-    commitVerified: false,
-    replyVerified: false,
-    buildVerified: false,
-    updatedAt: new Date(),
-  };
-}
-
 export function blockComment(c: PrReviewComment, reason: string): PrReviewComment {
   if (c.state !== 'pending' && c.state !== 'replied') {
     throw new CommentStateError(
