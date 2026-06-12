@@ -27,7 +27,7 @@ export interface PollAttemptDto {
   startedAt: string;
   completedAt: string | null;
   nextPollAt: string | null;
-  terminalState: 'all_resolved' | 'max_polls_reached' | 'blocked' | null;
+  terminalState: 'all_resolved' | 'max_polls_reached' | 'blocked' | 'timed_out' | null;
 }
 
 const STATE_ORDER: Record<PrReviewCommentDto['state'], number> = {
