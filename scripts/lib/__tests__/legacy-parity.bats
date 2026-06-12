@@ -347,3 +347,31 @@ setup() {
   phase_line=$(grep -n 'PHASE="\$(detect_phase)"' "$REPO_ROOT/scripts/ai-run-issue-v2" | head -1 | cut -d: -f1)
   [ "$detach_line" -lt "$phase_line" ]
 }
+
+# Invariant: run-agent.ts rejects `--cwd` equal to `--repo-root` (REPO_ROOT).
+#   Running an agent with cwd=REPO_ROOT allows stray writes/commits to corrupt
+#   the main checkout. The guard catches mutations after the fact, but cwd
+#   validation prevents the pre-condition entirely.
+# Source: #295.
+# TS-port contract: this invariant is already in TypeScript — it does not port.
+#   The test verifies the current implementation holds.
+@test "parity[#295]: run-agent.ts rejects cwd equal to repo-root" {
+  # Check that the validation logic exists in the source
+  run grep -c "agent cwd must not be REPO_ROOT" "$REPO_ROOT/apps/cli/src/run-agent.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Verify the exit code is 2 (config error) for this validation.
+  # Use -A5 to capture enough context after the error message.
+  run grep -A5 "agent cwd must not be REPO_ROOT" "$REPO_ROOT/apps/cli/src/run-agent.ts"
+  [ "$status" -eq 0 ]
+  run grep -c "process.exit(2)" <<< "$output"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Verify the resolved path comparison uses resolve() on both sides
+  run grep -c "resolve.*values.*cwd" "$REPO_ROOT/apps/cli/src/run-agent.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  run grep -c "resolve.*values.*repo-root" "$REPO_ROOT/apps/cli/src/run-agent.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}

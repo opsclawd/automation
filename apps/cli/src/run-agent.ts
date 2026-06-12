@@ -211,6 +211,20 @@ async function main() {
   // its own pnpm-workspace.yaml, producing the wrong root for DB lookups).
   const repoRoot = values['repo-root'] ?? findRepoRoot(values.cwd!);
 
+  // Agent cwd must never be REPO_ROOT (the main checkout on main).
+  // Running agents in REPO_ROOT allows stray writes and commits to corrupt
+  // the main branch. Use a worktree directory instead.
+  if (values['repo-root'] && values.cwd) {
+    const resolvedCwd = resolve(values.cwd);
+    const resolvedRepoRoot = resolve(values['repo-root']);
+    if (resolvedCwd === resolvedRepoRoot) {
+      console.error(
+        'agent cwd must not be REPO_ROOT (main checkout). ' + 'Use a worktree directory instead.',
+      );
+      process.exit(2);
+    }
+  }
+
   // Load config from repo root
   let config;
   try {
