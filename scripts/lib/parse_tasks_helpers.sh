@@ -566,7 +566,7 @@ _lint_task_size() {
       local line_count
       line_count=$(wc -l < "$resolved_path" 2>/dev/null || echo 0)
       local test_case_count
-      test_case_count=$(grep -cP '^\s*(it|test)\(.*,\s*(async\s+)?\(\)' "$resolved_path" 2>/dev/null || echo 0)
+      test_case_count=$(grep -cP '^\s*(it|test)(\.(skip|only))?\(.*,\s*(async\s+)?(\(\)|function)' "$resolved_path" 2>/dev/null || echo 0)
       local oversized=0
       local reasons=""
       if [[ "$line_count" -gt "$max_lines" ]]; then
