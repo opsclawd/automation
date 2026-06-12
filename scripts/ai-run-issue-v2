@@ -561,18 +561,28 @@ EOF
 # shellcheck source=lib/result-resolver.sh
 source "${REPO_ROOT}/scripts/lib/result-resolver.sh"
 
+# shellcheck source=lib/review-contract.sh
+source "${REPO_ROOT}/scripts/lib/review-contract.sh"
+
 # shellcheck source=lib/plan-write-remediation.sh
 source "${REPO_ROOT}/scripts/lib/plan-write-remediation.sh"
 
 # validate_review_artifacts: checks that review artifacts satisfy the
 # agent contract. An agent must always produce a non-empty .md findings
-# file. The .result file is optional but, if present, must coexist with
-# a non-empty .md. Returns 1 if the contract is broken, 0 if valid.
+# file. If the .result file is present, its value must be in the allowed
+# set. Returns 1 if the .md contract is broken, 2 if the .result verdict
+# is invalid (present but wrong value), 0 if valid.
+# Caller passes allowed verdict values as additional args.
 validate_review_artifacts() {
   local result_file="$1"
-  local md_file="$2"
+  local md_file="$2"; shift 2
   if [[ ! -s "$md_file" ]]; then
     return 1
+  fi
+  if [[ -f "$result_file" ]]; then
+    if ! validate_review_verdict "$result_file" "$@"; then
+      return 2  # verdict invalid
+    fi
   fi
   return 0
 }

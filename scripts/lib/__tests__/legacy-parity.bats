@@ -636,3 +636,44 @@ JSON
     false
   }
 }
+
+# Invariant: Review artifacts with an invalid verdict (e.g., SPEC_PARTIAL)
+#   are rejected by validate_review_artifacts (return non-zero). The
+#   orchestrator must not silently accept a .result file containing a
+#   value outside the allowed set.
+# Source: #305 (was #286#issuecomment-off-contract).
+# Failure prevented: Reviewer wrote SPEC_PARTIAL to the .result file;
+#   orchestrator accepted it as valid, burned retries, and hard-failed.
+# TS-port contract: whatever validates review artifacts in the TS
+#   orchestrator must also reject invalid verdicts (values outside the
+#   allowed set per review type).
+@test "parity[#305]: validate_review_artifacts rejects invalid verdict" {
+  # Source the library and extract validate_review_artifacts from ai-run-issue-v2
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  source "${REPO_ROOT}/scripts/lib/review-contract.sh"
+  # Stubs
+  log() { :; }
+  # Extract the function (post-extension)
+  eval "$(awk '
+    /^validate_review_artifacts\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) exit }
+  ' "$SCRIPT_PATH")"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  # Valid verdict: SPEC_PASS
+  echo "SPEC_PASS" > "${test_dir}/spec-review-task-1.result"
+  echo "No findings." > "${test_dir}/spec-review-task-1.md"
+  run validate_review_artifacts "${test_dir}/spec-review-task-1.result" "${test_dir}/spec-review-task-1.md" SPEC_PASS SPEC_FAIL
+  [ "$status" -eq 0 ]
+  # Invalid verdict: SPEC_PARTIAL
+  echo "SPEC_PARTIAL" > "${test_dir}/spec-review-task-2.result"
+  echo "Findings here." > "${test_dir}/spec-review-task-2.md"
+  run validate_review_artifacts "${test_dir}/spec-review-task-2.result" "${test_dir}/spec-review-task-2.md" SPEC_PASS SPEC_FAIL
+  [ "$status" -ne 0 ]
+  # Invalid verdict: QUALITY_PARTIAL (quality context)
+  echo "QUALITY_PARTIAL" > "${test_dir}/quality-review-task-1.result"
+  echo "Findings here." > "${test_dir}/quality-review-task-1.md"
+  run validate_review_artifacts "${test_dir}/quality-review-task-1.result" "${test_dir}/quality-review-task-1.md" QUALITY_PASS QUALITY_FAIL
+  [ "$status" -ne 0 ]
+}
