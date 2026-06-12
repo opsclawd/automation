@@ -29,17 +29,12 @@ setup() {
 # TS-port contract: the TS orchestrator must never stage/commit these paths.
 #   Runtime-agnostic — pure git index state.
 @test "parity[#279/#280]: per-run orchestrator artifacts are never tracked" {
-  local artifacts=(
-    validation.headsha
-    review-fix-plan.json
-    review-task-manifest.json
-    review-triage.md
-    code-review.md
-  )
-  for f in "${artifacts[@]}"; do
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
     run git -C "$REPO_ROOT" ls-files --error-unmatch -- "$f"
     [ "$status" -ne 0 ] || { echo "artifact is tracked (must be ignored): $f"; false; }
-  done
+  done < <(orchestrator_artifact_paths)
 }
 
 # Invariant: a review-task manifest whose findings are ALL deferred/skipped has
@@ -784,4 +779,164 @@ JSON
   run grep -c 'resultJsonPath' "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
+}
+
+# Invariant: orchestrator_artifact_paths() returns the canonical artifact
+#   filename list (source of truth). The list is source-controlled and any
+#   new root-level orchestrator artifact MUST be added here first.
+# Source: #280.
+# Failure prevented: artifact lists in .gitignore, seed_excludes, mutation
+#   guards, and agent prompts drift independently.
+# TS-port contract: the TS orchestrator must reference the same canonical
+#   list (or a port of it) for its equivalent guards.
+@test "parity[#280]: orchestrator_artifact_paths returns expected canonical entries" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  run orchestrator_artifact_paths
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"validation.headsha"* ]]
+  [[ "$output" == *"review-fix-plan.json"* ]]
+  [[ "$output" == *"review-task-manifest.json"* ]]
+  [[ "$output" == *"review-triage.md"* ]]
+  [[ "$output" == *"code-review.md"* ]]
+  [[ "$output" == *"task-manifest.json"* ]]
+  [[ "$output" == *"compound-draft.md"* ]]
+  [[ "$output" == *"result.json"* ]]
+}
+
+# Invariant: guard_artifact_clean() removes a staged artifact from the index
+#   so it cannot enter a commit even if .gitignore misses it.
+# Source: #280.
+# Failure prevented: an agent force-adds an artifact (git add -f), it enters
+#   the index, and the next commit ships it in the PR.
+# TS-port contract: the TS orchestrator's post-phase cleanup must also
+#   unstage and delete known artifact paths.
+@test "parity[#280]: guard_artifact_clean unstages a staged artifact" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  warn() { :; }
+  emit_event() { :; }
+  local repo="$BATS_TEST_TMPDIR/gac-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+  # Simulate an agent force-adding an artifact
+  echo "abc123" > "$repo/validation.headsha"
+  git -C "$repo" add -f validation.headsha
+  # Verify it is staged
+  git -C "$repo" diff --cached --name-only | grep -qxF "validation.headsha"
+  # Run the guard
+  guard_artifact_clean "$repo"
+  # Verify it is no longer staged
+  run git -C "$repo" diff --cached --name-only
+  ! grep -qxF "validation.headsha" <<< "$output"
+  # Verify the file was deleted from disk
+  [ ! -f "$repo/validation.headsha" ]
+}
+
+# Invariant: hardened mutation guards (with artifact pathspec exclusions)
+#   do NOT trip when the only diff against HEAD is a known orchestrator
+#   artifact. Source file changes are still caught — exclusions are scoped
+#   to known artifact paths only.
+# Source: #280.
+# Failure prevented: a tracked artifact (e.g. validation.headsha) is
+#   rewritten and trips the mutation guard on every run, blocking all
+#   runs until the artifact is untracked — even though no source was mutated.
+# TS-port contract: the TS orchestrator mutation guards must also exclude
+#   known orchestrator artifacts from diff checks.
+@test "parity[#280]: hardened guard does not trip on artifact-only diffs" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  local repo="$BATS_TEST_TMPDIR/hg-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+  # Track an artifact (simulate the #273 regression)
+  echo "abc123" > "$repo/validation.headsha"
+  git -C "$repo" add validation.headsha
+  git -C "$repo" commit -q -m "accidental artifact commit"
+  # Modify the tracked artifact (as validate phase does every run)
+  echo "def456" > "$repo/validation.headsha"
+  # Unhardened guard: would trip (diff sees changed validation.headsha)
+  run git -C "$repo" diff --exit-code HEAD
+  [ "$status" -ne 0 ]
+  # Hardened guard: should NOT trip (artifact excluded)
+  local -a _art_excl=()
+  while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+  run git -C "$repo" diff --exit-code HEAD -- . "${_art_excl[@]}"
+  [ "$status" -eq 0 ]
+  # Source file changes are still caught
+  echo "real change" >> "$repo/app.ts"
+  run git -C "$repo" diff --exit-code HEAD -- . "${_art_excl[@]}"
+  [ "$status" -ne 0 ]
+}
+
+# Invariant: guard_artifact_clean() is called inside _stash_and_conditionally_commit
+#   before git add -A, so the orchestrator-created commit in fix-review-stash.sh
+#   cannot sweep up known artifacts even if info/exclude is incomplete.
+# Source: #280.
+# Failure prevented: the orchestrator's own git add -A in _stash_and_conditionally_commit
+#   stages artifacts (e.g. validation.headsha), committing them to the PR branch.
+# TS-port contract: the TS fix-review stash/commit path must also exclude known
+#   artifacts before staging.
+@test "parity[#280]: guard_artifact_clean is called before git add -A in fix-review-stash.sh" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  local stash="$REPO_ROOT/scripts/lib/fix-review-stash.sh"
+  # guard_artifact_clean must appear before git add -A
+  local _guard_line _add_line
+  _guard_line=$(grep -n 'guard_artifact_clean' "$stash" | head -1 | cut -d: -f1)
+  _add_line=$(grep -n 'git.*add -A' "$stash" | head -1 | cut -d: -f1)
+  [[ -n "$_guard_line" ]]
+  [[ -n "$_add_line" ]]
+  [[ "$_guard_line" -lt "$_add_line" ]]
+}
+
+# Invariant: seed_excludes() writes every entry from the canonical
+#   orchestrator_artifact_paths() list into the worktree's info/exclude.
+#   This closes the gap where a new artifact added to the centralized list
+#   but not to the seed_excludes heredoc could be git add -A'd.
+# Source: #280.
+# Failure prevented: a new artifact type is added to the canonical list
+#   but forgotten in seed_excludes → agent git add -A picks it up → committed.
+# TS-port contract: the TS orchestrator's worktree initialization must also
+#   exclude every entry from the canonical artifact list.
+@test "parity[#280]: seed_excludes covers every entry in orchestrator_artifact_paths" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  local repo="$BATS_TEST_TMPDIR/se-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  local ORIG_WORKTREE_DIR="$WORKTREE_DIR"
+  export WORKTREE_DIR="$repo"
+  log() { :; }
+  emit_event() { :; }
+  warn() { :; }
+
+  # Source seed_excludes from ai-run-issue-v2
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  pushd "$repo" >/dev/null
+  seed_excludes
+  popd >/dev/null
+
+  local exclude_file
+  exclude_file="$repo/$(cd "$repo" && git rev-parse --git-common-dir)/info/exclude"
+
+  # Every entry from the canonical list must be present
+  while IFS= read -r artifact; do
+    [[ -z "$artifact" ]] && continue
+    run grep -qxF "$artifact" "$exclude_file"
+    [ "$status" -eq 0 ] || { echo "artifact not in info/exclude: $artifact"; false; }
+  done < <(orchestrator_artifact_paths)
+
+  export WORKTREE_DIR="$ORIG_WORKTREE_DIR"
 }

@@ -13,11 +13,19 @@ ai/
 # Per-run orchestrator artifacts written at the repo/worktree root. These must
 # never be tracked: the validate phase rewrites *.headsha each run, which would
 # otherwise dirty the tree and trip the read-only phase mutation guards.
+# Canonical list: scripts/lib/artifacts.sh → orchestrator_artifact_paths()
 *.headsha
 /review-fix-plan.json
 /review-task-manifest.json
 /review-triage.md
 /code-review.md
+/review-loop-history.json
+/arbiter-result.json
+/compound-draft.md
+/fix-validate-done.marker
+/plan-review-passed.marker
+/review.md
+/task-manifest.json
 .review-context/
 .ai/
 changes/
