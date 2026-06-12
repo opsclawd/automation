@@ -1105,7 +1105,6 @@ cleanup_staging() {
 }
 _trap_on_exit() {
   local _exit_code=$?
-  local _exit_state="${PHASE:-unknown}"
   # P1-F1 FIX: reattach BEFORE guard.  If the guard hard-fails and calls
   # orchestrator_fail → exit 1, bash terminates immediately and does NOT
   # re-trigger the EXIT trap.  Reattaching first guarantees REPO_ROOT is
