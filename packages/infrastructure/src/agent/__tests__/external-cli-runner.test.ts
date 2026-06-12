@@ -66,6 +66,11 @@ describe('runExternalCli', () => {
       const cwd = makeTmpDir();
       const artifactsDir = makeTmpDir();
       try {
+        // Make cwd a git repo so `git rev-parse HEAD` resolves and no
+        // `missing_commit` violation is added. Otherwise this test is
+        // non-hermetic: it passes only when os.tmpdir() happens to sit under a
+        // git repo (e.g. a repo-local TMPDIR) and fails under CI's bare /tmp.
+        makeGitRepo(cwd);
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
