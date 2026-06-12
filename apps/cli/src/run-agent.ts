@@ -185,6 +185,40 @@ export async function streamTranscript(
   });
 }
 
+export function persistTranscript(
+  result: Pick<AgentInvocationResult, 'outcome' | 'stdoutPath' | 'stderrPath'>,
+  phaseId: string,
+  cwd: string,
+  log?: (msg: string, ...args: string[]) => void,
+): string[] {
+  const persisted: string[] = [];
+  if (result.outcome === 'success') return persisted;
+  const aiRunsDir = join(cwd, '.ai-runs');
+  mkdirSync(aiRunsDir, { recursive: true });
+  const ts = Date.now();
+  const transcriptDest = join(aiRunsDir, `agent-transcript-${phaseId}-${ts}.log`);
+  const stderrDest = join(aiRunsDir, `agent-stderr-${phaseId}-${ts}.log`);
+  const logger = log ?? ((msg, ...args) => console.error(msg, ...args));
+  try {
+    if (result.stdoutPath && existsSync(result.stdoutPath)) {
+      copyFileSync(result.stdoutPath, transcriptDest);
+      logger('Agent transcript saved to:', transcriptDest);
+      persisted.push(transcriptDest);
+    }
+  } catch (_e) {
+    logger('Failed to persist agent stdout transcript:', String(_e));
+  }
+  try {
+    if (result.stderrPath && existsSync(result.stderrPath)) {
+      copyFileSync(result.stderrPath, stderrDest);
+      persisted.push(stderrDest);
+    }
+  } catch (_e) {
+    logger('Failed to persist agent stderr:', String(_e));
+  }
+  return persisted;
+}
+
 async function main() {
   const { values } = parseArgs({
     options: {
@@ -346,24 +380,7 @@ async function main() {
     await streamTranscript(result.stderrPath, process.stderr);
 
     if (result.outcome !== 'success') {
-      const aiRunsDir = join(values.cwd!, '.ai-runs');
-      mkdirSync(aiRunsDir, { recursive: true });
-      const transcriptDest = join(
-        aiRunsDir,
-        `agent-transcript-${values['phase-id']}-${Date.now()}.log`,
-      );
-      const stderrDest = join(aiRunsDir, `agent-stderr-${values['phase-id']}-${Date.now()}.log`);
-      try {
-        if (result.stdoutPath && existsSync(result.stdoutPath)) {
-          copyFileSync(result.stdoutPath, transcriptDest);
-          console.error('Agent transcript saved to:', transcriptDest);
-        }
-        if (result.stderrPath && existsSync(result.stderrPath)) {
-          copyFileSync(result.stderrPath, stderrDest);
-        }
-      } catch (_copyErr) {
-        console.error('Failed to persist agent transcript:', _copyErr);
-      }
+      persistTranscript(result, values['phase-id']!, values.cwd!);
     }
 
     if (createdSynthetic) {

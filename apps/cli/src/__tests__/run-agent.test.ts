@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PassThrough } from 'node:stream';
@@ -10,6 +10,7 @@ import {
   resolveProfileName,
   phaseToRunType,
   streamTranscript,
+  persistTranscript,
   type ConfigForProfileResolution,
 } from '../run-agent.js';
 
@@ -312,6 +313,92 @@ describe('run-agent CLI logic', () => {
     it('returns pr_review for unknown phases', () => {
       expect(phaseToRunType('implement')).toBe('pr_review');
       expect(phaseToRunType('review')).toBe('pr_review');
+    });
+  });
+
+  describe('persistTranscript', () => {
+    let tmpDir: string;
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), 'persist-transcript-test-'));
+    });
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+    it('returns empty array and does nothing for success outcome', () => {
+      const result = persistTranscript(
+        {
+          outcome: 'success',
+          stdoutPath: '/nonexistent/stdout.log',
+          stderrPath: '/nonexistent/stderr.log',
+        },
+        'plan-review-1',
+        tmpDir,
+      );
+      expect(result).toEqual([]);
+    });
+    it('copies stdout to .ai-runs/ on non-success outcome', () => {
+      const stdoutFile = join(tmpDir, 'stdout.log');
+      writeFileSync(stdoutFile, 'agent stdout content');
+      const result = persistTranscript(
+        { outcome: 'contract_violation', stdoutPath: stdoutFile },
+        'plan-review-1',
+        tmpDir,
+      );
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result[0]).toContain('.ai-runs/agent-transcript-plan-review-1-');
+      expect(readFileSync(result[0], 'utf-8')).toBe('agent stdout content');
+    });
+    it('copies stderr to .ai-runs/ on non-success outcome', () => {
+      const stderrFile = join(tmpDir, 'stderr.log');
+      writeFileSync(stderrFile, 'agent stderr content');
+      const result = persistTranscript(
+        { outcome: 'failed', stderrPath: stderrFile },
+        'plan-review-1',
+        tmpDir,
+      );
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      const stderrDest = result.find((p) => p.includes('agent-stderr'));
+      expect(stderrDest).toBeDefined();
+      expect(readFileSync(stderrDest!, 'utf-8')).toBe('agent stderr content');
+    });
+    it('copies both stdout and stderr when both paths present', () => {
+      const stdoutFile = join(tmpDir, 'stdout.log');
+      const stderrFile = join(tmpDir, 'stderr.log');
+      writeFileSync(stdoutFile, 'out');
+      writeFileSync(stderrFile, 'err');
+      const result = persistTranscript(
+        { outcome: 'timeout', stdoutPath: stdoutFile, stderrPath: stderrFile },
+        'plan-review-1',
+        tmpDir,
+      );
+      expect(result.length).toBe(2);
+    });
+    it('does not crash when source files are missing', () => {
+      const result = persistTranscript(
+        { outcome: 'failed', stdoutPath: join(tmpDir, 'nonexistent.log') },
+        'plan-review-1',
+        tmpDir,
+      );
+      expect(result).toEqual([]);
+    });
+    it('does not crash when stdoutPath is undefined', () => {
+      const result = persistTranscript({ outcome: 'contract_violation' }, 'plan-review-1', tmpDir);
+      expect(result).toEqual([]);
+    });
+    it('calls the custom logger with the transcript path on success', () => {
+      const stdoutFile = join(tmpDir, 'stdout.log');
+      writeFileSync(stdoutFile, 'content');
+      const logs: string[] = [];
+      const logger = (...args: string[]) => logs.push(args.join(' '));
+      persistTranscript(
+        { outcome: 'contract_violation', stdoutPath: stdoutFile },
+        'plan-review-1',
+        tmpDir,
+        logger,
+      );
+      expect(logs).toEqual(
+        expect.arrayContaining([expect.stringContaining('Agent transcript saved to:')]),
+      );
     });
   });
 
