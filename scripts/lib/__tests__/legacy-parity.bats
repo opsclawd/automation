@@ -785,3 +785,22 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+# Invariant: Token usage is extracted from opencode session `service=llm` lines
+#   via a pure function (parseSessionLogUsage) and populated on
+#   AgentInvocationResult.usage by the opencode adapter. The parse function
+#   filters to service=llm/provider lines only — never matching agent transcript
+#   content that happens to contain tokens={…}.
+# Source: #307.
+# Failure prevented: Token attribution stops working silently if the function is
+#   removed or the wiring is deleted — profile tuning becomes guesswork again.
+# TS-port contract: parseSessionLogUsage must exist as a pure exported function
+#   filtering service=llm lines; the adapter must populate result.usage.
+@test "parity[#307]: opencode adapter parses token usage from session logs" {
+  run grep -c 'export function parseSessionLogUsage' "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  run grep -c 'parseSessionLogUsage' "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+}

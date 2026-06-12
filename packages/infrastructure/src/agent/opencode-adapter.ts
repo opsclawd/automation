@@ -22,6 +22,44 @@ import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/app
 // content (e.g. a file the agent read, or a `git log` line containing "429").
 const PROVIDER_LOG_SERVICES = /service=(?:llm|provider)\b/;
 
+// Pattern: `tokens={"input":1234,"output":567,"cacheRead":42,"reasoningTokens":100}`
+const TOKENS_LINE_RE =
+  /tokens=\{"input":(\d+),"output":(\d+)(?:,"cacheRead":(\d+))?(?:,"reasoningTokens":(\d+))?\}/;
+
+export interface SessionLogUsage {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens?: number;
+  cachedTokens?: number;
+}
+
+export function parseSessionLogUsage(content: string): SessionLogUsage | undefined {
+  const lines = content.split('\n');
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let reasoningTokens = 0;
+  let cachedTokens = 0;
+  let hasAny = false;
+  for (const line of lines) {
+    if (!PROVIDER_LOG_SERVICES.test(line)) continue;
+    const match = TOKENS_LINE_RE.exec(line);
+    if (!match) continue;
+    hasAny = true;
+    inputTokens += parseInt(match[1], 10);
+    outputTokens += parseInt(match[2], 10);
+    if (match[3]) cachedTokens += parseInt(match[3], 10);
+    if (match[4]) reasoningTokens += parseInt(match[4], 10);
+  }
+  return hasAny
+    ? {
+        inputTokens,
+        outputTokens,
+        ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+        ...(cachedTokens > 0 ? { cachedTokens } : {}),
+      }
+    : undefined;
+}
+
 export interface OpenCodeAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
@@ -293,6 +331,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
     writeFileSync(stdoutPath, transcript);
     writeFileSync(stderrPath, stderrForLog);
 
+    // Parse token usage from the session log transcripts
+    const effectiveProvider = request.provider ?? '';
+    const effectiveModel = request.model ?? '';
+    const usage = postExit?.transcript
+      ? parseSessionLogUsage(OpenCodeAgentAdapter.providerLines(postExit.transcript))
+      : undefined;
+
     const ret: AgentInvocationResult = {
       runtime: 'opencode',
       provider: '',
@@ -303,6 +348,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stderrPath,
       contractViolations,
       outcome,
+      ...(usage ? { usage: { ...usage, provider: effectiveProvider, model: effectiveModel } } : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     // Set resultJsonPath so downstream extraction uses the explicit path rather

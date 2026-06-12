@@ -3,7 +3,12 @@ export {
   normalizeRoutingPhase,
   type AgentRuntimeRouterOptions,
 } from './agent-runtime-router.js';
-export { OpenCodeAgentAdapter, type OpenCodeAdapterOptions } from './opencode-adapter.js';
+export {
+  OpenCodeAgentAdapter,
+  parseSessionLogUsage,
+  type OpenCodeAdapterOptions,
+  type SessionLogUsage,
+} from './opencode-adapter.js';
 export { PiAgentAdapter, type PiAdapterOptions } from './pi-adapter.js';
 export {
   isOpenCodeLogLine,
