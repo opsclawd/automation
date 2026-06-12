@@ -167,7 +167,10 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
       const artifactPath = join(input.cwd, artifact);
       if (!existsSync(artifactPath)) {
         outcome = 'contract_violation';
-        contractViolations = [CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT];
+        contractViolations = [
+          ...contractViolations,
+          CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+        ];
         stderrForLog = `MISSING_REQUIRED_ARTIFACT: ${artifact}\n${stderrForLog}`;
         writeFileSync(stderrPath, stderrForLog);
         break;
