@@ -68,6 +68,7 @@ guard_artifact_clean() {
   local base_branch=${2:-}
 
   local _artifact _committed_any=0
+  local -a _removed_artifacts=()
 
   while IFS= read -r _artifact; do
     [[ -z "$_artifact" ]] && continue
@@ -88,12 +89,13 @@ guard_artifact_clean() {
       if git -C "$worktree_dir" diff "${base_branch}..HEAD" --name-only 2>/dev/null | grep -qxF "$_artifact"; then
         git -C "$worktree_dir" rm -f -- "$_artifact" 2>/dev/null || true
         _committed_any=1
+        _removed_artifacts+=("$_artifact")
       fi
     fi
   done < <(orchestrator_artifact_paths)
 
   if [[ $_committed_any -eq 1 ]]; then
-    git -C "$worktree_dir" commit --only -m "fix: remove orchestrator artifacts that were committed by agent" -- $(orchestrator_artifact_paths | tr '\n' ' ') 2>/dev/null || true
+    git -C "$worktree_dir" commit --only -m "fix: remove orchestrator artifacts that were committed by agent" -- "${_removed_artifacts[@]}" 2>/dev/null || true
     if declare -F warn >/dev/null 2>&1; then
       warn "guard_artifact_clean: removed one or more committed orchestrator artifacts"
     fi
