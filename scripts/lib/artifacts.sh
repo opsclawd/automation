@@ -87,9 +87,10 @@ guard_artifact_clean() {
     # 3. Already committed to the branch.
     if [[ -n "$base_branch" ]]; then
       if git -C "$worktree_dir" diff "${base_branch}..HEAD" --name-only 2>/dev/null | grep -qxF "$_artifact"; then
-        git -C "$worktree_dir" rm -f -- "$_artifact" 2>/dev/null || true
-        _committed_any=1
-        _removed_artifacts+=("$_artifact")
+        if git -C "$worktree_dir" rm -f -- "$_artifact" 2>/dev/null; then
+          _committed_any=1
+          _removed_artifacts+=("$_artifact")
+        fi
       fi
     fi
   done < <(orchestrator_artifact_paths)
