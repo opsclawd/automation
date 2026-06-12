@@ -56,9 +56,9 @@ CREATE VIEW IF NOT EXISTS v_cost_by_phase AS
 SELECT u.phase_id, u.profile, u.provider, u.model,
        SUM(u.input_tokens) AS total_input_tokens,
        SUM(u.output_tokens) AS total_output_tokens,
-       SUM(u.input_tokens * COALESCE(p.input_price_per_1k_tokens, 0) / 1000.0
-         + u.output_tokens * COALESCE(p.output_price_per_1k_tokens, 0) / 1000.0)
-         AS estimated_cost_usd,
+        ROUND(SUM(u.input_tokens * COALESCE(p.input_price_per_1k_tokens, 0) / 1000.0
+          + u.output_tokens * COALESCE(p.output_price_per_1k_tokens, 0) / 1000.0), 6)
+          AS estimated_cost_usd,
        COUNT(*) AS invocation_count
 FROM agent_usage u
 LEFT JOIN model_prices p ON p.provider = u.provider
