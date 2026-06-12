@@ -4,7 +4,7 @@ import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
-import { createReadStream, existsSync } from 'node:fs';
+import { copyFileSync, createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 interface Flags {
@@ -344,6 +344,27 @@ async function main() {
 
     await streamTranscript(result.stdoutPath, process.stdout);
     await streamTranscript(result.stderrPath, process.stderr);
+
+    if (result.outcome !== 'success') {
+      const aiRunsDir = join(values.cwd!, '.ai-runs');
+      mkdirSync(aiRunsDir, { recursive: true });
+      const transcriptDest = join(
+        aiRunsDir,
+        `agent-transcript-${values['phase-id']}-${Date.now()}.log`,
+      );
+      const stderrDest = join(aiRunsDir, `agent-stderr-${values['phase-id']}-${Date.now()}.log`);
+      try {
+        if (result.stdoutPath && existsSync(result.stdoutPath)) {
+          copyFileSync(result.stdoutPath, transcriptDest);
+          console.error('Agent transcript saved to:', transcriptDest);
+        }
+        if (result.stderrPath && existsSync(result.stderrPath)) {
+          copyFileSync(result.stderrPath, stderrDest);
+        }
+      } catch (_copyErr) {
+        console.error('Failed to persist agent transcript:', _copyErr);
+      }
+    }
 
     if (createdSynthetic) {
       c.runRepository.update(runId, {

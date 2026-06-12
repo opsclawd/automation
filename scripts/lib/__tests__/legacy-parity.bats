@@ -475,3 +475,34 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+# Invariant: the CLI persists agent stdout/stderr to .ai-runs/ in the worktree
+# when the agent outcome is not success, so failures are post-mortemable.
+# Source: #297 (Part 2).
+# Failure prevented: an agent run that fails with zero durable transcript
+#   cannot be post-mortemed. The transcript path must be surfaced in stderr.
+# TS-port contract: the TS run-agent MUST copy stdoutPath/stderrPath to
+#   .ai-runs/ on non-success outcomes and log the path.
+@test "parity[#297]: agent transcript persisted to .ai-runs/ on non-success outcomes" {
+  local cli="$REPO_ROOT/apps/cli/src/run-agent.ts"
+
+  # Must import copyFileSync
+  run grep -c "copyFileSync" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must reference .ai-runs as the persistence directory
+  run grep -c ".ai-runs" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must check outcome !== 'success' before persisting
+  run grep -c "outcome !== 'success'" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must surface the transcript path via console.error
+  run grep -c "Agent transcript saved to:" "$cli"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
