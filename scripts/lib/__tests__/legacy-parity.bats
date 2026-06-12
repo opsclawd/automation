@@ -693,3 +693,27 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+# Invariant: when result.json is missing at the worktree, the opencode adapter
+#   scans apps/cli/ (the known drift target from #311) and auto-recovers the
+#   artifact, annotating stderr with a DRIFT_WARNING.
+# Source: #311 (session directory drift → stranded result.json).
+# Failure prevented: a valid agent verdict written to apps/cli/result.json
+#   instead of the worktree is silently dropped → comment permanently blocked.
+# TS-port contract: the adapter must scan known stray locations as a defense-
+#   in-depth backstop and recover found artifacts. The stray location list
+#   must include at least 'apps/cli'.
+@test "parity[#311]: opencode adapter scans apps/cli/ for stranded result.json" {
+  run grep -c "'apps/cli'" "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c 'DRIFT_WARNING' "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # resultJsonPath must be set when result.json exists after normal or recovery path
+  run grep -c 'resultJsonPath' "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}

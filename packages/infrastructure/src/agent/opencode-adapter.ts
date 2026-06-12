@@ -212,7 +212,25 @@ export class OpenCodeAgentAdapter implements AgentPort {
     if (outcome === 'success' && request.expectedArtifacts?.length) {
       for (const artifact of request.expectedArtifacts) {
         const artifactPath = join(request.cwd, artifact);
-        if (!existsSync(artifactPath)) {
+        if (existsSync(artifactPath)) {
+          continue;
+        }
+        // Defense-in-depth: scan known stray locations for artifacts stranded by
+        // opencode session-directory drift (#311). If found, copy to the expected
+        // path so the orchestrator can consume it.
+        let recovered = false;
+        const strayLocations = ['apps/cli'];
+        for (const stray of strayLocations) {
+          const strayPath = join(request.cwd, stray, artifact);
+          if (existsSync(strayPath)) {
+            const artifactDir = join(request.cwd, artifact);
+            writeFileSync(artifactDir, readFileSync(strayPath));
+            recovered = true;
+            stderrForLog = `DRIFT_WARNING: ${artifact} recovered from ${stray}/${artifact}\n${stderrForLog}`;
+            break;
+          }
+        }
+        if (!recovered) {
           outcome = 'contract_violation';
           contractViolations = [
             ...contractViolations,
@@ -244,6 +262,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
       outcome,
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
+    // Set resultJsonPath so downstream extraction uses the explicit path rather
+    // than falling back to a hardcoded 'result.json' (#311).
+    if (ret.outcome === 'success' && request.expectedArtifacts.includes('result.json')) {
+      const artifactPath = join(request.cwd, 'result.json');
+      if (existsSync(artifactPath)) {
+        ret.resultJsonPath = 'result.json';
+      }
+    }
     return ret;
   }
 
