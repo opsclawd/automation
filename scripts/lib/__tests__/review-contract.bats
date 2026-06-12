@@ -67,22 +67,10 @@ teardown() {
 
 # ── build_corrective_warning ─────────────────────────────────────────────
 
-@test "build_corrective_warning: wrong_path produces path-specific message" {
-  run build_corrective_warning "spec" "3" "wrong_path" "" "/tmp/worktree/docs/TASK-3.result"
-  [[ "$output" == *"wrong location"* ]]
-  [[ "$output" == *"/tmp/worktree/docs/TASK-3.result"* ]]
-}
-
 @test "build_corrective_warning: invalid_verdict names the actual verdict" {
   run build_corrective_warning "quality" "2" "invalid_verdict" "QUALITY_PARTIAL" ""
   [[ "$output" == *"'QUALITY_PARTIAL'"* ]]
   [[ "$output" == *"NOT an allowed value"* ]]
-}
-
-@test "build_corrective_warning: missing_artifacts describes ordering rule" {
-  run build_corrective_warning "spec" "1" "missing_artifacts" "" ""
-  [[ "$output" == *"write BOTH files in order"* ]]
-  [[ "$output" == *".md first, then .result last"* ]]
 }
 
 # ── recover_off_contract_review_artifacts ────────────────────────────────

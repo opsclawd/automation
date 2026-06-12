@@ -39,14 +39,8 @@ build_corrective_warning() {
   local actual_verdict="$4"   # the invalid verdict value (if known)
   local actual_path="$5"      # the wrong path used (if known)
   case "$violation_type" in
-    wrong_path)
-      echo "WARNING: Your previous attempt wrote artifacts to the wrong location (found at: ${actual_path}). This is a contract violation. You MUST write to the EXACT absolute paths specified in the MANDATORY OUTPUT FILES section — no subdirectories, no alternative filenames."
-      ;;
     invalid_verdict)
       echo "WARNING: Your previous attempt wrote verdict '${actual_verdict}' which is NOT an allowed value. You MUST choose EXACTLY one of the allowed values listed in the MANDATORY OUTPUT FILES section — no other text, no alternatives."
-      ;;
-    missing_artifacts)
-      echo "WARNING: Your previous attempt wrote the .result file but did not write the .md report file. This is a contract violation. You MUST write BOTH files in order: .md first, then .result last."
       ;;
   esac
 }
