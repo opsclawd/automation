@@ -736,6 +736,32 @@ describe('PrReviewPoller — READY + reactivation', () => {
     });
     expect(result.terminalState).toBe('all_resolved');
   });
+  it('emits process_failed event when processOnePass throws during reactivation', async () => {
+    let callCount = 0;
+    const { poller, events } = makePoller([], {
+      onAllResolved: async () => 'reactivate',
+      maxReactivations: 2,
+      processOnePass: async () => {
+        callCount++;
+        if (callCount <= 3) return { result: resolved(), attempt: undefined };
+        throw new Error('reactivation error');
+      },
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(
+      events.some(
+        (e) => (e.event as { type: string }).type === 'post-pr-review.ready.process_failed',
+      ),
+    ).toBe(true);
+  });
 });
 describe('PrReviewPoller — blocked enters READY (not terminal)', () => {
   it('enters READY when a pass has only blocked and no in-flight', async () => {
