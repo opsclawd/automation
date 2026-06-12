@@ -105,6 +105,7 @@ teardown() {
   run recover_off_contract_review_artifacts "spec" "3"
   [ "$status" -eq 0 ]
   [ -f "$TMPDIR_TEST/spec-review-task-3.result" ]
+  [ -f "$TMPDIR_TEST/spec-review-task-3.md" ]
 }
 
 @test "recover_off_contract_review_artifacts: does not overwrite existing expected file" {

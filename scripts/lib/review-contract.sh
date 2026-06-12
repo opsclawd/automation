@@ -79,7 +79,7 @@ recover_off_contract_review_artifacts() {
       found_result="$candidate"
     fi
     candidate=$(find "$dir" -maxdepth 1 -type f \
-      \( -name "*-task-${task_n}.md" -o -name "*-TASK-${task_n}.md" -o -name "TASK-${task_n}.md" -o -name "task-${task_n}.md" \) \
+      \( -name "*-task-${task_n}.md" -o -name "*-TASK-${task_n}.md" -o -name "TASK-${task_n}.md" -o -name "task-${task_n}.md" -o -name "*TASK-${task_n}-*.md" -o -name "*task-${task_n}-*.md" \) \
       2>/dev/null | head -1)
     if [[ -n "$candidate" && -z "$found_md" ]]; then
       found_md="$candidate"
