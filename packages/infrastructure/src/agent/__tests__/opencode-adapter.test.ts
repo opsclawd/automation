@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
+import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import { OpenCodeAgentAdapter } from '../opencode-adapter.js';
 
 function makeWorktree(): string {
@@ -1123,6 +1124,30 @@ describe('OpenCodeAgentAdapter', () => {
     // No DRIFT_WARNING when artifact is at the expected location
     const stderrLog = readFileSync(r.stderrPath, 'utf-8');
     expect(stderrLog).not.toContain('DRIFT_WARNING');
+  });
+
+  it('resultJsonPath is absent on contract_violation when artifact is missing', async () => {
+    const cwd = makeWorktree();
+    // No result.json written anywhere — not in cwd, not passed repoRoot
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(r.resultJsonPath).toBeUndefined();
   });
 
   it('recovers result.json from repoRoot stray location when not in worktree', async () => {
