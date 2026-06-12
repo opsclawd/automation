@@ -73,6 +73,11 @@ teardown() {
   [[ "$output" == *"NOT an allowed value"* ]]
 }
 
+@test "build_corrective_warning: unknown type produces generic warning" {
+  run build_corrective_warning "spec" "1" "unknown_type" "" ""
+  [[ "$output" == *"output contract"* ]]
+}
+
 # ── recover_off_contract_review_artifacts ────────────────────────────────
 
 @test "recover_off_contract_review_artifacts: returns 0 when artifacts already at expected paths" {

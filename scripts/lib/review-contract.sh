@@ -41,6 +41,9 @@ build_corrective_warning() {
     invalid_verdict)
       echo "WARNING: Your previous attempt wrote verdict '${actual_verdict}' which is NOT an allowed value. You MUST choose EXACTLY one of the allowed values listed in the MANDATORY OUTPUT FILES section — no other text, no alternatives."
       ;;
+    *)
+      echo "WARNING: Your previous attempt violated the output contract. Please follow the MANDATORY OUTPUT FILES section exactly."
+      ;;
   esac
 }
 # recover_off_contract_review_artifacts: scan common wrong locations for review
