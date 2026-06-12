@@ -307,77 +307,107 @@ setup() {
   [ "$_fail_called" = "false" ]
 }
 
-# Implementation-presence check: ai-run-issue-v2 must install an EXIT trap that
-#   fires the guard and restores REPO_ROOT branch on every exit path. The
-#   behavioral contract (trap actually fires on exit) is verified by the
-#   runtime-agnostic parity tests above. This check pins the structural
-#   invariant so a refactor that removes the trap is caught early.
+# Invariant: the on-exit sequence ai-run-issue-v2 runs (reattach REPO_ROOT
+#   branch, then run the guard) restores the main checkout to its original
+#   branch and SHA, even when an agent left REPO_ROOT on a different branch.
+#   Mirrors _trap_on_exit: reattach first, guard second (defense-in-depth).
 # Source: #295.
-@test "implementation-presence[#295]: ai-run-issue-v2 has EXIT trap that covers guard + branch restore" {
-  # Verify trap registration exists and calls _trap_on_exit (or equivalent)
-  run grep -c 'trap.*_trap_on_exit.*EXIT' "$REPO_ROOT/scripts/ai-run-issue-v2"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
+# Failure prevented: a run that crashes/exits mid-phase leaving REPO_ROOT on a
+#   stray branch or detached HEAD — the operator's main checkout is corrupted.
+# TS-port contract: whatever the TS orchestrator runs on exit must leave
+#   REPO_ROOT on its pre-run branch at its pre-run SHA. Runtime-agnostic — git
+#   branch/SHA state after driving the real _detach/_reattach/_guard functions.
+@test "parity[#295]: on-exit reattach+guard restores REPO_ROOT branch after a run" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
+  orchestrator_fail() { return 1; }
 
-  # Verify the trap handler calls _guard_main_checkout
-  run grep -c '_guard_main_checkout' "$REPO_ROOT/scripts/ai-run-issue-v2"
-  [ "$status" -eq 0 ]
-  # At least 1 in trap handler + existing phase call sites
-  [ "$output" -ge 2 ]
+  local repo="$BATS_TEST_TMPDIR/exit-restore"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
 
-  # Verify the trap handler calls _reattach_main_head (or equivalent restore)
-  run grep -c '_reattach_main_head' "$REPO_ROOT/scripts/ai-run-issue-v2"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
+  export REPO_ROOT="$repo"
+  export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt-exit"
+  mkdir -p "$WORKTREE_DIR"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/ev-exit.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _branch _sha
+  _branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  _sha=$(git -C "$repo" rev-parse HEAD)
+
+  # Snapshot pre-detach state, as ai-run-issue-v2 does for the EXIT trap.
+  local _exit_pre_state
+  _exit_pre_state=$(_capture_main_state)
+
+  _detach_main_head
+  # Simulate an agent that switched the main checkout onto a stray branch.
+  git -C "$repo" checkout -q -b agent-stray
+
+  # The trap's documented sequence: reattach first, then guard.
+  _reattach_main_head
+  _guard_main_checkout "exit-trap" "$_exit_pre_state" || true
+
+  # REPO_ROOT must be back on its original branch at its original SHA.
+  [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" = "$_branch" ]
+  [ "$(git -C "$repo" rev-parse HEAD)" = "$_sha" ]
 }
 
-# Implementation-presence check: ai-run-issue-v2 must detach REPO_ROOT HEAD
-#   before the first agent phase runs. The behavioral contract (detached HEAD
-#   prevents commits from advancing main) is verified by the runtime-agnostic
-#   parity test above. This check pins the structural invariant so a refactor
-#   that removes the detach call is caught early.
+# Invariant: _detach_main_head detaches REPO_ROOT HEAD so an agent commit lands
+#   on a detached HEAD (orphaned), and _reattach_main_head returns to the
+#   original branch WITHOUT advancing it. This is the mechanism that stops a
+#   leaked commit from moving main.
 # Source: #295.
-@test "implementation-presence[#295]: ai-run-issue-v2 calls _detach_main_head before first agent phase" {
-  # Verify _detach_main_head is called at least once
-  run grep -c '_detach_main_head' "$REPO_ROOT/scripts/ai-run-issue-v2"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
+# Failure prevented: agent commits leaked onto local main, diverging from origin
+#   (e.g. commit 6645816 in #290).
+# TS-port contract: the TS detach/restore must leave the original branch at its
+#   pre-run SHA after an agent commits, with the leaked commit unreachable.
+#   Runtime-agnostic — drives the real _detach_main_head/_reattach_main_head.
+@test "parity[#295]: _detach_main_head/_reattach_main_head keep main at its pre-run SHA" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
 
-  # Verify it is called BEFORE detect_phase (the detach must happen before any
-  # phase runs). Capture line numbers and compare.
-  local detach_line phase_line
-  detach_line=$(grep -n '_detach_main_head' "$REPO_ROOT/scripts/ai-run-issue-v2" | head -1 | cut -d: -f1)
-  phase_line=$(grep -n 'PHASE="\$(detect_phase)"' "$REPO_ROOT/scripts/ai-run-issue-v2" | head -1 | cut -d: -f1)
-  [ "$detach_line" -lt "$phase_line" ]
-}
+  local repo="$BATS_TEST_TMPDIR/detach-fns"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
 
-# Implementation-presence check: run-agent.ts must reject --cwd equal to
-#   --repo-root when a worktree is configured. The behavioral contract is
-#   inherent in TypeScript (process.exit(2) is the only path). This check
-#   pins the structural invariant so a refactor that removes the validation
-#   is caught early. Not a parity invariant — does not port to TS.
-# Source: #295.
-@test "implementation-presence[#295]: run-agent.ts rejects cwd equal to repo-root when worktree expected" {
-  # Check that the validation logic exists in the source
-  run grep -c "agent cwd must not be REPO_ROOT" "$REPO_ROOT/apps/cli/src/run-agent.ts"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-  # Verify the exit code is 2 (config error) for this validation.
-  # Use -A5 to capture enough context after the error message.
-  run grep -A5 "agent cwd must not be REPO_ROOT" "$REPO_ROOT/apps/cli/src/run-agent.ts"
-  [ "$status" -eq 0 ]
-  run grep -c "process.exit(2)" <<< "$output"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-  # Verify the resolved path comparison uses resolve() on both sides
-  run grep -c "resolve.*values.*cwd" "$REPO_ROOT/apps/cli/src/run-agent.ts"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-  run grep -c "resolve.*values.*repo-root" "$REPO_ROOT/apps/cli/src/run-agent.ts"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-  # Verify the guard is scoped to worktree presence (not unconditional)
-  run grep -c "values\['worktree-dir'\] || process.env.POLL_WORKTREE" "$REPO_ROOT/apps/cli/src/run-agent.ts"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
+  export REPO_ROOT="$repo"
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/ev-detach.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _branch _pre_sha
+  _branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  _pre_sha=$(git -C "$repo" rev-parse HEAD)
+
+  _detach_main_head
+  [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" = "HEAD" ]   # detached
+
+  # Agent commits while detached.
+  echo leak > "$repo/leak.txt"
+  git -C "$repo" add leak.txt
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m "agent leak"
+  local _leak_sha
+  _leak_sha=$(git -C "$repo" rev-parse HEAD)
+  [ "$_leak_sha" != "$_pre_sha" ]
+
+  _reattach_main_head
+
+  # Original branch restored and NOT advanced.
+  [ "$(git -C "$repo" rev-parse --abbrev-ref HEAD)" = "$_branch" ]
+  [ "$(git -C "$repo" rev-parse HEAD)" = "$_pre_sha" ]
+  # The leaked commit is unreachable from the restored branch (orphaned).
+  run git -C "$repo" merge-base --is-ancestor "$_leak_sha" "$_branch"
+  [ "$status" -ne 0 ]
 }

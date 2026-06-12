@@ -66,6 +66,16 @@ export function exitCodeForOutcome(
   return 3;
 }
 
+// True when --cwd resolves to the same path as --repo-root (the main checkout)
+// while a worktree is expected. Running an agent in REPO_ROOT lets stray writes
+// and commits corrupt the main branch. Skipped when no worktree is configured
+// (e.g. consolidation workflows that intentionally run from REPO_ROOT).
+export function cwdViolatesRepoRoot(values: Flags, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!values['repo-root'] || !values.cwd) return false;
+  if (!values['worktree-dir'] && !env.POLL_WORKTREE) return false;
+  return resolve(values.cwd) === resolve(values['repo-root']);
+}
+
 export function resolveProfileName(
   config: ConfigForProfileResolution,
   values: { profile?: string; phase?: string },
@@ -215,17 +225,11 @@ async function main() {
   // Agent cwd must never be REPO_ROOT when a worktree is expected (the main
   // checkout on main). Running agents in REPO_ROOT allows stray writes and
   // commits to corrupt the main branch. Use a worktree directory instead.
-  // Skip this check when no worktree is configured (e.g. consolidation
-  // workflows that intentionally run from REPO_ROOT).
-  if (values['repo-root'] && values.cwd && (values['worktree-dir'] || process.env.POLL_WORKTREE)) {
-    const resolvedCwd = resolve(values.cwd);
-    const resolvedRepoRoot = resolve(values['repo-root']);
-    if (resolvedCwd === resolvedRepoRoot) {
-      console.error(
-        'agent cwd must not be REPO_ROOT (main checkout). ' + 'Use a worktree directory instead.',
-      );
-      process.exit(2);
-    }
+  if (cwdViolatesRepoRoot(values)) {
+    console.error(
+      'agent cwd must not be REPO_ROOT (main checkout). Use a worktree directory instead.',
+    );
+    process.exit(2);
   }
 
   // Load config from repo root

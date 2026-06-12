@@ -6,6 +6,7 @@ import { PassThrough } from 'node:stream';
 import {
   validateRequiredFlags,
   exitCodeForOutcome,
+  cwdViolatesRepoRoot,
   resolveProfileName,
   phaseToRunType,
   streamTranscript,
@@ -13,6 +14,53 @@ import {
 } from '../run-agent.js';
 
 describe('run-agent CLI logic', () => {
+  describe('cwdViolatesRepoRoot', () => {
+    it('is true when cwd equals repo-root and a worktree is configured', () => {
+      expect(
+        cwdViolatesRepoRoot(
+          { cwd: '/repo', 'repo-root': '/repo', 'worktree-dir': '/repo/.wt' },
+          {},
+        ),
+      ).toBe(true);
+    });
+
+    it('normalizes paths before comparing (trailing slash / dot segments)', () => {
+      expect(
+        cwdViolatesRepoRoot({ cwd: '/repo/', 'repo-root': '/repo', 'worktree-dir': '/x' }, {}),
+      ).toBe(true);
+      expect(
+        cwdViolatesRepoRoot(
+          { cwd: '/repo/sub/..', 'repo-root': '/repo', 'worktree-dir': '/x' },
+          {},
+        ),
+      ).toBe(true);
+    });
+
+    it('is false when cwd differs from repo-root (the normal worktree case)', () => {
+      expect(
+        cwdViolatesRepoRoot(
+          { cwd: '/repo/.wt', 'repo-root': '/repo', 'worktree-dir': '/repo/.wt' },
+          {},
+        ),
+      ).toBe(false);
+    });
+
+    it('is false when no worktree is configured (consolidation workflows)', () => {
+      expect(cwdViolatesRepoRoot({ cwd: '/repo', 'repo-root': '/repo' }, {})).toBe(false);
+    });
+
+    it('honors POLL_WORKTREE env as the worktree signal', () => {
+      expect(
+        cwdViolatesRepoRoot({ cwd: '/repo', 'repo-root': '/repo' }, { POLL_WORKTREE: '/repo/.wt' }),
+      ).toBe(true);
+    });
+
+    it('is false when repo-root or cwd is missing', () => {
+      expect(cwdViolatesRepoRoot({ cwd: '/repo', 'worktree-dir': '/x' }, {})).toBe(false);
+      expect(cwdViolatesRepoRoot({ 'repo-root': '/repo', 'worktree-dir': '/x' }, {})).toBe(false);
+    });
+  });
+
   describe('validateRequiredFlags', () => {
     const requiredFlags = [
       '--cwd',
