@@ -561,18 +561,28 @@ EOF
 # shellcheck source=lib/result-resolver.sh
 source "${REPO_ROOT}/scripts/lib/result-resolver.sh"
 
+# shellcheck source=lib/review-contract.sh
+source "${REPO_ROOT}/scripts/lib/review-contract.sh"
+
 # shellcheck source=lib/plan-write-remediation.sh
 source "${REPO_ROOT}/scripts/lib/plan-write-remediation.sh"
 
 # validate_review_artifacts: checks that review artifacts satisfy the
 # agent contract. An agent must always produce a non-empty .md findings
-# file. The .result file is optional but, if present, must coexist with
-# a non-empty .md. Returns 1 if the contract is broken, 0 if valid.
+# file. If the .result file is present, its value must be in the allowed
+# set. Returns 1 if the .md contract is broken, 2 if the .result verdict
+# is invalid (present but wrong value), 0 if valid.
+# Caller passes allowed verdict values as additional args.
 validate_review_artifacts() {
   local result_file="$1"
-  local md_file="$2"
+  local md_file="$2"; shift 2
   if [[ ! -s "$md_file" ]]; then
     return 1
+  fi
+  if [[ -f "$result_file" ]]; then
+    if ! validate_review_verdict "$result_file" "$@"; then
+      return 2  # verdict invalid
+    fi
   fi
   return 0
 }
@@ -663,6 +673,13 @@ rerun_reviewer_with_retry() {
     is_infra_error=true
   fi
 
+  local allowed_verdicts=()
+  if [[ "$reviewer_type" == "spec" ]]; then
+    allowed_verdicts=(SPEC_PASS SPEC_FAIL)
+  else
+    allowed_verdicts=(QUALITY_PASS QUALITY_FAIL)
+  fi
+
   # Clean up orphaned artifacts from both directories so the re-run starts fresh
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.result"
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
@@ -678,13 +695,21 @@ rerun_reviewer_with_retry() {
       sleep "$delay"
       if [[ "$reviewer_type" == "spec" ]]; then
         local impl_report="$7"
-        SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+        if [[ -n "${SPEC_CORRECTIVE_WARNING:-}" ]]; then
+          run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+        else
+          SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+        fi
       elif [[ "$reviewer_type" == "quality" ]]; then
-        QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+        if [[ -n "${QUALITY_CORRECTIVE_WARNING:-}" ]]; then
+          run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+        else
+          QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+        fi
       fi
       local result_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
       local md_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
-      if validate_review_artifacts "$result_file" "$md_file"; then
+      if validate_review_artifacts "$result_file" "$md_file" "${allowed_verdicts[@]}"; then
         log "  ${reviewer_type}-review-task-${task_n} retry $attempt succeeded"
         return 0
       fi
@@ -710,13 +735,21 @@ rerun_reviewer_with_retry() {
     log "  Non-infra failure, re-running once immediately"
     if [[ "$reviewer_type" == "spec" ]]; then
       local impl_report="$7"
-      SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+      if [[ -n "${SPEC_CORRECTIVE_WARNING:-}" ]]; then
+        run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+      else
+        SPEC_REVIEW_RERUN_WARNING=1 run_spec_reviewer "$task_n" "$task_title" "$task_text" "$impl_report"
+      fi
     elif [[ "$reviewer_type" == "quality" ]]; then
-      QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+      if [[ -n "${QUALITY_CORRECTIVE_WARNING:-}" ]]; then
+        run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+      else
+        QUALITY_REVIEW_RERUN_WARNING=1 run_quality_reviewer "$task_n" "$task_title" "$task_text" "$base_sha" "$head_sha"
+      fi
     fi
     local result_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
     local md_file="${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
-    if validate_review_artifacts "$result_file" "$md_file"; then
+    if validate_review_artifacts "$result_file" "$md_file" "${allowed_verdicts[@]}"; then
       log "  ${reviewer_type}-review-task-${task_n} non-infra re-run succeeded"
       return 0
     fi
@@ -1223,8 +1256,8 @@ is_task_complete() {
   # or a contract violation), treat the task as review-needed so resume re-runs
   # the review — find_first_incomplete_task must not skip it on a bare .result.
   # Reuse the same check the in-loop path uses so the two cannot drift.
-  if ! validate_review_artifacts "$spec_result_file" "$spec_md_file" \
-    || ! validate_review_artifacts "$quality_result_file" "$quality_md_file"; then
+  if ! validate_review_artifacts "$spec_result_file" "$spec_md_file" SPEC_PASS SPEC_FAIL \
+    || ! validate_review_artifacts "$quality_result_file" "$quality_md_file" QUALITY_PASS QUALITY_FAIL; then
     echo "review-needed"
     return 1
   fi
@@ -2072,6 +2105,12 @@ implementer's word for what was built.
 Write both files to these EXACT absolute paths (not relative — a relative
 path resolves against the wrong workspace and the orchestrator never sees it):
 
+DO NOT create subdirectories (e.g. docs/, review/, output/). Write both files
+directly to the EXACT paths given above. Choosing a different directory or
+filename is a contract violation. If you are tempted to organize the output
+into a subdirectory — STOP. The orchestrator reads these exact paths and will
+not find files anywhere else.
+
 **Step 1**: Write \`${WORKTREE_DIR}/spec-review-task-${task_n}.md\` — the detailed
 findings the fix-review agent will read. Include every issue with file:line
 references, the spec requirement violated, and what would satisfy it. If
@@ -2079,6 +2118,9 @@ everything passes, write a single line: 'No findings. Implementation matches the
 
 **Step 2**: Write \`${WORKTREE_DIR}/spec-review-task-${task_n}.result\` — EXACTLY ONE of:
 SPEC_PASS | SPEC_FAIL. No other content — just the status word.
+
+FORBIDDEN VALUES: Do NOT write SPEC_PARTIAL, QUALITY_PARTIAL, PASS, FAIL,
+PARTIAL, or any prose. ONLY the exact values listed above.
 
 CRITICAL ORDERING RULE:
 - You MUST write the .md file FIRST, then the .result file LAST.
@@ -2100,7 +2142,10 @@ Any action after writing .result is a contract violation.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 
-    if [[ "${SPEC_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
+    if [[ -n "${SPEC_CORRECTIVE_WARNING:-}" ]]; then
+      SPEC_REVIEWER_PROMPT="${SPEC_CORRECTIVE_WARNING}
+${SPEC_REVIEWER_PROMPT}"
+    elif [[ "${SPEC_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
       SPEC_REVIEWER_PROMPT="WARNING: Your previous attempt wrote the .result file but did not write the .md report file. This is a contract violation. You MUST write BOTH files in order: .md first, then .result last.
 
 ${SPEC_REVIEWER_PROMPT}"
@@ -2244,7 +2289,16 @@ path resolves against the wrong workspace and the orchestrator never sees it):
 
 2. ${WORKTREE_DIR}/quality-review-task-${task_n}.result
    EXACTLY ONE of: QUALITY_PASS | QUALITY_FAIL
-   No other content in the file — just the status word.
+No other content in the file — just the status word.
+
+DO NOT create subdirectories (e.g. docs/, review/, output/). Write both files
+directly to the EXACT paths given above. Choosing a different directory or
+filename is a contract violation. If you are tempted to organize the output
+into a subdirectory — STOP. The orchestrator reads these exact paths and will
+not find files anywhere else.
+
+FORBIDDEN VALUES: Do NOT write QUALITY_PARTIAL, SPEC_PARTIAL, PASS, FAIL,
+PARTIAL, or any prose. ONLY the exact values listed above.
 
 Both files MUST be written before you stop, even on QUALITY_PASS. The
 .md file is the primary handoff to the fix-review agent — without it,
@@ -2263,7 +2317,10 @@ Any action after writing .result is a contract violation.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 
-    if [[ "${QUALITY_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
+    if [[ -n "${QUALITY_CORRECTIVE_WARNING:-}" ]]; then
+      QUALITY_REVIEWER_PROMPT="${QUALITY_CORRECTIVE_WARNING}
+${QUALITY_REVIEWER_PROMPT}"
+    elif [[ "${QUALITY_REVIEW_RERUN_WARNING:-}" == "1" ]]; then
       QUALITY_REVIEWER_PROMPT="WARNING: Your previous attempt wrote the .result file but did not write the .md report file. This is a contract violation. You MUST write BOTH files in order: .md first, then .result last.
 
 ${QUALITY_REVIEWER_PROMPT}"
@@ -2839,19 +2896,39 @@ ${_hook_log_tail}"
     quality_md="${WORKTREE_DIR}/quality-review-task-${TASK_NUM}.md"
 
     # Validate spec-review artifacts
-    if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+    # Layer 3: attempt artifact recovery first
+    recover_off_contract_review_artifacts "spec" "$TASK_NUM" || true
+    # Layer 2: validate artifacts + verdict
+    SPEC_CORRECTIVE_WARNING=""
+    validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL
+    spec_vcode=$?
+    if [[ $spec_vcode -ne 0 ]]; then
+      if [[ $spec_vcode -eq 2 ]]; then
+        spec_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
+        SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
+      fi
       if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
-        if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+        if ! validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL; then
+          orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
         fi
       fi
     fi
 
     # Validate quality-review artifacts
-    if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+    # Layer 3: attempt artifact recovery first
+    recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
+    # Layer 2: validate artifacts + verdict
+    QUALITY_CORRECTIVE_WARNING=""
+    validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL
+    quality_vcode=$?
+    if [[ $quality_vcode -ne 0 ]]; then
+      if [[ $quality_vcode -eq 2 ]]; then
+        quality_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
+        QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
+      fi
       if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
-        if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+        if ! validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL; then
+          orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
         fi
       fi
     fi
@@ -2938,17 +3015,39 @@ ${_hook_log_tail}"
       run_quality_reviewer "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"
 
       # Validate re-review artifacts (same pattern as initial reviews above)
-      if ! validate_review_artifacts "$spec_result" "$spec_md"; then
+      # Layer 3: attempt artifact recovery first
+      recover_off_contract_review_artifacts "spec" "$TASK_NUM" || true
+      # Layer 2: validate artifacts + verdict
+      SPEC_CORRECTIVE_WARNING=""
+      validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL
+      spec_vcode=$?
+      if [[ $spec_vcode -ne 0 ]]; then
+        if [[ $spec_vcode -eq 2 ]]; then
+          spec_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
+          SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
+        fi
         if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
-          if ! validate_review_artifacts "$spec_result" "$spec_md"; then
-            orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+          if ! validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL; then
+            orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
           fi
         fi
       fi
-      if ! validate_review_artifacts "$quality_result" "$quality_md"; then
+
+      # Validate quality-review artifacts
+      # Layer 3: attempt artifact recovery first
+      recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
+      # Layer 2: validate artifacts + verdict
+      QUALITY_CORRECTIVE_WARNING=""
+      validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL
+      quality_vcode=$?
+      if [[ $quality_vcode -ne 0 ]]; then
+        if [[ $quality_vcode -eq 2 ]]; then
+          quality_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
+          QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
+        fi
         if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
-          if ! validate_review_artifacts "$quality_result" "$quality_md"; then
-            orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry (missing/empty .md or missing both)"
+          if ! validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL; then
+            orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
           fi
         fi
       fi

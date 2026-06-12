@@ -637,6 +637,74 @@ JSON
   }
 }
 
+# Invariant: Review artifacts with an invalid verdict (e.g., SPEC_PARTIAL)
+#   are rejected by validate_review_artifacts (return non-zero). The
+#   orchestrator must not silently accept a .result file containing a
+#   value outside the allowed set.
+# Source: #305 (was #286#issuecomment-off-contract).
+# Failure prevented: Reviewer wrote SPEC_PARTIAL to the .result file;
+#   orchestrator accepted it as valid, burned retries, and hard-failed.
+# TS-port contract: whatever validates review artifacts in the TS
+#   orchestrator must also reject invalid verdicts (values outside the
+#   allowed set per review type).
+@test "parity[#305]: validate_review_artifacts rejects invalid verdict" {
+  # Source the library and extract validate_review_artifacts from ai-run-issue-v2
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  source "${REPO_ROOT}/scripts/lib/review-contract.sh"
+  # Stubs
+  log() { :; }
+  # Extract the function (post-extension)
+  eval "$(awk '
+    /^validate_review_artifacts\(\)/ { found=1 }
+    found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) exit }
+  ' "$SCRIPT_PATH")"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  # Valid verdict: SPEC_PASS
+  echo "SPEC_PASS" > "${test_dir}/spec-review-task-1.result"
+  echo "No findings." > "${test_dir}/spec-review-task-1.md"
+  run validate_review_artifacts "${test_dir}/spec-review-task-1.result" "${test_dir}/spec-review-task-1.md" SPEC_PASS SPEC_FAIL
+  [ "$status" -eq 0 ]
+  # Invalid verdict: SPEC_PARTIAL
+  echo "SPEC_PARTIAL" > "${test_dir}/spec-review-task-2.result"
+  echo "Findings here." > "${test_dir}/spec-review-task-2.md"
+  run validate_review_artifacts "${test_dir}/spec-review-task-2.result" "${test_dir}/spec-review-task-2.md" SPEC_PASS SPEC_FAIL
+  [ "$status" -ne 0 ]
+  # Invalid verdict: QUALITY_PARTIAL (quality context)
+  echo "QUALITY_PARTIAL" > "${test_dir}/quality-review-task-1.result"
+  echo "Findings here." > "${test_dir}/quality-review-task-1.md"
+  run validate_review_artifacts "${test_dir}/quality-review-task-1.result" "${test_dir}/quality-review-task-1.md" QUALITY_PASS QUALITY_FAIL
+  [ "$status" -ne 0 ]
+}
+
+# Invariant: When a reviewer writes artifacts to a wrong path (e.g.,
+#   docs/spec-vs-implementation-reviews/), the recovery scanner copies them
+#   to the expected path so the retry and downstream consumers can find them.
+# Source: #305 (was #286 hard-failure — artifacts at wrong path).
+# Failure prevented: Reviewer wrote .result/.md to docs/ subdirectory;
+#   orchestrator couldn't find them, burned retries, hard-failed.
+# TS-port contract: the TS orchestrator must also scan for and recover
+#   artifacts written to off-contract paths within the worktree.
+@test "parity[#305]: recover_off_contract_review_artifacts recovers from docs/ subdirectory" {
+  source "${REPO_ROOT}/scripts/lib/review-contract.sh"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  WORKTREE_DIR="$test_dir"
+  log() { :; }
+  # Simulate off-contract write: reviewer wrote to docs/spec-vs-implementation-reviews/
+  mkdir -p "${test_dir}/docs/spec-vs-implementation-reviews"
+  echo "SPEC_FAIL" > "${test_dir}/docs/spec-vs-implementation-reviews/TASK-3.result"
+  echo "## Findings" > "${test_dir}/docs/spec-vs-implementation-reviews/TASK-3-spec-vs-implementation.md"
+  # Also create a .md with the expected pattern name (the actual #286 case used a different .md name)
+  echo "Findings here" > "${test_dir}/docs/TASK-3-task-3.md"
+  run recover_off_contract_review_artifacts "spec" "3"
+  [ "$status" -eq 0 ]
+  # The .result should be recovered
+  [ -f "${test_dir}/spec-review-task-3.result" ]
+  [ "$(cat "${test_dir}/spec-review-task-3.result")" = "SPEC_FAIL" ]
+}
 
 # Invariant: the opencode adapter enforces artifact existence when
 # expectedArtifacts is declared. When the agent exits 0 but the expected file
