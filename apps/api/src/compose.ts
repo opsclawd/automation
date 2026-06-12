@@ -262,6 +262,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       > = {
         opencode: new OpenCodeAgentAdapter({
           artifactsDir: join(runsDir, 'agent-artifacts'),
+          repoRoot: opts.repoRoot,
         }),
       };
       if (needsPi) {

@@ -24,6 +24,10 @@ export interface OpenCodeAdapterOptions {
   // the dir opencode actually writes to (it does NOT honor OPENCODE_SESSION_LOG_DIR).
   // Tests inject a temp dir here.
   logDir?: string;
+  // Root of the git repository. When set, stray-recovery also scans
+  // <repoRoot>/apps/cli/ for artifacts that drifted to the main checkout
+  // outside the worktree (cwd). The worktree path is always checked first.
+  repoRoot?: string;
 }
 
 export class OpenCodeAgentAdapter implements AgentPort {
@@ -221,13 +225,23 @@ export class OpenCodeAgentAdapter implements AgentPort {
         let recovered = false;
         const strayLocations = ['apps/cli'];
         for (const stray of strayLocations) {
-          const strayPath = join(request.cwd, stray, artifact);
-          if (existsSync(strayPath)) {
+          const worktreePath = join(request.cwd, stray, artifact);
+          if (existsSync(worktreePath)) {
             const artifactDir = join(request.cwd, artifact);
-            writeFileSync(artifactDir, readFileSync(strayPath));
+            writeFileSync(artifactDir, readFileSync(worktreePath));
             recovered = true;
-            stderrForLog = `DRIFT_WARNING: ${artifact} recovered from ${stray}/${artifact}\n${stderrForLog}`;
+            stderrForLog = `DRIFT_WARNING: ${artifact} recovered from worktree ${stray}/${artifact}\n${stderrForLog}`;
             break;
+          }
+          if (this.opts.repoRoot) {
+            const repoPath = join(this.opts.repoRoot, stray, artifact);
+            if (existsSync(repoPath)) {
+              const artifactDir = join(request.cwd, artifact);
+              writeFileSync(artifactDir, readFileSync(repoPath));
+              recovered = true;
+              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot ${stray}/${artifact}\n${stderrForLog}`;
+              break;
+            }
           }
         }
         if (!recovered) {

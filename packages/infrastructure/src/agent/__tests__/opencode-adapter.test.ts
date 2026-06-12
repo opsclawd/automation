@@ -1124,4 +1124,47 @@ describe('OpenCodeAgentAdapter', () => {
     const stderrLog = readFileSync(r.stderrPath, 'utf-8');
     expect(stderrLog).not.toContain('DRIFT_WARNING');
   });
+
+  it('recovers result.json from repoRoot stray location when not in worktree', async () => {
+    const cwd = makeWorktree();
+    const repoRoot = mkdtempSync(join(tmpdir(), 'opencode-repoRoot-'));
+    execSync('git init -q', { cwd: repoRoot });
+    execSync('git config user.email t@test', { cwd: repoRoot });
+    execSync('git config user.name t', { cwd: repoRoot });
+    writeFileSync(join(repoRoot, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: repoRoot });
+    const strayDir = join(repoRoot, 'apps', 'cli');
+    mkdirSync(strayDir, { recursive: true });
+    writeFileSync(
+      join(strayDir, 'result.json'),
+      '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}',
+    );
+    // Confirm it is NOT at the worktree path
+    expect(existsSync(join(cwd, 'result.json'))).toBe(false);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+      repoRoot,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(r.resultJsonPath).toBe('result.json');
+    expect(existsSync(join(cwd, 'result.json'))).toBe(true);
+    expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toContain('repoRoot');
+    const stderrLog = readFileSync(r.stderrPath, 'utf-8');
+    expect(stderrLog).toContain('DRIFT_WARNING');
+    expect(stderrLog).toContain('repoRoot');
+    expect(stderrLog).toContain('apps/cli/result.json');
+  });
 });
