@@ -306,3 +306,44 @@ setup() {
 
   [ "$_fail_called" = "false" ]
 }
+
+# Invariant: ai-run-issue-v2 installs an EXIT trap that fires the guard and
+#   restores REPO_ROOT branch on every exit path (normal completion, crash,
+#   orchestrator_fail). This closes the gap where a run crash between phases
+#   leaves REPO_ROOT on detached HEAD or with leaked mutations.
+# Source: #295.
+@test "parity[#295]: ai-run-issue-v2 has EXIT trap that covers guard + branch restore" {
+  # Verify trap registration exists and calls _trap_on_exit (or equivalent)
+  run grep -c 'trap.*_trap_on_exit.*EXIT' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Verify the trap handler calls _guard_main_checkout
+  run grep -c '_guard_main_checkout' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  # At least 1 in trap handler + existing phase call sites
+  [ "$output" -ge 2 ]
+
+  # Verify the trap handler calls _reattach_main_head (or equivalent restore)
+  run grep -c '_reattach_main_head' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
+
+# Invariant: ai-run-issue-v2 detaches REPO_ROOT HEAD before the first agent
+#   phase runs. _detach_main_head is called after configuration loading and
+#   before detect_phase.
+# Source: #295.
+@test "parity[#295]: ai-run-issue-v2 calls _detach_main_head before first agent phase" {
+  # Verify _detach_main_head is called at least once
+  run grep -c '_detach_main_head' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Verify it is called BEFORE detect_phase (the detach must happen before any
+  # phase runs). Capture line numbers and compare.
+  local detach_line phase_line
+  detach_line=$(grep -n '_detach_main_head' "$REPO_ROOT/scripts/ai-run-issue-v2" | head -1 | cut -d: -f1)
+  phase_line=$(grep -n 'PHASE="\$(detect_phase)"' "$REPO_ROOT/scripts/ai-run-issue-v2" | head -1 | cut -d: -f1)
+  [ "$detach_line" -lt "$phase_line" ]
+}

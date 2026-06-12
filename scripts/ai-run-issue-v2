@@ -147,6 +147,12 @@ source "${REPO_ROOT}/scripts/lib/plan-review.sh"
 # shellcheck source=lib/copy-artifact.sh
 source "${REPO_ROOT}/scripts/lib/copy-artifact.sh"
 
+# ── Main checkout protection ────────────────────────────────────────────────
+# Detach REPO_ROOT HEAD so stray agent commits can't advance main.
+# Restored in the done phase and on EXIT trap.
+# NOTE: must be after the source block (guard-main-checkout.sh sourced at ~L131).
+_detach_main_head || warn "Failed to detach REPO_ROOT HEAD — guard will still detect leaks"
+
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
 # Invariant: _emit_phase_started must always be called before _emit_phase_done
 # in the same phase block. orchestrator_fail always exits the script, so a
@@ -1092,7 +1098,23 @@ cleanup_staging() {
     rm -rf "${ISSUE_STAGING_DIR}"
   fi
 }
-trap cleanup_staging EXIT
+_trap_on_exit() {
+  local _exit_code=$?
+  local _exit_state="${PHASE:-unknown}"
+  # P1-F1 FIX: reattach BEFORE guard.  If the guard hard-fails and calls
+  # orchestrator_fail → exit 1, bash terminates immediately and does NOT
+  # re-trigger the EXIT trap.  Reattaching first guarantees REPO_ROOT is
+  # restored even when the guard aborts the run.
+  if declare -F _reattach_main_head >/dev/null 2>&1; then
+    _reattach_main_head 2>/dev/null || warn "EXIT trap: failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
+  fi
+  if declare -F _guard_main_checkout >/dev/null 2>&1; then
+    _guard_main_checkout "exit-trap" "" 2>/dev/null || true
+  fi
+  cleanup_staging
+  exit $_exit_code
+}
+trap _trap_on_exit EXIT
 
 mkdir -p "${ISSUES_DIR}"
 
@@ -4974,6 +4996,11 @@ if [[ "$PHASE" == "done" ]]; then
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"
+
+  # Restore REPO_ROOT branch from detached HEAD
+  if declare -F _reattach_main_head >/dev/null 2>&1; then
+    _reattach_main_head || warn "Failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
+  fi
 
   # Start PR review poll loop in background
   log "Starting PR review poll loop (background)..."
