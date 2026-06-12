@@ -2590,7 +2590,9 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
   if ! _validation_error=$(validate_task_list "plan.md" "$TASK_COUNT"); then
     orchestrator_fail "$_validation_error"
   fi
-  _lint_task_size "${WORKTREE_DIR}/task-manifest.json"
+  if ! _lint_task_size "${WORKTREE_DIR}/task-manifest.json"; then
+    orchestrator_fail "Task size lint failed — oversized test tasks detected"
+  fi
 
   log "Found ${TASK_COUNT} task(s) to implement"
 
