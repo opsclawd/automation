@@ -533,6 +533,7 @@ _lint_task_size() {
   local max_lines="${_TASK_SPLIT_MAX_LINES:-500}"
   local max_cases="${_TASK_SPLIT_MAX_CASES:-10}"
   local block="${_TASK_SPLIT_BLOCK:-false}"
+  local violations=""
   local task_count
   task_count=$(jq '.tasks | length' "$manifest_path" 2>/dev/null || echo 0)
   local i=0
@@ -580,8 +581,7 @@ _lint_task_size() {
       fi
       if [[ $oversized -eq 1 ]]; then
         if [[ "$block" == "true" ]]; then
-          echo "FATAL: Task ${task_num} ($(printf '%s' "$task_title")) targets oversized test file ${file_path}: ${reasons}" >&2
-          return 1
+          violations+="Task ${task_num} ($(printf '%s' "$task_title")) targets oversized test file ${file_path}: ${reasons}"$'\n'
         else
           emit_event "implement" "warn" "task_size.oversized" \
             "Task ${task_num} ($(printf '%s' "$task_title")) targets oversized test file ${file_path}: ${reasons}" \
@@ -594,5 +594,12 @@ _lint_task_size() {
     done
     i=$((i + 1))
   done
+  if [[ -n "$violations" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      echo "FATAL: ${line}" >&2
+    done <<< "$violations"
+    return 1
+  fi
   return 0
 }

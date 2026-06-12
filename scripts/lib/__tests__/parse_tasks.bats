@@ -1443,3 +1443,36 @@ JSON
   [ "$status" -eq 1 ]
   [[ "$output" == *"FATAL: Task 1 (Refactor Oversized Test) targets oversized test file oversized.test.ts: line count"* ]]
 }
+
+@test "_lint_task_size: block=true reports all oversized files, not just the first" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=true
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-block-all"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local big1="${test_dir}/big.test.ts"
+  local big2="${test_dir}/huge.spec.ts"
+  local big3="${test_dir}/massive.bats"
+  for _ in $(seq 1 501); do echo "// line"; done > "$big1"
+  for _ in $(seq 1 502); do echo "// line"; done > "$big2"
+  for _ in $(seq 1 503); do echo "# line"; done > "$big3"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update all tests", "files": ["big.test.ts", "huge.spec.ts", "massive.bats"] }
+] }
+JSON
+
+  run _lint_task_size "${test_dir}/task-manifest.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"big.test.ts"* ]]
+  [[ "$output" == *"huge.spec.ts"* ]]
+  [[ "$output" == *"massive.bats"* ]]
+}
