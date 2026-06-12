@@ -327,7 +327,7 @@ export class ProcessPrReviewComments {
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
         newlyProcessed++;
-      } else if (c.attempts >= ESCALATION_BUDGET) {
+      } else if (c.attempts >= 2) {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed'));
         blocked++;
       } else {

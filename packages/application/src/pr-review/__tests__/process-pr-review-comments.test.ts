@@ -41,6 +41,16 @@ class IncrementingShaGitPort extends FakeGitPort {
   override async headCommitSha(_cwd: string): Promise<string> {
     return `sha-${++this.n}`;
   }
+  override async isAncestor(
+    _cwd: string,
+    _ancestor: string,
+    _descendant: string,
+  ): Promise<boolean> {
+    return true;
+  }
+  override async logBetween(_cwd: string, _base: string, _head: string): Promise<string[]> {
+    return ['dummy'];
+  }
 }
 
 // Two-SHA before/after model, used by tests that specifically assert SHA

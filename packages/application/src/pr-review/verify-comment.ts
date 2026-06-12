@@ -80,7 +80,7 @@ export async function verifyComment(
 
   let fixCommitOnRemote = true;
   let isNewerThanStart = true;
-  if (comment.commitSha && context.startCommitSha) {
+  if (comment.commitSha) {
     const remoteSha = await deps.git.remoteRef({
       cwd: context.cwd,
       remote: 'origin',
@@ -91,12 +91,14 @@ export async function verifyComment(
     } else {
       fixCommitOnRemote = false;
     }
-    const commitsSinceStart = await deps.git.logBetween(
-      context.cwd,
-      context.startCommitSha,
-      comment.commitSha,
-    );
-    isNewerThanStart = commitsSinceStart.length > 0;
+    if (context.startCommitSha) {
+      const commitsSinceStart = await deps.git.logBetween(
+        context.cwd,
+        context.startCommitSha,
+        comment.commitSha,
+      );
+      isNewerThanStart = commitsSinceStart.length > 0;
+    }
   }
 
   if (!replyVerified) failReason = 'reply not found on GitHub';
