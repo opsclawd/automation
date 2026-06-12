@@ -2909,9 +2909,9 @@ ${_hook_log_tail}"
     local spec_vcode=$?
     if [[ $spec_vcode -ne 0 ]]; then
       if [[ $spec_vcode -eq 2 ]]; then
-        local actual_verdict
-        actual_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
-        SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$actual_verdict" "")
+        local spec_verdict
+        spec_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
+        SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
       fi
       if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
         recover_off_contract_review_artifacts "spec" "$TASK_NUM" || true
@@ -2930,9 +2930,9 @@ ${_hook_log_tail}"
     local quality_vcode=$?
     if [[ $quality_vcode -ne 0 ]]; then
       if [[ $quality_vcode -eq 2 ]]; then
-        local actual_verdict
-        actual_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
-        QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$actual_verdict" "")
+        local quality_verdict
+        quality_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
+        QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
       fi
       if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
         recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
@@ -3032,9 +3032,9 @@ ${_hook_log_tail}"
       local spec_vcode=$?
       if [[ $spec_vcode -ne 0 ]]; then
         if [[ $spec_vcode -eq 2 ]]; then
-          local actual_verdict
-          actual_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
-          SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$actual_verdict" "")
+          local spec_verdict
+          spec_verdict=$(head -1 "$spec_result" 2>/dev/null | tr -d '[:space:]' || true)
+          SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
         fi
         if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
           recover_off_contract_review_artifacts "spec" "$TASK_NUM" || true
@@ -3053,9 +3053,9 @@ ${_hook_log_tail}"
       local quality_vcode=$?
       if [[ $quality_vcode -ne 0 ]]; then
         if [[ $quality_vcode -eq 2 ]]; then
-          local actual_verdict
-          actual_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
-          QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$actual_verdict" "")
+          local quality_verdict
+          quality_verdict=$(head -1 "$quality_result" 2>/dev/null | tr -d '[:space:]' || true)
+          QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
         fi
         if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
           recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
