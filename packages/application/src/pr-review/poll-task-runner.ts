@@ -7,6 +7,7 @@ import type { AgentPort } from '../ports/agent-port.js';
 import type { AgentProfileName } from '../ports/agent-invocation-types.js';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
+import { verifyComment } from './verify-comment.js';
 
 export interface PollTaskRunnerDeps {
   github: GitHubPort;
@@ -162,25 +163,10 @@ export class PollTaskRunner {
       };
     }
 
-    // 5. If fixed: verify commit pushed + build passes
-    let commitVerified = true;
-    let buildVerified = true;
-    let commitShaChanged = false;
+    // 5. Capture fix commit SHA (verification delegated to shared verifyComment)
     let fixCommitSha: string | undefined;
-
     if (result.action === 'fixed') {
       fixCommitSha = await d.git.headCommitSha(input.cwd);
-      commitShaChanged = fixCommitSha !== input.startCommitSha;
-      const commitPushedInput = fixCommitSha
-        ? {
-            cwd: input.cwd,
-            branch: input.branch,
-            startCommitSha: input.startCommitSha,
-            commitSha: fixCommitSha,
-          }
-        : { cwd: input.cwd, branch: input.branch, startCommitSha: input.startCommitSha };
-      commitVerified = await d.verifyCommitPushed(commitPushedInput);
-      buildVerified = await d.verifyBuildPasses({ cwd: input.cwd, runId: String(input.runId) });
     }
 
     // 6. Mark replied
@@ -197,23 +183,16 @@ export class PollTaskRunner {
     }
     d.prReviewRepo.upsertComment(replied);
 
-    // 7. Verify reply on GitHub
-    const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const githubReply = afterComments.find((c) => c.inReplyToId === comment.commentId);
-    const replyVerified = githubReply !== undefined;
-    if (githubReply) {
-      d.prReviewRepo.upsertComment({ ...replied, replyId: githubReply.id });
-    }
+    // 7. Verify with shared function
+    const verification = await verifyComment(replied, d, {
+      cwd: input.cwd,
+      branch: input.branch,
+      prNumber: input.prNumber,
+      repoFullName: input.repoFullName,
+      startCommitSha: input.startCommitSha,
+    });
 
-    const noFixOk = result.action === 'no_fix' && replyVerified;
-    const fixOk =
-      result.action === 'fixed' &&
-      commitShaChanged &&
-      commitVerified &&
-      replyVerified &&
-      buildVerified;
-
-    if (noFixOk || fixOk) {
+    if (verification.ok) {
       d.prReviewRepo.insertReply({
         id: d.idFactory(),
         runId: input.runId,
@@ -225,9 +204,9 @@ export class PollTaskRunner {
       });
       d.prReviewRepo.upsertComment(
         markProcessed(replied, {
-          commitVerified: result.action === 'fixed' ? commitVerified : true,
-          replyVerified,
-          buildVerified: result.action === 'fixed' ? buildVerified : true,
+          commitVerified: verification.commitVerified,
+          replyVerified: verification.replyVerified,
+          buildVerified: verification.buildVerified,
         }),
       );
       await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);

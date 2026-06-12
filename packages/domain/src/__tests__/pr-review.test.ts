@@ -8,7 +8,6 @@ import {
   blockComment,
   isUnresolved,
   CommentStateError,
-  type PrReviewComment,
 } from '../pr-review.js';
 
 const base = () =>
@@ -137,15 +136,13 @@ describe('PrReviewComment state machine', () => {
     expect(() => resetForRetry(base(), { poll: 1 })).toThrow(/cannot reset.*retry/i);
   });
 
-  it('blockComment after 2 unresolved attempts', () => {
-    let c: PrReviewComment = markReplied(base(), {
+  it('blockComment from replied state', () => {
+    const c = markReplied(base(), {
       replyId: 1,
       outcome: 'fixed',
       commitSha: 'a',
       poll: 1,
     });
-    c = resetForRetry(c, { poll: 2 });
-    c = markReplied(c, { replyId: 2, outcome: 'fixed', commitSha: 'b', poll: 2 });
     const blocked = blockComment(c, 'verification failed twice');
     expect(blocked.state).toBe('blocked');
     expect(blocked.blockedReason).toBe('verification failed twice');

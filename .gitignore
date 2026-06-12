@@ -19,6 +19,10 @@ ai/
 /review-triage.md
 /code-review.md
 .review-context/
+.ai/
+changes/
+review-reports/
+docs/spec-vs-implementation-reviews/
 .DS_Store
 test-results/
 .antigravitycli/
