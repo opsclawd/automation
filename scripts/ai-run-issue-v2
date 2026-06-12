@@ -667,8 +667,6 @@ rerun_reviewer_with_retry() {
   # detection method. Fall back to the .log file if no inv-* dirs exist
   # (e.g. if the adapter crashed before writing artifacts).
   local is_infra_error=false
-  # Layer 3: attempt to recover artifacts from wrong paths before retrying
-  recover_off_contract_review_artifacts "$reviewer_type" "$task_n" || true
   if check_adapter_stderr_for_infra_error; then
     is_infra_error=true
   elif grep -qiE "$REVIEWER_PROVIDER_ERROR_PATTERNS" "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.log" 2>/dev/null; then
@@ -687,6 +685,9 @@ rerun_reviewer_with_retry() {
   rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
   rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+
+  # Layer 3: attempt to recover artifacts from wrong paths before retrying
+  recover_off_contract_review_artifacts "$reviewer_type" "$task_n" || true
 
   if $is_infra_error; then
     local max_retries=2
@@ -721,6 +722,8 @@ rerun_reviewer_with_retry() {
       rm -f "${ISSUES_DIR}/${reviewer_type}-review-task-${task_n}.md"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.result"
       rm -f "${WORKTREE_DIR}/${reviewer_type}-review-task-${task_n}.md"
+      # Layer 3: recover artifacts from wrong paths before next retry
+      recover_off_contract_review_artifacts "$reviewer_type" "$task_n" || true
       attempt=$((attempt + 1))
       delay=60
     done
