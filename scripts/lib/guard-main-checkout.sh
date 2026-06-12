@@ -89,6 +89,14 @@ _guard_main_checkout() {
       return 0
     fi
     _guard_fail_or_warn "leak detected: HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" || return $?
+    # ── Legacy auto-reset path ──────────────────────────────────
+    # The warn/revert/reset code below is only reached when
+    # orchestrator_fail is NOT defined (legacy mode without the
+    # orchestrator framework). When orchestrator_fail IS defined:
+    #   - Production: orchestrator_fail calls exit(1), so this
+    #     code is unreachable (dead).
+    #   - BATS tests: the stub returns 1, and || return $?
+    #     above short-circuits before reaching here.
     warn "Main checkout HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
     if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
       git -C "$REPO_ROOT" checkout -q "$pre_branch" 2>/dev/null || true
@@ -132,6 +140,10 @@ _guard_main_checkout() {
         pollIteration="${POLL_COUNT:-0}"
     else
       _guard_fail_or_warn "leak detected: working tree is dirty" "$guard_label" || return $?
+      # ── Legacy auto-reset path ──────────────────────────────
+      # Same as the HEAD-moved block above: this dirty-tree
+      # auto-reset is only reachable when orchestrator_fail is
+      # not defined. See comment above for the full explanation.
       warn "Main checkout dirty after ${guard_label} — resetting leaked changes"
       git -C "$REPO_ROOT" reset --hard HEAD 2>/dev/null || true
       git -C "$REPO_ROOT" clean -fd 2>/dev/null || true
