@@ -562,8 +562,6 @@ describe('AgentRuntimeRouter', () => {
             inputTokens: 500,
             outputTokens: 200,
             reasoningTokens: 100,
-            provider: 'deepseek',
-            model: 'deepseek-pro',
           },
         };
       }
