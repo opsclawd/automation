@@ -181,7 +181,7 @@ export interface PollAttempt {
   startedAt: Date;
   completedAt?: Date;
   nextPollAt?: Date;
-  terminalState?: 'all_resolved' | 'max_polls_reached' | 'blocked' | 'timed_out';
+  terminalState?: 'all_resolved' | 'max_polls_reached' | 'blocked' | 'timed_out' | 'cancelled';
 }
 
 export interface PrReviewReply {
