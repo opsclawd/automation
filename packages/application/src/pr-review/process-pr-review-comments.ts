@@ -6,6 +6,7 @@ import {
   markProcessed,
   blockComment,
   isUnresolved,
+  resetForRetry,
   type PrReviewComment,
   type PollAttempt,
 } from '@ai-sdlc/domain';
@@ -331,11 +332,7 @@ export class ProcessPrReviewComments {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed'));
         blocked++;
       } else {
-        d.prReviewRepo.upsertComment({
-          ...c,
-          attempts: c.attempts + 1,
-          updatedAt: d.now(),
-        });
+        d.prReviewRepo.upsertComment(resetForRetry(c, { poll: input.pollNumber }));
       }
     }
     return { blocked, newlyProcessed };

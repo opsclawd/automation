@@ -4,6 +4,7 @@ import {
   createPrReviewComment,
   markReplied,
   markProcessed,
+  resetForRetry,
   blockComment,
   isUnresolved,
   CommentStateError,
@@ -110,6 +111,29 @@ describe('PrReviewComment state machine', () => {
     expect(() =>
       markProcessed(replied, { commitVerified: false, replyVerified: false, buildVerified: false }),
     ).toThrow(/reply not verified/i);
+  });
+
+  it('resetForRetry sends replied back to pending and clears stale fields', () => {
+    const replied = markReplied(base(), {
+      replyId: 555,
+      outcome: 'fixed',
+      commitSha: 'abc',
+      poll: 1,
+    });
+    const retried = resetForRetry(replied, { poll: 2 });
+    expect(retried.state).toBe('pending');
+    expect(retried.attempts).toBe(1);
+    expect(retried.replyId).toBeUndefined();
+    expect(retried.outcome).toBeUndefined();
+    expect(retried.commitSha).toBeUndefined();
+    expect(retried.blockedReason).toBeUndefined();
+    expect(retried.commitVerified).toBe(false);
+    expect(retried.replyVerified).toBe(false);
+    expect(retried.buildVerified).toBe(false);
+  });
+
+  it('resetForRetry throws if not in replied state', () => {
+    expect(() => resetForRetry(base(), { poll: 1 })).toThrow(/cannot reset.*retry/i);
   });
 
   it('blockComment from replied state', () => {

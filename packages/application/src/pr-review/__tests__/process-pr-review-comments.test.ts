@@ -301,10 +301,10 @@ describe('ProcessPrReviewComments — blocking', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('replied');
+    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
 
     const c = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c, attempts: ESCALATION_BUDGET });
+    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
 
     const out = await uc.execute({
       runId,
@@ -318,7 +318,8 @@ describe('ProcessPrReviewComments — blocking', () => {
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
     expect(out.blocked).toBe(1);
-    // Only one reply is ever posted, even across retry polls (idempotent — H1).
+    // Comment was reset to pending for retry, so the blocking path runs via
+    // verifyOrphaned when state is manually set back to replied with exhausted budget.
     expect(github.repliesPosted).toHaveLength(1);
   });
 });
@@ -717,10 +718,10 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('replied');
+    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
 
     const c2 = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c2, attempts: ESCALATION_BUDGET });
+    repo.upsertComment({ ...c2, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
 
     const out = await uc.execute({
       runId,
@@ -818,10 +819,10 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('replied');
+    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
 
     const c = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c, attempts: ESCALATION_BUDGET });
+    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
 
     const out1 = await uc.execute({
       runId,
@@ -1021,8 +1022,8 @@ describe('ProcessPrReviewComments — per-task failure isolation', () => {
   });
 });
 
-describe('ProcessPrReviewComments — no duplicate replies on failed verification', () => {
-  it('keeps a replied comment in replied state when verification fails, preventing duplicate replies', async () => {
+describe('ProcessPrReviewComments — reset to pending on failed verification', () => {
+  it('resets comment to pending after failed verification, then blocks when budget exhausted', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
@@ -1058,12 +1059,13 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
     });
 
     const after1 = repo.getComment(runId, 9001);
-    expect(after1?.state).toBe('replied');
+    expect(after1?.state).toBe('pending');
     expect(after1?.replyVerified).toBe(false);
+    // Comment was reset to pending for agent retry (resetForRetry).
     expect(github.repliesPosted).toHaveLength(1);
 
     const c = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c, attempts: ESCALATION_BUDGET });
+    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
 
     await uc.execute({
       runId,
@@ -1075,7 +1077,7 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
       pollNumber: 2,
     });
 
-    // Still exactly one reply after the second poll — no duplicate (H1).
+    // verifyOrphaned blocks the comment when budget is exhausted.
     expect(github.repliesPosted).toHaveLength(1);
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
