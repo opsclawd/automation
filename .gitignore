@@ -21,6 +21,11 @@ ai/
 /code-review.md
 /review-loop-history.json
 /arbiter-result.json
+/compound-draft.md
+/fix-validate-done.marker
+/plan-review-passed.marker
+/review.md
+/task-manifest.json
 .review-context/
 .ai/
 changes/
