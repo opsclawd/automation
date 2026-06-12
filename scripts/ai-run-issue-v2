@@ -553,6 +553,15 @@ fix-validate-log.md
 review-task-manifest.json
 review-triage.md
 EOF
+
+  # Append any entries from the canonical artifact list that are not yet
+  # present in the exclude file.  Idempotent — no duplicates accumulate.
+  if declare -F orchestrator_artifact_paths >/dev/null 2>&1; then
+    while IFS= read -r _artifact; do
+      [[ -z "$_artifact" ]] && continue
+      grep -qxF "$_artifact" "$exclude_file" 2>/dev/null || echo "$_artifact" >> "$exclude_file"
+    done < <(orchestrator_artifact_paths)
+  fi
 }
 
 # ── result resolution helpers ───────────────────────────────────────────────

@@ -900,3 +900,48 @@ JSON
   [[ -n "$_add_line" ]]
   [[ "$_guard_line" -lt "$_add_line" ]]
 }
+
+# Invariant: seed_excludes() writes every entry from the canonical
+#   orchestrator_artifact_paths() list into the worktree's info/exclude.
+#   This closes the gap where a new artifact added to the centralized list
+#   but not to the seed_excludes heredoc could be git add -A'd.
+# Source: #280.
+# Failure prevented: a new artifact type is added to the canonical list
+#   but forgotten in seed_excludes → agent git add -A picks it up → committed.
+# TS-port contract: the TS orchestrator's worktree initialization must also
+#   exclude every entry from the canonical artifact list.
+@test "parity[#280]: seed_excludes covers every entry in orchestrator_artifact_paths" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  local repo="$BATS_TEST_TMPDIR/se-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  local ORIG_WORKTREE_DIR="$WORKTREE_DIR"
+  export WORKTREE_DIR="$repo"
+  log() { :; }
+  emit_event() { :; }
+  warn() { :; }
+
+  # Source seed_excludes from ai-run-issue-v2
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  pushd "$repo" >/dev/null
+  seed_excludes
+  popd >/dev/null
+
+  local exclude_file
+  exclude_file="$repo/$(cd "$repo" && git rev-parse --git-common-dir)/info/exclude"
+
+  # Every entry from the canonical list must be present
+  while IFS= read -r artifact; do
+    [[ -z "$artifact" ]] && continue
+    run grep -qxF "$artifact" "$exclude_file"
+    [ "$status" -eq 0 ] || { echo "artifact not in info/exclude: $artifact"; false; }
+  done < <(orchestrator_artifact_paths)
+
+  export WORKTREE_DIR="$ORIG_WORKTREE_DIR"
+}
