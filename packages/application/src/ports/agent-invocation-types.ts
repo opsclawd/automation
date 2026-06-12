@@ -47,7 +47,5 @@ export interface AgentInvocationResult {
     outputTokens: number;
     reasoningTokens?: number;
     cachedTokens?: number;
-    provider: string;
-    model: string;
   };
 }

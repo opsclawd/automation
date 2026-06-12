@@ -1304,7 +1304,7 @@ describe('OpenCodeAgentAdapter usage capture', () => {
     expect(result.usage!.inputTokens).toBe(1334);
     expect(result.usage!.outputTokens).toBe(617);
     expect(result.usage!.cachedTokens).toBe(42);
-    expect(result.usage!.provider).toBe('deepseek');
-    expect(result.usage!.model).toBe('deepseek-pro');
+    expect(result.provider).toBe('deepseek');
+    expect(result.model).toBe('deepseek-pro');
   }, 15000);
 });

@@ -336,15 +336,13 @@ export class OpenCodeAgentAdapter implements AgentPort {
     writeFileSync(stderrPath, stderrForLog);
 
     // Parse token usage from the session log transcripts
-    const effectiveProvider = request.provider ?? '';
-    const effectiveModel = request.model ?? '';
     const usage = postExit?.transcript
       ? parseSessionLogUsage(OpenCodeAgentAdapter.providerLines(postExit.transcript))
       : undefined;
 
     const ret: AgentInvocationResult = {
       runtime: 'opencode',
-      provider: '',
+      provider: request.provider ?? '',
       model: request.model ?? '',
       exitCode,
       durationMs,
@@ -352,7 +350,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stderrPath,
       contractViolations,
       outcome,
-      ...(usage ? { usage: { ...usage, provider: effectiveProvider, model: effectiveModel } } : {}),
+      ...(usage ? { usage: { ...usage } } : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     if (request.stepId) ret.stepId = request.stepId;
