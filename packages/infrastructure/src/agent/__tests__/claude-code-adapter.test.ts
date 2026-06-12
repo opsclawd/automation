@@ -170,6 +170,7 @@ exit 0
 
   it('skips no_output check for artifact-only phases with expectedArtifacts', async () => {
     const cwd = makeWorktree();
+    writeFileSync(join(cwd, 'result.md'), 'ok');
     const adapter = new ClaudeCodeAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-claude-silent-zero.sh'),
       artifactsDir: cwd,
