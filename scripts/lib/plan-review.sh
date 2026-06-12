@@ -299,6 +299,7 @@ fi
     --prompt-file "$_reviewer_prompt_file" \
     --timeout-minutes $(( (timeout_sec + 59) / 60 )) \
     --start-sha "$(git -C "$worktree_dir" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
+    --expected-artifacts plan-review-findings.md \
     2>&1 | tee -a "${issues_dir}/plan-review.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_reviewer_prompt_file"
   if [[ ${_tee_ec:-0} -ne 0 ]]; then
