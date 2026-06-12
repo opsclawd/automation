@@ -1353,3 +1353,34 @@ JSON
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
 }
+
+@test "_lint_task_size: block=true FATAL on stderr with full task details" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=true
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-stderr"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local oversized="${test_dir}/oversized.test.ts"
+  for _ in $(seq 1 501); do echo "// oversized line"; done > "$oversized"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Refactor Oversized Test", "files": ["oversized.test.ts"] }
+] }
+JSON
+
+  orchestrator_fail() {
+    echo "orchestrator_fail would be called: $*" >&2
+  }
+
+  run _lint_task_size "${test_dir}/task-manifest.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FATAL: Task 1 (Refactor Oversized Test) targets oversized test file oversized.test.ts: line count"* ]]
+}
