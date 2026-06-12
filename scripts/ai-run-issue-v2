@@ -151,6 +151,11 @@ source "${REPO_ROOT}/scripts/lib/copy-artifact.sh"
 # Detach REPO_ROOT HEAD so stray agent commits can't advance main.
 # Restored in the done phase and on EXIT trap.
 # NOTE: must be after the source block (guard-main-checkout.sh sourced at ~L131).
+# Capture pre-detach state so the EXIT trap guard can detect HEAD movement
+# even when _reattach_main_head fails (orphaning agent commits on the detached
+# HEAD). This is a single snapshot taken before detach — per-phase guard calls
+# capture fresh state independently and are not affected.
+_EXIT_TRAP_PRE_STATE=$(_capture_main_state)
 _detach_main_head || warn "Failed to detach REPO_ROOT HEAD — guard will still detect leaks"
 
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
@@ -1109,7 +1114,13 @@ _trap_on_exit() {
     _reattach_main_head 2>/dev/null || warn "EXIT trap: failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
   fi
   if declare -F _guard_main_checkout >/dev/null 2>&1; then
-    _guard_main_checkout "exit-trap" "" 2>/dev/null || true
+    # P2-F2: pass pre-detach state so the guard can detect HEAD advancement
+    # from leaked commits if _reattach_main_head above failed. The pre-state
+    # is captured before _detach_main_head (not before each phase) — per-phase
+    # guard calls capture their own state independently. Since _reattach_main_head
+    # runs first in this trap (restoring the branch or orphaning agent commits),
+    # HEAD-movement detection here is primarily a defense-in-depth fallback.
+    _guard_main_checkout "exit-trap" "${_EXIT_TRAP_PRE_STATE:-}" 2>/dev/null || true
   fi
   cleanup_staging
   exit $_exit_code
