@@ -520,3 +520,86 @@ extract_task_commit_msg() {
     echo "$fallback_msg"
   fi
 }
+
+# _lint_task_size: check task-manifest.json for tasks targeting oversized test files.
+# Reads thresholds from _TASK_SPLIT_MAX_LINES, _TASK_SPLIT_MAX_CASES, _TASK_SPLIT_BLOCK.
+# If blockOversizedTasks is true, exits 1 on the first oversized task.
+# Otherwise, emits a warn event per oversized task.
+_lint_task_size() {
+  local manifest_path="${1:-${ISSUES_DIR}/task-manifest.json}"
+  if [[ ! -f "$manifest_path" ]]; then
+    return 0
+  fi
+  local max_lines="${_TASK_SPLIT_MAX_LINES:-500}"
+  local max_cases="${_TASK_SPLIT_MAX_CASES:-10}"
+  local block="${_TASK_SPLIT_BLOCK:-false}"
+  local violations=""
+  local task_count
+  task_count=$(jq '.tasks | length' "$manifest_path" 2>/dev/null || echo 0)
+  local i=0
+  while [[ $i -lt $task_count ]]; do
+    local task_title
+    task_title=$(jq -r ".tasks[$i].title // \"\"" "$manifest_path")
+    local task_num=$((i + 1))
+    local file_count
+    file_count=$(jq ".tasks[$i].files | length" "$manifest_path" 2>/dev/null || echo 0)
+    if [[ "$file_count" -eq 0 ]]; then
+      i=$((i + 1))
+      continue
+    fi
+    local j=0
+    while [[ $j -lt $file_count ]]; do
+      local file_path
+      file_path=$(jq -r ".tasks[$i].files[$j]" "$manifest_path")
+      local is_test_file=0
+      if [[ "$file_path" =~ \.(test|spec)\.(ts|tsx)$ || "$file_path" =~ \.bats$ ]]; then
+        is_test_file=1
+      fi
+      if [[ $is_test_file -eq 0 ]]; then
+        j=$((j + 1))
+        continue
+      fi
+      local resolved_path="${WORKTREE_DIR:-.}/${file_path}"
+      if [[ ! -f "$resolved_path" ]]; then
+        j=$((j + 1))
+        continue
+      fi
+      local line_count
+      line_count=$(wc -l < "$resolved_path" 2>/dev/null || echo 0)
+      local test_case_count
+      test_case_count=$(grep -cE '^[[:space:]]*(it|test)(\.(skip|only))?\(' "$resolved_path" 2>/dev/null || true)
+      local oversized=0
+      local reasons=""
+      if [[ "$line_count" -gt "$max_lines" ]]; then
+        oversized=1
+        reasons="line count ${line_count} > threshold ${max_lines}"
+      fi
+      if [[ "$test_case_count" -gt "$max_cases" ]]; then
+        oversized=1
+        if [[ -n "$reasons" ]]; then reasons+=", "; fi
+        reasons+="test case count ${test_case_count} > threshold ${max_cases}"
+      fi
+      if [[ $oversized -eq 1 ]]; then
+        if [[ "$block" == "true" ]]; then
+          violations+="Task ${task_num} ($(printf '%s' "$task_title")) targets oversized test file ${file_path}: ${reasons}"$'\n'
+        else
+          emit_event "implement" "warn" "task_size.oversized" \
+            "Task ${task_num} ($(printf '%s' "$task_title")) targets oversized test file ${file_path}: ${reasons}" \
+            taskNum="$task_num" "taskTitle=${task_title}" "file=${file_path}" \
+            "lineCount=${line_count}" "testCaseCount=${test_case_count}" \
+            "maxLines=${max_lines}" "maxCases=${max_cases}"
+        fi
+      fi
+      j=$((j + 1))
+    done
+    i=$((i + 1))
+  done
+  if [[ -n "$violations" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      echo "FATAL: ${line}" >&2
+    done <<< "$violations"
+    return 1
+  fi
+  return 0
+}

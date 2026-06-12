@@ -127,6 +127,13 @@ export const orchestratorConfigSchema = z
     phases: phasesSchema,
     timeouts: timeoutsSchema,
     agent: agentSchema.optional(),
+    taskSplitting: z
+      .object({
+        maxTestFileLines: z.number().int().positive(),
+        maxTestCases: z.number().int().positive(),
+        blockOversizedTasks: z.boolean(),
+      })
+      .optional(),
   })
   .superRefine((config, ctx) => {
     const judgmentAgent = config.phases.planReview?.judgmentAgent;
