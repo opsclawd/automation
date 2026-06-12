@@ -22,9 +22,8 @@ import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/app
 // content (e.g. a file the agent read, or a `git log` line containing "429").
 const PROVIDER_LOG_SERVICES = /service=(?:llm|provider)\b/;
 
-// Pattern: `tokens={"input":1234,"output":567,"cacheRead":42,"reasoningTokens":100}`
-const TOKENS_LINE_RE =
-  /tokens=\{"input":(\d+),"output":(\d+)(?:,"cacheRead":(\d+))?(?:,"reasoningTokens":(\d+))?\}/;
+// Match `tokens=` prefix and extract the JSON payload
+const TOKENS_PREFIX_RE = /tokens=(\{.*\})/;
 
 export interface SessionLogUsage {
   inputTokens: number;
@@ -42,13 +41,18 @@ export function parseSessionLogUsage(content: string): SessionLogUsage | undefin
   let hasAny = false;
   for (const line of lines) {
     if (!PROVIDER_LOG_SERVICES.test(line)) continue;
-    const match = TOKENS_LINE_RE.exec(line);
+    const match = TOKENS_PREFIX_RE.exec(line);
     if (!match) continue;
-    hasAny = true;
-    inputTokens += parseInt(match[1]!, 10);
-    outputTokens += parseInt(match[2]!, 10);
-    if (match[3]) cachedTokens += parseInt(match[3], 10);
-    if (match[4]) reasoningTokens += parseInt(match[4], 10);
+    try {
+      const parsed = JSON.parse(match[1]!);
+      inputTokens += parsed.input ?? 0;
+      outputTokens += parsed.output ?? 0;
+      if (parsed.cacheRead) cachedTokens += parsed.cacheRead;
+      if (parsed.reasoningTokens) reasoningTokens += parsed.reasoningTokens;
+      hasAny = true;
+    } catch {
+      // Malformed tokens JSON — skip silently
+    }
   }
   return hasAny
     ? {

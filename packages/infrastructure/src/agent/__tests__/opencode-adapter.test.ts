@@ -1265,6 +1265,13 @@ describe('parseSessionLogUsage', () => {
     const result = parseSessionLogUsage(content);
     expect(result).toEqual({ inputTokens: 42, outputTokens: 7 });
   });
+
+  it('handles reordered JSON keys — resilient to serializer key order changes', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"output":567,"input":1234,"cacheRead":0,"reasoningTokens":0}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 1234, outputTokens: 567 });
+  });
 });
 
 describe('OpenCodeAgentAdapter usage capture', () => {
