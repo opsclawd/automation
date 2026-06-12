@@ -90,8 +90,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
       // dir from XDG_DATA_HOME). We still pass it so the test fixtures — which
       // stand in for opencode and DO honor it — write to the dir we scan. In
       // production it is harmless: opencode writes to sessionLogDir anyway.
-      const childEnv: Record<string, string> = {
+      const childEnv: Record<string, string | undefined> = {
         OPENCODE_SESSION_LOG_DIR: sessionLogDir,
+        PWD: request.cwd,
+        INIT_CWD: undefined,
       };
       const child = execa(bin, args, {
         cwd: request.cwd,

@@ -672,3 +672,24 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+# Invariant: opencode child processes receive PWD=<worktree> and never
+#   inherit INIT_CWD from the parent pnpm process environment.
+# Source: #311 (session directory drift → stranded result.json).
+# Failure prevented: opencode session binds to the pnpm exec directory
+#   (apps/cli/) instead of the worktree, writes result.json to the wrong
+#   path, and the adapter finds MISSING_REQUIRED_ARTIFACT — permanently
+#   blocking PR review comments.
+# TS-port contract: the opencode-adapter must set PWD=request.cwd and
+#   INIT_CWD=undefined in the child env passed to execa. This test
+#   guards at the source-code level: grep the adapter for PWD and INIT_CWD
+#   set as described.
+@test "parity[#311]: opencode child env sets PWD=request.cwd and removes INIT_CWD" {
+  run grep -c "PWD: request.cwd" "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "INIT_CWD: undefined" "$REPO_ROOT/packages/infrastructure/src/agent/opencode-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
