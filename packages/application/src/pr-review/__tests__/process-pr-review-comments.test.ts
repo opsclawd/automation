@@ -37,6 +37,17 @@ function makeSuccessAgentResult(
 // Models real HEAD progression: every read returns a fresh SHA, so each agent
 // "commit" looks like a distinct new commit. Robust for multi-task passes where
 // several comments each produce their own commit. (replaces call-count fixtures — M3)
+//
+// isAncestor and logBetween use blanket overrides (true / ['dummy']) because tests
+// using this port exercise the task-loop orchestration — they don't assert on ancestry
+// or commit-range logic. These overrides intentionally bypass the parent FakeGitPort's
+// per-key ancestorResults/logBetweenResults maps.
+//
+// Tests that DO assert on ancestry/log behavior should either:
+//   (a) Pass a TwoShaGitPort or FakeGitPort via makeDeps({ git }), then set
+//       per-key entries on .ancestorResults and .logBetweenResults; or
+//   (b) Keep IncrementingShaGitPort but override isAncestor/logBetween with
+//       specific key lookups matching the incrementing SHAs.
 class IncrementingShaGitPort extends FakeGitPort {
   private n = 0;
   override async headCommitSha(_cwd: string): Promise<string> {
