@@ -840,3 +840,43 @@ JSON
   # Verify the file was deleted from disk
   [ ! -f "$repo/validation.headsha" ]
 }
+
+# Invariant: hardened mutation guards (with artifact pathspec exclusions)
+#   do NOT trip when the only diff against HEAD is a known orchestrator
+#   artifact. Source file changes are still caught — exclusions are scoped
+#   to known artifact paths only.
+# Source: #280.
+# Failure prevented: a tracked artifact (e.g. validation.headsha) is
+#   rewritten and trips the mutation guard on every run, blocking all
+#   runs until the artifact is untracked — even though no source was mutated.
+# TS-port contract: the TS orchestrator mutation guards must also exclude
+#   known orchestrator artifacts from diff checks.
+@test "parity[#280]: hardened guard does not trip on artifact-only diffs" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  local repo="$BATS_TEST_TMPDIR/hg-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+  # Track an artifact (simulate the #273 regression)
+  echo "abc123" > "$repo/validation.headsha"
+  git -C "$repo" add validation.headsha
+  git -C "$repo" commit -q -m "accidental artifact commit"
+  # Modify the tracked artifact (as validate phase does every run)
+  echo "def456" > "$repo/validation.headsha"
+  # Unhardened guard: would trip (diff sees changed validation.headsha)
+  run git -C "$repo" diff --exit-code HEAD
+  [ "$status" -ne 0 ]
+  # Hardened guard: should NOT trip (artifact excluded)
+  local -a _art_excl=()
+  while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+  run git -C "$repo" diff --exit-code HEAD -- . "${_art_excl[@]}"
+  [ "$status" -eq 0 ]
+  # Source file changes are still caught
+  echo "real change" >> "$repo/app.ts"
+  run git -C "$repo" diff --exit-code HEAD -- . "${_art_excl[@]}"
+  [ "$status" -ne 0 ]
+}

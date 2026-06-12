@@ -3342,7 +3342,9 @@ if [[ "$PHASE" == "validate" ]]; then
   # This check runs BEFORE writing validation.result so that on mutation,
   # detect_phase won't skip validation on a subsequent run (validation.result
   # is the resume marker, not validate.log).
-  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+  local -a _art_excl=()
+  while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
     git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
     rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md"
     orchestrator_fail "validate phase produced uncommitted changes — mutation not allowed"
@@ -3520,7 +3522,9 @@ Start now."
       cp "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log" "${WORKTREE_DIR}/validation.md"
 
       # Mutation guard
-      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+      local -a _art_excl=()
+      while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
         git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
         rm -f "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log" "${ISSUES_DIR}/validation-fv-${FIX_VALIDATE_COUNT}.md" \
               "${ISSUES_DIR}/fix-validate-done.marker"
@@ -3764,7 +3768,9 @@ Write review-task-manifest.json and review-triage.md now."
   # Mutation guard: triage is a read-only phase — the agent must not modify
   # tracked source files. Only check tracked-file diffs; untracked orchestrator
   # artifacts (review-triage.md, review-task-manifest.json) are expected.
-  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+  local -a _art_excl=()
+  while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
     git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
     rm -f "${ISSUES_DIR}/review-triage.log"
     orchestrator_fail "review-triage produced uncommitted changes — mutation not allowed"
@@ -4031,7 +4037,9 @@ Only include tasks that have action=fix or action=null. Skip defer/skip tasks.
     # Mutation guard: architect is a read-only phase.
     # Only tracked-file diffs trigger this — untracked output files (review-fix-plan.json)
     # are expected and not considered mutations.
-    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    local -a _art_excl=()
+    while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
       git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
       rm -f "${ISSUES_DIR}/fix-review-architect.log"
       warn "Architect pass produced uncommitted changes — discarding plan, proceeding without"
@@ -4223,7 +4231,9 @@ Start now."
   # lets the orchestrator_fail below fire (red — preserving the state for
   # debugging). Unlike the old invariant (always fail on dirty), a green
   # revalidation with uncommitted changes is now accepted and committed.
-  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+  local -a _art_excl=()
+  while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
     _stash_and_conditionally_commit \
       "${WORKTREE_DIR}" \
       "legacy-${FIX_LOOP_COUNT}" \
@@ -4239,7 +4249,7 @@ Start now."
     # Guard: if the tree is still dirty after _stash_and_conditionally_commit,
     # the commit failed (stash pop succeeded but commit didn't). A subsequent
     # reset --hard would destroy the agent's work. Fail the phase.
-    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
       rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" \
             "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
       orchestrator_fail "revalidate: commit failed after stash pop, tree dirty — agent work not committed"
@@ -4469,7 +4479,9 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
         "fix-review task $_task_id attempt $_retry/${MAX_FIX_REVIEW_RETRIES_PER_TASK}" \
         task_id="$_task_id" attempt="${_retry}" max="${MAX_FIX_REVIEW_RETRIES_PER_TASK}"
 
-      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+      local -a _art_excl=()
+      while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
         warn "Dirty worktree before task $_task_id — resetting to HEAD"
         git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
       fi
@@ -4620,7 +4632,9 @@ Start now."
       # the tree is dirty with staged changes. A subsequent retry or task
       # would reset --hard and destroy the agent's work. Mark FAILED so the
       # dirty-tree guard at the top of the next iteration handles it safely.
-      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD 2>/dev/null; then
+      local -a _art_excl=()
+      while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
+      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
         warn "Task $_task_id: commit failed, tree dirty — marking task as FAILED"
         echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
       fi

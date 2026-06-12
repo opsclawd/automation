@@ -49,7 +49,7 @@ EOF
 orchestrator_diff_exclusions() {
   while IFS= read -r _artifact; do
     [[ -z "$_artifact" ]] && continue
-    printf '%s\n' "':!${_artifact}'"
+    printf '%s\n' ":!${_artifact}"
   done < <(orchestrator_artifact_paths)
 }
 
