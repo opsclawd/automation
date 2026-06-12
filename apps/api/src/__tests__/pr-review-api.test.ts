@@ -92,4 +92,32 @@ describe('GET /api/runs/:uuid/pr-review', () => {
       terminalState: 'all_resolved',
     });
   });
+
+  it('serializes terminalState: timed_out', async () => {
+    const runId = RunId(runUuid);
+    repo.insertPollAttempt({
+      id: 'p2',
+      runId,
+      prNumber: 5,
+      pollNumber: 1,
+      status: 'completed',
+      commentsFetched: 1,
+      commentsProcessed: 1,
+      startedAt: new Date('2026-06-04T00:00:00Z'),
+      completedAt: new Date('2026-06-04T00:05:00Z'),
+      terminalState: 'timed_out',
+    });
+
+    const app = buildApp(repo);
+    const res = await app.inject({ method: 'GET', url: `/api/runs/${runUuid}/pr-review` });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+
+    expect(body.pollAttempts).toHaveLength(1);
+    expect(body.pollAttempts[0]).toMatchObject({
+      pollNumber: 1,
+      status: 'completed',
+      terminalState: 'timed_out',
+    });
+  });
 });
