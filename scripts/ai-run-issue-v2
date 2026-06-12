@@ -2909,7 +2909,6 @@ ${_hook_log_tail}"
         SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
       fi
       if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
-        recover_off_contract_review_artifacts "spec" "$TASK_NUM" || true
         if ! validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL; then
           orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
         fi
@@ -2930,7 +2929,6 @@ ${_hook_log_tail}"
         QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
       fi
       if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
-        recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
         if ! validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL; then
           orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
         fi
@@ -3032,7 +3030,6 @@ ${_hook_log_tail}"
           SPEC_CORRECTIVE_WARNING=$(build_corrective_warning "spec" "$TASK_NUM" "invalid_verdict" "$spec_verdict" "")
         fi
         if ! rerun_reviewer_with_retry "spec" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA" "$IMPL_REPORT"; then
-          recover_off_contract_review_artifacts "spec" "$TASK_NUM" || true
           if ! validate_review_artifacts "$spec_result" "$spec_md" SPEC_PASS SPEC_FAIL; then
             orchestrator_fail "invalid_agent_contract: spec-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
           fi
@@ -3053,7 +3050,6 @@ ${_hook_log_tail}"
           QUALITY_CORRECTIVE_WARNING=$(build_corrective_warning "quality" "$TASK_NUM" "invalid_verdict" "$quality_verdict" "")
         fi
         if ! rerun_reviewer_with_retry "quality" "$TASK_NUM" "$task_title" "$TASK_TEXT" "$BASE_SHA" "$HEAD_SHA"; then
-          recover_off_contract_review_artifacts "quality" "$TASK_NUM" || true
           if ! validate_review_artifacts "$quality_result" "$quality_md" QUALITY_PASS QUALITY_FAIL; then
             orchestrator_fail "invalid_agent_contract: quality-review-task-${TASK_NUM} failed to write valid review artifacts after re-run with retry"
           fi
