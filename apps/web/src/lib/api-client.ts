@@ -1,4 +1,5 @@
 import type { ApiEvent } from './timeline';
+import type { PrReviewCommentDto, PollAttemptDto } from './pr-review';
 import type { ValidationRunDto } from './validation';
 
 export interface RunDto {
@@ -87,4 +88,16 @@ export async function listValidation(runUuid: string): Promise<ValidationRunDto[
   const r = await fetch(`${base}/api/runs/${runUuid}/validation`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load validation: ${r.status}`);
   return ((await r.json()) as { validationRuns: ValidationRunDto[] }).validationRuns;
+}
+
+export interface PrReviewData {
+  comments: PrReviewCommentDto[];
+  pollAttempts: PollAttemptDto[];
+}
+
+export async function listPrReview(runUuid: string): Promise<PrReviewData> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const r = await fetch(`${base}/api/runs/${runUuid}/pr-review`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to load pr-review: ${r.status}`);
+  return (await r.json()) as PrReviewData;
 }

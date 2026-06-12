@@ -82,6 +82,8 @@ function makeDeps(overrides: Partial<PollTaskRunnerDeps> = {}): {
   ]);
   git.remoteRefs.set('origin/feat-x', 'abc123');
   git.headByCwd.set('/work/tree', 'abc123');
+  git.ancestorResults.set('abc123|abc123', true);
+  git.logBetweenResults.set('abc123|abc123', ['abc123']);
 
   let replyCounter = 0;
   const deps: PollTaskRunnerDeps = {
@@ -127,6 +129,9 @@ describe('PollTaskRunner — happy path', () => {
     const { deps, github, git } = makeDeps();
     // Simulate agent creating a new commit
     git.headByCwd.set('/work/tree', 'def456');
+    git.remoteRefs.set('origin/feat-x', 'def456');
+    git.ancestorResults.set('def456|def456', true);
+    git.logBetweenResults.set('abc123|def456', ['def456']);
     const runner = new PollTaskRunner(deps);
 
     const out = await runner.execute(makeInput());

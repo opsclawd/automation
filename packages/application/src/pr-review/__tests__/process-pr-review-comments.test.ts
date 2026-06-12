@@ -9,6 +9,7 @@ import {
 import type { AgentInvocationResult } from '../../ports/agent-invocation-types.js';
 import {
   ProcessPrReviewComments,
+  ESCALATION_BUDGET,
   type ProcessPrReviewDeps,
 } from '../process-pr-review-comments.js';
 
@@ -36,10 +37,31 @@ function makeSuccessAgentResult(
 // Models real HEAD progression: every read returns a fresh SHA, so each agent
 // "commit" looks like a distinct new commit. Robust for multi-task passes where
 // several comments each produce their own commit. (replaces call-count fixtures — M3)
+//
+// isAncestor and logBetween use blanket overrides (true / ['dummy']) because tests
+// using this port exercise the task-loop orchestration — they don't assert on ancestry
+// or commit-range logic. These overrides intentionally bypass the parent FakeGitPort's
+// per-key ancestorResults/logBetweenResults maps.
+//
+// Tests that DO assert on ancestry/log behavior should either:
+//   (a) Pass a TwoShaGitPort or FakeGitPort via makeDeps({ git }), then set
+//       per-key entries on .ancestorResults and .logBetweenResults; or
+//   (b) Keep IncrementingShaGitPort but override isAncestor/logBetween with
+//       specific key lookups matching the incrementing SHAs.
 class IncrementingShaGitPort extends FakeGitPort {
   private n = 0;
   override async headCommitSha(_cwd: string): Promise<string> {
     return `sha-${++this.n}`;
+  }
+  override async isAncestor(
+    _cwd: string,
+    _ancestor: string,
+    _descendant: string,
+  ): Promise<boolean> {
+    return true;
+  }
+  override async logBetween(_cwd: string, _base: string, _head: string): Promise<string[]> {
+    return ['dummy'];
   }
 }
 
@@ -281,6 +303,9 @@ describe('ProcessPrReviewComments — blocking', () => {
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('pending');
 
+    const c = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
+
     const out = await uc.execute({
       runId,
       repoId,
@@ -293,7 +318,8 @@ describe('ProcessPrReviewComments — blocking', () => {
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
     expect(out.blocked).toBe(1);
-    // Only one reply is ever posted, even across retry polls (idempotent — H1).
+    // Comment was reset to pending for retry, so the blocking path runs via
+    // verifyOrphaned when state is manually set back to replied with exhausted budget.
     expect(github.repliesPosted).toHaveLength(1);
   });
 });
@@ -626,7 +652,7 @@ describe('ProcessPrReviewComments — failed agent invocation', () => {
 });
 
 describe('ProcessPrReviewComments — per-task retry budget', () => {
-  it('retries a failing task MAX_TASK_RETRIES times before blocking the comment', async () => {
+  it('retries a failing task ESCALATION_BUDGET times before blocking the comment', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [
         makeSuccessAgentResult({ outcome: 'failed' }),
@@ -693,6 +719,9 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
       pollNumber: 1,
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('pending');
+
+    const c2 = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c2, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
 
     const out = await uc.execute({
       runId,
@@ -791,6 +820,9 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
       pollNumber: 1,
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('pending');
+
+    const c = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
 
     const out1 = await uc.execute({
       runId,
@@ -990,8 +1022,8 @@ describe('ProcessPrReviewComments — per-task failure isolation', () => {
   });
 });
 
-describe('ProcessPrReviewComments — no duplicate replies on failed verification', () => {
-  it('keeps a replied comment in replied state when verification fails, preventing duplicate replies', async () => {
+describe('ProcessPrReviewComments — reset to pending on failed verification', () => {
+  it('resets comment to pending after failed verification, then blocks when budget exhausted', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
@@ -1029,7 +1061,11 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
     const after1 = repo.getComment(runId, 9001);
     expect(after1?.state).toBe('pending');
     expect(after1?.replyVerified).toBe(false);
+    // Comment was reset to pending for agent retry (resetForRetry).
     expect(github.repliesPosted).toHaveLength(1);
+
+    const c = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
 
     await uc.execute({
       runId,
@@ -1041,7 +1077,7 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
       pollNumber: 2,
     });
 
-    // Still exactly one reply after the second poll — no duplicate (H1).
+    // verifyOrphaned blocks the comment when budget is exhausted.
     expect(github.repliesPosted).toHaveLength(1);
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
@@ -1385,6 +1421,9 @@ describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha
     const agentBCommit = 'bbb222fix';
 
     const git = new TwoShaGitPort(sharedStart, agentBCommit);
+    git.remoteRefs.set('origin/feat-x', agentBCommit);
+    git.ancestorResults.set(`${agentBCommit}|${agentBCommit}`, true);
+    git.logBetweenResults.set(`${sharedStart}|${agentBCommit}`, [agentBCommit]);
     const verifyCalls: Array<{
       cwd: string;
       branch: string;

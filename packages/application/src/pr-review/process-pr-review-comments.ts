@@ -10,6 +10,7 @@ import {
   type PrReviewComment,
   type PollAttempt,
 } from '@ai-sdlc/domain';
+import { verifyComment } from './verify-comment.js';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { AgentPort } from '../ports/agent-port.js';
@@ -68,7 +69,7 @@ export interface ProcessPrReviewOutput {
   allResolved: boolean;
 }
 
-const BLOCK_THRESHOLD = 2;
+export const ESCALATION_BUDGET = 3;
 
 export class ProcessPrReviewComments {
   constructor(private readonly deps: ProcessPrReviewDeps) {}
@@ -157,7 +158,6 @@ export class ProcessPrReviewComments {
     const manifest = this.generateManifest(unresolved);
     const taskRunner = new PollTaskRunner(d);
     const taskResults: PollTaskOutput[] = [];
-    const MAX_TASK_RETRIES = 3;
     // Each task's agent may commit, advancing HEAD. Later tasks must verify
     // against the HEAD as of when they start, not the stale poll-start SHA. (M1)
     let runningStartSha = startCommitSha;
@@ -172,7 +172,7 @@ export class ProcessPrReviewComments {
       runningStartSha = await d.git.headCommitSha(input.cwd);
 
       let lastOutput: PollTaskOutput | undefined;
-      for (let attempt = 1; attempt <= MAX_TASK_RETRIES; attempt++) {
+      for (let attempt = 1; attempt <= ESCALATION_BUDGET; attempt++) {
         try {
           lastOutput = await taskRunner.execute({
             ...input,
@@ -192,13 +192,13 @@ export class ProcessPrReviewComments {
           };
         }
         if (
-          attempt === MAX_TASK_RETRIES &&
+          attempt === ESCALATION_BUDGET &&
           lastOutput &&
           !lastOutput.processed &&
           !lastOutput.blocked
         ) {
           d.prReviewRepo.upsertComment(
-            blockComment(comment, `task failed after ${MAX_TASK_RETRIES} attempts`),
+            blockComment(comment, `task failed after ${ESCALATION_BUDGET} attempts`),
           );
           lastOutput = {
             commentId: task.commentId,
@@ -306,59 +306,30 @@ export class ProcessPrReviewComments {
     if (orphaned.length === 0) return { blocked: 0, newlyProcessed: 0 };
 
     const pr = await d.github.getPr(input.repoFullName, input.prNumber);
-    const afterComments = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const buildVerified = await d.verifyBuildPasses({ cwd: input.cwd, runId: input.runId });
 
     let blocked = 0;
     let newlyProcessed = 0;
     for (const c of orphaned) {
-      const replyVerified = afterComments.some((rc) => rc.inReplyToId === c.commentId);
-      const isFix = c.outcome === 'fixed';
-      const commitVerified = !startCommitSha
-        ? true
-        : c.commitSha
-          ? await d.verifyCommitPushed({
-              cwd: input.cwd,
-              branch: pr.headRefName,
-              startCommitSha,
-              commitSha: c.commitSha,
-            })
-          : false;
-      let fixCommitOnRemote = true;
-      if (isFix && c.commitSha) {
-        const remoteSha = await d.git.remoteRef({
-          cwd: input.cwd,
-          remote: 'origin',
-          ref: pr.headRefName,
-        });
-        if (remoteSha) {
-          fixCommitOnRemote = await d.git.isAncestor(input.cwd, c.commitSha, remoteSha);
-        } else {
-          fixCommitOnRemote = false;
-        }
-      }
-      let isNewerThanStart = true;
-      if (isFix && startCommitSha && c.commitSha) {
-        const commitsSinceStart = await d.git.logBetween(input.cwd, startCommitSha, c.commitSha);
-        isNewerThanStart = commitsSinceStart.length > 0;
-      }
-      // Asymmetric: 'fixed' comments require commit/build verification; 'no_fix' only needs reply visible
-      const ok = isFix
-        ? fixCommitOnRemote && isNewerThanStart && commitVerified && replyVerified && buildVerified
-        : replyVerified;
+      const verification = await verifyComment(c, d, {
+        cwd: input.cwd,
+        branch: pr.headRefName,
+        prNumber: input.prNumber,
+        repoFullName: input.repoFullName,
+        startCommitSha,
+      });
 
-      if (ok) {
+      if (verification.ok) {
         d.prReviewRepo.upsertComment(
           markProcessed(c, {
-            commitVerified: isFix ? commitVerified : true,
-            replyVerified,
-            buildVerified: isFix ? buildVerified : true,
+            commitVerified: verification.commitVerified,
+            replyVerified: verification.replyVerified,
+            buildVerified: verification.buildVerified,
           }),
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
         newlyProcessed++;
-      } else if (c.attempts >= BLOCK_THRESHOLD) {
-        d.prReviewRepo.upsertComment(blockComment(c, 'verification failed twice'));
+      } else if (c.attempts >= ESCALATION_BUDGET) {
+        d.prReviewRepo.upsertComment(blockComment(c, 'verification failed'));
         blocked++;
       } else {
         d.prReviewRepo.upsertComment(resetForRetry(c, { poll: input.pollNumber }));
