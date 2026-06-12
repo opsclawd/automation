@@ -65,7 +65,7 @@ orchestrator_diff_exclusions() {
 # When omitted, only states 1 and 2 are handled.
 guard_artifact_clean() {
   local worktree_dir=$1
-  local base_branch=$2
+  local base_branch=${2:-}
 
   local _artifact _committed_any=0
 
