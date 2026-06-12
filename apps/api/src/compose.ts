@@ -433,7 +433,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderTaskPrompt: async ({ cwd: _cwd, comment, diff, branch }) => {
+      renderTaskPrompt: async ({ cwd, comment, diff, branch }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
@@ -463,7 +463,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           '## Required Output',
           '',
-          'Write a `result.json` file:',
+          `Write a result.json file at: ${join(cwd, 'result.json')}`,
+          '',
           '```json',
           '{',
           '  "commentId": <number>,',
