@@ -21,6 +21,7 @@ import {
   AgentInvocationRepository,
   ValidationRunRepository,
   PrReviewRepository,
+  AgentUsageRepository,
   RunDirectory,
   runBashScript,
   classifyExit,
@@ -190,6 +191,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
   const prReviewRepository = new PrReviewRepository(db);
+  const agentUsageRepository = new AgentUsageRepository(db);
   const validationAdapter = new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
@@ -290,6 +292,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         agent: config.agent,
         adapters,
         invocationRepository: agentInvocationRepository,
+        usageRepository: agentUsageRepository,
         eventBus,
       });
       const agent = config.agent;

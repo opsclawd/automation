@@ -37,3 +37,4 @@ export type { AgentInvocationPort, AgentInvocationUpdatePatch } from './agent-in
 export type { EventBusPort } from './event-bus-port.js';
 
 export type { AgentRuntimeKind } from '@ai-sdlc/domain';
+export type { AgentUsagePort } from './agent-usage-port.js';

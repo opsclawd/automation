@@ -45,8 +45,8 @@ export function parseSessionLogUsage(content: string): SessionLogUsage | undefin
     const match = TOKENS_LINE_RE.exec(line);
     if (!match) continue;
     hasAny = true;
-    inputTokens += parseInt(match[1], 10);
-    outputTokens += parseInt(match[2], 10);
+    inputTokens += parseInt(match[1]!, 10);
+    outputTokens += parseInt(match[2]!, 10);
     if (match[3]) cachedTokens += parseInt(match[3], 10);
     if (match[4]) reasoningTokens += parseInt(match[4], 10);
   }
