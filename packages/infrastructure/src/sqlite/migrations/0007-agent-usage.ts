@@ -62,13 +62,12 @@ SELECT u.phase_id, u.profile, u.provider, u.model,
           AS estimated_cost_usd,
        COUNT(*) AS invocation_count
 FROM agent_usage u
-LEFT JOIN model_prices p ON p.provider = u.provider
-  AND p.model = u.model
-  AND p.effective_from <= u.recorded_at
-  AND (p.effective_from = (
-    SELECT MAX(p2.effective_from) FROM model_prices p2
-    WHERE p2.provider = u.provider AND p2.model = u.model
-    AND p2.effective_from <= u.recorded_at
-  ))
+LEFT JOIN model_prices p ON p.id = (
+  SELECT p2.id FROM model_prices p2
+  WHERE p2.provider = u.provider AND p2.model = u.model
+  AND p2.effective_from <= u.recorded_at
+  ORDER BY p2.effective_from DESC
+  LIMIT 1
+)
 GROUP BY u.phase_id, u.profile, u.provider, u.model;
 `;
