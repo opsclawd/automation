@@ -444,7 +444,7 @@ run_plan_review_loop() {
           warn "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on iteration ${iteration}"
           emit_event "plan-review" "error" "plan_review.reviewer_failed" \
             "Reviewer agent failed on iteration ${iteration} after retries" iteration="$iteration" exit_code="$reviewer_ec" retries="$retry"
-          orchestrator_fail "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on iteration ${iteration} — agent contract violation, retries exhausted"
+          orchestrator_fail "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on iteration ${iteration} — retries exhausted"
         fi
       else
         warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on iteration ${iteration}"
@@ -569,7 +569,7 @@ run_plan_review_loop() {
           warn "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on final review pass"
           emit_event "plan-review" "error" "plan_review.reviewer_failed" \
             "Reviewer agent failed on final review pass after retries" iteration="$_final_iter" exit_code="$reviewer_ec" retries="$retry"
-          orchestrator_fail "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on final review pass — agent contract violation, retries exhausted"
+          orchestrator_fail "Adversarial reviewer agent failed after ${retry} retries (exit ${reviewer_ec}) on final review pass — retries exhausted"
         fi
       else
         warn "Adversarial reviewer agent failed (exit ${reviewer_ec}) on final review pass"

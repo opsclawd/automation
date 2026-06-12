@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -205,6 +205,20 @@ export class OpenCodeAgentAdapter implements AgentPort {
         contractViolations = [CONTRACT_VIOLATION_CODES.NO_OUTPUT];
         stderr = 'NO_OUTPUT: agent exited 0 with empty stdout and no git changes';
         stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
+      }
+    }
+    if (outcome === 'success' && request.expectedArtifacts?.length) {
+      for (const artifact of request.expectedArtifacts) {
+        const artifactPath = join(request.cwd, artifact);
+        if (!existsSync(artifactPath)) {
+          outcome = 'contract_violation';
+          contractViolations = [
+            ...contractViolations,
+            CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+          ];
+          stderrForLog = `MISSING_REQUIRED_ARTIFACT: ${artifact}\n${stderrForLog}`;
+          break;
+        }
       }
     }
     // opencode emits its transcript to its session log, not to stdout/stderr, so
