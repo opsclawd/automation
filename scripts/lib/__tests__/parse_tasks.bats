@@ -2,6 +2,7 @@
 
 setup() {
   SCRIPT_DIR="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
+  source "${SCRIPT_DIR}/emit_event.sh"
   source "${SCRIPT_DIR}/parse_tasks_helpers.sh"
   source "${SCRIPT_DIR}/review-manifest-helpers.sh"
 
@@ -1116,4 +1117,239 @@ JSON
 @test "_dedupe_manifest_ids: passes through non-array input unchanged" {
   result=$(echo '{"key":"value"}' | _dedupe_manifest_ids)
   [[ "$(echo "$result" | jq -r '.key')" == "value" ]]
+}
+
+# ── _lint_task_size tests ────────────────────────────────────────────────────
+
+@test "_lint_task_size: returns 0 when no test files exceed thresholds" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local small_file="${test_dir}/small.test.ts"
+  for _ in $(seq 1 10); do echo "// line"; done > "$small_file"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update small test", "files": ["small.test.ts"] }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+  [ $? -eq 0 ]
+}
+
+@test "_lint_task_size: warns when test file exceeds line threshold" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-lines"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local big_file="${test_dir}/big.test.ts"
+  for _ in $(seq 1 501); do echo "// line"; done > "$big_file"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update big test", "files": ["big.test.ts"] }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+
+  jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
+}
+
+@test "_lint_task_size: warns when test file exceeds test case threshold" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-cases"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local case_file="${test_dir}/many-cases.test.ts"
+  for _ in $(seq 1 11); do echo "it('case', async () => {})"; done > "$case_file"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update many cases", "files": ["many-cases.test.ts"] }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+
+  jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
+}
+
+@test "_lint_task_size: skips tasks with no files field" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-nofiles"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Task with no files" }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+  [ $? -eq 0 ]
+
+  local events
+  events=$(cat "$AI_RUN_EVENTS_FILE")
+  [ -z "$events" ]
+}
+
+@test "_lint_task_size: skips non-test files" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=2
+  export _TASK_SPLIT_MAX_CASES=1
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-nontest"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local ts_file="${test_dir}/large-module.ts"
+  for _ in $(seq 1 100); do echo "// large implementation file"; done > "$ts_file"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update large module", "files": ["large-module.ts"] }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+  [ $? -eq 0 ]
+
+  local events
+  events=$(cat "$AI_RUN_EVENTS_FILE")
+  [ -z "$events" ]
+}
+
+@test "_lint_task_size: skips files that do not exist on disk" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=2
+  export _TASK_SPLIT_MAX_CASES=1
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-missing"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update nonexistent", "files": ["nonexistent.test.ts"] }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+  [ $? -eq 0 ]
+
+  local events
+  events=$(cat "$AI_RUN_EVENTS_FILE")
+  [ -z "$events" ]
+}
+
+@test "_lint_task_size: returns 1 when block is true and oversized task found" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=true
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-block"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local big_file="${test_dir}/big.test.ts"
+  for _ in $(seq 1 501); do echo "// big file"; done > "$big_file"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update big test", "files": ["big.test.ts"] }
+] }
+JSON
+
+  set +e
+  _lint_task_size "${test_dir}/task-manifest.json"
+  local rc=$?
+  set -e
+
+  [ "$rc" -eq 1 ]
+}
+
+@test "_lint_task_size: returns 0 when manifest is missing" {
+  export AI_RUN_EVENTS_FILE="/dev/null"
+  export AI_RUN_DISPLAY_ID="test-lint-missing-manifest"
+  export WORKTREE_DIR="/tmp"
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+
+  _lint_task_size "/nonexistent/task-manifest.json"
+  [ $? -eq 0 ]
+}
+
+@test "_lint_task_size: warns for .spec.ts and .bats test files too" {
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="test-lint-bats"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local bats_file="${test_dir}/oversized.bats"
+  for _ in $(seq 1 501); do echo "# large bats file"; done > "$bats_file"
+
+  cat > "${test_dir}/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 1, "tasks": [
+  { "n": 1, "title": "Update bats tests", "files": ["oversized.bats"] }
+] }
+JSON
+
+  _lint_task_size "${test_dir}/task-manifest.json"
+
+  jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
 }
