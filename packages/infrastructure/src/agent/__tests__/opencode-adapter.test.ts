@@ -639,6 +639,88 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.outcome).toBe('success');
   });
 
+  it('sets outcome to contract_violation when expected artifact is missing', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['plan-review-findings.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain('missing_required_artifact');
+    expect(readFileSync(r.stderrPath, 'utf-8')).toContain(
+      'MISSING_REQUIRED_ARTIFACT: plan-review-findings.md',
+    );
+  });
+
+  it('keeps success outcome when all expected artifacts exist', async () => {
+    const cwd = makeWorktree();
+    writeFileSync(join(cwd, 'plan-review-findings.md'), '# Findings');
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['plan-review-findings.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('success');
+  });
+
+  it('does not interfere with non-zero exit handling when expectedArtifacts is set', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-fail.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['plan-review-findings.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('failed');
+    expect(r.exitCode).toBe(7);
+  });
+
+  it('is a no-op when expectedArtifacts is empty', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(r.outcome).toBe('success');
+  });
+
   // #255: provider/quota detection comes ONLY from opencode's own session log,
   // never the captured process stderr (the agent transcript). A nonzero exit
   // whose provider-error JSON appears only on stderr is a plain failure — not
