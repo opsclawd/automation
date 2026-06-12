@@ -1036,4 +1036,31 @@ describe('OpenCodeAgentAdapter', () => {
       await injectionPromise;
     }
   }, 15000);
+
+  it('passes PWD=request.cwd and removes INIT_CWD from child env', async () => {
+    const cwd = makeWorktree();
+    const envLogFile = join(__dirname, '..', '__fixtures__', 'last-env.txt');
+    if (existsSync(envLogFile)) rmSync(envLogFile);
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-env-logger.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: [],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'plan-design',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+    expect(result.outcome).toBe('success');
+    const envLog = readFileSync(envLogFile, 'utf-8');
+    // PWD should be set to the request cwd
+    expect(envLog).toContain(`PWD=${cwd}`);
+    // INIT_CWD should be <unset> (the fixture writes <unset> when var is empty/missing)
+    expect(envLog).toContain('INIT_CWD=<unset>');
+    if (existsSync(envLogFile)) rmSync(envLogFile);
+  });
 });
