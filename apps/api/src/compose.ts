@@ -625,7 +625,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           const record = runRepository.findByUuid(String(input.runId));
           if (!record || record.status !== 'waiting') return 'stay_ready';
           const comments = await ghAdapter.listReviewComments(input.repoFullName, input.prNumber);
-          const reviewerComments = comments.filter((c) => c.inReplyToId === undefined);
+          const reviewerComments = comments;
           const newestCommentAt = reviewerComments.reduce(
             (max, c) => (c.createdAt.getTime() > max.getTime() ? c.createdAt : max),
             record.completedAt ?? new Date(0),
