@@ -804,3 +804,23 @@ JSON
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
+
+# Invariant: Agent usage is persisted to the agent_usage table and an agent.usage
+#   event is emitted on the event bus after each agent invocation completes.
+#   The router integrates AgentUsagePort for durable storage (one row per
+#   invocation) and emits agent.usage events for downstream consumers (SSE).
+# Source: #307.
+# Failure prevented: Token data is lost silently if the insertion or event
+#   emission is removed — downstream consumers (SSE, SQL views) get no data,
+#   and profile tuning remains guesswork.
+# TS-port contract: AgentRuntimeRouter must accept usageRepository, call
+#   usageRepository.insert() when result.usage is present, and emit agent.usage
+#   events via the event bus.
+@test "parity[#307]: router persists usage and emits agent.usage event" {
+  run grep -c 'usageRepository' "$REPO_ROOT/packages/infrastructure/src/agent/agent-runtime-router.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  run grep -c "agent.usage" "$REPO_ROOT/packages/infrastructure/src/agent/agent-runtime-router.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}

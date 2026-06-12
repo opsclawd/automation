@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { AgentInvocationId, AgentProfileName } from '@ai-sdlc/domain';
+import { AgentInvocationId, AgentProfileName, type AgentUsage } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
-import type { AgentPort } from '@ai-sdlc/application/ports';
+import type { AgentPort, AgentUsagePort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
-import { ConfigError, type AgentConfig } from '@ai-sdlc/shared';
+import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { AgentRuntimeRouter } from '../agent-runtime-router.js';
 
 function cfg(): AgentConfig {
@@ -49,6 +49,22 @@ class StubAdapter implements AgentPort {
   constructor(private readonly result: AgentInvocationResult) {}
   async invoke(_: AgentInvocationRequest): Promise<AgentInvocationResult> {
     return this.result;
+  }
+}
+
+class FakeAgentUsagePort implements AgentUsagePort {
+  readonly inserts: AgentUsage[] = [];
+  insert(usage: AgentUsage): void {
+    this.inserts.push({ ...usage });
+  }
+  findById(_id: AgentInvocationId): AgentUsage | undefined {
+    return undefined;
+  }
+  listByRun(_runId: string): AgentUsage[] {
+    return [];
+  }
+  listByRunAndPhase(_runId: string, _phaseId: string): AgentUsage[] {
+    return [];
   }
 }
 
@@ -518,5 +534,92 @@ describe('AgentRuntimeRouter', () => {
       contextLimitTokens: 64000,
       outputBudgetTokens: 4000,
     });
+  });
+
+  it('persists usage and emits agent.usage event when adapter returns usage', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+    const usageRepo = new FakeAgentUsagePort();
+
+    class UsageAdapter implements AgentPort {
+      async invoke(_req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        return {
+          runtime: 'opencode',
+          provider: 'deepseek',
+          model: 'deepseek-pro',
+          exitCode: 0,
+          durationMs: 1000,
+          stdoutPath: '/tmp/o',
+          stderrPath: '/tmp/e',
+          contractViolations: [],
+          outcome: 'success',
+          usage: {
+            inputTokens: 500,
+            outputTokens: 200,
+            reasoningTokens: 100,
+            provider: 'deepseek',
+            model: 'deepseek-pro',
+          },
+        };
+      }
+    }
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: { opencode: new UsageAdapter() },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      usageRepository: usageRepo,
+      clock: () => FIXED_NOW,
+    });
+
+    await router.invoke(req());
+
+    expect(usageRepo.inserts).toHaveLength(1);
+    expect(usageRepo.inserts[0].inputTokens).toBe(500);
+    expect(usageRepo.inserts[0].outputTokens).toBe(200);
+    expect(usageRepo.inserts[0].reasoningTokens).toBe(100);
+    // provider/model come from effective profile (cfg() uses anthropic/m)
+    expect(usageRepo.inserts[0].provider).toBe('anthropic');
+    expect(usageRepo.inserts[0].model).toBe('m');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('agent.usage');
+    expect(events[0].metadata.inputTokens).toBe(500);
+    expect(events[0].metadata.outputTokens).toBe(200);
+    expect(events[0].metadata.durationMs).toBe(1000);
+  });
+
+  it('does not emit agent.usage event when adapter returns no usage', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+    const usageRepo = new FakeAgentUsagePort();
+
+    const router = new AgentRuntimeRouter({
+      agent: cfg(),
+      adapters: {
+        opencode: new StubAdapter({ exitCode: 0, outcome: 'success' } as AgentInvocationResult),
+      },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      usageRepository: usageRepo,
+      clock: () => FIXED_NOW,
+    });
+
+    await router.invoke(req());
+
+    expect(usageRepo.inserts).toHaveLength(0);
+    const usageEvents = events.filter((e) => e.type === 'agent.usage');
+    expect(usageEvents).toHaveLength(0);
   });
 });
