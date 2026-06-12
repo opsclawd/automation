@@ -411,3 +411,133 @@ setup() {
   run git -C "$repo" merge-base --is-ancestor "$_leak_sha" "$_branch"
   [ "$status" -ne 0 ]
 }
+
+# Invariant: _lint_task_size warns (via emit_event) when a task-manifest entry
+#   targets an oversized test file — line count > _TASK_SPLIT_MAX_LINES or
+#   test-case count > _TASK_SPLIT_MAX_CASES. When _TASK_SPLIT_BLOCK is true,
+#   the function returns exit 1 instead of warning.
+# Source: #269.
+# Failure prevented: a single agent invocation targeting a 1600+ line / 30-test
+#   file exceeds context budget, compacts mid-task, and gets stuck (BLOCKED,
+#   canRetry:false), blocking the entire run.
+# TS-port contract: the TS lint phase must detect oversized test tasks using
+#   configurable thresholds and surface them. Runtime-agnostic — drives
+#   _lint_task_size through the real emit_event path.
+@test "parity[#269]: _lint_task_size warns on oversized test-task files" {
+  source "${REPO_ROOT}/scripts/lib/emit_event.sh"
+  source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="parity-test-269"
+  : > "$AI_RUN_EVENTS_FILE"
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  # Create a test file that exceeds the line threshold (501 lines > 500)
+  local big_file="${test_dir}/src/__tests__/big.test.ts"
+  mkdir -p "$(dirname "$big_file")"
+  for _ in $(seq 1 501); do echo "// line"; done > "$big_file"
+  # Add some test cases that exceed the count threshold (11 > 10)
+  for _ in $(seq 1 11); do echo "it('case', async () => {})"; done >> "$big_file"
+  # Create a manifest with the oversized test file
+  local manifest="${test_dir}/task-manifest.json"
+  cat > "$manifest" << 'JSON'
+{
+  "version": 1,
+  "task_count": 2,
+  "tasks": [
+    { "n": 1, "title": "Update big test file", "files": ["src/__tests__/big.test.ts"] },
+    { "n": 2, "title": "Update small config", "files": ["tsconfig.json"] }
+  ]
+}
+JSON
+  _lint_task_size "$manifest"
+  # Verify an event was emitted with task_size.oversized type
+  local events
+  events=$(cat "$AI_RUN_EVENTS_FILE")
+  echo "$events" | jq -e 'select(.type == "task_size.oversized")' >/dev/null || {
+    echo "FAIL: no task_size.oversized event emitted"
+    false
+  }
+  # Verify the event references task 1
+  local task_num
+  task_num=$(echo "$events" | jq -r 'select(.type == "task_size.oversized") | .metadata.taskNum')
+  [[ "$task_num" == "1" ]] || {
+    echo "FAIL: expected taskNum=1, got ${task_num}"
+    false
+  }
+}
+@test "parity[#269]: _lint_task_size returns error when _TASK_SPLIT_BLOCK is true" {
+  source "${REPO_ROOT}/scripts/lib/emit_event.sh"
+  source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="parity-test-269-block"
+  : > "$AI_RUN_EVENTS_FILE"
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=true
+  export WORKTREE_DIR="$test_dir"
+  local big_file="${test_dir}/src/__tests__/big.test.ts"
+  mkdir -p "$(dirname "$big_file")"
+  for _ in $(seq 1 501); do echo "// line"; done > "$big_file"
+  local manifest="${test_dir}/task-manifest.json"
+  cat > "$manifest" << 'JSON'
+{
+  "version": 1,
+  "task_count": 1,
+  "tasks": [
+    { "n": 1, "title": "Update big test file", "files": ["src/__tests__/big.test.ts"] }
+  ]
+}
+JSON
+  set +e
+  _lint_task_size "$manifest"
+  local rc=$?
+  set -e
+  [[ $rc -eq 1 ]] || {
+    echo "FAIL: expected exit 1 when block is true, got exit ${rc}"
+    false
+  }
+}
+@test "parity[#269]: _lint_task_size silently passes when no test files exceed thresholds" {
+  source "${REPO_ROOT}/scripts/lib/emit_event.sh"
+  source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
+  export AI_RUN_DISPLAY_ID="parity-test-269-pass"
+  : > "$AI_RUN_EVENTS_FILE"
+  export _TASK_SPLIT_MAX_LINES=500
+  export _TASK_SPLIT_MAX_CASES=10
+  export _TASK_SPLIT_BLOCK=false
+  export WORKTREE_DIR="$test_dir"
+  local small_file="${test_dir}/src/__tests__/small.test.ts"
+  mkdir -p "$(dirname "$small_file")"
+  for _ in $(seq 1 10); do echo "// line"; done > "$small_file"
+  echo "it('works', () => {})" >> "$small_file"
+  local manifest="${test_dir}/task-manifest.json"
+  cat > "$manifest" << 'JSON'
+{
+  "version": 1,
+  "task_count": 1,
+  "tasks": [
+    { "n": 1, "title": "Update small test", "files": ["src/__tests__/small.test.ts"] }
+  ]
+}
+JSON
+  _lint_task_size "$manifest"
+  # Verify no task_size.oversized event was emitted
+  local has_event
+  has_event=$(jq -r 'select(.type == "task_size.oversized") | length' "$AI_RUN_EVENTS_FILE" 2>/dev/null || echo 0)
+  [[ "$has_event" -eq 0 ]] || {
+    echo "FAIL: unexpected task_size.oversized event emitted for small file"
+    false
+  }
+}
