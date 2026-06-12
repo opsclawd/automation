@@ -9,6 +9,7 @@ import {
 import type { AgentInvocationResult } from '../../ports/agent-invocation-types.js';
 import {
   ProcessPrReviewComments,
+  ESCALATION_BUDGET,
   type ProcessPrReviewDeps,
 } from '../process-pr-review-comments.js';
 
@@ -290,6 +291,9 @@ describe('ProcessPrReviewComments — blocking', () => {
       pollNumber: 1,
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('replied');
+
+    const c = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c, attempts: ESCALATION_BUDGET });
 
     const out = await uc.execute({
       runId,
@@ -704,6 +708,9 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('replied');
 
+    const c2 = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c2, attempts: ESCALATION_BUDGET });
+
     const out = await uc.execute({
       runId,
       repoId,
@@ -801,6 +808,9 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
       pollNumber: 1,
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('replied');
+
+    const c = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c, attempts: ESCALATION_BUDGET });
 
     const out1 = await uc.execute({
       runId,
@@ -1040,6 +1050,9 @@ describe('ProcessPrReviewComments — no duplicate replies on failed verificatio
     expect(after1?.state).toBe('replied');
     expect(after1?.replyVerified).toBe(false);
     expect(github.repliesPosted).toHaveLength(1);
+
+    const c = repo.getComment(runId, 9001)!;
+    repo.upsertComment({ ...c, attempts: ESCALATION_BUDGET });
 
     await uc.execute({
       runId,

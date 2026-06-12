@@ -68,7 +68,7 @@ export interface ProcessPrReviewOutput {
   allResolved: boolean;
 }
 
-const ESCALATION_BUDGET = 3;
+export const ESCALATION_BUDGET = 3;
 
 export class ProcessPrReviewComments {
   constructor(private readonly deps: ProcessPrReviewDeps) {}
@@ -327,7 +327,7 @@ export class ProcessPrReviewComments {
         );
         await d.github.resolveReviewThread(input.repoFullName, input.prNumber, c.commentId);
         newlyProcessed++;
-      } else if (c.attempts >= 2) {
+      } else if (c.attempts >= ESCALATION_BUDGET) {
         d.prReviewRepo.upsertComment(blockComment(c, 'verification failed'));
         blocked++;
       } else {
