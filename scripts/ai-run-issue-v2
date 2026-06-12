@@ -2072,6 +2072,12 @@ implementer's word for what was built.
 Write both files to these EXACT absolute paths (not relative — a relative
 path resolves against the wrong workspace and the orchestrator never sees it):
 
+DO NOT create subdirectories (e.g. docs/, review/, output/). Write both files
+directly to the EXACT paths given above. Choosing a different directory or
+filename is a contract violation. If you are tempted to organize the output
+into a subdirectory — STOP. The orchestrator reads these exact paths and will
+not find files anywhere else.
+
 **Step 1**: Write \`${WORKTREE_DIR}/spec-review-task-${task_n}.md\` — the detailed
 findings the fix-review agent will read. Include every issue with file:line
 references, the spec requirement violated, and what would satisfy it. If
@@ -2079,6 +2085,9 @@ everything passes, write a single line: 'No findings. Implementation matches the
 
 **Step 2**: Write \`${WORKTREE_DIR}/spec-review-task-${task_n}.result\` — EXACTLY ONE of:
 SPEC_PASS | SPEC_FAIL. No other content — just the status word.
+
+FORBIDDEN VALUES: Do NOT write SPEC_PARTIAL, QUALITY_PARTIAL, PASS, FAIL,
+PARTIAL, or any prose. ONLY the exact values listed above.
 
 CRITICAL ORDERING RULE:
 - You MUST write the .md file FIRST, then the .result file LAST.
@@ -2244,7 +2253,16 @@ path resolves against the wrong workspace and the orchestrator never sees it):
 
 2. ${WORKTREE_DIR}/quality-review-task-${task_n}.result
    EXACTLY ONE of: QUALITY_PASS | QUALITY_FAIL
-   No other content in the file — just the status word.
+No other content in the file — just the status word.
+
+DO NOT create subdirectories (e.g. docs/, review/, output/). Write both files
+directly to the EXACT paths given above. Choosing a different directory or
+filename is a contract violation. If you are tempted to organize the output
+into a subdirectory — STOP. The orchestrator reads these exact paths and will
+not find files anywhere else.
+
+FORBIDDEN VALUES: Do NOT write QUALITY_PARTIAL, SPEC_PARTIAL, PASS, FAIL,
+PARTIAL, or any prose. ONLY the exact values listed above.
 
 Both files MUST be written before you stop, even on QUALITY_PASS. The
 .md file is the primary handoff to the fix-review agent — without it,
