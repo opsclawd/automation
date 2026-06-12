@@ -181,7 +181,7 @@ export class ProcessPrReviewComments {
             startCommitSha: runningStartSha,
             unresolvedCommentCount: unresolved.length,
           });
-          if (lastOutput.processed || lastOutput.action === 'blocked') break;
+          if (lastOutput.action !== 'failed') break;
         } catch {
           lastOutput = {
             commentId: task.commentId,
