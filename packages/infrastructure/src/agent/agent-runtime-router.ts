@@ -195,50 +195,56 @@ export class AgentRuntimeRouter implements AgentPort {
     this.opts.invocationRepository.update(id, patch);
 
     // Persist token usage if the adapter reported it
+    // NOTE: wrapped in try/catch so a DB error doesn't skip the fallback
+    // check below. The invocation has already been updated as completed.
     if (result.usage && this.opts.usageRepository) {
-      this.opts.usageRepository.insert({
-        invocationId: id,
-        runId: RunId(request.runId),
-        phaseId: PhaseName(request.phaseId),
-        profile: request.profile,
-        provider: effectiveProvider,
-        model: effectiveModel,
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-        ...(result.usage.reasoningTokens !== undefined
-          ? { reasoningTokens: result.usage.reasoningTokens }
-          : {}),
-        ...(result.usage.cachedTokens !== undefined
-          ? { cachedTokens: result.usage.cachedTokens }
-          : {}),
-        recordedAt: endedAt,
-      });
+      try {
+        this.opts.usageRepository.insert({
+          invocationId: id,
+          runId: RunId(request.runId),
+          phaseId: PhaseName(request.phaseId),
+          profile: request.profile,
+          provider: effectiveProvider,
+          model: effectiveModel,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          ...(result.usage.reasoningTokens !== undefined
+            ? { reasoningTokens: result.usage.reasoningTokens }
+            : {}),
+          ...(result.usage.cachedTokens !== undefined
+            ? { cachedTokens: result.usage.cachedTokens }
+            : {}),
+          recordedAt: endedAt,
+        });
 
-      if (this.opts.eventBus) {
-        const event: OrchestratorEvent = {
-          runId: request.runId,
-          level: 'info',
-          type: 'agent.usage',
-          message: `${request.phaseId}: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens`,
-          timestamp: endedAt.toISOString(),
-          metadata: {
-            phase: request.phaseId,
-            phaseId: request.phaseId,
-            profile: request.profile,
-            provider: effectiveProvider,
-            model: effectiveModel,
-            inputTokens: result.usage.inputTokens,
-            outputTokens: result.usage.outputTokens,
-            ...(result.usage.reasoningTokens !== undefined
-              ? { reasoningTokens: result.usage.reasoningTokens }
-              : {}),
-            ...(result.usage.cachedTokens !== undefined
-              ? { cachedTokens: result.usage.cachedTokens }
-              : {}),
-            durationMs: result.durationMs,
-          },
-        };
-        this.opts.eventBus.publish(request.runId, event);
+        if (this.opts.eventBus) {
+          const event: OrchestratorEvent = {
+            runId: request.runId,
+            level: 'info',
+            type: 'agent.usage',
+            message: `${request.phaseId}: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens`,
+            timestamp: endedAt.toISOString(),
+            metadata: {
+              phase: request.phaseId,
+              phaseId: request.phaseId,
+              profile: request.profile,
+              provider: effectiveProvider,
+              model: effectiveModel,
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              ...(result.usage.reasoningTokens !== undefined
+                ? { reasoningTokens: result.usage.reasoningTokens }
+                : {}),
+              ...(result.usage.cachedTokens !== undefined
+                ? { cachedTokens: result.usage.cachedTokens }
+                : {}),
+              durationMs: result.durationMs,
+            },
+          };
+          this.opts.eventBus.publish(request.runId, event);
+        }
+      } catch {
+        // Non-critical: usage persistence failure should not prevent fallback
       }
     }
 
