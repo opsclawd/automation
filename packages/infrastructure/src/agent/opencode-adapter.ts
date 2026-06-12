@@ -227,8 +227,8 @@ export class OpenCodeAgentAdapter implements AgentPort {
         for (const stray of strayLocations) {
           const worktreePath = join(request.cwd, stray, artifact);
           if (existsSync(worktreePath)) {
-            const artifactDir = join(request.cwd, artifact);
-            writeFileSync(artifactDir, readFileSync(worktreePath));
+            const artifactPath = join(request.cwd, artifact);
+            writeFileSync(artifactPath, readFileSync(worktreePath));
             recovered = true;
             stderrForLog = `DRIFT_WARNING: ${artifact} recovered from worktree ${stray}/${artifact}\n${stderrForLog}`;
             break;
@@ -236,8 +236,8 @@ export class OpenCodeAgentAdapter implements AgentPort {
           if (this.opts.repoRoot) {
             const repoPath = join(this.opts.repoRoot, stray, artifact);
             if (existsSync(repoPath)) {
-              const artifactDir = join(request.cwd, artifact);
-              writeFileSync(artifactDir, readFileSync(repoPath));
+              const artifactPath = join(request.cwd, artifact);
+              writeFileSync(artifactPath, readFileSync(repoPath));
               recovered = true;
               stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot ${stray}/${artifact}\n${stderrForLog}`;
               break;
