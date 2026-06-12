@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS agent_usage (
   invocation_id TEXT PRIMARY KEY REFERENCES agent_invocations(id) ON DELETE CASCADE,
   run_uuid TEXT NOT NULL REFERENCES runs(uuid) ON DELETE CASCADE,
   phase_id TEXT NOT NULL,
-  step_id TEXT,
   profile TEXT NOT NULL,
   provider TEXT NOT NULL,
   model TEXT NOT NULL,
