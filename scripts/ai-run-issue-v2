@@ -1795,6 +1795,19 @@ Write plan.md and task-manifest.json now."
 
   _emit_phase_done "plan-write"
 
+  # Blocking gate: validate manifest/prose agreement immediately after
+  # plan-write, before plan-review. Catches #206/#315-class fence bugs at
+  # the source instead of 2 phases later at implement-entry.
+  if [[ -f "${WORKTREE_DIR}/task-manifest.json" ]]; then
+    local _plan_validation_error
+    local _plan_task_count
+    _plan_task_count=$(jq '.task_count' "${WORKTREE_DIR}/task-manifest.json" 2>/dev/null || echo 0)
+    if ! _plan_validation_error=$(validate_task_list "${WORKTREE_DIR}/plan.md" "$_plan_task_count"); then
+      orchestrator_fail "Plan validation failed at plan-write gate: ${_plan_validation_error}"
+    fi
+    info "Plan validation passed at plan-write gate (${_plan_task_count} tasks)"
+  fi
+
   _lint_plan_verification
 
   PHASE="plan-review"

@@ -1129,3 +1129,25 @@ PLAN
     false
   }
 }
+
+# Invariant: validate_task_list runs as a post-plan-write blocking gate.
+# Source: #315 (this issue).
+# Failure prevented: a plan with manifest/prose mismatch (e.g. real headings
+#   swallowed by unbalanced fence) is caught at plan-write time, not 2 phases
+#   later at implement-entry. The implement phase never sees a plan that
+#   validation would green-light but extraction would mis-execute.
+# TS-port contract: the TS orchestrator must validate plan manifest/prose
+#   agreement immediately after plan-write, before advancing to plan-review.
+@test "parity[#315]: validate_task_list runs as post-plan-write gate" {
+  # Verify the gate exists in ai-run-issue-v2 between plan-write
+  # _emit_phase_done and the _lint_plan_verification call.
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # The gate text must appear after _emit_phase_done "plan-write"
+  # and before _lint_plan_verification
+  local section
+  section=$(sed -n '/_emit_phase_done "plan-write"/,/_lint_plan_verification/p' "$script")
+  echo "$section" | grep -q "validate_task_list" || {
+    echo "FAIL: post-plan-write validate_task_list gate not found"
+    false
+  }
+}
