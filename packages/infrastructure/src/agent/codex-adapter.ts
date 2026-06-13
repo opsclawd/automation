@@ -13,7 +13,8 @@ export interface CodexAdapterOptions {
  * Experimental reviewer/adjudicator-only runtime backed by the Codex CLI (`codex`).
  *
  * Verified headless contract (codex-cli 0.130.0):
- *   codex exec --sandbox read-only --color never "<prompt>"
+ *   codex exec --sandbox read-only --color never "-"
+ *   (the prompt is piped to stdin; "-" tells codex exec to read stdin)
  *
  * read-only sandbox forbids writes and unsandboxed command execution. The
  * adapter NEVER passes --dangerously-bypass-approvals-and-sandbox or a writable
@@ -26,7 +27,7 @@ export class CodexAgentAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     const bin = this.opts.binaryPath ?? 'codex';
     const prompt = readFileSync(request.promptPath, 'utf-8');
-    const args = ['exec', '--sandbox', 'read-only', '--color', 'never'];
+    const args = ['exec', '--sandbox', 'read-only', '--color', 'never', '-'];
     if (request.model && request.model !== 'default') {
       args.push('--model', request.model);
     }

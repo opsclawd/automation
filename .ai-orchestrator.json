@@ -133,11 +133,7 @@
       "plan-write": { "profile": "architect", "fallbackProfile": "senior" },
       "implement": { "profile": "qwen", "fallbackProfile": "builder" },
       "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
-      "spec-review": {
-        "profile": "task-reviewer",
-        "fallbackProfile": "codex-reviewer",
-        "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
-      },
+      "spec-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "fix-review": { "profile": "builder", "fallbackProfile": "junior" },
       "whole-pr-fix-review": { "profile": "builder", "fallbackProfile": "junior" },
       "fix-validate": { "profile": "builder", "fallbackProfile": "junior" },

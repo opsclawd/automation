@@ -83,6 +83,7 @@ describe('CodexAgentAdapter', () => {
     expect(args).toContain('exec');
     expect(args).toContain('--sandbox');
     expect(args).toContain('read-only');
+    expect(args).toContain('-');
     expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     expect(args).not.toContain('workspace-write');
     expect(args).not.toContain('danger-full-access');
