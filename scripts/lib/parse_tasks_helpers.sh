@@ -416,6 +416,8 @@ extract_task_text() {
   local task_num="${3:-}"
   local line_num=""
   local fence_re='^[[:space:]]*(```|~~~)'
+  local numbered_exhausted=false
+
   if [[ -n "$task_num" ]]; then
     local candidate_lines
     candidate_lines=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | cut -d: -f1)
@@ -430,10 +432,12 @@ extract_task_text() {
       total_fences=$(grep -cE "$fence_re" "$plan_file")
       if (( total_fences % 2 == 1 )); then
         line_num=$(echo "$candidate_lines" | head -1)
+      else
+        numbered_exhausted=true
       fi
     fi
   fi
-  if [[ -z "$line_num" ]]; then
+  if [[ -z "$line_num" && "$numbered_exhausted" != "true" ]]; then
     local escaped_title title_candidates
     escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
     title_candidates=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | cut -d: -f1)
@@ -454,12 +458,22 @@ extract_task_text() {
   if [[ -z "$line_num" ]]; then
     return 1
   fi
-  sed -n "${line_num},\$p" "$plan_file" | awk '
-    NR == 1 { next }
-    /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
-    !in_fence && /^#{2,3} Task [0-9]+:/ { exit }
-    { print }
-  '
+  local total_fence_count
+  total_fence_count=$(grep -cE "$fence_re" "$plan_file" 2>/dev/null || echo 0)
+  if (( total_fence_count % 2 == 1 )); then
+    sed -n "${line_num},\$p" "$plan_file" | awk '
+      NR == 1 { next }
+      /^#{2,3} Task [0-9]+:/ { exit }
+      { print }
+    '
+  else
+    sed -n "${line_num},\$p" "$plan_file" | awk '
+      NR == 1 { next }
+      /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
+      !in_fence && /^#{2,3} Task [0-9]+:/ { exit }
+      { print }
+    '
+  fi
 }
 
 extract_task_commit_msg() {
@@ -470,6 +484,7 @@ extract_task_commit_msg() {
 
   local line_num=""
   local fence_re='^[[:space:]]*(```|~~~)'
+  local numbered_exhausted=false
 
   if [[ -n "$task_num" ]]; then
     local candidate_lines
@@ -485,11 +500,13 @@ extract_task_commit_msg() {
       total_fences=$(grep -cE "$fence_re" "$plan_file")
       if (( total_fences % 2 == 1 )); then
         line_num=$(echo "$candidate_lines" | head -1)
+      else
+        numbered_exhausted=true
       fi
     fi
   fi
 
-  if [[ -z "$line_num" ]]; then
+  if [[ -z "$line_num" && "$numbered_exhausted" != "true" ]]; then
     local escaped_title title_candidates
     escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
     title_candidates=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | cut -d: -f1)
@@ -513,11 +530,19 @@ extract_task_commit_msg() {
     return
   fi
 
+  local total_fence_count
+  total_fence_count=$(grep -cE "$fence_re" "$plan_file" 2>/dev/null || echo 0)
   local next_task_line
-  next_task_line=$(awk -v start="$line_num" '
-    NR > start && /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
-    NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
-  ' "$plan_file")
+  if (( total_fence_count % 2 == 1 )); then
+    next_task_line=$(awk -v start="$line_num" '
+      NR > start && /^#{2,3} Task [0-9]+:/ { print NR; exit }
+    ' "$plan_file")
+  else
+    next_task_line=$(awk -v start="$line_num" '
+      NR > start && /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
+      NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
+    ' "$plan_file")
+  fi
 
   local commit_msg
   if [[ -n "$next_task_line" ]]; then
