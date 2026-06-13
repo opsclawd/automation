@@ -838,6 +838,26 @@ PLAN
   [[ "$result" == *"Task 3"* ]]
 }
 
+@test "validate_task_list: rejects non-positive prose task numbers (Task 0, #319)" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  # A real column-0 "## Task 0:" is not executable (manifest is 1-indexed and the
+  # implement loop only iterates manifest tasks), so it must be flagged as not in
+  # the manifest rather than silently accepted as "in range".
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 0: Setup that gets silently skipped
+## Task 1: Alpha
+## Task 2: Beta
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"prose tasks not in manifest"* ]]
+  [[ "$result" == *"Task 0"* ]]
+}
+
 @test "validate_task_list: rejects manifest when task header inside fenced block" {
   cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
 { "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Real task" }, { "n": 2, "title": "Hidden task" }] }

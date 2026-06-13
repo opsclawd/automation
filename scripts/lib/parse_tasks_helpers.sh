@@ -180,7 +180,11 @@ _check_manifest_against_prose() {
   local extra_in_prose="" seen="" pn
   while IFS= read -r pn; do
     [[ -z "$pn" ]] && continue
-    if (( pn > task_count )); then
+    # Flag anything outside 1..task_count. Manifest numbers are exactly
+    # 1..task_count (read_manifest), so a Task 0 (or any non-positive) heading is
+    # not executable — the implement loop only iterates manifest tasks and would
+    # silently skip it. ">" alone would let Task 0 pass (regression caught in #319).
+    if (( pn < 1 || pn > task_count )); then
       case ",${seen}," in *",${pn},"*) continue ;; esac
       seen+="${pn},"
       if [[ -n "$extra_in_prose" ]]; then
