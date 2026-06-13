@@ -126,9 +126,9 @@ _check_duplicate_titles() {
 # also require the heading title to match the manifest title — prose headings
 # routinely elaborate on or reword the short manifest title (e.g. "(Part 1 — …)"
 # or a fuller description / different punctuation), and title matching false-failed
-# valid plans (#223, #147). The weaker "real section vs fenced example" guarantee
-# is delegated to the plan-write indent contract and extract_task_text consistency
-# (tracked in #315; FIXME(#315): heading-inside-fence detection delegated), not enforced here via fragile text matching. The "extra"
+# valid plans (#223, #147). Because we match only by heading NUMBER (not title),
+# a task heading inside a markdown code fence passes validation. This is
+# temporarily accepted — FIXME(#315): add heading-inside-fence detection. The "extra"
 # check flags headings numbered outside 1..task_count.
 _check_manifest_against_prose() {
   local plan_file="$1"
@@ -158,6 +158,21 @@ _check_manifest_against_prose() {
     fence_count=$(grep -cE '^[[:space:]]*```' "$plan_file" 2>/dev/null || echo 0)
     if (( fence_count % 2 == 1 )); then
       errors+=" — likely caused by an unbalanced code fence (${fence_count} fences, expected even)"
+    fi
+  fi
+
+  # Non-blocking diagnostic: warn when task headings appear only inside fences
+  if [[ -z "$missing_from_prose" ]]; then
+    local fenced_only_nums
+    fenced_only_nums=$(comm -23 \
+      <(grep -oE "^#{2,3} Task [0-9]+:" "$plan_file" 2>/dev/null | grep -oE "[0-9]+" | sort -nu) \
+      <(_strip_fenced < "$plan_file" | grep -oE "^#{2,3} Task [0-9]+:" 2>/dev/null | grep -oE "[0-9]+" | sort -nu) \
+      2>/dev/null || true)
+    if [[ -n "$fenced_only_nums" ]]; then
+      local fenced_only
+      fenced_only=$(echo "$fenced_only_nums" | tr '\n' ',' | sed 's/,$//')
+      emit_event "implement" "warn" "manifest_check.fenced_heading" \
+        "task headings only found inside code fences (falsely valid per #315): ${fenced_only}"
     fi
   fi
 
