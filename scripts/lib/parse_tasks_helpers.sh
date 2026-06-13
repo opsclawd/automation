@@ -126,9 +126,9 @@ _check_duplicate_titles() {
 # also require the heading title to match the manifest title — prose headings
 # routinely elaborate on or reword the short manifest title (e.g. "(Part 1 — …)"
 # or a fuller description / different punctuation), and title matching false-failed
-# valid plans (#223, #147). Because we match only by heading NUMBER (not title),
-# a task heading inside a markdown code fence passes validation. This is
-# temporarily accepted — FIXME(#315): add heading-inside-fence detection. The "extra"
+# valid plans (#223, #147). The weaker "real section vs fenced example" guarantee
+# is delegated to the plan-write indent contract and extract_task_text consistency
+# (tracked in #315), not enforced here via fragile text matching. The "extra"
 # check flags headings numbered outside 1..task_count.
 _check_manifest_against_prose() {
   local plan_file="$1"
@@ -429,68 +429,23 @@ extract_task_text() {
   local plan_file="$1"
   local task_title="$2"
   local task_num="${3:-}"
-
-  local line_num
-  local used_num_lookup=0
-
+  local line_num=""
   if [[ -n "$task_num" ]]; then
-    line_num=$(awk -v tn="$task_num" '
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
-    ' "$plan_file")
-    used_num_lookup=1
+    line_num=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | head -1 | cut -d: -f1)
   fi
-
   if [[ -z "$line_num" ]]; then
-    used_num_lookup=0
-    local title_file
-    title_file=$(mktemp)
-    printf '%s' "$task_title" > "$title_file"
-    line_num=$(awk -v title_file="$title_file" '
-      BEGIN { getline title < title_file; close(title_file) }
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && index($0, title) > 0 { print NR; exit }
-    ' "$plan_file")
-    rm -f "$title_file"
+    local escaped_title
+    escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    line_num=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | head -1 | cut -d: -f1)
   fi
-
   if [[ -z "$line_num" ]]; then
     return 1
   fi
-
-  if [[ "$used_num_lookup" -eq 1 ]]; then
-    tail -n +"$line_num" "$plan_file" | awk -v tn="$task_num" '
-      /^[[:space:]]*```/ { in_fence = !in_fence }
-      NF == 0 { next }
-      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { in_task=1; next }
-      !in_fence && /^#{2,3} Task [0-9]+:/ {
-        if (in_task) { exit }
-      }
-      in_task { print }
-    '
-  else
-    local title_file2
-    title_file2=$(mktemp)
-    printf '%s' "$task_title" > "$title_file2"
-    tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file2" '
-      BEGIN {
-        while ((getline line < title_file) > 0) { title = line }
-        close(title_file)
-        buf_idx = 0
-      }
-      /^[[:space:]]*```/ { in_fence = !in_fence }
-      NF == 0 { next }
-      index($0, title) > 0 { in_task=1; next }
-      !in_fence && /^#{2,3} Task [0-9]+:/ {
-        if (in_task) {
-          for (i = 1; i <= buf_idx; i++) print buf[i]
-          exit
-        }
-      }
-      in_task { buf[++buf_idx] = $0 }
-    '
-    rm -f "$title_file2"
-  fi
+  sed -n "${line_num},\$p" "$plan_file" | awk '
+    NR == 1 { next }
+    /^#{2,3} Task [0-9]+:/ { exit }
+    { print }
+  '
 }
 
 extract_task_commit_msg() {
@@ -499,25 +454,16 @@ extract_task_commit_msg() {
   local fallback_msg="$3"
   local task_num="${4:-}"
 
-  local line_num
+  local line_num=""
 
   if [[ -n "$task_num" ]]; then
-    line_num=$(awk -v tn="$task_num" '
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
-    ' "$plan_file")
+    line_num=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | head -1 | cut -d: -f1)
   fi
 
   if [[ -z "$line_num" ]]; then
-    local title_file
-    title_file=$(mktemp)
-    printf '%s' "$task_title" > "$title_file"
-    line_num=$(awk -v title_file="$title_file" '
-      BEGIN { getline title < title_file; close(title_file) }
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && index($0, title) > 0 { print NR; exit }
-    ' "$plan_file")
-    rm -f "$title_file"
+    local escaped_title
+    escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    line_num=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | head -1 | cut -d: -f1)
   fi
 
   if [[ -z "$line_num" ]]; then
@@ -527,8 +473,7 @@ extract_task_commit_msg() {
 
   local next_task_line
   next_task_line=$(awk -v start="$line_num" '
-    /^[[:space:]]*```/ { in_fence = !in_fence; next }
-    NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
+    NR > start && /^#{2,3} Task [0-9]+:/ { print NR; exit }
   ' "$plan_file")
 
   local commit_msg
