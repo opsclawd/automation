@@ -113,29 +113,23 @@ _check_duplicate_titles() {
   return 0
 }
 
-# Normalize heading/title text for comparison: drop backticks, lowercase,
-# collapse runs of whitespace to a single space, trim. Used so a prose task
-# header matches its manifest title despite inline-code formatting differences.
-_norm_heading() {
-  printf '%s' "$1" | tr -d '`' | tr '[:upper:]' '[:lower:]' \
-    | tr -s '[:space:]' ' ' | sed -E 's/^ +//; s/ +$//'
-}
-
-# Verify the plan prose describes exactly the tasks the manifest declares.
+# Verify the plan prose describes the tasks the manifest declares.
 #
-# Manifest-anchored (see #315): the manifest — already validated by
-# read_manifest to be n=1..task_count with non-empty titles — is the source of
-# truth. We do NOT fence-strip the plan: a naive ``` toggle cannot robustly
-# parse plans that contain example fences (#315) or that simply forgot one
-# closing fence (#206), and that fragility silently stripped real task headers.
+# Manifest-anchored (see #315/#319): the manifest — validated by read_manifest to
+# be n=1..task_count with non-empty titles — is the source of truth. We do NOT
+# fence-strip the plan: a naive ``` toggle cannot robustly parse plans that
+# contain example fences (#315) or that forgot one closing fence (#206), and that
+# fragility silently stripped real task headers.
 #
-# For each manifest task n we require a column-0 "## Task n:" / "### Task n:"
-# heading in the RAW plan whose title text contains the manifest title. Matching
-# on title (not bare number) preserves the "task must actually be described, not
-# merely appear as a fenced/example header" guarantee without depending on fence
-# balance. The "extra" check flags only headings numbered beyond task_count
-# (manifest numbers are always 1..task_count, so out-of-range == not-in-manifest);
-# in-range example numbers — the common fixture case — are intentionally tolerated.
+# Presence is checked by NUMBER only: each manifest task n requires a column-0
+# "## Task n:" / "### Task n:" heading in the RAW plan. We deliberately do NOT
+# also require the heading title to match the manifest title — prose headings
+# routinely elaborate on or reword the short manifest title (e.g. "(Part 1 — …)"
+# or a fuller description / different punctuation), and title matching false-failed
+# valid plans (#223, #147). The weaker "real section vs fenced example" guarantee
+# is delegated to the plan-write indent contract and extract_task_text consistency
+# (tracked in #315), not enforced here via fragile text matching. The "extra"
+# check flags headings numbered outside 1..task_count.
 _check_manifest_against_prose() {
   local plan_file="$1"
   local manifest_path="$2"
@@ -145,25 +139,15 @@ _check_manifest_against_prose() {
   task_count=$(jq -r '.task_count' "$manifest_path")
 
   local missing_from_prose=""
-  local n title norm_title heading htext found
-  while IFS=$'\t' read -r n title; do
-    norm_title=$(_norm_heading "$title")
-    found=""
-    while IFS= read -r heading; do
-      htext=$(printf '%s' "$heading" | sed -E 's/^#{2,3} Task [0-9]+:[[:space:]]*//')
-      htext=$(_norm_heading "$htext")
-      if [[ -n "$norm_title" && "$htext" == *"$norm_title"* ]]; then
-        found=1
-        break
-      fi
-    done < <(grep -E "^#{2,3} Task ${n}:" "$plan_file" 2>/dev/null || true)
-    if [[ -z "$found" ]]; then
+  local n
+  while IFS= read -r n; do
+    if ! grep -qE "^#{2,3} Task ${n}:" "$plan_file" 2>/dev/null; then
       if [[ -n "$missing_from_prose" ]]; then
         missing_from_prose+=", "
       fi
       missing_from_prose+="Task ${n}"
     fi
-  done < <(jq -r '.tasks[] | "\(.n)\t\(.title)"' "$manifest_path")
+  done < <(jq -r '.tasks[].n' "$manifest_path")
 
   if [[ -n "$missing_from_prose" ]]; then
     errors+="manifest tasks missing from plan.md prose: ${missing_from_prose}"
@@ -430,68 +414,23 @@ extract_task_text() {
   local plan_file="$1"
   local task_title="$2"
   local task_num="${3:-}"
-
-  local line_num
-  local used_num_lookup=0
-
+  local line_num=""
   if [[ -n "$task_num" ]]; then
-    line_num=$(awk -v tn="$task_num" '
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
-    ' "$plan_file")
-    used_num_lookup=1
+    line_num=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | head -1 | cut -d: -f1)
   fi
-
   if [[ -z "$line_num" ]]; then
-    used_num_lookup=0
-    local title_file
-    title_file=$(mktemp)
-    printf '%s' "$task_title" > "$title_file"
-    line_num=$(awk -v title_file="$title_file" '
-      BEGIN { getline title < title_file; close(title_file) }
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && index($0, title) > 0 { print NR; exit }
-    ' "$plan_file")
-    rm -f "$title_file"
+    local escaped_title
+    escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    line_num=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | head -1 | cut -d: -f1)
   fi
-
   if [[ -z "$line_num" ]]; then
     return 1
   fi
-
-  if [[ "$used_num_lookup" -eq 1 ]]; then
-    tail -n +"$line_num" "$plan_file" | awk -v tn="$task_num" '
-      /^[[:space:]]*```/ { in_fence = !in_fence }
-      NF == 0 { next }
-      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { in_task=1; next }
-      !in_fence && /^#{2,3} Task [0-9]+:/ {
-        if (in_task) { exit }
-      }
-      in_task { print }
-    '
-  else
-    local title_file2
-    title_file2=$(mktemp)
-    printf '%s' "$task_title" > "$title_file2"
-    tail -n +"$line_num" "$plan_file" | awk -v title_file="$title_file2" '
-      BEGIN {
-        while ((getline line < title_file) > 0) { title = line }
-        close(title_file)
-        buf_idx = 0
-      }
-      /^[[:space:]]*```/ { in_fence = !in_fence }
-      NF == 0 { next }
-      index($0, title) > 0 { in_task=1; next }
-      !in_fence && /^#{2,3} Task [0-9]+:/ {
-        if (in_task) {
-          for (i = 1; i <= buf_idx; i++) print buf[i]
-          exit
-        }
-      }
-      in_task { buf[++buf_idx] = $0 }
-    '
-    rm -f "$title_file2"
-  fi
+  sed -n "${line_num},\$p" "$plan_file" | awk '
+    NR == 1 { next }
+    /^#{2,3} Task [0-9]+:/ { exit }
+    { print }
+  '
 }
 
 extract_task_commit_msg() {
@@ -500,25 +439,16 @@ extract_task_commit_msg() {
   local fallback_msg="$3"
   local task_num="${4:-}"
 
-  local line_num
+  local line_num=""
 
   if [[ -n "$task_num" ]]; then
-    line_num=$(awk -v tn="$task_num" '
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
-    ' "$plan_file")
+    line_num=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | head -1 | cut -d: -f1)
   fi
 
   if [[ -z "$line_num" ]]; then
-    local title_file
-    title_file=$(mktemp)
-    printf '%s' "$task_title" > "$title_file"
-    line_num=$(awk -v title_file="$title_file" '
-      BEGIN { getline title < title_file; close(title_file) }
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && index($0, title) > 0 { print NR; exit }
-    ' "$plan_file")
-    rm -f "$title_file"
+    local escaped_title
+    escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    line_num=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | head -1 | cut -d: -f1)
   fi
 
   if [[ -z "$line_num" ]]; then
@@ -528,8 +458,7 @@ extract_task_commit_msg() {
 
   local next_task_line
   next_task_line=$(awk -v start="$line_num" '
-    /^[[:space:]]*```/ { in_fence = !in_fence; next }
-    NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
+    NR > start && /^#{2,3} Task [0-9]+:/ { print NR; exit }
   ' "$plan_file")
 
   local commit_msg
