@@ -415,7 +415,7 @@ extract_task_text() {
   local task_title="$2"
   local task_num="${3:-}"
   local line_num=""
-  local fence_re='^[[:space:]]*(```|~~~)'
+  local fence_re='^[[:space:]]*```'
   local numbered_exhausted=false
 
   if [[ -n "$task_num" ]]; then
@@ -469,7 +469,7 @@ extract_task_text() {
   else
     sed -n "${line_num},\$p" "$plan_file" | awk '
       NR == 1 { next }
-      /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
+      /^[[:space:]]*```/ { in_fence = !in_fence }
       !in_fence && /^#{2,3} Task [0-9]+:/ { exit }
       { print }
     '
@@ -483,7 +483,7 @@ extract_task_commit_msg() {
   local task_num="${4:-}"
 
   local line_num=""
-  local fence_re='^[[:space:]]*(```|~~~)'
+  local fence_re='^[[:space:]]*```'
   local numbered_exhausted=false
 
   if [[ -n "$task_num" ]]; then
@@ -539,7 +539,7 @@ extract_task_commit_msg() {
     ' "$plan_file")
   else
     next_task_line=$(awk -v start="$line_num" '
-      NR > start && /^[[:space:]]*(```|~~~)/ { in_fence = !in_fence }
+      NR > start && /^[[:space:]]*```/ { in_fence = !in_fence }
       NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
     ' "$plan_file")
   fi
