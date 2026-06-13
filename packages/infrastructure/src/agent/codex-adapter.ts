@@ -30,8 +30,8 @@ export class CodexAgentAdapter implements AgentPort {
     if (request.model && request.model !== 'default') {
       args.push('--model', request.model);
     }
-    args.push(prompt);
     return runExternalCli({
+      input: prompt,
       runtime: 'codex',
       bin,
       args,
