@@ -128,7 +128,7 @@ _check_duplicate_titles() {
 # or a fuller description / different punctuation), and title matching false-failed
 # valid plans (#223, #147). The weaker "real section vs fenced example" guarantee
 # is delegated to the plan-write indent contract and extract_task_text consistency
-# (tracked in #315), not enforced here via fragile text matching. The "extra"
+# (tracked in #315; FIXME(#315): heading-inside-fence detection delegated), not enforced here via fragile text matching. The "extra"
 # check flags headings numbered outside 1..task_count.
 _check_manifest_against_prose() {
   local plan_file="$1"
