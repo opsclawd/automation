@@ -68,6 +68,7 @@ describe('CodexAgentAdapter', () => {
     expect(r.exitCode).toBe(1);
     // The router's isQuotaError reads stderrPath; must contain the signature.
     expect(readFileSync(r.stderrPath, 'utf-8')).toMatch(/quota.*exceed/i);
+    expect(r.endCommitSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
   it('runs exec in a read-only sandbox and never bypasses approvals', async () => {
@@ -138,5 +139,6 @@ describe('CodexAgentAdapter', () => {
     const r = await p;
     expect(r.outcome).toBe('failed');
     expect(r.contractViolations).toContain('cancelled_by_orchestrator');
+    expect(r.endCommitSha).toMatch(/^[0-9a-f]{40}$/);
   });
 });
