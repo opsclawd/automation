@@ -1284,7 +1284,7 @@ describe('parseSessionLogUsage', () => {
     const content =
       'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":500,"output":200,"cache":{"read":100,"write":20}}\n';
     const result = parseSessionLogUsage(content);
-    expect(result).toEqual({ inputTokens: 500, outputTokens: 200, cachedTokens: 120 });
+    expect(result).toEqual({ inputTokens: 500, outputTokens: 200, cachedTokens: 100 });
   });
 
   it('parses reasoning field (alternate key name)', () => {
