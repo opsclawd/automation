@@ -113,29 +113,23 @@ _check_duplicate_titles() {
   return 0
 }
 
-# Normalize heading/title text for comparison: drop backticks, lowercase,
-# collapse runs of whitespace to a single space, trim. Used so a prose task
-# header matches its manifest title despite inline-code formatting differences.
-_norm_heading() {
-  printf '%s' "$1" | tr -d '`' | tr '[:upper:]' '[:lower:]' \
-    | tr -s '[:space:]' ' ' | sed -E 's/^ +//; s/ +$//'
-}
-
-# Verify the plan prose describes exactly the tasks the manifest declares.
+# Verify the plan prose describes the tasks the manifest declares.
 #
-# Manifest-anchored (see #315): the manifest — already validated by
-# read_manifest to be n=1..task_count with non-empty titles — is the source of
-# truth. We do NOT fence-strip the plan: a naive ``` toggle cannot robustly
-# parse plans that contain example fences (#315) or that simply forgot one
-# closing fence (#206), and that fragility silently stripped real task headers.
+# Manifest-anchored (see #315/#319): the manifest — validated by read_manifest to
+# be n=1..task_count with non-empty titles — is the source of truth. We do NOT
+# fence-strip the plan: a naive ``` toggle cannot robustly parse plans that
+# contain example fences (#315) or that forgot one closing fence (#206), and that
+# fragility silently stripped real task headers.
 #
-# For each manifest task n we require a column-0 "## Task n:" / "### Task n:"
-# heading in the RAW plan whose title text contains the manifest title. Matching
-# on title (not bare number) preserves the "task must actually be described, not
-# merely appear as a fenced/example header" guarantee without depending on fence
-# balance. The "extra" check flags only headings numbered beyond task_count
-# (manifest numbers are always 1..task_count, so out-of-range == not-in-manifest);
-# in-range example numbers — the common fixture case — are intentionally tolerated.
+# Presence is checked by NUMBER only: each manifest task n requires a column-0
+# "## Task n:" / "### Task n:" heading in the RAW plan. We deliberately do NOT
+# also require the heading title to match the manifest title — prose headings
+# routinely elaborate on or reword the short manifest title (e.g. "(Part 1 — …)"
+# or a fuller description / different punctuation), and title matching false-failed
+# valid plans (#223, #147). The weaker "real section vs fenced example" guarantee
+# is delegated to the plan-write indent contract and extract_task_text consistency
+# (tracked in #315), not enforced here via fragile text matching. The "extra"
+# check flags headings numbered outside 1..task_count.
 _check_manifest_against_prose() {
   local plan_file="$1"
   local manifest_path="$2"
@@ -145,25 +139,15 @@ _check_manifest_against_prose() {
   task_count=$(jq -r '.task_count' "$manifest_path")
 
   local missing_from_prose=""
-  local n title norm_title heading htext found
-  while IFS=$'\t' read -r n title; do
-    norm_title=$(_norm_heading "$title")
-    found=""
-    while IFS= read -r heading; do
-      htext=$(printf '%s' "$heading" | sed -E 's/^#{2,3} Task [0-9]+:[[:space:]]*//')
-      htext=$(_norm_heading "$htext")
-      if [[ -n "$norm_title" && "$htext" == *"$norm_title"* ]]; then
-        found=1
-        break
-      fi
-    done < <(grep -E "^#{2,3} Task ${n}:" "$plan_file" 2>/dev/null || true)
-    if [[ -z "$found" ]]; then
+  local n
+  while IFS= read -r n; do
+    if ! grep -qE "^#{2,3} Task ${n}:" "$plan_file" 2>/dev/null; then
       if [[ -n "$missing_from_prose" ]]; then
         missing_from_prose+=", "
       fi
       missing_from_prose+="Task ${n}"
     fi
-  done < <(jq -r '.tasks[] | "\(.n)\t\(.title)"' "$manifest_path")
+  done < <(jq -r '.tasks[].n' "$manifest_path")
 
   if [[ -n "$missing_from_prose" ]]; then
     errors+="manifest tasks missing from plan.md prose: ${missing_from_prose}"
