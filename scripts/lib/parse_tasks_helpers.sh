@@ -445,7 +445,7 @@ extract_task_text() {
   sed -n "${line_num},\$p" "$plan_file" | awk '
     NR == 1 { next }
     /^#{2,3} Task [0-9]+:/ { exit }
-    { print }
+    NF { print }
   '
 }
 
