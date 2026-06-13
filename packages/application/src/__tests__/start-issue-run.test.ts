@@ -252,6 +252,33 @@ describe('StartIssueRun', () => {
     expect(patch.failureReason).toMatch(/3/);
   });
 
+  it('preserves waiting status when poller set it via onAllResolved', async () => {
+    const repo = new FakeRunRepositoryWithLookup();
+    const failureRepo = new FakeFailureRepository();
+    const { factory, dirs } = fakeDirectoryFactory();
+    const bash: RunBashScriptFn = async (input) => {
+      repo.update(input.env.AI_RUN_UUID, { status: 'waiting' });
+      return { exitCode: 0, durationMs: 42 };
+    };
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 42 });
+    expect(out.status).toBe('passed');
+    expect(out.exitCode).toBe(0);
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.status).toBe('waiting');
+    expect(dirs[0]!.writes).toHaveLength(1);
+  });
+
   it('refuses to start a second active run for the same issue', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
@@ -708,6 +735,29 @@ describe('StartIssueRun', () => {
     expect(patch.failureReason).toContain('ENOSPC');
   });
 });
+
+class FakeRunRepositoryWithLookup extends FakeRunRepository {
+  findByUuid(uuid: string): RunRecord | undefined {
+    const inserted = this.inserted.find((r) => r.uuid === uuid);
+    if (!inserted) return undefined;
+    let status = inserted.status;
+    let completedAt: Date | undefined;
+    for (const u of this.updates) {
+      if (u.uuid === uuid && u.patch.status) status = u.patch.status;
+      if (u.uuid === uuid && u.patch.completedAt) completedAt = u.patch.completedAt;
+    }
+    return {
+      uuid: inserted.uuid,
+      displayId: inserted.displayId,
+      issueNumber: inserted.issueNumber,
+      type: inserted.type,
+      status,
+      completedPhases: inserted.completedPhases,
+      startedAt: inserted.startedAt,
+      ...(completedAt ? { completedAt } : {}),
+    };
+  }
+}
 
 class FakeEventRepository implements EventRepositoryPort {
   events: Array<{ runUuid: string; type: string; timestamp: Date }> = [];
