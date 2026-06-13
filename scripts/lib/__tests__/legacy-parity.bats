@@ -1098,15 +1098,15 @@ PLAN
   [ "$output" -ge 1 ]
 
   # Exclude comments when checking for dangerous strings in code
-  run bash -c "grep -vE '^\s*(/\*|\*|//)' '$adapter' | grep -c 'dangerously-bypass-approvals-and-sandbox'"
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'dangerously-bypass-approvals-and-sandbox'"
   [ "$status" -eq 1 ]
   [ "$output" -eq 0 ]
 
-  run bash -c "grep -vE '^\s*(/\*|\*|//)' '$adapter' | grep -c 'workspace-write'"
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'workspace-write'"
   [ "$status" -eq 1 ]
   [ "$output" -eq 0 ]
 
-  run bash -c "grep -vE '^\s*(/\*|\*|//)' '$adapter' | grep -c 'danger-full-access'"
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'danger-full-access'"
   [ "$status" -eq 1 ]
   [ "$output" -eq 0 ]
 }
