@@ -141,7 +141,8 @@
       "plan-review": { "profile": "architect", "fallbackProfile": "senior" },
       "plan-fix": { "profile": "architect", "fallbackProfile": "senior" },
       "result-writer": { "profile": "task-reviewer", "fallbackProfile": "junior" },
-      "fix-review-architect": { "profile": "architect", "fallbackProfile": "senior" }
+      "fix-review-architect": { "profile": "architect", "fallbackProfile": "senior" },
+      "commit-completion": { "profile": "junior", "fallbackProfile": "builder" }
     }
   }
 }

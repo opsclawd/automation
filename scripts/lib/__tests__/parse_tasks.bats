@@ -972,7 +972,7 @@ PLAN
   [[ "$result" == *"Task 0"* ]]
 }
 
-@test "validate_task_list: rejects manifest when task header inside fenced block" {
+@test "validate_task_list: accepts column-0 task header by number even inside a fence (#319 number-only)" {
   cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
 { "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Real task" }, { "n": 2, "title": "Hidden task" }] }
 JSON
@@ -987,8 +987,13 @@ PLAN
   set +e
   result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
   set -e
-  [[ "$result" == *"manifest tasks missing from plan.md prose"* ]]
-  [[ "$result" == *"Task 2"* ]]
+  # Presence is checked by NUMBER only (no fence-stripping, no title match) —
+  # title matching false-failed valid plans where prose elaborates the manifest
+  # title (#223, #147), so it was removed. A column-0 "## Task 2:" satisfies the
+  # presence check regardless of fences. Distinguishing a real section from a
+  # fenced example is delegated to the plan-write indent contract and
+  # extract_task_text consistency (tracked in #315), not enforced here.
+  [ -z "$result" ]
 }
 
 @test "parse_tasks: prefers manifest over scraping when manifest exists" {

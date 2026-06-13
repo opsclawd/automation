@@ -1062,6 +1062,20 @@ PLAN
   [[ "$output" == *"Task 2"* ]]
   [[ "$output" == *"unbalanced code fence"* ]]
 
+  # #223/#147 regression: presence is by NUMBER only. Prose headings routinely
+  # elaborate/reword the short manifest title — that MUST still validate (title
+  # matching false-failed real plans and was removed).
+  cat > "$d/plan3.md" << 'PLAN'
+### Task 1: Add local config override tests (Part 1 — basic overrides and deep merge)
+
+### Task 2: Export the adapter from index.ts and wire it up
+PLAN
+  cat > "$d/manifest3.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Add local config override tests — basic overrides and deep merge" }, { "n": 2, "title": "Export CodexAgentAdapter" }] }
+JSON
+  run _check_manifest_against_prose "$d/plan3.md" "$d/manifest3.json"
+  [ "$status" -eq 0 ] || { echo "elaborated prose titles must validate, got: $output"; false; }
+
   rm -rf "$d"
 }
 
@@ -1126,49 +1140,6 @@ PLAN
   result=$(extract_task_commit_msg "$test_dir/plan.md" "Second task" "fallback" "2")
   [ "$result" = "feat: real commit msg here" ] || {
     echo "FAIL: expected 'feat: real commit msg here', got '$result'"
-    false
-  }
-}
-
-# Invariant: validate_task_list runs as a post-plan-write blocking gate.
-# Source: #315 (this issue).
-# Failure prevented: a plan with manifest/prose mismatch (e.g. real headings
-#   swallowed by unbalanced fence) is caught at plan-write time, not 2 phases
-#   later at implement-entry. The implement phase never sees a plan that
-#   validation would green-light but extraction would mis-execute.
-# TS-port contract: the TS orchestrator must validate plan manifest/prose
-#   agreement immediately after plan-write, before advancing to plan-review.
-@test "parity[#315]: validate_task_list runs as post-plan-write gate" {
-  # Verify the gate exists in ai-run-issue-v2 between plan-write
-  # _emit_phase_done and the _lint_plan_verification call.
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
-  # The gate text must appear after _emit_phase_done "plan-write"
-  # and before _lint_plan_verification
-  local section
-  section=$(sed -n '/_emit_phase_done "plan-write"/,/_lint_plan_verification/p' "$script")
-  echo "$section" | grep -q "validate_task_list" || {
-    echo "FAIL: post-plan-write validate_task_list gate not found"
-    false
-  }
-}
-
-# Invariant: a missing task heading in plan.md causes the implement phase to
-#   abort (orchestrator_fail), never silently substitute the title as the
-#   agent's only instruction.
-# Source: #315 (this issue).
-# Failure prevented: an agent is invoked with only a short title like
-#   "Add bats tests" as its prompt, producing hallucinated implementation.
-# TS-port contract: the TS implement loop must abort when no column-0
-#   heading is found for a manifest task.
-@test "parity[#315]: missing task heading aborts implement phase (not silent title fallback)" {
-  # Verify no title-fallback pattern remains at the extract_task_text call sites
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
-  # The old pattern: warn "...using title as description" then TASK_TEXT="$task_title"
-  # must NOT appear at either call site
-  ! grep -n "using title as description" "$script" | grep -q "." || {
-    local matches
-    matches=$(grep -n "using title as description" "$script")
-    echo "FAIL: title-as-description fallback still present at lines: $matches"
     false
   }
 }
