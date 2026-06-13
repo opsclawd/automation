@@ -432,7 +432,15 @@ extract_task_text() {
   local task_num="${3:-}"
   local line_num=""
   if [[ -n "$task_num" ]]; then
-    line_num=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | head -1 | cut -d: -f1)
+    local candidate_lines
+    candidate_lines=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | cut -d: -f1)
+    while IFS= read -r candidate; do
+      fence_count=$(sed -n "1,$((candidate - 1))p" "$plan_file" | grep -cE '^[[:space:]]*```')
+      if (( fence_count % 2 == 0 )); then
+        line_num=$candidate
+        break
+      fi
+    done <<< "$candidate_lines"
   fi
   if [[ -z "$line_num" ]]; then
     local escaped_title
