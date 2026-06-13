@@ -237,7 +237,12 @@ export class PrReviewPoller {
         return { terminalState: 'cancelled', pollsRun };
       }
       if (action === 'stay_ready') {
-        // onAllResolved already handled the running→waiting transition — no revert needed
+        // onAllResolved handles running→waiting on the happy path, but on the
+        // error path (compose catch returns stay_ready without transitioning)
+        // the run is still running — revert unconditionally when reactivated.
+        if (wasReactivated) {
+          await d.revertRunStatus?.(input.runId);
+        }
         await d.recordTerminalState(lastAttempt, 'all_resolved');
         return { terminalState: 'all_resolved', pollsRun };
       }
