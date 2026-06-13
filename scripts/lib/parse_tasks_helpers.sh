@@ -452,7 +452,8 @@ extract_task_text() {
   fi
   sed -n "${line_num},\$p" "$plan_file" | awk '
     NR == 1 { next }
-    /^#{2,3} Task [0-9]+:/ { exit }
+    /^[[:space:]]*```/ { in_fence = !in_fence }
+    !in_fence && /^#{2,3} Task [0-9]+:/ { exit }
     NF { print }
   '
 }

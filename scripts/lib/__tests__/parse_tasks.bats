@@ -449,6 +449,36 @@ PLAN
   ! echo "$result" | grep -q "Core body"
 }
 
+@test "extract_task_text: end boundary is fence-aware for column-0 fenced headings (#315)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+This is the body of task 1.
+
+```
+## Task 2: Phantom at column 0 inside fence
+```
+
+Still part of task 1 body.
+
+## Task 2: Real second task
+
+Second task body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
+  echo "$result" | grep -q "Still part of task 1 body" || {
+    echo "FAIL: last body line of task 1 missing"
+    echo "got: [$result]"
+    false
+  }
+  echo "$result" | grep -q "Phantom at column 0" || {
+    echo "FAIL: fenced column-0 heading was excluded (should be part of task 1 body)"
+    echo "got: [$result]"
+    false
+  }
+  ! echo "$result" | grep -q "Real second task"
+}
+
 @test "extract_task_text: returns exit 1 when no heading matches task title" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Write tests
