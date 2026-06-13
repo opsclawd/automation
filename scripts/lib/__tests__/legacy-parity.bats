@@ -1078,3 +1078,68 @@ JSON
 
   rm -rf "$d"
 }
+
+# Invariant: extract_task_text is immune to unbalanced code fences — real task
+#   headings after an unclosed fence opener are found via raw column-0 grep,
+#   not lost to the _strip_fenced toggle.
+# Source: #315 (this issue).
+# Failure prevented: a plan with a forgotten closing fence causes validation to
+#   green-light but extract_task_text reads the wrong (or no) task body because
+#   the old toggle treats everything after an odd fence as fenced.
+# TS-port contract: the TS extraction must locate headings with raw column-0
+#   grep, never depend on fence-state tracking.
+@test "parity[#315]: extract_task_text finds headings past an unbalanced fence" {
+  source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  cat > "$test_dir/plan.md" << 'PLAN'
+## Task 5: Far downstream task
+This is real task body after the unclosed fence.
+PLAN
+  cat > "$test_dir/plan-with-unbalanced.md" << 'PLAN'
+## Task 1: Early task
+Early body.
+```
+unclosed fence — everything below is treated as fenced by old toggle
+## Task 5: Far downstream task
+This is real task body after the unclosed fence.
+PLAN
+  # Without unbalanced fence, Task 5 is found normally.
+  run extract_task_text "$test_dir/plan.md" "Far downstream task" "5"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "real task body"
+  # With unbalanced fence, Task 5 is still found (old fence toggle would skip it).
+  run extract_task_text "$test_dir/plan-with-unbalanced.md" "Far downstream task" "5"
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q "real task body"
+}
+
+# Invariant: extract_task_commit_msg is immune to unbalanced code fences —
+#   uses the same raw column-0 grep as extract_task_text.
+# Source: #315 (this issue).
+# Failure prevented: the old toggle-based heading finder misses the real
+#   heading after an unclosed fence, returning a fallback commit message
+#   instead of the one documented in plan.md.
+# TS-port contract: the TS extraction must locate headings with raw column-0
+#   grep, never depend on fence-state tracking.
+@test "parity[#315]: extract_task_commit_msg finds commit msg past an unbalanced fence" {
+  source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
+  local test_dir
+  test_dir=$(mktemp -d)
+  trap "rm -rf $test_dir" EXIT
+  cat > "$test_dir/plan.md" << 'PLAN'
+```
+unclosed fence
+## Task 2: Second task
+Body.
+git commit -m "feat: real commit msg here"
+
+## Task 3: Third task
+PLAN
+  result=$(extract_task_commit_msg "$test_dir/plan.md" "Second task" "fallback" "2")
+  [ "$result" = "feat: real commit msg here" ] || {
+    echo "FAIL: expected 'feat: real commit msg here', got '$result'"
+    false
+  }
+}

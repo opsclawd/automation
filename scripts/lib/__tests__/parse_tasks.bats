@@ -170,7 +170,7 @@ PLAN
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: First task
 ```bash
-## Task 2: Phantom fenced task
+  ## Task 2: Phantom fenced task
 git commit -m "feat: phantom commit"
 ```
 
@@ -189,7 +189,7 @@ PLAN
 This is the body of task 1.
 
 ```bash
-## Task 2: Phantom fenced task
+  ## Task 2: Phantom fenced task
 ```
 
 Still part of task 1 body.
@@ -294,7 +294,7 @@ PLAN
 @test "extract_task_text: title first appears inside fence, grep finds real copy" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash
-## Task 1: Implement X
+  ## Task 1: Implement X
 echo "example"
 ```
 ## Task 1: Implement X
@@ -311,26 +311,25 @@ PLAN
 @test "extract_task_text: falls back to task number when title does not match" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Implement authentication
-
 This is the auth body.
-
+```bash
+  ## Task 1: Fenced example (indented — new behavior skips it)
+```
+More body text.
 ## Task 2: Write database migration
-
 This is the migration body.
 PLAN
   result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement auth" "1")
   echo "$result" | grep -q "auth body"
+  echo "$result" | grep -q "Fenced example"
   ! echo "$result" | grep -q "migration body"
 }
 
 @test "extract_task_text: title match works when no task_num provided" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Implement auth
-
 This is the auth body.
-
 ## Task 2: Write migration
-
 This is the migration body.
 PLAN
   result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement auth")
@@ -340,30 +339,27 @@ PLAN
 @test "extract_task_text: prefers task_num lookup when both title and task_num provided" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Manifest title differs
-
 Actual body for task 1.
-
+```bash
+  ## Task 1: Fenced phantom (indented — ignored by raw grep)
+```
+More text.
 ## Task 2: Prose has different title
-
 Actual body for task 2.
 PLAN
   result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Prose has different title" "1")
   echo "$result" | grep -q "Actual body for task 1"
+  echo "$result" | grep -q "Fenced phantom"
   ! echo "$result" | grep -q "Actual body for task 2"
 }
 
 @test "extract_task_text: task_num fallback finds correct task" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: First task
-
 Body 1.
-
 ## Task 2: Second task
-
 Body 2.
-
 ## Task 3: Third task
-
 Body 3.
 PLAN
   result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Non-existent title" "2")
@@ -406,10 +402,77 @@ PLAN
   ! echo "$result" | grep -q "Body 2"
 }
 
+@test "extract_task_text: finds real heading past unbalanced fence (#206 regression)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Early task
+
+Early body.
+```
+unclosed fence line
+## Task 2: Middle task
+This is real task 2 body, not fenced.
+## Task 3: Late task
+Task 3 body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Middle task" "2")
+  echo "$result" | grep -q "real task 2 body" || {
+    echo "FAIL: unbalanced fence caused heading miss"
+    echo "got: [$result]"
+    false
+  }
+}
+
+@test "extract_task_text: nested fences do not cause heading skip (#315 regression)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Setup
+
+```bash
+cat > fixture.sh << 'SCRIPT'
+```bash
+  ## Task 99: Nested phantom
+```
+SCRIPT
+```
+
+Real body continues here.
+
+## Task 2: Core logic
+
+Core body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Setup" "1")
+  echo "$result" | grep -q "Real body continues here" || {
+    echo "FAIL: nested fences caused heading miss"
+    echo "got: [$result]"
+    false
+  }
+  ! echo "$result" | grep -q "Core body"
+}
+
+@test "extract_task_text: returns exit 1 when no heading matches task title" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Write tests
+
+Test body.
+
+## Task 2: Refactor code
+
+Refactor body.
+PLAN
+  set +e
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Nonexistent task title" 2>/dev/null)
+  local rc=$?
+  set -e
+  [ "$rc" -eq 1 ] || {
+    echo "FAIL: expected exit 1 for non-matching title, got exit ${rc}"
+    false
+  }
+}
+
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash
-## Task 1: Implement X
+  ## Task 1: Implement X
 echo "example"
 ```
 ## Task 1: Implement X
