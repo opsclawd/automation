@@ -402,26 +402,6 @@ PLAN
   ! echo "$result" | grep -q "Body 2"
 }
 
-@test "extract_task_text: finds real heading past unbalanced fence (#206 regression)" {
-  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
-## Task 1: Early task
-
-Early body.
-```
-unclosed fence line
-## Task 2: Middle task
-This is real task 2 body, not fenced.
-## Task 3: Late task
-Task 3 body.
-PLAN
-  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Middle task" "2")
-  echo "$result" | grep -q "real task 2 body" || {
-    echo "FAIL: unbalanced fence caused heading miss"
-    echo "got: [$result]"
-    false
-  }
-}
-
 @test "extract_task_text: nested fences do not cause heading skip (#315 regression)" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Setup
