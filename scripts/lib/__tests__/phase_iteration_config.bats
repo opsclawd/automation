@@ -9,6 +9,11 @@ setup() {
   LOG_OUTPUT=""
   # Stub log to capture output
   log() { LOG_OUTPUT="${LOG_OUTPUT}$*\n"; }
+  # Stub warn likewise — the config-load block may warn() on a malformed local
+  # config fallback; without this stub the eval'd block dies with
+  # "warn: command not found" (status 127). Captured into LOG_OUTPUT so tests
+  # can assert the warning fired.
+  warn() { LOG_OUTPUT="${LOG_OUTPUT}WARN: $*\n"; }
   # Stub mkdir — the config-reading block ensures ISSUES_DIR exists before
   # the first log() call so tee -a doesn't fail under set -euo pipefail.
   # Tests evaluate that block in isolation, so we no-op the side effect.
