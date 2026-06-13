@@ -189,7 +189,7 @@ PLAN
 This is the body of task 1.
 
 ```bash
-## Task 2: Phantom fenced task
+  ## Task 2: Phantom fenced task
 ```
 
 Still part of task 1 body.
@@ -294,7 +294,7 @@ PLAN
 @test "extract_task_text: title first appears inside fence, grep finds real copy" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash
-## Task 1: Implement X
+  ## Task 1: Implement X
 echo "example"
 ```
 ## Task 1: Implement X
@@ -400,6 +400,73 @@ PLAN
   result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
   echo "$result" | grep -q "Body 1"
   ! echo "$result" | grep -q "Body 2"
+}
+
+@test "extract_task_text: finds real heading past unbalanced fence (#206 regression)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Early task
+
+Early body.
+```
+unclosed fence line
+## Task 2: Middle task
+This is real task 2 body, not fenced.
+## Task 3: Late task
+Task 3 body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Middle task" "2")
+  echo "$result" | grep -q "real task 2 body" || {
+    echo "FAIL: unbalanced fence caused heading miss"
+    echo "got: [$result]"
+    false
+  }
+}
+
+@test "extract_task_text: nested fences do not cause heading skip (#315 regression)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Setup
+
+```bash
+cat > fixture.sh << 'SCRIPT'
+```bash
+  ## Task 99: Nested phantom
+```
+SCRIPT
+```
+
+Real body continues here.
+
+## Task 2: Core logic
+
+Core body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Setup" "1")
+  echo "$result" | grep -q "Real body continues here" || {
+    echo "FAIL: nested fences caused heading miss"
+    echo "got: [$result]"
+    false
+  }
+  ! echo "$result" | grep -q "Core body"
+}
+
+@test "extract_task_text: returns exit 1 when no heading matches task title" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Write tests
+
+Test body.
+
+## Task 2: Refactor code
+
+Refactor body.
+PLAN
+  set +e
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Nonexistent task title" 2>/dev/null)
+  local rc=$?
+  set -e
+  [ "$rc" -eq 1 ] || {
+    echo "FAIL: expected exit 1 for non-matching title, got exit ${rc}"
+    false
+  }
 }
 
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
