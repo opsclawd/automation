@@ -15,3 +15,5 @@ export * from './validation/classify-validation.js';
 export * from './validation/validation-run-to-failure.js';
 export * from './pr-review/process-pr-review-comments.js';
 export * from './pr-review/pr-review-poller.js';
+export * from './pr-review/reactivate-on-review.js';
+export * from './pr-review/apply-reactivation.js';

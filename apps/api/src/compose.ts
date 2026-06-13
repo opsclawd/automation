@@ -38,6 +38,8 @@ import {
   RunValidation,
   PrReviewPoller,
   ProcessPrReviewComments,
+  decideReactivation,
+  applyReactivation,
   pollTaskResultSchema,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -621,6 +623,53 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
         }
       },
+      onAllResolved: async (input) => {
+        try {
+          let record = runRepository.findByUuid(String(input.runId));
+          if (!record) return 'stay_ready';
+          // Transition running → waiting so existing runs (non-synthetic poll
+          // path) can enter the reactivation check. The synthetic path does
+          // this in runStatusForTerminalState before the poller starts.
+          if (record.status === 'running') {
+            const readyAt = new Date();
+            runRepository.update(record.uuid, { status: 'waiting', completedAt: readyAt });
+            record = { ...record, status: 'waiting', completedAt: readyAt };
+          }
+          if (record.status !== 'waiting') return 'stay_ready';
+          const comments = await ghAdapter.listReviewComments(input.repoFullName, input.prNumber);
+          const reviewerComments = comments;
+          const newestCommentAt = reviewerComments.reduce(
+            (max, c) => (c.createdAt.getTime() > max.getTime() ? c.createdAt : max),
+            record.completedAt ?? new Date(0),
+          );
+          const lastAttempt = prReviewRepository.latestPollAttempt(input.runId);
+          const lastSeenActivityAt = lastAttempt?.startedAt ?? record.startedAt;
+          const decision = decideReactivation({
+            readyAt: record.completedAt ?? record.startedAt,
+            now: new Date(),
+            readyMaxDays: opts.readyMaxDays,
+            lastSeenActivityAt,
+            newestCommentAt,
+          });
+          const run = record;
+          applyReactivation(run, decision, {
+            runRepository,
+            eventBus: persistingEventBus,
+            now: () => new Date(),
+          });
+          return decision.action;
+        } catch (err) {
+          console.error(
+            { err, runId: input.runId },
+            'onAllResolved callback failed, staying ready',
+          );
+          return 'stay_ready';
+        }
+      },
+      revertRunStatus: async (runId) => {
+        runRepository.update(String(runId), { status: 'waiting' });
+      },
+      maxReactivations: 100,
     });
   }
 

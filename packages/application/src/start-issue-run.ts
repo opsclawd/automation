@@ -287,6 +287,22 @@ export class StartIssueRun {
             });
           }
         } else {
+          // If the run is in 'waiting' (transitioned by pr-review poller's
+          // onAllResolved), preserve it for future reactivation instead of
+          // overwriting with 'passed' (#206).
+          if (current?.status === 'waiting') {
+            try {
+              dir.writeRunJson(passRun(run, completedAt));
+            } catch (writeErr) {
+              logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
+            }
+            return {
+              uuid: run.uuid,
+              displayId: run.displayId,
+              exitCode: exec.exitCode,
+              status: 'passed',
+            };
+          }
           this.deps.runRepository.update(run.uuid, {
             status: 'passed',
             completedAt,
