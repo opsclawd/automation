@@ -136,6 +136,7 @@ export type {
   AgentInvocationPort,
   AgentInvocationUpdatePatch,
 } from './ports/agent-invocation-port.js';
+export type { AgentUsagePort } from './ports/agent-usage-port.js';
 
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 

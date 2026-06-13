@@ -12,7 +12,7 @@ import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationPort } from '@ai-sdlc/application/ports';
-import type { EventBusPort } from '@ai-sdlc/application/ports';
+import type { AgentUsagePort, EventBusPort } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { testQuotaPatterns } from './error-patterns.js';
 
@@ -21,6 +21,7 @@ export interface AgentRuntimeRouterOptions {
   adapters: Partial<Record<AgentRuntimeKind, AgentPort>>;
   invocationRepository: AgentInvocationPort;
   eventBus?: EventBusPort;
+  usageRepository?: AgentUsagePort;
   clock?: () => Date;
   idFactory?: () => string;
   readPromptChars?: (path: string) => number;
@@ -192,6 +193,60 @@ export class AgentRuntimeRouter implements AgentPort {
       patch.endCommitSha = result.endCommitSha;
     }
     this.opts.invocationRepository.update(id, patch);
+
+    // Persist token usage if the adapter reported it
+    // NOTE: wrapped in try/catch so a DB error doesn't skip the fallback
+    // check below. The invocation has already been updated as completed.
+    if (result.usage && this.opts.usageRepository) {
+      try {
+        this.opts.usageRepository.insert({
+          invocationId: id,
+          runId: RunId(request.runId),
+          phaseId: PhaseName(request.phaseId),
+          profile: request.profile,
+          provider: effectiveProvider,
+          model: effectiveModel,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          ...(result.usage.reasoningTokens !== undefined
+            ? { reasoningTokens: result.usage.reasoningTokens }
+            : {}),
+          ...(result.usage.cachedTokens !== undefined
+            ? { cachedTokens: result.usage.cachedTokens }
+            : {}),
+          recordedAt: endedAt,
+        });
+
+        if (this.opts.eventBus) {
+          const event: OrchestratorEvent = {
+            runId: request.runId,
+            level: 'info',
+            type: 'agent.usage',
+            message: `${request.phaseId}: ${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens`,
+            timestamp: endedAt.toISOString(),
+            metadata: {
+              phase: request.phaseId,
+              phaseId: request.phaseId,
+              profile: request.profile,
+              provider: effectiveProvider,
+              model: effectiveModel,
+              inputTokens: result.usage.inputTokens,
+              outputTokens: result.usage.outputTokens,
+              ...(result.usage.reasoningTokens !== undefined
+                ? { reasoningTokens: result.usage.reasoningTokens }
+                : {}),
+              ...(result.usage.cachedTokens !== undefined
+                ? { cachedTokens: result.usage.cachedTokens }
+                : {}),
+              durationMs: result.durationMs,
+            },
+          };
+          this.opts.eventBus.publish(request.runId, event);
+        }
+      } catch {
+        // Non-critical: usage persistence failure should not prevent fallback
+      }
+    }
 
     // --- Adapter-level fallback only (caller-signalled is handled in invoke) ---
     // NOTE: The router does NOT consult PHASE_FALLBACKS here. The caller (bash script)

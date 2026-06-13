@@ -5,6 +5,7 @@ import * as agentInvocations from './migrations/0003-agent-invocations.js';
 import * as phaseRename from './migrations/0004-phase-rename.js';
 import * as validationResults from './migrations/0005-validation-results.js';
 import * as prReview from './migrations/0006-pr-review.js';
+import * as agentUsage from './migrations/0007-agent-usage.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -13,6 +14,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: phaseRename.version, sql: phaseRename.sql },
   { version: validationResults.version, sql: validationResults.sql },
   { version: prReview.version, sql: prReview.sql },
+  { version: agentUsage.version, sql: agentUsage.sql },
 ];
 
 export function applyMigrations(db: Db): void {

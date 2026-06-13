@@ -22,6 +22,50 @@ import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/app
 // content (e.g. a file the agent read, or a `git log` line containing "429").
 const PROVIDER_LOG_SERVICES = /service=(?:llm|provider)\b/;
 
+// Match `tokens=` prefix and extract the JSON payload
+const TOKENS_PREFIX_RE = /tokens=(\{.*\})/;
+
+export interface SessionLogUsage {
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens?: number;
+  cachedTokens?: number;
+}
+
+export function parseSessionLogUsage(content: string): SessionLogUsage | undefined {
+  const lines = content.split('\n');
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let reasoningTokens = 0;
+  let cachedTokens = 0;
+  let hasAny = false;
+  for (const line of lines) {
+    if (!PROVIDER_LOG_SERVICES.test(line)) continue;
+    const match = TOKENS_PREFIX_RE.exec(line);
+    if (!match) continue;
+    try {
+      const parsed = JSON.parse(match[1]!);
+      inputTokens += parsed.input ?? 0;
+      outputTokens += parsed.output ?? 0;
+      if (parsed.cacheRead) cachedTokens += parsed.cacheRead;
+      if (parsed.cache?.read) cachedTokens += parsed.cache.read;
+      if (parsed.reasoningTokens) reasoningTokens += parsed.reasoningTokens;
+      if (parsed.reasoning) reasoningTokens += parsed.reasoning;
+      hasAny = true;
+    } catch {
+      // Malformed tokens JSON — skip silently
+    }
+  }
+  return hasAny
+    ? {
+        inputTokens,
+        outputTokens,
+        ...(reasoningTokens > 0 ? { reasoningTokens } : {}),
+        ...(cachedTokens > 0 ? { cachedTokens } : {}),
+      }
+    : undefined;
+}
+
 export interface OpenCodeAdapterOptions {
   binaryPath?: string;
   artifactsDir: string;
@@ -293,9 +337,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
     writeFileSync(stdoutPath, transcript);
     writeFileSync(stderrPath, stderrForLog);
 
+    // Parse token usage from the session log transcripts
+    const usage = postExit?.transcript
+      ? parseSessionLogUsage(OpenCodeAgentAdapter.providerLines(postExit.transcript))
+      : undefined;
+
     const ret: AgentInvocationResult = {
       runtime: 'opencode',
-      provider: '',
+      provider: request.provider ?? '',
       model: request.model ?? '',
       exitCode,
       durationMs,
@@ -303,8 +352,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stderrPath,
       contractViolations,
       outcome,
+      ...(usage ? { usage: { ...usage } } : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
+    if (request.stepId) ret.stepId = request.stepId;
     // Set resultJsonPath so downstream extraction uses the explicit path rather
     // than falling back to a hardcoded 'result.json' (#311).
     if (ret.outcome === 'success' && request.expectedArtifacts.includes('result.json')) {

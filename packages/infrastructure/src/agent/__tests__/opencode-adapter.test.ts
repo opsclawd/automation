@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { AgentProfileName } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
-import { OpenCodeAgentAdapter } from '../opencode-adapter.js';
+import { OpenCodeAgentAdapter, parseSessionLogUsage } from '../opencode-adapter.js';
 
 function makeWorktree(): string {
   const dir = mkdtempSync(join(tmpdir(), 'opencode-test-'));
@@ -1190,4 +1190,163 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
     expect(r.resultJsonPath).toBeUndefined();
   });
+});
+
+describe('parseSessionLogUsage', () => {
+  it('parses a single token line', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":1234,"output":567}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 1234, outputTokens: 567 });
+  });
+  it('aggregates multiple token lines', () => {
+    const content = [
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50}',
+      'INFO  2026-06-03T12:00:02.000Z service=llm tokens={"input":200,"output":100}',
+    ].join('\n');
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 300, outputTokens: 150 });
+  });
+  it('parses cacheRead tokens', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50,"cacheRead":25}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 100, outputTokens: 50, cachedTokens: 25 });
+  });
+  it('parses reasoningTokens', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50,"reasoningTokens":200}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 100, outputTokens: 50, reasoningTokens: 200 });
+  });
+  it('parses full token line with all fields', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":1000,"output":500,"cacheRead":100,"reasoningTokens":300}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cachedTokens: 100,
+      reasoningTokens: 300,
+    });
+  });
+  it('ignores non-service=llm lines', () => {
+    const content = [
+      'Some other log line',
+      'agent transcript with tokens={"input":999,"output":999} in it',
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50}',
+    ].join('\n');
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 100, outputTokens: 50 });
+  });
+  it('returns undefined when no token lines are found', () => {
+    const content = 'INFO  2026-06-03T12:00:01.000Z service=llm no tokens here\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toBeUndefined();
+  });
+  it('returns undefined for empty content', () => {
+    expect(parseSessionLogUsage('')).toBeUndefined();
+  });
+  it('handles garbage content gracefully', () => {
+    const result = parseSessionLogUsage('garbage\nmore garbage\n');
+    expect(result).toBeUndefined();
+  });
+  it('omits zero-valued optional fields from result', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50,"cacheRead":0,"reasoningTokens":0}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 100, outputTokens: 50 });
+    expect('cachedTokens' in (result ?? {})).toBe(false);
+    expect('reasoningTokens' in (result ?? {})).toBe(false);
+  });
+  it('filters on service=provider lines too', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=provider tokens={"input":42,"output":7}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 42, outputTokens: 7 });
+  });
+
+  it('handles reordered JSON keys — resilient to serializer key order changes', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"output":567,"input":1234,"cacheRead":0,"reasoningTokens":0}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 1234, outputTokens: 567 });
+  });
+
+  it('parses nested cache.read field', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":200,"output":100,"cache":{"read":50}}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 200, outputTokens: 100, cachedTokens: 50 });
+  });
+
+  it('parses nested cache.read and cache.write', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":500,"output":200,"cache":{"read":100,"write":20}}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 500, outputTokens: 200, cachedTokens: 100 });
+  });
+
+  it('parses reasoning field (alternate key name)', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50,"reasoning":200}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 100, outputTokens: 50, reasoningTokens: 200 });
+  });
+
+  it('parses nested cache.read and reasoning together', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":1000,"output":500,"cache":{"read":200},"reasoning":300}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cachedTokens: 200,
+      reasoningTokens: 300,
+    });
+  });
+
+  it('handle both flat and nested formats in different lines of same session', () => {
+    const content = [
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50,"cacheRead":25}',
+      'INFO  2026-06-03T12:00:02.000Z service=llm tokens={"input":200,"output":100,"cache":{"read":50}}',
+    ].join('\n');
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 300, outputTokens: 150, cachedTokens: 75 });
+  });
+});
+
+describe('OpenCodeAgentAdapter usage capture', () => {
+  it('populates result.usage from session log token lines', async () => {
+    const sessionLogDir = mkdtempSync(join(tmpdir(), 'session-log-'));
+    const artifactsDir = mkdtempSync(join(tmpdir(), 'artifacts-'));
+    const wd = makeWorktree();
+    writeFileSync(join(wd, 'prompt.md'), 'test prompt');
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-session-log-usage.sh'),
+      artifactsDir,
+      logDir: sessionLogDir,
+      quotaPollMs: 100,
+      timeoutMsDefault: 120_000,
+      repoRoot: wd,
+    });
+    const result = await adapter.invoke({
+      profile: AgentProfileName('test'),
+      promptPath: join(wd, 'prompt.md'),
+      expectedArtifacts: [],
+      cwd: wd,
+      runId: 'test-run-1',
+      repoId: 'test-repo',
+      phaseId: 'plan',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd: wd }).toString().trim(),
+      provider: 'deepseek',
+      model: 'deepseek-pro',
+    });
+    expect(result.usage).toBeDefined();
+    expect(result.usage!.inputTokens).toBe(1334);
+    expect(result.usage!.outputTokens).toBe(617);
+    expect(result.usage!.cachedTokens).toBe(42);
+    expect(result.provider).toBe('deepseek');
+    expect(result.model).toBe('deepseek-pro');
+  }, 15000);
 });

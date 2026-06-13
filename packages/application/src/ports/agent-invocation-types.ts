@@ -41,4 +41,11 @@ export interface AgentInvocationResult {
   contractViolations: string[];
   outcome: AgentInvocationOutcome;
   endCommitSha?: string;
+  stepId?: string;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens?: number;
+    cachedTokens?: number;
+  };
 }
