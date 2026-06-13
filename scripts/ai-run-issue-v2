@@ -91,7 +91,7 @@ _ORCHESTRATOR_LOCAL_CONFIG="${REPO_ROOT}/.ai-orchestrator.local.json"
 _ACTIVE_CONFIG="$_ORCHESTRATOR_CONFIG"
 if [[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]]; then
   _ACTIVE_CONFIG=$(mktemp)
-  jq -s '.[0] * .[1]' "$_ORCHESTRATOR_CONFIG" "$_ORCHESTRATOR_LOCAL_CONFIG" > "$_ACTIVE_CONFIG" 2>/dev/null || cp "$_ORCHESTRATOR_CONFIG" "$_ACTIVE_CONFIG"
+  jq -s '.[0] * .[1]' "$_ORCHESTRATOR_CONFIG" "$_ORCHESTRATOR_LOCAL_CONFIG" > "$_ACTIVE_CONFIG" 2>/dev/null || { warn "Failed to merge .ai-orchestrator.local.json (invalid JSON), falling back to base config"; cp "$_ORCHESTRATOR_CONFIG" "$_ACTIVE_CONFIG"; }
 fi
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
