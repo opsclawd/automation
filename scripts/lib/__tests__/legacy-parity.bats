@@ -1151,3 +1151,24 @@ PLAN
     false
   }
 }
+
+# Invariant: a missing task heading in plan.md causes the implement phase to
+#   abort (orchestrator_fail), never silently substitute the title as the
+#   agent's only instruction.
+# Source: #315 (this issue).
+# Failure prevented: an agent is invoked with only a short title like
+#   "Add bats tests" as its prompt, producing hallucinated implementation.
+# TS-port contract: the TS implement loop must abort when no column-0
+#   heading is found for a manifest task.
+@test "parity[#315]: missing task heading aborts implement phase (not silent title fallback)" {
+  # Verify no title-fallback pattern remains at the extract_task_text call sites
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # The old pattern: warn "...using title as description" then TASK_TEXT="$task_title"
+  # must NOT appear at either call site
+  ! grep -n "using title as description" "$script" | grep -q "." || {
+    local matches
+    matches=$(grep -n "using title as description" "$script")
+    echo "FAIL: title-as-description fallback still present at lines: $matches"
+    false
+  }
+}

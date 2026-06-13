@@ -2703,10 +2703,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     log "=== Task ${TASK_NUM}/${TASK_COUNT}: ${task_title} ==="
 
-    TASK_TEXT=$(extract_task_text "plan.md" "$task_title" "$TASK_NUM")
-    if [[ -z "$TASK_TEXT" ]]; then
-      warn "Could not extract task text for '${task_title}', using title as description"
-      TASK_TEXT="$task_title"
+    if ! TASK_TEXT=$(extract_task_text "plan.md" "$task_title" "$TASK_NUM") || [[ -z "$TASK_TEXT" ]]; then
+      orchestrator_fail "Task ${TASK_NUM} '${task_title}' — no column-0 heading found in plan.md. The plan-write agent may have omitted the heading or placed it inside a fenced code block. Run aborted to prevent executing a task with no instructions."
     fi
 
     BASE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -3208,9 +3206,8 @@ with open(path, 'w') as f:
                 break
               else
                 log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
-                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" "$TASK_NUM" 2>/dev/null || echo "$TASK_TEXT")
-                if [[ -z "$TASK_TEXT" ]]; then
-                  TASK_TEXT="$task_title"
+                if ! TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" "$TASK_NUM") || [[ -z "$TASK_TEXT" ]]; then
+                  orchestrator_fail "Task ${TASK_NUM} '${task_title}' — no column-0 heading found in plan.md after amendment. Plan amendment did not fix the heading issue."
                 fi
               fi
             fi
