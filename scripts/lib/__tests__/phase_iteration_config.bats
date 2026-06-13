@@ -139,3 +139,19 @@ _load_config_block() {
   [ "$MAX_FIX_VALIDATE_ITERATIONS" = "8" ]  # from override
   [ "$FIX_VALIDATE_ENABLED" = "false" ]     # from base (preserved within overridden object)
 }
+
+@test "falls back to base config when local config is malformed JSON" {
+  echo '{"phases":{"reviewFix":{"maxIterations":7},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  echo 'not json at all {{{' > "$TMPDIR_TEST/.ai-orchestrator.local.json"
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "7" ]  # from base (malformed local silently ignored)
+}
+
+@test "no local config file: behavior unchanged" {
+  echo '{"phases":{"reviewFix":{"maxIterations":6},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  # No .ai-orchestrator.local.json created
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "6" ]
+  # _ACTIVE_CONFIG should equal _ORCHESTRATOR_CONFIG (no temp file created)
+  [ "$_ACTIVE_CONFIG" = "$_ORCHESTRATOR_CONFIG" ]
+}
