@@ -13,6 +13,9 @@ setup() {
   # the first log() call so tee -a doesn't fail under set -euo pipefail.
   # Tests evaluate that block in isolation, so we no-op the side effect.
   mkdir() { :; }
+  # Stub mktemp to create a predictable file in the test temp dir. Only
+  # invoked when a local config file is present (new override tests).
+  mktemp() { echo "${TMPDIR_TEST}/.merged-config.json"; }
 }
 
 teardown() {
@@ -112,4 +115,27 @@ _load_config_block() {
   echo '{"phases":{"reviewFix":{"maxIterations":5},"implement":{"maxIterations":5},"fixValidate":{"maxIterations":2,"enabled":false}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
   _load_config_block
   [[ "$LOG_OUTPUT" == *"fixValidate.enabled=false"* ]]
+}
+
+@test "reads planReview.enabled from local config override" {
+  echo '{"phases":{"reviewFix":{"maxIterations":5},"implement":{"maxIterations":5},"planReview":{"enabled":false}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  echo '{"phases":{"planReview":{"enabled":true}}}' > "$TMPDIR_TEST/.ai-orchestrator.local.json"
+  _load_config_block
+  [ "$PLAN_REVIEW_ENABLED" = "true" ]
+}
+
+@test "reads reviewFix.maxIterations from local config override" {
+  echo '{"phases":{"reviewFix":{"maxIterations":3},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  echo '{"phases":{"reviewFix":{"maxIterations":9}}}' > "$TMPDIR_TEST/.ai-orchestrator.local.json"
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "9" ]
+}
+
+@test "deep merge: local overrides a single key, base provides the rest" {
+  echo '{"phases":{"reviewFix":{"maxIterations":5},"implement":{"maxIterations":5},"fixValidate":{"maxIterations":4,"enabled":false}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
+  echo '{"phases":{"fixValidate":{"maxIterations":8}}}' > "$TMPDIR_TEST/.ai-orchestrator.local.json"
+  _load_config_block
+  [ "$MAX_REVIEW_FIX_ITERATIONS" = "5" ]   # from base (not overridden)
+  [ "$MAX_FIX_VALIDATE_ITERATIONS" = "8" ]  # from override
+  [ "$FIX_VALIDATE_ENABLED" = "false" ]     # from base (preserved within overridden object)
 }
