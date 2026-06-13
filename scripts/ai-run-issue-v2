@@ -1779,6 +1779,7 @@ Write plan.md and task-manifest.json now."
     MANIFEST_TASKS=""
     MANIFEST_COUNT=0
     if read_manifest "${WORKTREE_DIR}/task-manifest.json"; then
+      _manifest_valid=true
       info "Task manifest found: ${MANIFEST_COUNT} tasks declared"
       emit_event "plan-write" "info" "plan_written.manifest" \
         "task-manifest.json written alongside plan.md" taskCount="$MANIFEST_COUNT" manifestVersion="1"
@@ -1798,14 +1799,14 @@ Write plan.md and task-manifest.json now."
   # Blocking gate: validate manifest/prose agreement immediately after
   # plan-write, before plan-review. Catches #206/#315-class fence bugs at
   # the source instead of 2 phases later at implement-entry.
-  if [[ -f "${WORKTREE_DIR}/task-manifest.json" ]]; then
+  # Only runs when the manifest was successfully validated above — an invalid
+  # manifest falls back to prose scraping (handled at implement-entry).
+  if [[ "${_manifest_valid:-false}" == "true" ]]; then
     local _plan_validation_error
-    local _plan_task_count
-    _plan_task_count=$(jq '.task_count' "${WORKTREE_DIR}/task-manifest.json" 2>/dev/null || echo 0)
-    if ! _plan_validation_error=$(validate_task_list "${WORKTREE_DIR}/plan.md" "$_plan_task_count"); then
+    if ! _plan_validation_error=$(validate_task_list "${WORKTREE_DIR}/plan.md" "$MANIFEST_COUNT"); then
       orchestrator_fail "Plan validation failed at plan-write gate: ${_plan_validation_error}"
     fi
-    info "Plan validation passed at plan-write gate (${_plan_task_count} tasks)"
+    info "Plan validation passed at plan-write gate (${MANIFEST_COUNT} tasks)"
   fi
 
   _lint_plan_verification
