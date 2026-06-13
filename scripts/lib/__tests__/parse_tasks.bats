@@ -499,6 +499,27 @@ PLAN
   }
 }
 
+@test "extract_task_text: title fallback is fence-aware when number path is empty (#315)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real task
+
+Body.
+
+```
+## Task 2: Phantom — only heading with this number
+```
+PLAN
+  set +e
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Phantom" 2)
+  local rc=$?
+  set -e
+  [ "$rc" -eq 1 ] || {
+    echo "FAIL: expected exit 1 when title-match is inside fence, got exit ${rc}"
+    echo "got: [$result]"
+    false
+  }
+}
+
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash

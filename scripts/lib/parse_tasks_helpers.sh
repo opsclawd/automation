@@ -443,9 +443,16 @@ extract_task_text() {
     done <<< "$candidate_lines"
   fi
   if [[ -z "$line_num" ]]; then
-    local escaped_title
+    local escaped_title title_candidates
     escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
-    line_num=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | head -1 | cut -d: -f1)
+    title_candidates=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | cut -d: -f1)
+    while IFS= read -r candidate; do
+      fence_count=$(sed -n "1,$((candidate - 1))p" "$plan_file" | grep -cE '^[[:space:]]*```')
+      if (( fence_count % 2 == 0 )); then
+        line_num=$candidate
+        break
+      fi
+    done <<< "$title_candidates"
   fi
   if [[ -z "$line_num" ]]; then
     return 1
@@ -479,9 +486,16 @@ extract_task_commit_msg() {
   fi
 
   if [[ -z "$line_num" ]]; then
-    local escaped_title
+    local escaped_title title_candidates
     escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
-    line_num=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | head -1 | cut -d: -f1)
+    title_candidates=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | cut -d: -f1)
+    while IFS= read -r candidate; do
+      fence_count=$(sed -n "1,$((candidate - 1))p" "$plan_file" | grep -cE '^[[:space:]]*```')
+      if (( fence_count % 2 == 0 )); then
+        line_num=$candidate
+        break
+      fi
+    done <<< "$title_candidates"
   fi
 
   if [[ -z "$line_num" ]]; then
