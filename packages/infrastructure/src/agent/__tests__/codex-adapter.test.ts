@@ -126,6 +126,16 @@ describe('CodexAgentAdapter', () => {
     expect(args).not.toContain('--model');
   });
 
+  it('propagates provider field from request through adapter to result', async () => {
+    const cwd = makeWorktree();
+    const adapter = new CodexAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-codex-success.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke(req(cwd, { provider: 'openai' }));
+    expect(result.provider).toBe('openai');
+  });
+
   it('marks cancellation via AbortController as failed/cancelled_by_orchestrator', async () => {
     const cwd = makeWorktree();
     const adapter = new CodexAgentAdapter({
