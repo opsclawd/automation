@@ -1062,5 +1062,19 @@ PLAN
   [[ "$output" == *"Task 2"* ]]
   [[ "$output" == *"unbalanced code fence"* ]]
 
+  # #223/#147 regression: presence is by NUMBER only. Prose headings routinely
+  # elaborate/reword the short manifest title — that MUST still validate (title
+  # matching false-failed real plans and was removed).
+  cat > "$d/plan3.md" << 'PLAN'
+### Task 1: Add local config override tests (Part 1 — basic overrides and deep merge)
+
+### Task 2: Export the adapter from index.ts and wire it up
+PLAN
+  cat > "$d/manifest3.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Add local config override tests — basic overrides and deep merge" }, { "n": 2, "title": "Export CodexAgentAdapter" }] }
+JSON
+  run _check_manifest_against_prose "$d/plan3.md" "$d/manifest3.json"
+  [ "$status" -eq 0 ] || { echo "elaborated prose titles must validate, got: $output"; false; }
+
   rm -rf "$d"
 }
