@@ -1064,3 +1064,18 @@ PLAN
 
   rm -rf "$d"
 }
+
+# Invariant: QUOTA_PATTERNS recognizes Codex's "ERROR: Quota exceeded" format
+# so codex quota errors are classified as quota_exceeded (triggering fallback)
+# rather than generic failed (exit 1, no fallback triggered).
+# Source: #147.
+# Failure prevented: a Codex quota error classified as generic 'failed' would
+# leave the fallback trigger un-fired, wasting the reviewer run entirely.
+# TS-port contract: the QUOTA_PATTERNS array must contain a pattern matching
+# Codex's "Quota exceeded" stderr format.
+@test "parity[#147]: QUOTA_PATTERNS matches Codex 'ERROR: Quota exceeded' format" {
+  local patfile="$REPO_ROOT/packages/infrastructure/src/agent/error-patterns.ts"
+  run grep -c "quota.*exceed" "$patfile"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
