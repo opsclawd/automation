@@ -1272,6 +1272,48 @@ describe('parseSessionLogUsage', () => {
     const result = parseSessionLogUsage(content);
     expect(result).toEqual({ inputTokens: 1234, outputTokens: 567 });
   });
+
+  it('parses nested cache.read field', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":200,"output":100,"cache":{"read":50}}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 200, outputTokens: 100, cachedTokens: 50 });
+  });
+
+  it('parses nested cache.read and cache.write', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":500,"output":200,"cache":{"read":100,"write":20}}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 500, outputTokens: 200, cachedTokens: 120 });
+  });
+
+  it('parses reasoning field (alternate key name)', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50,"reasoning":200}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 100, outputTokens: 50, reasoningTokens: 200 });
+  });
+
+  it('parses nested cache.read and reasoning together', () => {
+    const content =
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":1000,"output":500,"cache":{"read":200},"reasoning":300}\n';
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({
+      inputTokens: 1000,
+      outputTokens: 500,
+      cachedTokens: 200,
+      reasoningTokens: 300,
+    });
+  });
+
+  it('handle both flat and nested formats in different lines of same session', () => {
+    const content = [
+      'INFO  2026-06-03T12:00:01.000Z service=llm tokens={"input":100,"output":50,"cacheRead":25}',
+      'INFO  2026-06-03T12:00:02.000Z service=llm tokens={"input":200,"output":100,"cache":{"read":50}}',
+    ].join('\n');
+    const result = parseSessionLogUsage(content);
+    expect(result).toEqual({ inputTokens: 300, outputTokens: 150, cachedTokens: 75 });
+  });
 });
 
 describe('OpenCodeAgentAdapter usage capture', () => {

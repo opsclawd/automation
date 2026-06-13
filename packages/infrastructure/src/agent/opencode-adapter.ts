@@ -48,7 +48,10 @@ export function parseSessionLogUsage(content: string): SessionLogUsage | undefin
       inputTokens += parsed.input ?? 0;
       outputTokens += parsed.output ?? 0;
       if (parsed.cacheRead) cachedTokens += parsed.cacheRead;
+      if (parsed.cache?.read) cachedTokens += parsed.cache.read;
+      if (parsed.cache?.write) cachedTokens += parsed.cache.write;
       if (parsed.reasoningTokens) reasoningTokens += parsed.reasoningTokens;
+      if (parsed.reasoning) reasoningTokens += parsed.reasoning;
       hasAny = true;
     } catch {
       // Malformed tokens JSON — skip silently
