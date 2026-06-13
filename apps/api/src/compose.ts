@@ -628,8 +628,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           // path) can enter the reactivation check. The synthetic path does
           // this in runStatusForTerminalState before the poller starts.
           if (record.status === 'running') {
-            runRepository.update(record.uuid, { status: 'waiting' });
-            record = { ...record, status: 'waiting' };
+            const readyAt = new Date();
+            runRepository.update(record.uuid, { status: 'waiting', completedAt: readyAt });
+            record = { ...record, status: 'waiting', completedAt: readyAt };
           }
           if (record.status !== 'waiting') return 'stay_ready';
           const comments = await ghAdapter.listReviewComments(input.repoFullName, input.prNumber);
@@ -639,7 +640,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             record.completedAt ?? new Date(0),
           );
           const lastAttempt = prReviewRepository.latestPollAttempt(input.runId);
-          const lastSeenActivityAt = lastAttempt?.completedAt ?? record.startedAt;
+          const lastSeenActivityAt = lastAttempt?.startedAt ?? record.startedAt;
           const decision = decideReactivation({
             readyAt: record.completedAt ?? record.startedAt,
             now: new Date(),
