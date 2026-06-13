@@ -1089,17 +1089,16 @@ JSON
 # TS-port contract: the TS extraction must locate headings with raw column-0
 #   grep, never depend on fence-state tracking.
 # Invariant: extract_task_text uses fence-count to skip headings inside code
-#   fences. A column-0 heading is valid only when an even number of fence
-#   markers (``` or ~~~) precede it — i.e., it is outside any open fence.
-# Source: #315 (this issue). Supersedes the earlier "column-0 raw grep"
-#   approach (cherry-picked in #321) which found headings regardless of fence
-#   state; the fence-count approach is safer because it refuses to execute a
-#   task whose heading appears inside a code-block example.
-# Failure prevented: the old toggle desynced on unbalanced fences and could
-#   execute a fenced EXAMPLE heading as if it were a real task. Fence-count
-#   instead returns failure so orchestrator_fail catches the plan bug loudly.
-# TS-port contract: the TS extraction must use fence-count (even=outside,
-#   odd=inside) when locating headings, never toggle-state tracking.
+#   fences, with a raw-column-0 fallback when the plan has unbalanced fences
+#   (total fence count is odd). This handles the #206 case where a real heading
+#   appears after a forgotten closing fence marker.
+# Source: #315 (this issue).
+# Failure prevented: a plan with an unbalanced fence bounces fence-count parity
+#   (odd) for every heading after the unclosed opener. The raw fallback then
+#   finds the real column-0 heading, so orchestration proceeds with correct
+#   instructions instead of aborting with "heading not found."
+# TS-port contract: the TS extraction must prefer fence-count filtering and
+#   fall back to raw column-0 grep only when total fences are unbalanced.
 @test "parity[#315]: extract_task_text finds heading outside fence, skips heading inside fence" {
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
@@ -1114,8 +1113,8 @@ PLAN
   [ "$status" -eq 0 ]
   [[ "$output" = *"real task body"* ]]
 
-  # Heading at odd fence count (1 unclosed opener before it) is inside a
-  # fence — skipped, returns non-zero so orchestrator_fail can abort.
+  # Heading at odd fence count (1 unclosed opener before it) — fence-count
+  # rejects it but raw fallback kicks in because total fences are odd (unbalanced).
   cat > "$test_dir/plan-with-unbalanced.md" << 'PLAN'
 ## Task 1: Early task
 Early body.
@@ -1125,27 +1124,29 @@ unclosed fence — heading below has 1 (odd) fence opener before it
 This is real task body.
 PLAN
   run extract_task_text "$test_dir/plan-with-unbalanced.md" "Far downstream task" "5"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
+  [[ "$output" = *"real task body"* ]]
 
   rm -rf "$test_dir"
 }
 
-# Invariant: extract_task_commit_msg uses fence-count to locate the task
-#   heading. A heading with an odd fence count before it (inside a code fence)
-#   is skipped; the function returns the caller-supplied fallback message.
-# Source: #315 (this issue). Supersedes the "raw column-0 grep" cherry-pick
-#   from #321 for the same reason as extract_task_text above.
-# Failure prevented: the old toggle returned a commit message from inside a
-#   fenced code example instead of the documented commit message for the task.
-# TS-port contract: same fence-count contract as extract_task_text.
-@test "parity[#315]: extract_task_commit_msg uses fallback when heading is inside a fence" {
+# Invariant: extract_task_commit_msg uses fence-count with raw fallback for
+#   unbalanced fences, matching extract_task_text. A heading after an unclosed
+#   fence is found by the raw fallback (total fences odd), and the correct
+#   commit message is returned.
+# Source: #315 (this issue).
+# Failure prevented: the old fence-count-only approach returned fallback for
+#   real headings after unclosed fences. The raw fallback preserves the #206
+#   compatibility that made the original issue report actionable.
+# TS-port contract: same fence-count + raw fallback as extract_task_text.
+@test "parity[#315]: extract_task_commit_msg finds real heading past unbalanced fence" {
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
 
   cat > "$test_dir/plan.md" << 'PLAN'
 ```
-unclosed fence — Task 2 heading has 1 (odd) opener before it → skipped
+unclosed fence — Task 2 heading has 1 (odd) opener before it → raw fallback
 ## Task 2: Second task
 Body.
 git commit -m "feat: real commit msg here"
@@ -1154,8 +1155,8 @@ git commit -m "feat: real commit msg here"
 PLAN
   local result
   result=$(extract_task_commit_msg "$test_dir/plan.md" "Second task" "fallback" "2")
-  [ "$result" = "fallback" ] || {
-    echo "FAIL: expected fallback when heading inside fence, got '$result'"
+  [ "$result" = "feat: real commit msg here" ] || {
+    echo "FAIL: expected 'feat: real commit msg here', got '$result'"
     false
   }
 

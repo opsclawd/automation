@@ -1802,7 +1802,6 @@ Write plan.md and task-manifest.json now."
   # Only runs when the manifest was successfully validated above — an invalid
   # manifest falls back to prose scraping (handled at implement-entry).
   if [[ "${_manifest_valid:-false}" == "true" ]]; then
-    local _plan_validation_error
     if ! _plan_validation_error=$(validate_task_list "${WORKTREE_DIR}/plan.md" "$MANIFEST_COUNT"); then
       orchestrator_fail "Plan validation failed at plan-write gate: ${_plan_validation_error}"
     fi
