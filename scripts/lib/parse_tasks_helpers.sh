@@ -455,25 +455,16 @@ extract_task_commit_msg() {
   local fallback_msg="$3"
   local task_num="${4:-}"
 
-  local line_num
+  local line_num=""
 
   if [[ -n "$task_num" ]]; then
-    line_num=$(awk -v tn="$task_num" '
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && $0 ~ "^#{2,3} Task " tn ":" { print NR; exit }
-    ' "$plan_file")
+    line_num=$(grep -nE "^#{2,3} Task ${task_num}:" "$plan_file" | head -1 | cut -d: -f1)
   fi
 
   if [[ -z "$line_num" ]]; then
-    local title_file
-    title_file=$(mktemp)
-    printf '%s' "$task_title" > "$title_file"
-    line_num=$(awk -v title_file="$title_file" '
-      BEGIN { getline title < title_file; close(title_file) }
-      /^[[:space:]]*```/ { in_fence = !in_fence; next }
-      !in_fence && index($0, title) > 0 { print NR; exit }
-    ' "$plan_file")
-    rm -f "$title_file"
+    local escaped_title
+    escaped_title=$(printf '%s' "$task_title" | sed 's/[[\.*^$()+?{|]/\\&/g')
+    line_num=$(grep -nE "^#{2,3} Task [0-9]+:.*${escaped_title}" "$plan_file" | head -1 | cut -d: -f1)
   fi
 
   if [[ -z "$line_num" ]]; then
@@ -483,8 +474,7 @@ extract_task_commit_msg() {
 
   local next_task_line
   next_task_line=$(awk -v start="$line_num" '
-    /^[[:space:]]*```/ { in_fence = !in_fence; next }
-    NR > start && !in_fence && /^#{2,3} Task [0-9]+:/ { print NR; exit }
+    NR > start && /^#{2,3} Task [0-9]+:/ { print NR; exit }
   ' "$plan_file")
 
   local commit_msg

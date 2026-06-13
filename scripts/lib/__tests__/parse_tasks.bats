@@ -170,7 +170,7 @@ PLAN
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: First task
 ```bash
-## Task 2: Phantom fenced task
+  ## Task 2: Phantom fenced task
 git commit -m "feat: phantom commit"
 ```
 
@@ -405,7 +405,7 @@ PLAN
 @test "extract_task_commit_msg: title first appears inside fence, gets real commit msg" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ```bash
-## Task 1: Implement X
+  ## Task 1: Implement X
 echo "example"
 ```
 ## Task 1: Implement X
