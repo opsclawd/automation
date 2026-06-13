@@ -85,6 +85,14 @@ warn() { log "WARN: $*" >&2; }
 # the value would be dead config. See packages/shared/src/config/schema.ts for
 # the matching dead-config comment on the Zod schema.
 _ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
+_ORCHESTRATOR_LOCAL_CONFIG="${REPO_ROOT}/.ai-orchestrator.local.json"
+
+# Resolve active config source (deep-merges overrides if local config exists)
+_ACTIVE_CONFIG="$_ORCHESTRATOR_CONFIG"
+if [[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]]; then
+  _ACTIVE_CONFIG=$(mktemp)
+  jq -s '.[0] * .[1]' "$_ORCHESTRATOR_CONFIG" "$_ORCHESTRATOR_LOCAL_CONFIG" > "$_ACTIVE_CONFIG" 2>/dev/null || cp "$_ORCHESTRATOR_CONFIG" "$_ACTIVE_CONFIG"
+fi
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
 MAX_FIX_REVIEW_RETRIES_PER_TASK=3
@@ -96,23 +104,23 @@ FIX_VALIDATE_ENABLED=true
 FIX_REVIEW_ARCHITECT_ENABLED=true
 JUDGMENT_AGENT_PROFILE=""
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
-  _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
-  _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
-  _val=$(jq -r '.phases.wholePrFix.maxRetriesPerTask // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_REVIEW_RETRIES_PER_TASK="$_val"
-  _val=$(jq -r '.phases.wholePrFix.maxTotalTasks // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_REVIEW_TOTAL_TASKS="$_val"
-  _val=$(jq -r '.phases.planReview.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
+  _val=$(jq -r '.phases.reviewFix.maxIterations // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_REVIEW_FIX_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_WHOLE_PR_FIX_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.wholePrFix.maxRetriesPerTask // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_REVIEW_RETRIES_PER_TASK="$_val"
+  _val=$(jq -r '.phases.wholePrFix.maxTotalTasks // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_REVIEW_TOTAL_TASKS="$_val"
+  _val=$(jq -r '.phases.planReview.enabled' "$_ACTIVE_CONFIG" 2>/dev/null) || true
   if [[ "$_val" == "false" ]]; then
     PLAN_REVIEW_ENABLED=false
-  elif [[ "$_val" == "true" ]] || { [[ -z "$_val" || "$_val" == "null" ]] && jq -e '.phases.planReview' "$_ORCHESTRATOR_CONFIG" >/dev/null 2>&1; }; then
+  elif [[ "$_val" == "true" ]] || { [[ -z "$_val" || "$_val" == "null" ]] && jq -e '.phases.planReview' "$_ACTIVE_CONFIG" >/dev/null 2>&1; }; then
     PLAN_REVIEW_ENABLED=true
   fi
-  _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
-  _val=$(jq -r '.phases.planReview.judgmentAgent // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && JUDGMENT_AGENT_PROFILE="$_val"
-  _val=$(jq -r '.phases.fixValidate.maxIterations // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_VALIDATE_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.planReview.maxIterations // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_PLAN_REVIEW_ITERATIONS="$_val"
+  _val=$(jq -r '.phases.planReview.judgmentAgent // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ -n "$_val" ]] && JUDGMENT_AGENT_PROFILE="$_val"
+  _val=$(jq -r '.phases.fixValidate.maxIterations // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && MAX_FIX_VALIDATE_ITERATIONS="$_val"
   # Opt-out only for these two: default is true; only "false" in config disables.
-  _val=$(jq -r '.phases.fixValidate.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
+  _val=$(jq -r '.phases.fixValidate.enabled' "$_ACTIVE_CONFIG" 2>/dev/null) || true
   [[ "$_val" == "false" ]] && FIX_VALIDATE_ENABLED=false
-  _val=$(jq -r '.phases.wholePrFix.architectPass.enabled' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
+  _val=$(jq -r '.phases.wholePrFix.architectPass.enabled' "$_ACTIVE_CONFIG" 2>/dev/null) || true
   [[ "$_val" == "false" ]] && FIX_REVIEW_ARCHITECT_ENABLED=false
 fi
 # ── Task size splitting thresholds ─────────────────────────────────────────────
@@ -120,9 +128,9 @@ _TASK_SPLIT_MAX_LINES=500
 _TASK_SPLIT_MAX_CASES=10
 _TASK_SPLIT_BLOCK=false
 if [[ -f "$_ORCHESTRATOR_CONFIG" ]]; then
-  _val=$(jq -r '.taskSplitting.maxTestFileLines // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_LINES="$_val"
-  _val=$(jq -r '.taskSplitting.maxTestCases // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_CASES="$_val"
-  _val=$(jq -r '.taskSplitting.blockOversizedTasks // empty' "$_ORCHESTRATOR_CONFIG" 2>/dev/null) || true
+  _val=$(jq -r '.taskSplitting.maxTestFileLines // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_LINES="$_val"
+  _val=$(jq -r '.taskSplitting.maxTestCases // empty' "$_ACTIVE_CONFIG" 2>/dev/null) && [[ "$_val" =~ ^[1-9][0-9]*$ ]] && _TASK_SPLIT_MAX_CASES="$_val"
+  _val=$(jq -r '.taskSplitting.blockOversizedTasks // empty' "$_ACTIVE_CONFIG" 2>/dev/null) || true
   [[ "$_val" == "true" ]] && _TASK_SPLIT_BLOCK=true
 fi
 # Ensure the log target exists before the first log() call. The setup block
@@ -1175,6 +1183,9 @@ _trap_on_exit() {
     # runs first in this trap (restoring the branch or orphaning agent commits),
     # HEAD-movement detection here is primarily a defense-in-depth fallback.
     _guard_main_checkout "exit-trap" "${_EXIT_TRAP_PRE_STATE:-}" || true
+  fi
+  if [[ -n "${_ACTIVE_CONFIG:-}" && "$_ACTIVE_CONFIG" != "$_ORCHESTRATOR_CONFIG" && -f "$_ACTIVE_CONFIG" ]]; then
+    rm -f "$_ACTIVE_CONFIG"
   fi
   cleanup_staging
   exit $_exit_code
