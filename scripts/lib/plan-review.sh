@@ -677,7 +677,7 @@ run_plan_review_judge() {
 
   # Resolve profile: use explicit override, or fall back to plan-review phase profile
   if [[ -z "$judge_profile" ]]; then
-    local _config="${_ORCHESTRATOR_CONFIG:-}"
+    local _config="${_ACTIVE_CONFIG:-}"
     if [[ -n "$_config" && -f "$_config" ]]; then
       judge_profile=$(jq -r '.agent.phaseProfiles["plan-review"].profile // empty' "$_config" 2>/dev/null || true)
     fi
