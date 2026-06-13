@@ -1005,3 +1005,62 @@ JSON
 
   export WORKTREE_DIR="$ORIG_WORKTREE_DIR"
 }
+
+# Invariant: manifest/prose agreement is manifest-anchored and fence-immune.
+#   _check_manifest_against_prose finds each manifest task by a column-0
+#   "## Task n:" / "### Task n:" heading whose title matches the manifest title,
+#   read from the RAW plan (no fence-stripping). A real heading is found even
+#   when preceded by an unbalanced/forgotten code fence (#206), and in-range
+#   example/fixture headings (a plan whose subject is task parsing, #315) do NOT
+#   cause a false failure.
+# Source: #315 (run failed on its own plan) / #206 (forgotten closing fence).
+# Failure prevented: the naive _strip_fenced toggle mis-parsed plans with
+#   unbalanced or nested example fences, silently stripping real task headers ->
+#   "tasks missing from prose" / "not sequential" on a valid plan, blocking the run.
+# TS-port contract: the TS task-parsing must anchor on the manifest (source of
+#   truth, validated 1..task_count) and match task headers by number+title in the
+#   raw plan text; it must NOT depend on balanced code fences. Pure decision over
+#   plan text + manifest — runtime-agnostic.
+@test "parity[#315]: manifest/prose check is manifest-anchored and fence-immune" {
+  source "$REPO_ROOT/scripts/lib/parse_tasks_helpers.sh"
+  local d
+  d="$(mktemp -d)"
+
+  # Plan whose fixtures contain in-range example "## Task n:" headings and an
+  # intentionally unbalanced code fence — yet real tasks 1 and 2 are present.
+  cat > "$d/plan.md" << 'PLAN'
+### Task 1: Build the thing
+
+```bash
+cat > plan.md << 'INNER'
+## Task 1: Example
+```typescript
+## Task 2: Example two
+still unclosed
+INNER
+```
+
+### Task 2: Test the thing
+PLAN
+  cat > "$d/manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Build the thing" }, { "n": 2, "title": "Test the thing" }] }
+JSON
+
+  run _check_manifest_against_prose "$d/plan.md" "$d/manifest.json"
+  [ "$status" -eq 0 ] || { echo "expected pass, got: $output"; false; }
+
+  # Fence-immunity: a real heading after a forgotten (odd) fence is still found,
+  # and the missing-task diagnostic surfaces the odd-fence hint.
+  cat > "$d/plan2.md" << 'PLAN'
+### Task 1: Build the thing
+
+```bash
+echo only-one-fence
+PLAN
+  run _check_manifest_against_prose "$d/plan2.md" "$d/manifest.json"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Task 2"* ]]
+  [[ "$output" == *"unbalanced code fence"* ]]
+
+  rm -rf "$d"
+}

@@ -113,61 +113,86 @@ _check_duplicate_titles() {
   return 0
 }
 
+# Normalize heading/title text for comparison: drop backticks, lowercase,
+# collapse runs of whitespace to a single space, trim. Used so a prose task
+# header matches its manifest title despite inline-code formatting differences.
+_norm_heading() {
+  printf '%s' "$1" | tr -d '`' | tr '[:upper:]' '[:lower:]' \
+    | tr -s '[:space:]' ' ' | sed -E 's/^ +//; s/ +$//'
+}
+
+# Verify the plan prose describes exactly the tasks the manifest declares.
+#
+# Manifest-anchored (see #315): the manifest — already validated by
+# read_manifest to be n=1..task_count with non-empty titles — is the source of
+# truth. We do NOT fence-strip the plan: a naive ``` toggle cannot robustly
+# parse plans that contain example fences (#315) or that simply forgot one
+# closing fence (#206), and that fragility silently stripped real task headers.
+#
+# For each manifest task n we require a column-0 "## Task n:" / "### Task n:"
+# heading in the RAW plan whose title text contains the manifest title. Matching
+# on title (not bare number) preserves the "task must actually be described, not
+# merely appear as a fenced/example header" guarantee without depending on fence
+# balance. The "extra" check flags only headings numbered beyond task_count
+# (manifest numbers are always 1..task_count, so out-of-range == not-in-manifest);
+# in-range example numbers — the common fixture case — are intentionally tolerated.
 _check_manifest_against_prose() {
   local plan_file="$1"
   local manifest_path="$2"
 
   local errors=""
-
-  local seq_result
-  seq_result=$(_check_sequential_numbers "$plan_file")
-  local seq_rc=$?
-  if [[ $seq_rc -ne 0 ]]; then
-    errors="${seq_result}"
-  fi
+  local task_count
+  task_count=$(jq -r '.task_count' "$manifest_path")
 
   local missing_from_prose=""
-  local task_nums
-  task_nums=$(jq -r '.tasks[].n' "$manifest_path")
-
-  local n
-  while IFS= read -r n; do
-    local found
-    found=$(_strip_fenced < "$plan_file" | awk -v tn="$n" '
-      $0 ~ "^#{2,3} Task " tn ":" { print "1"; exit }
-    ')
+  local n title norm_title heading htext found
+  while IFS=$'\t' read -r n title; do
+    norm_title=$(_norm_heading "$title")
+    found=""
+    while IFS= read -r heading; do
+      htext=$(printf '%s' "$heading" | sed -E 's/^#{2,3} Task [0-9]+:[[:space:]]*//')
+      htext=$(_norm_heading "$htext")
+      if [[ -n "$norm_title" && "$htext" == *"$norm_title"* ]]; then
+        found=1
+        break
+      fi
+    done < <(grep -E "^#{2,3} Task ${n}:" "$plan_file" 2>/dev/null || true)
     if [[ -z "$found" ]]; then
       if [[ -n "$missing_from_prose" ]]; then
         missing_from_prose+=", "
       fi
       missing_from_prose+="Task ${n}"
     fi
-  done <<< "$task_nums"
+  done < <(jq -r '.tasks[] | "\(.n)\t\(.title)"' "$manifest_path")
 
   if [[ -n "$missing_from_prose" ]]; then
-    if [[ -n "$errors" ]]; then
-      errors+="; "
-    fi
     errors+="manifest tasks missing from plan.md prose: ${missing_from_prose}"
+    # Diagnostic hint: an odd number of code fences is the usual cause of a real
+    # heading being swallowed by downstream fence-aware tooling (a forgotten
+    # closing fence — see #206), so surface it when something is missing.
+    local fence_count
+    fence_count=$(grep -cE '^[[:space:]]*```' "$plan_file" 2>/dev/null || echo 0)
+    if (( fence_count % 2 == 1 )); then
+      errors+=" — likely caused by an unbalanced code fence (${fence_count} fences, expected even)"
+    fi
   fi
 
-  local extra_in_prose=""
-  local prose_nums
-  prose_nums=$(_strip_fenced < "$plan_file" | grep -oP '^#{2,3} Task \K\d+(?=:)' 2>/dev/null || true)
-
-  if [[ -n "$prose_nums" ]]; then
-    local manifest_nums_csv
-    manifest_nums_csv=$(jq -r '.tasks[].n' "$manifest_path" | tr '\n' ',' | sed 's/,$//')
-    while IFS= read -r pn; do
-      [[ -z "$pn" ]] && continue
-      if ! echo ",${manifest_nums_csv}," | grep -q ",${pn},"; then
-        if [[ -n "$extra_in_prose" ]]; then
-          extra_in_prose+=", "
-        fi
-        extra_in_prose+="Task ${pn}"
+  local extra_in_prose="" seen="" pn
+  while IFS= read -r pn; do
+    [[ -z "$pn" ]] && continue
+    # Flag anything outside 1..task_count. Manifest numbers are exactly
+    # 1..task_count (read_manifest), so a Task 0 (or any non-positive) heading is
+    # not executable — the implement loop only iterates manifest tasks and would
+    # silently skip it. ">" alone would let Task 0 pass (regression caught in #319).
+    if (( pn < 1 || pn > task_count )); then
+      case ",${seen}," in *",${pn},"*) continue ;; esac
+      seen+="${pn},"
+      if [[ -n "$extra_in_prose" ]]; then
+        extra_in_prose+=", "
       fi
-    done <<< "$prose_nums"
-  fi
+      extra_in_prose+="Task ${pn}"
+    fi
+  done < <(grep -oE "^#{2,3} Task [0-9]+:" "$plan_file" 2>/dev/null | grep -oE "[0-9]+")
 
   if [[ -n "$extra_in_prose" ]]; then
     if [[ -n "$errors" ]]; then

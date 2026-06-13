@@ -838,6 +838,26 @@ PLAN
   [[ "$result" == *"Task 3"* ]]
 }
 
+@test "validate_task_list: rejects non-positive prose task numbers (Task 0, #319)" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  # A real column-0 "## Task 0:" is not executable (manifest is 1-indexed and the
+  # implement loop only iterates manifest tasks), so it must be flagged as not in
+  # the manifest rather than silently accepted as "in range".
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 0: Setup that gets silently skipped
+## Task 1: Alpha
+## Task 2: Beta
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [[ "$result" == *"prose tasks not in manifest"* ]]
+  [[ "$result" == *"Task 0"* ]]
+}
+
 @test "validate_task_list: rejects manifest when task header inside fenced block" {
   cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
 { "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Real task" }, { "n": 2, "title": "Hidden task" }] }
@@ -1017,7 +1037,7 @@ PLAN
   echo "$TASKS" | grep -q "Fallback task"
 }
 
-@test "validate_task_list: rejects manifest when prose has duplicate task numbers" {
+@test "validate_task_list: tolerates in-range duplicate prose task numbers (manifest-anchored, #315)" {
   cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
 { "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
 JSON
@@ -1030,7 +1050,13 @@ PLAN
   set +e
   result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
   set -e
-  [[ "$result" == *"not sequential"* ]]
+  # Manifest-anchored extraction (#315): the manifest is validated to be
+  # 1..task_count and drives execution, so an in-range duplicate prose heading
+  # is tolerated rather than hard-failing the run. Blindly flagging duplicate
+  # prose task numbers re-introduces the false positives that example/fixture
+  # headings cause (e.g. a plan whose subject is task parsing). Both manifest
+  # tasks are present and no out-of-range extras exist → passes.
+  [ -z "$result" ]
 }
 
 @test "validate_task_list: reports both missing-from-prose and extra-in-prose errors" {
@@ -1049,6 +1075,67 @@ PLAN
   [[ "$result" == *"Task 2"* ]]
   [[ "$result" == *"prose tasks not in manifest"* ]]
   [[ "$result" == *"Task 3"* ]]
+}
+
+@test "validate_task_list: passes self-referential plan with in-range example headings and unbalanced fences (#315 regression)" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Create the linter" }, { "n": 2, "title": "Add bats tests" }] }
+JSON
+  # Mirrors the #315 failure: a plan about task parsing whose bats fixtures
+  # contain in-range "## Task N:" example headings AND an intentionally
+  # unbalanced code fence. Manifest-anchored extraction must not be fooled.
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+### Task 1: Create the linter
+
+Example fixture for the test:
+```bash
+cat > plan.md << 'INNER'
+## Task 1: Alpha
+```typescript
+## Task 2: Beta
+still unclosed
+INNER
+```
+
+### Task 2: Add bats tests
+
+Another fixture:
+```bash
+## Task 1: Alpha
+## Task 2: Gamma
+```
+PLAN
+  emit_event() { true; }
+  set +e
+  result=$(validate_task_list "$TMPDIR_TEST/plan.md" 2)
+  set -e
+  [ -z "$result" ]
+}
+
+@test "_check_manifest_against_prose: appends fence-count hint when a task is missing and fences are odd" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  printf '### Task 1: Alpha\n\n```bash\necho hi\n' > "$TMPDIR_TEST/plan.md"
+  set +e
+  result=$(_check_manifest_against_prose "$TMPDIR_TEST/plan.md" "$TMPDIR_TEST/task-manifest.json")
+  set -e
+  [[ "$result" == *"manifest tasks missing from plan.md prose"* ]]
+  [[ "$result" == *"Task 2"* ]]
+  [[ "$result" == *"likely caused by an unbalanced code fence"* ]]
+  [[ "$result" == *"1 fences, expected even"* ]]
+}
+
+@test "_check_manifest_against_prose: no fence hint when a task is missing but fences are balanced" {
+  cat > "$TMPDIR_TEST/task-manifest.json" << 'JSON'
+{ "version": 1, "task_count": 2, "tasks": [{ "n": 1, "title": "Alpha" }, { "n": 2, "title": "Beta" }] }
+JSON
+  printf '### Task 1: Alpha\n\n```bash\necho hi\n```\n' > "$TMPDIR_TEST/plan.md"
+  set +e
+  result=$(_check_manifest_against_prose "$TMPDIR_TEST/plan.md" "$TMPDIR_TEST/task-manifest.json")
+  set -e
+  [[ "$result" == *"manifest tasks missing from plan.md prose"* ]]
+  [[ "$result" != *"unbalanced code fence"* ]]
 }
 
 # ── _validate_review_manifest tests ────────────────────────────────────────
