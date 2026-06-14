@@ -43,6 +43,17 @@ setup() {
   warn() { log "WARN: $*" >&2; }
 }
 
+setup_worktree_fixture() {
+  local _dir="$1"
+  mkdir -p "$_dir"
+  git -C "$_dir" init -q
+  git -C "$_dir" config user.email "test@example.com"
+  git -C "$_dir" config user.name "test"
+  : > "$_dir/.gitignore"
+  git -C "$_dir" add .gitignore
+  git -C "$_dir" commit -q -m "init"
+}
+
 teardown() {
   rm -rf "$TMPDIR_TEST"
 }
@@ -465,6 +476,72 @@ teardown() {
 
   run git -C "$FIXTURE_REPO" diff --quiet
   [ "$status" -ne 0 ]
+}
+
+@test "_capture_worktree_state returns clean state on clean worktree" {
+  local _dir="$TMPDIR_TEST/worktree-clean"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  # Output format: sha|dirty|branch
+  [[ "$output" =~ ^[a-f0-9]{40}\|0\| ]]
+}
+
+@test "_capture_worktree_state detects dirty worktree (tracked file modified)" {
+  local _dir="$TMPDIR_TEST/worktree-dirty"
+  setup_worktree_fixture "$_dir"
+  echo "dirty" >> "$_dir/.gitignore"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|1\| ]]
+}
+
+@test "_capture_worktree_state detects staged changes (index dirty)" {
+  local _dir="$TMPDIR_TEST/worktree-staged"
+  setup_worktree_fixture "$_dir"
+  echo "staged" >> "$_dir/.gitignore"
+  git -C "$_dir" add .gitignore
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|1\| ]]
+}
+
+@test "_capture_worktree_state detects untracked files" {
+  local _dir="$TMPDIR_TEST/worktree-untracked"
+  setup_worktree_fixture "$_dir"
+  echo "untracked" > "$_dir/new-file.txt"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|1\| ]]
+}
+
+@test "_capture_worktree_state captures branch name correctly" {
+  local _dir="$TMPDIR_TEST/worktree-branch"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" checkout -q -b feature-branch
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|0\|feature-branch$ ]]
 }
 
 @test "ai-pr-review-poll has no pushd callsites" {
