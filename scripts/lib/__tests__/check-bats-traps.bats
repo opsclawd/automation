@@ -103,3 +103,39 @@ BATS
   [[ "$output" == *"a.bats"* ]]
   [[ "$output" == *"b.bats"* ]]
 }
+
+@test "fails when trap uses lowercase exit" {
+  cat > "$FIXTURE_DIR/lowercase_exit.bats" << 'BATS'
+@test "lowercase exit" {
+  trap 'rm -rf $dir' exit
+  true
+}
+BATS
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"lowercase_exit.bats"* ]]
+}
+
+@test "fails when trap uses mixed-case Exit" {
+  cat > "$FIXTURE_DIR/mixed_case_exit.bats" << 'BATS'
+@test "mixed case exit" {
+  trap 'rm -rf $dir' Exit
+  true
+}
+BATS
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"mixed_case_exit.bats"* ]]
+}
+
+@test "fails when trap uses numeric 0 (EXIT synonym)" {
+  cat > "$FIXTURE_DIR/numeric_trap.bats" << 'BATS'
+@test "numeric trap" {
+  trap 'rm -rf $dir' 0
+  true
+}
+BATS
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"numeric_trap.bats"* ]]
+}

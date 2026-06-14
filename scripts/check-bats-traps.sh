@@ -2,9 +2,9 @@
 set -euo pipefail
 
 if [[ -n "${BATS_TEST_DIR:-}" ]]; then
-  violations=$(find "$BATS_TEST_DIR" -type f -name '*.bats' -exec grep -Hn 'trap\s\+\('"'"'[^'"'"']*'"'"'\|"[^"]*"\|\S\+\)\s\+EXIT' {} + 2>/dev/null || true)
+  violations=$(find "$BATS_TEST_DIR" -type f -name '*.bats' -exec grep -Hni 'trap\s\+\('"'"'[^'"'"']*'"'"'\|"[^"]*"\|\S\+\)\s\+\(EXIT\|0\)' {} + 2>/dev/null || true)
 else
-  violations=$(git ls-files '*.bats' | grep -v 'check-bats-traps.bats' | xargs grep -Hn 'trap\s\+\('"'"'[^'"'"']*'"'"'\|"[^"]*"\|\S\+\)\s\+EXIT' 2>/dev/null || true)
+  violations=$(git ls-files '*.bats' | grep -v 'check-bats-traps.bats' | xargs grep -Hni 'trap\s\+\('"'"'[^'"'"']*'"'"'\|"[^"]*"\|\S\+\)\s\+\(EXIT\|0\)' 2>/dev/null || true)
 fi
 
 if [[ -n "$violations" ]]; then
