@@ -82,40 +82,51 @@ _guard_worktree() {
         expectedSha="$expected_sha" actualSha="$actual_sha"
       return 0
     fi
-    _guard_fail_or_warn "leak detected: worktree HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" "Worktree guard" || return $?
-    warn "Worktree HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
-    if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
-      git -C "$_worktree" checkout -q "$pre_branch" 2>/dev/null || true
-      local _current_branch
-      _current_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
-      if [[ "$_current_branch" != "$pre_branch" ]]; then
-        warn "Checkout of ${pre_branch} failed after ${guard_label} — refusing to reset to avoid corrupting current branch; manual cleanup required"
-        emit_event "${guard_label}" "error" "${guard_label}.worktree_leak_unsafe_recovery" \
-          "Agent committed to worktree; failed to restore branch ${pre_branch}; manual cleanup required" \
-          pollIteration="${POLL_COUNT:-0}" \
-          expectedSha="$expected_sha" actualSha="$actual_sha"
-        return 0
+    # ── Clean commit: HEAD advanced but tree is clean ──────────────
+    # This is expected committed work (implement phase, fix phase,
+    # code-review phase, etc.). Do not treat as a leak — no fail,
+    # no reset. Branch-switch check below still applies.
+    if [[ $_dirty -eq 0 ]]; then
+      emit_event "${guard_label}" "info" "${guard_label}.worktree_commit_detected" \
+        "Commit detected in worktree (${expected_sha:0:7} → ${actual_sha:0:7}); tree is clean — not a leak" \
+        pollIteration="${POLL_COUNT:-0}" \
+        expectedSha="$expected_sha" actualSha="$actual_sha"
+    else
+      _guard_fail_or_warn "leak detected: worktree HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" "Worktree guard" || return $?
+      warn "Worktree HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
+      if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
+        git -C "$_worktree" checkout -q "$pre_branch" 2>/dev/null || true
+        local _current_branch
+        _current_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+        if [[ "$_current_branch" != "$pre_branch" ]]; then
+          warn "Checkout of ${pre_branch} failed after ${guard_label} — refusing to reset to avoid corrupting current branch; manual cleanup required"
+          emit_event "${guard_label}" "error" "${guard_label}.worktree_leak_unsafe_recovery" \
+            "Agent committed to worktree; failed to restore branch ${pre_branch}; manual cleanup required" \
+            pollIteration="${POLL_COUNT:-0}" \
+            expectedSha="$expected_sha" actualSha="$actual_sha"
+          return 0
+        fi
+      elif [[ "$pre_branch" == "HEAD" ]]; then
+        local _current_branch
+        _current_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+        if [[ "$_current_branch" != "HEAD" ]]; then
+          warn "Pre-agent was detached (HEAD) but agent left checkout on branch ${_current_branch} after ${guard_label} — refusing to reset to avoid corrupting local branch state; manual cleanup required"
+          warn "  inspect with:  git -C ${_worktree} log --oneline ${expected_sha}..${actual_sha}"
+          emit_event "${guard_label}" "error" "${guard_label}.worktree_leak_unsafe_recovery" \
+            "Agent committed to worktree from detached HEAD; agent left on branch ${_current_branch}; refusing to reset to avoid branch corruption" \
+            pollIteration="${POLL_COUNT:-0}" \
+            expectedSha="$expected_sha" actualSha="$actual_sha"
+          return 0
+        fi
       fi
-    elif [[ "$pre_branch" == "HEAD" ]]; then
-      local _current_branch
-      _current_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
-      if [[ "$_current_branch" != "HEAD" ]]; then
-        warn "Pre-agent was detached (HEAD) but agent left checkout on branch ${_current_branch} after ${guard_label} — refusing to reset to avoid corrupting local branch state; manual cleanup required"
-        warn "  inspect with:  git -C ${_worktree} log --oneline ${expected_sha}..${actual_sha}"
-        emit_event "${guard_label}" "error" "${guard_label}.worktree_leak_unsafe_recovery" \
-          "Agent committed to worktree from detached HEAD; agent left on branch ${_current_branch}; refusing to reset to avoid branch corruption" \
-          pollIteration="${POLL_COUNT:-0}" \
-          expectedSha="$expected_sha" actualSha="$actual_sha"
-        return 0
-      fi
+      git -C "$_worktree" reset --hard "$expected_sha" 2>/dev/null || true
+      git -C "$_worktree" clean -fd 2>/dev/null || true
+      emit_event "${guard_label}" "warn" "${guard_label}.worktree_leak_detected" \
+        "Agent leaked commit into worktree; auto-reset to pre-agent SHA" \
+        pollIteration="${POLL_COUNT:-0}" \
+        expectedSha="$expected_sha" actualSha="$actual_sha"
+      return 0
     fi
-    git -C "$_worktree" reset --hard "$expected_sha" 2>/dev/null || true
-    git -C "$_worktree" clean -fd 2>/dev/null || true
-    emit_event "${guard_label}" "warn" "${guard_label}.worktree_leak_detected" \
-      "Agent leaked commit into worktree; auto-reset to pre-agent SHA" \
-      pollIteration="${POLL_COUNT:-0}" \
-      expectedSha="$expected_sha" actualSha="$actual_sha"
-    return 0
   fi
 
   if [[ $_dirty -eq 1 ]]; then
