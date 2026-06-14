@@ -57,7 +57,7 @@ while IFS= read -r pr_line; do
   fi
 
   # Fetch PR diff via gh CLI (works for forked PRs where branch doesn't exist under origin/)
-  pr_diff="$(gh pr diff "${pr_number}" -- scripts/lib/__tests__/legacy-parity.bats 2>/dev/null)" || {
+  pr_diff="$(gh pr diff "${pr_number}" 2>/dev/null)" || {
     echo "::notice::Skipping PR #${pr_number} — could not fetch PR diff."
     continue
   }
