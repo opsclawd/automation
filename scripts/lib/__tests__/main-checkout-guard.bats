@@ -636,6 +636,181 @@ teardown() {
   [ ! -f "$_dir/leaked.txt" ]
 }
 
+@test "_guard_worktree preserves pre-existing dirty work" {
+  local _dir="$TMPDIR_TEST/worktree-guard-predirty"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "developer edit" >> "$_dir/.gitignore"
+  echo "dev untracked" > "$_dir/dev-scratch.txt"
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run grep -q "developer edit" "$_dir/.gitignore"
+  [ "$status" -eq 0 ]
+  [ -f "$_dir/dev-scratch.txt" ]
+
+  run jq -e '.type == "test.worktree_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree restores branch after same-SHA branch switch" {
+  local _dir="$TMPDIR_TEST/worktree-guard-samesha"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" branch same-sha-branch
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local _default_branch
+  _default_branch=$(git -C "$_dir" rev-parse --abbrev-ref HEAD)
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$_dir" checkout -q same-sha-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$_dir" rev-parse HEAD
+  [ "$output" = "$pre_sha" ]
+
+  run jq -e '.type == "test.worktree_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree restores detached HEAD after same-SHA branch switch from detached" {
+  local _dir="$TMPDIR_TEST/worktree-guard-detached"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" checkout -q --detach HEAD
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  git -C "$_dir" checkout -q -b agent-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" rev-parse --abbrev-ref HEAD
+  [ "$output" = "HEAD" ]
+
+  run jq -e '.type == "test.worktree_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree refuses to auto-reset when pre-agent dirty AND HEAD moved" {
+  local _dir="$TMPDIR_TEST/worktree-guard-dirty-moved"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "developer tracked edit" >> "$_dir/.gitignore"
+  echo "dev untracked" > "$_dir/dev-untracked.txt"
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$_dir" add -A
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "leak-with-dev-work"
+  local leaked_sha
+  leaked_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$leaked_sha" != "$pre_sha" ]
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  local final_sha
+  final_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$final_sha" = "$leaked_sha" ]
+
+  [ -f "$_dir/dev-untracked.txt" ]
+
+  run jq -e '.type == "test.worktree_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree calls orchestrator_fail on detected leak (hard-fail)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-hardfail"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  echo "# __test_guard_wt_hardfail_$$" >> "$_dir/.gitignore"
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+  run grep -q "leak" "$TMPDIR_TEST/fail-reason.txt"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree hard-fails when branch switched from expected" {
+  local _dir="$TMPDIR_TEST/worktree-guard-branch-fail"
+  setup_worktree_fixture "$_dir"
+  local _default_branch
+  _default_branch=$(git -C "$_dir" rev-parse --abbrev-ref HEAD)
+  git -C "$_dir" checkout -q -b other-branch
+  echo "other" > "$_dir/other.txt"
+  git -C "$_dir" add other.txt
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "other"
+  git -C "$_dir" checkout -q "$_default_branch"
+
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  git -C "$_dir" checkout -q other-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+
+  run git -C "$_dir" rev-parse --abbrev-ref HEAD
+  [ "$output" = "other-branch" ]
+}
+
+@test "_guard_worktree fails when WORKTREE_DIR is unset" {
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset WORKTREE_DIR
+  unset POLL_WORKTREE
+
+  run _guard_worktree "test"
+  [ "$status" -ne 0 ]
+}
+
 @test "ai-pr-review-poll has no pushd callsites" {
   run grep -c 'pushd' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
   [ "$output" -eq 0 ]
