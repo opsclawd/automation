@@ -205,3 +205,16 @@ run_check() {
   [ "$status" -eq 0 ]
   [[ "$output" = *"check passed"* ]]
 }
+
+@test "fails when CURRENT_PR_NUMBER is not set (self-match not skipped)" {
+  add_pr_branch "self-branch-unset" "parity[#1100]"
+  export MOCK_PR_LIST="1001\tself-branch-unset"
+
+  echo '@test "parity[#1100]: unset CURRENT_PR_NUMBER test" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
+  git -C "$FIXTURE_REPO" commit -q -am "add parity[#1100]"
+
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" = *"parity[#1100]"* ]]
+  [[ "$output" = *"PR #1001"* ]]
+}
