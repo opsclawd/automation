@@ -2186,6 +2186,20 @@ ${history_excerpt}"
     fi
     _guard_worktree "spec-review-task-${task_n}" "$_worktree_state_before"
     check_branch_after_agent
+    # Read-only guard: spec-review must not modify source files
+    local _pre_sha _worktree_violations
+    _pre_sha="${_worktree_state_before%%|*}"
+    _worktree_violations=$({
+      if [[ -n "$_pre_sha" ]]; then
+        git -C "$WORKTREE_DIR" diff --name-only "$_pre_sha"..HEAD 2>/dev/null
+      fi
+      git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    } | grep -vE "spec-review-task-${task_n}\.(result|md)$" | tr '\n' ' ' || true)
+    if [[ -n "$_worktree_violations" ]]; then
+      orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+    fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/spec-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "spec-review-task-${task_n} failed (config error in log)"
@@ -2360,6 +2374,20 @@ ${history_excerpt}"
     fi
     _guard_worktree "quality-review-task-${task_n}" "$_worktree_state_before"
     check_branch_after_agent
+    # Read-only guard: quality-review must not modify source files
+    local _pre_sha _worktree_violations
+    _pre_sha="${_worktree_state_before%%|*}"
+    _worktree_violations=$({
+      if [[ -n "$_pre_sha" ]]; then
+        git -C "$WORKTREE_DIR" diff --name-only "$_pre_sha"..HEAD 2>/dev/null
+      fi
+      git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    } | grep -vE "quality-review-task-${task_n}\.(result|md)$" | tr '\n' ' ' || true)
+    if [[ -n "$_worktree_violations" ]]; then
+      orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+    fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "quality-review-task-${task_n} failed (config error in log)"
