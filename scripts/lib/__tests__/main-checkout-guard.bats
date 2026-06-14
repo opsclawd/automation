@@ -544,6 +544,98 @@ teardown() {
   [[ "$output" =~ \|0\|feature-branch$ ]]
 }
 
+@test "_guard_worktree is a no-op when worktree is clean" {
+  local _dir="$TMPDIR_TEST/worktree-guard-clean"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree resets leaked changes when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-dirty"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "# __test_guard_wt_leak_$$" >> "$_dir/.gitignore"
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" diff --quiet
+  [ "$status" -eq 0 ]
+
+  run jq -e '.type == "test.worktree_leak_detected"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree resets staged leaked changes when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-staged"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "leak" >> "$_dir/.gitignore"
+  git -C "$_dir" add .gitignore
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" diff --quiet
+  [ "$status" -eq 0 ]
+  run git -C "$_dir" diff --cached --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree removes untracked leaked files when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-untracked"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "untracked" > "$_dir/leaked-untracked.txt"
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+
+  [ ! -f "$_dir/leaked-untracked.txt" ]
+}
+
+@test "_guard_worktree rewinds HEAD when agent committed a leak when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-commit"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  echo "leaked content" > "$_dir/leaked.txt"
+  git -C "$_dir" add leaked.txt
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "leaked"
+
+  local leaked_sha
+  leaked_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$leaked_sha" != "$pre_sha" ]
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  local final_sha
+  final_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$final_sha" = "$pre_sha" ]
+  [ ! -f "$_dir/leaked.txt" ]
+}
+
 @test "ai-pr-review-poll has no pushd callsites" {
   run grep -c 'pushd' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
   [ "$output" -eq 0 ]
