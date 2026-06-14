@@ -544,7 +544,6 @@ setup() {
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
   export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
   export AI_RUN_DISPLAY_ID="parity-test-269"
   : > "$AI_RUN_EVENTS_FILE"
@@ -585,13 +584,14 @@ JSON
     echo "FAIL: expected taskNum=1, got ${task_num}"
     false
   }
+
+  rm -rf "$test_dir"
 }
 @test "parity[#269]: _lint_task_size returns error when _TASK_SPLIT_BLOCK is true" {
   source "${REPO_ROOT}/scripts/lib/emit_event.sh"
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
   export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
   export AI_RUN_DISPLAY_ID="parity-test-269-block"
   : > "$AI_RUN_EVENTS_FILE"
@@ -620,13 +620,14 @@ JSON
     echo "FAIL: expected exit 1 when block is true, got exit ${rc}"
     false
   }
+
+  rm -rf "$test_dir"
 }
 @test "parity[#269]: _lint_task_size silently passes when no test files exceed thresholds" {
   source "${REPO_ROOT}/scripts/lib/emit_event.sh"
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
   export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
   export AI_RUN_DISPLAY_ID="parity-test-269-pass"
   : > "$AI_RUN_EVENTS_FILE"
@@ -656,6 +657,8 @@ JSON
     echo "FAIL: unexpected task_size.oversized event emitted for small file"
     false
   }
+
+  rm -rf "$test_dir"
 }
 
 # Invariant: Review artifacts with an invalid verdict (e.g., SPEC_PARTIAL)
