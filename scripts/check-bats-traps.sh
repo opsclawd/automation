@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCAN_DIR="${BATS_TEST_DIR:-scripts/lib/__tests__}"
+SCAN_DIR="${BATS_TEST_DIR:-.}"
 
-violations=$(grep -Hrn 'trap\s\+["'"'"'].*["'"'"']\s\+EXIT' "$SCAN_DIR"/*.bats 2>/dev/null || true)
+violations=$(find "$SCAN_DIR" -type f -name '*.bats' -exec grep -Hn 'trap\s\+["'"'"'].*["'"'"']\s\+EXIT' {} + 2>/dev/null || true)
 
 if [[ -n "$violations" ]]; then
   echo "::error::trap EXIT in bats test body replaces bats' internal EXIT handler, causing silent test failures."
