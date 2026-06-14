@@ -82,6 +82,19 @@ BATS
   [ "$status" -eq 0 ]
 }
 
+@test "fails when trap body contains nested quotes (e.g. single-quoted with double-quoted variables)" {
+  cat > "$FIXTURE_DIR/bad_nested.bats" << 'BATS'
+@test "bad test" {
+  trap 'rm -rf "$test_dir"' EXIT
+  true
+}
+BATS
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"::error::"* ]]
+  [[ "$output" == *"bad_nested.bats"* ]]
+}
+
 @test "scans multiple .bats files and reports all violations" {
   echo 'trap "x" EXIT' > "$FIXTURE_DIR/a.bats"
   echo 'trap "y" EXIT' > "$FIXTURE_DIR/b.bats"
