@@ -1306,3 +1306,61 @@ PLAN
     false
   }
 }
+
+# Invariant: _guard_worktree hard-fails on worktree mutation when
+#   orchestrator_fail is defined. The guard operates on $WORKTREE_DIR,
+#   not $REPO_ROOT, so parallel runs have zero contention on the guard.
+# Source: #318.
+# Failure prevented: agent leaks into worktree that go undetected because
+#   the guard was checking the wrong repo (REPO_ROOT instead of worktree).
+# TS-port contract: the TS orchestrator worktree guard must hard-fail on
+#   detected worktree mutation (branch switch, HEAD advance, dirty tree)
+#   and must never silently auto-reset when orchestrator_fail is defined.
+@test "parity[#318]: worktree guard hard-fails on worktree mutation" {
+  source "$REPO_ROOT/scripts/lib/guard-main-checkout.sh"
+  source "$REPO_ROOT/scripts/lib/emit_event.sh"
+  warn() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/wg"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@t"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  export REPO_ROOT="$repo"
+  export WORKTREE_DIR="$BATS_TEST_TMPDIR/wt"
+  mkdir -p "$WORKTREE_DIR"
+  git -C "$WORKTREE_DIR" init -q
+  git -C "$WORKTREE_DIR" config user.email "t@t"
+  git -C "$WORKTREE_DIR" config user.name "t"
+  echo base > "$WORKTREE_DIR/app.ts"
+  git -C "$WORKTREE_DIR" add app.ts
+  git -C "$WORKTREE_DIR" commit -q -m init
+
+  export AI_RUN_EVENTS_FILE="$BATS_TEST_TMPDIR/ev-wg.jsonl"
+  : > "$AI_RUN_EVENTS_FILE"
+
+  local _fail_called=false
+  local _fail_reason=""
+  orchestrator_fail() { _fail_called=true; _fail_reason="$1"; return 1; }
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  echo "# leaked by agent" >> "$WORKTREE_DIR/app.ts"
+
+  _guard_worktree "test" "$pre_state" || true
+
+  [ "$_fail_called" = "true" ]
+  [[ "$_fail_reason" == *"worktree"* ]]
+
+  if grep -q "leaked by agent" "$WORKTREE_DIR/app.ts" 2>/dev/null; then
+    : # expected — guard did not auto-reset
+  else
+    echo "FATAL: guard auto-reset the leak despite orchestrator_fail being defined"
+    false
+  fi
+}
