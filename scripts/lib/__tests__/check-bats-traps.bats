@@ -37,6 +37,19 @@ BATS
   [[ "$output" == *"bad.bats"* ]]
 }
 
+@test "fails when a .bats file contains trap unquoted function name EXIT" {
+  cat > "$FIXTURE_DIR/bad_unquoted.bats" << 'BATS'
+@test "bad test" {
+  trap cleanup_fn EXIT
+  true
+}
+BATS
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"::error::"* ]]
+  [[ "$output" == *"bad_unquoted.bats"* ]]
+}
+
 @test "fails when a .bats file contains trap single-quoted EXIT" {
   cat > "$FIXTURE_DIR/bad2.bats" << "BATS"
 @test "bad test" {
