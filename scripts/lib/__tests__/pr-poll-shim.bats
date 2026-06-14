@@ -30,10 +30,10 @@ SCRIPT
   repo_root="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   workdir="$repo_root/.ai-worktrees/issue-7"
   mkdir -p "$workdir"
-  trap "rm -rf '$workdir'" EXIT
-
   run env PATH="$fake_bin:$PATH" OWNER_REPO= scripts/ai-pr-review-poll 42 7
 
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not determine owner/repo"* ]]
+
+  rm -rf "$workdir"
 }
