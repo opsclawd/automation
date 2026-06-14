@@ -3,15 +3,15 @@
 setup() {
   CHECK_SCRIPT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/check-bats-traps.sh"
 
-  TMPDIR="$(mktemp -d)"
-  FIXTURE_DIR="$TMPDIR/bats-test-dir"
+  _TMPDIR="$(mktemp -d)"
+  FIXTURE_DIR="$_TMPDIR/bats-test-dir"
   mkdir -p "$FIXTURE_DIR"
 
   export BATS_TEST_DIR="$FIXTURE_DIR"
 }
 
 teardown() {
-  rm -rf "$TMPDIR"
+  rm -rf "$_TMPDIR"
 }
 
 run_check() {
