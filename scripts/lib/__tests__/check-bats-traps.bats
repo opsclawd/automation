@@ -139,3 +139,27 @@ BATS
   [ "$status" -eq 1 ]
   [[ "$output" == *"numeric_trap.bats"* ]]
 }
+
+@test "fails on handlerless trap EXIT (resets bats' EXIT handler)" {
+  cat > "$FIXTURE_DIR/handlerless_exit.bats" << 'BATS'
+@test "handlerless exit" {
+  trap EXIT
+  true
+}
+BATS
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"handlerless_exit.bats"* ]]
+}
+
+@test "fails on handlerless trap 0 (resets bats' EXIT handler)" {
+  cat > "$FIXTURE_DIR/handlerless_zero.bats" << 'BATS'
+@test "handlerless zero" {
+  trap 0
+  true
+}
+BATS
+  run_check
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"handlerless_zero.bats"* ]]
+}
