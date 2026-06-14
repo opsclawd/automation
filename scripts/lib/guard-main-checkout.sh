@@ -115,6 +115,31 @@ _guard_worktree() {
           "HEAD moved and dirty worktree after agent; phase recovery handles committed work" \
           pollIteration="${POLL_COUNT:-0}" \
           expectedSha="$expected_sha" actualSha="$actual_sha"
+        # Also check branch drift before returning — call sites that
+        # invoke _guard_worktree without check_branch_after_agent would
+        # otherwise miss a silent branch switch.
+        if [[ -n "$pre_branch" ]]; then
+          local _current_branch
+          _current_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+          if [[ "$_current_branch" != "$pre_branch" ]]; then
+            _guard_fail_or_warn "branch switch: worktree switched from ${pre_branch} to ${_current_branch}" "$guard_label" "Worktree guard" || return $?
+            if [[ "$pre_branch" == "HEAD" ]]; then
+              warn "Worktree switched from detached HEAD to ${_current_branch} after ${guard_label} — restoring detached HEAD"
+              git -C "$_worktree" checkout -q --detach HEAD 2>/dev/null || true
+            else
+              warn "Worktree switched from ${pre_branch} to ${_current_branch} after ${guard_label} — restoring ${pre_branch}"
+              git -C "$_worktree" checkout -q "$pre_branch" 2>/dev/null || true
+              local _post_restore_branch
+              _post_restore_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+              if [[ "$_post_restore_branch" != "$pre_branch" ]]; then
+                warn "Checkout of ${pre_branch} failed after ${guard_label} — manual cleanup may be needed"
+              fi
+            fi
+            emit_event "${guard_label}" "warn" "${guard_label}.worktree_branch_restored" \
+              "Restored worktree branch from ${_current_branch} to ${pre_branch}" \
+              pollIteration="${POLL_COUNT:-0}"
+          fi
+        fi
         return 0
       fi
       # ── Legacy auto-reset path ──────────────────────────────────
