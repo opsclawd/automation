@@ -27,6 +27,18 @@ setup() {
   gh() {
     if [[ "$1" = "pr" && "$2" = "list" ]]; then
       echo -e "${MOCK_PR_LIST:-}"
+    elif [[ "$1" = "pr" && "$2" = "diff" ]] && [[ "$3" =~ ^[0-9]+$ ]]; then
+      local pr_number="$3"
+      shift 3
+      local branch_name
+      branch_name=$(echo -e "${MOCK_PR_LIST:-}" | awk -v p="$pr_number" 'BEGIN{FS="\t"} $1 == p {print $2; exit}')
+      if [[ -z "$branch_name" ]]; then
+        return 1
+      fi
+      if ! git rev-parse --verify "origin/${branch_name}" &>/dev/null; then
+        return 1
+      fi
+      git diff "origin/${BASE_REF}...origin/${branch_name}" "$@" 2>/dev/null
     fi
   }
   export -f gh

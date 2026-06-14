@@ -56,14 +56,11 @@ while IFS= read -r pr_line; do
     continue
   fi
 
-  # Check if branch exists on origin
-  if ! git rev-parse --verify "origin/${pr_branch}" &>/dev/null; then
-    echo "::notice::Skipping PR #${pr_number} — branch origin/${pr_branch} not found remotely."
+  # Fetch PR diff via gh CLI (works for forked PRs where branch doesn't exist under origin/)
+  pr_diff="$(gh pr diff "${pr_number}" -- scripts/lib/__tests__/legacy-parity.bats 2>/dev/null)" || {
+    echo "::notice::Skipping PR #${pr_number} — could not fetch PR diff."
     continue
-  fi
-
-  # Diff that branch against base for legacy-parity.bats
-  pr_diff="$(git diff "origin/${BASE_REF}...origin/${pr_branch}" -- scripts/lib/__tests__/legacy-parity.bats 2>/dev/null)" || continue
+  }
 
   # Extract invariant IDs from that branch's additions
   pr_ids="$(echo "$pr_diff" | grep '^+.*@test "parity\[' | grep -oE 'parity\[#[^]]+\]' | sort -u || true)"
