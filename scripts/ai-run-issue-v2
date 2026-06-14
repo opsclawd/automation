@@ -509,7 +509,8 @@ seed_excludes() {
     grep -qxF 'review-task-manifest.json' "$exclude_file" || echo 'review-task-manifest.json' >> "$exclude_file"
     grep -qxF 'review-triage.md' "$exclude_file" || echo 'review-triage.md' >> "$exclude_file"
     grep -qxF 'result.json' "$exclude_file" || echo 'result.json' >> "$exclude_file"
-
+    grep -qxF 'review-plan*.md' "$exclude_file" || echo 'review-plan*.md' >> "$exclude_file"
+    
     # Seed merge attributes — guards legacy-parity.bats even before .gitattributes
     # arrives in the worktree index via a first sync of main (#329).
     local git_dir
@@ -517,7 +518,6 @@ seed_excludes() {
     mkdir -p "$git_dir/info"
     grep -qF 'legacy-parity.bats' "$git_dir/info/attributes" 2>/dev/null \
       || echo 'scripts/lib/__tests__/legacy-parity.bats merge=union' >> "$git_dir/info/attributes"
-
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -547,6 +547,7 @@ review-findings-status.txt
 fix-status.txt
 implement-task-*.md
 fix-review-task-*.md
+review-plan*.md
 fix-review-task-*.log
 next-env.d.ts
 node_modules/
