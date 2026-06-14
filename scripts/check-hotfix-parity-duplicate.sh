@@ -34,7 +34,7 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # Step 3: Get open PRs targeting the base ref
-open_prs="$(gh pr list --state open --base "${BASE_REF}" --json number,headRefName -q '.[] | "\(.number) \(.headRefName)"' 2>/dev/null)" || {
+open_prs="$(gh pr list --state open --base "${BASE_REF}" --json number,headRefName -q '.[] | "\(.number)\t\(.headRefName)"' 2>/dev/null)" || {
   echo "::notice::Could not list open PRs — skipping duplicate check."
   exit 0
 }
@@ -49,8 +49,7 @@ conflicts=""
 
 while IFS= read -r pr_line; do
   [[ -z "$pr_line" ]] && continue
-  pr_number="$(echo "$pr_line" | awk '{print $1}')"
-  pr_branch="$(echo "$pr_line" | awk '{print $2}')"
+  IFS=$'\t' read -r pr_number pr_branch <<< "$pr_line"
 
   # Skip current PR if its number is known
   if [[ -n "${CURRENT_PR_NUMBER:-}" && "$pr_number" = "${CURRENT_PR_NUMBER}" ]]; then

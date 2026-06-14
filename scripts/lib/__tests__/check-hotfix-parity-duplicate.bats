@@ -90,7 +90,7 @@ run_check() {
 @test "passes when new parity test added but no overlap with open PRs" {
   # Create an open PR branch with parity[#400]
   add_pr_branch "feature-a" "parity[#400]"
-  export MOCK_PR_LIST="456 feature-a"
+  export MOCK_PR_LIST="456\tfeature-a"
 
   # Current PR adds parity[#300] (no overlap with PR #456's parity[#400])
   echo '@test "parity[#300]: unique test" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
@@ -103,7 +103,7 @@ run_check() {
 @test "fails when new parity test invariant ID overlaps with an open PR" {
   # Create an open PR branch with parity[#500]
   add_pr_branch "feature-b" "parity[#500]"
-  export MOCK_PR_LIST="789 feature-b"
+  export MOCK_PR_LIST="789\tfeature-b"
 
   # Current PR also adds parity[#500] (cherry-pick scenario)
   echo '@test "parity[#500]: cherry-picked test" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
@@ -118,7 +118,7 @@ run_check() {
 
 @test "fails when multiple parity tests added and at least one overlaps" {
   add_pr_branch "feature-c" "parity[#600]"
-  export MOCK_PR_LIST="111 feature-c"
+  export MOCK_PR_LIST="111\tfeature-c"
 
   # Current PR adds two tests, one overlapping
   echo '@test "parity[#500]: safe test" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
@@ -134,7 +134,7 @@ run_check() {
 
 @test "passes when open PR branch is deleted/absent from origin" {
   # Open PR #333 claims branch 'gone-branch' but it was already deleted
-  export MOCK_PR_LIST="333 gone-branch"
+  export MOCK_PR_LIST="333\tgone-branch"
 
   echo '@test "parity[#700]: test after branch gone" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
   git -C "$FIXTURE_REPO" commit -q -am "add parity[#700]"
@@ -160,7 +160,7 @@ run_check() {
   # Current PR #555 adds parity[#900]
   # Another open PR #888 has the same parity test on branch feature-z
   add_pr_branch "feature-z" "parity[#900]"
-  export MOCK_PR_LIST="555 hotfix-xyz\n888 feature-z"
+  export MOCK_PR_LIST="555\thotfix-xyz\n888\tfeature-z"
   export CURRENT_PR_NUMBER=555
 
   echo '@test "parity[#900]: current PR test" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
@@ -184,7 +184,7 @@ run_check() {
 
 @test "extracts multi-issue invariant IDs like parity[#279/#280]" {
   add_pr_branch "feature-multi" "parity[#279/#280]"
-  export MOCK_PR_LIST="321 feature-multi"
+  export MOCK_PR_LIST="321\tfeature-multi"
 
   echo '@test "parity[#279/#280]: multi-issue test" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
   git -C "$FIXTURE_REPO" commit -q -am "cherry-pick parity[#279/#280]"
@@ -195,7 +195,7 @@ run_check() {
 }
 
 @test "skips current PR using CURRENT_PR_NUMBER when only PR is self" {
-  export MOCK_PR_LIST="999 self-branch"
+  export MOCK_PR_LIST="999\tself-branch"
   export CURRENT_PR_NUMBER=999
 
   echo '@test "parity[#1000]: self-only test" { true }' >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
