@@ -126,57 +126,12 @@ the calling scripts provide them (`ai-run-issue-v2` provides `warn()`; both sour
 `ai-run-issue-v2`, `POLL_WORKTREE` for `ai-pr-review-poll`); it no-ops when neither
 is set or either equals `REPO_ROOT`.
 
-## Worktree-local guard (2026-06-14)
-
-After issue #318, the leak guard was moved from `REPO_ROOT` into each run's
-own worktree. `_capture_worktree_state` and `_guard_worktree` operate on
-`$WORKTREE_DIR` instead of `$REPO_ROOT`, ensuring zero cross-run contention
-during parallel execution.
-
-The per-run detach/reattach cycle (`_detach_main_head` / `_reattach_main_head`)
-was removed from `ai-run-issue-v2`. `REPO_ROOT` is instead detached once at
-orchestrator startup (a separate infrastructure change).
-
-### New functions
-
-- `_capture_worktree_state` — snapshots `$WORKTREE_DIR` HEAD SHA, dirty flag,
-  and current branch, using `_guard_worktree_dir()` to resolve the worktree path.
-  Fails if `WORKTREE_DIR` is unset (unlike the REPO_ROOT guard, which no-ops).
-
-- `_guard_worktree <label> [pre_state]` — compares worktree state before/after
-  an agent invocation. Same logic as `_guard_main_checkout` (dirty detection,
-  HEAD movement, branch switch, `orchestrator_fail` hard-fail vs. legacy
-  auto-reset), but scoped to the worktree.
-
-### Event type changes
-
-| Old event | New event |
-|---|---|
-| `<label>.main_leak_detected` | `<label>.worktree_leak_detected` |
-| `<label>.main_dirty_preexisting` | `<label>.worktree_dirty_preexisting` |
-| `<label>.main_leak_unsafe_recovery` | `<label>.worktree_leak_unsafe_recovery` |
-| `<label>.main_branch_restored` | `<label>.worktree_branch_restored` |
-
-### Caller migration pattern
-
-```bash
-# Before (REPO_ROOT guard):
-_main_state_before=$(_capture_main_state)
-# ... run-agent.ts invocation ...
-_guard_main_checkout "<phase-label>" "$_main_state_before"
-
-# After (worktree guard):
-_worktree_state_before=$(_capture_worktree_state)
-# ... run-agent.ts invocation ...
-_guard_worktree "<phase-label>" "$_worktree_state_before"
-```
-
 ## When adding a new agent invocation phase
 
 ```bash
-_worktree_state_before=$(_capture_worktree_state)
+_main_state_before=$(_capture_main_state)
 # ... run-agent.ts invocation ...
-_guard_worktree "<phase-label>" "$_worktree_state_before"   # BEFORE any orchestrator_fail
+_guard_main_checkout "<phase-label>" "$_main_state_before"   # BEFORE any orchestrator_fail
 # ... exit-code handling ...
 ```
 
@@ -188,4 +143,3 @@ Preserve the `ai-pr-review-poll` callsite's explicit `"post-pr-review"` label (n
 - `docs/solutions/orchestrator/bash-pipeline-exit-code-trap-2026-05-26.md` — `set -e` / PIPESTATUS footguns in the same scripts
 - `docs/solutions/orchestrator/staging-dir-lifecycle-2026-06-04.md` — same "scope side effects, clean up on every exit path" discipline
 - `docs/solutions/orchestrator/worktree-exclude-seeding-2026-05-18.md` — sibling worktree-hygiene guard
-- Issue #318 — Move Leak Guard from Shared REPO_ROOT to Per-Run Worktree
