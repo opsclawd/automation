@@ -21,6 +21,10 @@ setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
 }
 
+teardown() {
+  if [ -n "${_test_dir:-}" ]; then rm -rf "$_test_dir"; fi
+}
+
 # Invariant: per-run orchestrator artifacts are NEVER tracked by git.
 # Source: #279 (hotfix) / #280 (durable guard).
 # Failure prevented: a tracked artifact (e.g. validation.headsha) is rewritten
@@ -544,7 +548,7 @@ setup() {
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+  _test_dir="$test_dir"
   export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
   export AI_RUN_DISPLAY_ID="parity-test-269"
   : > "$AI_RUN_EVENTS_FILE"
@@ -585,13 +589,15 @@ JSON
     echo "FAIL: expected taskNum=1, got ${task_num}"
     false
   }
+
+  rm -rf "$test_dir"
 }
 @test "parity[#269]: _lint_task_size returns error when _TASK_SPLIT_BLOCK is true" {
   source "${REPO_ROOT}/scripts/lib/emit_event.sh"
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+  _test_dir="$test_dir"
   export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
   export AI_RUN_DISPLAY_ID="parity-test-269-block"
   : > "$AI_RUN_EVENTS_FILE"
@@ -620,13 +626,15 @@ JSON
     echo "FAIL: expected exit 1 when block is true, got exit ${rc}"
     false
   }
+
+  rm -rf "$test_dir"
 }
 @test "parity[#269]: _lint_task_size silently passes when no test files exceed thresholds" {
   source "${REPO_ROOT}/scripts/lib/emit_event.sh"
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+  _test_dir="$test_dir"
   export AI_RUN_EVENTS_FILE="${test_dir}/events.jsonl"
   export AI_RUN_DISPLAY_ID="parity-test-269-pass"
   : > "$AI_RUN_EVENTS_FILE"
@@ -656,6 +664,8 @@ JSON
     echo "FAIL: unexpected task_size.oversized event emitted for small file"
     false
   }
+
+  rm -rf "$test_dir"
 }
 
 # Invariant: Review artifacts with an invalid verdict (e.g., SPEC_PARTIAL)
@@ -681,7 +691,7 @@ JSON
   ' "$SCRIPT_PATH")"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+  _test_dir="$test_dir"
   # Valid verdict: SPEC_PASS
   echo "SPEC_PASS" > "${test_dir}/spec-review-task-1.result"
   echo "No findings." > "${test_dir}/spec-review-task-1.md"
@@ -697,6 +707,8 @@ JSON
   echo "Findings here." > "${test_dir}/quality-review-task-1.md"
   run validate_review_artifacts "${test_dir}/quality-review-task-1.result" "${test_dir}/quality-review-task-1.md" QUALITY_PASS QUALITY_FAIL
   [ "$status" -ne 0 ]
+
+  rm -rf "$test_dir"
 }
 
 # Invariant: When a reviewer writes artifacts to a wrong path (e.g.,
@@ -711,7 +723,7 @@ JSON
   source "${REPO_ROOT}/scripts/lib/review-contract.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+  _test_dir="$test_dir"
   WORKTREE_DIR="$test_dir"
   log() { :; }
   # Simulate off-contract write: reviewer wrote to docs/spec-vs-implementation-reviews/
@@ -725,6 +737,8 @@ JSON
   # The .result should be recovered
   [ -f "${test_dir}/spec-review-task-3.result" ]
   [ "$(cat "${test_dir}/spec-review-task-3.result")" = "SPEC_FAIL" ]
+
+  rm -rf "$test_dir"
 }
 
 # Invariant: the opencode adapter enforces artifact existence when

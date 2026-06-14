@@ -1,1 +1,1 @@
-pnpm -r build && pnpm typecheck && pnpm depcruise
+bash scripts/check-bats-traps.sh && pnpm -r build && pnpm typecheck && pnpm depcruise

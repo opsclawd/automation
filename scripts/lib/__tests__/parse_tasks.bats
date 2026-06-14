@@ -14,6 +14,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMPDIR_TEST"
+  if [ -n "${_test_dir:-}" ]; then rm -rf "$_test_dir"; fi
 }
 
 @test "read_manifest: returns titles and count for valid manifest" {
@@ -1356,7 +1357,7 @@ JSON
 @test "_lint_task_size: returns 0 when no test files exceed thresholds" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+  _test_dir="$test_dir"
 
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
@@ -1377,14 +1378,16 @@ JSON
 
   _lint_task_size "${test_dir}/task-manifest.json"
   [ $? -eq 0 ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: warns when test file exceeds line threshold" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1404,14 +1407,15 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
-}
 
+  rm -rf "$test_dir"
+}
 @test "_lint_task_size: warns when test file exceeds test case threshold" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1431,14 +1435,15 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
-}
 
+  rm -rf "$test_dir"
+}
 @test "_lint_task_size: counts multiline test declarations correctly" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=5
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1490,14 +1495,15 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
-}
 
+  rm -rf "$test_dir"
+}
 @test "_lint_task_size: skips tasks with no files field" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1517,12 +1523,14 @@ JSON
   local events
   events=$(cat "$AI_RUN_EVENTS_FILE")
   [ -z "$events" ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: skips non-test files" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+  _test_dir="$test_dir"
 
   export _TASK_SPLIT_MAX_LINES=2
   export _TASK_SPLIT_MAX_CASES=1
@@ -1547,13 +1555,14 @@ JSON
   local events
   events=$(cat "$AI_RUN_EVENTS_FILE")
   [ -z "$events" ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: skips files that do not exist on disk" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=2
   export _TASK_SPLIT_MAX_CASES=1
   export _TASK_SPLIT_BLOCK=false
@@ -1574,13 +1583,14 @@ JSON
   local events
   events=$(cat "$AI_RUN_EVENTS_FILE")
   [ -z "$events" ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: returns 1 when block is true and oversized task found" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1604,6 +1614,8 @@ JSON
   set -e
 
   [ "$rc" -eq 1 ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: returns 0 when manifest is missing" {
@@ -1621,8 +1633,7 @@ JSON
 @test "_lint_task_size: warns for .spec.ts and .bats test files too" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
@@ -1643,13 +1654,14 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: block=true FATAL on stderr with full task details" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1674,13 +1686,14 @@ JSON
   run _lint_task_size "${test_dir}/task-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"FATAL: Task 1 (Refactor Oversized Test) targets oversized test file oversized.test.ts: line count"* ]]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: block=true reports all oversized files, not just the first" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1707,4 +1720,6 @@ JSON
   [[ "$output" == *"big.test.ts"* ]]
   [[ "$output" == *"huge.spec.ts"* ]]
   [[ "$output" == *"massive.bats"* ]]
+
+  rm -rf "$test_dir"
 }
