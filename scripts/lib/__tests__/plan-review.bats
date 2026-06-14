@@ -823,6 +823,7 @@ PLAN
 @test "run_adversarial_reviewer: prompt includes PREVIOUS FINDINGS when prev_findings_path set" {
   _capture_main_state() { echo "main-state"; }
   _guard_main_checkout() { :; }
+  _guard_worktree() { :; }
   check_branch_after_agent() { :; }
   _PROMPT_CAPTURE_FILE="$TMPDIR_TEST/_prompt-capture.txt"
   node() {
@@ -854,6 +855,7 @@ PLAN
 @test "run_adversarial_reviewer: prompt excludes PREVIOUS FINDINGS when prev_findings_path empty" {
   _capture_main_state() { echo "main-state"; }
   _guard_main_checkout() { :; }
+  _guard_worktree() { :; }
   check_branch_after_agent() { :; }
   _PROMPT_CAPTURE_FILE="$TMPDIR_TEST/_prompt-capture.txt"
   node() {
@@ -958,6 +960,7 @@ JUDGMENT
   _GIT_SHA="abc123"
   _capture_main_state() { echo "main-state"; }
   _guard_main_checkout() { :; }
+  _guard_worktree() { :; }
   check_branch_after_agent() { :; }
 
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'

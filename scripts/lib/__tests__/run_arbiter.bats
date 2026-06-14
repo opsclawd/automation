@@ -50,9 +50,10 @@ EOF
   warn() { :; }
   _capture_main_state() { echo "ok"; }
   _guard_main_checkout() { return 0; }
+  _guard_worktree() { return 0; }
   check_branch_after_agent() { return 0; }
   emit_event() { :; }
-  export -f log warn _capture_main_state _guard_main_checkout check_branch_after_agent emit_event
+  export -f log warn _capture_main_state _guard_main_checkout _guard_worktree check_branch_after_agent emit_event
 }
 
 teardown() {

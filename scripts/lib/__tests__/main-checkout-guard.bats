@@ -43,6 +43,17 @@ setup() {
   warn() { log "WARN: $*" >&2; }
 }
 
+setup_worktree_fixture() {
+  local _dir="$1"
+  mkdir -p "$_dir"
+  git -C "$_dir" init -q
+  git -C "$_dir" config user.email "test@example.com"
+  git -C "$_dir" config user.name "test"
+  : > "$_dir/.gitignore"
+  git -C "$_dir" add .gitignore
+  git -C "$_dir" commit -q -m "init"
+}
+
 teardown() {
   rm -rf "$TMPDIR_TEST"
 }
@@ -464,6 +475,399 @@ teardown() {
   [ "$status" -eq 0 ]
 
   run git -C "$FIXTURE_REPO" diff --quiet
+  [ "$status" -ne 0 ]
+}
+
+@test "_capture_worktree_state returns clean state on clean worktree" {
+  local _dir="$TMPDIR_TEST/worktree-clean"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  # Output format: sha|dirty|branch
+  [[ "$output" =~ ^[a-f0-9]{40}\|0\| ]]
+}
+
+@test "_capture_worktree_state detects dirty worktree (tracked file modified)" {
+  local _dir="$TMPDIR_TEST/worktree-dirty"
+  setup_worktree_fixture "$_dir"
+  echo "dirty" >> "$_dir/.gitignore"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|1\| ]]
+}
+
+@test "_capture_worktree_state detects staged changes (index dirty)" {
+  local _dir="$TMPDIR_TEST/worktree-staged"
+  setup_worktree_fixture "$_dir"
+  echo "staged" >> "$_dir/.gitignore"
+  git -C "$_dir" add .gitignore
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|1\| ]]
+}
+
+@test "_capture_worktree_state detects untracked files" {
+  local _dir="$TMPDIR_TEST/worktree-untracked"
+  setup_worktree_fixture "$_dir"
+  echo "untracked" > "$_dir/new-file.txt"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|1\| ]]
+}
+
+@test "_capture_worktree_state captures branch name correctly" {
+  local _dir="$TMPDIR_TEST/worktree-branch"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" checkout -q -b feature-branch
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _capture_worktree_state
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ \|0\|feature-branch$ ]]
+}
+
+@test "_guard_worktree is a no-op when worktree is clean" {
+  local _dir="$TMPDIR_TEST/worktree-guard-clean"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree resets leaked changes when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-dirty"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "# __test_guard_wt_leak_$$" >> "$_dir/.gitignore"
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" diff --quiet
+  [ "$status" -eq 0 ]
+
+  run jq -e '.type == "test.worktree_leak_detected"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree resets staged leaked changes when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-staged"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "leak" >> "$_dir/.gitignore"
+  git -C "$_dir" add .gitignore
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" diff --quiet
+  [ "$status" -eq 0 ]
+  run git -C "$_dir" diff --cached --quiet
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree removes untracked leaked files when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-untracked"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "untracked" > "$_dir/leaked-untracked.txt"
+
+  run _guard_worktree "test"
+  [ "$status" -eq 0 ]
+
+  [ ! -f "$_dir/leaked-untracked.txt" ]
+}
+
+@test "_guard_worktree rewinds HEAD when agent committed a leak AND left tree dirty when no orchestrator_fail (legacy path)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-commit"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  echo "leaked content" > "$_dir/leaked.txt"
+  git -C "$_dir" add leaked.txt
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "leaked"
+  
+  echo "dirty" > "$_dir/dirty.txt"
+
+  local leaked_sha
+  leaked_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$leaked_sha" != "$pre_sha" ]
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  local final_sha
+  final_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$final_sha" = "$pre_sha" ]
+  [ ! -f "$_dir/leaked.txt" ]
+}
+
+@test "_guard_worktree permits clean commit without rewinding HEAD" {
+  local _dir="$TMPDIR_TEST/worktree-guard-clean-commit"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  echo "committed content" > "$_dir/committed.txt"
+  git -C "$_dir" add committed.txt
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "clean commit"
+
+  local expected_sha
+  expected_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$expected_sha" != "$pre_sha" ]
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  local final_sha
+  final_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$final_sha" = "$expected_sha" ]
+  [ -f "$_dir/committed.txt" ]
+  
+  run jq -e '.type == "test.worktree_commit_detected"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree preserves pre-existing dirty work" {
+  local _dir="$TMPDIR_TEST/worktree-guard-predirty"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "developer edit" >> "$_dir/.gitignore"
+  echo "dev untracked" > "$_dir/dev-scratch.txt"
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run grep -q "developer edit" "$_dir/.gitignore"
+  [ "$status" -eq 0 ]
+  [ -f "$_dir/dev-scratch.txt" ]
+
+  run jq -e '.type == "test.worktree_dirty_preexisting"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree restores branch after same-SHA branch switch" {
+  local _dir="$TMPDIR_TEST/worktree-guard-samesha"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" branch same-sha-branch
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local _default_branch
+  _default_branch=$(git -C "$_dir" rev-parse --abbrev-ref HEAD)
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$_dir" checkout -q same-sha-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" rev-parse --abbrev-ref HEAD
+  [ "$output" = "$_default_branch" ]
+
+  run git -C "$_dir" rev-parse HEAD
+  [ "$output" = "$pre_sha" ]
+
+  run jq -e '.type == "test.worktree_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree restores detached HEAD after same-SHA branch switch from detached" {
+  local _dir="$TMPDIR_TEST/worktree-guard-detached"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" checkout -q --detach HEAD
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  git -C "$_dir" checkout -q -b agent-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  run git -C "$_dir" rev-parse --abbrev-ref HEAD
+  [ "$output" = "HEAD" ]
+
+  run jq -e '.type == "test.worktree_branch_restored"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree hard-fails on same-SHA branch switch when orchestrator_fail defined" {
+  local _dir="$TMPDIR_TEST/worktree-guard-branch-switch-only-fail"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" branch same-sha-branch
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local _default_branch
+  _default_branch=$(git -C "$_dir" rev-parse --abbrev-ref HEAD)
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  git -C "$_dir" checkout -q same-sha-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+  run grep -q "branch switch" "$TMPDIR_TEST/fail-reason.txt"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree refuses to auto-reset when pre-agent dirty AND HEAD moved" {
+  local _dir="$TMPDIR_TEST/worktree-guard-dirty-moved"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  echo "developer tracked edit" >> "$_dir/.gitignore"
+  echo "dev untracked" > "$_dir/dev-untracked.txt"
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  git -C "$_dir" add -A
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "leak-with-dev-work"
+  local leaked_sha
+  leaked_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$leaked_sha" != "$pre_sha" ]
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  local final_sha
+  final_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$final_sha" = "$leaked_sha" ]
+
+  [ -f "$_dir/dev-untracked.txt" ]
+
+  run jq -e '.type == "test.worktree_leak_unsafe_recovery"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree warns on dirty tree, does not call orchestrator_fail (phase recovery handles dirty state)" {
+  local _dir="$TMPDIR_TEST/worktree-guard-hardfail"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local _fail_called=false
+  orchestrator_fail() { _fail_called=true; return 1; }
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  echo "# __test_guard_wt_dirty_$$" >> "$_dir/.gitignore"
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+  [ "$_fail_called" = "false" ]
+
+  run jq -e '.type == "test.worktree_leak_detected"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
+}
+
+@test "_guard_worktree hard-fails when branch switched from expected" {
+  local _dir="$TMPDIR_TEST/worktree-guard-branch-fail"
+  setup_worktree_fixture "$_dir"
+  local _default_branch
+  _default_branch=$(git -C "$_dir" rev-parse --abbrev-ref HEAD)
+  git -C "$_dir" checkout -q -b other-branch
+  echo "other" > "$_dir/other.txt"
+  git -C "$_dir" add other.txt
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "other"
+  git -C "$_dir" checkout -q "$_default_branch"
+
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  git -C "$_dir" checkout -q other-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+
+  run git -C "$_dir" rev-parse --abbrev-ref HEAD
+  [ "$output" = "other-branch" ]
+}
+
+@test "_guard_worktree fails when WORKTREE_DIR is unset" {
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset WORKTREE_DIR
+  unset POLL_WORKTREE
+
+  run _guard_worktree "test"
   [ "$status" -ne 0 ]
 }
 

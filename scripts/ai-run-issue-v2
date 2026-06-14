@@ -167,10 +167,10 @@ source "${REPO_ROOT}/scripts/lib/plan-review.sh"
 # shellcheck source=lib/copy-artifact.sh
 source "${REPO_ROOT}/scripts/lib/copy-artifact.sh"
 
-# ── Main checkout protection ────────────────────────────────────────────────
+# ── Main checkout protection (defense-in-depth) ────────────────────────────────
 # Detach REPO_ROOT HEAD so stray agent commits can't advance main.
-# Restored in the done phase and on EXIT trap.
-# NOTE: must be after the source block (guard-main-checkout.sh sourced at ~L131).
+# This is a temporary per-run detach until the orchestrator-level startup
+# detach is implemented. Once that lands, this block can be removed.
 # Capture pre-detach state so the EXIT trap guard can detect HEAD movement
 # even when _reattach_main_head fails (orphaning agent commits on the detached
 # HEAD). This is a single snapshot taken before detach — per-phase guard calls
@@ -1167,22 +1167,25 @@ cleanup_staging() {
 }
 _trap_on_exit() {
   local _exit_code=$?
-  # P1-F1 FIX: reattach BEFORE guard.  If the guard hard-fails and calls
+  # P1-F1: reattach BEFORE guard. If the guard hard-fails and calls
   # orchestrator_fail → exit 1, bash terminates immediately and does NOT
-  # re-trigger the EXIT trap.  Reattaching first guarantees REPO_ROOT is
+  # re-trigger the EXIT trap. Reattaching first guarantees REPO_ROOT is
   # restored even when the guard aborts the run.
   if declare -F _reattach_main_head >/dev/null 2>&1; then
     _reattach_main_head || warn "EXIT trap: failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
   fi
 
   if declare -F _guard_main_checkout >/dev/null 2>&1; then
-    # P2-F2: pass pre-detach state so the guard can detect HEAD advancement
-    # from leaked commits if _reattach_main_head above failed. The pre-state
-    # is captured before _detach_main_head (not before each phase) — per-phase
-    # guard calls capture their own state independently. Since _reattach_main_head
-    # runs first in this trap (restoring the branch or orphaning agent commits),
-    # HEAD-movement detection here is primarily a defense-in-depth fallback.
     _guard_main_checkout "exit-trap" "${_EXIT_TRAP_PRE_STATE:-}" || true
+  fi
+
+  # Worktree guard: capture exit-time state as a final defense-in-depth sweep.
+  # Per-phase guards have already checked the worktree after each agent invocation.
+  if declare -F _guard_worktree >/dev/null 2>&1; then
+    local _worktree_exit_state
+    if _worktree_exit_state=$(_capture_worktree_state 2>/dev/null); then
+      _guard_worktree "exit-trap" "$_worktree_exit_state" || true
+    fi
   fi
   if [[ -n "${_ACTIVE_CONFIG:-}" && "$_ACTIVE_CONFIG" != "$_ORCHESTRATOR_CONFIG" && -f "$_ACTIVE_CONFIG" ]]; then
     rm -f "$_ACTIVE_CONFIG"
@@ -1545,7 +1548,7 @@ Write design.md now."
   # Write prompt to temp file for run-agent CLI
   _plan_prompt_file=$(mktemp)
   printf '%s' "$BRAINSTORM_PROMPT" > "$_plan_prompt_file"
-  _main_state_before=$(_capture_main_state)
+  _worktree_state_before=$(_capture_worktree_state)
   _worktree_sha_before=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-design \
@@ -1563,25 +1566,7 @@ Write design.md now."
     orchestrator_fail "tee failed writing log for plan-design (exit $_tee_ec)"
   fi
 
-  _pre_was_dirty=0
-  _expected_sha=""
-  if [[ -n "$_main_state_before" ]]; then
-    IFS='|' read -r _expected_sha _pre_was_dirty _ <<< "$_main_state_before"
-  fi
-
-  _main_checkout_violations=""
-  if [[ $_pre_was_dirty -eq 0 ]]; then
-    _main_checkout_violations=$({
-      git -C "$REPO_ROOT" diff --name-only 2>/dev/null
-      git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
-      git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
-      if [[ -n "$_expected_sha" ]]; then
-        git -C "$REPO_ROOT" diff --name-only "$_expected_sha"..HEAD 2>/dev/null
-      fi
-    } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
-  fi
-
-  _guard_main_checkout "plan-design" "$_main_state_before"
+  _guard_worktree "plan-design" "$_worktree_state_before"
 
   _detect_ignored_misplaced_artifact "design.md" "plan-design" || true
 
@@ -1593,7 +1578,7 @@ Write design.md now."
     fi
   } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
 
-  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _all_violations="${_worktree_violations}"
   _remediate_misplaced_artifact "design.md" "design" "plan-design"
   if [[ -n "$_all_violations" ]]; then
     orchestrator_fail "plan-design agent modified source files (contract violation): ${_all_violations}"
@@ -1716,7 +1701,7 @@ Write plan.md and task-manifest.json now."
 
   _plan_prompt_file=$(mktemp)
   printf '%s' "$PLAN_WRITE_PROMPT" > "$_plan_prompt_file"
-  _main_state_before=$(_capture_main_state)
+  _worktree_state_before=$(_capture_worktree_state)
   _worktree_sha_before=$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || echo "")
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase plan-write \
@@ -1734,25 +1719,7 @@ Write plan.md and task-manifest.json now."
     orchestrator_fail "tee failed writing log for plan-write (exit $_tee_ec)"
   fi
 
-  _pre_was_dirty=0
-  _expected_sha=""
-  if [[ -n "$_main_state_before" ]]; then
-    IFS='|' read -r _expected_sha _pre_was_dirty _ <<< "$_main_state_before"
-  fi
-
-  _main_checkout_violations=""
-  if [[ $_pre_was_dirty -eq 0 ]]; then
-    _main_checkout_violations=$({
-      git -C "$REPO_ROOT" diff --name-only 2>/dev/null
-      git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
-      git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
-      if [[ -n "$_expected_sha" ]]; then
-        git -C "$REPO_ROOT" diff --name-only "$_expected_sha"..HEAD 2>/dev/null
-      fi
-    } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
-  fi
-
-  _guard_main_checkout "plan-write" "$_main_state_before"
+  _guard_worktree "plan-write" "$_worktree_state_before"
 
   _detect_ignored_misplaced_plan || true
 
@@ -1764,7 +1731,7 @@ Write plan.md and task-manifest.json now."
     fi
   } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
 
-  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _all_violations="${_worktree_violations}"
   _remediate_plan_write_violations
   if [[ -n "$_all_violations" ]]; then
     orchestrator_fail "plan-write agent modified source files (contract violation): ${_all_violations}"
@@ -2045,8 +2012,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     local _impl_prompt_file
     _impl_prompt_file=$(mktemp)
     printf '%s' "$IMPLEMENTER_PROMPT" > "$_impl_prompt_file"
-    local _main_state_before
-    _main_state_before=$(_capture_main_state)
+    _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase implement \
       --phase-id "implement-task-${task_n}" \
@@ -2062,7 +2028,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for implement-task-${task_n} (exit $_tee_ec)"
     fi
-    _guard_main_checkout "implement-task-${task_n}" "$_main_state_before"
+    _guard_worktree "implement-task-${task_n}" "$_worktree_state_before"
     check_branch_after_agent
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/implement-task-${task_n}.log" 2>/dev/null; then
@@ -2202,8 +2168,7 @@ ${history_excerpt}"
     local _spec_prompt_file
     _spec_prompt_file=$(mktemp)
     printf '%s' "$SPEC_REVIEWER_PROMPT" > "$_spec_prompt_file"
-    local _main_state_before
-    _main_state_before=$(_capture_main_state)
+    _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase spec-review \
       --phase-id "spec-review-task-${task_n}" \
@@ -2219,8 +2184,22 @@ ${history_excerpt}"
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for spec-review-task-${task_n} (exit $_tee_ec)"
     fi
-    _guard_main_checkout "spec-review-task-${task_n}" "$_main_state_before"
+    _guard_worktree "spec-review-task-${task_n}" "$_worktree_state_before"
     check_branch_after_agent
+    # Read-only guard: spec-review must not modify source files
+    local _pre_sha _worktree_violations
+    _pre_sha="${_worktree_state_before%%|*}"
+    _worktree_violations=$({
+      if [[ -n "$_pre_sha" ]]; then
+        git -C "$WORKTREE_DIR" diff --name-only "$_pre_sha"..HEAD 2>/dev/null
+      fi
+      git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    } | grep -vE "spec-review-task-${task_n}\.(result|md)$" | tr '\n' ' ' || true)
+    if [[ -n "$_worktree_violations" ]]; then
+      orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+    fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/spec-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "spec-review-task-${task_n} failed (config error in log)"
@@ -2377,8 +2356,7 @@ ${history_excerpt}"
     local _qual_prompt_file
     _qual_prompt_file=$(mktemp)
     printf '%s' "$QUALITY_REVIEWER_PROMPT" > "$_qual_prompt_file"
-    local _main_state_before
-    _main_state_before=$(_capture_main_state)
+    _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase quality-review \
       --phase-id "quality-review-task-${task_n}" \
@@ -2394,8 +2372,22 @@ ${history_excerpt}"
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for quality-review-task-${task_n} (exit $_tee_ec)"
     fi
-    _guard_main_checkout "quality-review-task-${task_n}" "$_main_state_before"
+    _guard_worktree "quality-review-task-${task_n}" "$_worktree_state_before"
     check_branch_after_agent
+    # Read-only guard: quality-review must not modify source files
+    local _pre_sha _worktree_violations
+    _pre_sha="${_worktree_state_before%%|*}"
+    _worktree_violations=$({
+      if [[ -n "$_pre_sha" ]]; then
+        git -C "$WORKTREE_DIR" diff --name-only "$_pre_sha"..HEAD 2>/dev/null
+      fi
+      git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    } | grep -vE "quality-review-task-${task_n}\.(result|md)$" | tr '\n' ' ' || true)
+    if [[ -n "$_worktree_violations" ]]; then
+      orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+    fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
         orchestrator_fail "quality-review-task-${task_n} failed (config error in log)"
@@ -2496,8 +2488,7 @@ ${history_excerpt}"
     local _fix_prompt_file
     _fix_prompt_file=$(mktemp)
     printf '%s' "$FIX_REVIEW_PROMPT" > "$_fix_prompt_file"
-    local _main_state_before
-    _main_state_before=$(_capture_main_state)
+    _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase fix-review \
       --phase-id "fix-review-task-${task_n}" \
@@ -2513,7 +2504,7 @@ ${history_excerpt}"
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for fix-review-task-${task_n} (exit $_tee_ec)"
     fi
-    _guard_main_checkout "fix-review-task-${task_n}" "$_main_state_before"
+    _guard_worktree "fix-review-task-${task_n}" "$_worktree_state_before"
     check_branch_after_agent
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-task-${task_n}.log" 2>/dev/null; then
@@ -2620,8 +2611,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     local _arbiter_prompt_file
     _arbiter_prompt_file=$(mktemp)
     printf '%s' "$ARBITER_PROMPT" > "$_arbiter_prompt_file"
-    local _main_state_before
-    _main_state_before=$(_capture_main_state)
+    _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase arbitrate \
       --phase-id "arbitrate-task-${task_n}" \
@@ -2641,7 +2631,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       # exception to the "all phases halt on tee failure" rule.
       warn "tee failed writing log for arbiter-task-${task_n} (exit $_tee_ec)"
     fi
-    _guard_main_checkout "arbiter-task-${task_n}" "$_main_state_before"
+    _guard_worktree "arbiter-task-${task_n}" "$_worktree_state_before"
     check_branch_after_agent
     if [[ $_agent_ec -ne 0 ]]; then
       warn "Arbiter agent exited with code $_agent_ec — attempting to read result if present"
@@ -3487,7 +3477,7 @@ Do NOT delete or modify these files.
 Start now."
 
       _fv_prompt_file=$(mktemp)
-      _main_state_before=$(_capture_main_state)
+      _worktree_state_before=$(_capture_worktree_state)
       printf '%s' "$FIX_VALIDATE_PROMPT" > "$_fv_prompt_file"
       : > "${ISSUES_DIR}/fix-validate-${FIX_VALIDATE_COUNT}.log"
       ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
@@ -3506,7 +3496,7 @@ Start now."
       if [[ $_tee_ec -ne 0 ]]; then
         orchestrator_fail "tee failed writing log for fix-validate-${FIX_VALIDATE_COUNT} (exit $_tee_ec)"
       fi
-      _guard_main_checkout "fix-validate-loop-${FIX_VALIDATE_COUNT}" "$_main_state_before"
+      _guard_worktree "fix-validate-loop-${FIX_VALIDATE_COUNT}" "$_worktree_state_before"
       check_branch_after_agent
       if [[ $_agent_ec -ne 0 ]]; then
         if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-validate-${FIX_VALIDATE_COUNT}.log" 2>/dev/null; then
@@ -3647,7 +3637,7 @@ Categorize findings:
 
 Write code-review.md now."
 
-  _main_state_before=$(_capture_main_state)
+  _worktree_state_before=$(_capture_worktree_state)
   _review_prompt_file=$(mktemp)
   printf '%s' "$REVIEW_PROMPT" > "$_review_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
@@ -3666,7 +3656,7 @@ Write code-review.md now."
     orchestrator_fail "tee failed writing log for review (exit $_tee_ec)"
   fi
 
-  _guard_main_checkout "whole-pr-review" "$_main_state_before"
+  _guard_worktree "whole-pr-review" "$_worktree_state_before"
 
   if [[ $_agent_ec -ne 0 ]]; then
     case $_agent_ec in
@@ -3779,7 +3769,7 @@ Read ./review.md and produce two files:
 - Output ONLY review-task-manifest.json and review-triage.md.
 - Stop after writing both files.
 Write review-task-manifest.json and review-triage.md now."
-  _main_state_before=$(_capture_main_state)
+  _worktree_state_before=$(_capture_worktree_state)
   _triage_prompt_file=$(mktemp)
   printf '%s' "$TRIAGE_PROMPT" > "$_triage_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
@@ -3794,7 +3784,7 @@ Write review-task-manifest.json and review-triage.md now."
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
     2>&1 | tee -a "${ISSUES_DIR}/review-triage.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   rm -f "$_triage_prompt_file"
-  _guard_main_checkout "review-triage" "$_main_state_before"
+  _guard_worktree "review-triage" "$_worktree_state_before"
   # Mutation guard: triage is a read-only phase — the agent must not modify
   # tracked source files. Only check tracked-file diffs; untracked orchestrator
   # artifacts (review-triage.md, review-task-manifest.json) are expected.
@@ -4196,7 +4186,7 @@ excluded from git and move on. Do NOT delete or modify these files:
 Start now."
 
   _fix_prompt_file=$(mktemp)
-  _main_state_before=$(_capture_main_state)
+  _worktree_state_before=$(_capture_worktree_state)
   printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
     --phase whole-pr-fix-review \
@@ -4214,7 +4204,7 @@ Start now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for fix-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
   fi
-  _guard_main_checkout "fix-review-loop-${FIX_LOOP_COUNT}" "$_main_state_before"
+  _guard_worktree "fix-review-loop-${FIX_LOOP_COUNT}" "$_worktree_state_before"
   check_branch_after_agent
   if [[ $_agent_ec -ne 0 ]]; then
     if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
@@ -4370,7 +4360,7 @@ No other content in the file — just the status word.
 
 Write code-review.md and review-findings-status.txt now."
 
-  _main_state_before=$(_capture_main_state)
+  _worktree_state_before=$(_capture_worktree_state)
 
   _re_review_prompt_file=$(mktemp)
   printf '%s' "$RE_REVIEW_PROMPT" > "$_re_review_prompt_file"
@@ -4393,7 +4383,7 @@ Write code-review.md and review-findings-status.txt now."
     orchestrator_fail "tee failed writing log for re-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
   fi
 
-  _guard_main_checkout "re-review-${FIX_LOOP_COUNT}" "$_main_state_before"
+  _guard_worktree "re-review-${FIX_LOOP_COUNT}" "$_worktree_state_before"
 
   if [[ $_agent_ec -ne 0 ]]; then
     if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
@@ -4590,7 +4580,7 @@ No other content in the file — just the status word.
 Start now."
 
       _fix_prompt_file=$(mktemp)
-      _main_state_before=$(_capture_main_state)
+      _worktree_state_before=$(_capture_worktree_state)
       printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
       ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
         --phase fix-review \
@@ -4609,7 +4599,7 @@ Start now."
       if [[ $_tee_ec -ne 0 ]]; then
         orchestrator_fail "tee failed writing log for fix-review-task-${_task_id} (exit $_tee_ec)"
       fi
-      _guard_main_checkout "fix-review-task-${_task_id}" "$_main_state_before"
+      _guard_worktree "fix-review-task-${_task_id}" "$_worktree_state_before"
       check_branch_after_agent
 
       if [[ $_agent_ec -ne 0 ]]; then
@@ -4830,7 +4820,7 @@ Start now."
 
     _compound_prompt_file=$(mktemp)
     printf '%s' "$COMPOUND_PROMPT" > "$_compound_prompt_file"
-    _main_state_before=$(_capture_main_state)
+    _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase compound \
       --phase-id "compound" \
@@ -4847,7 +4837,7 @@ Start now."
       orchestrator_fail "tee failed writing log for compound (exit $_tee_ec)"
     fi
 
-    _guard_main_checkout "compound" "$_main_state_before"
+    _guard_worktree "compound" "$_worktree_state_before"
 
     if [[ $_agent_ec -ne 0 ]]; then
       if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/compound.log" 2>/dev/null; then
@@ -5180,11 +5170,6 @@ if [[ "$PHASE" == "done" ]]; then
     cp "${WORKTREE_DIR}/$f" "$ARCHIVE_DIR/" 2>/dev/null || true
   done
   log "Artifacts archived to ${ARCHIVE_DIR}/"
-
-  # Restore REPO_ROOT branch from detached HEAD
-  if declare -F _reattach_main_head >/dev/null 2>&1; then
-    _reattach_main_head || warn "Failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
-  fi
 
   # Start PR review poll loop in background
   log "Starting PR review poll loop (background)..."

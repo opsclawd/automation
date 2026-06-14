@@ -27,6 +27,7 @@ setup() {
   _emit_artifact() { :; }
   _capture_main_state() { :; }
   _guard_main_checkout() { :; }
+  _guard_worktree() { :; }
   check_branch_after_agent() { :; }
   resolve_result() { echo "${1:-FAILED}"; }
 }
