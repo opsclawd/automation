@@ -82,7 +82,7 @@ _guard_worktree() {
         expectedSha="$expected_sha" actualSha="$actual_sha"
       return 0
     fi
-    _guard_fail_or_warn "leak detected: worktree HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" || return $?
+    _guard_fail_or_warn "leak detected: worktree HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" "Worktree guard" || return $?
     warn "Worktree HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
     if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
       git -C "$_worktree" checkout -q "$pre_branch" 2>/dev/null || true
@@ -125,7 +125,7 @@ _guard_worktree() {
         "Worktree dirty pre-agent; guard skipped to preserve local work" \
         pollIteration="${POLL_COUNT:-0}"
     else
-      _guard_fail_or_warn "leak detected: worktree is dirty" "$guard_label" || return $?
+      _guard_fail_or_warn "leak detected: worktree is dirty" "$guard_label" "Worktree guard" || return $?
       warn "Worktree dirty after ${guard_label} — resetting leaked changes"
       git -C "$_worktree" reset --hard HEAD 2>/dev/null || true
       git -C "$_worktree" clean -fd 2>/dev/null || true
@@ -176,8 +176,9 @@ _capture_main_state() {
 _guard_fail_or_warn() {
   local reason="$1"
   local guard_label="$2"
+  local guard_scope="${3:-Main checkout guard}"
   if declare -F orchestrator_fail >/dev/null 2>&1; then
-    orchestrator_fail "Main checkout guard: ${reason} (phase: ${guard_label})"
+    orchestrator_fail "${guard_scope}: ${reason} (phase: ${guard_label})"
     return 1
   fi
   return 0
@@ -222,7 +223,7 @@ _guard_main_checkout() {
         expectedSha="$expected_sha" actualSha="$actual_sha"
       return 0
     fi
-    _guard_fail_or_warn "leak detected: HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" || return $?
+    _guard_fail_or_warn "leak detected: HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" "Main checkout guard" || return $?
     # ── Legacy auto-reset path ──────────────────────────────────
     # The warn/revert/reset code below is only reached when
     # orchestrator_fail is NOT defined (legacy mode without the
@@ -273,7 +274,7 @@ _guard_main_checkout() {
         "Main checkout dirty pre-agent; guard skipped to preserve local work" \
         pollIteration="${POLL_COUNT:-0}"
     else
-      _guard_fail_or_warn "leak detected: working tree is dirty" "$guard_label" || return $?
+      _guard_fail_or_warn "leak detected: working tree is dirty" "$guard_label" "Main checkout guard" || return $?
       # ── Legacy auto-reset path ──────────────────────────────
       # Same as the HEAD-moved block above: this dirty-tree
       # auto-reset is only reachable when orchestrator_fail is
