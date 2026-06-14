@@ -684,7 +684,6 @@ JSON
   ' "$SCRIPT_PATH")"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
   # Valid verdict: SPEC_PASS
   echo "SPEC_PASS" > "${test_dir}/spec-review-task-1.result"
   echo "No findings." > "${test_dir}/spec-review-task-1.md"
@@ -700,6 +699,8 @@ JSON
   echo "Findings here." > "${test_dir}/quality-review-task-1.md"
   run validate_review_artifacts "${test_dir}/quality-review-task-1.result" "${test_dir}/quality-review-task-1.md" QUALITY_PASS QUALITY_FAIL
   [ "$status" -ne 0 ]
+
+  rm -rf "$test_dir"
 }
 
 # Invariant: When a reviewer writes artifacts to a wrong path (e.g.,
@@ -714,7 +715,6 @@ JSON
   source "${REPO_ROOT}/scripts/lib/review-contract.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
   WORKTREE_DIR="$test_dir"
   log() { :; }
   # Simulate off-contract write: reviewer wrote to docs/spec-vs-implementation-reviews/
@@ -728,6 +728,8 @@ JSON
   # The .result should be recovered
   [ -f "${test_dir}/spec-review-task-3.result" ]
   [ "$(cat "${test_dir}/spec-review-task-3.result")" = "SPEC_FAIL" ]
+
+  rm -rf "$test_dir"
 }
 
 # Invariant: the opencode adapter enforces artifact existence when
