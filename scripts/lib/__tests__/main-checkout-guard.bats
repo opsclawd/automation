@@ -806,27 +806,26 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "_guard_worktree calls orchestrator_fail on detected leak (hard-fail)" {
+@test "_guard_worktree warns on dirty tree, does not call orchestrator_fail (phase recovery handles dirty state)" {
   local _dir="$TMPDIR_TEST/worktree-guard-hardfail"
   setup_worktree_fixture "$_dir"
   export WORKTREE_DIR="$_dir"
   export REPO_ROOT="$FIXTURE_REPO"
   unset POLL_WORKTREE
 
-  orchestrator_fail() {
-    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
-    return 1
-  }
+  local _fail_called=false
+  orchestrator_fail() { _fail_called=true; return 1; }
 
   local pre_state
   pre_state=$(_capture_worktree_state)
 
-  echo "# __test_guard_wt_hardfail_$$" >> "$_dir/.gitignore"
+  echo "# __test_guard_wt_dirty_$$" >> "$_dir/.gitignore"
 
   run _guard_worktree "test" "$pre_state"
-  [ "$status" -ne 0 ]
-  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
-  run grep -q "leak" "$TMPDIR_TEST/fail-reason.txt"
+  [ "$status" -eq 0 ]
+  [ "$_fail_called" = "false" ]
+
+  run jq -e '.type == "test.worktree_leak_detected"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
 

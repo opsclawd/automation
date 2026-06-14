@@ -167,10 +167,16 @@ source "${REPO_ROOT}/scripts/lib/plan-review.sh"
 # shellcheck source=lib/copy-artifact.sh
 source "${REPO_ROOT}/scripts/lib/copy-artifact.sh"
 
-# ── Worktree guard (per-run) ───────────────────────────────────────────────
-# Each run operates in its own worktree. Leak detection is scoped to
-# $WORKTREE_DIR using _capture_worktree_state / _guard_worktree.
-# REPO_ROOT is detached once at orchestrator startup — not per run.
+# ── Main checkout protection (defense-in-depth) ────────────────────────────────
+# Detach REPO_ROOT HEAD so stray agent commits can't advance main.
+# This is a temporary per-run detach until the orchestrator-level startup
+# detach is implemented. Once that lands, this block can be removed.
+# Capture pre-detach state so the EXIT trap guard can detect HEAD movement
+# even when _reattach_main_head fails (orphaning agent commits on the detached
+# HEAD). This is a single snapshot taken before detach — per-phase guard calls
+# capture fresh state independently and are not affected.
+_EXIT_TRAP_PRE_STATE=$(_capture_main_state)
+_detach_main_head || warn "Failed to detach REPO_ROOT HEAD — guard will still detect leaks"
 
 # ── Per-phase wall-clock tracking ─────────────────────────────────────────────
 # Invariant: _emit_phase_started must always be called before _emit_phase_done
@@ -1161,6 +1167,18 @@ cleanup_staging() {
 }
 _trap_on_exit() {
   local _exit_code=$?
+  # P1-F1: reattach BEFORE guard. If the guard hard-fails and calls
+  # orchestrator_fail → exit 1, bash terminates immediately and does NOT
+  # re-trigger the EXIT trap. Reattaching first guarantees REPO_ROOT is
+  # restored even when the guard aborts the run.
+  if declare -F _reattach_main_head >/dev/null 2>&1; then
+    _reattach_main_head || warn "EXIT trap: failed to restore REPO_ROOT branch — manual 'git checkout main' may be needed"
+  fi
+
+  if declare -F _guard_main_checkout >/dev/null 2>&1; then
+    _guard_main_checkout "exit-trap" "${_EXIT_TRAP_PRE_STATE:-}" || true
+  fi
+
   # Worktree guard: capture exit-time state as a final defense-in-depth sweep.
   # Per-phase guards have already checked the worktree after each agent invocation.
   if declare -F _guard_worktree >/dev/null 2>&1; then

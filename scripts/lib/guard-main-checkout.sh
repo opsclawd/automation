@@ -136,13 +136,15 @@ _guard_worktree() {
         "Worktree dirty pre-agent; guard skipped to preserve local work" \
         pollIteration="${POLL_COUNT:-0}"
     else
-      _guard_fail_or_warn "leak detected: worktree is dirty" "$guard_label" "Worktree guard" || return $?
-      warn "Worktree dirty after ${guard_label} — resetting leaked changes"
-      git -C "$_worktree" reset --hard HEAD 2>/dev/null || true
-      git -C "$_worktree" clean -fd 2>/dev/null || true
+      warn "Worktree dirty after ${guard_label} — possible leak (phase recovery runs before commit-completion guard)"
       emit_event "${guard_label}" "warn" "${guard_label}.worktree_leak_detected" \
-        "Agent leaked changes into worktree; auto-reset" \
+        "Dirty worktree after agent; phase recovery handles committed work" \
         pollIteration="${POLL_COUNT:-0}"
+      if ! declare -F orchestrator_fail >/dev/null 2>&1; then
+        warn "Worktree dirty after ${guard_label} — resetting leaked changes"
+        git -C "$_worktree" reset --hard HEAD 2>/dev/null || true
+        git -C "$_worktree" clean -fd 2>/dev/null || true
+      fi
     fi
   fi
 
