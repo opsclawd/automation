@@ -1560,7 +1560,7 @@ Write design.md now."
     fi
   } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
 
-  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _all_violations="${_worktree_violations}"
   _remediate_misplaced_artifact "design.md" "design" "plan-design"
   if [[ -n "$_all_violations" ]]; then
     orchestrator_fail "plan-design agent modified source files (contract violation): ${_all_violations}"
@@ -1713,7 +1713,7 @@ Write plan.md and task-manifest.json now."
     fi
   } | grep -vE '^(plan\.md|design\.md|\.gitignore|task-manifest\.json)$' | tr '\n' ' ' || true)
 
-  _all_violations="${_main_checkout_violations}${_worktree_violations}"
+  _all_violations="${_worktree_violations}"
   _remediate_plan_write_violations
   if [[ -n "$_all_violations" ]]; then
     orchestrator_fail "plan-write agent modified source files (contract violation): ${_all_violations}"
@@ -1994,7 +1994,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     local _impl_prompt_file
     _impl_prompt_file=$(mktemp)
     printf '%s' "$IMPLEMENTER_PROMPT" > "$_impl_prompt_file"
-    local _main_state_before
     _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase implement \
@@ -2151,7 +2150,6 @@ ${history_excerpt}"
     local _spec_prompt_file
     _spec_prompt_file=$(mktemp)
     printf '%s' "$SPEC_REVIEWER_PROMPT" > "$_spec_prompt_file"
-    local _main_state_before
     _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase spec-review \
@@ -2326,7 +2324,6 @@ ${history_excerpt}"
     local _qual_prompt_file
     _qual_prompt_file=$(mktemp)
     printf '%s' "$QUALITY_REVIEWER_PROMPT" > "$_qual_prompt_file"
-    local _main_state_before
     _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase quality-review \
@@ -2445,7 +2442,6 @@ ${history_excerpt}"
     local _fix_prompt_file
     _fix_prompt_file=$(mktemp)
     printf '%s' "$FIX_REVIEW_PROMPT" > "$_fix_prompt_file"
-    local _main_state_before
     _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase fix-review \
@@ -2569,7 +2565,6 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
     local _arbiter_prompt_file
     _arbiter_prompt_file=$(mktemp)
     printf '%s' "$ARBITER_PROMPT" > "$_arbiter_prompt_file"
-    local _main_state_before
     _worktree_state_before=$(_capture_worktree_state)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase arbitrate \
