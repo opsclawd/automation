@@ -1555,8 +1555,6 @@ JSON
 @test "_lint_task_size: skips files that do not exist on disk" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=2
   export _TASK_SPLIT_MAX_CASES=1
   export _TASK_SPLIT_BLOCK=false
@@ -1577,13 +1575,13 @@ JSON
   local events
   events=$(cat "$AI_RUN_EVENTS_FILE")
   [ -z "$events" ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: returns 1 when block is true and oversized task found" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1607,6 +1605,8 @@ JSON
   set -e
 
   [ "$rc" -eq 1 ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: returns 0 when manifest is missing" {
@@ -1624,8 +1624,6 @@ JSON
 @test "_lint_task_size: warns for .spec.ts and .bats test files too" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
@@ -1646,13 +1644,13 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: block=true FATAL on stderr with full task details" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1677,13 +1675,13 @@ JSON
   run _lint_task_size "${test_dir}/task-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"FATAL: Task 1 (Refactor Oversized Test) targets oversized test file oversized.test.ts: line count"* ]]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: block=true reports all oversized files, not just the first" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1710,4 +1708,6 @@ JSON
   [[ "$output" == *"big.test.ts"* ]]
   [[ "$output" == *"huge.spec.ts"* ]]
   [[ "$output" == *"massive.bats"* ]]
+
+  rm -rf "$test_dir"
 }
