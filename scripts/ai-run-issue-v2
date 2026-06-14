@@ -1687,7 +1687,7 @@ The manifest is the machine-readable source of truth for task boundaries. plan.m
 - Do NOT edit any source files (*.ts, *.js, *.sh, *.py, etc.). Your ONLY output is plan.md and task-manifest.json.
 - If you find yourself wanting to edit source code, STOP — that is for the implement phase.
 - The <!-- task-count: N --> HTML comment is not required when task-manifest.json is valid. If the manifest is missing or invalid, the comment serves as a fallback count check — without either, validation will fail.
-- When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code.
+- When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code. This is NOT optional — the task extraction pipeline relies on the column-0 invariant (real task headings start at column 0; anything indented is treated as an example/fixture). Violating this rule causes task extraction to misread the plan, potentially executing the wrong instructions or aborting the run. Inside fenced code blocks, heredocs, and code examples, ALWAYS indent example task headers (e.g., `  ## Task 3: Do something`), never let them appear at column 0.
 - Do NOT create standalone \"run validation suite\" or \"make CI green\" tasks. If a test needs updating, that is a separate implementation task. The validate phase runs automatically after all tasks complete.
 
 ## PLAN RISK CLASSIFICATION
@@ -1779,6 +1779,7 @@ Write plan.md and task-manifest.json now."
     MANIFEST_TASKS=""
     MANIFEST_COUNT=0
     if read_manifest "${WORKTREE_DIR}/task-manifest.json"; then
+      _manifest_valid=true
       info "Task manifest found: ${MANIFEST_COUNT} tasks declared"
       emit_event "plan-write" "info" "plan_written.manifest" \
         "task-manifest.json written alongside plan.md" taskCount="$MANIFEST_COUNT" manifestVersion="1"
@@ -1794,6 +1795,18 @@ Write plan.md and task-manifest.json now."
   fi
 
   _emit_phase_done "plan-write"
+
+  # Blocking gate: validate manifest/prose agreement immediately after
+  # plan-write, before plan-review. Catches #206/#315-class fence bugs at
+  # the source instead of 2 phases later at implement-entry.
+  # Only runs when the manifest was successfully validated above — an invalid
+  # manifest falls back to prose scraping (handled at implement-entry).
+  if [[ "${_manifest_valid:-false}" == "true" ]]; then
+    if ! _plan_validation_error=$(validate_task_list "${WORKTREE_DIR}/plan.md" "$MANIFEST_COUNT"); then
+      orchestrator_fail "Plan validation failed at plan-write gate: ${_plan_validation_error}"
+    fi
+    info "Plan validation passed at plan-write gate (${MANIFEST_COUNT} tasks)"
+  fi
 
   _lint_plan_verification
 
@@ -2690,10 +2703,8 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
 
     log "=== Task ${TASK_NUM}/${TASK_COUNT}: ${task_title} ==="
 
-    TASK_TEXT=$(extract_task_text "plan.md" "$task_title" "$TASK_NUM")
-    if [[ -z "$TASK_TEXT" ]]; then
-      warn "Could not extract task text for '${task_title}', using title as description"
-      TASK_TEXT="$task_title"
+    if ! TASK_TEXT=$(extract_task_text "plan.md" "$task_title" "$TASK_NUM") || [[ -z "$TASK_TEXT" ]]; then
+      orchestrator_fail "Task ${TASK_NUM} '${task_title}' — no column-0 heading found in plan.md. The plan-write agent may have omitted the heading or placed it inside a fenced code block. Run aborted to prevent executing a task with no instructions."
     fi
 
     BASE_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -3195,9 +3206,8 @@ with open(path, 'w') as f:
                 break
               else
                 log "  Task ${TASK_NUM}: applied verification amendment to plan.md"
-                TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" "$TASK_NUM" 2>/dev/null || echo "$TASK_TEXT")
-                if [[ -z "$TASK_TEXT" ]]; then
-                  TASK_TEXT="$task_title"
+                if ! TASK_TEXT=$(extract_task_text "${WORKTREE_DIR}/plan.md" "$task_title" "$TASK_NUM") || [[ -z "$TASK_TEXT" ]]; then
+                  orchestrator_fail "Task ${TASK_NUM} '${task_title}' — no column-0 heading found in plan.md after amendment. Plan amendment did not fix the heading issue."
                 fi
               fi
             fi
