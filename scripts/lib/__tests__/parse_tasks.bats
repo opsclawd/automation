@@ -1356,7 +1356,6 @@ JSON
 @test "_lint_task_size: returns 0 when no test files exceed thresholds" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
 
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
@@ -1377,14 +1376,15 @@ JSON
 
   _lint_task_size "${test_dir}/task-manifest.json"
   [ $? -eq 0 ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: warns when test file exceeds line threshold" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1404,14 +1404,14 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
-}
 
+  rm -rf "$test_dir"
+}
 @test "_lint_task_size: warns when test file exceeds test case threshold" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1431,14 +1431,14 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
-}
 
+  rm -rf "$test_dir"
+}
 @test "_lint_task_size: counts multiline test declarations correctly" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=5
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1490,14 +1490,14 @@ JSON
   _lint_task_size "${test_dir}/task-manifest.json"
 
   jq -e 'select(.type == "task_size.oversized")' "$AI_RUN_EVENTS_FILE" >/dev/null
-}
 
+  rm -rf "$test_dir"
+}
 @test "_lint_task_size: skips tasks with no files field" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-
   export _TASK_SPLIT_MAX_LINES=500
+
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
   export WORKTREE_DIR="$test_dir"
@@ -1517,12 +1517,13 @@ JSON
   local events
   events=$(cat "$AI_RUN_EVENTS_FILE")
   [ -z "$events" ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: skips non-test files" {
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
 
   export _TASK_SPLIT_MAX_LINES=2
   export _TASK_SPLIT_MAX_CASES=1
