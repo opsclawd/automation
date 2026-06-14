@@ -109,6 +109,17 @@ _guard_worktree() {
         pollIteration="${POLL_COUNT:-0}" \
         expectedSha="$expected_sha" actualSha="$actual_sha"
     else
+      if declare -F orchestrator_fail >/dev/null 2>&1; then
+        warn "Worktree HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) and tree is dirty — phase recovery handles committed work before commit-completion guard"
+        emit_event "${guard_label}" "warn" "${guard_label}.worktree_leak_detected" \
+          "HEAD moved and dirty worktree after agent; phase recovery handles committed work" \
+          pollIteration="${POLL_COUNT:-0}" \
+          expectedSha="$expected_sha" actualSha="$actual_sha"
+        return 0
+      fi
+      # ── Legacy auto-reset path ──────────────────────────────────
+      # Only reachable when orchestrator_fail is NOT defined (no
+      # commit-completion recovery). Auto-reset to pre-agent SHA.
       _guard_fail_or_warn "leak detected: worktree HEAD moved from ${expected_sha:0:7} to ${actual_sha:0:7}" "$guard_label" "Worktree guard" || return $?
       warn "Worktree HEAD moved after ${guard_label} (${expected_sha:0:7} → ${actual_sha:0:7}) — resetting to pre-agent SHA"
       if [[ -n "$pre_branch" && "$pre_branch" != "HEAD" ]]; then
