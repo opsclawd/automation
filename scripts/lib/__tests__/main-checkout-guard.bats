@@ -608,7 +608,7 @@ teardown() {
   [ ! -f "$_dir/leaked-untracked.txt" ]
 }
 
-@test "_guard_worktree rewinds HEAD when agent committed a leak when no orchestrator_fail (legacy path)" {
+@test "_guard_worktree rewinds HEAD when agent committed a leak AND left tree dirty when no orchestrator_fail (legacy path)" {
   local _dir="$TMPDIR_TEST/worktree-guard-commit"
   setup_worktree_fixture "$_dir"
   export WORKTREE_DIR="$_dir"
@@ -622,6 +622,8 @@ teardown() {
   echo "leaked content" > "$_dir/leaked.txt"
   git -C "$_dir" add leaked.txt
   git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "leaked"
+  
+  echo "dirty" > "$_dir/dirty.txt"
 
   local leaked_sha
   leaked_sha=$(git -C "$_dir" rev-parse HEAD)
@@ -634,6 +636,37 @@ teardown() {
   final_sha=$(git -C "$_dir" rev-parse HEAD)
   [ "$final_sha" = "$pre_sha" ]
   [ ! -f "$_dir/leaked.txt" ]
+}
+
+@test "_guard_worktree permits clean commit without rewinding HEAD" {
+  local _dir="$TMPDIR_TEST/worktree-guard-clean-commit"
+  setup_worktree_fixture "$_dir"
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+  local pre_sha="${pre_state%%|*}"
+
+  echo "committed content" > "$_dir/committed.txt"
+  git -C "$_dir" add committed.txt
+  git -C "$_dir" -c user.email=t@t -c user.name=t commit -q -m "clean commit"
+
+  local expected_sha
+  expected_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$expected_sha" != "$pre_sha" ]
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -eq 0 ]
+
+  local final_sha
+  final_sha=$(git -C "$_dir" rev-parse HEAD)
+  [ "$final_sha" = "$expected_sha" ]
+  [ -f "$_dir/committed.txt" ]
+  
+  run jq -e '.type == "test.worktree_commit_detected"' "$AI_RUN_EVENTS_FILE"
+  [ "$status" -eq 0 ]
 }
 
 @test "_guard_worktree preserves pre-existing dirty work" {
