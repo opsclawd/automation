@@ -1548,6 +1548,8 @@ JSON
   local events
   events=$(cat "$AI_RUN_EVENTS_FILE")
   [ -z "$events" ]
+
+  rm -rf "$test_dir"
 }
 
 @test "_lint_task_size: skips files that do not exist on disk" {
