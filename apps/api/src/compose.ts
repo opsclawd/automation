@@ -59,6 +59,7 @@ import {
   PiAgentAdapter,
   AntigravityAgentAdapter,
   ClaudeCodeAgentAdapter,
+  CodexAgentAdapter,
 } from '@ai-sdlc/infrastructure';
 
 const classifyExitAdapter = (
@@ -287,6 +288,12 @@ export function composeRoot(opts: ComposeOptions): Container {
       );
       if (needsClaudeCode) {
         adapters['claude-code'] = new ClaudeCodeAgentAdapter({
+          artifactsDir: join(runsDir, 'agent-artifacts'),
+        });
+      }
+      const needsCodex = Object.values(config.agent.profiles).some((p) => p.runtime === 'codex');
+      if (needsCodex) {
+        adapters.codex = new CodexAgentAdapter({
           artifactsDir: join(runsDir, 'agent-artifacts'),
         });
       }

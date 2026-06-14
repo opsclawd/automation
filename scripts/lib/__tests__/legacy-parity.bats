@@ -1079,6 +1079,52 @@ JSON
   rm -rf "$d"
 }
 
+# Invariant: QUOTA_PATTERNS recognizes Codex's "ERROR: Quota exceeded" format
+# so codex quota errors are classified as quota_exceeded (triggering fallback)
+# rather than generic failed (exit 1, no fallback triggered).
+# Source: #147.
+# Failure prevented: a Codex quota error classified as generic 'failed' would
+# leave the fallback trigger un-fired, wasting the reviewer run entirely.
+# TS-port contract: the QUOTA_PATTERNS array must contain a pattern matching
+# Codex's "Quota exceeded" stderr format.
+@test "parity[#147]: QUOTA_PATTERNS matches Codex 'ERROR: Quota exceeded' format" {
+  local patfile="$REPO_ROOT/packages/infrastructure/src/agent/error-patterns.ts"
+  run grep -c "quota.*exceed" "$patfile"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
+
+# Invariant: the Codex adapter hardcodes --sandbox read-only and never passes
+# --dangerously-bypass-approvals-and-sandbox, workspace-write, or
+# danger-full-access. This is the safety boundary that keeps the reviewer from
+# writing files or running unsandboxed commands.
+# Source: #147.
+# Failure prevented: a writable sandbox or approval bypass would let the
+# reviewer modify the worktree or execute unsandboxed commands, defeating the
+# purpose of reviewer-only routing.
+# TS-port contract: the adapter source must contain "read-only" in its arg
+# array and must never reference the three dangerous sandbox modes.
+@test "parity[#147]: codex adapter hardcodes read-only sandbox, never bypasses approvals" {
+  local adapter="$REPO_ROOT/packages/infrastructure/src/agent/codex-adapter.ts"
+
+  run grep -c "read-only" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Exclude comments when checking for dangerous strings in code
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'dangerously-bypass-approvals-and-sandbox'"
+  [ "$status" -eq 1 ]
+  [ "$output" -eq 0 ]
+
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'workspace-write'"
+  [ "$status" -eq 1 ]
+  [ "$output" -eq 0 ]
+
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'danger-full-access'"
+  [ "$status" -eq 1 ]
+  [ "$output" -eq 0 ]
+}
+
 # Invariant: extract_task_text is immune to unbalanced code fences — real task
 #   headings after an unclosed fence opener are found via raw column-0 grep,
 #   not lost to the _strip_fenced toggle.

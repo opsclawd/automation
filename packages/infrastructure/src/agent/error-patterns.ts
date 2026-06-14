@@ -4,6 +4,7 @@ export const QUOTA_PATTERNS = [
   /rate_limit_exceeded/i,
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
+  /quota.*exceed/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [

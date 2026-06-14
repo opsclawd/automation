@@ -156,6 +156,11 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeTruthy();
     expect(result).toContain('Not Enough Credits');
   });
+  it('matches Codex "ERROR: Quota exceeded" format (non-structural)', () => {
+    const result = testQuotaPatterns('ERROR: Quota exceeded. Check your plan and billing details.');
+    expect(result).toBeTruthy();
+    expect(result).toContain('Quota exceeded');
+  });
 
   it('ignores quota pattern in non-structural line (structuralOnly: true)', () => {
     const result = testQuotaPatterns(
