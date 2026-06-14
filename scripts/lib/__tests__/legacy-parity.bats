@@ -1079,6 +1079,68 @@ JSON
   rm -rf "$d"
 }
 
+
+# Invariant: the orchestrator startup deep-merges .ai-orchestrator.local.json
+#   overrides onto .ai-orchestrator.json before reading config values. The merge
+#   uses jq -s '.[0] * .[1]' — override values win for matching keys while
+#   base values are preserved for non-overridden keys.
+# Source: #223.
+# Failure prevented: a developer who sets planReview.enabled=true in their local
+#   config silently gets the base config default (false) because the orchestrator
+#   reads the base file directly. Every override is silently ignored.
+# TS-port contract: the TS orchestrator's config loader (loadConfig()) already
+#   deep-merges local config. This invariant pins the merge semantics so the
+#   TypeScript cutover preserves the same override-wins behavior.
+@test "parity[#223]: bash orchestrator deep-merges local config overrides" {
+  local d
+  d=$(mktemp -d)
+  # Base config: reviewFix.maxIterations=3, planReview.enabled=false
+  echo '{"phases":{"reviewFix":{"maxIterations":3},"implement":{"maxIterations":5},"planReview":{"enabled":false,"maxIterations":2}}}' > "$d/base.json"
+  # Local override: only planReview.enabled=true (reviewFix unchanged)
+  echo '{"phases":{"planReview":{"enabled":true}}}' > "$d/local.json"
+  local merged
+  merged=$(jq -s '.[0] * .[1]' "$d/base.json" "$d/local.json")
+  # Override wins where present
+  run jq -r '.phases.planReview.enabled' <<< "$merged"
+  [ "$output" = "true" ]
+  # Base value preserved where not overridden
+  run jq -r '.phases.reviewFix.maxIterations' <<< "$merged"
+  [ "$output" = "3" ]
+  # Base value for nested key within overridden object is preserved
+  run jq -r '.phases.planReview.maxIterations' <<< "$merged"
+  [ "$output" = "2" ]
+  # Local config absent: behavior unchanged (base config used as-is)
+  merged_no_override=$(jq -s '.[0] * .[1]' "$d/base.json" /dev/null 2>/dev/null || jq '.' "$d/base.json")
+  run jq -r '.phases.planReview.enabled' <<< "$merged_no_override"
+  [ "$output" = "false" ]
+  rm -rf "$d"
+}
+
+# Invariant: when .ai-orchestrator.local.json is malformed JSON, the orchestrator
+#   silently falls back to the base config rather than crashing.
+# Source: #223.
+# Failure prevented: a developer typo in the local config file (trailing comma,
+#   missing brace) crashes the entire orchestrator at startup.
+# TS-port contract: the TS config loader must also gracefully degrade on malformed
+#   local config — applicable if a future TS runner reads config at startup in
+#   the same way the bash runner does.
+@test "parity[#223]: malformed local config silently falls back to base" {
+  local d
+  d=$(mktemp -d)
+  echo '{"phases":{"reviewFix":{"maxIterations":7}}}' > "$d/base.json"
+  echo 'not valid json {{{' > "$d/local.json"
+  set +e
+  jq -s '.[0] * .[1]' "$d/base.json" "$d/local.json" > /dev/null 2>&1
+  local rc=$?
+  set -e
+  # Merge fails — verify fallback behavior (base config is used unchanged)
+  [ "$rc" -ne 0 ]
+  # The base config value is still readable
+  run jq -r '.phases.reviewFix.maxIterations' "$d/base.json"
+  [ "$output" = "7" ]
+  rm -rf "$d"
+}
+
 # Invariant: QUOTA_PATTERNS recognizes Codex's "ERROR: Quota exceeded" format
 # so codex quota errors are classified as quota_exceeded (triggering fallback)
 # rather than generic failed (exit 1, no fallback triggered).

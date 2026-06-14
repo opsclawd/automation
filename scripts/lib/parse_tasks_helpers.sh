@@ -161,6 +161,21 @@ _check_manifest_against_prose() {
     fi
   fi
 
+  # Non-blocking diagnostic: warn when task headings appear only inside fences
+  if [[ -z "$missing_from_prose" ]]; then
+    local fenced_only_nums
+    fenced_only_nums=$(comm -23 \
+      <(grep -oE "^#{2,3} Task [0-9]+:" "$plan_file" 2>/dev/null | grep -oE "[0-9]+" | sort -nu) \
+      <(_strip_fenced < "$plan_file" | grep -oE "^#{2,3} Task [0-9]+:" 2>/dev/null | grep -oE "[0-9]+" | sort -nu) \
+      2>/dev/null || true)
+    if [[ -n "$fenced_only_nums" ]]; then
+      local fenced_only
+      fenced_only=$(echo "$fenced_only_nums" | tr '\n' ',' | sed 's/,$//')
+      emit_event "implement" "warn" "manifest_check.fenced_heading" \
+        "task headings only found inside code fences (falsely valid per #315): ${fenced_only}"
+    fi
+  fi
+
   local extra_in_prose="" seen="" pn
   while IFS= read -r pn; do
     [[ -z "$pn" ]] && continue

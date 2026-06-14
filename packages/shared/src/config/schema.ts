@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+// WARNING: Bash orchestrator startup merge (scripts/ai-run-issue-v2) uses
+//   jq -s '.[0] * .[1]'
+// to combine base and local config. jq's '*' operator CONCATENATES arrays
+// rather than replacing them like TypeScript deepMerge. Any config key
+// consumed by the bash orchestrator MUST NOT hold an array value, or the merge
+// will silently produce duplicate entries instead of an override.
+
 const validationSchema = z.object({
   commands: z.array(z.string().min(1)).min(1),
   timeout: z.number().int().positive(),
