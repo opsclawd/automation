@@ -164,6 +164,17 @@ describe('agent config schema', () => {
     };
     expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
   });
+
+  it('accepts a codex runtime profile', () => {
+    const cfg = structuredClone(baseValid);
+    cfg.agent.profiles['codex-reviewer'] = {
+      runtime: 'codex',
+      provider: 'openai',
+      model: 'default',
+      timeoutMinutes: 45,
+    };
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
 });
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {

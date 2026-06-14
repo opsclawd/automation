@@ -1079,6 +1079,7 @@ JSON
   rm -rf "$d"
 }
 
+
 # Invariant: the orchestrator startup deep-merges .ai-orchestrator.local.json
 #   overrides onto .ai-orchestrator.json before reading config values. The merge
 #   uses jq -s '.[0] * .[1]' — override values win for matching keys while
@@ -1140,6 +1141,52 @@ JSON
   rm -rf "$d"
 }
 
+# Invariant: QUOTA_PATTERNS recognizes Codex's "ERROR: Quota exceeded" format
+# so codex quota errors are classified as quota_exceeded (triggering fallback)
+# rather than generic failed (exit 1, no fallback triggered).
+# Source: #147.
+# Failure prevented: a Codex quota error classified as generic 'failed' would
+# leave the fallback trigger un-fired, wasting the reviewer run entirely.
+# TS-port contract: the QUOTA_PATTERNS array must contain a pattern matching
+# Codex's "Quota exceeded" stderr format.
+@test "parity[#147]: QUOTA_PATTERNS matches Codex 'ERROR: Quota exceeded' format" {
+  local patfile="$REPO_ROOT/packages/infrastructure/src/agent/error-patterns.ts"
+  run grep -c "quota.*exceed" "$patfile"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
+
+# Invariant: the Codex adapter hardcodes --sandbox read-only and never passes
+# --dangerously-bypass-approvals-and-sandbox, workspace-write, or
+# danger-full-access. This is the safety boundary that keeps the reviewer from
+# writing files or running unsandboxed commands.
+# Source: #147.
+# Failure prevented: a writable sandbox or approval bypass would let the
+# reviewer modify the worktree or execute unsandboxed commands, defeating the
+# purpose of reviewer-only routing.
+# TS-port contract: the adapter source must contain "read-only" in its arg
+# array and must never reference the three dangerous sandbox modes.
+@test "parity[#147]: codex adapter hardcodes read-only sandbox, never bypasses approvals" {
+  local adapter="$REPO_ROOT/packages/infrastructure/src/agent/codex-adapter.ts"
+
+  run grep -c "read-only" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Exclude comments when checking for dangerous strings in code
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'dangerously-bypass-approvals-and-sandbox'"
+  [ "$status" -eq 1 ]
+  [ "$output" -eq 0 ]
+
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'workspace-write'"
+  [ "$status" -eq 1 ]
+  [ "$output" -eq 0 ]
+
+  run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'danger-full-access'"
+  [ "$status" -eq 1 ]
+  [ "$output" -eq 0 ]
+}
+
 # Invariant: extract_task_text is immune to unbalanced code fences — real task
 #   headings after an unclosed fence opener are found via raw column-0 grep,
 #   not lost to the _strip_fenced toggle.
@@ -1149,58 +1196,113 @@ JSON
 #   the old toggle treats everything after an odd fence as fenced.
 # TS-port contract: the TS extraction must locate headings with raw column-0
 #   grep, never depend on fence-state tracking.
-@test "parity[#315]: extract_task_text finds headings past an unbalanced fence" {
+# Invariant: extract_task_text uses fence-count to skip headings inside code
+#   fences, with a raw-column-0 fallback when the plan has unbalanced fences
+#   (total fence count is odd). This handles the #206 case where a real heading
+#   appears after a forgotten closing fence marker.
+# Source: #315 (this issue).
+# Failure prevented: a plan with an unbalanced fence bounces fence-count parity
+#   (odd) for every heading after the unclosed opener. The raw fallback then
+#   finds the real column-0 heading, so orchestration proceeds with correct
+#   instructions instead of aborting with "heading not found."
+# TS-port contract: the TS extraction must prefer fence-count filtering and
+#   fall back to raw column-0 grep only when total fences are unbalanced.
+@test "parity[#315]: extract_task_text finds heading outside fence, skips heading inside fence" {
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
-  cat > "$test_dir/plan.md" << 'PLAN'
+
+  # Heading at even fence count (0) is outside a fence — found normally.
+  cat > "$test_dir/plan-clean.md" << 'PLAN'
 ## Task 5: Far downstream task
-This is real task body after the unclosed fence.
+This is real task body.
 PLAN
+  run extract_task_text "$test_dir/plan-clean.md" "Far downstream task" "5"
+  [ "$status" -eq 0 ]
+  [[ "$output" = *"real task body"* ]]
+
+  # Heading at odd fence count (1 unclosed opener before it) — fence-count
+  # rejects it but raw fallback kicks in because total fences are odd (unbalanced).
   cat > "$test_dir/plan-with-unbalanced.md" << 'PLAN'
 ## Task 1: Early task
 Early body.
 ```
-unclosed fence — everything below is treated as fenced by old toggle
+unclosed fence — heading below has 1 (odd) fence opener before it
 ## Task 5: Far downstream task
-This is real task body after the unclosed fence.
+This is real task body.
 PLAN
-  # Without unbalanced fence, Task 5 is found normally.
-  run extract_task_text "$test_dir/plan.md" "Far downstream task" "5"
-  [ "$status" -eq 0 ]
-  echo "$output" | grep -q "real task body"
-  # With unbalanced fence, Task 5 is still found (old fence toggle would skip it).
   run extract_task_text "$test_dir/plan-with-unbalanced.md" "Far downstream task" "5"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "real task body"
+  [[ "$output" = *"real task body"* ]]
+
+  rm -rf "$test_dir"
 }
 
-# Invariant: extract_task_commit_msg is immune to unbalanced code fences —
-#   uses the same raw column-0 grep as extract_task_text.
+# Invariant: extract_task_commit_msg uses fence-count with raw fallback for
+#   unbalanced fences, matching extract_task_text. A heading after an unclosed
+#   fence is found by the raw fallback (total fences odd), and the correct
+#   commit message is returned.
 # Source: #315 (this issue).
-# Failure prevented: the old toggle-based heading finder misses the real
-#   heading after an unclosed fence, returning a fallback commit message
-#   instead of the one documented in plan.md.
-# TS-port contract: the TS extraction must locate headings with raw column-0
-#   grep, never depend on fence-state tracking.
-@test "parity[#315]: extract_task_commit_msg finds commit msg past an unbalanced fence" {
+# Failure prevented: the old fence-count-only approach returned fallback for
+#   real headings after unclosed fences. The raw fallback preserves the #206
+#   compatibility that made the original issue report actionable.
+# TS-port contract: same fence-count + raw fallback as extract_task_text.
+@test "parity[#315]: extract_task_commit_msg finds real heading past unbalanced fence" {
   source "${REPO_ROOT}/scripts/lib/parse_tasks_helpers.sh"
   local test_dir
   test_dir=$(mktemp -d)
-  trap "rm -rf $test_dir" EXIT
+
   cat > "$test_dir/plan.md" << 'PLAN'
 ```
-unclosed fence
+unclosed fence — Task 2 heading has 1 (odd) opener before it → raw fallback
 ## Task 2: Second task
 Body.
 git commit -m "feat: real commit msg here"
 
 ## Task 3: Third task
 PLAN
+  local result
   result=$(extract_task_commit_msg "$test_dir/plan.md" "Second task" "fallback" "2")
   [ "$result" = "feat: real commit msg here" ] || {
     echo "FAIL: expected 'feat: real commit msg here', got '$result'"
+    false
+  }
+
+  rm -rf "$test_dir"
+}
+
+# Invariant: validate_task_list runs as a post-plan-write blocking gate.
+# Source: #315 (this issue).
+# Failure prevented: a plan with manifest/prose mismatch (e.g. real headings
+#   swallowed by unbalanced fence) is caught at plan-write time, not 2 phases
+#   later at implement-entry. The implement phase never sees a plan that
+#   validation would green-light but extraction would mis-execute.
+# TS-port contract: the TS orchestrator must validate plan manifest/prose
+#   agreement immediately after plan-write, before advancing to plan-review.
+@test "parity[#315]: validate_task_list runs as post-plan-write gate" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local section
+  section=$(sed -n '/_emit_phase_done "plan-write"/,/_lint_plan_verification/p' "$script")
+  echo "$section" | grep -q "validate_task_list" || {
+    echo "FAIL: post-plan-write validate_task_list gate not found"
+    false
+  }
+}
+
+# Invariant: a missing task heading in plan.md causes the implement phase to
+#   abort (orchestrator_fail), never silently substitute the title as the
+#   agent's only instruction.
+# Source: #315 (this issue).
+# Failure prevented: an agent is invoked with only a short title like
+#   "Add bats tests" as its prompt, producing hallucinated implementation.
+# TS-port contract: the TS implement loop must abort when no column-0
+#   heading is found for a manifest task.
+@test "parity[#315]: missing task heading aborts implement phase (not silent title fallback)" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  ! grep -n "using title as description" "$script" | grep -q "." || {
+    local matches
+    matches=$(grep -n "using title as description" "$script")
+    echo "FAIL: title-as-description fallback still present at lines: $matches"
     false
   }
 }

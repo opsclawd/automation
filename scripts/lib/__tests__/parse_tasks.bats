@@ -402,26 +402,6 @@ PLAN
   ! echo "$result" | grep -q "Body 2"
 }
 
-@test "extract_task_text: finds real heading past unbalanced fence (#206 regression)" {
-  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
-## Task 1: Early task
-
-Early body.
-```
-unclosed fence line
-## Task 2: Middle task
-This is real task 2 body, not fenced.
-## Task 3: Late task
-Task 3 body.
-PLAN
-  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Middle task" "2")
-  echo "$result" | grep -q "real task 2 body" || {
-    echo "FAIL: unbalanced fence caused heading miss"
-    echo "got: [$result]"
-    false
-  }
-}
-
 @test "extract_task_text: nested fences do not cause heading skip (#315 regression)" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Setup
@@ -449,6 +429,61 @@ PLAN
   ! echo "$result" | grep -q "Core body"
 }
 
+@test "extract_task_text: end boundary is fence-aware for column-0 fenced headings (#315)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+This is the body of task 1.
+
+```
+## Task 2: Phantom at column 0 inside fence
+```
+
+Still part of task 1 body.
+
+## Task 2: Real second task
+
+Second task body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
+  echo "$result" | grep -q "Still part of task 1 body" || {
+    echo "FAIL: last body line of task 1 missing"
+    echo "got: [$result]"
+    false
+  }
+  echo "$result" | grep -q "Phantom at column 0" || {
+    echo "FAIL: fenced column-0 heading was excluded (should be part of task 1 body)"
+    echo "got: [$result]"
+    false
+  }
+  ! echo "$result" | grep -q "Real second task"
+}
+
+@test "extract_task_text: unbalanced fence boundary falls back to raw matching (#315 review)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: First task
+
+Body with unclosed fence.
+```
+unclosed
+
+## Task 2: Real second task
+
+Second body.
+PLAN
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "First task" "1")
+  echo "$result" | grep -q "unclosed" || {
+    echo "FAIL: fenced body content missing from task 1"
+    echo "got: [$result]"
+    false
+  }
+  ! echo "$result" | grep -q "Second body" || {
+    echo "FAIL: task 2 body leaked into task 1 extraction (unbalanced fence swallowed boundary)"
+    echo "got: [$result]"
+    false
+  }
+}
+
 @test "extract_task_text: returns exit 1 when no heading matches task title" {
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
 ## Task 1: Write tests
@@ -465,6 +500,48 @@ PLAN
   set -e
   [ "$rc" -eq 1 ] || {
     echo "FAIL: expected exit 1 for non-matching title, got exit ${rc}"
+    false
+  }
+}
+
+@test "extract_task_text: title fallback is fence-aware when number path is empty (#315)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Real task
+
+Body.
+
+```
+## Task 2: Phantom — only heading with this number
+```
+PLAN
+  set +e
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Phantom" 2)
+  local rc=$?
+  set -e
+  [ "$rc" -eq 1 ] || {
+    echo "FAIL: expected exit 1 when title-match is inside fence, got exit ${rc}"
+    echo "got: [$result]"
+    false
+  }
+}
+
+@test "extract_task_text: numbered exhausted skips title fallback to avoid wrong task body (#315 review)" {
+  cat > "$TMPDIR_TEST/plan.md" << 'PLAN'
+## Task 1: Implement auth
+
+Task 1 body.
+
+```
+## Task 2: Implement auth
+```
+PLAN
+  set +e
+  result=$(extract_task_text "$TMPDIR_TEST/plan.md" "Implement auth" 2)
+  local rc=$?
+  set -e
+  [ "$rc" -eq 1 ] || {
+    echo "FAIL: expected exit 1 when Task 2 heading is fenced-only and title matches Task 1, got exit ${rc}"
+    echo "got: [$result]"
     false
   }
 }
