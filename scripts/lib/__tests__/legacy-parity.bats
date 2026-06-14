@@ -1412,3 +1412,45 @@ PLAN
   run jq -e '.type == "test.worktree_leak_detected"' "$AI_RUN_EVENTS_FILE"
   [ "$status" -eq 0 ]
 }
+
+# Invariant: seed_excludes() writes the union merge attribute for
+#   legacy-parity.bats into the worktree-specific $GIT_DIR/info/attributes.
+#   This closes the gap where a branch cut before .gitattributes arrived in
+#   the index would use the default text driver on the first merge of main,
+#   producing a conflict in an append-only file.
+# Source: #329.
+# Failure prevented: merge conflict in legacy-parity.bats when syncing main
+#   into a branch that predates .gitattributes.
+# TS-port contract: the TS orchestrator's worktree initialization must also
+#   seed info/attributes with the union merge rule for legacy-parity.bats.
+@test "parity[#329]: worktree info/attributes seeds union merge for legacy-parity.bats" {
+  local repo="$BATS_TEST_TMPDIR/se-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "t@e.com"
+  git -C "$repo" config user.name "t"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  local worktree="$BATS_TEST_TMPDIR/se-wt"
+  git -C "$repo" worktree add "$worktree" -b se-branch HEAD
+
+  local ORIG_WORKTREE_DIR="$WORKTREE_DIR"
+  export WORKTREE_DIR="$worktree"
+  log() { :; }
+  emit_event() { :; }
+  warn() { :; }
+
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  seed_excludes
+
+  local git_dir
+  git_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-dir)
+  local attr_file="${git_dir}/info/attributes"
+  [ -f "$attr_file" ]
+  grep -qF 'scripts/lib/__tests__/legacy-parity.bats merge=union' "$attr_file"
+
+  export WORKTREE_DIR="$ORIG_WORKTREE_DIR"
+}

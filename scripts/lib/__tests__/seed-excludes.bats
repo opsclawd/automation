@@ -159,3 +159,30 @@ OLDBLOCK
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+@test "seed_excludes writes merge=union attribute for legacy-parity.bats" {
+  local script_path
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
+  seed_excludes
+  local git_dir
+  git_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-dir)
+  local attr_file="${git_dir}/info/attributes"
+  [ -f "$attr_file" ]
+  grep -qF 'scripts/lib/__tests__/legacy-parity.bats merge=union' "$attr_file"
+}
+
+@test "seed_excludes attributes seeding is idempotent — calling twice does not duplicate" {
+  local script_path
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
+  seed_excludes
+  seed_excludes
+  local git_dir
+  git_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-dir)
+  local attr_file="${git_dir}/info/attributes"
+  [ -f "$attr_file" ]
+  local count
+  count=$(grep -c 'legacy-parity.bats' "$attr_file")
+  [ "$count" -eq 1 ]
+}

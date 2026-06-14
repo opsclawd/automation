@@ -509,6 +509,15 @@ seed_excludes() {
     grep -qxF 'review-task-manifest.json' "$exclude_file" || echo 'review-task-manifest.json' >> "$exclude_file"
     grep -qxF 'review-triage.md' "$exclude_file" || echo 'review-triage.md' >> "$exclude_file"
     grep -qxF 'result.json' "$exclude_file" || echo 'result.json' >> "$exclude_file"
+
+    # Seed merge attributes — guards legacy-parity.bats even before .gitattributes
+    # arrives in the worktree index via a first sync of main (#329).
+    local git_dir
+    git_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-dir)
+    mkdir -p "$git_dir/info"
+    grep -qF 'legacy-parity.bats' "$git_dir/info/attributes" 2>/dev/null \
+      || echo 'scripts/lib/__tests__/legacy-parity.bats merge=union' >> "$git_dir/info/attributes"
+
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -570,6 +579,14 @@ EOF
       grep -qxF "$_artifact" "$exclude_file" 2>/dev/null || echo "$_artifact" >> "$exclude_file"
     done < <(orchestrator_artifact_paths)
   fi
+
+  # Seed merge attributes — guards legacy-parity.bats even before .gitattributes
+  # arrives in the worktree index via a first sync of main (#329).
+  local git_dir
+  git_dir=$(cd "$WORKTREE_DIR" && git rev-parse --git-dir)
+  mkdir -p "$git_dir/info"
+  grep -qF 'legacy-parity.bats' "$git_dir/info/attributes" 2>/dev/null \
+    || echo 'scripts/lib/__tests__/legacy-parity.bats merge=union' >> "$git_dir/info/attributes"
 }
 
 # ── result resolution helpers ───────────────────────────────────────────────
