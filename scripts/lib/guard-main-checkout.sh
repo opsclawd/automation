@@ -80,6 +80,23 @@ _guard_worktree() {
         "Agent committed to worktree while pre-agent state was dirty; manual cleanup required" \
         pollIteration="${POLL_COUNT:-0}" \
         expectedSha="$expected_sha" actualSha="$actual_sha"
+      if [[ -n "$pre_branch" ]]; then
+        local _current_branch
+        _current_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+        if [[ "$_current_branch" != "$pre_branch" ]]; then
+          _guard_fail_or_warn "branch switch: worktree switched from ${pre_branch} to ${_current_branch}" "$guard_label" "Worktree guard" || return $?
+          if [[ "$pre_branch" == "HEAD" ]]; then
+            warn "Worktree switched from detached HEAD to ${_current_branch} after ${guard_label} — restoring detached HEAD"
+            git -C "$_worktree" checkout -q --detach HEAD 2>/dev/null || true
+          else
+            warn "Worktree switched from ${pre_branch} to ${_current_branch} after ${guard_label} — restoring ${pre_branch}"
+            git -C "$_worktree" checkout -q "$pre_branch" 2>/dev/null || true
+          fi
+          emit_event "${guard_label}" "warn" "${guard_label}.worktree_branch_restored" \
+            "Restored worktree branch from ${_current_branch} to ${pre_branch}" \
+            pollIteration="${POLL_COUNT:-0}"
+        fi
+      fi
       return 0
     fi
     # ── Clean commit: HEAD advanced but tree is clean ──────────────
