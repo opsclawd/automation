@@ -1,5 +1,9 @@
 #!/usr/bin/env bats
 
+teardown() {
+  if [ -n "${_work_dir:-}" ]; then rm -rf "$_work_dir"; fi
+}
+
 @test "ai-pr-review-poll prints usage when no PR given" {
   run scripts/ai-pr-review-poll
   [ "$status" -eq 1 ]
@@ -30,10 +34,10 @@ SCRIPT
   repo_root="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   workdir="$repo_root/.ai-worktrees/issue-7"
   mkdir -p "$workdir"
+  _work_dir="$workdir"
   run env PATH="$fake_bin:$PATH" OWNER_REPO= scripts/ai-pr-review-poll 42 7
 
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not determine owner/repo"* ]]
 
-  rm -rf "$workdir"
 }

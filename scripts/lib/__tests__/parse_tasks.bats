@@ -14,6 +14,7 @@ setup() {
 
 teardown() {
   rm -rf "$TMPDIR_TEST"
+  if [ -n "${_test_dir:-}" ]; then rm -rf "$_test_dir"; fi
 }
 
 @test "read_manifest: returns titles and count for valid manifest" {
@@ -1356,6 +1357,7 @@ JSON
 @test "_lint_task_size: returns 0 when no test files exceed thresholds" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
 
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
@@ -1383,6 +1385,7 @@ JSON
 @test "_lint_task_size: warns when test file exceeds line threshold" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
 
   export _TASK_SPLIT_MAX_CASES=10
@@ -1410,6 +1413,7 @@ JSON
 @test "_lint_task_size: warns when test file exceeds test case threshold" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
 
   export _TASK_SPLIT_MAX_CASES=10
@@ -1437,6 +1441,7 @@ JSON
 @test "_lint_task_size: counts multiline test declarations correctly" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
 
   export _TASK_SPLIT_MAX_CASES=5
@@ -1496,6 +1501,7 @@ JSON
 @test "_lint_task_size: skips tasks with no files field" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
 
   export _TASK_SPLIT_MAX_CASES=10
@@ -1524,6 +1530,7 @@ JSON
 @test "_lint_task_size: skips non-test files" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
 
   export _TASK_SPLIT_MAX_LINES=2
   export _TASK_SPLIT_MAX_CASES=1
@@ -1555,6 +1562,7 @@ JSON
 @test "_lint_task_size: skips files that do not exist on disk" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=2
   export _TASK_SPLIT_MAX_CASES=1
   export _TASK_SPLIT_BLOCK=false
@@ -1582,6 +1590,7 @@ JSON
 @test "_lint_task_size: returns 1 when block is true and oversized task found" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1624,6 +1633,7 @@ JSON
 @test "_lint_task_size: warns for .spec.ts and .bats test files too" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=false
@@ -1651,6 +1661,7 @@ JSON
 @test "_lint_task_size: block=true FATAL on stderr with full task details" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
@@ -1682,6 +1693,7 @@ JSON
 @test "_lint_task_size: block=true reports all oversized files, not just the first" {
   local test_dir
   test_dir=$(mktemp -d)
+  _test_dir="$test_dir"
   export _TASK_SPLIT_MAX_LINES=500
   export _TASK_SPLIT_MAX_CASES=10
   export _TASK_SPLIT_BLOCK=true
