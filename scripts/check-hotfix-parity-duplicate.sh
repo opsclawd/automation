@@ -34,7 +34,7 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
 fi
 
 # Step 3: Get open PRs targeting the base ref
-open_prs="$(gh pr list --state open --base "${BASE_REF}" --json number,headRefName -q '.[] | "\(.number)\t\(.headRefName)"' 2>/dev/null)" || {
+open_prs="$(gh pr list --limit 1000 --state open --base "${BASE_REF}" --json number,headRefName -q '.[] | "\(.number)\t\(.headRefName)"' 2>/dev/null)" || {
   echo "::notice::Could not list open PRs — skipping duplicate check."
   exit 0
 }
