@@ -139,6 +139,7 @@ _guard_worktree() {
     local _current_branch
     _current_branch=$(git -C "$_worktree" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
     if [[ "$_current_branch" != "$pre_branch" ]]; then
+      _guard_fail_or_warn "branch switch: worktree switched from ${pre_branch} to ${_current_branch}" "$guard_label" "Worktree guard" || return $?
       if [[ "$pre_branch" == "HEAD" ]]; then
         warn "Worktree switched from detached HEAD to ${_current_branch} after ${guard_label} — restoring detached HEAD"
         git -C "$_worktree" checkout -q --detach HEAD 2>/dev/null || true

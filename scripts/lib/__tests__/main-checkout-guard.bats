@@ -713,6 +713,34 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
+@test "_guard_worktree hard-fails on same-SHA branch switch when orchestrator_fail defined" {
+  local _dir="$TMPDIR_TEST/worktree-guard-branch-switch-only-fail"
+  setup_worktree_fixture "$_dir"
+  git -C "$_dir" branch same-sha-branch
+  export WORKTREE_DIR="$_dir"
+  export REPO_ROOT="$FIXTURE_REPO"
+  unset POLL_WORKTREE
+
+  orchestrator_fail() {
+    echo "orchestrator_fail called: $1" > "$TMPDIR_TEST/fail-reason.txt"
+    return 1
+  }
+
+  local _default_branch
+  _default_branch=$(git -C "$_dir" rev-parse --abbrev-ref HEAD)
+
+  local pre_state
+  pre_state=$(_capture_worktree_state)
+
+  git -C "$_dir" checkout -q same-sha-branch
+
+  run _guard_worktree "test" "$pre_state"
+  [ "$status" -ne 0 ]
+  [ -f "$TMPDIR_TEST/fail-reason.txt" ]
+  run grep -q "branch switch" "$TMPDIR_TEST/fail-reason.txt"
+  [ "$status" -eq 0 ]
+}
+
 @test "_guard_worktree refuses to auto-reset when pre-agent dirty AND HEAD moved" {
   local _dir="$TMPDIR_TEST/worktree-guard-dirty-moved"
   setup_worktree_fixture "$_dir"
