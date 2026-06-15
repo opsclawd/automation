@@ -336,7 +336,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
-        const invocationId = newestInvocationId(String(ctx.runId));
         const result = await router.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath: 'prompts/review.md',
@@ -347,6 +346,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           phaseId: String(ctx.phaseId),
           startCommitSha: '',
         });
+        const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         const store: ArtifactStore = {
           async read(_runId: string, relativePath: string): Promise<string> {
@@ -374,7 +374,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       ): Promise<FixStepResult> => {
         const profile =
           opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
-        const invocationId = newestInvocationId(String(ctx.runId));
         const result = await router.invoke({
           profile: AgentProfileName(profile),
           promptPath: 'prompts/fix.md',
@@ -388,6 +387,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? { fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId) }
             : {}),
         });
+        const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         const store: ArtifactStore = {
           async read(_runId: string, relativePath: string): Promise<string> {
