@@ -397,7 +397,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           cwd: ctx.cwd,
           runId: String(ctx.runId),
           repoId: ctx.repoId,
-          phaseId: String(ctx.phaseId),
+          phaseId: 'whole-pr-review',
           startCommitSha,
         });
         const invocationId = newestInvocationId(String(ctx.runId));
