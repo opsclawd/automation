@@ -462,7 +462,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           cwd: ctx.cwd,
           runId: String(ctx.runId),
           repoId: ctx.repoId,
-          phaseId: String(ctx.phaseId),
+          phaseId: 'fix-review',
           startCommitSha: '',
           ...(opts.useFallback && opts.previousInvocationId
             ? {
