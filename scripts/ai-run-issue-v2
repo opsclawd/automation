@@ -3959,6 +3959,7 @@ else
   if [[ "$FIX_REVIEW_FIX_COUNT" -eq 0 ]]; then
     info "No actionable fix tasks in review-task-manifest (${FIX_REVIEW_TASK_COUNT} finding(s), all deferred/skipped). Nothing to fix; exiting fix-review."
     echo "ALL_FIXED" > "${ISSUES_DIR}/fix-status.txt"
+    echo "passed" > "${ISSUES_DIR}/validation.result"
     emit_event "fix-review" "info" "phase.completed" \
       "fix-review completed: no actionable fix tasks" \
       status="ALL_FIXED"
