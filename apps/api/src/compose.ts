@@ -384,6 +384,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         // readReviewVerdict would parse a fix-review schema as whole-pr-review.
         rmSync(join(ctx.cwd, 'code-review.md'), { force: true });
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
         const result = await router.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath,
@@ -392,7 +397,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           repoId: ctx.repoId,
           phaseId: String(ctx.phaseId),
-          startCommitSha: '',
+          startCommitSha,
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
@@ -473,6 +478,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         // Clear stale result.json from a prior step so the adapter's
         // artifact-exists check cannot be satisfied by a prior step's file.
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
         const result = await router.invoke({
           profile: AgentProfileName(profile),
           promptPath,
@@ -481,7 +491,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           repoId: ctx.repoId,
           phaseId: 'fix-review',
-          startCommitSha: '',
+          startCommitSha,
           ...(opts.useFallback && opts.previousInvocationId
             ? {
                 fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
@@ -508,15 +518,34 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = patchedFixInv
           ? await readFixVerdict(patchedFixInv, { artifacts: store, agent: router })
           : { ok: false as const, detail: 'no invocation row' };
+        // Reject done_with_fixes when git commit did not advance the HEAD SHA.
+        // The fixer may have written result.json but failed to commit (e.g.
+        // missing git identity). Without this check the loop would accept the
+        // fix, run revalidation against dirty uncommitted files, and subsequent
+        // review iterations would diff origin/<base>...HEAD (the pre-fix commit),
+        // silently discarding the fix's changes.
+        const shaAdvanced =
+          result.endCommitSha !== undefined && result.endCommitSha !== startCommitSha;
+        const effectiveVerdict =
+          verdict.ok && verdict.verdict === 'done_with_fixes' && !shaAdvanced
+            ? undefined
+            : verdict.ok
+              ? verdict.verdict
+              : undefined;
         return {
           invocationId,
           agentOutcome: result.outcome,
-          ...(verdict.ok ? { verdict: verdict.verdict } : {}),
+          ...(effectiveVerdict !== undefined ? { verdict: effectiveVerdict } : {}),
         };
       };
 
       const runRevalidation = async (ctx: StepContext): Promise<RevalidationResult> => {
-        const revalidateLogDir = join(runsDir, String(ctx.runId), 'revalidate');
+        const revalidateLogDir = join(
+          runsDir,
+          String(ctx.runId),
+          'revalidate',
+          `iter-${ctx.iterationIndex}`,
+        );
         const vr = await runValidation.execute({
           runId: RunId(String(ctx.runId)),
           phaseId: PhaseName('validate'),
