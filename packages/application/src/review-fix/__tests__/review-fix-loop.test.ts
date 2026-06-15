@@ -312,4 +312,43 @@ describe('ReviewFixLoop', () => {
     expect(out.loop.iterations).toHaveLength(2);
     expect(revalCalls).toBe(2);
   });
+
+  it('proceeds to fix step when phaseId is fix-review and review returns fail', async () => {
+    let reviewCalls = 0;
+    let fixCalls = 0;
+    const deps = makeDeps({
+      runReview: async () => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+        };
+      },
+      runFix: async () => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        };
+      },
+    });
+    const out = await new ReviewFixLoop(deps).execute({
+      ...baseInput(),
+      phaseId: PhaseName('fix-review'),
+    });
+    // The review step returns fail (a whole-pr-review-shaped verdict).
+    // Despite phaseId being fix-review, the loop must proceed to the fix step.
+    // Before the fix, extractResult validated fail against fixReviewResultSchema
+    // which only accepts done_with_fixes/done_no_fixes_needed/cannot_fix,
+    // causing verdict to be undefined and the loop to hard-fail at iteration 1.
+    expect(out.phaseOutcome).toBe('passed');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(2);
+    expect(fixCalls).toBe(1);
+  });
 });
