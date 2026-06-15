@@ -8,7 +8,9 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  copyFileSync,
 } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   openDatabase,
@@ -18,6 +20,7 @@ import {
   EventRepository,
   ArtifactRepository,
   FailureRepository,
+  LoopRepository,
   AgentInvocationRepository,
   ValidationRunRepository,
   PrReviewRepository,
@@ -41,6 +44,10 @@ import {
   decideReactivation,
   applyReactivation,
   pollTaskResultSchema,
+  ReviewFixLoop,
+  readReviewVerdict,
+  readFixVerdict,
+  type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
@@ -50,9 +57,13 @@ import {
   type GitPort,
   type CreateWorktreeInput,
   type PushInput,
+  type StepContext,
+  type ReviewStepResult,
+  type FixStepResult,
+  type RevalidationResult,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
+import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -127,6 +138,7 @@ export interface Container {
   agentInvocationRepository: AgentInvocationRepository;
   validationRunRepository: ValidationRunRepository;
   prReviewRepository: PrReviewRepository;
+  loopRepository: LoopRepository;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
@@ -136,6 +148,7 @@ export interface Container {
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
+  reviewFixLoop?: ReviewFixLoop;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -195,6 +208,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const validationRunRepository = new ValidationRunRepository(db);
   const prReviewRepository = new PrReviewRepository(db);
   const agentUsageRepository = new AgentUsageRepository(db);
+  const loopRepository = new LoopRepository(db);
   const validationAdapter = new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
@@ -258,6 +272,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
+  let reviewFixLoop: ReviewFixLoop | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
@@ -306,6 +321,343 @@ export function composeRoot(opts: ComposeOptions): Container {
       });
       const agent = config.agent;
       resolveProfileForPhaseBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+
+      const router = agentRuntime;
+      const reviewProfileName: string =
+        config.agent.phaseProfiles['whole-pr-review']?.profile ?? 'opencode-frontier';
+      const fixProfileName: string =
+        config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
+      const fixFallbackProfileName: string | undefined =
+        config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+
+      const newestInvocationId = (runUuid: string): string => {
+        const list = agentInvocationRepository.listByRun(RunId(runUuid));
+        const last = list[list.length - 1];
+        return last ? String(last.id) : '';
+      };
+
+      const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
+        const promptDir = join(baseTmpDir, 'review-fix-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
+        const reviewPrompt = [
+          'You are reviewing code changes in a pull request.',
+          '',
+          '## CONTEXT',
+          `Working directory: ${ctx.cwd}`,
+          `Repository: ${ctx.repoId}`,
+          '',
+          '## TASK',
+          `Run: git diff origin/${opts.baseBranch ?? resolvedDefaultBranch}...HEAD`,
+          'Read the diff carefully.',
+          '',
+          'Write a code review to ./code-review.md.',
+          '',
+          'For each finding you MUST include:',
+          '- severity: critical | high | medium | low',
+          '- file path and line reference (if applicable)',
+          '- evidence: what you observed in the diff',
+          '- failure mode: why this is a problem',
+          '- required fix: specific action to resolve the issue',
+          '',
+          'Categorize findings:',
+          '- critical: security, data loss, production-breaking',
+          '- high: correct behavior violation, significant bugs',
+          '- medium: suboptimal patterns, missing tests',
+          '- low: style, formatting, minor improvements',
+          '',
+          'After writing the review, write a result.json file with:',
+          '{ "result": "pass" | "fail", "findings": [{ "severity": "...", "summary": "..." }] }',
+          'Use "pass" when there are no significant findings, "fail" when changes are needed.',
+          '',
+          '## CRITICAL RULES',
+          '- Do NOT ask questions.',
+          '- Do NOT switch branches. All work must stay on the current branch.',
+          '- Write code-review.md first, then result.json.',
+        ].join('\n');
+        writeFileSync(promptPath, reviewPrompt, 'utf-8');
+        // Clear stale files so a prior iteration's artifacts cannot be
+        // misattributed to this invocation if the agent omits to rewrite them.
+        // result.json is cleared too: after a fix step the worktree contains the
+        // fixer's result.json (fix-review schema); a reviewer that exits 0 but
+        // forgets to write its own result.json would otherwise satisfy the
+        // adapter's artifact-exists check with the stale file, and
+        // readReviewVerdict would parse a fix-review schema as whole-pr-review.
+        rmSync(join(ctx.cwd, 'code-review.md'), { force: true });
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
+        const result = await router.invoke({
+          profile: AgentProfileName(reviewProfileName),
+          promptPath,
+          expectedArtifacts: ['result.json', 'code-review.md'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: String(ctx.phaseId),
+          startCommitSha,
+        });
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        const store: ArtifactStore = {
+          async read(_runId: string, relativePath: string): Promise<string> {
+            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
+          },
+          write: async () => {
+            throw new Error('not implemented');
+          },
+          list: async () => [],
+        };
+        // External runtimes (antigravity etc.) do not populate resultJsonPath
+        // on the invocation row even when result.json was written. Fall back
+        // to the expected artifact name so readReviewVerdict can find it.
+        const patchedInv = inv?.resultJsonPath
+          ? inv
+          : inv
+            ? { ...inv, resultJsonPath: 'result.json' }
+            : inv;
+        const verdict = patchedInv
+          ? await readReviewVerdict(patchedInv, { artifacts: store, agent: router })
+          : { ok: false as const, detail: 'no invocation row' };
+        // Preserve review artifacts to a stable per-iteration path so they
+        // survive subsequent iterations that overwrite result.json and
+        // code-review.md in the worktree.
+        const reviewArtifactDir = join(
+          runsDir,
+          String(ctx.runId),
+          'review-fix',
+          'review',
+          `iter-${ctx.iterationIndex}`,
+        );
+        mkdirSync(reviewArtifactDir, { recursive: true });
+        try {
+          copyFileSync(join(ctx.cwd, 'code-review.md'), join(reviewArtifactDir, 'code-review.md'));
+        } catch {
+          /* best-effort */
+        }
+        try {
+          copyFileSync(join(ctx.cwd, 'result.json'), join(reviewArtifactDir, 'result.json'));
+        } catch {
+          /* best-effort */
+        }
+        return {
+          invocationId,
+          agentOutcome: result.outcome,
+          ...(verdict.ok ? { verdict: verdict.verdict } : {}),
+        };
+      };
+
+      const runFix = async (
+        ctx: StepContext,
+        opts: { useFallback: boolean; previousInvocationId?: string },
+      ): Promise<FixStepResult> => {
+        const profile =
+          opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
+        const promptDir = join(baseTmpDir, 'review-fix-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(promptDir, `fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
+        const fixPrompt = [
+          'You are fixing code review findings.',
+          '',
+          '## CONTEXT',
+          `Working directory: ${ctx.cwd}`,
+          `Repository: ${ctx.repoId}`,
+          'Review findings: ./code-review.md',
+          '',
+          '## TASK',
+          'Read the code review findings.',
+          'Fix ALL legitimate review findings across all severities.',
+          '',
+          'Rules:',
+          '- Fix only what the review asks for. Do not expand scope.',
+          '- Do not rewrite working code for style preference.',
+          '- If a finding is invalid, skip it.',
+          '',
+          'After fixing, write a result.json file with exactly one of:',
+          '{ "result": "done_with_fixes" }',
+          '{ "result": "done_no_fixes_needed" }',
+          '{ "result": "cannot_fix" }',
+          '',
+          '## CRITICAL RULES',
+          '- Do NOT ask questions.',
+          '- Do NOT switch branches. All work must stay on the current branch.',
+          '- After fixing, run: git add -A && git commit -m "fix: review findings"',
+          '- Write result.json last.',
+          '',
+          ...(opts.useFallback
+            ? [
+                '',
+                '## NOTE',
+                'The previous fix attempt failed. Review the current state carefully',
+                'and consider a different approach to address the findings.',
+              ]
+            : []),
+        ].join('\n');
+        writeFileSync(promptPath, fixPrompt, 'utf-8');
+        // Clear stale result.json from a prior step so the adapter's
+        // artifact-exists check cannot be satisfied by a prior step's file.
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
+        const result = await router.invoke({
+          profile: AgentProfileName(profile),
+          promptPath,
+          expectedArtifacts: ['result.json'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: 'fix-review',
+          startCommitSha,
+          ...(opts.useFallback && opts.previousInvocationId
+            ? {
+                fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
+                fallbackReason: 'use_case_escalation',
+              }
+            : {}),
+        });
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        const store: ArtifactStore = {
+          async read(_runId: string, relativePath: string): Promise<string> {
+            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
+          },
+          write: async () => {
+            throw new Error('not implemented');
+          },
+          list: async () => [],
+        };
+        const patchedFixInv = inv?.resultJsonPath
+          ? inv
+          : inv
+            ? { ...inv, resultJsonPath: 'result.json' }
+            : inv;
+        const verdict = patchedFixInv
+          ? await readFixVerdict(patchedFixInv, { artifacts: store, agent: router })
+          : { ok: false as const, detail: 'no invocation row' };
+        // Reject done_with_fixes when git commit did not advance the HEAD SHA.
+        // The fixer may have written result.json but failed to commit (e.g.
+        // missing git identity). Without this check the loop would accept the
+        // fix, run revalidation against dirty uncommitted files, and subsequent
+        // review iterations would diff origin/<base>...HEAD (the pre-fix commit),
+        // silently discarding the fix's changes.
+        const shaAdvanced =
+          result.endCommitSha !== undefined && result.endCommitSha !== startCommitSha;
+        const effectiveVerdict =
+          verdict.ok && verdict.verdict === 'done_with_fixes' && !shaAdvanced
+            ? undefined
+            : verdict.ok
+              ? verdict.verdict
+              : undefined;
+        // Preserve fix artifacts to a stable per-iteration path before
+        // subsequent iterations overwrite result.json in the worktree.
+        const fixArtifactDir = join(
+          runsDir,
+          String(ctx.runId),
+          'review-fix',
+          'fix',
+          `iter-${ctx.iterationIndex}`,
+        );
+        mkdirSync(fixArtifactDir, { recursive: true });
+        try {
+          copyFileSync(join(ctx.cwd, 'result.json'), join(fixArtifactDir, 'result.json'));
+        } catch {
+          /* best-effort */
+        }
+        // If HEAD advanced but the fix did not produce a valid done_with_fixes
+        // result, revert the commit so the worktree is clean for the next review
+        // iteration. Without this guard a failed fix invocation that nonetheless
+        // committed changes would leave unvalidated modifications in the worktree;
+        // the loop records it as unresolved but the next review would diff
+        // against origin/<base>...HEAD (which now includes the spurious commit),
+        // and if that review returns 'pass' the loop resolves without running
+        // revalidation on the unvalidated changes.
+        if (shaAdvanced && effectiveVerdict !== 'done_with_fixes') {
+          execFileSync('git', ['reset', '--hard', startCommitSha], {
+            cwd: ctx.cwd,
+          });
+        }
+        // Carry the pre-fix SHA so the loop can roll back if revalidation
+        // subsequently fails. Only set when the fix actually advanced HEAD
+        // and produced a valid done_with_fixes verdict (the compose helper
+        // already reverts all other cases above).
+        const headBeforeFix =
+          shaAdvanced && effectiveVerdict === 'done_with_fixes' ? startCommitSha : undefined;
+        return {
+          invocationId,
+          agentOutcome: result.outcome,
+          ...(effectiveVerdict !== undefined ? { verdict: effectiveVerdict } : {}),
+          ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
+        };
+      };
+
+      const runRevalidation = async (ctx: StepContext): Promise<RevalidationResult> => {
+        const revalidateLogDir = join(
+          runsDir,
+          String(ctx.runId),
+          'revalidate',
+          `iter-${ctx.iterationIndex}`,
+        );
+        const vr = await runValidation.execute({
+          runId: RunId(String(ctx.runId)),
+          phaseId: PhaseName('validate'),
+          cwd: ctx.cwd,
+          logDir: revalidateLogDir,
+          commands: config.validation.commands,
+          timeoutSeconds: config.validation.timeout,
+        });
+        const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+        return {
+          validationRunId: vr.validationRun.id,
+          passed: vr.passed,
+          ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+        };
+      };
+
+      // Wrap the in-memory bus so loop events survive process restarts.
+      // Without this wrapper loop.iteration.*, loop.exhausted, and
+      // phase.fallback.escalated events vanish when no live subscriber exists.
+      const persistingEventBusForLoop: EventBusPort = {
+        subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
+        publish: (runUuid, event) => {
+          eventBus.publish(runUuid, event);
+          try {
+            eventRepository.insert({
+              runUuid,
+              ...(event.phase !== undefined ? { phase: event.phase } : {}),
+              level: event.level,
+              type: event.type,
+              message: event.message,
+              ...(event.metadata !== undefined
+                ? { metadata: event.metadata as Record<string, unknown> }
+                : {}),
+              timestamp: new Date(event.timestamp),
+            });
+          } catch {
+            // Best-effort: event persistence must not crash the loop
+          }
+        },
+      };
+
+      const rollbackFix = async (ctx: StepContext, targetSha: string): Promise<void> => {
+        execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
+      };
+
+      reviewFixLoop = new ReviewFixLoop({
+        runReview,
+        runFix,
+        runRevalidation,
+        rollbackFix,
+        loops: loopRepository,
+        events: persistingEventBusForLoop,
+        now: () => new Date(),
+        idFactory: () => randomUUID(),
+      });
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
@@ -689,6 +1041,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     agentInvocationRepository,
     validationRunRepository,
     prReviewRepository,
+    loopRepository,
     runValidation,
     startIssueRun,
     cancelRun,
@@ -698,6 +1051,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     ...(agentRuntime ? { agentRuntime } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
     buildPrReviewPoller,
+    ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
   };
 }
 

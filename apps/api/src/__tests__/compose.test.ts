@@ -13,7 +13,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
-import { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
+import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
+import { ReviewFixLoop } from '@ai-sdlc/application';
+import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
+import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PrReviewPollerDeps } from '@ai-sdlc/application';
 
 const tempDirs: string[] = [];
@@ -374,6 +377,78 @@ exit 1
     const c = composeRoot({ repoRoot: root, scriptPath });
     expect(c.runValidation).toBeDefined();
     expect(typeof c.runValidation.execute).toBe('function');
+  });
+
+  it('exposes loopRepository and reviewFixLoop', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3 },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const c = composeRoot({ repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
+    expect(c.loopRepository).toBeDefined();
+    expect(c.reviewFixLoop).toBeDefined();
+    expect(typeof c.reviewFixLoop!.execute).toBe('function');
+  });
+
+  it('reviewFixLoop.execute converges when review immediately passes', async () => {
+    const bus = {
+      publish: (_runUuid: string, _event: OrchestratorEvent) => {},
+      subscribe: () => () => {},
+    };
+    const fixLoop = new ReviewFixLoop({
+      runReview: async () => ({
+        invocationId: 'review-1',
+        agentOutcome: 'success' as const,
+        verdict: 'pass' as const,
+      }),
+      runFix: async () => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runRevalidation: async () => ({
+        validationRunId: 'reval-1',
+        passed: true,
+      }),
+      loops: new FakeLoopRepository(),
+      events: bus,
+      now: () => new Date(),
+      idFactory: () => 'smoke-loop-1',
+    });
+
+    const result = await fixLoop.execute({
+      runId: RunId('test-run'),
+      phaseId: PhaseName('whole-pr-review'),
+      repoId: 'owner/repo',
+      cwd: '/tmp',
+      maxIterations: 3,
+      reviewProfile: AgentProfileName('test'),
+      fixProfile: AgentProfileName('test'),
+    });
+
+    expect(result.phaseOutcome).toBe('passed');
+    expect(result.loop.status).toBe('converged');
+    expect(result.loop.iterations).toHaveLength(1);
   });
 
   it('removes per-run tmp dir after a failed run completes', async () => {
