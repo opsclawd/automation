@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 
+const mockBehavior = vi.hoisted(() => ({ reviewResult: 'pass' as 'pass' | 'fail' }));
+
 vi.mock('@ai-sdlc/infrastructure', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@ai-sdlc/infrastructure')>();
   return {
@@ -12,11 +14,19 @@ vi.mock('@ai-sdlc/infrastructure', async (importOriginal) => {
       async invoke(request: { cwd: string }) {
         const { writeFileSync } = await import('node:fs');
         const { join } = await import('node:path');
+        const fail = mockBehavior.reviewResult === 'fail';
         writeFileSync(
           join(request.cwd, 'result.json'),
-          JSON.stringify({ result: 'pass', findings: [] }),
+          JSON.stringify(
+            fail
+              ? { result: 'fail', findings: [{ severity: 'high', summary: 'stub' }] }
+              : { result: 'pass', findings: [] },
+          ),
         );
-        writeFileSync(join(request.cwd, 'code-review.md'), '# Review passed\n');
+        writeFileSync(
+          join(request.cwd, 'code-review.md'),
+          fail ? '# Review failed\n' : '# Review passed\n',
+        );
         return {
           runtime: 'opencode' as const,
           provider: 'test',
@@ -132,6 +142,7 @@ describe('run-review-fix integration', () => {
   });
 
   it('exhausts when review never passes within maxIterations → exit 1', async () => {
+    mockBehavior.reviewResult = 'fail';
     const c = await compose();
     expect(c.reviewFixLoop).toBeDefined();
 
@@ -156,10 +167,8 @@ describe('run-review-fix integration', () => {
       fixProfile: AgentProfileName('fixer'),
     });
 
-    expect(typeof phaseOutcome).toBe('string');
-    expect(['passed', 'failed']).toContain(phaseOutcome);
-    expect(loop.iterations.length).toBeGreaterThanOrEqual(1);
-    // Exhausted loops must not exceed maxIterations iterations
-    expect(loop.iterations.length).toBeLessThanOrEqual(2);
+    expect(phaseOutcome).toBe('failed');
+    expect(loop.status).toBe('exhausted');
+    expect(loop.iterations.length).toBe(2);
   });
 });
