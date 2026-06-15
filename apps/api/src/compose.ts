@@ -511,12 +511,37 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
+      // Wrap the in-memory bus so loop events survive process restarts.
+      // Without this wrapper loop.iteration.*, loop.exhausted, and
+      // phase.fallback.escalated events vanish when no live subscriber exists.
+      const persistingEventBusForLoop: EventBusPort = {
+        subscribe: (runUuid, listener) => eventBus.subscribe(runUuid, listener),
+        publish: (runUuid, event) => {
+          eventBus.publish(runUuid, event);
+          try {
+            eventRepository.insert({
+              runUuid,
+              ...(event.phase !== undefined ? { phase: event.phase } : {}),
+              level: event.level,
+              type: event.type,
+              message: event.message,
+              ...(event.metadata !== undefined
+                ? { metadata: event.metadata as Record<string, unknown> }
+                : {}),
+              timestamp: new Date(event.timestamp),
+            });
+          } catch {
+            // Best-effort: event persistence must not crash the loop
+          }
+        },
+      };
+
       reviewFixLoop = new ReviewFixLoop({
         runReview,
         runFix,
         runRevalidation,
         loops: loopRepository,
-        events: eventBus,
+        events: persistingEventBusForLoop,
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
