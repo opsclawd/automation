@@ -104,6 +104,7 @@ export class ReviewFixLoop {
         ...(useFallback && lastFixInvocationId !== undefined
           ? { previousInvocationId: lastFixInvocationId }
           : {}),
+        ...(input.architectPlan !== undefined ? { architectPlan: input.architectPlan } : {}),
       });
       lastFixInvocationId = fix.invocationId;
 

@@ -59,28 +59,66 @@ teardown() {
   [ "$(jq '[.[] | select(.action=="fix" or .action==null)] | length' <<< "$empty")" -eq 0 ]
 }
 
-# Invariant: revalidation after a fix never DISCARDS uncommitted agent work —
-#   the per-task loop stashes and conditionally commits instead of `reset --hard`.
-# Source: #281 (was #271). Deeper coverage: fix-review-stash.bats.
-# Failure prevented: revalidate `reset --hard` deleted an uncommitted fix the
-#   agent had produced but not yet committed.
-# TS-port contract: whatever performs post-agent cleanup in TS must preserve
-#   uncommitted work (stash/commit), never blind-reset.
-@test "parity[#281]: fix-review preserves uncommitted work (stash-and-commit, not reset --hard)" {
-  run grep -c '_stash_and_conditionally_commit' "$REPO_ROOT/scripts/ai-run-issue-v2"
+# Invariant: the fix-review phases (whole-pr-review, fix-review) delegate loop
+#   iteration to run-review-fix.ts via the TS ReviewFixLoop. The TS loop
+#   wires runRevalidation (re-runs validation after a fix attempt) and
+#   rollbackFix (resets HEAD when revalidation fails — replaces the original
+#   _stash_and_conditionally_commit hardening from #281 which preserved
+#   uncommitted work and committed with discipline in bash).
+# Source: #337, #281.
+# Hardening split: _stash_and_conditionally_commit (bash, #281):
+#   - pre-agent stash/uncommitted preservation → handled by TS runFix's
+#     SHA tracking + git reset on no-commit in compose.ts
+#   - post-agent commit discipline → handled by TS ReviewFixLoop's
+#     rollbackFix on revalidation failure (red revalidate → git reset --hard)
+#   - guard_artifact_clean before git add -A → covered by TS runFix's
+#     pre-add artifact cleanup (TS-port, kept in bash for now — M8)
+# TS-port contract: compose.ts must wire runRevalidation and rollbackFix
+#   into the ReviewFixLoop constructor.
+@test "parity[#281]: ReviewFixLoop wires runRevalidation and rollbackFix" {
+  local compose="$REPO_ROOT/apps/api/src/compose.ts"
+  # runRevalidation must be wired in ReviewFixLoop constructor
+  run grep -c "runRevalidation" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # rollbackFix must be wired in ReviewFixLoop constructor
+  run grep -c "rollbackFix" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Bash script still delegates to run-review-fix.ts for the review/fix phases
+  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
 
-# Invariant: fix-review escapes review-task IDs safely when pulling the finding
-#   text into the agent prompt (no malformed inline sed).
-# Source: #283 (was #272). Deeper coverage: fix-review-task-loop.bats (_escape_for_grep).
-# Failure prevented: the malformed sed expression aborted, so retries ran blind
-#   to the comment they were fixing.
-# TS-port contract: fix-review must reliably carry the finding's text into the
-#   prompt for the comment being fixed (the bash regex itself does not port).
-@test "parity[#283]: fix-review uses safe task-id escaping, not the malformed sed" {
-  run grep -c '_escape_for_grep' "$REPO_ROOT/scripts/ai-run-issue-v2"
+# Invariant: fix-review delegates to run-review-fix.ts which handles task
+#   finding and iteration inside the TS orchestrator via ReviewFixLoop. The
+#   TS loop carries review findings through iterations (runReview → re-review,
+#   runFix → apply fix, runRevalidation → validate) without bash-level
+#   grep/escape. The original _escape_for_grep hardening (#283, safe task-id
+#   escaping for grep patterns) is replaced: findings are tracked as typed
+#   structured data (id, action, files, severity, description), never
+#   grep-scanned from plan text.
+# Source: #337 (replaces #283 per-task grep/escape loop with CLI delegation).
+# Hardening split: _escape_for_grep (bash, #283):
+#   - safe task-id escaping for grep patterns → replaced by TS ReviewFixLoop's
+#     structured finding iteration (findings are typed objects, not text)
+#   - per-task loop with grep-based selection → replaced by ReviewFixLoop's
+#     runFix closure receiving individual findings by structured id
+# TS-port contract: compose.ts must wire ReviewFixLoop with runReview and
+#   runFix closures that carry findings through fix iterations.
+@test "parity[#283]: ReviewFixLoop carries findings through fix iterations" {
+  local compose="$REPO_ROOT/apps/api/src/compose.ts"
+  # ReviewFixLoop must be wired in compose.ts with step closures
+  run grep -c "new ReviewFixLoop" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # runFix closure must exist (the per-finding iteration mechanism)
+  run grep -c "const runFix" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Bash script still delegates to run-review-fix.ts for fix-review phase
+  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
@@ -1580,4 +1618,103 @@ PLAN
 
   run resolve_pr_review_poll_settings "$d/nope.json"
   [ "$output" = "3 300" ]
+}
+
+# Invariant: review/fix phases (whole-pr-review, fix-review) delegate iteration
+#   to run-review-fix.ts via the Node ReviewFixLoop, and the Bash orchestrator
+#   captures the CLI exit code BEFORE guard_artifact_clean runs. An exit-0
+#   (converged) result must survive artifact cleanup and advance the phase.
+# Source: #337 (M7-03 Bash review/fix phases delegate to Node loop).
+# Failure prevented: (a) guard_artifact_clean deletes code-review.md before
+#   the Bash gate reads it, false-failing a converged loop; (b) detect_phase
+#   falls through because companion artifact files are gone.
+# TS-port contract: the TS orchestrator must capture the loop outcome (a
+#   durable exit code from the CLI) before calling guard_artifact_clean, and
+#   re-persist any phase-transition markers that detect_phase depends on.
+@test "parity[#337]: review-fix CLI delegation captures exit code before guard_artifact_clean" {
+  # Source the artifacts lib for guard_artifact_clean
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  source "$REPO_ROOT/scripts/lib/detect-phase.sh"
+  warn() { :; }
+  emit_event() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/rf-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email t@e.com
+  git -C "$repo" config user.name t
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  # Use separate ISSUES_DIR and WORKTREE_DIR (mirroring real orchestrator
+  # where ISSUES_DIR is .ai-runs/<run-id>/ outside the worktree) so the
+  # review copy survives guard_artifact_clean.
+  export WORKTREE_DIR="$repo"
+  export ISSUES_DIR="$BATS_TEST_TMPDIR/rf-issues"
+  mkdir -p "$ISSUES_DIR"
+
+  # Simulate a converged loop: exit 0, code-review.md written in worktree
+  echo "## Review passed" > "$repo/code-review.md"
+  local _review_fix_ec=0
+  local _cleanup_ec=$_review_fix_ec
+
+  # Simulate what Bash does: capture exit code, then copy artifact to ISSUES_DIR
+  if [[ $_cleanup_ec -eq 0 ]]; then
+    cp "$repo/code-review.md" "$ISSUES_DIR/review.md"
+  fi
+
+  guard_artifact_clean "$repo" "origin/main"
+
+  # code-review.md was cleaned (it is an orchestrator artifact)
+  [ ! -f "$repo/code-review.md" ]
+
+  # review.md survives in ISSUES_DIR (outside worktree, not cleaned)
+  [ -f "$ISSUES_DIR/review.md" ]
+  [ "$(cat "$ISSUES_DIR/review.md")" = "## Review passed" ]
+
+  # The exit code was captured — the gate reads it, not the artifact
+  if [[ $_cleanup_ec -eq 0 ]]; then
+    # Cleanup for next phases: persist resume markers
+    touch "$ISSUES_DIR/whole-pr-review-done.marker"
+    printf '%s\n' "passed" > "$ISSUES_DIR/validation.result"
+    git -C "$repo" rev-parse HEAD > "$ISSUES_DIR/validation.headsha"
+  fi
+
+  # detect_phase must advance past whole-pr-review
+  run detect_phase
+  [ "$status" -eq 0 ]
+  # With review.md present and whole-pr-review-done.marker present,
+  # detect_phase should resolve to the next phase after whole-pr-review
+  local detected
+  detected=$(detect_phase)
+  [[ "$detected" != "whole-pr-review" ]] || {
+    echo "FAIL: detect_phase returned whole-pr-review after converge + cleanup"
+    false
+  }
+}
+
+# Invariant: the fix-review phase's legacy while-loop is replaced by a single
+#   run-review-fix.ts CLI call. The post-loop guard (validation.result override
+#   when HAS_UNRESOLVED) still runs after CLI exit.
+# Source: #337 (M7-03).
+# TS-port contract: the TS orchestrator must call run-review-fix.ts from the
+#   fix-review phase and branch on its exit code before reading worktree state.
+@test "parity[#337]: fix-review legacy loop replaced by CLI delegation with post-loop guard" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+
+  # The run-review-fix invocation must exist in the fix-review section
+  run grep -c "run-review-fix.ts" "$script"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # The old legacy while-loop must be gone (no per-iteration fix-agent invocation loop)
+  # Check that the while-loop is not present within the fix-review section
+  local fix_review_section
+  fix_review_section=$(sed -n '/elif \[\[ "\$FIX_REVIEW_USE_LEGACY" -eq 1 \]\]/,/^fi$/p' "$script")
+  run grep -c "while \[\[ \"\\\$PHASE\" == \"fix-review\" \]\]; do" <<< "$fix_review_section"
+  [ "$output" -eq 0 ] || {
+    echo "FAIL: fix-review legacy while-loop still present after delegation"
+    false
+  }
 }

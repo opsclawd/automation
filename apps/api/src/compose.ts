@@ -452,7 +452,20 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const runFix = async (
         ctx: StepContext,
-        opts: { useFallback: boolean; previousInvocationId?: string },
+        opts: {
+          useFallback: boolean;
+          previousInvocationId?: string;
+          architectPlan?: {
+            version: number;
+            tasks: Array<{
+              task_id: string;
+              approach: string;
+              conflicts_resolved: string[];
+              constraints: string[];
+              depends_on: string[];
+            }>;
+          };
+        },
       ): Promise<FixStepResult> => {
         const profile =
           opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
@@ -480,6 +493,29 @@ export function composeRoot(opts: ComposeOptions): Container {
           '{ "result": "done_with_fixes" }',
           '{ "result": "done_no_fixes_needed" }',
           '{ "result": "cannot_fix" }',
+          '',
+          ...(opts.architectPlan
+            ? [
+                '',
+                '## CROSS-TASK FIX PLAN',
+                `The following architect analysis provides cross-task context for this fix:`,
+                ...opts.architectPlan.tasks.map((t) =>
+                  [
+                    `### Task: ${t.task_id}`,
+                    `**Approach:** ${t.approach}`,
+                    ...(t.conflicts_resolved.length > 0
+                      ? [`**Conflicts resolved:** ${t.conflicts_resolved.join(', ')}`]
+                      : []),
+                    ...(t.constraints.length > 0
+                      ? [`**Constraints:** ${t.constraints.join(', ')}`]
+                      : []),
+                    ...(t.depends_on.length > 0
+                      ? [`**Depends on:** ${t.depends_on.join(', ')}`]
+                      : []),
+                  ].join('\n'),
+                ),
+              ]
+            : []),
           '',
           '## CRITICAL RULES',
           '- Do NOT ask questions.',
