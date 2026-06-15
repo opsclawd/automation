@@ -88,7 +88,11 @@ export class ReviewFixLoop {
       });
       lastFixInvocationId = fix.invocationId;
 
-      if (fix.agentOutcome !== 'success' || fix.verdict === 'cannot_fix') {
+      if (
+        fix.agentOutcome !== 'success' ||
+        fix.verdict === undefined ||
+        fix.verdict === 'cannot_fix'
+      ) {
         consecutiveFixFailures += 1;
         loop = completeIteration(loop, {
           outcome: 'unresolved',
