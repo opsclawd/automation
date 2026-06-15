@@ -3703,7 +3703,7 @@ Write code-review.md now."
 
   if [[ $_cleanup_ec -eq 0 ]]; then
     info "whole-pr-review: review/fix loop converged"
-    : # success — advance
+    echo "passed" > "${ISSUES_DIR}/validation.result"
   else
     case $_cleanup_ec in
       1) orchestrator_fail "review/fix loop exhausted or hard-failed" ;;
