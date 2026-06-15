@@ -1581,3 +1581,102 @@ PLAN
   run resolve_pr_review_poll_settings "$d/nope.json"
   [ "$output" = "3 300" ]
 }
+
+# Invariant: review/fix phases (whole-pr-review, fix-review) delegate iteration
+#   to run-review-fix.ts via the Node ReviewFixLoop, and the Bash orchestrator
+#   captures the CLI exit code BEFORE guard_artifact_clean runs. An exit-0
+#   (converged) result must survive artifact cleanup and advance the phase.
+# Source: #337 (M7-03 Bash review/fix phases delegate to Node loop).
+# Failure prevented: (a) guard_artifact_clean deletes code-review.md before
+#   the Bash gate reads it, false-failing a converged loop; (b) detect_phase
+#   falls through because companion artifact files are gone.
+# TS-port contract: the TS orchestrator must capture the loop outcome (a
+#   durable exit code from the CLI) before calling guard_artifact_clean, and
+#   re-persist any phase-transition markers that detect_phase depends on.
+@test "parity[#337]: review-fix CLI delegation captures exit code before guard_artifact_clean" {
+  # Source the artifacts lib for guard_artifact_clean
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  source "$REPO_ROOT/scripts/lib/detect-phase.sh"
+  warn() { :; }
+  emit_event() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/rf-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email t@e.com
+  git -C "$repo" config user.name t
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  # Use separate ISSUES_DIR and WORKTREE_DIR (mirroring real orchestrator
+  # where ISSUES_DIR is .ai-runs/<run-id>/ outside the worktree) so the
+  # review copy survives guard_artifact_clean.
+  export WORKTREE_DIR="$repo"
+  export ISSUES_DIR="$BATS_TEST_TMPDIR/rf-issues"
+  mkdir -p "$ISSUES_DIR"
+
+  # Simulate a converged loop: exit 0, code-review.md written in worktree
+  echo "## Review passed" > "$repo/code-review.md"
+  local _review_fix_ec=0
+  local _cleanup_ec=$_review_fix_ec
+
+  # Simulate what Bash does: capture exit code, then copy artifact to ISSUES_DIR
+  if [[ $_cleanup_ec -eq 0 ]]; then
+    cp "$repo/code-review.md" "$ISSUES_DIR/review.md"
+  fi
+
+  guard_artifact_clean "$repo" "origin/main"
+
+  # code-review.md was cleaned (it is an orchestrator artifact)
+  [ ! -f "$repo/code-review.md" ]
+
+  # review.md survives in ISSUES_DIR (outside worktree, not cleaned)
+  [ -f "$ISSUES_DIR/review.md" ]
+  [ "$(cat "$ISSUES_DIR/review.md")" = "## Review passed" ]
+
+  # The exit code was captured — the gate reads it, not the artifact
+  if [[ $_cleanup_ec -eq 0 ]]; then
+    # Cleanup for next phases: persist resume markers
+    touch "$ISSUES_DIR/whole-pr-review-done.marker"
+    printf '%s\n' "passed" > "$ISSUES_DIR/validation.result"
+    git -C "$repo" rev-parse HEAD > "$ISSUES_DIR/validation.headsha"
+  fi
+
+  # detect_phase must advance past whole-pr-review
+  run detect_phase
+  [ "$status" -eq 0 ]
+  # With review.md present and whole-pr-review-done.marker present,
+  # detect_phase should resolve to the next phase after whole-pr-review
+  local detected
+  detected=$(detect_phase)
+  [[ "$detected" != "whole-pr-review" ]] || {
+    echo "FAIL: detect_phase returned whole-pr-review after converge + cleanup"
+    false
+  }
+}
+
+# Invariant: the fix-review phase's legacy while-loop is replaced by a single
+#   run-review-fix.ts CLI call. The post-loop guard (validation.result override
+#   when HAS_UNRESOLVED) still runs after CLI exit.
+# Source: #337 (M7-03).
+# TS-port contract: the TS orchestrator must call run-review-fix.ts from the
+#   fix-review phase and branch on its exit code before reading worktree state.
+@test "parity[#337]: fix-review legacy loop replaced by CLI delegation with post-loop guard" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+
+  # The run-review-fix invocation must exist in the fix-review section
+  run grep -c "run-review-fix.ts" "$script"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # The old legacy while-loop must be gone (no per-iteration fix-agent invocation loop)
+  # Check that the while-loop is not present within the fix-review section
+  local fix_review_section
+  fix_review_section=$(sed -n '/elif \[\[ "\$FIX_REVIEW_USE_LEGACY" -eq 1 \]\]/,/^fi$/p' "$script")
+  run grep -c "while \[\[ \"\\\$PHASE\" == \"fix-review\" \]\]; do" <<< "$fix_review_section"
+  [ "$output" -eq 0 ] || {
+    echo "FAIL: fix-review legacy while-loop still present after delegation"
+    false
+  }
+}

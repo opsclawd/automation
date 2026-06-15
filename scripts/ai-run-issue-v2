@@ -3678,48 +3678,36 @@ Categorize findings:
 
 Write code-review.md now."
 
-  _worktree_state_before=$(_capture_worktree_state)
-  _review_prompt_file=$(mktemp)
-  printf '%s' "$REVIEW_PROMPT" > "$_review_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-    --phase whole-pr-review \
+  _review_fix_ec=0
+  NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+    "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
-    --phase-id whole-pr-review \
-    --prompt-file "$_review_prompt_file" \
-    --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
-    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/review.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
-  rm -f "$_review_prompt_file"
+    --phase-id "whole-pr-review" \
+    2>&1 | tee -a "${ISSUES_DIR}/review-fix.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then
-    orchestrator_fail "tee failed writing log for review (exit $_tee_ec)"
+    orchestrator_fail "tee failed writing log for review-fix (exit $_tee_ec)"
   fi
-
-  _guard_worktree "whole-pr-review" "$_worktree_state_before"
-
-  if [[ $_agent_ec -ne 0 ]]; then
-    case $_agent_ec in
-      1) orchestrator_fail "review failed (contract violation)" ;;
-      2) orchestrator_fail "review failed (config error or timeout)" ;;
-      3) orchestrator_fail "review failed (unexpected error)" ;;
-      4) warn "review had a provider error — checking for review artifacts..." ;;
-      *) orchestrator_fail "review failed (unknown exit code $_agent_ec)" ;;
-    esac
-  fi
-
-  # Copy review from worktree
+  # Capture exit code BEFORE guard_artifact_clean (see #337 / PR #339 pattern)
+  _cleanup_ec=$_review_fix_ec
+  # Copy review artifacts from worktree (before cleanup removes them)
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
-    info "Review saved to ${ISSUES_DIR}/review.md"
     _emit_artifact "whole-pr-review" "${ISSUES_DIR}/review.md" "review"
+  fi
+
+  if [[ $_cleanup_ec -eq 0 ]]; then
+    info "whole-pr-review: review/fix loop converged"
+    : # success — advance
   else
-    REVIEW_FILE=$(find "${WORKTREE_DIR}" -name "code-review.md" 2>/dev/null | head -1 || true)
-    if [[ -n "$REVIEW_FILE" && -f "$REVIEW_FILE" ]]; then
-      cp "$REVIEW_FILE" "${ISSUES_DIR}/review.md"
-      _emit_artifact "whole-pr-review" "${ISSUES_DIR}/review.md" "review"
-    fi
+    case $_cleanup_ec in
+      1) orchestrator_fail "review/fix loop exhausted or hard-failed" ;;
+      2) orchestrator_fail "review/fix failed (config error)" ;;
+      3) orchestrator_fail "review/fix failed (unexpected error)" ;;
+      *) orchestrator_fail "review/fix failed (unknown exit code $_cleanup_ec)" ;;
+    esac
   fi
 
   _emit_phase_done "whole-pr-review"
@@ -4149,347 +4137,19 @@ if [[ "$FIX_REVIEW_EMPTY" -eq 1 ]]; then
   : # skip straight to phase done
 elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
 
-while [[ "$PHASE" == "fix-review" ]]; do
-  FIX_LOOP_COUNT=$((FIX_LOOP_COUNT + 1))
-  emit_event "fix-review" "info" "loop.iteration.started" \
-    "fix-review loop ${FIX_LOOP_COUNT}/${MAX_WHOLE_PR_FIX_ITERATIONS}" \
-    iteration="${FIX_LOOP_COUNT}" max="${MAX_WHOLE_PR_FIX_ITERATIONS}"
-  if [[ $FIX_LOOP_COUNT -gt $MAX_WHOLE_PR_FIX_ITERATIONS ]]; then
-    emit_event "fix-review" "error" "loop.exhausted" \
-      "fix-review hit max iterations" \
-      iterations="${FIX_LOOP_COUNT}"
-    info "Fix loop limit (${MAX_WHOLE_PR_FIX_ITERATIONS}) reached. Moving on."
-    break
-  fi
-  log "=== Phase: fix-review (loop $FIX_LOOP_COUNT) ==="
-  log "Cancel window: press Ctrl+C within 10s to abort..."
-  sleep 10
-  LAST_PHASE="fix-review"
-
-  ensure_worktree
-
-  if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
-    info "No review.md found. Skipping fix loop."
-    emit_event "fix-review" "info" "loop.iteration.completed" \
-      "fix-review loop ${FIX_LOOP_COUNT} completed (no review.md)" \
-      iteration="${FIX_LOOP_COUNT}" status="skipped"
-    break
-  fi
-
-  # Clear any stale self-report from a prior iteration so a missing write
-  # this iteration falls back to running the re-review agent (fail-safe).
-  rm -f "${WORKTREE_DIR}/fix-status.txt"
-
-  FIX_PROMPT="You are fixing code review findings.
-
-## CONTEXT
-You are working in: ${WORKTREE_DIR}
-Issue: issue.md
-Plan: plan.md
-Review findings: ./review.md
-
-## TASK
-Read the code review findings.
-Fix ALL legitimate review findings across all severities.
-
-Rules:
-- Fix only what the review asks for. Do not expand scope.
-- Do not rewrite working code for style preference.
-- If a finding is invalid, note it in ./review-fix-log.md and skip it.
-- If a finding is fixed, document the fix in ./review-fix-log.md.
-
-## MANDATORY RESULT FILE
-After fixing (or deciding nothing needs fixing), write EXACTLY ONE of these values to ./fix-status.txt:
-- ALL_FIXED      (every finding from this iteration's review was fixed in code, or was already carried-forward from a prior loop's fix. Use this ONLY when no findings this iteration were marked invalid/skip/out-of-scope by you. This is the strictest value — choose it only when you are claiming you actually changed the code to address every legitimate finding.)
-- NEEDS_REVIEW   (any other case: you skipped a finding as invalid/out-of-scope, you are uncertain a fix landed correctly, or one or more findings still need work. The orchestrator will run an independent re-reviewer to verify.)
-No other content in the file — just the status word.
-This is your self-report. The orchestrator skips the expensive re-review pass only when you write ALL_FIXED, so do not use it as a shortcut for skipped findings — write NEEDS_REVIEW whenever any claim of yours needs verification.
-
-## ORCHESTRATOR ARTIFACTS — DO NOT DELETE
-The following files are orchestrator working artifacts. They are excluded
-from git via info/exclude and will NOT appear in the final PR. If a review
-finding flags them as out-of-scope, note in review-fix-log.md that they are
-excluded from git and move on. Do NOT delete or modify these files:
-- issue.md, issue.json, issue-comments.md
-- design.md, plan.md, implementation-log.md, orchestrator.log
-- *.result, *.log files (spec-review, quality-review, fix-review, etc.)
-- code-review.md, review.md, validation.md
-
-## CRITICAL RULES
-- Do NOT ask questions.
-- Do NOT rely on agent memory.
-- Do NOT create a PR.
-- Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
-- Load the receiving-code-review skill first.
-- After fixing, run: git add -A && git commit -m 'fix: review findings for issue #${ISSUE_NUM} (loop ${FIX_LOOP_COUNT})'
-- Stop after fixing and committing.
-
-Start now."
-
-  _fix_prompt_file=$(mktemp)
-  _worktree_state_before=$(_capture_worktree_state)
-  printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
-  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-    --phase whole-pr-fix-review \
+  _review_fix_ec=0
+  NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+    "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
-    --phase-id "fix-review-${FIX_LOOP_COUNT}" \
-    --step-id "${FIX_LOOP_COUNT}" \
-    --prompt-file "$_fix_prompt_file" \
-    --timeout-minutes $(( (TIMEOUT_PR_FIX + 59) / 60 )) \
-    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
-  rm -f "$_fix_prompt_file"
+    --phase-id "fix-review" \
+    2>&1 | tee -a "${ISSUES_DIR}/fix-review-cli.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then
-    orchestrator_fail "tee failed writing log for fix-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
+    orchestrator_fail "tee failed writing log for fix-review CLI (exit $_tee_ec)"
   fi
-  _guard_worktree "fix-review-loop-${FIX_LOOP_COUNT}" "$_worktree_state_before"
-  check_branch_after_agent
-  if [[ $_agent_ec -ne 0 ]]; then
-    if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
-      orchestrator_fail "fix-review failed (agent emitted BLOCKED)"
-    else
-      case $_agent_ec in
-        1) orchestrator_fail "fix-review failed (contract violation)" ;;
-        2) orchestrator_fail "fix-review failed (config error or timeout)" ;;
-        3) orchestrator_fail "fix-review failed (unexpected error)" ;;
-        4) warn "fix-review had a provider error — checking for work..." ;;
-        *) orchestrator_fail "fix-review failed (unknown exit code $_agent_ec)" ;;
-      esac
-    fi
-  fi
-
-  # ── re-validate ────────────────────────────────────────────────────────────
-  log "=== Re-validating after fix (loop $FIX_LOOP_COUNT) ==="
-  cd "${WORKTREE_DIR}"
-  ensure_branch
-
-  {
-    echo "=== pnpm build ==="
-    timeout 120 pnpm build 2>&1 || echo "[build failed]"
-    echo ""
-    echo "=== pnpm lint ==="
-    timeout 120 pnpm lint 2>&1 || echo "[lint failed]"
-    echo ""
-    echo "=== pnpm typecheck ==="
-    timeout 120 pnpm typecheck 2>&1 || echo "[typecheck failed]"
-    echo ""
-    echo "=== pnpm test ==="
-    timeout 120 pnpm test 2>&1 || echo "[test failed]"
-    echo ""
-    echo "=== pnpm test:bash ==="
-    timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
-  } > >(tee "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log") 2>&1
-
-  cp "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
-
-  # Revalidation dirty-tree guard: agent work during the fix task may leave
-  # uncommitted changes. _stash_and_conditionally_commit stashes them, checks
-  # whether revalidation passed (green) or failed (red), then either commits
-  # the stash (green — preserving the agent's work) or retains the stash and
-  # lets the orchestrator_fail below fire (red — preserving the state for
-  # debugging). Unlike the old invariant (always fail on dirty), a green
-  # revalidation with uncommitted changes is now accepted and committed.
-    declare -a _art_excl=()
-  while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
-  if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
-    _stash_and_conditionally_commit \
-      "${WORKTREE_DIR}" \
-      "legacy-${FIX_LOOP_COUNT}" \
-      "fix: loop ${FIX_LOOP_COUNT} (auto-committed after green revalidate)" \
-      "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" \
-      "origin/${BASE_BRANCH}"
-    # If revalidation failed, the stash is retained (tree clean, no commit).
-    # Fail the phase as before — the stash preserves the work for debugging.
-    if [[ -f "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" ]] && grep -qE '\[(build|lint|typecheck|test|test:bash) failed\]' "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
-      rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" \
-            "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
-      orchestrator_fail "revalidate phase produced uncommitted changes after fix — mutation not allowed"
-    fi
-    # Guard: if the tree is still dirty after _stash_and_conditionally_commit,
-    # the commit failed (stash pop succeeded but commit didn't). A subsequent
-    # reset --hard would destroy the agent's work. Fail the phase.
-    if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
-      rm -f "${ISSUES_DIR}/validate.log" "${ISSUES_DIR}/validation.md" \
-            "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log" "${ISSUES_DIR}/validation-${FIX_LOOP_COUNT}.md"
-      orchestrator_fail "revalidate: commit failed after stash pop, tree dirty — agent work not committed"
-    fi
-  fi
-
-  # Propagate revalidate state into validation.result so the create-pr phase
-  # (which labels ai:pr-ready vs ai:needs-human-review based on this file)
-  # reflects the current build/lint/typecheck/test status — not the stale
-  # result from the pre-loop validate phase.
-  if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
-    echo "passed" > "${ISSUES_DIR}/validation.result"
-  else
-    echo "failed" > "${ISSUES_DIR}/validation.result"
-    warn "Revalidate after fix loop ${FIX_LOOP_COUNT} did not pass — validation.result set to failed."
-  fi
-
-  # ── deterministic gate: skip re-review agent on the happy path ────────────
-  # The re-review agent is the heaviest step in this loop (full agent + skill
-  # load + re-reads source). Skip it ONLY when:
-  #   (a) the fix agent self-reports ALL_FIXED (the strict value — no
-  #       invalid/skip/out-of-scope claims this iteration; every finding was
-  #       actually fixed in code), AND
-  #   (b) revalidate is green.
-  # Any NEEDS_REVIEW value (including all skip/invalid claims) falls through
-  # to the independent re-reviewer, so the fix agent cannot self-approve
-  # findings it decided to skip.
-  FIX_STATUS_FILE="${WORKTREE_DIR}/fix-status.txt"
-  FIX_AGENT_STATUS=""
-  if [[ -f "$FIX_STATUS_FILE" ]]; then
-    # Read file directly with head (bounded read, no upstream producer that
-    # could SIGPIPE under pipefail) — see SIGPIPE gotcha note at top of file.
-    FIX_AGENT_STATUS=$(head -c 64 "$FIX_STATUS_FILE" 2>/dev/null | tr -d '[:space:]')
-  fi
-  if [[ "$FIX_AGENT_STATUS" == "ALL_FIXED" ]] \
-     && _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
-    info "Fix agent reports ALL_FIXED and revalidate is green — skipping re-review agent (loop ${FIX_LOOP_COUNT})."
-    echo "ALL_RESOLVED" > "${WORKTREE_DIR}/review-findings-status.txt"
-    emit_event "fix-review" "info" "loop.reagent_skipped" \
-      "skipped re-review agent: fix-status=ALL_FIXED and revalidate green" \
-      iteration="${FIX_LOOP_COUNT}"
-    emit_event "fix-review" "info" "loop.iteration.completed" \
-      "fix-review loop ${FIX_LOOP_COUNT} completed (deterministic resolve)" \
-      iteration="${FIX_LOOP_COUNT}" status="ALL_RESOLVED"
-    break
-  fi
-
-  # ── re-review ──────────────────────────────────────────────────────────────
-  log "=== Re-reviewing after fix (loop $FIX_LOOP_COUNT) ==="
-
-  RE_REVIEW_PROMPT="You are re-reviewing code after fixes were applied.
-
-## CONTEXT
-You are reviewing branch: ${BRANCH} against base: ${BASE_BRANCH}
-Your working directory: ${WORKTREE_DIR}
-Original review: ./review.md
-Fix agent's notes: ./review-fix-log.md  (READ THIS — it records which findings the fix agent fixed, skipped as invalid, or deemed out-of-scope, with reasoning)
-Revalidation log: ./revalidate-${FIX_LOOP_COUNT}.log
-
-## TASK
-Load the receiving-code-review skill first.
-Read ./review-fix-log.md first to see what the fix agent did for each finding.
-Read the actual source files that had findings. Verify each finding by reading the file on disk.
-Check the revalidation log for build/lint/test results.
-For each original finding, note whether it is: **fixed** | **partially fixed** | **not fixed** | **invalid**
-If a finding was pre-existing (not introduced by this branch), note it as **CARRIED FORWARD** (pre-existing).
-Write an updated review to ./code-review.md.
-Verify your assertions by reading actual file contents.
-
-## HONORING THE FIX AGENT'S SKIP/INVALID CLAIMS
-If review-fix-log.md marks a finding as **invalid**, **skip**, **out-of-scope**, or **no code change possible**:
-- Default to **invalid** in your status unless you can point to a concrete, in-scope code defect on disk that contradicts the fix agent's reasoning.
-- A test-design critique, a request for more tests, or 'this could be better refactored' is NOT a code defect — accept the fix agent's invalid/skip verdict.
-- Do NOT re-litigate the same finding across loops. If you marked a finding **not fixed** in a prior loop and the fix agent has documented why no fix is possible, flip it to **invalid** this loop.
-
-## MANDATORY RESULT FILE
-After writing code-review.md, write EXACTLY ONE of these values to ./review-findings-status.txt:
-- ALL_RESOLVED  (if every finding is fixed, carried forward, or invalid)
-- HAS_UNRESOLVED (if any finding is not fixed or partially fixed)
-No other content in the file — just the status word.
-
-## CRITICAL RULES
-- Do NOT ask questions.
-- Do NOT expand scope.
-- Do not flag new issues beyond the original review.
-- Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
-
-Write code-review.md and review-findings-status.txt now."
-
-  _worktree_state_before=$(_capture_worktree_state)
-
-  _re_review_prompt_file=$(mktemp)
-  printf '%s' "$RE_REVIEW_PROMPT" > "$_re_review_prompt_file"
-  # Re-review uses whole-pr-review to route through the gemini profile, matching
-  # the model that produced the original findings. The --phase-id distinguishes
-  # this invocation in telemetry.
-  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-    --phase whole-pr-review \
-    --phase-id "re-review-${FIX_LOOP_COUNT}" \
-    --cwd "$WORKTREE_DIR" \
-    --run-id "$RUN_ID" \
-    --repo-id "$REPO_ID" \
-    --repo-root "$REPO_ROOT" \
-    --prompt-file "$_re_review_prompt_file" \
-    --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
-    --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-    2>&1 | tee -a "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
-  rm -f "$_re_review_prompt_file"
-  if [[ $_tee_ec -ne 0 ]]; then
-    orchestrator_fail "tee failed writing log for re-review-${FIX_LOOP_COUNT} (exit $_tee_ec)"
-  fi
-
-  _guard_worktree "re-review-${FIX_LOOP_COUNT}" "$_worktree_state_before"
-
-  if [[ $_agent_ec -ne 0 ]]; then
-    if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/re-review-${FIX_LOOP_COUNT}.log" 2>/dev/null; then
-      orchestrator_fail "re-review-${FIX_LOOP_COUNT} is blocked (agent emitted BLOCKED)"
-    else
-      case $_agent_ec in
-        1) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (contract violation)" ;;
-        2) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (config error or timeout)" ;;
-        3) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unexpected error)" ;;
-        4) warn "re-review-${FIX_LOOP_COUNT} had a provider error — checking for review artifacts..." ;;
-        *) orchestrator_fail "re-review-${FIX_LOOP_COUNT} failed (unknown exit code $_agent_ec)" ;;
-      esac
-    fi
-  fi
-
-  # Copy updated review
-  if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
-    cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
-  fi
-
-  # Check if all findings are resolved using resolve_result (primary: .result file, fallback: extractor, tertiary: assume unresolved)
-  REVIEW_STATUS=$(resolve_result \
-    "${WORKTREE_DIR}/review-findings-status.txt" \
-    "${ISSUES_DIR}/review.md" \
-    ALL_RESOLVED HAS_UNRESOLVED \
-    "HAS_UNRESOLVED")
-
-  if [[ "$REVIEW_STATUS" == "ALL_RESOLVED" ]]; then
-    info "All findings resolved. Exiting fix loop."
-    emit_event "fix-review" "info" "loop.iteration.completed" \
-      "fix-review loop ${FIX_LOOP_COUNT} completed (all resolved)" \
-      iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
-    break
-  fi
-
-  # No-progress detector: if the unresolved finding set is identical to the
-  # previous iteration, the loop is stuck (typically on a finding the fix agent
-  # cannot or will not address). Break instead of churning to the iteration cap.
-  # But only break when revalidate is GREEN — if it's red, there's still
-  # something objectively broken (build/lint/typecheck/test failed) and we
-  # should keep trying until MAX_ITERATIONS rather than ship a broken branch.
-  NEW_UNRESOLVED_FP=$(_unresolved_fingerprint "${ISSUES_DIR}/review.md")
-  if [[ -n "$PREV_UNRESOLVED_FP" && "$NEW_UNRESOLVED_FP" == "$PREV_UNRESOLVED_FP" ]]; then
-    if _revalidate_is_green "${ISSUES_DIR}/revalidate-${FIX_LOOP_COUNT}.log"; then
-      info "Unresolved finding set unchanged since loop $((FIX_LOOP_COUNT - 1)) and revalidate green — breaking to avoid churn."
-      emit_event "fix-review" "warn" "loop.no_progress" \
-        "fix-review unresolved set unchanged across iterations" \
-        iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}" fingerprint="${NEW_UNRESOLVED_FP}"
-      emit_event "fix-review" "info" "loop.iteration.completed" \
-        "fix-review loop ${FIX_LOOP_COUNT} completed (no progress)" \
-        iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
-      break
-    fi
-    info "Unresolved set unchanged but revalidate is red — continuing loop (refusing to early-exit with broken build/tests)."
-    emit_event "fix-review" "warn" "loop.no_progress_blocked_red" \
-      "no-progress break suppressed because revalidate is red" \
-      iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}" fingerprint="${NEW_UNRESOLVED_FP}"
-  fi
-  PREV_UNRESOLVED_FP="$NEW_UNRESOLVED_FP"
-
-  info "Review status: ${REVIEW_STATUS}. Continuing fix loop."
-  emit_event "fix-review" "info" "loop.iteration.completed" \
-    "fix-review loop ${FIX_LOOP_COUNT} completed (has unresolved)" \
-    iteration="${FIX_LOOP_COUNT}" status="${REVIEW_STATUS}"
-done
+  _cleanup_ec=$_review_fix_ec
 
 # Post-loop guard: refuse to let create-pr label this PR as ai:pr-ready when
 # the fix loop exited with unresolved findings. Covers ALL exit paths from
@@ -4535,230 +4195,28 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
     _task_fixed=0
     _prev_fp=""
     _pre_task_head=$(git -C "${WORKTREE_DIR}" rev-parse HEAD)
-    for _retry in $(seq 1 "$MAX_FIX_REVIEW_RETRIES_PER_TASK"); do
-      log "=== Task $_task_id: fix-review attempt ${_retry}/${MAX_FIX_REVIEW_RETRIES_PER_TASK} ==="
-      emit_event "fix-review" "info" "task.attempt.started" \
-        "fix-review task $_task_id attempt $_retry/${MAX_FIX_REVIEW_RETRIES_PER_TASK}" \
-        task_id="$_task_id" attempt="${_retry}" max="${MAX_FIX_REVIEW_RETRIES_PER_TASK}"
+    _review_fix_ec=0
+    NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+      "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
+      --cwd "$WORKTREE_DIR" \
+      --run-id "$RUN_ID" \
+      --repo-id "$REPO_ID" \
+      --repo-root "$REPO_ROOT" \
+      --phase-id "fix-review" \
+      2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _review_fix_ec=${PIPESTATUS[0]}
+    _cleanup_ec=$_review_fix_ec
 
-      declare -a _art_excl=()
-      while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
-      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
-        warn "Dirty worktree before task $_task_id — resetting to HEAD"
-        git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
-      fi
-
-      _task_finding_text=""
-      if [[ -f "${ISSUES_DIR}/review.md" ]]; then
-        _task_finding_text=$(grep -A 20 -i -w "$(_escape_for_grep "$_task_id")" "${ISSUES_DIR}/review.md" 2>/dev/null || echo "")
-      fi
-      if [[ -z "$_task_finding_text" && -f "${ISSUES_DIR}/review-triage.md" ]]; then
-        _task_finding_text=$(grep -A 20 -i -w "$(_escape_for_grep "$_task_id")" "${ISSUES_DIR}/review-triage.md" 2>/dev/null || echo "")
-      fi
-
-      # Load architect plan entry for this task (if available)
-      _task_plan_section=""
-      if [[ -n "$FIX_REVIEW_ARCHITECT_PLAN" ]]; then
-        _plan_entry=$(_extract_architect_plan_entry "$FIX_REVIEW_ARCHITECT_PLAN" "$_task_id")
-        if [[ -n "$_plan_entry" ]]; then
-          _plan_approach=$(echo "$_plan_entry" | jq -r '.approach // ""' 2>/dev/null)
-          _plan_constraints=$(echo "$_plan_entry" | jq -r '.constraints // [] | join("\n- ")' 2>/dev/null)
-          _plan_conflicts=$(echo "$_plan_entry" | jq -r '.conflicts_resolved // [] | join(", ")' 2>/dev/null)
-          _plan_depends=$(echo "$_plan_entry" | jq -r '.depends_on // [] | join(", ")' 2>/dev/null)
-          _task_plan_section="## CROSS-TASK FIX PLAN (from cohesive architect analysis)
-Approach: ${_plan_approach}
-$([ -n "$_plan_conflicts" ] && echo "Conflicts resolved: ${_plan_conflicts}" || true)
-$([ -n "$_plan_constraints" ] && printf 'Constraints:\n- %s' "$_plan_constraints" || true)
-$([ -n "$_plan_depends" ] && echo "Depends on: ${_plan_depends}" || true)
-"
-        fi
-      fi
-
-      FIX_PROMPT="You are fixing a single review finding.
-
-## CROSS-TASK FIX PLAN
-${_task_plan_section:-No plan entry — fix independently.}
-
-## CONTEXT
-You are working in: ${WORKTREE_DIR}
-Issue: issue.md
-Plan: plan.md
-Review finding ID: ${_task_id}
-Severity: ${_task_severity}
-Files to fix: ${_task_files}
-
-## FINDING
-${_task_description}
-
-${_task_finding_text}
-
-## YOUR TASK
-Fix ONLY the finding described above. Do not expand scope.
-Do not touch files not listed in the finding unless the fix necessarily requires it.
-
-## VERIFICATION
-${_task_verify}
-
-## COMMIT DISCIPLINE (CRITICAL)
-1. After fixing, commit your changes using: git add -A && git commit -m '${_task_commit_msg}'
-2. THEN write the result file.
-
-## MANDATORY RESULT FILE
-After committing, write EXACTLY ONE of these values to ./fix-review-task-${_task_id}.result:
-- FIXED          (you fixed the finding in code)
-- FAILED         (you could not fix the finding after reasonable attempts)
-- DONE_NO_FIXES_NEEDED  (the finding was invalid or already fixed)
-No other content in the file — just the status word.
-
-## CRITICAL RULES
-- Do NOT ask questions.
-- Do NOT rely on agent memory.
-- Do NOT create a PR.
-- Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
-- Load the receiving-code-review skill first.
-- You MUST commit BEFORE writing the result file.
-
-Start now."
-
-      _fix_prompt_file=$(mktemp)
-      _worktree_state_before=$(_capture_worktree_state)
-      printf '%s' "$FIX_PROMPT" > "$_fix_prompt_file"
-      ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
-        --phase fix-review \
-        --phase-id "fix-review-task-${_task_id}" \
-        --step-id "${_retry}" \
-        --cwd "$WORKTREE_DIR" \
-        --run-id "$RUN_ID" \
-        --repo-id "$REPO_ID" \
-        --repo-root "$REPO_ROOT" \
-        --prompt-file "$_fix_prompt_file" \
-        --timeout-minutes $(( (TIMEOUT_PR_FIX + 59) / 60 )) \
-        --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
-        2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _agent_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
-      rm -f "$_fix_prompt_file"
-
-      if [[ $_tee_ec -ne 0 ]]; then
-        orchestrator_fail "tee failed writing log for fix-review-task-${_task_id} (exit $_tee_ec)"
-      fi
-      _guard_worktree "fix-review-task-${_task_id}" "$_worktree_state_before"
-      check_branch_after_agent
-
-      if [[ $_agent_ec -ne 0 ]]; then
-        if grep -qE '^[[:space:]]*BLOCKED([[:space:]]*$|:)' "${ISSUES_DIR}/fix-review-task-${_task_id}.log" 2>/dev/null; then
-          echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
-          emit_event "fix-review" "warn" "task.blocked" \
-            "fix-review task $_task_id is blocked" \
-            task_id="$_task_id"
-          break
-        else
-          case $_agent_ec in
-            2) warn "fix-review-task-${_task_id} config error or timeout (attempt ${_retry})" ;;
-            *) warn "fix-review-task-${_task_id} failed with exit code $_agent_ec (attempt ${_retry})" ;;
-          esac
-          if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
-            continue
-          fi
-          echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
-          break
-        fi
-      fi
-
-      log "=== Re-validating after fix for task $_task_id (attempt $_retry) ==="
-      cd "${WORKTREE_DIR}"
-      ensure_branch
-
-      {
-        echo "=== pnpm build ==="
-        timeout 120 pnpm build 2>&1 || echo "[build failed]"
-        echo ""
-        echo "=== pnpm lint ==="
-        timeout 120 pnpm lint 2>&1 || echo "[lint failed]"
-        echo ""
-        echo "=== pnpm typecheck ==="
-        timeout 120 pnpm typecheck 2>&1 || echo "[typecheck failed]"
-        echo ""
-        echo "=== pnpm test ==="
-        timeout 120 pnpm test 2>&1 || echo "[test failed]"
-        echo ""
-        echo "=== pnpm test:bash ==="
-        timeout 180 pnpm test:bash 2>&1 || echo "[test:bash failed]"
-      } > >(tee "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log") 2>&1
-
-      _stash_and_conditionally_commit \
-        "${WORKTREE_DIR}" \
-        "$_task_id" \
-        "fix: task ${_task_id} (auto-committed after green revalidate)" \
-        "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log" \
-        "origin/${BASE_BRANCH}"
-
-      # Guard: if the stash was consumed (pop succeeded) but commit failed,
-      # the tree is dirty with staged changes. A subsequent retry or task
-      # would reset --hard and destroy the agent's work. Mark FAILED so the
-      # dirty-tree guard at the top of the next iteration handles it safely.
-      declare -a _art_excl=()
-      while IFS= read -r _exc; do _art_excl+=("$_exc"); done < <(orchestrator_diff_exclusions)
-      if ! git -C "${WORKTREE_DIR}" diff --exit-code HEAD -- . "${_art_excl[@]}" 2>/dev/null; then
-        warn "Task $_task_id: commit failed, tree dirty — marking task as FAILED"
-        echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
-      fi
-
-      _revert_task_commits \
-        "${WORKTREE_DIR}" \
-        "$_task_id" \
-        "$_pre_task_head" \
-        "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"
-
-      _task_result_file="${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
-      _task_status=$(resolve_result "$_task_result_file" "" FIXED FAILED DONE_NO_FIXES_NEEDED "FAILED")
-
-      if [[ "$_task_status" == "FIXED" || "$_task_status" == "DONE_NO_FIXES_NEEDED" ]]; then
-        if _revalidate_is_green "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"; then
-          _task_fixed=1
-          emit_event "fix-review" "info" "task.attempt.completed" \
-            "fix-review task $_task_id fixed (attempt $_retry)" \
-            task_id="$_task_id" attempt="${_retry}" status="$_task_status"
-          break
-        else
-          warn "Task $_task_id reports $_task_status but revalidate failed (attempt $_retry)"
-          if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
-            continue
-          fi
-          echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
-          break
-        fi
-      elif [[ "$_task_status" == "FAILED" ]]; then
-        # Fingerprint-based no-progress detection: capture the tree state (diff
-        # from base) to detect when the fix agent is making no progress across
-        # retries. Identical fingerprints mean the agent produced the same code
-        # (or no changes at all) on consecutive FAILED attempts.
-        _current_fp=$(git -C "${WORKTREE_DIR}" diff --patch "${BASE_BRANCH}" -- . 2>/dev/null | sha256sum | awk '{print $1}')
-        if [[ -n "$_prev_fp" && "$_current_fp" == "$_prev_fp" ]]; then
-          if _revalidate_is_green "${ISSUES_DIR}/revalidate-${_task_id}-retry-${_retry}.log"; then
-            warn "Task $_task_id: fix produced identical diff as previous attempt (fingerprint match) and revalidate green — no progress, stopping retries"
-            emit_event "fix-review" "warn" "task.no_progress" \
-              "fix-review task $_task_id no progress detected via fingerprint" \
-              task_id="$_task_id" attempt="${_retry}" fingerprint="${_current_fp}"
-            break
-          fi
-          warn "Task $_task_id: fingerprint match but revalidate is red — continuing retry (refusing to early-exit with broken build/tests)"
-          emit_event "fix-review" "warn" "task.no_progress_blocked_red" \
-            "no-progress break suppressed because revalidate is red" \
-            task_id="$_task_id" attempt="${_retry}" fingerprint="${_current_fp}"
-        fi
-        _prev_fp="$_current_fp"
-        if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
-          continue
-        fi
-        break
-      else
-        warn "Task $_task_id has unexpected status: $_task_status"
-        if [[ "$_retry" -lt "$MAX_FIX_REVIEW_RETRIES_PER_TASK" ]]; then
-          continue
-        fi
-        echo "FAILED" > "${WORKTREE_DIR}/fix-review-task-${_task_id}.result"
-        break
-      fi
-    done
+    if [[ $_cleanup_ec -eq 0 ]]; then
+      _task_fixed=1
+      info "Task $_task_id: review/fix loop converged"
+    else
+      case $_cleanup_ec in
+        1) warn "Task $_task_id: review/fix loop exhausted" ;;
+        2) warn "Task $_task_id: config error (exit 2)" ;;
+        3) warn "Task $_task_id: unexpected error (exit 3)" ;;
+        *) warn "Task $_task_id: unknown exit code $_cleanup_ec" ;;
+      esac
+    fi
 
     if [[ "$_task_fixed" -eq 1 ]]; then
       info "Task $_task_id: FIXED"
