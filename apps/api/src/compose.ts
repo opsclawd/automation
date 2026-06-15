@@ -9,6 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   openDatabase,
@@ -351,7 +352,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const store: ArtifactStore = {
           async read(_runId: string, relativePath: string): Promise<string> {
             if (!inv?.stdoutPath) throw new ArtifactNotFoundError(_runId, relativePath);
-            return readFileSync(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
+            return await readFile(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
           },
           write: async () => {
             throw new Error('not implemented');
@@ -395,7 +396,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const store: ArtifactStore = {
           async read(_runId: string, relativePath: string): Promise<string> {
             if (!inv?.stdoutPath) throw new ArtifactNotFoundError(_runId, relativePath);
-            return readFileSync(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
+            return await readFile(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
           },
           write: async () => {
             throw new Error('not implemented');
