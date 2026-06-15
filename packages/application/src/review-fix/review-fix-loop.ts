@@ -128,6 +128,14 @@ export class ReviewFixLoop {
       const reval = await deps.runRevalidation(ctx);
       outstandingFailedRevalidation = !reval.passed;
 
+      // When revalidation fails after a fix that advanced HEAD, roll back
+      // the fix commit so the next iteration starts from the pre-fix baseline
+      // rather than a commit already known to break validation. This prevents
+      // an exhausted loop or resumed run from inheriting unvalidated changes.
+      if (!reval.passed && fix.headBeforeFix && deps.rollbackFix) {
+        await deps.rollbackFix(ctx, fix.headBeforeFix);
+      }
+
       // category-change trigger: if this revalidation failed with a different
       // category than the previous failing one, escalate the NEXT fix.
       if (!reval.passed && reval.category !== undefined) {

@@ -23,6 +23,7 @@ export interface FixStepResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
+  headBeforeFix?: string; // commit SHA before the fix, for rollback on revalidation failure
 }
 
 export interface RevalidationResult {
@@ -44,6 +45,7 @@ export interface ReviewFixLoopDeps {
   events: EventBusPort;
   now: () => Date;
   idFactory: () => string;
+  rollbackFix?: (ctx: StepContext, targetSha: string) => Promise<void>;
 }
 
 export interface ReviewFixLoopInput {

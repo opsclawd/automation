@@ -582,10 +582,17 @@ export function composeRoot(opts: ComposeOptions): Container {
             cwd: ctx.cwd,
           });
         }
+        // Carry the pre-fix SHA so the loop can roll back if revalidation
+        // subsequently fails. Only set when the fix actually advanced HEAD
+        // and produced a valid done_with_fixes verdict (the compose helper
+        // already reverts all other cases above).
+        const headBeforeFix =
+          shaAdvanced && effectiveVerdict === 'done_with_fixes' ? startCommitSha : undefined;
         return {
           invocationId,
           agentOutcome: result.outcome,
           ...(effectiveVerdict !== undefined ? { verdict: effectiveVerdict } : {}),
+          ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
         };
       };
 
@@ -637,10 +644,15 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
       };
 
+      const rollbackFix = async (ctx: StepContext, targetSha: string): Promise<void> => {
+        execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
+      };
+
       reviewFixLoop = new ReviewFixLoop({
         runReview,
         runFix,
         runRevalidation,
+        rollbackFix,
         loops: loopRepository,
         events: persistingEventBusForLoop,
         now: () => new Date(),

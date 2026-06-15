@@ -215,6 +215,74 @@ describe('ReviewFixLoop', () => {
     expect(revalCalls).toBe(3);
   });
 
+  it('calls rollbackFix when revalidation fails after a fix with headBeforeFix', async () => {
+    const rollbackCalls: Array<{ targetSha: string }> = [];
+    const deps = makeDeps({
+      runReview: async () => ({ invocationId: 'r', agentOutcome: 'success', verdict: 'fail' }),
+      runFix: async () => ({
+        invocationId: 'f',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'abc123def',
+      }),
+      runRevalidation: async () => ({
+        validationRunId: 'v',
+        passed: false,
+        category: 'build',
+      }),
+      rollbackFix: async (_ctx: StepContext, targetSha: string) => {
+        rollbackCalls.push({ targetSha });
+      },
+    });
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    // rollbackFix is called on every iteration where revalidation fails
+    // (3 iterations with maxIterations=3)
+    expect(rollbackCalls).toHaveLength(3);
+    expect(rollbackCalls[0]?.targetSha).toBe('abc123def');
+    expect(out.phaseOutcome).toBe('failed');
+    expect(out.loop.status).toBe('exhausted');
+  });
+
+  it('does not call rollbackFix when revalidation fails but no headBeforeFix', async () => {
+    const rollbackCalls: Array<unknown> = [];
+    const deps = makeDeps({
+      runReview: async () => ({ invocationId: 'r', agentOutcome: 'success', verdict: 'fail' }),
+      runFix: async () => ({
+        invocationId: 'f',
+        agentOutcome: 'success',
+        verdict: 'done_no_fixes_needed',
+      }),
+      runRevalidation: async () => ({
+        validationRunId: 'v',
+        passed: false,
+        category: 'build',
+      }),
+      rollbackFix: async () => {
+        rollbackCalls.push('called');
+      },
+    });
+    await new ReviewFixLoop(deps).execute(baseInput());
+    expect(rollbackCalls).toHaveLength(0);
+  });
+
+  it('does not call rollbackFix when revalidation passes even with headBeforeFix', async () => {
+    const rollbackCalls: Array<unknown> = [];
+    const deps = makeDeps({
+      runReview: async () => ({ invocationId: 'r', agentOutcome: 'success', verdict: 'fail' }),
+      runFix: async () => ({
+        invocationId: 'f',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'abc123def',
+      }),
+      rollbackFix: async () => {
+        rollbackCalls.push('called');
+      },
+    });
+    await new ReviewFixLoop(deps).execute(baseInput());
+    expect(rollbackCalls).toHaveLength(0);
+  });
+
   it('resolves when revalidation retry passes after review pass with outstanding failure', async () => {
     let revalCalls = 0;
     let reviewCalls = 0;
