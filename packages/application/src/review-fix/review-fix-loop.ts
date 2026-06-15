@@ -32,6 +32,7 @@ export class ReviewFixLoop {
     let consecutiveFixFailures = 0;
     let lastFixInvocationId: string | undefined;
     let lastFailingCategory: string | undefined;
+    let outstandingFailedRevalidation = false;
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -66,6 +67,24 @@ export class ReviewFixLoop {
       }
 
       if (review.verdict === 'pass') {
+        if (outstandingFailedRevalidation) {
+          const reval = await deps.runRevalidation(ctx);
+          outstandingFailedRevalidation = !reval.passed;
+          if (reval.passed) {
+            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(loop);
+            this.emitIterationCompleted(input, iterationIndex, 'resolved');
+            break;
+          }
+          loop = completeIteration(loop, {
+            outcome: 'unresolved',
+            revalidationId: reval.validationRunId,
+            now: deps.now(),
+          });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          continue;
+        }
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
@@ -107,6 +126,7 @@ export class ReviewFixLoop {
 
       // --- REVALIDATE ---
       const reval = await deps.runRevalidation(ctx);
+      outstandingFailedRevalidation = !reval.passed;
 
       // category-change trigger: if this revalidation failed with a different
       // category than the previous failing one, escalate the NEXT fix.

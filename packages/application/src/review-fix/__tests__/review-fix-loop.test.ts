@@ -183,4 +183,65 @@ describe('ReviewFixLoop', () => {
     expect(events.filter((e) => e.type === 'loop.iteration.started')).toHaveLength(1);
     expect(events.filter((e) => e.type === 'loop.iteration.completed')).toHaveLength(1);
   });
+
+  it('does not resolve on review pass when previous revalidation failed (re-runs revalidation instead)', async () => {
+    let reviewCalls = 0;
+    let revalCalls = 0;
+    const deps = makeDeps({
+      runReview: async () => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+        };
+      },
+      runRevalidation: async () => {
+        revalCalls += 1;
+        return {
+          validationRunId: `val-${revalCalls}`,
+          passed: false,
+          category: 'build',
+        };
+      },
+    });
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    // Iteration 1: review fail → fix → reval fail → unresolved, outstandingFailedReval = true
+    // Iteration 2: review pass → reval fails again (outstanding) → continue → unresolved
+    // Iteration 3: review pass → reval fails again → exhausted
+    expect(out.phaseOutcome).toBe('failed');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(revalCalls).toBe(3);
+  });
+
+  it('resolves when revalidation retry passes after review pass with outstanding failure', async () => {
+    let revalCalls = 0;
+    let reviewCalls = 0;
+    const deps = makeDeps({
+      runReview: async () => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+        };
+      },
+      runRevalidation: async () => {
+        revalCalls += 1;
+        return {
+          validationRunId: `val-${revalCalls}`,
+          passed: revalCalls > 1,
+          category: 'build',
+        };
+      },
+    });
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    // Iteration 1: review fail → fix → reval fail (call 1) → unresolved, outstandingFailedReval = true
+    // Iteration 2: review pass → reval retry (call 2) → passes → resolved
+    expect(out.phaseOutcome).toBe('passed');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(2);
+    expect(revalCalls).toBe(2);
+  });
 });
