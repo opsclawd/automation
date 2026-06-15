@@ -113,3 +113,15 @@ resolve_result() {
   echo "$effective_fallback"
   return 0
 }
+
+# reset_task_result_file: clear a stale per-task .result before a fresh attempt.
+# A prior attempt/run may have written a verdict (e.g. BLOCKED during a transient
+# agent/permission hiccup) and then never rewritten it on a successful retry that
+# committed real work. Without clearing it, the next attempt reads the stale
+# verdict and hard-fails instead of evaluating what the agent actually did.
+# The companion .basesha.log / .headsha.log and any commits are left untouched —
+# only the verdict is reset so the attempt starts from a clean slate.
+reset_task_result_file() {
+  local result_file="$1"
+  rm -f "$result_file"
+}

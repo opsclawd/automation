@@ -1911,6 +1911,12 @@ if [[ "$PHASE" == "implement" ]]; then
     local output_log="${ISSUES_DIR}/implement-task-${task_n}.log"
     local impl_status="unknown"
 
+    # Clear any stale verdict from a prior attempt/run so a leftover BLOCKED/
+    # NEEDS_CONTEXT cannot be misattributed to this invocation. If the agent
+    # commits work but forgets to rewrite the result, the SHA-advanced
+    # result-writer recovery (caller) then runs instead of a hard fail.
+    reset_task_result_file "${ISSUES_DIR}/implement-task-${task_n}.result"
+
     log "  Task ${task_n}: implementing..."
 
     IMPLEMENTER_PROMPT="You are implementing Task ${task_n}: ${task_title}
