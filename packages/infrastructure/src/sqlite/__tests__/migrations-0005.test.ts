@@ -43,7 +43,7 @@ describe('migration 0005 validation tables', () => {
     applyMigrations(db);
     applyMigrations(db);
     const versions = db.prepare('SELECT version FROM schema_version').all();
-    expect(versions).toHaveLength(7);
+    expect(versions).toHaveLength(8);
     db.close();
   });
 });
