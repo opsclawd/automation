@@ -375,10 +375,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           '- Write code-review.md first, then result.json.',
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
+        // Clear stale code-review.md so a prior iteration's file cannot be
+        // misattributed to this invocation if the agent omits to rewrite it.
+        rmSync(join(ctx.cwd, 'code-review.md'), { force: true });
         const result = await router.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath,
-          expectedArtifacts: ['result.json'],
+          expectedArtifacts: ['result.json', 'code-review.md'],
           cwd: ctx.cwd,
           runId: String(ctx.runId),
           repoId: ctx.repoId,
