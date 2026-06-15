@@ -19,3 +19,4 @@ export * from './pr-review/reactivate-on-review.js';
 export * from './pr-review/apply-reactivation.js';
 export * from './review-fix/types.js';
 export * from './review-fix/review-fix-loop.js';
+export * from './review-fix/read-verdicts.js';

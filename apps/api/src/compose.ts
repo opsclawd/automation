@@ -18,6 +18,7 @@ import {
   EventRepository,
   ArtifactRepository,
   FailureRepository,
+  LoopRepository,
   AgentInvocationRepository,
   ValidationRunRepository,
   PrReviewRepository,
@@ -41,6 +42,11 @@ import {
   decideReactivation,
   applyReactivation,
   pollTaskResultSchema,
+  ReviewFixLoop,
+  readReviewVerdict,
+  readFixVerdict,
+  ArtifactNotFoundError,
+  type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
   type EventTailerFactory,
@@ -50,9 +56,13 @@ import {
   type GitPort,
   type CreateWorktreeInput,
   type PushInput,
+  type StepContext,
+  type ReviewStepResult,
+  type FixStepResult,
+  type RevalidationResult,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName, PhaseName, RunId } from '@ai-sdlc/domain';
+import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -127,6 +137,7 @@ export interface Container {
   agentInvocationRepository: AgentInvocationRepository;
   validationRunRepository: ValidationRunRepository;
   prReviewRepository: PrReviewRepository;
+  loopRepository: LoopRepository;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
@@ -136,6 +147,7 @@ export interface Container {
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
+  reviewFixLoop?: ReviewFixLoop;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -195,6 +207,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const validationRunRepository = new ValidationRunRepository(db);
   const prReviewRepository = new PrReviewRepository(db);
   const agentUsageRepository = new AgentUsageRepository(db);
+  const loopRepository = new LoopRepository(db);
   const validationAdapter = new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
@@ -258,6 +271,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
+  let reviewFixLoop: ReviewFixLoop | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
@@ -306,6 +320,122 @@ export function composeRoot(opts: ComposeOptions): Container {
       });
       const agent = config.agent;
       resolveProfileForPhaseBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+
+      const router = agentRuntime;
+      const reviewProfileName: string =
+        config.agent.phaseProfiles['whole-pr-review']?.profile ?? 'opencode-frontier';
+      const fixProfileName: string =
+        config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
+      const fixFallbackProfileName: string | undefined =
+        config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+
+      const newestInvocationId = (runUuid: string): string => {
+        const list = agentInvocationRepository.listByRun(RunId(runUuid));
+        const last = list[list.length - 1];
+        return last ? String(last.id) : '';
+      };
+
+      const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const result = await router.invoke({
+          profile: AgentProfileName(reviewProfileName),
+          promptPath: 'prompts/review.md',
+          expectedArtifacts: [],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: String(ctx.phaseId),
+          startCommitSha: '',
+        });
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        const store: ArtifactStore = {
+          async read(_runId: string, relativePath: string): Promise<string> {
+            if (!inv?.stdoutPath) throw new ArtifactNotFoundError(_runId, relativePath);
+            return readFileSync(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
+          },
+          write: async () => {
+            throw new Error('not implemented');
+          },
+          list: async () => [],
+        };
+        const verdict = inv
+          ? await readReviewVerdict(inv, { artifacts: store, agent: router })
+          : { ok: false as const, detail: 'no invocation row' };
+        return {
+          invocationId,
+          agentOutcome: result.outcome,
+          ...(verdict.ok ? { verdict: verdict.verdict } : {}),
+        };
+      };
+
+      const runFix = async (
+        ctx: StepContext,
+        opts: { useFallback: boolean; previousInvocationId?: string },
+      ): Promise<FixStepResult> => {
+        const profile =
+          opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const result = await router.invoke({
+          profile: AgentProfileName(profile),
+          promptPath: 'prompts/fix.md',
+          expectedArtifacts: [],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: String(ctx.phaseId),
+          startCommitSha: '',
+          ...(opts.previousInvocationId
+            ? { fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId) }
+            : {}),
+        });
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        const store: ArtifactStore = {
+          async read(_runId: string, relativePath: string): Promise<string> {
+            if (!inv?.stdoutPath) throw new ArtifactNotFoundError(_runId, relativePath);
+            return readFileSync(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
+          },
+          write: async () => {
+            throw new Error('not implemented');
+          },
+          list: async () => [],
+        };
+        const verdict = inv
+          ? await readFixVerdict(inv, { artifacts: store, agent: router })
+          : { ok: false as const, detail: 'no invocation row' };
+        return {
+          invocationId,
+          agentOutcome: result.outcome,
+          ...(verdict.ok ? { verdict: verdict.verdict } : {}),
+        };
+      };
+
+      const runRevalidation = async (ctx: StepContext): Promise<RevalidationResult> => {
+        const revalidateLogDir = join(runsDir, String(ctx.runId), 'revalidate');
+        const vr = await runValidation.execute({
+          runId: RunId(String(ctx.runId)),
+          phaseId: PhaseName('validate'),
+          cwd: ctx.cwd,
+          logDir: revalidateLogDir,
+          commands: config.validation.commands,
+          timeoutSeconds: config.validation.timeout,
+        });
+        const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+        return {
+          validationRunId: vr.validationRun.id,
+          passed: vr.passed,
+          ...(failedCommand?.kind ? { category: failedCommand.kind } : {}),
+        };
+      };
+
+      reviewFixLoop = new ReviewFixLoop({
+        runReview,
+        runFix,
+        runRevalidation,
+        loops: loopRepository,
+        events: eventBus,
+        now: () => new Date(),
+        idFactory: () => randomUUID(),
+      });
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
@@ -689,6 +819,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     agentInvocationRepository,
     validationRunRepository,
     prReviewRepository,
+    loopRepository,
     runValidation,
     startIssueRun,
     cancelRun,
@@ -698,6 +829,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     ...(agentRuntime ? { agentRuntime } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
     buildPrReviewPoller,
+    ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
   };
 }
 
