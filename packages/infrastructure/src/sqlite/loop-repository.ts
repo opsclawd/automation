@@ -125,8 +125,29 @@ export class LoopRepository implements LoopRepositoryPort {
 
   listForRun(runId: RunId): Loop[] {
     const rows = this.db
-      .prepare(`SELECT id FROM loops WHERE run_uuid = ? ORDER BY started_at ASC`)
-      .all(runId as unknown as string) as Array<{ id: string }>;
-    return rows.map((r) => this.findById(r.id)!).filter(Boolean);
+      .prepare(`SELECT * FROM loops WHERE run_uuid = ? ORDER BY started_at ASC`)
+      .all(runId as unknown as string) as LoopRow[];
+
+    if (rows.length === 0) return [];
+
+    const placeholders = rows.map(() => '?').join(', ');
+    const ids = rows.map((r) => r.id);
+    const iterationRows = this.db
+      .prepare(
+        `SELECT * FROM loop_iterations WHERE loop_id IN (${placeholders}) ORDER BY loop_id, idx ASC`,
+      )
+      .all(...ids) as IterationRow[];
+
+    const iterationsByLoopId = new Map<string, IterationRow[]>();
+    for (const ir of iterationRows) {
+      const arr = iterationsByLoopId.get(ir.loop_id);
+      if (arr) {
+        arr.push(ir);
+      } else {
+        iterationsByLoopId.set(ir.loop_id, [ir]);
+      }
+    }
+
+    return rows.map((r) => rowToLoop(r, (iterationsByLoopId.get(r.id) ?? []).map(rowToIteration)));
   }
 }
