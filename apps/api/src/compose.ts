@@ -375,9 +375,15 @@ export function composeRoot(opts: ComposeOptions): Container {
           '- Write code-review.md first, then result.json.',
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
-        // Clear stale code-review.md so a prior iteration's file cannot be
-        // misattributed to this invocation if the agent omits to rewrite it.
+        // Clear stale files so a prior iteration's artifacts cannot be
+        // misattributed to this invocation if the agent omits to rewrite them.
+        // result.json is cleared too: after a fix step the worktree contains the
+        // fixer's result.json (fix-review schema); a reviewer that exits 0 but
+        // forgets to write its own result.json would otherwise satisfy the
+        // adapter's artifact-exists check with the stale file, and
+        // readReviewVerdict would parse a fix-review schema as whole-pr-review.
         rmSync(join(ctx.cwd, 'code-review.md'), { force: true });
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const result = await router.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath,
@@ -399,8 +405,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           },
           list: async () => [],
         };
-        const verdict = inv
-          ? await readReviewVerdict(inv, { artifacts: store, agent: router })
+        // External runtimes (antigravity etc.) do not populate resultJsonPath
+        // on the invocation row even when result.json was written. Fall back
+        // to the expected artifact name so readReviewVerdict can find it.
+        const patchedInv = inv?.resultJsonPath
+          ? inv
+          : inv
+            ? { ...inv, resultJsonPath: 'result.json' }
+            : inv;
+        const verdict = patchedInv
+          ? await readReviewVerdict(patchedInv, { artifacts: store, agent: router })
           : { ok: false as const, detail: 'no invocation row' };
         return {
           invocationId,
@@ -456,6 +470,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             : []),
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
+        // Clear stale result.json from a prior step so the adapter's
+        // artifact-exists check cannot be satisfied by a prior step's file.
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const result = await router.invoke({
           profile: AgentProfileName(profile),
           promptPath,
@@ -483,8 +500,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           },
           list: async () => [],
         };
-        const verdict = inv
-          ? await readFixVerdict(inv, { artifacts: store, agent: router })
+        const patchedFixInv = inv?.resultJsonPath
+          ? inv
+          : inv
+            ? { ...inv, resultJsonPath: 'result.json' }
+            : inv;
+        const verdict = patchedFixInv
+          ? await readFixVerdict(patchedFixInv, { artifacts: store, agent: router })
           : { ok: false as const, detail: 'no invocation row' };
         return {
           invocationId,
