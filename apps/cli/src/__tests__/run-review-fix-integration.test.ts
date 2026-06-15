@@ -117,10 +117,10 @@ describe('run-review-fix integration', () => {
       fixProfile: AgentProfileName('fixer'),
     });
 
-    // The loop converges because the default runReview in compose.ts invokes
-    // the agent runtime. With no real agent CLI available, the adapter call
-    // will fail — but for the test, we assert the structural invariants:
-    // the execute method exists and was callable.
+    // The mock returns a passing review result on every invocation, so the
+    // loop converges on the first iteration. We verify that execute() returns
+    // a phaseOutcome and that a loop row with at least one iteration is
+    // persisted.
     expect(typeof phaseOutcome).toBe('string');
     expect(loop).toBeDefined();
     expect(typeof loop.status).toBe('string');
