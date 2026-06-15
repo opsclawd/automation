@@ -8,6 +8,10 @@ coverage/
 .ai-worktrees/
 ai/
 .review-context/
+# compound-engineering ce-review tooling writes persona findings here; it is
+# scratch output, not source. Untracked files in read-only review phases trip
+# the orchestrator's mutation guard (see #338 false-positive), so ignore it.
+.context/
 *.result
 *.log
 # Per-run orchestrator artifacts written at the repo/worktree root. These must
