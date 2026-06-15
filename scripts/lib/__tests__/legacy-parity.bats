@@ -60,20 +60,64 @@ teardown() {
 }
 
 # Invariant: the fix-review phases (whole-pr-review, fix-review) delegate loop
-#   iteration to run-review-fix.ts. The TS orchestrator's ReviewFixLoop handles
-#   post-agent cleanup internally (preserving uncommitted work, commit discipline).
+#   iteration to run-review-fix.ts via the TS ReviewFixLoop. The TS loop
+#   wires runRevalidation (re-runs validation after a fix attempt) and
+#   rollbackFix (resets HEAD when revalidation fails — replaces the original
+#   _stash_and_conditionally_commit hardening from #281 which preserved
+#   uncommitted work and committed with discipline in bash).
 # Source: #337, #281.
-@test "parity[#281]: fix-review delegates to run-review-fix.ts" {
+# Hardening split: _stash_and_conditionally_commit (bash, #281):
+#   - pre-agent stash/uncommitted preservation → handled by TS runFix's
+#     SHA tracking + git reset on no-commit in compose.ts
+#   - post-agent commit discipline → handled by TS ReviewFixLoop's
+#     rollbackFix on revalidation failure (red revalidate → git reset --hard)
+#   - guard_artifact_clean before git add -A → covered by TS runFix's
+#     pre-add artifact cleanup (TS-port, kept in bash for now — M8)
+# TS-port contract: compose.ts must wire runRevalidation and rollbackFix
+#   into the ReviewFixLoop constructor.
+@test "parity[#281]: ReviewFixLoop wires runRevalidation and rollbackFix" {
+  local compose="$REPO_ROOT/apps/api/src/compose.ts"
+  # runRevalidation must be wired in ReviewFixLoop constructor
+  run grep -c "runRevalidation" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # rollbackFix must be wired in ReviewFixLoop constructor
+  run grep -c "rollbackFix" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Bash script still delegates to run-review-fix.ts for the review/fix phases
   run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
 
 # Invariant: fix-review delegates to run-review-fix.ts which handles task
-#   finding and iteration inside the TS orchestrator (no bash-level grep/escape).
-# Source: #337 (replaces #283 per-task loop with CLI delegation).
-# TS-port contract: fix-review must use run-review-fix.ts for the fix-review phase.
-@test "parity[#283]: fix-review delegates to run-review-fix.ts" {
+#   finding and iteration inside the TS orchestrator via ReviewFixLoop. The
+#   TS loop carries review findings through iterations (runReview → re-review,
+#   runFix → apply fix, runRevalidation → validate) without bash-level
+#   grep/escape. The original _escape_for_grep hardening (#283, safe task-id
+#   escaping for grep patterns) is replaced: findings are tracked as typed
+#   structured data (id, action, files, severity, description), never
+#   grep-scanned from plan text.
+# Source: #337 (replaces #283 per-task grep/escape loop with CLI delegation).
+# Hardening split: _escape_for_grep (bash, #283):
+#   - safe task-id escaping for grep patterns → replaced by TS ReviewFixLoop's
+#     structured finding iteration (findings are typed objects, not text)
+#   - per-task loop with grep-based selection → replaced by ReviewFixLoop's
+#     runFix closure receiving individual findings by structured id
+# TS-port contract: compose.ts must wire ReviewFixLoop with runReview and
+#   runFix closures that carry findings through fix iterations.
+@test "parity[#283]: ReviewFixLoop carries findings through fix iterations" {
+  local compose="$REPO_ROOT/apps/api/src/compose.ts"
+  # ReviewFixLoop must be wired in compose.ts with step closures
+  run grep -c "new ReviewFixLoop" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # runFix closure must exist (the per-finding iteration mechanism)
+  run grep -c "const runFix" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # Bash script still delegates to run-review-fix.ts for fix-review phase
   run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]

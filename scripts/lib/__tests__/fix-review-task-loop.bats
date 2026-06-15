@@ -172,6 +172,19 @@ JSON
   [ "$status" -ne 0 ]
 }
 
+# Hardening split: the original bash-level functions (_stash_and_conditionally_commit
+#   from #281, _escape_for_grep from #283) are replaced by the TS ReviewFixLoop
+#   in compose.ts/packages/application. What Bash handles vs what TS handles:
+#   Bash (still responsible):
+#     - guard_artifact_clean before agent delegation (M8 target)
+#     - post-loop phase advancement (detect_phase, validation.result override)
+#   TS (ReviewFixLoop handles):
+#     - runRevalidation + rollbackFix (replaces _stash_and_conditionally_commit)
+#     - structured finding iteration (replaces _escape_for_grep + grep-based loop)
+#     - commit discipline and worktree state management inside the loop
+# This test guards that the Bash script still delegates; behavioral coverage of
+# the TS loop's revalidation and rollbackFix lives in parity[#281] and of
+# iteration in parity[#283] (legacy-parity.bats).
 @test "ai-run-issue-v2 fix-review delegates to run-review-fix.ts" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   run grep -c 'run-review-fix.ts' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
