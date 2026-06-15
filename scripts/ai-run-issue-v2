@@ -3680,7 +3680,7 @@ Write code-review.md now."
 
   _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
-  NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
     "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
@@ -4145,7 +4145,7 @@ else
   if [[ -n "$FIX_REVIEW_ARCHITECT_PLAN" ]]; then
     _ARCHITECT_PLAN_FLAG="--architect-plan-json $FIX_REVIEW_ARCHITECT_PLAN"
   fi
-  NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
+  ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
     "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
     --cwd "$WORKTREE_DIR" \
     --run-id "$RUN_ID" \
