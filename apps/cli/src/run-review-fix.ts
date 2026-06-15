@@ -137,7 +137,26 @@ async function main() {
   const architectPlanPath = values['architect-plan-json'];
   if (architectPlanPath) {
     try {
-      architectPlan = JSON.parse(readFileSync(architectPlanPath, 'utf-8'));
+      const raw = JSON.parse(readFileSync(architectPlanPath, 'utf-8'));
+      if (
+        typeof raw !== 'object' ||
+        raw === null ||
+        typeof raw.version !== 'number' ||
+        !Array.isArray(raw.tasks)
+      ) {
+        console.error(`architect plan must contain version (number) and tasks (array)`);
+        process.exit(2);
+      }
+      architectPlan = {
+        version: raw.version,
+        tasks: (raw.tasks as Array<Record<string, unknown>>).map((t, i) => ({
+          task_id: String(t.task_id ?? `task-${i}`),
+          approach: String(t.approach ?? ''),
+          conflicts_resolved: Array.isArray(t.conflicts_resolved) ? t.conflicts_resolved : [],
+          constraints: Array.isArray(t.constraints) ? t.constraints : [],
+          depends_on: Array.isArray(t.depends_on) ? t.depends_on : [],
+        })),
+      };
     } catch (err) {
       console.error(`failed to read architect plan from ${architectPlanPath}: ${err}`);
       process.exit(2);
