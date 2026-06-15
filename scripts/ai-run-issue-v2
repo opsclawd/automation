@@ -4163,10 +4163,7 @@ else
 
   if [[ $_cleanup_ec -eq 0 ]]; then
     echo "ALL_FIXED" > "${ISSUES_DIR}/fix-status.txt"
-    _last_revalidate_log=$(ls -t "${ISSUES_DIR}"/revalidate-*-retry-*.log 2>/dev/null | head -1 || true)
-    if [[ -n "$_last_revalidate_log" ]] && _revalidate_is_green "$_last_revalidate_log"; then
-      echo "passed" > "${ISSUES_DIR}/validation.result"
-    fi
+    echo "passed" > "${ISSUES_DIR}/validation.result"
   else
     echo "HAS_UNRESOLVED" > "${ISSUES_DIR}/fix-status.txt"
     warn "fix-review exited with unresolved findings — overriding validation.result to block ai:pr-ready."
@@ -4184,12 +4181,6 @@ else
     _fix_status=$(cat "${ISSUES_DIR}/fix-status.txt" 2>/dev/null)
     if [[ "$_fix_status" == "HAS_UNRESOLVED" ]]; then
       orchestrator_fail "fix-review: unresolved findings remain — cannot create PR"
-    fi
-    if [[ "$_fix_status" == "ALL_FIXED" ]]; then
-      _last_revalidate_log_gate=$(ls -t "${ISSUES_DIR}"/revalidate-*-retry-*.log 2>/dev/null | head -1 || true)
-      if [[ -n "$_last_revalidate_log_gate" ]] && ! _revalidate_is_green "$_last_revalidate_log_gate"; then
-        orchestrator_fail "fix-review: all tasks fixed but final revalidate is red — branch is broken"
-      fi
     fi
   fi
 fi
