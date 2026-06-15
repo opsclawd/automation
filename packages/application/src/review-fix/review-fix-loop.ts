@@ -45,9 +45,6 @@ export class ReviewFixLoop {
       };
 
       // --- REVIEW ---
-      const review = await deps.runReview(ctx);
-      loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
-      deps.loops.update(loop);
       this.emit(
         input,
         'loop.iteration.started',
@@ -57,6 +54,9 @@ export class ReviewFixLoop {
           index: iterationIndex,
         },
       );
+      const review = await deps.runReview(ctx);
+      loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
+      deps.loops.update(loop);
 
       if (review.agentOutcome !== 'success' || review.verdict === undefined) {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
