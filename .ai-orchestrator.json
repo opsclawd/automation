@@ -14,7 +14,8 @@
       "architectPass": { "enabled": true }
     },
     "fixValidate": { "maxIterations": 2 },
-    "planReview": { "maxIterations": 5, "enabled": true }
+    "planReview": { "maxIterations": 5, "enabled": true },
+    "postPrReview": { "maxPolls": 10, "pollIntervalSeconds": 300 }
   },
   "timeouts": {
     "readyMaxDays": 7,

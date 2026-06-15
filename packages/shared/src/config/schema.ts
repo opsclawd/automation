@@ -32,6 +32,14 @@ const phasesSchema = z.object({
       judgmentAgent: z.string().min(1).optional(),
     })
     .optional(),
+  // Post-PR review poller (scripts/ai-pr-review-poll) settings. When absent, the
+  // Bash launcher falls back to maxPolls=3 / pollIntervalSeconds=300.
+  postPrReview: z
+    .object({
+      maxPolls: z.number().int().positive(),
+      pollIntervalSeconds: z.number().int().positive(),
+    })
+    .optional(),
 });
 
 const timeoutsSchema = z.object({

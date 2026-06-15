@@ -224,3 +224,43 @@ describe('loadConfig with local override', () => {
     expect(cfg.agent!.phaseProfiles.compound.profile).toBe('fast');
   });
 });
+
+describe('phases.postPrReview', () => {
+  it('parses configured maxPolls and pollIntervalSeconds', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          postPrReview: { maxPolls: 10, pollIntervalSeconds: 120 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const config = loadConfig(dir);
+    expect(config.phases.postPrReview).toEqual({ maxPolls: 10, pollIntervalSeconds: 120 });
+  });
+
+  it('is optional (absent → undefined)', () => {
+    const dir = makeRepo(BASE_CONFIG);
+    expect(loadConfig(dir).phases.postPrReview).toBeUndefined();
+  });
+
+  it('rejects a non-positive maxPolls', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          postPrReview: { maxPolls: 0, pollIntervalSeconds: 300 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    expect(() => loadConfig(dir)).toThrow(ConfigError);
+  });
+});

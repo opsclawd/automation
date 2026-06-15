@@ -1548,3 +1548,36 @@ PLAN
   [ -f "$d/implement-task-4.basesha.log" ]   # sha logs untouched
   [ -f "$d/implement-task-4.headsha.log" ]
 }
+
+# Invariant: post-PR review poll count + interval are read from
+#   phases.postPrReview.{maxPolls,pollIntervalSeconds}, falling back to 3 / 300
+#   on a missing file, missing key, or non-positive-integer value — so a bad
+#   config can never shrink the poll budget to 0/garbage and silently disable
+#   post-PR review handling.
+# Source: #344 (poll count was hardcoded to 3 in ai-run-issue-v2; PR #343
+#   capped at 3 polls with comments still unprocessed).
+# Failure prevented: the background poller stops too early due to a hardcoded or
+#   unvalidated poll budget.
+# TS-port contract: the managed TS poller must resolve the same config with the
+#   same default fallbacks.
+@test "parity[#344]: resolve_pr_review_poll_settings reads config with safe fallbacks" {
+  source "$REPO_ROOT/scripts/lib/poll-config.sh"
+  local d="$BATS_TEST_TMPDIR/poll-cfg"
+  mkdir -p "$d"
+
+  printf '%s' '{"phases":{"postPrReview":{"maxPolls":10,"pollIntervalSeconds":120}}}' > "$d/cfg.json"
+  run resolve_pr_review_poll_settings "$d/cfg.json"
+  [ "$status" -eq 0 ]
+  [ "$output" = "10 120" ]
+
+  printf '%s' '{"phases":{}}' > "$d/empty.json"
+  run resolve_pr_review_poll_settings "$d/empty.json"
+  [ "$output" = "3 300" ]
+
+  printf '%s' '{"phases":{"postPrReview":{"maxPolls":0,"pollIntervalSeconds":"x"}}}' > "$d/bad.json"
+  run resolve_pr_review_poll_settings "$d/bad.json"
+  [ "$output" = "3 300" ]
+
+  run resolve_pr_review_poll_settings "$d/nope.json"
+  [ "$output" = "3 300" ]
+}
