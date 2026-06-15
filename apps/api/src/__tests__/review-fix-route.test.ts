@@ -95,9 +95,9 @@ describe('GET /api/runs/:uuid/review-fix', () => {
       reviewInvocationId: 'r1',
       fixInvocationId: 'f1',
       revalidationId: 're1',
-      reviewArtifactPath: 'phases/review_fix/loop-1/review.md',
-      fixArtifactPath: 'phases/review_fix/loop-1/fix.md',
-      revalidateArtifactPath: 'phases/review_fix/loop-1/revalidate.md',
+      reviewArtifactPath: 'review-fix/review/iter-1/code-review.md',
+      fixArtifactPath: 'review-fix/fix/iter-1/result.json',
+      revalidateArtifactPath: 'revalidate/iter-1/validation-result.json',
       startedAt: '2026-06-14T00:01:00.000Z',
       completedAt: '2026-06-14T00:05:00.000Z',
     });

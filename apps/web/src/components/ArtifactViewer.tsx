@@ -6,7 +6,7 @@ import { formatBytes } from '@/lib/format';
 interface ArtifactViewerProps {
   runId: string;
   fileName: string;
-  fileSize: number;
+  fileSize?: number;
 }
 
 type ViewState = 'closed' | 'loading' | 'loaded' | 'error' | 'no-preview';
@@ -71,7 +71,9 @@ export function ArtifactViewer({ runId, fileName, fileSize }: ArtifactViewerProp
       >
         {fileName}
       </button>
-      <span className="ml-2 text-slate-500">{formatBytes(fileSize)}</span>
+      {fileSize !== undefined && (
+        <span className="ml-2 text-slate-500">{formatBytes(fileSize)}</span>
+      )}
       <a
         href={`/api/runs/${runId}/artifacts/${encodeURIComponent(fileName)}`}
         download

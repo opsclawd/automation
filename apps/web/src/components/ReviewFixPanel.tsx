@@ -25,11 +25,30 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
 
   useEffect(() => {
     let live = true;
-    listReviewFix(runUuid)
-      .then((d) => live && setLoops(d))
-      .catch((e) => live && setError(String(e)));
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+
+    async function fetchData() {
+      try {
+        const d = await listReviewFix(runUuid);
+        if (!live) return;
+        setLoops(d);
+        setError(null);
+        if (d.some((l) => l.status === 'running')) {
+          intervalId ??= setInterval(fetchData, 10000);
+        } else if (intervalId !== undefined) {
+          clearInterval(intervalId);
+          intervalId = undefined;
+        }
+      } catch (e) {
+        if (!live) return;
+        setError(String(e));
+      }
+    }
+
+    fetchData();
     return () => {
       live = false;
+      if (intervalId !== undefined) clearInterval(intervalId);
     };
   }, [runUuid]);
 
@@ -64,24 +83,12 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
                     <li key={it.index} className="flex flex-wrap items-center gap-2 text-sm">
                       <span className="w-24 text-slate-500 text-xs">Iteration {it.index}</span>
                       <Pill color={chip.color}>{chip.label}</Pill>
-                      <ArtifactViewer
-                        runId={runUuid}
-                        fileName={it.reviewArtifactPath}
-                        fileSize={0}
-                      />
+                      <ArtifactViewer runId={runUuid} fileName={it.reviewArtifactPath} />
                       {it.fixArtifactPath && (
-                        <ArtifactViewer
-                          runId={runUuid}
-                          fileName={it.fixArtifactPath}
-                          fileSize={0}
-                        />
+                        <ArtifactViewer runId={runUuid} fileName={it.fixArtifactPath} />
                       )}
                       {it.revalidateArtifactPath && (
-                        <ArtifactViewer
-                          runId={runUuid}
-                          fileName={it.revalidateArtifactPath}
-                          fileSize={0}
-                        />
+                        <ArtifactViewer runId={runUuid} fileName={it.revalidateArtifactPath} />
                       )}
                     </li>
                   );

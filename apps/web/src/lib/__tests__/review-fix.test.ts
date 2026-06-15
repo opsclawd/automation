@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { loopBadge, iterationChip, type LoopDto } from '../review-fix.js';
+import { listReviewFix } from '../api-client';
 
 describe('loopBadge', () => {
   it('maps running to blue', () => {
@@ -34,6 +35,49 @@ describe('iterationChip', () => {
   });
 });
 
+describe('listReviewFix', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        loops: [
+          {
+            id: 'l1',
+            phaseId: 'whole-pr-review',
+            type: 'review-fix',
+            status: 'converged',
+            maxIterations: 3,
+            startedAt: '2026-06-14T00:00:00.000Z',
+            completedAt: '2026-06-14T00:05:00.000Z',
+            iterations: [],
+          },
+        ],
+      }),
+    } as Response);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('calls the correct URL and unwraps .loops from the response', async () => {
+    const loops = await listReviewFix('abc-123');
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/runs/abc-123/review-fix'), {
+      cache: 'no-store',
+    });
+    expect(loops).toHaveLength(1);
+    expect(loops[0]!.id).toBe('l1');
+  });
+
+  it('throws on non-ok response', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+    } as Response);
+    await expect(listReviewFix('abc-123')).rejects.toThrow('failed to load review-fix: 500');
+  });
+});
+
 it('LoopDto type compiles', () => {
   const l: LoopDto = {
     id: 'l1',
@@ -50,9 +94,9 @@ it('LoopDto type compiles', () => {
         reviewInvocationId: 'r1',
         fixInvocationId: 'f1',
         revalidationId: 're1',
-        reviewArtifactPath: 'phases/review_fix/loop-1/review.md',
-        fixArtifactPath: 'phases/review_fix/loop-1/fix.md',
-        revalidateArtifactPath: 'phases/review_fix/loop-1/revalidate.md',
+        reviewArtifactPath: 'review-fix/review/iter-1/code-review.md',
+        fixArtifactPath: 'review-fix/fix/iter-1/result.json',
+        revalidateArtifactPath: 'revalidate/iter-1/validation-result.json',
         startedAt: '2026-06-14T00:01:00.000Z',
         completedAt: '2026-06-14T00:05:00.000Z',
       },
