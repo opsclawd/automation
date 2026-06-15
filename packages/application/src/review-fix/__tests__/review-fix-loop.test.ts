@@ -106,7 +106,7 @@ describe('ReviewFixLoop', () => {
 
   it('hard-fails when the review agent itself fails', async () => {
     const deps = makeDeps({
-      runReview: async () => ({ invocationId: 'r', agentOutcome: 'failed' }),
+      runReview: async () => ({ invocationId: 'r', agentOutcome: 'failed' as const }),
     });
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('failed');
@@ -119,7 +119,11 @@ describe('ReviewFixLoop', () => {
     const fixCalls: FixStepOptions[] = [];
     const deps = makeDeps({
       events: bus,
-      runReview: async () => ({ invocationId: 'r', agentOutcome: 'success', verdict: 'fail' }),
+      runReview: async () => ({
+        invocationId: 'r',
+        agentOutcome: 'success' as const,
+        verdict: 'fail' as const,
+      }),
       runFix: async (_ctx: StepContext, opts: FixStepOptions) => {
         fixCalls.push(opts);
         return { invocationId: `fix-${fixCalls.length}`, agentOutcome: 'failed' as const };
