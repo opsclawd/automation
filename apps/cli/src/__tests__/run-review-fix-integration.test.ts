@@ -1,8 +1,38 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
+
+vi.mock('@ai-sdlc/infrastructure', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@ai-sdlc/infrastructure')>();
+  return {
+    ...mod,
+    OpenCodeAgentAdapter: class {
+      async invoke(request: { cwd: string }) {
+        const { writeFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        writeFileSync(
+          join(request.cwd, 'result.json'),
+          JSON.stringify({ result: 'pass', findings: [] }),
+        );
+        writeFileSync(join(request.cwd, 'code-review.md'), '# Review passed\n');
+        return {
+          runtime: 'opencode' as const,
+          provider: 'test',
+          model: 'test',
+          exitCode: 0,
+          durationMs: 10,
+          stdoutPath: '',
+          stderrPath: '',
+          resultJsonPath: 'result.json',
+          contractViolations: [],
+          outcome: 'success' as const,
+        };
+      }
+    },
+  };
+});
 
 describe('run-review-fix integration', () => {
   let repoRoot: string;

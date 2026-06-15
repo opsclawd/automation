@@ -132,7 +132,7 @@ async function main() {
         ? { fixFallbackProfile: AgentProfileName(fixEntry.fallbackProfile) }
         : {}),
     });
-    console.log(
+    console.error(
       `review-fix: ${phaseOutcome.toUpperCase()} (${loop.iterations.length}/${loop.maxIterations} iterations, status=${loop.status})`,
     );
     process.exit(exitCodeForPhaseOutcome(phaseOutcome));

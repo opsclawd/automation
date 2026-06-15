@@ -172,9 +172,9 @@ JSON
   [ "$status" -ne 0 ]
 }
 
-@test "ai-run-issue-v2 per-task loop uses stash-and-commit instead of reset --hard" {
+@test "ai-run-issue-v2 fix-review delegates to run-review-fix.ts" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -c '_stash_and_conditionally_commit' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -c 'run-review-fix.ts' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }

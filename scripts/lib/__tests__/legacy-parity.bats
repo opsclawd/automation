@@ -59,28 +59,22 @@ teardown() {
   [ "$(jq '[.[] | select(.action=="fix" or .action==null)] | length' <<< "$empty")" -eq 0 ]
 }
 
-# Invariant: revalidation after a fix never DISCARDS uncommitted agent work —
-#   the per-task loop stashes and conditionally commits instead of `reset --hard`.
-# Source: #281 (was #271). Deeper coverage: fix-review-stash.bats.
-# Failure prevented: revalidate `reset --hard` deleted an uncommitted fix the
-#   agent had produced but not yet committed.
-# TS-port contract: whatever performs post-agent cleanup in TS must preserve
-#   uncommitted work (stash/commit), never blind-reset.
-@test "parity[#281]: fix-review preserves uncommitted work (stash-and-commit, not reset --hard)" {
-  run grep -c '_stash_and_conditionally_commit' "$REPO_ROOT/scripts/ai-run-issue-v2"
+# Invariant: the fix-review phases (whole-pr-review, fix-review) delegate loop
+#   iteration to run-review-fix.ts. The TS orchestrator's ReviewFixLoop handles
+#   post-agent cleanup internally (preserving uncommitted work, commit discipline).
+# Source: #337, #281.
+@test "parity[#281]: fix-review delegates to run-review-fix.ts" {
+  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
 
-# Invariant: fix-review escapes review-task IDs safely when pulling the finding
-#   text into the agent prompt (no malformed inline sed).
-# Source: #283 (was #272). Deeper coverage: fix-review-task-loop.bats (_escape_for_grep).
-# Failure prevented: the malformed sed expression aborted, so retries ran blind
-#   to the comment they were fixing.
-# TS-port contract: fix-review must reliably carry the finding's text into the
-#   prompt for the comment being fixed (the bash regex itself does not port).
-@test "parity[#283]: fix-review uses safe task-id escaping, not the malformed sed" {
-  run grep -c '_escape_for_grep' "$REPO_ROOT/scripts/ai-run-issue-v2"
+# Invariant: fix-review delegates to run-review-fix.ts which handles task
+#   finding and iteration inside the TS orchestrator (no bash-level grep/escape).
+# Source: #337 (replaces #283 per-task loop with CLI delegation).
+# TS-port contract: fix-review must use run-review-fix.ts for the fix-review phase.
+@test "parity[#283]: fix-review delegates to run-review-fix.ts" {
+  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
