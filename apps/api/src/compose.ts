@@ -384,7 +384,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           phaseId: String(ctx.phaseId),
           startCommitSha: '',
           ...(opts.useFallback && opts.previousInvocationId
-            ? { fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId) }
+            ? {
+                fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
+                fallbackReason: 'use_case_escalation',
+              }
             : {}),
         });
         const invocationId = newestInvocationId(String(ctx.runId));
