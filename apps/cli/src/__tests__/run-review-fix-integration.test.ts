@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -81,10 +82,20 @@ describe('run-review-fix integration', () => {
 
   beforeAll(async () => {
     repoRoot = mkdtempSync(join(tmpdir(), 'run-rf-int-'));
+    // A real git repo, NOT a faked empty `.git` dir. The review-fix loop runs
+    // `git rev-parse HEAD` in repoRoot, which needs a valid repository with a
+    // commit. An empty `.git` only appears to work when the temp dir happens to
+    // sit inside another repo (git walks up and finds it) — e.g. when an
+    // orchestrator run nests TMPDIR under the checkout — but fails in a clean
+    // CI tmpdir with `fatal: not a git repository`.
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repoRoot });
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    git('config', 'commit.gpgsign', 'false');
     writeFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
-    const dotGit = join(repoRoot, '.git');
-    const { mkdirSync } = await import('node:fs');
-    mkdirSync(dotGit, { recursive: true });
+    git('add', '-A');
+    git('commit', '-qm', 'init');
   });
 
   afterAll(() => {
