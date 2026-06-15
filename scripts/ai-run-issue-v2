@@ -4210,7 +4210,10 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --phase-id "fix-review" \
-      2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _review_fix_ec=${PIPESTATUS[0]}
+      2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
+    if [[ $_tee_ec -ne 0 ]]; then
+      orchestrator_fail "tee failed writing log for fix-review-task-${_task_id} (exit $_tee_ec)"
+    fi
     _guard_worktree "fix-review-task-${_task_id}" "$_worktree_state_before"
     check_branch_after_agent
     _cleanup_ec=$_review_fix_ec
