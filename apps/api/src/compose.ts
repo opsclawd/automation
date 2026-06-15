@@ -8,6 +8,7 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  copyFileSync,
 } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -421,6 +422,27 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = patchedInv
           ? await readReviewVerdict(patchedInv, { artifacts: store, agent: router })
           : { ok: false as const, detail: 'no invocation row' };
+        // Preserve review artifacts to a stable per-iteration path so they
+        // survive subsequent iterations that overwrite result.json and
+        // code-review.md in the worktree.
+        const reviewArtifactDir = join(
+          runsDir,
+          String(ctx.runId),
+          'review-fix',
+          'review',
+          `iter-${ctx.iterationIndex}`,
+        );
+        mkdirSync(reviewArtifactDir, { recursive: true });
+        try {
+          copyFileSync(join(ctx.cwd, 'code-review.md'), join(reviewArtifactDir, 'code-review.md'));
+        } catch {
+          /* best-effort */
+        }
+        try {
+          copyFileSync(join(ctx.cwd, 'result.json'), join(reviewArtifactDir, 'result.json'));
+        } catch {
+          /* best-effort */
+        }
         return {
           invocationId,
           agentOutcome: result.outcome,
@@ -532,6 +554,34 @@ export function composeRoot(opts: ComposeOptions): Container {
             : verdict.ok
               ? verdict.verdict
               : undefined;
+        // Preserve fix artifacts to a stable per-iteration path before
+        // subsequent iterations overwrite result.json in the worktree.
+        const fixArtifactDir = join(
+          runsDir,
+          String(ctx.runId),
+          'review-fix',
+          'fix',
+          `iter-${ctx.iterationIndex}`,
+        );
+        mkdirSync(fixArtifactDir, { recursive: true });
+        try {
+          copyFileSync(join(ctx.cwd, 'result.json'), join(fixArtifactDir, 'result.json'));
+        } catch {
+          /* best-effort */
+        }
+        // If HEAD advanced but the fix did not produce a valid done_with_fixes
+        // result, revert the commit so the worktree is clean for the next review
+        // iteration. Without this guard a failed fix invocation that nonetheless
+        // committed changes would leave unvalidated modifications in the worktree;
+        // the loop records it as unresolved but the next review would diff
+        // against origin/<base>...HEAD (which now includes the spurious commit),
+        // and if that review returns 'pass' the loop resolves without running
+        // revalidation on the unvalidated changes.
+        if (shaAdvanced && effectiveVerdict !== 'done_with_fixes') {
+          execFileSync('git', ['reset', '--hard', startCommitSha], {
+            cwd: ctx.cwd,
+          });
+        }
         return {
           invocationId,
           agentOutcome: result.outcome,
