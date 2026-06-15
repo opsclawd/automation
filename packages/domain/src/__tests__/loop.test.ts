@@ -105,12 +105,20 @@ describe('completeIteration', () => {
     expect(l.status).toBe('failed');
     expect(l.completedAt).toBe(t1);
   });
-  it('fixed/unresolved keep loop running with no completedAt', () => {
+  it("'fixed' keeps loop running with no completedAt", () => {
     let l = startIteration(newLoop(), { reviewInvocationId: 'r1', now: t0 });
     l = completeIteration(l, { outcome: 'fixed', revalidationId: 'v1', now: t1 });
     expect(l.status).toBe('running');
     expect(l.completedAt).toBeUndefined();
     expect(l.iterations[0]?.revalidationId).toBe('v1');
+  });
+  it("'unresolved' keeps loop running with no completedAt", () => {
+    let l = startIteration(newLoop(), { reviewInvocationId: 'r1', now: t0 });
+    l = completeIteration(l, { outcome: 'unresolved', now: t1 });
+    expect(l.status).toBe('running');
+    expect(l.completedAt).toBeUndefined();
+    expect(l.iterations[0]?.outcome).toBe('unresolved');
+    expect(l.iterations[0]?.completedAt).toBe(t1);
   });
   it('throws when there is no open iteration', () => {
     const l = newLoop();
