@@ -4138,8 +4138,7 @@ fi
 
 if [[ "$FIX_REVIEW_EMPTY" -eq 1 ]]; then
   : # skip straight to phase done
-elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
-
+else
   _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
   _ARCHITECT_PLAN_FLAG=""
@@ -4162,120 +4161,25 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
   check_branch_after_agent
   _cleanup_ec=$_review_fix_ec
 
-# Post-loop guard: refuse to let create-pr label this PR as ai:pr-ready when
-# the fix loop exited with unresolved findings. Covers ALL exit paths from
-# the while loop — no-progress break, MAX_ITERATIONS exhaustion, or any other
-# future early-break that leaves review-findings-status.txt as HAS_UNRESOLVED.
-# Without this, a finding the fix agent cannot resolve would still ship as
-# pr-ready as long as build/lint/typecheck/test are green.
-if [[ -f "${WORKTREE_DIR}/review-findings-status.txt" ]]; then
-  FINAL_REVIEW_STATUS=$(head -c 64 "${WORKTREE_DIR}/review-findings-status.txt" 2>/dev/null | tr -d '[:space:]')
-  if [[ "$FINAL_REVIEW_STATUS" == "HAS_UNRESOLVED" ]]; then
-    warn "fix-review exited with unresolved findings — overriding validation.result to block ai:pr-ready."
-    echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
-    emit_event "fix-review" "warn" "phase.unresolved_findings" \
-      "fix-review exited with unresolved findings; validation.result overridden to block ai:pr-ready" \
-      status="$FINAL_REVIEW_STATUS"
-  fi
-fi
-
-elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
-  FIX_REVIEW_ALL_FIXED=1
-  FIX_REVIEW_TASK_IDX=0
-
-  while IFS= read -r _task_json; do
-    _task_action=$(echo "$_task_json" | jq -r '.action // "fix"')
-
-    if [[ "$_task_action" != "fix" ]]; then
-      info "Skipping task $(echo "$_task_json" | jq -r '.id // "unknown"') (action=$_task_action)"
-      continue
-    fi
-
-    FIX_REVIEW_TASK_IDX=$((FIX_REVIEW_TASK_IDX + 1))
-    if [[ $FIX_REVIEW_TASK_IDX -gt $MAX_FIX_REVIEW_TOTAL_TASKS ]]; then
-      warn "fix-review task limit (${MAX_FIX_REVIEW_TOTAL_TASKS}) reached. Stopping."
-      break
-    fi
-    _task_id=$(echo "$_task_json" | jq -r --arg idx "$FIX_REVIEW_TASK_IDX" '.id // "task-\($idx)"')
-    _task_files=$(echo "$_task_json" | jq -r '.files | join(", ")')
-    _task_severity=$(echo "$_task_json" | jq -r '.severity // "medium"')
-    _task_description=$(echo "$_task_json" | jq -r '.description // ""')
-    _task_commit_msg=$(echo "$_task_json" | jq -r --arg default "fix: review finding ${_task_id}" '.commit_message // $default')
-    _task_verify=$(echo "$_task_json" | jq -r '.verify // ""')
-
-    _task_fixed=0
-    _prev_fp=""
-    _pre_task_head=$(git -C "${WORKTREE_DIR}" rev-parse HEAD)
-    _worktree_state_before=$(_capture_worktree_state)
-    _review_fix_ec=0
-    _ARCHITECT_PLAN_FLAG=""
-    if [[ -n "$FIX_REVIEW_ARCHITECT_PLAN" ]]; then
-      _ARCHITECT_PLAN_FLAG="--architect-plan-json $FIX_REVIEW_ARCHITECT_PLAN"
-    fi
-    NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
-      "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
-      --cwd "$WORKTREE_DIR" \
-      --run-id "$RUN_ID" \
-      --repo-id "$REPO_ID" \
-      --repo-root "$REPO_ROOT" \
-      --phase-id "fix-review" \
-      $_ARCHITECT_PLAN_FLAG \
-      2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
-    if [[ $_tee_ec -ne 0 ]]; then
-      orchestrator_fail "tee failed writing log for fix-review-task-${_task_id} (exit $_tee_ec)"
-    fi
-    _guard_worktree "fix-review-task-${_task_id}" "$_worktree_state_before"
-    check_branch_after_agent
-    _cleanup_ec=$_review_fix_ec
-
-    if [[ $_cleanup_ec -eq 0 ]]; then
-      _task_fixed=1
-      info "Task $_task_id: review/fix loop converged"
-    else
-      case $_cleanup_ec in
-        1) warn "Task $_task_id: review/fix loop exhausted" ;;
-        2) warn "Task $_task_id: config error (exit 2)" ;;
-        3) warn "Task $_task_id: unexpected error (exit 3)" ;;
-        *) warn "Task $_task_id: unknown exit code $_cleanup_ec" ;;
-      esac
-    fi
-
-    if [[ "$_task_fixed" -eq 1 ]]; then
-      info "Task $_task_id: FIXED"
-    else
-      warn "Task $_task_id: FAILED"
-      FIX_REVIEW_ALL_FIXED=0
-    fi
-  done <<< "$(echo "$FIX_REVIEW_MANIFEST" | jq -c '.[] | select(.action == "fix" or .action == null)')"
-
-  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
+  if [[ $_cleanup_ec -eq 0 ]]; then
     echo "ALL_FIXED" > "${ISSUES_DIR}/fix-status.txt"
-  else
-    echo "HAS_UNRESOLVED" > "${ISSUES_DIR}/fix-status.txt"
-    warn "fix-review completed with unresolved tasks — overriding validation.result to block ai:pr-ready."
-    echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
-    emit_event "fix-review" "warn" "phase.unresolved_findings" \
-      "fix-review exited with unresolved tasks; validation.result overridden" \
-      status="HAS_UNRESOLVED"
-  fi
-
-  if [[ "$FIX_REVIEW_ALL_FIXED" -eq 1 ]]; then
-    # `|| true`: with no matching files, ls exits 2 and pipefail propagates it,
-    # which under set -e would kill the run. Defensive even though the empty-path
-    # short-circuit above should keep us out of this branch when nothing ran.
     _last_revalidate_log=$(ls -t "${ISSUES_DIR}"/revalidate-*-retry-*.log 2>/dev/null | head -1 || true)
     if [[ -n "$_last_revalidate_log" ]] && _revalidate_is_green "$_last_revalidate_log"; then
       echo "passed" > "${ISSUES_DIR}/validation.result"
     fi
+  else
+    echo "HAS_UNRESOLVED" > "${ISSUES_DIR}/fix-status.txt"
+    warn "fix-review exited with unresolved findings — overriding validation.result to block ai:pr-ready."
+    echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
+    emit_event "fix-review" "warn" "phase.unresolved_findings" \
+      "fix-review exited with unresolved findings; validation.result overridden" \
+      status="HAS_UNRESOLVED"
   fi
 
   emit_event "fix-review" "info" "phase.completed" \
-    "fix-review manifest loop completed" \
-    all_fixed="${FIX_REVIEW_ALL_FIXED}"
+    "fix-review completed" \
+    status="${_cleanup_ec}"
 
-  # Gate: exit 1 when fix-review has unresolved findings or a red branch.
-  # This prevents proceeding to compound/create-pr when the run is not clean.
-  # The legacy path (FIX_REVIEW_USE_LEGACY=1) is out of scope for this gate.
   if [[ -f "${ISSUES_DIR}/fix-status.txt" ]]; then
     _fix_status=$(cat "${ISSUES_DIR}/fix-status.txt" 2>/dev/null)
     if [[ "$_fix_status" == "HAS_UNRESOLVED" ]]; then
