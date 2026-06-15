@@ -3594,12 +3594,21 @@ Start now."
       fi
     done
 
+    # Capture the loop outcome BEFORE guard_artifact_clean runs: validation.result
+    # is an orchestrator artifact (scripts/lib/artifacts.sh) and guard_artifact_clean
+    # deletes untracked artifacts, so reading it afterwards always returns empty
+    # and the gate below would false-fail a loop that actually passed.
+    _fv_validation_result="$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || true)"
+    _fv_infra_failure=0
+    if grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
+      _fv_infra_failure=1
+    fi
+
     # Remove any orchestrator artifacts that the fix-validate agents may have
     # staged or committed.
     guard_artifact_clean "${WORKTREE_DIR}" "origin/${BASE_BRANCH}"
 
-    if [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]] || \
-       grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
+    if [[ "$_fv_validation_result" == "passed" ]] || [[ $_fv_infra_failure -eq 1 ]]; then
       touch "${ISSUES_DIR}/fix-validate-done.marker"
       _emit_phase_done "fix-validate"
       PHASE="whole-pr-review"
