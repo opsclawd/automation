@@ -347,7 +347,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           `Repository: ${ctx.repoId}`,
           '',
           '## TASK',
-          'Run: git diff origin/main...HEAD',
+          `Run: git diff origin/${opts.baseBranch ?? resolvedDefaultBranch}...HEAD`,
           'Read the diff carefully.',
           '',
           'Write a code review to ./code-review.md.',
