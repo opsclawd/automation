@@ -1520,3 +1520,31 @@ PLAN
   [ "$status" -eq 0 ]
   [ "$output" = "whole-pr-review" ]
 }
+
+# Invariant: a fresh implementer attempt must start from a clean result slate.
+#   reset_task_result_file clears a stale per-task .result so a leftover verdict
+#   (e.g. BLOCKED written during a transient hiccup, never rewritten on a retry
+#   that committed real work) cannot mask the new attempt and trigger a false
+#   "Task N is BLOCKED" hard-fail. Companion .basesha.log / .headsha.log and any
+#   commits are intentionally left untouched.
+# Source: #341 (stale .result masks committed work on retry; observed on #336).
+# Failure prevented: orchestrator hard-fails a task whose implementation was
+#   actually completed and committed, because a prior attempt's BLOCKED survived.
+# TS-port contract: the TS implement-phase handler must reset per-task verdict
+#   state before re-invoking the agent, not inherit a prior attempt's verdict.
+@test "parity[#341]: reset_task_result_file clears stale verdict but keeps sha logs" {
+  source "$REPO_ROOT/scripts/lib/result-resolver.sh"
+  log() { :; }
+
+  local d="$BATS_TEST_TMPDIR/reset-result"
+  mkdir -p "$d"
+  printf 'BLOCKED\n' > "$d/implement-task-4.result"
+  printf 'aaaa\n'    > "$d/implement-task-4.basesha.log"
+  printf 'bbbb\n'    > "$d/implement-task-4.headsha.log"
+
+  reset_task_result_file "$d/implement-task-4.result"
+
+  [ ! -f "$d/implement-task-4.result" ]      # stale verdict cleared
+  [ -f "$d/implement-task-4.basesha.log" ]   # sha logs untouched
+  [ -f "$d/implement-task-4.headsha.log" ]
+}
