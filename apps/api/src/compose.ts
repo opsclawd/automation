@@ -337,10 +337,49 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
+        const promptDir = join(baseTmpDir, 'review-fix-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
+        const reviewPrompt = [
+          'You are reviewing code changes in a pull request.',
+          '',
+          '## CONTEXT',
+          `Working directory: ${ctx.cwd}`,
+          `Repository: ${ctx.repoId}`,
+          '',
+          '## TASK',
+          'Run: git diff origin/main...HEAD',
+          'Read the diff carefully.',
+          '',
+          'Write a code review to ./code-review.md.',
+          '',
+          'For each finding you MUST include:',
+          '- severity: critical | high | medium | low',
+          '- file path and line reference (if applicable)',
+          '- evidence: what you observed in the diff',
+          '- failure mode: why this is a problem',
+          '- required fix: specific action to resolve the issue',
+          '',
+          'Categorize findings:',
+          '- critical: security, data loss, production-breaking',
+          '- high: correct behavior violation, significant bugs',
+          '- medium: suboptimal patterns, missing tests',
+          '- low: style, formatting, minor improvements',
+          '',
+          'After writing the review, write a result.json file with:',
+          '{ "result": "pass" | "fail", "findings": [{ "severity": "...", "summary": "..." }] }',
+          'Use "pass" when there are no significant findings, "fail" when changes are needed.',
+          '',
+          '## CRITICAL RULES',
+          '- Do NOT ask questions.',
+          '- Do NOT switch branches. All work must stay on the current branch.',
+          '- Write code-review.md first, then result.json.',
+        ].join('\n');
+        writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const result = await router.invoke({
           profile: AgentProfileName(reviewProfileName),
-          promptPath: 'prompts/review.md',
-          expectedArtifacts: [],
+          promptPath,
+          expectedArtifacts: ['result.json'],
           cwd: ctx.cwd,
           runId: String(ctx.runId),
           repoId: ctx.repoId,
@@ -375,10 +414,51 @@ export function composeRoot(opts: ComposeOptions): Container {
       ): Promise<FixStepResult> => {
         const profile =
           opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
+        const promptDir = join(baseTmpDir, 'review-fix-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(promptDir, `fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
+        const fixPrompt = [
+          'You are fixing code review findings.',
+          '',
+          '## CONTEXT',
+          `Working directory: ${ctx.cwd}`,
+          `Repository: ${ctx.repoId}`,
+          'Review findings: ./code-review.md',
+          '',
+          '## TASK',
+          'Read the code review findings.',
+          'Fix ALL legitimate review findings across all severities.',
+          '',
+          'Rules:',
+          '- Fix only what the review asks for. Do not expand scope.',
+          '- Do not rewrite working code for style preference.',
+          '- If a finding is invalid, skip it.',
+          '',
+          'After fixing, write a result.json file with exactly one of:',
+          '{ "result": "done_with_fixes" }',
+          '{ "result": "done_no_fixes_needed" }',
+          '{ "result": "cannot_fix" }',
+          '',
+          '## CRITICAL RULES',
+          '- Do NOT ask questions.',
+          '- Do NOT switch branches. All work must stay on the current branch.',
+          '- After fixing, run: git add -A && git commit -m "fix: review findings"',
+          '- Write result.json last.',
+          '',
+          ...(opts.useFallback
+            ? [
+                '',
+                '## NOTE',
+                'The previous fix attempt failed. Review the current state carefully',
+                'and consider a different approach to address the findings.',
+              ]
+            : []),
+        ].join('\n');
+        writeFileSync(promptPath, fixPrompt, 'utf-8');
         const result = await router.invoke({
           profile: AgentProfileName(profile),
-          promptPath: 'prompts/fix.md',
-          expectedArtifacts: [],
+          promptPath,
+          expectedArtifacts: ['result.json'],
           cwd: ctx.cwd,
           runId: String(ctx.runId),
           repoId: ctx.repoId,
