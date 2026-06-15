@@ -120,7 +120,9 @@ async function main() {
   const maxIterationsArg = values['max-iterations'];
   const maxIterations = maxIterationsArg
     ? parseInt(maxIterationsArg, 10)
-    : config.phases.reviewFix.maxIterations;
+    : phaseId === 'whole-pr-review'
+      ? (config.phases.wholePrFix?.maxIterations ?? config.phases.reviewFix.maxIterations)
+      : config.phases.reviewFix.maxIterations;
 
   let architectPlan:
     | {
