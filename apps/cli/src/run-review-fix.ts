@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { RunId, PhaseName, AgentProfileName, createRun } from '@ai-sdlc/domain';
@@ -11,6 +12,7 @@ interface Flags {
   'repo-root'?: string;
   'phase-id'?: string;
   'max-iterations'?: string;
+  'architect-plan-json'?: string;
 }
 
 export function validateRequiredFlags(values: Flags): string[] {
@@ -52,6 +54,7 @@ async function main() {
       'repo-root': { type: 'string' },
       'phase-id': { type: 'string' },
       'max-iterations': { type: 'string' },
+      'architect-plan-json': { type: 'string' },
     },
     allowPositionals: false,
   }) as { values: Flags };
@@ -119,6 +122,28 @@ async function main() {
     ? parseInt(maxIterationsArg, 10)
     : config.phases.reviewFix.maxIterations;
 
+  let architectPlan:
+    | {
+        version: number;
+        tasks: Array<{
+          task_id: string;
+          approach: string;
+          conflicts_resolved: string[];
+          constraints: string[];
+          depends_on: string[];
+        }>;
+      }
+    | undefined;
+  const architectPlanPath = values['architect-plan-json'];
+  if (architectPlanPath) {
+    try {
+      architectPlan = JSON.parse(readFileSync(architectPlanPath, 'utf-8'));
+    } catch (err) {
+      console.error(`failed to read architect plan from ${architectPlanPath}: ${err}`);
+      process.exit(2);
+    }
+  }
+
   try {
     const { phaseOutcome, loop } = await c.reviewFixLoop.execute({
       runId: RunId(runId),
@@ -131,6 +156,7 @@ async function main() {
       ...(fixEntry.fallbackProfile
         ? { fixFallbackProfile: AgentProfileName(fixEntry.fallbackProfile) }
         : {}),
+      ...(architectPlan !== undefined ? { architectPlan } : {}),
     });
     console.error(
       `review-fix: ${phaseOutcome.toUpperCase()} (${loop.iterations.length}/${loop.maxIterations} iterations, status=${loop.status})`,

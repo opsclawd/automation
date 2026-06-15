@@ -32,9 +32,23 @@ export interface RevalidationResult {
   category?: string; // 'build' | 'lint' | 'typecheck' | 'test' | 'other'
 }
 
+export interface ArchitectPlanTask {
+  task_id: string;
+  approach: string;
+  conflicts_resolved: string[];
+  constraints: string[];
+  depends_on: string[];
+}
+
+export interface ArchitectPlan {
+  version: number;
+  tasks: ArchitectPlanTask[];
+}
+
 export interface FixStepOptions {
   useFallback: boolean;
   previousInvocationId?: string;
+  architectPlan?: ArchitectPlan;
 }
 
 export interface ReviewFixLoopDeps {
@@ -57,6 +71,7 @@ export interface ReviewFixLoopInput {
   reviewProfile: AgentProfileName;
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
+  architectPlan?: ArchitectPlan;
 }
 
 export interface ReviewFixLoopResult {

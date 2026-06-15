@@ -4142,6 +4142,10 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
 
   _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
+  _ARCHITECT_PLAN_FLAG=""
+  if [[ -n "$FIX_REVIEW_ARCHITECT_PLAN" ]]; then
+    _ARCHITECT_PLAN_FLAG="--architect-plan-json $FIX_REVIEW_ARCHITECT_PLAN"
+  fi
   NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
     "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
     --cwd "$WORKTREE_DIR" \
@@ -4149,6 +4153,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
     --phase-id "fix-review" \
+    $_ARCHITECT_PLAN_FLAG \
     2>&1 | tee -a "${ISSUES_DIR}/fix-review-cli.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for fix-review CLI (exit $_tee_ec)"
@@ -4203,6 +4208,10 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
     _pre_task_head=$(git -C "${WORKTREE_DIR}" rev-parse HEAD)
     _worktree_state_before=$(_capture_worktree_state)
     _review_fix_ec=0
+    _ARCHITECT_PLAN_FLAG=""
+    if [[ -n "$FIX_REVIEW_ARCHITECT_PLAN" ]]; then
+      _ARCHITECT_PLAN_FLAG="--architect-plan-json $FIX_REVIEW_ARCHITECT_PLAN"
+    fi
     NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
       "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
       --cwd "$WORKTREE_DIR" \
@@ -4210,6 +4219,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
       --phase-id "fix-review" \
+      $_ARCHITECT_PLAN_FLAG \
       2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
     if [[ $_tee_ec -ne 0 ]]; then
       orchestrator_fail "tee failed writing log for fix-review-task-${_task_id} (exit $_tee_ec)"
