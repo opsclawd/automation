@@ -3678,6 +3678,7 @@ Categorize findings:
 
 Write code-review.md now."
 
+  _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
   NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
     "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
@@ -3690,6 +3691,7 @@ Write code-review.md now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review-fix (exit $_tee_ec)"
   fi
+  _guard_worktree "whole-pr-review" "$_worktree_state_before"
   # Capture exit code BEFORE guard_artifact_clean (see #337 / PR #339 pattern)
   _cleanup_ec=$_review_fix_ec
   # Copy review artifacts from worktree (before cleanup removes them)
@@ -4137,6 +4139,7 @@ if [[ "$FIX_REVIEW_EMPTY" -eq 1 ]]; then
   : # skip straight to phase done
 elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
 
+  _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
   NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
     "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
@@ -4149,6 +4152,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 1 ]]; then
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for fix-review CLI (exit $_tee_ec)"
   fi
+  _guard_worktree "fix-review" "$_worktree_state_before"
   _cleanup_ec=$_review_fix_ec
 
 # Post-loop guard: refuse to let create-pr label this PR as ai:pr-ready when
@@ -4195,6 +4199,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
     _task_fixed=0
     _prev_fp=""
     _pre_task_head=$(git -C "${WORKTREE_DIR}" rev-parse HEAD)
+    _worktree_state_before=$(_capture_worktree_state)
     _review_fix_ec=0
     NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
       "$REPO_ROOT/apps/cli/src/run-review-fix.ts" \
@@ -4204,6 +4209,7 @@ elif [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 ]]; then
       --repo-root "$REPO_ROOT" \
       --phase-id "fix-review" \
       2>&1 | tee -a "${ISSUES_DIR}/fix-review-task-${_task_id}.log"; _review_fix_ec=${PIPESTATUS[0]}
+    _guard_worktree "fix-review-task-${_task_id}" "$_worktree_state_before"
     _cleanup_ec=$_review_fix_ec
 
     if [[ $_cleanup_ec -eq 0 ]]; then
