@@ -3609,6 +3609,12 @@ Start now."
     guard_artifact_clean "${WORKTREE_DIR}" "origin/${BASE_BRANCH}"
 
     if [[ "$_fv_validation_result" == "passed" ]] || [[ $_fv_infra_failure -eq 1 ]]; then
+      # guard_artifact_clean removed validation.result / validation.headsha (they
+      # are orchestrator artifacts). Re-persist them so the resume oracle
+      # (detect_phase) resolves to whole-pr-review on a restart after this point
+      # — without them it falls through plan.md and redoes validate/fix-validate.
+      printf '%s\n' "$_fv_validation_result" > "${ISSUES_DIR}/validation.result"
+      git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
       touch "${ISSUES_DIR}/fix-validate-done.marker"
       _emit_phase_done "fix-validate"
       PHASE="whole-pr-review"

@@ -1468,3 +1468,55 @@ PLAN
 
   export WORKTREE_DIR="$ORIG_WORKTREE_DIR"
 }
+
+# Invariant: a fix-validate loop that passes revalidation must stay resumable at
+#   whole-pr-review even though guard_artifact_clean removes validation.result /
+#   validation.headsha (both are orchestrator artifacts). The orchestrator gate
+#   re-persists them after cleanup, so detect_phase resolves to whole-pr-review,
+#   not validate.
+# Source: PR #339 — guard_artifact_clean deleted validation.result one line
+#   before the gate read it, false-failing a passed loop and (after the gate fix)
+#   breaking resume because detect_phase only honours fix-validate-done.marker
+#   inside the validation.result-exists branch.
+# Failure prevented: (a) "fix-validate loop exhausted without passing validation"
+#   on a loop that actually passed; (b) resume falling through plan.md and redoing
+#   validate/fix-validate.
+# TS-port contract: the TS fix-validate handler must persist validation result +
+#   head SHA durably so the resume oracle advances past validate.
+@test "parity[#339]: fix-validate passed state survives guard_artifact_clean and resumes at whole-pr-review" {
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+  source "$REPO_ROOT/scripts/lib/detect-phase.sh"
+  warn() { :; }
+  emit_event() { :; }
+
+  local repo="$BATS_TEST_TMPDIR/fv-repo"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+  git -C "$repo" config user.email t@e.com
+  git -C "$repo" config user.name t
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m init
+
+  export ISSUES_DIR="$repo"
+  export WORKTREE_DIR="$repo"
+
+  # Loop's passed state, written as untracked orchestrator artifacts.
+  echo passed > "$repo/validation.result"
+  git -C "$repo" rev-parse HEAD > "$repo/validation.headsha"
+  touch "$repo/fix-validate-done.marker"
+
+  # guard_artifact_clean wipes both orchestrator artifacts.
+  guard_artifact_clean "$repo" "origin/main"
+  [ ! -f "$repo/validation.result" ]
+  [ ! -f "$repo/validation.headsha" ]
+
+  # The gate re-persists them after cleanup (the behaviour under test).
+  printf '%s\n' "passed" > "$repo/validation.result"
+  git -C "$repo" rev-parse HEAD > "$repo/validation.headsha"
+  touch "$repo/fix-validate-done.marker"
+
+  run detect_phase
+  [ "$status" -eq 0 ]
+  [ "$output" = "whole-pr-review" ]
+}
