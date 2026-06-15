@@ -46,7 +46,6 @@ import {
   ReviewFixLoop,
   readReviewVerdict,
   readFixVerdict,
-  ArtifactNotFoundError,
   type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -390,8 +389,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         const store: ArtifactStore = {
           async read(_runId: string, relativePath: string): Promise<string> {
-            if (!inv?.stdoutPath) throw new ArtifactNotFoundError(_runId, relativePath);
-            return await readFile(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
+            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
           },
           write: async () => {
             throw new Error('not implemented');
@@ -475,8 +473,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         const store: ArtifactStore = {
           async read(_runId: string, relativePath: string): Promise<string> {
-            if (!inv?.stdoutPath) throw new ArtifactNotFoundError(_runId, relativePath);
-            return await readFile(join(dirname(inv.stdoutPath), relativePath), 'utf-8');
+            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
           },
           write: async () => {
             throw new Error('not implemented');
