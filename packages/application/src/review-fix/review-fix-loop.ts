@@ -82,7 +82,9 @@ export class ReviewFixLoop {
       // --- FIX ---
       const fix = await deps.runFix(ctx, {
         useFallback,
-        ...(lastFixInvocationId !== undefined ? { previousInvocationId: lastFixInvocationId } : {}),
+        ...(useFallback && lastFixInvocationId !== undefined
+          ? { previousInvocationId: lastFixInvocationId }
+          : {}),
       });
       lastFixInvocationId = fix.invocationId;
 

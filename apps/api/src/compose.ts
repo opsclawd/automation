@@ -383,7 +383,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           repoId: ctx.repoId,
           phaseId: String(ctx.phaseId),
           startCommitSha: '',
-          ...(opts.previousInvocationId
+          ...(opts.useFallback && opts.previousInvocationId
             ? { fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId) }
             : {}),
         });
