@@ -1093,7 +1093,7 @@ run_commit_completion() {
   local task_log="${ISSUES_DIR}/commit-completion-task-${task_n}.log"
 
   local dirty_files
-  dirty_files=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "")
+  dirty_files=$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null || echo "")
   if [[ -z "$dirty_files" ]]; then
     log "  Commit-completion: worktree is clean, nothing to recover"
     return 0
@@ -1155,7 +1155,7 @@ HARD RULE: Do NOT modify any code beyond fixing lint/format errors reported by t
 
   # Re-check dirtiness regardless of agent exit code
   local still_dirty
-  still_dirty=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "")
+  still_dirty=$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null || echo "")
 
   if [[ -z "$still_dirty" ]]; then
     log "  Commit-completion: worktree is clean after recovery"
@@ -2955,7 +2955,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       #   Mode B — commit rejected by pre-commit hook
       #   Third gap — one commit made but other files left dirty
       if [[ "$IMPL_STATUS" == "DONE" || "$IMPL_STATUS" == "DONE_WITH_CONCERNS" ]]; then
-        _dirty_tree=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "")
+        _dirty_tree=$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null || echo "")
         if [[ -n "$_dirty_tree" ]]; then
           warn "Task ${TASK_NUM}: implementer reported ${IMPL_STATUS} but worktree has uncommitted changes — attempting commit-completion recovery"
           log "  Dirty files:
@@ -2963,7 +2963,7 @@ ${_dirty_tree}"
           if run_commit_completion "$TASK_NUM" "$COMMIT_MSG"; then
             log "  Task ${TASK_NUM}: commit-completion recovery succeeded"
           else
-            _post_recovery_dirty=$(git -C "$WORKTREE_DIR" status --porcelain --untracked-files=no 2>/dev/null || echo "(git status failed)")
+            _post_recovery_dirty=$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null || echo "(git status failed)")
             _hook_log_tail=$(tail -50 "${ISSUES_DIR}/commit-completion-task-${TASK_NUM}.log" 2>/dev/null || echo "(no log)")
             orchestrator_fail "Task ${TASK_NUM}: implementer reported ${IMPL_STATUS} but worktree has uncommitted changes after recovery attempt. Dirty files:
 ${_post_recovery_dirty}

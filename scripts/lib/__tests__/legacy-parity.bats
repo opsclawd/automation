@@ -1944,3 +1944,35 @@ PLAN
   run grep -q "reviewer-created.txt" <<< "$_violations"
   [ "$status" -eq 0 ]
 }
+
+# Invariant: the dirty-tree detection for commit-completion uses bare
+#   git status --porcelain (no --untracked-files=no), so untracked files
+#   left by the implementer are detected and trigger recovery/gating.
+# Source: #351.
+# Failure prevented: untracked files left by the implementer go undetected,
+#   the commit-completion guard passes through, and review phases fail with
+#   misattributed "read-only reviewer modified source files" errors.
+# TS-port contract: the TS orchestrator's commit-completion dirty detection
+#   must use the equivalent of git status --porcelain (all files tracked
+#   or untracked), not a tracked-only variant.
+@test "parity[#351]: git status --porcelain (default) includes untracked files in dirty detection" {
+  local _test_tmp
+  _test_tmp=$(mktemp -d)
+  _test_dir="$_test_tmp"
+
+  git -C "$_test_tmp" init -q
+  git -C "$_test_tmp" config user.email "test@example.com"
+  git -C "$_test_tmp" config user.name "test"
+  : > "$_test_tmp/tracked.txt"
+  git -C "$_test_tmp" add tracked.txt
+  git -C "$_test_tmp" commit -q -m "init"
+
+  echo "untracked content" > "$_test_tmp/untracked.txt"
+
+  local _dirty
+  _dirty=$(git -C "$_test_tmp" status --porcelain 2>/dev/null)
+
+  [ -n "$_dirty" ]
+  run grep -q "untracked.txt" <<< "$_dirty"
+  [ "$status" -eq 0 ]
+}
