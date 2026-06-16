@@ -431,6 +431,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runDir,
           'review-fix',
           'review',
+          String(ctx.phaseId),
           `iter-${ctx.iterationIndex}`,
         );
         mkdirSync(reviewArtifactDir, { recursive: true });
@@ -599,6 +600,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runDir,
           'review-fix',
           'fix',
+          String(ctx.phaseId),
           `iter-${ctx.iterationIndex}`,
         );
         mkdirSync(fixArtifactDir, { recursive: true });
@@ -636,7 +638,13 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const runRevalidation = async (ctx: StepContext): Promise<RevalidationResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
-        const revalidateLogDir = join(runsDir, runDir, 'revalidate', `iter-${ctx.iterationIndex}`);
+        const revalidateLogDir = join(
+          runsDir,
+          runDir,
+          'revalidate',
+          String(ctx.phaseId),
+          `iter-${ctx.iterationIndex}`,
+        );
         const vr = await runValidation.execute({
           runId: RunId(String(ctx.runId)),
           phaseId: PhaseName('validate'),

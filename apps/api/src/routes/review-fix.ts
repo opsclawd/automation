@@ -26,12 +26,14 @@ export function registerReviewFixRoutes(app: FastifyInstance, c: Container): voi
         reviewInvocationId: it.reviewInvocationId,
         fixInvocationId: it.fixInvocationId ?? null,
         revalidationId: it.revalidationId ?? null,
-        reviewArtifactPath: `review-fix/review/iter-${it.index}/code-review.md`,
+        reviewArtifactPath: `review-fix/review/${l.phaseId}/iter-${it.index}/code-review.md`,
         fixArtifactPath:
-          it.fixInvocationId !== undefined ? `review-fix/fix/iter-${it.index}/result.json` : null,
+          it.fixInvocationId !== undefined
+            ? `review-fix/fix/${l.phaseId}/iter-${it.index}/result.json`
+            : null,
         revalidateArtifactPath:
           it.revalidationId !== undefined
-            ? `revalidate/iter-${it.index}/validation-result.json`
+            ? `revalidate/${l.phaseId}/iter-${it.index}/validation-result.json`
             : null,
         startedAt: it.startedAt.toISOString(),
         completedAt: it.completedAt?.toISOString() ?? null,
