@@ -16,6 +16,21 @@ export interface PhaseResultMeta {
   retrySafe: boolean;
 }
 
+// Temporary mapping from CANONICAL_PHASE_ORDER names to PHASE_RESULT_REGISTRY keys.
+// Phases with no result entry (null) do not produce result.json artifacts.
+// TODO: converge PHASE_RESULT_REGISTRY into CANONICAL_PHASE_ORDER so there's one source of truth.
+export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
+  'plan-design': 'plan-design',
+  'plan-write': 'plan-write',
+  implement: 'implement',
+  compound: 'compound',
+  'create-pr': 'create-pr',
+  'review-fix': 'fix-review',
+  read_issue: null,
+  validate: null,
+  'pr-review-poll': null,
+};
+
 export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'plan-design': { schema: planDesignResultSchema, retrySafe: true },
   'plan-write': { schema: planWriteResultSchema, retrySafe: true },
