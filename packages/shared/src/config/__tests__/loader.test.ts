@@ -264,3 +264,52 @@ describe('phases.postPrReview', () => {
     expect(() => loadConfig(dir)).toThrow(ConfigError);
   });
 });
+
+describe('phases.reviewFix.blockOnSeverity', () => {
+  it('defaults to "high" when omitted', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(dir);
+    expect(cfg.phases.reviewFix.blockOnSeverity).toBe('high');
+  });
+
+  it('accepts "critical" as a valid threshold', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10, blockOnSeverity: 'critical' },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(dir);
+    expect(cfg.phases.reviewFix.blockOnSeverity).toBe('critical');
+  });
+
+  it('rejects an invalid threshold value', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10, blockOnSeverity: 'urgent' },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    expect(() => loadConfig(dir)).toThrow(ConfigError);
+  });
+});
