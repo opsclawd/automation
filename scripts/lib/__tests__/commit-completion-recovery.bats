@@ -37,7 +37,7 @@ setup() {
           echo ""
         fi
         ;;
-      "status --porcelain")
+        "status --porcelain" | "status --porcelain --untracked-files=all")
         if [[ -s "$DIRTY_FLAG" ]]; then
           cat "$DIRTY_FLAG"
         else
