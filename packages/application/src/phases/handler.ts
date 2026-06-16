@@ -21,10 +21,9 @@ export interface PhaseHandlerContext {
 
 export type PhaseOutcome = 'passed' | 'failed' | 'blocked' | 'skipped';
 
-export interface PhaseResult {
-  outcome: PhaseOutcome;
-  failure?: Failure;
-}
+export type PhaseResult =
+  | { outcome: 'passed' | 'skipped' }
+  | { outcome: 'failed' | 'blocked'; failure: Failure };
 
 export interface PhaseHandler {
   readonly phase: PhaseName;
@@ -41,7 +40,7 @@ export type EventEmitter = (
 export function createEventEmitter(ctx: PhaseHandlerContext, phase: PhaseName): EventEmitter {
   return (type, level, message, metadata = {}) => {
     ctx.events.publish(ctx.runUuid, {
-      runId: ctx.runUuid,
+      runId: ctx.runId,
       phase,
       level,
       type,

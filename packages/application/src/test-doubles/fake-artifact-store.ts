@@ -3,8 +3,12 @@ import type { ArtifactStore, WriteArtifactInput, Artifact } from '../ports/artif
 
 export class FakeArtifactStore implements ArtifactStore {
   private files = new Map<string, { artifact: Artifact; contents: string }>();
+  shouldThrowOnWrite = false;
 
   async write(input: WriteArtifactInput): Promise<Artifact> {
+    if (this.shouldThrowOnWrite) {
+      throw new Error('write error');
+    }
     const key = `${input.runId}/${input.relativePath}`;
     const bytes = Buffer.byteLength(input.contents);
     const artifact: Artifact = {

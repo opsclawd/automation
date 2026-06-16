@@ -80,7 +80,9 @@ describe('ReadIssueHandler', () => {
     const result = await new ReadIssueHandler().run(ctx);
 
     expect(result.outcome).toBe('blocked');
-    expect(result.failure?.kind).toBe('agent_blocked');
+    if (result.outcome === 'blocked') {
+      expect(result.failure.kind).toBe('agent_blocked');
+    }
     await expect(artifacts.read('uuid-1', 'issue.md')).rejects.toThrow(ArtifactNotFoundError);
 
     const blockedEvents = events.filter((e) => e.type === 'phase.blocked');
@@ -115,12 +117,40 @@ describe('ReadIssueHandler', () => {
     const result = await new ReadIssueHandler().run(ctx);
 
     expect(result.outcome).toBe('failed');
-    expect(result.failure?.kind).toBe('github_failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('github_failed');
+    }
 
     const failedEvents = events.filter((e) => e.type === 'phase.failed');
     expect(failedEvents).toHaveLength(1);
     expect(failedEvents[0].level).toBe('error');
     expect(failedEvents[0].phase).toBe('read_issue');
     expect(failedEvents[0].message).toContain('Failed to fetch issue');
+  });
+
+  it('returns failed when artifact write throws', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('acme/widgets/7', {
+      number: 7,
+      title: 'Artifact write fails',
+      body: 'body',
+      labels: [],
+    });
+    const artifacts = new FakeArtifactStore();
+    artifacts.shouldThrowOnWrite = true;
+    const { ctx, events } = makeCtx(github, artifacts);
+
+    const result = await new ReadIssueHandler().run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('unknown');
+    }
+
+    const failedEvents = events.filter((e) => e.type === 'phase.failed');
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0].level).toBe('error');
+    expect(failedEvents[0].phase).toBe('read_issue');
+    expect(failedEvents[0].message).toContain('Failed to write issue.md');
   });
 });

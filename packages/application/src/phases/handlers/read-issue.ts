@@ -44,21 +44,51 @@ export class ReadIssueHandler implements PhaseHandler {
     }
 
     const issueMd = issue.body ? `# ${issue.title}\n\n${issue.body}\n` : `# ${issue.title}\n`;
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'read_issue',
-      relativePath: 'issue.md',
-      contents: issueMd,
-    });
+    try {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'read_issue',
+        relativePath: 'issue.md',
+        contents: issueMd,
+      });
+    } catch (e) {
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'read_issue',
+        kind: 'unknown',
+        message: `Failed to write issue.md: ${e instanceof Error ? e.message : String(e)}`,
+        canRetry: true,
+        suggestedAction: 'Check disk space and permissions, then retry.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      emit('phase.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
     emit('artifact.created', 'info', 'wrote issue.md', { path: 'issue.md' });
 
     // TODO: add GitHubPort.listIssueComments and populate this. Empty for now.
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'read_issue',
-      relativePath: 'issue-comments.md',
-      contents: '',
-    });
+    try {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'read_issue',
+        relativePath: 'issue-comments.md',
+        contents: '',
+      });
+    } catch (e) {
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'read_issue',
+        kind: 'unknown',
+        message: `Failed to write issue-comments.md: ${e instanceof Error ? e.message : String(e)}`,
+        canRetry: true,
+        suggestedAction: 'Check disk space and permissions, then retry.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      emit('phase.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
     emit('artifact.created', 'info', 'wrote issue-comments.md', {
       path: 'issue-comments.md',
     });
