@@ -380,4 +380,33 @@ describe('ReviewFixLoop', () => {
     expect(out.loop.iterations[1]?.outcome).toBe('resolved');
     expect(reviewCalls).toBe(2);
   });
+
+  it('emits review.verdict.overridden event when verdict is overridden', async () => {
+    const { events, bus } = collectEvents();
+    let reviewCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      runReview: async () => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          ...(reviewCalls === 1
+            ? {
+                overridden: true,
+                offendingFindings: [{ severity: 'high', summary: 'unused export' }],
+              }
+            : {}),
+        };
+      },
+    });
+    await new ReviewFixLoop(deps).execute(baseInput());
+    const overrideEvents = events.filter((e) => e.type === 'review.verdict.overridden');
+    expect(overrideEvents).toHaveLength(1);
+    expect(overrideEvents[0]?.metadata.offendingFindings).toEqual([
+      { severity: 'high', summary: 'unused export' },
+    ]);
+    expect(overrideEvents[0]?.metadata.threshold).toBe('high');
+  });
 });
