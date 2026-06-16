@@ -1,12 +1,14 @@
 import { PhaseName } from '@ai-sdlc/domain';
 import type { Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
+import { createEventEmitter } from '../handler.js';
 
 export class ReadIssueHandler implements PhaseHandler {
   readonly phase = PhaseName('read_issue');
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
-    this.emit(ctx, 'phase.started', 'info', 'reading issue');
+    const emit = createEventEmitter(ctx, this.phase);
+    emit('phase.started', 'info', 'reading issue');
 
     let issue;
     try {
@@ -22,7 +24,7 @@ export class ReadIssueHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      this.emit(ctx, 'phase.failed', 'error', failure.message);
+      emit('phase.failed', 'error', failure.message);
       return { outcome: 'failed', failure };
     }
 
@@ -37,18 +39,18 @@ export class ReadIssueHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      this.emit(ctx, 'phase.failed', 'error', failure.message);
+      emit('phase.blocked', 'error', failure.message);
       return { outcome: 'blocked', failure };
     }
 
-    const issueMd = `# ${issue.title}\n\n${issue.body}\n`;
+    const issueMd = issue.body ? `# ${issue.title}\n\n${issue.body}\n` : `# ${issue.title}\n`;
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       phaseId: 'read_issue',
       relativePath: 'issue.md',
       contents: issueMd,
     });
-    this.emit(ctx, 'artifact.created', 'info', 'wrote issue.md', { path: 'issue.md' });
+    emit('artifact.created', 'info', 'wrote issue.md', { path: 'issue.md' });
 
     // TODO: add GitHubPort.listIssueComments and populate this. Empty for now.
     await ctx.artifacts.write({
@@ -57,29 +59,11 @@ export class ReadIssueHandler implements PhaseHandler {
       relativePath: 'issue-comments.md',
       contents: '',
     });
-    this.emit(ctx, 'artifact.created', 'info', 'wrote issue-comments.md', {
+    emit('artifact.created', 'info', 'wrote issue-comments.md', {
       path: 'issue-comments.md',
     });
 
-    this.emit(ctx, 'phase.completed', 'info', 'read issue complete');
+    emit('phase.completed', 'info', 'read issue complete');
     return { outcome: 'passed' };
-  }
-
-  private emit(
-    ctx: PhaseHandlerContext,
-    type: 'phase.started' | 'phase.failed' | 'artifact.created' | 'phase.completed',
-    level: 'info' | 'warn' | 'error',
-    message: string,
-    metadata: Record<string, unknown> = {},
-  ): void {
-    ctx.events.publish(ctx.runUuid, {
-      runId: ctx.runUuid,
-      phase: 'read_issue',
-      level,
-      type,
-      message,
-      timestamp: ctx.now().toISOString(),
-      metadata,
-    });
   }
 }

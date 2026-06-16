@@ -83,10 +83,28 @@ describe('ReadIssueHandler', () => {
     expect(result.failure?.kind).toBe('agent_blocked');
     await expect(artifacts.read('uuid-1', 'issue.md')).rejects.toThrow(ArtifactNotFoundError);
 
-    const failedEvents = events.filter((e) => e.type === 'phase.failed');
-    expect(failedEvents).toHaveLength(1);
-    expect(failedEvents[0].level).toBe('error');
-    expect(failedEvents[0].phase).toBe('read_issue');
+    const blockedEvents = events.filter((e) => e.type === 'phase.blocked');
+    expect(blockedEvents).toHaveLength(1);
+    expect(blockedEvents[0].level).toBe('error');
+    expect(blockedEvents[0].phase).toBe('read_issue');
+  });
+
+  it('handles an issue with empty body', async () => {
+    const github = new FakeGitHubPort();
+    github.issues.set('acme/widgets/7', {
+      number: 7,
+      title: 'Empty body',
+      body: '',
+      labels: [],
+    });
+    const artifacts = new FakeArtifactStore();
+    const { ctx } = makeCtx(github, artifacts);
+
+    const result = await new ReadIssueHandler().run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    const issueContents = await artifacts.read('uuid-1', 'issue.md');
+    expect(issueContents).toBe('# Empty body\n');
   });
 
   it('surfaces a github_failed failure when getIssue throws', async () => {

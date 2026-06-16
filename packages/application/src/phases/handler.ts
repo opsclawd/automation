@@ -30,3 +30,24 @@ export interface PhaseHandler {
   readonly phase: PhaseName;
   run(ctx: PhaseHandlerContext): Promise<PhaseResult>;
 }
+
+export type EventEmitter = (
+  type: string,
+  level: 'info' | 'warn' | 'error',
+  message: string,
+  metadata?: Record<string, unknown>,
+) => void;
+
+export function createEventEmitter(ctx: PhaseHandlerContext, phase: PhaseName): EventEmitter {
+  return (type, level, message, metadata = {}) => {
+    ctx.events.publish(ctx.runUuid, {
+      runId: ctx.runUuid,
+      phase,
+      level,
+      type,
+      message,
+      timestamp: ctx.now().toISOString(),
+      metadata,
+    });
+  };
+}
