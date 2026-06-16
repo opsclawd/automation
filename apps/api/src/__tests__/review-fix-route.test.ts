@@ -95,9 +95,9 @@ describe('GET /api/runs/:uuid/review-fix', () => {
       reviewInvocationId: 'r1',
       fixInvocationId: 'f1',
       revalidationId: 're1',
-      reviewArtifactPath: 'review-fix/review/whole-pr-review/iter-1/code-review.md',
-      fixArtifactPath: 'review-fix/fix/whole-pr-review/iter-1/result.json',
-      revalidateArtifactPath: 'revalidate/whole-pr-review/iter-1/validation-result.json',
+      reviewArtifactPath: 'review-fix/loop-1/review/whole-pr-review/iter-1/code-review.md',
+      fixArtifactPath: 'review-fix/loop-1/fix/whole-pr-review/iter-1/result.json',
+      revalidateArtifactPath: 'revalidate/loop-1/whole-pr-review/iter-1/validation-result.json',
       startedAt: '2026-06-14T00:01:00.000Z',
       completedAt: '2026-06-14T00:05:00.000Z',
     });

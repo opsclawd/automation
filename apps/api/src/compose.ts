@@ -430,6 +430,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runsDir,
           runDir,
           'review-fix',
+          ctx.loopId,
           'review',
           String(ctx.phaseId),
           `iter-${ctx.iterationIndex}`,
@@ -599,6 +600,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runsDir,
           runDir,
           'review-fix',
+          ctx.loopId,
           'fix',
           String(ctx.phaseId),
           `iter-${ctx.iterationIndex}`,
@@ -642,6 +644,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runsDir,
           runDir,
           'revalidate',
+          ctx.loopId,
           String(ctx.phaseId),
           `iter-${ctx.iterationIndex}`,
         );
