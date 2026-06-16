@@ -2262,6 +2262,13 @@ ${history_excerpt}"
       done <<< "$_overlap"
       _worktree_violations="${_worktree_violations}${_changed_content}"
     fi
+    local _cleaned
+    _cleaned=$(comm -23 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "spec-review-task-${task_n}\.(result|md)$" \
+      | tr '\n' ' ' || true)
+    _worktree_violations="${_worktree_violations}${_cleaned}"
     rm -f "$_pre_dirty_sigs"
     if [[ -n "$_worktree_violations" ]]; then
       orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
@@ -2490,6 +2497,13 @@ ${history_excerpt}"
       done <<< "$_overlap"
       _worktree_violations="${_worktree_violations}${_changed_content}"
     fi
+    local _cleaned
+    _cleaned=$(comm -23 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "quality-review-task-${task_n}\.(result|md)$" \
+      | tr '\n' ' ' || true)
+    _worktree_violations="${_worktree_violations}${_cleaned}"
     rm -f "$_pre_dirty_sigs"
     if [[ -n "$_worktree_violations" ]]; then
       orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"

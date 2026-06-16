@@ -1867,3 +1867,80 @@ PLAN
   run grep -q "src/reviewer-touched.ts" <<< "$_violations"
   [ "$status" -eq 0 ]
 }
+
+# Invariant: when a reviewer deletes a pre-existing untracked file or restores a
+#   pre-existing dirty tracked file to HEAD, those paths disappear from the post
+#   dirty set and must be caught by comm -23 (files only in pre) rather than
+#   comm -13 or comm -12. Without this check, the read-only guard silently
+#   passes despite the reviewer having modified the worktree.
+# Source: #348 (PR feedback).
+# Failure prevented: A reviewer that removes dirt (deletes untracked, reverts
+#   tracked changes) escapes violation detection because the path is neither in
+#   comm -13 (new) nor comm -12 (overlap). This would be a false negative.
+# TS-port contract: the TS orchestrator's read-only guard must also detect paths
+#   that were dirty before the agent ran but are clean after, treating them as
+#   reviewer violations.
+@test "parity[#348]: read-only guard catches reviewer-cleaned pre-existing dirty paths" {
+  local _test_tmp
+  _test_tmp=$(mktemp -d)
+  _test_dir="$_test_tmp"
+
+  git -C "$_test_tmp" init -q
+  git -C "$_test_tmp" config user.email "test@example.com"
+  git -C "$_test_tmp" config user.name "test"
+  echo "tracked" > "$_test_tmp/tracked.txt"
+  git -C "$_test_tmp" add tracked.txt
+  git -C "$_test_tmp" commit -q -m "init"
+
+  # Pre-existing dirt: an untracked file and an unstaged modification
+  echo "untracked content" > "$_test_tmp/pre-existing-untracked.txt"
+  echo "dirty mod" >> "$_test_tmp/tracked.txt"
+
+  local _pre_dirty
+  _pre_dirty=$({
+    git -C "$_test_tmp" diff --name-only 2>/dev/null
+    git -C "$_test_tmp" diff --cached --name-only 2>/dev/null
+    git -C "$_test_tmp" ls-files --others --exclude-standard 2>/dev/null
+  } | sort -u)
+
+  # Reviewer deletes untracked file and restores tracked file to HEAD
+  rm -f "$_test_tmp/pre-existing-untracked.txt"
+  git -C "$_test_tmp" checkout -- tracked.txt
+  echo "reviewer created" > "$_test_tmp/reviewer-created.txt"
+
+  local _post_dirty
+  _post_dirty=$({
+    git -C "$_test_tmp" diff --name-only 2>/dev/null
+    git -C "$_test_tmp" diff --cached --name-only 2>/dev/null
+    git -C "$_test_tmp" ls-files --others --exclude-standard 2>/dev/null
+  } | sort -u)
+
+  # comm -23: files only in pre (cleaned by reviewer)
+  local _cleaned
+  _cleaned=$(comm -23 <(printf '%s' "$_pre_dirty") <(printf '%s' "$_post_dirty") || true)
+
+  # comm -13: files only in post (new)
+  local _new
+  _new=$(comm -13 <(printf '%s' "$_pre_dirty") <(printf '%s' "$_post_dirty") || true)
+
+  # Cleaned paths must be detected
+  run grep -q "pre-existing-untracked.txt" <<< "$_cleaned"
+  [ "$status" -eq 0 ]
+  run grep -q "tracked.txt" <<< "$_cleaned"
+  [ "$status" -eq 0 ]
+
+  # New file is in comm -13, not in comm -23
+  run grep -q "reviewer-created.txt" <<< "$_new"
+  [ "$status" -eq 0 ]
+  run grep -q "reviewer-created.txt" <<< "$_cleaned"
+  [ "$status" -ne 0 ]
+
+  # Together, violations must include both cleaned and new paths
+  local _violations="${_cleaned}${_new}"
+  run grep -q "pre-existing-untracked.txt" <<< "$_violations"
+  [ "$status" -eq 0 ]
+  run grep -q "tracked.txt" <<< "$_violations"
+  [ "$status" -eq 0 ]
+  run grep -q "reviewer-created.txt" <<< "$_violations"
+  [ "$status" -eq 0 ]
+}
