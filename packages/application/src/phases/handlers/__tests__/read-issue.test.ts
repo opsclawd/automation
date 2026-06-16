@@ -48,7 +48,22 @@ describe('ReadIssueHandler', () => {
     expect(issueContents).toContain('# Add a thing');
     expect(issueContents).toContain('Please add the thing.');
     expect(await artifacts.read('uuid-1', 'issue-comments.md')).toBe('');
-    expect(events.some((e) => e.type === 'artifact.created')).toBe(true);
+
+    const artifactCreatedEvents = events.filter((e) => e.type === 'artifact.created');
+    expect(artifactCreatedEvents).toHaveLength(2);
+    expect(artifactCreatedEvents[0].metadata).toEqual({ path: 'issue.md' });
+    expect(artifactCreatedEvents[1].metadata).toEqual({ path: 'issue-comments.md' });
+    expect(artifactCreatedEvents.every((e) => e.level === 'info')).toBe(true);
+
+    const startedEvents = events.filter((e) => e.type === 'phase.started');
+    expect(startedEvents).toHaveLength(1);
+    expect(startedEvents[0].level).toBe('info');
+    expect(startedEvents[0].phase).toBe('read_issue');
+
+    const completedEvents = events.filter((e) => e.type === 'phase.completed');
+    expect(completedEvents).toHaveLength(1);
+    expect(completedEvents[0].level).toBe('info');
+    expect(completedEvents[0].phase).toBe('read_issue');
   });
 
   it('returns blocked when the issue has the ai:blocked label', async () => {
@@ -60,23 +75,34 @@ describe('ReadIssueHandler', () => {
       labels: ['ai:blocked'],
     });
     const artifacts = new FakeArtifactStore();
-    const { ctx } = makeCtx(github, artifacts);
+    const { ctx, events } = makeCtx(github, artifacts);
 
     const result = await new ReadIssueHandler().run(ctx);
 
     expect(result.outcome).toBe('blocked');
     expect(result.failure?.kind).toBe('agent_blocked');
     await expect(artifacts.read('uuid-1', 'issue.md')).rejects.toThrow(ArtifactNotFoundError);
+
+    const failedEvents = events.filter((e) => e.type === 'phase.failed');
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0].level).toBe('error');
+    expect(failedEvents[0].phase).toBe('read_issue');
   });
 
   it('surfaces a github_failed failure when getIssue throws', async () => {
     const github = new FakeGitHubPort(); // no issue seeded → getIssue throws
     const artifacts = new FakeArtifactStore();
-    const { ctx } = makeCtx(github, artifacts);
+    const { ctx, events } = makeCtx(github, artifacts);
 
     const result = await new ReadIssueHandler().run(ctx);
 
     expect(result.outcome).toBe('failed');
     expect(result.failure?.kind).toBe('github_failed');
+
+    const failedEvents = events.filter((e) => e.type === 'phase.failed');
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0].level).toBe('error');
+    expect(failedEvents[0].phase).toBe('read_issue');
+    expect(failedEvents[0].message).toContain('Failed to fetch issue');
   });
 });

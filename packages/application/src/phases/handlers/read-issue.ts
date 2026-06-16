@@ -16,7 +16,7 @@ export class ReadIssueHandler implements PhaseHandler {
         runUuid: ctx.runUuid,
         phase: 'read_issue',
         kind: 'github_failed',
-        message: `Failed to fetch issue #${ctx.issueNumber}: ${(e as Error).message}`,
+        message: `Failed to fetch issue #${ctx.issueNumber}: ${e instanceof Error ? e.message : String(e)}`,
         canRetry: true,
         suggestedAction: 'Check gh auth and network, then retry.',
         artifacts: [],
@@ -67,7 +67,7 @@ export class ReadIssueHandler implements PhaseHandler {
 
   private emit(
     ctx: PhaseHandlerContext,
-    type: string,
+    type: 'phase.started' | 'phase.failed' | 'artifact.created' | 'phase.completed',
     level: 'info' | 'warn' | 'error',
     message: string,
     metadata: Record<string, unknown> = {},

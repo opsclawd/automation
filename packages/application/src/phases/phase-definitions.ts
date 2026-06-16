@@ -51,7 +51,7 @@ const _phaseDefinitions = {
   read_issue: {
     name: makePhaseName('read_issue'),
     inputs: { required: [], optional: [] },
-    outputs: ['issue.md', 'issue-comments.md'],
+    outputs: ['issue.md'],
     retrySafety: 'safe',
     skippable: false,
   },
