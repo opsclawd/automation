@@ -2067,3 +2067,38 @@ PLAN
 
   [ -z "$_dirty" ]
 }
+
+# Invariant: readReviewVerdict applies a severity gate. When the agent returns
+#   "pass" but findings[] contain items at or above the configured threshold,
+#   the verdict is overridden to "fail". The severityGate function and the
+#   blockOnSeverity parameter wire this through the TS orchestrator.
+# Source: #371.
+# Failure prevented: an agent returns "result": "pass" while its own findings[]
+#   still contain unaddressed high/medium items — the pass converges the loop
+#   with no fix iteration, so those findings ship unfixed (rubber-stamp failure).
+# TS-port contract: readReviewVerdict MUST accept an optional blockOnSeverity
+#   parameter and apply severityGate to override a pass to fail when findings
+#   at or above the threshold exist.
+@test "parity[#371]: severity gate overrides pass when findings at/above threshold exist" {
+  local rd="$REPO_ROOT/packages/application/src/review-fix/read-verdicts.ts"
+
+  # SEVERITY_RANK must be defined
+  run grep -c "SEVERITY_RANK" "$rd"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # severityGate function must be exported
+  run grep -c "export function severityGate" "$rd"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # readReviewVerdict must accept blockOnSeverity option
+  run grep -c "blockOnSeverity" "$rd"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  # Gate only triggers on agent pass (never downgrades fail)
+  run grep -c "result.result === 'pass'" "$rd"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
