@@ -2974,17 +2974,6 @@ ${_hook_log_tail}"
         fi
       fi
 
-      # Clean-worktree invariant: the implement phase (including commit-completion
-      # recovery) must leave a clean worktree before review phases run. Any remaining
-      # dirt (tracked or untracked) is an implement-step contract violation.
-      _dirty_after_recovery=$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null || echo "")
-      if [[ -n "$_dirty_after_recovery" ]]; then
-        orchestrator_fail "Task ${TASK_NUM}: implementer left uncommitted work — worktree not clean before review. Dirty files:
-${_dirty_after_recovery}
-
-This is an implement-step problem, not a reviewer contract violation."
-      fi
-
       HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
       # Persist the post-impl head too, so a later resume into this task's review
       # uses THIS task's tip — not the branch tip, which may already carry later
@@ -2997,6 +2986,20 @@ This is an implement-step problem, not a reviewer contract violation."
       # back to git when a marker is missing. See get_task_review_range() for
       # the rationale (HEAD~1 base, task's own post-impl head).
       read -r BASE_SHA HEAD_SHA <<< "$(get_task_review_range "$TASK_NUM")"
+    fi
+
+    # Clean-worktree invariant: the implement phase (including commit-completion
+    # recovery) must leave a clean worktree before review phases run. Any remaining
+    # dirt (tracked or untracked) is an implement-step contract violation. This
+    # gate runs after BOTH the fresh-implement path AND the resume-into-review
+    # path, so that a prior interrupted run's leftover files are caught before
+    # reviewers see them.
+    _dirty_after_recovery=$(git -C "$WORKTREE_DIR" status --porcelain 2>/dev/null || echo "")
+    if [[ -n "$_dirty_after_recovery" ]]; then
+      orchestrator_fail "Task ${TASK_NUM}: implementer left uncommitted work — worktree not clean before review. Dirty files:
+${_dirty_after_recovery}
+
+This is an implement-step problem, not a reviewer contract violation."
     fi
 
     # Step 2: Initial spec + quality reviews, then fix loop (max $MAX_REVIEW_FIX_ITERATIONS iterations).
