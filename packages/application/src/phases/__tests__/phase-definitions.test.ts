@@ -3,6 +3,7 @@ import type { PhaseName } from '@ai-sdlc/domain';
 import {
   CANONICAL_PHASE_ORDER,
   PHASE_DEFINITIONS,
+  clonePhaseDefinitions,
   getPhaseDefinition,
   orderedPhases,
   nextPhase,
@@ -96,14 +97,12 @@ describe('phase definitions registry', () => {
     });
 
     it('rejects a skip that orphans a downstream required input', () => {
-      const orig = PHASE_DEFINITIONS['plan-write'].skippable;
-      PHASE_DEFINITIONS['plan-write'].skippable = true;
-      try {
-        expect(() => orderedPhases(['plan-write' as PhaseName])).toThrow(InvalidSkipListError);
-        expect(() => orderedPhases(['plan-write' as PhaseName])).toThrow(/orphans required input/);
-      } finally {
-        PHASE_DEFINITIONS['plan-write'].skippable = orig;
-      }
+      const defs = clonePhaseDefinitions();
+      defs['plan-write'].skippable = true;
+      expect(() => orderedPhases(['plan-write' as PhaseName], defs)).toThrow(InvalidSkipListError);
+      expect(() => orderedPhases(['plan-write' as PhaseName], defs)).toThrow(
+        /orphans required input/,
+      );
     });
 
     it('allows skipping a phase when another kept phase provides the same output', () => {
@@ -113,18 +112,12 @@ describe('phase definitions registry', () => {
     });
 
     it('rejects multiple skips when any dependency is orphaned', () => {
-      const origDesign = PHASE_DEFINITIONS['plan-design'].skippable;
-      const origWrite = PHASE_DEFINITIONS['plan-write'].skippable;
-      PHASE_DEFINITIONS['plan-design'].skippable = true;
-      PHASE_DEFINITIONS['plan-write'].skippable = true;
-      try {
-        expect(() =>
-          orderedPhases(['plan-design' as PhaseName, 'plan-write' as PhaseName]),
-        ).toThrow(InvalidSkipListError);
-      } finally {
-        PHASE_DEFINITIONS['plan-design'].skippable = origDesign;
-        PHASE_DEFINITIONS['plan-write'].skippable = origWrite;
-      }
+      const defs = clonePhaseDefinitions();
+      defs['plan-design'].skippable = true;
+      defs['plan-write'].skippable = true;
+      expect(() =>
+        orderedPhases(['plan-design' as PhaseName, 'plan-write' as PhaseName], defs),
+      ).toThrow(InvalidSkipListError);
     });
   });
 
@@ -144,8 +137,8 @@ describe('phase definitions registry', () => {
       expect(nextPhase('validate' as PhaseName, ['compound' as PhaseName])).toBe('review-fix');
     });
 
-    it('returns null for an unknown phase', () => {
-      expect(nextPhase('bogus' as PhaseName, [])).toBeNull();
+    it('throws UnknownPhaseError for an unknown phase', () => {
+      expect(() => nextPhase('bogus' as PhaseName, [])).toThrow(UnknownPhaseError);
     });
   });
 

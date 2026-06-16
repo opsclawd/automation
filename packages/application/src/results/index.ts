@@ -1,4 +1,4 @@
-export { PHASE_RESULT_REGISTRY } from './phase-registry.js';
+export { PHASE_RESULT_REGISTRY, PHASE_NAME_MIGRATION_MAP } from './phase-registry.js';
 export type { PhaseResultMeta } from './phase-registry.js';
 export { planDesignResultSchema } from './schemas/plan-design.js';
 export type { PlanDesignResult } from './schemas/plan-design.js';

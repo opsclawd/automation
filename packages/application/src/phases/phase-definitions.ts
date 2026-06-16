@@ -1,4 +1,4 @@
-import { type PhaseName, type AgentContract } from '@ai-sdlc/domain';
+import { type PhaseName, PhaseName as makePhaseName, type AgentContract } from '@ai-sdlc/domain';
 
 export interface PhaseDefinition {
   name: PhaseName;
@@ -33,6 +33,8 @@ export class MissingRequiredInputError extends Error {
   }
 }
 
+// TODO: converge CANONICAL_PHASE_ORDER + PHASE_RESULT_REGISTRY into one source of truth
+// Canonical names map to result registry keys via PHASE_NAME_MIGRATION_MAP in phase-registry.ts
 export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
   'read_issue' as PhaseName,
   'plan-design' as PhaseName,
@@ -45,18 +47,16 @@ export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
   'pr-review-poll' as PhaseName,
 ];
 
-const _p = (name: string): PhaseName => name as PhaseName;
-
-export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
+const _phaseDefinitions = {
   read_issue: {
-    name: _p('read_issue'),
+    name: makePhaseName('read_issue'),
     inputs: { required: [], optional: [] },
     outputs: ['issue.md', 'issue-comments.md'],
     retrySafety: 'safe',
     skippable: false,
   },
   'plan-design': {
-    name: _p('plan-design'),
+    name: makePhaseName('plan-design'),
     inputs: { required: ['issue.md'], optional: ['issue-comments.md'] },
     outputs: ['design.md'],
     agentContract: { requiredArtifacts: ['design.md'], mustNotChangeBranch: true },
@@ -64,7 +64,7 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     skippable: false,
   },
   'plan-write': {
-    name: _p('plan-write'),
+    name: makePhaseName('plan-write'),
     inputs: { required: ['design.md'], optional: [] },
     outputs: ['plan.md'],
     agentContract: { requiredArtifacts: ['plan.md'], mustNotChangeBranch: true },
@@ -72,28 +72,30 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     skippable: false,
   },
   implement: {
-    name: _p('implement'),
+    name: makePhaseName('implement'),
     inputs: { required: ['plan.md'], optional: [] },
     outputs: ['implementation-log.md'],
     retrySafety: 'safe',
     skippable: false,
   },
   validate: {
-    name: _p('validate'),
-    inputs: { required: [], optional: [] },
+    name: makePhaseName('validate'),
+    inputs: { required: [], optional: ['implementation-log.md'] },
     outputs: ['validation-result.json'],
     retrySafety: 'safe',
     skippable: false,
   },
   'review-fix': {
-    name: _p('review-fix'),
+    name: makePhaseName('review-fix'),
+    // review.md consumed and produced in a loop — first iteration creates it,
+    // subsequent iterations refine. The loop is optional.
     inputs: { required: [], optional: ['review.md'] },
     outputs: ['review.md', 'review-fix-log.md'],
     retrySafety: 'safe',
     skippable: false,
   },
   compound: {
-    name: _p('compound'),
+    name: makePhaseName('compound'),
     inputs: { required: ['plan.md'], optional: ['design.md'] },
     outputs: ['compound.md'],
     agentContract: { requiredArtifacts: ['compound.md'], mustNotChangeBranch: true },
@@ -101,7 +103,7 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     skippable: true,
   },
   'create-pr': {
-    name: _p('create-pr'),
+    name: makePhaseName('create-pr'),
     inputs: { required: ['plan.md'], optional: ['compound.md'] },
     outputs: ['pr-summary.md', 'pr-url.txt'],
     agentContract: { requiredArtifacts: ['pr-summary.md'] },
@@ -109,13 +111,15 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     skippable: false,
   },
   'pr-review-poll': {
-    name: _p('pr-review-poll'),
+    name: makePhaseName('pr-review-poll'),
     inputs: { required: ['pr-url.txt'], optional: [] },
     outputs: ['comments.json', 'reviews.json'],
     retrySafety: 'safe',
     skippable: false,
   },
-} as Record<PhaseName, PhaseDefinition>;
+} satisfies Record<string, PhaseDefinition>;
+
+export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = _phaseDefinitions;
 
 export function getPhaseDefinition(name: PhaseName): PhaseDefinition {
   const def = PHASE_DEFINITIONS[name];
@@ -123,18 +127,24 @@ export function getPhaseDefinition(name: PhaseName): PhaseDefinition {
   return def;
 }
 
-export function orderedPhases(skip: PhaseName[]): PhaseDefinition[] {
+export function clonePhaseDefinitions(): Record<PhaseName, PhaseDefinition> {
+  return JSON.parse(JSON.stringify(PHASE_DEFINITIONS));
+}
+
+export function orderedPhases(
+  skip: PhaseName[],
+  definitions?: Record<PhaseName, PhaseDefinition>,
+): PhaseDefinition[] {
+  const defs = definitions ?? PHASE_DEFINITIONS;
   const skipSet = new Set(skip as string[]);
 
   for (const s of skipSet) {
-    const def = PHASE_DEFINITIONS[s as PhaseName];
+    const def = defs[s as PhaseName];
     if (!def) throw new InvalidSkipListError(`unknown phase in skip list: '${s}'`);
     if (!def.skippable) throw new InvalidSkipListError(`phase '${s}' is not skippable`);
   }
 
-  const kept = CANONICAL_PHASE_ORDER.filter((n) => !skipSet.has(n as string)).map(
-    (n) => PHASE_DEFINITIONS[n]!,
-  );
+  const kept = CANONICAL_PHASE_ORDER.filter((n) => !skipSet.has(n as string)).map((n) => defs[n]!);
 
   const producedByKept = new Set<string>();
   for (const def of kept) {
@@ -157,7 +167,8 @@ export function orderedPhases(skip: PhaseName[]): PhaseDefinition[] {
 export function nextPhase(current: PhaseName, skip: PhaseName[]): PhaseName | null {
   const order = orderedPhases(skip).map((p) => p.name);
   const idx = order.indexOf(current);
-  if (idx === -1 || idx === order.length - 1) return null;
+  if (idx === -1) throw new UnknownPhaseError(current as string);
+  if (idx === order.length - 1) return null;
   return order[idx + 1]!;
 }
 
