@@ -351,4 +351,33 @@ describe('ReviewFixLoop', () => {
     expect(reviewCalls).toBe(2);
     expect(fixCalls).toBe(1);
   });
+
+  it('does not converge when review returns overridden pass (severity gate forces fail)', async () => {
+    let reviewCalls = 0;
+    const deps = makeDeps({
+      runReview: async () => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          ...(reviewCalls === 1
+            ? {
+                overridden: true,
+                offendingFindings: [{ severity: 'high', summary: 'unused export' }],
+              }
+            : {}),
+        };
+      },
+    });
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    // Iteration 1: review verdict=overridden "fail" → fix → reval pass → fixed
+    // Iteration 2: review verdict=pass (no override) → resolved
+    expect(out.phaseOutcome).toBe('passed');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(2);
+  });
 });
