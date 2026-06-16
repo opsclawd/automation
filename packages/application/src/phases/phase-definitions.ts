@@ -173,7 +173,14 @@ export function orderedPhases(
 export function nextPhase(current: PhaseName, skip: PhaseName[]): PhaseName | null {
   const order = orderedPhases(skip).map((p) => p.name);
   const idx = order.indexOf(current);
-  if (idx === -1) throw new UnknownPhaseError(current as string);
+  if (idx === -1) {
+    if (PHASE_DEFINITIONS[current as string]) {
+      throw new InvalidSkipListError(
+        `phase '${current}' is in the skip list and cannot be advanced from`,
+      );
+    }
+    throw new UnknownPhaseError(current as string);
+  }
   if (idx === order.length - 1) return null;
   return order[idx + 1]!;
 }

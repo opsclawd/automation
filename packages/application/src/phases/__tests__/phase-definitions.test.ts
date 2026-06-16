@@ -141,6 +141,15 @@ describe('phase definitions registry', () => {
     it('throws UnknownPhaseError for an unknown phase', () => {
       expect(() => nextPhase('bogus' as PhaseName, [])).toThrow(UnknownPhaseError);
     });
+
+    it('throws InvalidSkipListError when a known phase is in the skip list', () => {
+      expect(() => nextPhase('compound' as PhaseName, ['compound' as PhaseName])).toThrow(
+        InvalidSkipListError,
+      );
+      expect(() => nextPhase('compound' as PhaseName, ['compound' as PhaseName])).toThrow(
+        /skip list/,
+      );
+    });
   });
 
   describe('assertInputsAvailable', () => {
