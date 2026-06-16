@@ -2258,6 +2258,7 @@ ${history_excerpt}"
           if [[ "$_new_sig" != "$_old_sig" ]]; then
             _changed_content+="$_path "
           fi
+        fi
         done <<< "$_overlap"
         _worktree_violations="${_worktree_violations}${_changed_content}"
       fi
@@ -2492,6 +2493,7 @@ ${history_excerpt}"
           if [[ "$_new_sig" != "$_old_sig" ]]; then
             _changed_content+="$_path "
           fi
+        fi
         done <<< "$_overlap"
         _worktree_violations="${_worktree_violations}${_changed_content}"
       fi
