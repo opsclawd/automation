@@ -61,7 +61,7 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     outputs: ['design.md'],
     agentContract: { requiredArtifacts: ['design.md'], mustNotChangeBranch: true },
     retrySafety: 'safe',
-    skippable: true,
+    skippable: false,
   },
   'plan-write': {
     name: _p('plan-write'),
@@ -69,7 +69,7 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     outputs: ['plan.md'],
     agentContract: { requiredArtifacts: ['plan.md'], mustNotChangeBranch: true },
     retrySafety: 'safe',
-    skippable: true,
+    skippable: false,
   },
   implement: {
     name: _p('implement'),

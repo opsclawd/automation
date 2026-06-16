@@ -94,9 +94,11 @@ describe('phase definitions registry', () => {
     });
 
     it('rejects a skip that orphans a downstream required input', () => {
-      // skipping plan-write removes plan.md, which implement requires
+      // plan-write is not skippable, so it throws "not skippable" before orphan check
       expect(() => orderedPhases(['plan-write' as PhaseName])).toThrow(InvalidSkipListError);
-      expect(() => orderedPhases(['plan-write' as PhaseName])).toThrow(/orphans required input/);
+      expect(() => orderedPhases(['plan-write' as PhaseName])).toThrow(
+        "phase 'plan-write' is not skippable",
+      );
     });
 
     it('allows skipping a phase when another kept phase provides the same output', () => {
