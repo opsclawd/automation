@@ -1,0 +1,118 @@
+import { type PhaseName, type AgentContract } from '@ai-sdlc/domain';
+
+export interface PhaseDefinition {
+  name: PhaseName;
+  inputs: { required: string[]; optional: string[] };
+  outputs: string[];
+  agentContract?: AgentContract;
+  retrySafety: 'safe' | 'unsafe';
+  skippable: boolean;
+}
+
+export class UnknownPhaseError extends Error {
+  constructor(public readonly phase: string) {
+    super(`unknown phase: '${phase}'`);
+    this.name = 'UnknownPhaseError';
+  }
+}
+
+export class InvalidSkipListError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidSkipListError';
+  }
+}
+
+export class MissingRequiredInputError extends Error {
+  constructor(
+    public readonly phase: string,
+    public readonly missing: string[],
+  ) {
+    super(`phase '${phase}' missing required inputs: ${missing.join(', ')}`);
+    this.name = 'MissingRequiredInputError';
+  }
+}
+
+export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
+  'read_issue',
+  'plan-design',
+  'plan-write',
+  'implement',
+  'validate',
+  'review-fix',
+  'compound',
+  'create-pr',
+  'pr-review-poll',
+] as const satisfies readonly PhaseName[];
+
+const _p = (name: string): PhaseName => name as PhaseName;
+
+export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
+  read_issue: {
+    name: _p('read_issue'),
+    inputs: { required: [], optional: [] },
+    outputs: ['issue.md', 'issue-comments.md'],
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  'plan-design': {
+    name: _p('plan-design'),
+    inputs: { required: ['issue.md'], optional: ['issue-comments.md'] },
+    outputs: ['design.md'],
+    agentContract: { requiredArtifacts: ['design.md'], mustNotChangeBranch: true },
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  'plan-write': {
+    name: _p('plan-write'),
+    inputs: { required: ['design.md'], optional: [] },
+    outputs: ['plan.md'],
+    agentContract: { requiredArtifacts: ['plan.md'], mustNotChangeBranch: true },
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  implement: {
+    name: _p('implement'),
+    inputs: { required: ['plan.md'], optional: [] },
+    outputs: ['implementation-log.md'],
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  validate: {
+    name: _p('validate'),
+    inputs: { required: [], optional: [] },
+    outputs: ['validation-result.json'],
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  'review-fix': {
+    name: _p('review-fix'),
+    inputs: { required: [], optional: ['review.md'] },
+    outputs: ['review.md', 'review-fix-log.md'],
+    retrySafety: 'safe',
+    skippable: false,
+  },
+  compound: {
+    name: _p('compound'),
+    inputs: { required: ['plan.md'], optional: ['design.md'] },
+    outputs: ['compound.md'],
+    agentContract: { requiredArtifacts: ['compound.md'], mustNotChangeBranch: true },
+    retrySafety: 'safe',
+    skippable: true,
+  },
+  'create-pr': {
+    name: _p('create-pr'),
+    inputs: { required: ['plan.md'], optional: ['compound.md'] },
+    outputs: ['pr-summary.md', 'pr-url.txt'],
+    agentContract: { requiredArtifacts: ['pr-summary.md'] },
+    retrySafety: 'unsafe',
+    skippable: false,
+  },
+  'pr-review-poll': {
+    name: _p('pr-review-poll'),
+    inputs: { required: ['pr-url.txt'], optional: [] },
+    outputs: ['comments.json', 'reviews.json'],
+    retrySafety: 'safe',
+    skippable: false,
+  },
+} as Record<PhaseName, PhaseDefinition>;
