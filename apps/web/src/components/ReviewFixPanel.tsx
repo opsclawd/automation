@@ -25,7 +25,6 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
 
   useEffect(() => {
     let live = true;
-    let intervalId: ReturnType<typeof setInterval> | undefined;
 
     async function fetchData() {
       try {
@@ -33,12 +32,6 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
         if (!live) return;
         setLoops(d);
         setError(null);
-        if (d.some((l) => l.status === 'running')) {
-          intervalId ??= setInterval(fetchData, 10000);
-        } else if (intervalId !== undefined) {
-          clearInterval(intervalId);
-          intervalId = undefined;
-        }
       } catch (e) {
         if (!live) return;
         setError(String(e));
@@ -46,9 +39,10 @@ export function ReviewFixPanel({ runUuid }: { runUuid: string }) {
     }
 
     fetchData();
+    const intervalId = setInterval(fetchData, 10000);
     return () => {
       live = false;
-      if (intervalId !== undefined) clearInterval(intervalId);
+      clearInterval(intervalId);
     };
   }, [runUuid]);
 
