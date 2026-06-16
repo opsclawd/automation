@@ -1,0 +1,32 @@
+import type { PhaseName, Failure } from '@ai-sdlc/domain';
+import type { ArtifactStore } from '../ports/artifact-store.js';
+import type { GitHubPort } from '../ports/github-port.js';
+import type { GitPort } from '../ports/git-port.js';
+import type { AgentPort } from '../ports/agent-port.js';
+import type { EventBusPort } from '../ports/event-bus-port.js';
+
+export interface PhaseHandlerContext {
+  runId: string;
+  runUuid: string;
+  repoFullName: string;
+  issueNumber: number;
+  cwd: string;
+  artifacts: ArtifactStore;
+  github: GitHubPort;
+  git: GitPort;
+  agent: AgentPort;
+  events: EventBusPort;
+  now: () => Date;
+}
+
+export type PhaseOutcome = 'passed' | 'failed' | 'blocked' | 'skipped';
+
+export interface PhaseResult {
+  outcome: PhaseOutcome;
+  failure?: Failure;
+}
+
+export interface PhaseHandler {
+  readonly phase: PhaseName;
+  run(ctx: PhaseHandlerContext): Promise<PhaseResult>;
+}
