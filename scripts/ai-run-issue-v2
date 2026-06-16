@@ -2195,6 +2195,21 @@ ${history_excerpt}"
     _spec_prompt_file=$(mktemp)
     printf '%s' "$SPEC_REVIEWER_PROMPT" > "$_spec_prompt_file"
     _worktree_state_before=$(_capture_worktree_state)
+    # Capture pre-existing dirty file paths (reviewer should not touch these)
+    local _pre_reviewer_dirty
+    _pre_reviewer_dirty=$({
+      git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    } | sort -u)
+    local _pre_dirty_sigs
+    _pre_dirty_sigs=$(mktemp)
+    if [[ -n "$_pre_reviewer_dirty" ]]; then
+      while IFS= read -r _p; do
+        _s=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_p" 2>/dev/null || true; [[ -f "$WORKTREE_DIR/$_p" ]] && git -C "$WORKTREE_DIR" hash-object "$_p" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
+        printf '%s\t%s\n' "$_p" "$_s" >> "$_pre_dirty_sigs"
+      done <<< "$_pre_reviewer_dirty"
+    fi
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase spec-review \
       --phase-id "spec-review-task-${task_n}" \
@@ -2215,16 +2230,48 @@ ${history_excerpt}"
     # Read-only guard: spec-review must not modify source files
     local _pre_sha _worktree_violations
     _pre_sha="${_worktree_state_before%%|*}"
-    _worktree_violations=$({
+    local _post_reviewer_dirty
+    _post_reviewer_dirty=$({
       if [[ -n "$_pre_sha" ]]; then
         git -C "$WORKTREE_DIR" diff --name-only "$_pre_sha"..HEAD 2>/dev/null
       fi
       git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
       git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
       git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
-    } | grep -vE "spec-review-task-${task_n}\.(result|md)$" | tr '\n' ' ' || true)
-    if [[ -n "$_worktree_violations" ]]; then
-      orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+    } | sort -u)
+    _worktree_violations=$(comm -13 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "spec-review-task-${task_n}\.(result|md)$" \
+      | tr '\n' ' ' || true)
+    local _overlap
+    _overlap=$(comm -12 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "spec-review-task-${task_n}\.(result|md)$" || true)
+    if [[ -f "$_pre_dirty_sigs" && -n "$_overlap" ]]; then
+      local _changed_content=""
+      while IFS= read -r _path; do
+        _old_sig=$(awk -F'\t' -v p="$_path" '$1 == p {print $2}' "$_pre_dirty_sigs" 2>/dev/null)
+        if [[ -n "$_old_sig" ]]; then
+        _new_sig=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_path" 2>/dev/null || true; [[ -f "$WORKTREE_DIR/$_path" ]] && git -C "$WORKTREE_DIR" hash-object "$_path" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
+          if [[ "$_new_sig" != "$_old_sig" ]]; then
+            _changed_content+="$_path "
+          fi
+        fi
+        done <<< "$_overlap"
+        _worktree_violations="${_worktree_violations}${_changed_content}"
+      fi
+      local _cleaned
+      _cleaned=$(comm -23 \
+        <(printf '%s' "$_pre_reviewer_dirty") \
+        <(printf '%s' "$_post_reviewer_dirty") \
+        | grep -vE "spec-review-task-${task_n}\.(result|md)$" \
+        | tr '\n' ' ' || true)
+      _worktree_violations="${_worktree_violations}${_cleaned}"
+      rm -f "$_pre_dirty_sigs"
+      if [[ -n "$_worktree_violations" ]]; then
+        orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
     fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/spec-review-task-${task_n}.log" 2>/dev/null; then
@@ -2383,6 +2430,21 @@ ${history_excerpt}"
     _qual_prompt_file=$(mktemp)
     printf '%s' "$QUALITY_REVIEWER_PROMPT" > "$_qual_prompt_file"
     _worktree_state_before=$(_capture_worktree_state)
+    # Capture pre-existing dirty file paths (reviewer should not touch these)
+    local _pre_reviewer_dirty
+    _pre_reviewer_dirty=$({
+      git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    } | sort -u)
+    local _pre_dirty_sigs
+    _pre_dirty_sigs=$(mktemp)
+    if [[ -n "$_pre_reviewer_dirty" ]]; then
+      while IFS= read -r _p; do
+        _s=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_p" 2>/dev/null || true; [[ -f "$WORKTREE_DIR/$_p" ]] && git -C "$WORKTREE_DIR" hash-object "$_p" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
+        printf '%s\t%s\n' "$_p" "$_s" >> "$_pre_dirty_sigs"
+      done <<< "$_pre_reviewer_dirty"
+    fi
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase quality-review \
       --phase-id "quality-review-task-${task_n}" \
@@ -2403,16 +2465,48 @@ ${history_excerpt}"
     # Read-only guard: quality-review must not modify source files
     local _pre_sha _worktree_violations
     _pre_sha="${_worktree_state_before%%|*}"
-    _worktree_violations=$({
+    local _post_reviewer_dirty
+    _post_reviewer_dirty=$({
       if [[ -n "$_pre_sha" ]]; then
         git -C "$WORKTREE_DIR" diff --name-only "$_pre_sha"..HEAD 2>/dev/null
       fi
       git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
       git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
       git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
-    } | grep -vE "quality-review-task-${task_n}\.(result|md)$" | tr '\n' ' ' || true)
-    if [[ -n "$_worktree_violations" ]]; then
-      orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+    } | sort -u)
+    _worktree_violations=$(comm -13 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "quality-review-task-${task_n}\.(result|md)$" \
+      | tr '\n' ' ' || true)
+    local _overlap
+    _overlap=$(comm -12 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "quality-review-task-${task_n}\.(result|md)$" || true)
+    if [[ -f "$_pre_dirty_sigs" && -n "$_overlap" ]]; then
+      local _changed_content=""
+      while IFS= read -r _path; do
+        _old_sig=$(awk -F'\t' -v p="$_path" '$1 == p {print $2}' "$_pre_dirty_sigs" 2>/dev/null)
+        if [[ -n "$_old_sig" ]]; then
+        _new_sig=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_path" 2>/dev/null || true; [[ -f "$WORKTREE_DIR/$_path" ]] && git -C "$WORKTREE_DIR" hash-object "$_path" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
+          if [[ "$_new_sig" != "$_old_sig" ]]; then
+            _changed_content+="$_path "
+          fi
+        fi
+        done <<< "$_overlap"
+        _worktree_violations="${_worktree_violations}${_changed_content}"
+      fi
+      local _cleaned
+      _cleaned=$(comm -23 \
+        <(printf '%s' "$_pre_reviewer_dirty") \
+        <(printf '%s' "$_post_reviewer_dirty") \
+        | grep -vE "quality-review-task-${task_n}\.(result|md)$" \
+        | tr '\n' ' ' || true)
+      _worktree_violations="${_worktree_violations}${_cleaned}"
+      rm -f "$_pre_dirty_sigs"
+      if [[ -n "$_worktree_violations" ]]; then
+        orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
     fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
