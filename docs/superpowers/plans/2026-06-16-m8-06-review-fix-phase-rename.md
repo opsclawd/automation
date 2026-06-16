@@ -23,6 +23,21 @@ The legacy names appear in **distinct roles** that map differently. From the cur
 
 **`fix-validate` is OUT OF SCOPE** — it belongs to the validate loop, not the review collapse. Leave it intact.
 
+## ⚠️ Parity gate — this PR touches a watched legacy path
+
+This story edits `scripts/ai-run-issue-v2` (and `scripts/lib/detect-phase.sh`), which are **watched legacy paths**. The required CI parity gate (`scripts/check-parity-coverage.sh`, issue #292) will **block this PR** unless it adds/extends a `parity[#NNN]` test, or a human adds a `no-parity-impact` note to the PR body. **The autonomous loop cannot self-declare `no-parity-impact`** (the `IMPLEMENTER_PROMPT`/`PLAN_WRITE_PROMPT` rules say so explicitly) — so expect this PR to go red on the parity gate and require a human to add the note/test. Plan for that hand-off; do not spin retrying CI.
+
+**Parity rows this rename must keep green (and update in lockstep where the phase name appears):**
+
+- `parity[#337]` — review-fix CLI delegation captures exit code before `guard_artifact_clean`; the legacy fix-review loop is replaced by CLI delegation with a post-loop guard.
+- `parity[#274]` — fix-review reverts task commits when revalidate is red.
+- `parity[#281]` — stash/commit (never blind `reset --hard`) before cleaning.
+- `parity[#282]` — an all-deferred manifest yields zero actionable fix tasks (success, not crash).
+- `parity[#283]` — findings text is carried through fix iterations.
+- **`parity[#339]` — ⚠️ directly impacted by the rename.** It pins *"fix-validate passed state survives `guard_artifact_clean` and resumes at `whole-pr-review`."* Renaming `whole-pr-review` → `review-fix` changes that resume target, so **this parity test must be updated in the same PR** (its assertion string and the behavior it pins both move to `review-fix`). Add this to the Task 0 decision matrix.
+
+Run `bash scripts/check-parity-coverage.sh` locally before pushing to see exactly what the gate will flag.
+
 ## Task 0 (MANDATORY FIRST): Build the inventory + decision matrix
 
 - [ ] **Step 1: Generate the authoritative inventory:**
@@ -228,7 +243,9 @@ Expected: all PASS.
 - [ ] `fix-validate` left intact (search the diff to confirm it was not touched).
 - [ ] Loop-internal routing keys (`whole-pr-fix-review`, `fix-review-architect`) handled per the confirmed decision — not blindly deleted.
 - [ ] All suites green including `pnpm test:bash`.
+- [ ] `parity[#339]` updated to assert resume at `review-fix` (not `whole-pr-review`); `parity[#337]/#274/#281/#282/#283` still green.
+- [ ] Parity gate (`check-parity-coverage.sh`) satisfied — either an extended/added parity test, or a human `no-parity-impact` note coordinated for the PR body.
 
 ## Definition of done
 
-Merged with green CI; rename is atomic in one PR; timeline/classifier/UI consistent on the unified `review-fix`; DB migration backfills history; `fix-validate` untouched; the M7 loop drives the handler.
+Merged with green CI **including the parity gate**; rename is atomic in one PR; timeline/classifier/UI consistent on the unified `review-fix`; DB migration backfills history; `fix-validate` untouched; the M7 loop drives the handler; the review-fix parity rows pass (with `#339` updated for the new resume target).

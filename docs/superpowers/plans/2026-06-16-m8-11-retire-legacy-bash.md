@@ -19,6 +19,28 @@
 - Many bats tests under `scripts/lib/__tests__/` reference the scripts; moving paths will break them. Update or retire those tests deliberately.
 - **Sequencing:** this story depends on M8-10 being merged and the default workflow being TS. Confirm `apps/api` exposes the worker/executor path as the documented default before quarantining.
 
+## ⚠️ Parity ratchet — this is the REAL retirement gate (issue #210)
+
+Per #210, retiring `ai-run-issue-v2` is **"the last test flipped from bash-driven to TS-driven"** — it is gated on the **parity suite passing under the TS runtime**, not merely on `pnpm test`/`pnpm test:bash` being green with the bash path still present. There are **55 pinned invariants** in `scripts/lib/__tests__/legacy-parity.bats` plus an auto-generated gap backlog (see the `parity-sweep` comment on #210). Removing the bash script while any of these still only pass *bash-driven* would regress behavior that exists only as legacy scar tissue.
+
+**Two more consequences:**
+
+1. **This PR moves `scripts/ai-run-issue-v2` — a watched legacy path** — so the CI parity gate (`scripts/check-parity-coverage.sh`, #292) will flag it, and the autonomous loop **cannot self-declare `no-parity-impact`**. Expect a human to add the parity note to the PR body. A pure move/quarantine is parity-neutral, but the gate doesn't know that without the note.
+2. **Per-phase ratchet, not a cliff.** Each phase's parity slice should already be passing TS-driven from its own M8 handler PR (M8-02…M8-09, M8-13). This story only flips the *final* remaining bash-driven rows and confirms the whole suite is green TS-driven. If a phase's slice is still bash-only, **stop and finish that phase's ratchet first** — do not delete bash to make a red suite go away.
+
+**Phase → parity-slice map (confirm each slice is TS-driven before retiring its bash path):**
+
+| Phase / handler | Parity rows to be TS-driven before bash removal |
+|---|---|
+| implement / review-fix (M8-04, M8-06) | `#337`, `#274`, `#281`, `#282`, `#283`, `#339`, `#269` (task-size lint), `#305` (reviewer artifact/verdict), `#297` (artifact contract + transcript) |
+| worktree lifecycle (M8-13) | `#295` (no main-checkout mutation), `#318` (worktree guard), `#348` (read-only guard pre-existing dirty), `#351` (clean-worktree gate), `#329` (info/attributes union seed) |
+| artifacts / read-only guards (M8-04/05) | `#279/#280` (artifacts never tracked), `#314`/`#301` (no commits to main) |
+| task parsing (M8-04 deriveSteps) | `#315`, `#223`/`#147`, `#320`/`#321` (manifest/prose by number, fence-immune) |
+| post-pr-review (M8-09) | `#206` (READY resting/`waiting`), `#344` (poll settings), `#311`/`#312` (in-worktree result.json) |
+| agent runtime/classification (M4 already TS) | `#147`/`#185`/`#250`/`#252` (anchored provider-error patterns), `#307` (token usage) |
+
+This map is a starting point; reconcile it against the live `legacy-parity.bats` + the #210 gap backlog. Filling/curating the map is the human-owned "inventory-completeness judgement" #210 reserves — **do not** hand a blanket "verify every invariant" task to the orchestrator (#269 antipattern).
+
 ## File structure
 
 - Move: `scripts/ai-run-issue-v2` → `scripts/legacy/ai-run-issue-v2`
@@ -46,6 +68,23 @@ cat /tmp/legacy-callers.txt
 - [ ] **Step 3:** Confirm `scripts/ai-pr-review-poll` current state (full loop vs shim). If M6-05 already reduced it, note that.
 
 This task produces the move-plan; no commit needed (or commit the audit notes to the PR description).
+
+---
+
+### Task 1b: Verify the parity suite is green TS-driven BEFORE any move (the gate)
+
+- [ ] **Step 1:** Run the full parity suite and confirm every invariant is exercised under the **TS runtime**, not the bash path you are about to delete:
+
+```bash
+pnpm test:bash   # runs scripts/lib/__tests__ including legacy-parity.bats
+bash scripts/check-parity-coverage.sh   # the required CI parity gate, run locally
+```
+
+- [ ] **Step 2:** For each row in the phase→parity-slice map above, confirm its assertion drives the TS path (e.g. `run-review-fix.ts`, `run-agent.ts`, the `GitWorktreeAdapter`, the validation runner) — not `scripts/ai-run-issue-v2`. Any row still bash-only is a **blocker**: finish that phase's ratchet (its M8 handler PR) first. Record the confirmation in the PR description.
+
+- [ ] **Step 3:** Check the #210 gap backlog (`parity-sweep` comment) for any legacy-path PR with no parity test that pins behavior owned by `ai-run-issue-v2`. Resolve or consciously accept each before retiring the script. **This curation is human-owned** — do not auto-generate characterization tests to clear the gate.
+
+> No code change here — this is the go/no-go gate. If it's not green TS-driven, **stop**.
 
 ---
 
@@ -134,10 +173,12 @@ fi
 
 ## Self-review checklist
 
+- [ ] **Parity ratchet gate (Task 1b) is green:** the full `legacy-parity.bats` suite passes **TS-driven**, with no row still depending on `ai-run-issue-v2`. This is the load-bearing precondition for retirement (#210).
 - [ ] Acceptance → checks: default documented workflow invokes no legacy script (Task 4 guard); `ai-run-issue-v2` under `scripts/legacy/` with banner (Task 2); no live code references the quarantined scripts (Task 1/2 grep clean); `emit_event.sh` kept only if referenced (Task 3); README/quickstart/ADR-0002 updated (Task 4).
+- [ ] The watched-path parity gate on this PR is satisfied via a human `no-parity-impact` note (the move is parity-neutral) — the loop cannot self-declare it.
 - [ ] Nothing hard-deleted — everything is moved/preserved.
 - [ ] Both `pnpm test` and `pnpm test:bash` green.
 
 ## Definition of done
 
-Merged with green CI; default workflow is TS-only; cutover documented in ADR-0002; legacy preserved under quarantine, not deleted.
+Merged with green CI; **the full parity suite passes TS-driven (the retirement gate, #210)**; default workflow is TS-only; cutover documented in ADR-0002; legacy preserved under quarantine, not deleted.

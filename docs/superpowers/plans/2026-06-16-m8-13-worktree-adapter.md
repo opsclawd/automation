@@ -16,6 +16,15 @@
 - **`GitPort` interface** (`packages/application/src/ports/git-port.ts`) — implement ALL methods: `createWorktree`, `removeWorktree`, `currentBranch`, `headCommitSha`, `resetHard`, `diff`, `commit`, `push`, `remoteRef`, `isAncestor`, `logBetween`, `cleanUntracked`, `headCommitShaOf`. Plus the lifecycle helpers this story adds (verify-clean, record-start-commit) — add them as adapter methods or as part of `createWorktree`.
 - **Q14:** worktree scoped to issue (`.ai-worktrees/issue-<N>`), reused across runs; verify clean (reset to latest base) at run start. **Q23/Q24:** capture `startCommitSha` at invocation start; reset to it on cancel.
 - **Regression guards:** runs must stay inside the worktree and never mutate the main checkout (#295, #318); read-only review phases require a clean worktree (#351). The verify-clean step is the enforcement point — distinguish reviewer-created leftovers from real drift (#348) where possible.
+- **This adapter is the TS home of several pinned parity invariants (#210 ratchet).** These are characterization tests in `scripts/lib/__tests__/legacy-parity.bats` that currently pass *bash-driven*; `GitWorktreeAdapter` is what lets them flip to *TS-driven* (a precondition for M8-11 retiring the bash script). Reproduce — do not regress — these behaviors, and reference the row IDs in your test names so the ratchet mapping is traceable:
+  - `parity[#295]` — runs never mutate the main checkout (detached-HEAD / REPO_ROOT mutation guard); `_detach/_reattach_main_head` keep `main` at its pre-run SHA.
+  - `parity[#318]` — worktree guard hard-fails on a branch switch; warns (not hard-fail) on a dirty tree.
+  - `parity[#348]` — the read-only guard excludes pre-existing dirty files from violations; an empty pre-agent snapshot treats all post-agent files as violations.
+  - `parity[#351]` — `git status --porcelain --untracked-files=all` detects untracked files even with config overrides; the clean-worktree gate catches untracked files left by an implementer and passes when fully clean.
+  - `parity[#329]` — worktree `$GIT_DIR/info/attributes` seeds the `merge=union` rule for `legacy-parity.bats` at creation time (if worktree creation is responsible for seeding it — confirm where this belongs).
+  - `parity[#339]` — fix-validate `passed` state survives the artifact guard and resumes correctly (interacts with the verify-clean/reset logic; coordinate with M8-06's rename of the resume target).
+
+  Note: `packages/infrastructure/src/git/**` is **not** a watched parity path, so this PR will not trip the CI parity gate — but these invariants are exactly what the adapter must preserve. Where a behavior is more naturally pinned as a bats row against the TS entrypoint, extend `legacy-parity.bats` accordingly (referencing the row IDs above).
 - **VPS layout (PRD §21.1):** `repos/<owner__repo>/bare.git` + `worktrees/issue-<N>-run-<runId>`. Take the base path from config/`Repository.localBasePath` (M3-02). For local MVP, default to `.ai-worktrees/issue-<N>`. Leave a documented seam for the VPS layout; don't hard-code the local path.
 - Use a shell runner that captures stdout/stderr and rejects on non-zero exit. There is an existing `packages/infrastructure/src/bash/run-bash-script.ts` and `agent/external-cli-runner.ts` — reuse a runner if one fits; otherwise a small promisified `execFile('git', args, { cwd })` is fine (no `execa` dependency assumed).
 
@@ -298,10 +307,11 @@ Add `verifyClean`:
 ## Self-review checklist
 
 - [ ] Acceptance → tests: createWorktree on own branch (Task 2), reuse idempotent (add a second-create test), verify-clean clean+dirty (Task 4), record + resetHard baseline (Task 3), main checkout never mutated (assert in Tasks 2–4), all git ops against a temp repo (all).
+- [ ] **Parity invariants reproduced TS-driven** — `#295` (no main-checkout mutation), `#318` (branch-switch hard-fail / dirty warn), `#348` (pre-existing-dirty exclusion), `#351` (untracked detection + clean gate) each have a test naming the row ID; coordinate `#339` resume target with M8-06.
 - [ ] Implements the full `GitPort` interface — no method left throwing.
 - [ ] Base path comes from input/`localBasePath`, not hard-coded; VPS-layout seam documented.
 - [ ] Names consistent: `GitWorktreeAdapter`, `git()` runner, `verifyClean`.
 
 ## Definition of done
 
-Merged with green CI; adapter implements `GitPort`; clean-at-start + reset-on-cancel proven against a temp repo; main checkout never mutated.
+Merged with green CI; adapter implements `GitPort`; clean-at-start + reset-on-cancel proven against a temp repo; main checkout never mutated; the worktree parity invariants (`#295/#318/#348/#351`) are exercised TS-driven so M8-11 can flip them off the bash path.
