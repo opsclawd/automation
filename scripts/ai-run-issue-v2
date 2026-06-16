@@ -2206,7 +2206,7 @@ ${history_excerpt}"
     _pre_dirty_sigs=$(mktemp)
     if [[ -n "$_pre_reviewer_dirty" ]]; then
       while IFS= read -r _p; do
-        _s=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_p" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_p" 2>/dev/null; } | sha256sum | cut -d' ' -f1)
+        _s=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_p" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_p" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
         printf '%s\t%s\n' "$_p" "$_s" >> "$_pre_dirty_sigs"
       done <<< "$_pre_reviewer_dirty"
     fi
@@ -2254,7 +2254,7 @@ ${history_excerpt}"
       while IFS= read -r _path; do
         _old_sig=$(awk -F'\t' -v p="$_path" '$1 == p {print $2}' "$_pre_dirty_sigs" 2>/dev/null)
         if [[ -n "$_old_sig" ]]; then
-          _new_sig=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_path" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_path" 2>/dev/null; } | sha256sum | cut -d' ' -f1)
+          _new_sig=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_path" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_path" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
           if [[ "$_new_sig" != "$_old_sig" ]]; then
             _changed_content+="$_path "
           fi
@@ -2434,7 +2434,7 @@ ${history_excerpt}"
     _pre_dirty_sigs=$(mktemp)
     if [[ -n "$_pre_reviewer_dirty" ]]; then
       while IFS= read -r _p; do
-        _s=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_p" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_p" 2>/dev/null; } | sha256sum | cut -d' ' -f1)
+        _s=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_p" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_p" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
         printf '%s\t%s\n' "$_p" "$_s" >> "$_pre_dirty_sigs"
       done <<< "$_pre_reviewer_dirty"
     fi
@@ -2482,7 +2482,7 @@ ${history_excerpt}"
       while IFS= read -r _path; do
         _old_sig=$(awk -F'\t' -v p="$_path" '$1 == p {print $2}' "$_pre_dirty_sigs" 2>/dev/null)
         if [[ -n "$_old_sig" ]]; then
-          _new_sig=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_path" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_path" 2>/dev/null; } | sha256sum | cut -d' ' -f1)
+          _new_sig=$( { git -C "$WORKTREE_DIR" diff HEAD -- "$_path" 2>/dev/null; git -C "$WORKTREE_DIR" hash-object "$_path" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
           if [[ "$_new_sig" != "$_old_sig" ]]; then
             _changed_content+="$_path "
           fi
