@@ -1,6 +1,7 @@
 import { PhaseName } from '@ai-sdlc/domain';
 import type { Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
+import type { GitHubIssue } from '../../ports/github-port.js';
 import { createEventEmitter } from '../handler.js';
 
 export class ReadIssueHandler implements PhaseHandler {
@@ -10,7 +11,7 @@ export class ReadIssueHandler implements PhaseHandler {
     const emit = createEventEmitter(ctx, this.phase);
     emit('phase.started', 'info', 'reading issue');
 
-    let issue;
+    let issue: GitHubIssue;
     try {
       issue = await ctx.github.getIssue(ctx.repoFullName, ctx.issueNumber);
     } catch (e) {
