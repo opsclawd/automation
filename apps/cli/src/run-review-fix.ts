@@ -172,6 +172,7 @@ async function main() {
       repoId: values['repo-id']!,
       cwd: values.cwd!,
       maxIterations,
+      blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
       reviewProfile: AgentProfileName(reviewEntry.profile),
       fixProfile: AgentProfileName(fixEntry.profile),
       ...(fixEntry.fallbackProfile
