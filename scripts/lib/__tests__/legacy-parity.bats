@@ -1827,3 +1827,43 @@ PLAN
   run grep -q "reviewer-created.txt" <<< "$_violations"
   [ "$status" -eq 0 ]
 }
+
+# Invariant: the violation computation excludes the reviewer's own .result and
+#   .md artifact files from the violation set. Reviewers are allowed to produce
+#   task artifacts; those must not count as source-file violations.
+# Source: #348.
+# Failure prevented: If the grep exclusion filter is missing or mistyped,
+#   reviewer-produced .result and .md files would be flagged as violations,
+#   causing every review phase to fail.
+# TS-port contract: the TS orchestrator's read-only guard must exclude
+#   phase-specific .result and .md files from violations using the same
+#   task-n-prefixed pattern.
+@test "parity[#348]: violation computation excludes phase-specific .result and .md files" {
+  local _test_tmp
+  _test_tmp=$(mktemp -d)
+  _test_dir="$_test_tmp"
+
+  # Simulate post-agent dirty set with reviewer artifacts + a real violation
+  local _post_dirty
+  _post_dirty=$(printf '%s\n' \
+    "quality-review-task-3.result" \
+    "quality-review-task-3.md" \
+    "src/reviewer-touched.ts")
+
+  # Simulate pre-agent snapshot: empty (pristine)
+  local _violations
+  _violations=$(comm -13 \
+    <(printf '%s' "") \
+    <(printf '%s' "$_post_dirty") \
+    | grep -vE "quality-review-task-[0-9]+\.(result|md)$" || true)
+
+  # .result and .md must be excluded
+  run grep -q "quality-review-task-3.result" <<< "$_violations"
+  [ "$status" -ne 0 ]
+  run grep -q "quality-review-task-3.md" <<< "$_violations"
+  [ "$status" -ne 0 ]
+
+  # Real violation file must still be flagged
+  run grep -q "src/reviewer-touched.ts" <<< "$_violations"
+  [ "$status" -eq 0 ]
+}
