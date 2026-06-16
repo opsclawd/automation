@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import type { PhaseName } from '@ai-sdlc/domain';
 import {
   CANONICAL_PHASE_ORDER,
   PHASE_DEFINITIONS,
+  getPhaseDefinition,
   UnknownPhaseError,
   InvalidSkipListError,
   MissingRequiredInputError,
@@ -41,5 +43,25 @@ describe('phase definitions registry', () => {
     expect(new InvalidSkipListError('bad').name).toBe('InvalidSkipListError');
     expect(new MissingRequiredInputError('p', ['a']).name).toBe('MissingRequiredInputError');
     expect(new MissingRequiredInputError('p', ['a']).missing).toEqual(['a']);
+  });
+
+  describe('getPhaseDefinition', () => {
+    it('returns the definition for a known phase', () => {
+      const def = getPhaseDefinition('plan-design' as PhaseName);
+      expect(def.outputs).toEqual(['design.md']);
+      expect(def.name).toBe('plan-design');
+    });
+
+    it('throws UnknownPhaseError for an unknown phase', () => {
+      expect(() => getPhaseDefinition('bogus' as PhaseName)).toThrow(UnknownPhaseError);
+      expect(() => getPhaseDefinition('bogus' as PhaseName)).toThrow("unknown phase: 'bogus'");
+    });
+
+    it('returns the definition for every canonical phase', () => {
+      for (const name of CANONICAL_PHASE_ORDER) {
+        expect(() => getPhaseDefinition(name)).not.toThrow();
+        expect(getPhaseDefinition(name).name).toBe(name);
+      }
+    });
   });
 });

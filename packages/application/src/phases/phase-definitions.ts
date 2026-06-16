@@ -116,3 +116,9 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     skippable: false,
   },
 } as Record<PhaseName, PhaseDefinition>;
+
+export function getPhaseDefinition(name: PhaseName): PhaseDefinition {
+  const def = PHASE_DEFINITIONS[name];
+  if (!def) throw new UnknownPhaseError(name as string);
+  return def;
+}
