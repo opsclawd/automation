@@ -2245,7 +2245,10 @@ ${history_excerpt}"
       | grep -vE "spec-review-task-${task_n}\.(result|md)$" \
       | tr '\n' ' ' || true)
     local _overlap
-    _overlap=$(comm -12 <(printf '%s' "$_pre_reviewer_dirty") <(printf '%s' "$_post_reviewer_dirty"))
+    _overlap=$(comm -12 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "spec-review-task-${task_n}\.(result|md)$" || true)
     if [[ -f "$_pre_dirty_sigs" && -n "$_overlap" ]]; then
       local _changed_content=""
       while IFS= read -r _path; do
@@ -2470,7 +2473,10 @@ ${history_excerpt}"
       | grep -vE "quality-review-task-${task_n}\.(result|md)$" \
       | tr '\n' ' ' || true)
     local _overlap
-    _overlap=$(comm -12 <(printf '%s' "$_pre_reviewer_dirty") <(printf '%s' "$_post_reviewer_dirty"))
+    _overlap=$(comm -12 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "quality-review-task-${task_n}\.(result|md)$" || true)
     if [[ -f "$_pre_dirty_sigs" && -n "$_overlap" ]]; then
       local _changed_content=""
       while IFS= read -r _path; do
