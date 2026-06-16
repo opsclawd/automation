@@ -421,7 +421,13 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? { ...inv, resultJsonPath: 'result.json' }
             : inv;
         const verdict = patchedInv
-          ? await readReviewVerdict(patchedInv, { artifacts: store, agent: router })
+          ? await readReviewVerdict(
+              patchedInv,
+              { artifacts: store, agent: router },
+              {
+                blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+              },
+            )
           : { ok: false as const, detail: 'no invocation row' };
         // Preserve review artifacts to a stable per-iteration path so they
         // survive subsequent iterations that overwrite result.json and
@@ -449,7 +455,15 @@ export function composeRoot(opts: ComposeOptions): Container {
         return {
           invocationId,
           agentOutcome: result.outcome,
-          ...(verdict.ok ? { verdict: verdict.verdict } : {}),
+          ...(verdict.ok
+            ? {
+                verdict: verdict.verdict,
+                ...(verdict.overridden !== undefined ? { overridden: verdict.overridden } : {}),
+                ...(verdict.offendingFindings !== undefined
+                  ? { offendingFindings: verdict.offendingFindings }
+                  : {}),
+              }
+            : {}),
         };
       };
 
