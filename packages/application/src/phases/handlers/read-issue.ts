@@ -1,4 +1,5 @@
 import { PhaseName } from '@ai-sdlc/domain';
+import type { Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 
 export class ReadIssueHandler implements PhaseHandler {
@@ -7,7 +8,38 @@ export class ReadIssueHandler implements PhaseHandler {
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     this.emit(ctx, 'phase.started', 'info', 'reading issue');
 
-    const issue = await ctx.github.getIssue(ctx.repoFullName, ctx.issueNumber);
+    let issue;
+    try {
+      issue = await ctx.github.getIssue(ctx.repoFullName, ctx.issueNumber);
+    } catch (e) {
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'read_issue',
+        kind: 'github_failed',
+        message: `Failed to fetch issue #${ctx.issueNumber}: ${(e as Error).message}`,
+        canRetry: true,
+        suggestedAction: 'Check gh auth and network, then retry.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      this.emit(ctx, 'phase.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    if (issue.labels.includes('ai:blocked')) {
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'read_issue',
+        kind: 'agent_blocked',
+        message: `Issue #${ctx.issueNumber} has the ai:blocked label`,
+        canRetry: false,
+        suggestedAction: 'Remove the ai:blocked label from the issue, then retry the run.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      this.emit(ctx, 'phase.failed', 'error', failure.message);
+      return { outcome: 'blocked', failure };
+    }
 
     const issueMd = `# ${issue.title}\n\n${issue.body}\n`;
     await ctx.artifacts.write({
