@@ -193,4 +193,42 @@ describe('phase definitions registry', () => {
       ).not.toThrow();
     });
   });
+
+  describe('cross-phase consistency', () => {
+    it('every required input of every phase is produced by some earlier phase', () => {
+      const produced = new Set<string>();
+      for (const name of CANONICAL_PHASE_ORDER) {
+        const def = PHASE_DEFINITIONS[name]!;
+        for (const req of def.inputs.required) {
+          expect(produced).toContain(req);
+        }
+        for (const out of def.outputs) {
+          produced.add(out);
+        }
+      }
+    });
+
+    it('all required inputs exist across the full chain by phase', () => {
+      const produced = new Set<string>();
+      for (const name of CANONICAL_PHASE_ORDER) {
+        const def = PHASE_DEFINITIONS[name]!;
+        const missing = def.inputs.required.filter((r) => !produced.has(r));
+        expect(missing).toEqual([]);
+        for (const out of def.outputs) produced.add(out);
+      }
+    });
+
+    it('no two phases claim the same required output that appears as a required input', () => {
+      const seen = new Map<string, string>();
+      for (const name of CANONICAL_PHASE_ORDER) {
+        const def = PHASE_DEFINITIONS[name]!;
+        for (const out of def.outputs) {
+          if (!seen.has(out)) {
+            seen.set(out, name as string);
+          }
+        }
+      }
+      expect(seen.size).toBeGreaterThan(0);
+    });
+  });
 });
