@@ -36,15 +36,15 @@ export class MissingRequiredInputError extends Error {
 // TODO: converge CANONICAL_PHASE_ORDER + PHASE_RESULT_REGISTRY into one source of truth
 // Canonical names map to result registry keys via PHASE_NAME_MIGRATION_MAP in phase-registry.ts
 export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
-  'read_issue' as PhaseName,
-  'plan-design' as PhaseName,
-  'plan-write' as PhaseName,
-  'implement' as PhaseName,
-  'validate' as PhaseName,
-  'review-fix' as PhaseName,
-  'compound' as PhaseName,
-  'create-pr' as PhaseName,
-  'pr-review-poll' as PhaseName,
+  makePhaseName('read_issue'),
+  makePhaseName('plan-design'),
+  makePhaseName('plan-write'),
+  makePhaseName('implement'),
+  makePhaseName('validate'),
+  makePhaseName('review-fix'),
+  makePhaseName('compound'),
+  makePhaseName('create-pr'),
+  makePhaseName('pr-review-poll'),
 ];
 
 const _phaseDefinitions = {
@@ -75,7 +75,7 @@ const _phaseDefinitions = {
     name: makePhaseName('implement'),
     inputs: { required: ['plan.md'], optional: [] },
     outputs: ['implementation-log.md'],
-    retrySafety: 'safe',
+    retrySafety: 'unsafe',
     skippable: false,
   },
   validate: {
@@ -91,7 +91,7 @@ const _phaseDefinitions = {
     // subsequent iterations refine. The loop is optional.
     inputs: { required: [], optional: ['review.md'] },
     outputs: ['review.md', 'review-fix-log.md'],
-    retrySafety: 'safe',
+    retrySafety: 'unsafe',
     skippable: false,
   },
   compound: {
@@ -99,7 +99,7 @@ const _phaseDefinitions = {
     inputs: { required: ['plan.md'], optional: ['design.md'] },
     outputs: ['compound.md'],
     agentContract: { requiredArtifacts: ['compound.md'], mustNotChangeBranch: true },
-    retrySafety: 'safe',
+    retrySafety: 'unsafe',
     skippable: true,
   },
   'create-pr': {
@@ -142,6 +142,15 @@ export function orderedPhases(
     const def = defs[s as PhaseName];
     if (!def) throw new InvalidSkipListError(`unknown phase in skip list: '${s}'`);
     if (!def.skippable) throw new InvalidSkipListError(`phase '${s}' is not skippable`);
+  }
+
+  if (definitions) {
+    const missing = CANONICAL_PHASE_ORDER.filter((n) => !skipSet.has(n as string) && !defs[n]);
+    if (missing.length > 0) {
+      throw new InvalidSkipListError(
+        `custom definitions missing required phase(s): ${missing.join(', ')}`,
+      );
+    }
   }
 
   const kept = CANONICAL_PHASE_ORDER.filter((n) => !skipSet.has(n as string)).map((n) => defs[n]!);

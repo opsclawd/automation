@@ -29,7 +29,12 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   read_issue: null,
   validate: null,
   'pr-review-poll': null,
-  // Sub-phase / legacy registry keys not in the canonical order:
+};
+
+// Legacy/sub-phase registry keys not in the canonical order, kept for
+// backward compatibility with existing runs. These entries are not
+// produced by orderedPhases and will be removed once migrations are complete.
+export const LEGACY_MIGRATION_MAP: Record<string, null> = {
   'quality-review': null,
   'post-pr-review': null,
   'spec-review': null,
