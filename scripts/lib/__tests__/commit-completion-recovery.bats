@@ -32,6 +32,13 @@ setup() {
       "rev-parse HEAD") echo "$_MOCK_HEAD_SHA" ;;
       "status --porcelain --untracked-files=no")
         if [[ -s "$DIRTY_FLAG" ]]; then
+          grep -v '^??' "$DIRTY_FLAG" || echo ""
+        else
+          echo ""
+        fi
+        ;;
+        "status --porcelain" | "status --porcelain --untracked-files=all")
+        if [[ -s "$DIRTY_FLAG" ]]; then
           cat "$DIRTY_FLAG"
         else
           echo ""
@@ -161,4 +168,13 @@ teardown() {
   run run_commit_completion 1 "feat: implement task 1"
   [ "$status" -eq 0 ]
   [ ! -f "${ISSUES_DIR}/commit-completion-task-1.log" ]
+}
+
+@test "run_commit_completion: detects untracked files and invokes agent" {
+  printf "?? src/new-file.ts\n" > "$DIRTY_FLAG"
+  _CC_AGENT_CLEANS_TREE=1
+  _CC_AGENT_EXIT=0
+  run run_commit_completion 1 "feat: implement task 1"
+  [ "$status" -eq 0 ]
+  [ -f "${ISSUES_DIR}/commit-completion-task-1.log" ]
 }

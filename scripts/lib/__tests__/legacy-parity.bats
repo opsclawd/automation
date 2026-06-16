@@ -1944,3 +1944,126 @@ PLAN
   run grep -q "reviewer-created.txt" <<< "$_violations"
   [ "$status" -eq 0 ]
 }
+
+# Invariant: the dirty-tree detection for commit-completion uses
+#   git status --porcelain --untracked-files=all, so untracked files
+#   left by the implementer are detected and trigger recovery/gating
+#   regardless of the user's status.showUntrackedFiles git config.
+# Source: #351.
+# Failure prevented: untracked files left by the implementer go undetected
+#   (e.g. status.showUntrackedFiles=no in git config), the commit-completion
+#   guard passes through, and review phases fail with misattributed "read-only
+#   reviewer modified source files" errors.
+# TS-port contract: the TS orchestrator's commit-completion dirty detection
+#   must use the equivalent of git status --porcelain --untracked-files=all,
+#   not a tracked-only variant or a bare porcelain that respects local config.
+@test "parity[#351]: git status --porcelain --untracked-files=all detects untracked files even with config overrides" {
+  local _test_tmp
+  _test_tmp=$(mktemp -d)
+  _test_dir="$_test_tmp"
+
+  git -C "$_test_tmp" init -q
+  git -C "$_test_tmp" config user.email "test@example.com"
+  git -C "$_test_tmp" config user.name "test"
+  : > "$_test_tmp/tracked.txt"
+  git -C "$_test_tmp" add tracked.txt
+  git -C "$_test_tmp" commit -q -m "init"
+
+  # Simulate a hostile config: status.showUntrackedFiles=no
+  git -C "$_test_tmp" config status.showUntrackedFiles no
+
+  echo "untracked content" > "$_test_tmp/untracked.txt"
+
+  # Must use --untracked-files=all — bare --porcelain would be silent
+  local _dirty
+  _dirty=$(git -C "$_test_tmp" status --porcelain --untracked-files=all 2>/dev/null)
+
+  [ -n "$_dirty" ]
+  run grep -q "untracked.txt" <<< "$_dirty"
+  [ "$status" -eq 0 ]
+  local _test_tmp
+  _test_tmp=$(mktemp -d)
+  _test_dir="$_test_tmp"
+
+  git -C "$_test_tmp" init -q
+  git -C "$_test_tmp" config user.email "test@example.com"
+  git -C "$_test_tmp" config user.name "test"
+  : > "$_test_tmp/tracked.txt"
+  git -C "$_test_tmp" add tracked.txt
+  git -C "$_test_tmp" commit -q -m "init"
+
+  echo "untracked content" > "$_test_tmp/untracked.txt"
+
+  local _dirty
+  _dirty=$(git -C "$_test_tmp" status --porcelain 2>/dev/null)
+
+  [ -n "$_dirty" ]
+  run grep -q "untracked.txt" <<< "$_dirty"
+  [ "$status" -eq 0 ]
+}
+
+# Invariant: before entering review phases, the orchestrator verifies the
+#   worktree is clean (no output from git status --porcelain --untracked-files=all).
+#   If dirty, the failure is attributed to the implement step, not the reviewer.
+# Source: #351.
+# Failure prevented: untracked or uncommitted files from the implementer
+#   persist into review phases, causing misattributed "read-only reviewer
+#   modified source files" contract violations.
+# TS-port contract: the TS orchestrator must include a pre-review
+#   clean-worktree gate with the same semantics — any non-empty git status
+#   output blocks review with an implement-step diagnostic.
+@test "parity[#351]: clean-worktree gate catches untracked files left by implementer" {
+  local _test_tmp
+  _test_tmp=$(mktemp -d)
+  _test_dir="$_test_tmp"
+
+  git -C "$_test_tmp" init -q
+  git -C "$_test_tmp" config user.email "test@example.com"
+  git -C "$_test_tmp" config user.name "test"
+  : > "$_test_tmp/tracked.txt"
+  git -C "$_test_tmp" add tracked.txt
+  git -C "$_test_tmp" commit -q -m "init"
+
+  echo "untracked content" > "$_test_tmp/untracked.txt"
+  echo "modified tracked content" >> "$_test_tmp/tracked.txt"
+
+  local _dirty
+  _dirty=$(git -C "$_test_tmp" status --porcelain --untracked-files=all 2>/dev/null)
+
+  # Invariant: non-empty status output means the worktree is not clean.
+  # The gate must treat this as a blocking condition.
+  [ -n "$_dirty" ]
+  # Both tracked modification and untracked file must appear.
+  run grep -q "tracked.txt" <<< "$_dirty"
+  [ "$status" -eq 0 ]
+  run grep -q "untracked.txt" <<< "$_dirty"
+  [ "$status" -eq 0 ]
+}
+
+# Invariant: a fully clean worktree (all changes committed, no untracked
+#   files not covered by excludes) produces empty git status
+#   --porcelain --untracked-files=all output, allowing review phases to
+#   proceed.
+# Source: #351.
+# Failure prevented: a clean worktree is incorrectly classified as dirty,
+#   blocking legitimate reviews with false positives.
+# TS-port contract: the TS orchestrator's pre-review gate must produce
+#   equivalent output to git status --porcelain --untracked-files=all for
+#   a clean tree.
+@test "parity[#351]: clean-worktree gate passes when worktree is fully clean" {
+  local _test_tmp
+  _test_tmp=$(mktemp -d)
+  _test_dir="$_test_tmp"
+
+  git -C "$_test_tmp" init -q
+  git -C "$_test_tmp" config user.email "test@example.com"
+  git -C "$_test_tmp" config user.name "test"
+  : > "$_test_tmp/file.txt"
+  git -C "$_test_tmp" add file.txt
+  git -C "$_test_tmp" commit -q -m "init"
+
+  local _dirty
+  _dirty=$(git -C "$_test_tmp" status --porcelain --untracked-files=all 2>/dev/null)
+
+  [ -z "$_dirty" ]
+}
