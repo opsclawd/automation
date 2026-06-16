@@ -2195,6 +2195,13 @@ ${history_excerpt}"
     _spec_prompt_file=$(mktemp)
     printf '%s' "$SPEC_REVIEWER_PROMPT" > "$_spec_prompt_file"
     _worktree_state_before=$(_capture_worktree_state)
+    # Capture pre-existing dirty file paths (reviewer should not touch these)
+    local _pre_reviewer_dirty
+    _pre_reviewer_dirty=$({
+      git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
+      git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
+    } | sort -u)
     ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" "$REPO_ROOT/apps/cli/src/run-agent.ts" \
       --phase spec-review \
       --phase-id "spec-review-task-${task_n}" \
@@ -2215,14 +2222,20 @@ ${history_excerpt}"
     # Read-only guard: spec-review must not modify source files
     local _pre_sha _worktree_violations
     _pre_sha="${_worktree_state_before%%|*}"
-    _worktree_violations=$({
+    local _post_reviewer_dirty
+    _post_reviewer_dirty=$({
       if [[ -n "$_pre_sha" ]]; then
         git -C "$WORKTREE_DIR" diff --name-only "$_pre_sha"..HEAD 2>/dev/null
       fi
       git -C "$WORKTREE_DIR" diff --name-only 2>/dev/null
       git -C "$WORKTREE_DIR" diff --cached --name-only 2>/dev/null
       git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null
-    } | grep -vE "spec-review-task-${task_n}\.(result|md)$" | tr '\n' ' ' || true)
+    } | sort -u)
+    _worktree_violations=$(comm -13 \
+      <(printf '%s' "$_pre_reviewer_dirty") \
+      <(printf '%s' "$_post_reviewer_dirty") \
+      | grep -vE "spec-review-task-${task_n}\.(result|md)$" \
+      | tr '\n' ' ' || true)
     if [[ -n "$_worktree_violations" ]]; then
       orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
     fi
