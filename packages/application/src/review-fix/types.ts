@@ -17,6 +17,8 @@ export interface ReviewStepResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'pass' | 'fail';
+  overridden?: boolean;
+  offendingFindings?: Array<{ severity: string; summary: string }>;
 }
 
 export interface FixStepResult {
@@ -68,6 +70,7 @@ export interface ReviewFixLoopInput {
   repoId: string;
   cwd: string;
   maxIterations: number;
+  blockOnSeverity?: string;
   reviewProfile: AgentProfileName;
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
