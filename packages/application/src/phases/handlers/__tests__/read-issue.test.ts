@@ -9,8 +9,8 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
 function makeCtx(github: FakeGitHubPort, artifacts: FakeArtifactStore) {
   const events: OrchestratorEvent[] = [];
   const ctx = {
-    runId: 'issue-7-run',
-    runUuid: 'uuid-1',
+    runId: 'human-readable-run',
+    runUuid: '550e8400-e29b-41d4-a716-446655440000',
     repoFullName: 'acme/widgets',
     issueNumber: 7,
     cwd: '/tmp/wt',
@@ -44,15 +44,17 @@ describe('ReadIssueHandler', () => {
     const result = await new ReadIssueHandler().run(ctx);
 
     expect(result.outcome).toBe('passed');
-    const issueContents = await artifacts.read('uuid-1', 'issue.md');
+    const issueContents = await artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'issue.md');
     expect(issueContents).toContain('# Add a thing');
     expect(issueContents).toContain('Please add the thing.');
-    expect(await artifacts.read('uuid-1', 'issue-comments.md')).toBe('');
+    expect(await artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'issue-comments.md')).toBe(
+      '',
+    );
 
     const artifactCreatedEvents = events.filter((e) => e.type === 'artifact.created');
     expect(artifactCreatedEvents).toHaveLength(2);
-    expect(artifactCreatedEvents[0].metadata).toEqual({ path: 'issue.md' });
-    expect(artifactCreatedEvents[1].metadata).toEqual({ path: 'issue-comments.md' });
+    expect(artifactCreatedEvents[0].metadata).toEqual({ path: 'issue-comments.md' });
+    expect(artifactCreatedEvents[1].metadata).toEqual({ path: 'issue.md' });
     expect(artifactCreatedEvents.every((e) => e.level === 'info')).toBe(true);
 
     const startedEvents = events.filter((e) => e.type === 'phase.started');
@@ -83,7 +85,9 @@ describe('ReadIssueHandler', () => {
     if (result.outcome === 'blocked') {
       expect(result.failure.kind).toBe('agent_blocked');
     }
-    await expect(artifacts.read('uuid-1', 'issue.md')).rejects.toThrow(ArtifactNotFoundError);
+    await expect(
+      artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'issue.md'),
+    ).rejects.toThrow(ArtifactNotFoundError);
 
     const blockedEvents = events.filter((e) => e.type === 'phase.blocked');
     expect(blockedEvents).toHaveLength(1);
@@ -105,7 +109,7 @@ describe('ReadIssueHandler', () => {
     const result = await new ReadIssueHandler().run(ctx);
 
     expect(result.outcome).toBe('passed');
-    const issueContents = await artifacts.read('uuid-1', 'issue.md');
+    const issueContents = await artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'issue.md');
     expect(issueContents).toBe('# Empty body\n');
   });
 
@@ -151,6 +155,6 @@ describe('ReadIssueHandler', () => {
     expect(failedEvents).toHaveLength(1);
     expect(failedEvents[0].level).toBe('error');
     expect(failedEvents[0].phase).toBe('read_issue');
-    expect(failedEvents[0].message).toContain('Failed to write issue.md');
+    expect(failedEvents[0].message).toContain('Failed to write issue-comments.md');
   });
 });
