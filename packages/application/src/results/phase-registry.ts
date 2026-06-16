@@ -31,17 +31,6 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   'pr-review-poll': null,
 };
 
-// Legacy/sub-phase registry keys not in the canonical order, kept for
-// backward compatibility with existing runs. These entries are not
-// produced by orderedPhases and will be removed once migrations are complete.
-export const LEGACY_MIGRATION_MAP: Record<string, null> = {
-  'quality-review': null,
-  'post-pr-review': null,
-  'spec-review': null,
-  'whole-pr-review': null,
-  'fix-validate': null,
-};
-
 export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'plan-design': { schema: planDesignResultSchema, retrySafe: true },
   'plan-write': { schema: planWriteResultSchema, retrySafe: true },

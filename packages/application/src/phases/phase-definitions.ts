@@ -174,7 +174,7 @@ export function nextPhase(current: PhaseName, skip: PhaseName[]): PhaseName | nu
   const order = orderedPhases(skip).map((p) => p.name);
   const idx = order.indexOf(current);
   if (idx === -1) {
-    if (PHASE_DEFINITIONS[current as string]) {
+    if (PHASE_DEFINITIONS[current]) {
       throw new InvalidSkipListError(
         `phase '${current}' is in the skip list and cannot be advanced from`,
       );
