@@ -337,6 +337,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
@@ -427,7 +428,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         // code-review.md in the worktree.
         const reviewArtifactDir = join(
           runsDir,
-          String(ctx.runId),
+          runDir,
           'review-fix',
           'review',
           `iter-${ctx.iterationIndex}`,
@@ -467,6 +468,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         },
       ): Promise<FixStepResult> => {
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const profile =
           opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
@@ -594,7 +596,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         // subsequent iterations overwrite result.json in the worktree.
         const fixArtifactDir = join(
           runsDir,
-          String(ctx.runId),
+          runDir,
           'review-fix',
           'fix',
           `iter-${ctx.iterationIndex}`,
@@ -633,12 +635,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       const runRevalidation = async (ctx: StepContext): Promise<RevalidationResult> => {
-        const revalidateLogDir = join(
-          runsDir,
-          String(ctx.runId),
-          'revalidate',
-          `iter-${ctx.iterationIndex}`,
-        );
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+        const revalidateLogDir = join(runsDir, runDir, 'revalidate', `iter-${ctx.iterationIndex}`);
         const vr = await runValidation.execute({
           runId: RunId(String(ctx.runId)),
           phaseId: PhaseName('validate'),
