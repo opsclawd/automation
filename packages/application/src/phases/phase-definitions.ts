@@ -153,3 +153,18 @@ export function orderedPhases(skip: PhaseName[]): PhaseDefinition[] {
 
   return kept;
 }
+
+export function nextPhase(current: PhaseName, skip: PhaseName[]): PhaseName | null {
+  const order = orderedPhases(skip).map((p) => p.name);
+  const idx = order.indexOf(current);
+  if (idx === -1 || idx === order.length - 1) return null;
+  return order[idx + 1]!;
+}
+
+export function assertInputsAvailable(phase: PhaseDefinition, present: string[]): void {
+  const have = new Set(present);
+  const missing = phase.inputs.required.filter((r) => !have.has(r));
+  if (missing.length > 0) {
+    throw new MissingRequiredInputError(phase.name as string, missing);
+  }
+}

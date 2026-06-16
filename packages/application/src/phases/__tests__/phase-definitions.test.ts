@@ -5,6 +5,8 @@ import {
   PHASE_DEFINITIONS,
   getPhaseDefinition,
   orderedPhases,
+  nextPhase,
+  assertInputsAvailable,
   UnknownPhaseError,
   InvalidSkipListError,
   MissingRequiredInputError,
@@ -123,6 +125,72 @@ describe('phase definitions registry', () => {
         PHASE_DEFINITIONS['plan-design'].skippable = origDesign;
         PHASE_DEFINITIONS['plan-write'].skippable = origWrite;
       }
+    });
+  });
+
+  describe('nextPhase', () => {
+    it('returns the following phase in canonical order', () => {
+      expect(nextPhase('plan-design' as PhaseName, [])).toBe('plan-write');
+      expect(nextPhase('plan-write' as PhaseName, [])).toBe('implement');
+    });
+
+    it('returns null for the last phase', () => {
+      expect(nextPhase('pr-review-poll' as PhaseName, [])).toBeNull();
+    });
+
+    it('skips phases in the skip list', () => {
+      // 'compound' is the only skippable phase; skipping it should not affect nextPhase
+      // since read_issue is before compound anyway
+      expect(nextPhase('validate' as PhaseName, ['compound' as PhaseName])).toBe('review-fix');
+    });
+
+    it('returns null for an unknown phase', () => {
+      expect(nextPhase('bogus' as PhaseName, [])).toBeNull();
+    });
+  });
+
+  describe('assertInputsAvailable', () => {
+    it('passes when all required inputs are present', () => {
+      expect(() =>
+        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), ['design.md']),
+      ).not.toThrow();
+    });
+
+    it('throws MissingRequiredInputError naming missing required inputs', () => {
+      expect(() =>
+        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), ['issue.md']),
+      ).toThrow(MissingRequiredInputError);
+    });
+
+    it('throws with the phase name and missing list', () => {
+      try {
+        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), []);
+      } catch (e) {
+        expect(e).toBeInstanceOf(MissingRequiredInputError);
+        expect((e as MissingRequiredInputError).phase).toBe('plan-write');
+        expect((e as MissingRequiredInputError).missing).toEqual(['design.md']);
+      }
+    });
+
+    it('ignores absent optional inputs', () => {
+      expect(() =>
+        assertInputsAvailable(getPhaseDefinition('plan-design' as PhaseName), ['issue.md']),
+      ).not.toThrow();
+    });
+
+    it('passes when no required inputs exist', () => {
+      expect(() =>
+        assertInputsAvailable(getPhaseDefinition('read_issue' as PhaseName), []),
+      ).not.toThrow();
+    });
+
+    it('passes when required inputs have extra files present', () => {
+      expect(() =>
+        assertInputsAvailable(getPhaseDefinition('plan-write' as PhaseName), [
+          'design.md',
+          'extra-file.md',
+        ]),
+      ).not.toThrow();
     });
   });
 });
