@@ -34,16 +34,16 @@ export class MissingRequiredInputError extends Error {
 }
 
 export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
-  'read_issue',
-  'plan-design',
-  'plan-write',
-  'implement',
-  'validate',
-  'review-fix',
-  'compound',
-  'create-pr',
-  'pr-review-poll',
-] as const satisfies readonly PhaseName[];
+  'read_issue' as PhaseName,
+  'plan-design' as PhaseName,
+  'plan-write' as PhaseName,
+  'implement' as PhaseName,
+  'validate' as PhaseName,
+  'review-fix' as PhaseName,
+  'compound' as PhaseName,
+  'create-pr' as PhaseName,
+  'pr-review-poll' as PhaseName,
+];
 
 const _p = (name: string): PhaseName => name as PhaseName;
 
