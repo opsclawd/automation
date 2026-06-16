@@ -61,7 +61,7 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     outputs: ['design.md'],
     agentContract: { requiredArtifacts: ['design.md'], mustNotChangeBranch: true },
     retrySafety: 'safe',
-    skippable: false,
+    skippable: true,
   },
   'plan-write': {
     name: _p('plan-write'),
@@ -69,7 +69,7 @@ export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = {
     outputs: ['plan.md'],
     agentContract: { requiredArtifacts: ['plan.md'], mustNotChangeBranch: true },
     retrySafety: 'safe',
-    skippable: false,
+    skippable: true,
   },
   implement: {
     name: _p('implement'),
@@ -121,4 +121,35 @@ export function getPhaseDefinition(name: PhaseName): PhaseDefinition {
   const def = PHASE_DEFINITIONS[name];
   if (!def) throw new UnknownPhaseError(name as string);
   return def;
+}
+
+export function orderedPhases(skip: PhaseName[]): PhaseDefinition[] {
+  const skipSet = new Set(skip as string[]);
+
+  for (const s of skipSet) {
+    const def = PHASE_DEFINITIONS[s as PhaseName];
+    if (!def) throw new InvalidSkipListError(`unknown phase in skip list: '${s}'`);
+    if (!def.skippable) throw new InvalidSkipListError(`phase '${s}' is not skippable`);
+  }
+
+  const kept = CANONICAL_PHASE_ORDER.filter((n) => !skipSet.has(n as string)).map(
+    (n) => PHASE_DEFINITIONS[n]!,
+  );
+
+  const producedByKept = new Set<string>();
+  for (const def of kept) {
+    for (const req of def.inputs.required) {
+      if (!producedByKept.has(req)) {
+        const anyKeptProduces = kept.some((d) => d.outputs.includes(req));
+        if (!anyKeptProduces) {
+          throw new InvalidSkipListError(
+            `skipping orphans required input '${req}' needed by phase '${def.name}'`,
+          );
+        }
+      }
+    }
+    for (const out of def.outputs) producedByKept.add(out);
+  }
+
+  return kept;
 }
