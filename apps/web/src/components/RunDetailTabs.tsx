@@ -6,6 +6,7 @@ import { LiveLogViewer } from '@/app/runs/[id]/LiveLogViewer';
 import { ArtifactViewer } from './ArtifactViewer';
 import { ValidationPanel } from './ValidationPanel';
 import { PrReviewPanel } from './PrReviewPanel';
+import { ReviewFixPanel } from './ReviewFixPanel';
 import { TimelineIsland } from '@/app/runs/[id]/timeline-island';
 import type { RunDto, FailureDto, ArtifactFile } from '@/lib/api-client';
 
@@ -20,6 +21,7 @@ const TAB_ITEMS = [
   { id: 'logs', label: 'Logs' },
   { id: 'artifacts', label: 'Artifacts' },
   { id: 'validation', label: 'Validation' },
+  { id: 'review-fix', label: 'Review/Fix' },
   { id: 'pr-review', label: 'PR Review' },
   { id: 'failure', label: 'Failure' },
   { id: 'timeline', label: 'Timeline' },
@@ -51,6 +53,8 @@ export function RunDetailTabs({ run, failure, files, initialCombinedContent }: R
       )}
 
       {activeTab === 'validation' && <ValidationPanel runUuid={run.uuid} />}
+
+      {activeTab === 'review-fix' && <ReviewFixPanel runUuid={run.uuid} />}
 
       {activeTab === 'pr-review' && <PrReviewPanel runUuid={run.uuid} />}
 

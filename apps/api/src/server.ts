@@ -7,6 +7,7 @@ import { eventsRoutes } from './routes/events.js';
 import { registerInvocationsRoutes } from './routes/invocations.js';
 import { registerValidationRoutes } from './routes/validation.js';
 import { registerPrReviewRoutes } from './routes/pr-review.js';
+import { registerReviewFixRoutes } from './routes/review-fix.js';
 
 export interface ServerOptions {
   container: Container;
@@ -27,6 +28,7 @@ export async function buildServer(container: Container, logger: boolean = false)
   registerInvocationsRoutes(app, container);
   registerValidationRoutes(app, container);
   registerPrReviewRoutes(app, container);
+  registerReviewFixRoutes(app, container);
   return app;
 }
 

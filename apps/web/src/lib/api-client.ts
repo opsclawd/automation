@@ -1,6 +1,7 @@
 import type { ApiEvent } from './timeline';
 import type { PrReviewCommentDto, PollAttemptDto } from './pr-review';
 import type { ValidationRunDto } from './validation';
+import type { LoopDto } from './review-fix';
 
 export interface RunDto {
   uuid: string;
@@ -100,4 +101,11 @@ export async function listPrReview(runUuid: string): Promise<PrReviewData> {
   const r = await fetch(`${base}/api/runs/${runUuid}/pr-review`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load pr-review: ${r.status}`);
   return (await r.json()) as PrReviewData;
+}
+
+export async function listReviewFix(runUuid: string): Promise<LoopDto[]> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const r = await fetch(`${base}/api/runs/${runUuid}/review-fix`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to load review-fix: ${r.status}`);
+  return ((await r.json()) as { loops: LoopDto[] }).loops;
 }
