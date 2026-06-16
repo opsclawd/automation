@@ -105,7 +105,7 @@ describe('phase definitions registry', () => {
       );
     });
 
-    it('allows skipping a phase when another kept phase provides the same output', () => {
+    it('allows skipping the only skippable phase (compound) when no downstream deps are orphaned', () => {
       // design.md is optional for compound but optional inputs are not in the orphan check
       // Create a scenario where no dependency is orphaned
       expect(() => orderedPhases(['compound' as PhaseName])).not.toThrow();

@@ -29,6 +29,12 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   read_issue: null,
   validate: null,
   'pr-review-poll': null,
+  // Sub-phase / legacy registry keys not in the canonical order:
+  'quality-review': null,
+  'post-pr-review': null,
+  'spec-review': null,
+  'whole-pr-review': null,
+  'fix-validate': null,
 };
 
 export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {

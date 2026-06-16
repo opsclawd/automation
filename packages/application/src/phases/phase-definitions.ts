@@ -128,7 +128,7 @@ export function getPhaseDefinition(name: PhaseName): PhaseDefinition {
 }
 
 export function clonePhaseDefinitions(): Record<PhaseName, PhaseDefinition> {
-  return JSON.parse(JSON.stringify(PHASE_DEFINITIONS));
+  return structuredClone(PHASE_DEFINITIONS);
 }
 
 export function orderedPhases(
@@ -150,12 +150,9 @@ export function orderedPhases(
   for (const def of kept) {
     for (const req of def.inputs.required) {
       if (!producedByKept.has(req)) {
-        const anyKeptProduces = kept.some((d) => d.outputs.includes(req));
-        if (!anyKeptProduces) {
-          throw new InvalidSkipListError(
-            `skipping orphans required input '${req}' needed by phase '${def.name}'`,
-          );
-        }
+        throw new InvalidSkipListError(
+          `skipping orphans required input '${req}' needed by phase '${def.name}'`,
+        );
       }
     }
     for (const out of def.outputs) producedByKept.add(out);
