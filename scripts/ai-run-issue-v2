@@ -3810,6 +3810,10 @@ Categorize findings:
 
 Write code-review.md now."
 
+  _WHOLE_PR_MAX_ITERATIONS_FLAG=()
+  if [[ -f "$_ACTIVE_CONFIG" ]] && jq -e '.phases.wholePrFix.maxIterations' "$_ACTIVE_CONFIG" >/dev/null 2>&1; then
+    _WHOLE_PR_MAX_ITERATIONS_FLAG=(--max-iterations "$MAX_WHOLE_PR_FIX_ITERATIONS")
+  fi
   _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
@@ -3819,6 +3823,7 @@ Write code-review.md now."
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
     --phase-id "review-fix" \
+    "${_WHOLE_PR_MAX_ITERATIONS_FLAG[@]}" \
     2>&1 | tee -a "${ISSUES_DIR}/review-fix.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review-fix (exit $_tee_ec)"
