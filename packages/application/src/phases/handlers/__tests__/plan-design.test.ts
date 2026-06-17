@@ -6,12 +6,9 @@ import { FakeAgentPort } from '../../../test-doubles/fake-agent-port.js';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeGitPort } from '../../../test-doubles/fake-git-port.js';
 import { FakeGitHubPort } from '../../../test-doubles/fake-github-port.js';
-import type {
-  AgentInvocationRequest,
-  AgentInvocationResult,
-} from '../../../ports/agent-invocation-types.js';
-import type { PhaseHandlerContext } from '../../handler.js';
-import { TemplateError } from '../../../prompts/errors.js';
+import type { AgentInvocationResult } from '../../../ports/agent-invocation-types.js';
+import type { PhaseHandlerContext, PhaseHandler } from '../../handler.js';
+import { TemplateError, TemplateNotFoundError } from '../../../prompts/errors.js';
 
 // ---------------------------------------------------------------------------
 // Mock loadPromptTemplate to avoid filesystem dependency. Tests exercise the
@@ -174,7 +171,8 @@ describe('PlanDesignHandler', () => {
 
     // Verify agent was invoked with correct request shape
     expect(agent.invocations).toHaveLength(1);
-    const req: AgentInvocationRequest = agent.invocations[0]!;
+    expect(agent.invocations[0]).toBeDefined();
+    const req = agent.invocations[0]!;
     expect(req.profile).toBe('opencode-frontier');
     expect(req.phaseId).toBe('plan-design');
     expect(req.expectedArtifacts).toContain('design.md');
@@ -240,22 +238,27 @@ describe('PlanWriteHandler', () => {
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
+    expect(agent.invocations).toHaveLength(1);
+    expect(agent.invocations[0]).toBeDefined();
     expect(agent.invocations[0]!.expectedArtifacts).toContain('plan.md');
     expect(eventsOf(ctx, 'phase.completed')).toHaveLength(1);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Shared helper error paths (tested via PlanDesignHandler)
+// Shared helper error paths (tested via both handlers)
 // ---------------------------------------------------------------------------
 
-describe('runSingleShotAgentPhase error paths', () => {
+describe.each([
+  ['PlanDesignHandler', () => new PlanDesignHandler()],
+  ['PlanWriteHandler', () => new PlanWriteHandler()],
+])('runSingleShotAgentPhase error paths - %s', (_name, createHandler) => {
   let ctx: ReturnType<typeof makeCtx>;
-  let handler: PlanDesignHandler;
+  let handler: PhaseHandler;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    handler = new PlanDesignHandler();
+    handler = createHandler();
   });
 
   function setupCtx(overrides?: Parameters<typeof makeCtx>[0]) {
@@ -273,41 +276,49 @@ describe('runSingleShotAgentPhase error paths', () => {
     mockRenderPrompt.mockResolvedValue(RENDERED_PROMPT);
   }
 
-  it('throws when promptsRoot is missing', async () => {
+  it('returns failed when promptsRoot is missing', async () => {
     setupCtx({
       startCommitSha: 'abc123',
       expectedBranch: 'main',
       resolveProfile: () => 'pf',
     });
     ctx.promptsRoot = undefined as unknown as string;
-    await expect(handler.run(ctx)).rejects.toThrow("Missing required context field 'promptsRoot'");
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+    }
   });
 
-  it('throws when startCommitSha is missing', async () => {
+  it('returns failed when startCommitSha is missing', async () => {
     setupCtx({
       promptsRoot: '/p',
       expectedBranch: 'main',
       resolveProfile: () => 'pf',
     });
     ctx.startCommitSha = undefined as unknown as string;
-    await expect(handler.run(ctx)).rejects.toThrow(
-      "Missing required context field 'startCommitSha'",
-    );
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+    }
   });
 
-  it('throws when expectedBranch is missing', async () => {
+  it('returns failed when expectedBranch is missing', async () => {
     setupCtx({
       promptsRoot: '/p',
       startCommitSha: 'abc',
       resolveProfile: () => 'pf',
     });
     ctx.expectedBranch = undefined as unknown as string;
-    await expect(handler.run(ctx)).rejects.toThrow(
-      "Missing required context field 'expectedBranch'",
-    );
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+    }
   });
 
-  it('returns failed when resolveProfile is missing', async () => {
+  it('returns failed when resolveProfile is missing from context', async () => {
     setupCtx({
       promptsRoot: '/p',
       startCommitSha: 'abc',
@@ -322,10 +333,27 @@ describe('runSingleShotAgentPhase error paths', () => {
     }
   });
 
-  it('returns failed when loadPromptTemplate throws', async () => {
+  it('returns failed when resolveProfile returns empty', async () => {
+    setupCtx({
+      promptsRoot: '/p',
+      startCommitSha: 'abc',
+      expectedBranch: 'main',
+      resolveProfile: () => '',
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+    }
+  });
+
+  it('returns failed when loadPromptTemplate throws missing template', async () => {
     setupCtx();
     mockLoadPromptTemplate.mockImplementation(() => {
-      throw new Error('ENOENT: no such file');
+      throw new TemplateNotFoundError(
+        'prompt template not found: /tmp/prompts/plan-design/plan-design.md',
+      );
     });
 
     const result = await handler.run(ctx);
@@ -334,6 +362,20 @@ describe('runSingleShotAgentPhase error paths', () => {
       expect(result.failure.kind).toBe('missing_artifact');
     }
     expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+  });
+
+  it('returns failed when loadPromptTemplate throws generic error', async () => {
+    setupCtx();
+    mockLoadPromptTemplate.mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+      expect(result.failure.canRetry).toBe(true);
+    }
   });
 
   it('returns failed when renderPrompt throws TemplateError (missing artifact)', async () => {
@@ -345,6 +387,19 @@ describe('runSingleShotAgentPhase error paths', () => {
     if (result.outcome === 'failed') {
       expect(result.failure.kind).toBe('missing_artifact');
     }
+  });
+
+  it('returns failed when artifact write fails', async () => {
+    setupCtx();
+    (ctx.artifacts as FakeArtifactStore).shouldThrowOnWrite = true;
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+      expect(result.failure.canRetry).toBe(true);
+    }
+    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
   });
 
   it('returns failed when agent.invoke() throws', async () => {
@@ -374,10 +429,11 @@ describe('runSingleShotAgentPhase error paths', () => {
     });
 
     const agent = ctx.agent as FakeAgentPort;
-    // Agent succeeds but does NOT produce design.md — contract violation
+    // Agent succeeds but does NOT produce required artifact — contract violation
+    // (design.md for PlanDesignHandler, plan.md for PlanWriteHandler)
     agent.enqueue('opencode-frontier', successResult());
 
-    // Write result.json but NOT design.md
+    // Write result.json but NOT the required artifact
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'result.json',
@@ -401,21 +457,26 @@ describe('runSingleShotAgentPhase error paths', () => {
       contents: '# Test\n',
     });
 
+    // Write both design.md and plan.md so either handler's contract passes
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'design.md',
+      contents: '# Design',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan',
+    });
+
     const agent = ctx.agent as FakeAgentPort;
-    // First invoke: agent succeeds but produces invalid result.json
     agent.enqueue('opencode-frontier', successResult());
-    // Second invoke (M4-05 rerun): also succeeds but still invalid
     agent.enqueue('opencode-frontier', successResult());
 
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'result.json',
-      contents: JSON.stringify({ invalid: 'schema' }), // fails schema validation
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'design.md',
-      contents: '# Design',
+      contents: JSON.stringify({ invalid: 'schema' }),
     });
 
     const result = await handler.run(ctx);
@@ -423,7 +484,7 @@ describe('runSingleShotAgentPhase error paths', () => {
     if (result.outcome === 'failed') {
       expect(result.failure.kind).toBe('invalid_result');
     }
-    expect(agent.invocations).toHaveLength(2); // initial + rerun
+    expect(agent.invocations).toHaveLength(2);
   });
 
   it('M4-05 rerun: passes when rerun produces valid result', async () => {
@@ -434,37 +495,41 @@ describe('runSingleShotAgentPhase error paths', () => {
       relativePath: 'issue.md',
       contents: '# Test\n',
     });
+
+    // Write both design.md and plan.md so either handler's contract passes
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'design.md',
       contents: '# Design',
     });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan',
+    });
 
     const agent = ctx.agent as FakeAgentPort;
-    // First invoke: agent succeeds but produces invalid result.json
     agent.enqueue('opencode-frontier', successResult({ resultJsonPath: 'result.json' }));
-    // Second invoke (M4-05 rerun): succeeds with valid result
     agent.enqueue('opencode-frontier', successResult({ resultJsonPath: 'result-rerun.json' }));
 
-    // Write INVALID result for initial extract
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'result.json',
       contents: JSON.stringify({ invalid: 'schema' }),
     });
-    // Write VALID result for rerun extract
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'result-rerun.json',
       contents: JSON.stringify({
         result: 'ready',
         summary: 'design done',
+        tasks: [{ title: 'task 1' }],
       }),
     });
 
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
-    expect(agent.invocations).toHaveLength(2); // initial + rerun
+    expect(agent.invocations).toHaveLength(2);
     expect(eventsOf(ctx, 'phase.completed')).toHaveLength(1);
   });
 });

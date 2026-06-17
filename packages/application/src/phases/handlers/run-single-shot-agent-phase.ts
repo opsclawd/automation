@@ -8,10 +8,10 @@ import type { PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.
 import { createEventEmitter } from '../handler.js';
 import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
 import { renderPrompt } from '../../prompts/render-prompt.js';
-import { TemplateError } from '../../prompts/errors.js';
+import { TemplateError, TemplateNotFoundError } from '../../prompts/errors.js';
 import { validateAgentContract } from '../../agent/validate-agent-contract.js';
 import { extractResult } from '../../results/extract-result.js';
-import type { AgentInvocation } from '@ai-sdlc/domain';
+import { AgentInvocationId, type AgentInvocation } from '@ai-sdlc/domain';
 
 export interface SingleShotConfig {
   phase: PhaseName;
@@ -29,6 +29,9 @@ function assertField<T>(value: T | undefined, name: string): T {
         `These are populated by buildPhaseHandlerContext() in the compose root.`,
     );
   }
+  if (typeof value === 'string' && value.trim() === '') {
+    throw new Error(`Required context field '${name}' must not be empty.`);
+  }
   return value;
 }
 
@@ -39,9 +42,9 @@ function buildAgentInvocation(
   result: AgentInvocationResult,
   promptChars: number,
   startedAt: Date,
+  id: AgentInvocationId,
 ): AgentInvocation {
   const endedAt = ctx.now();
-  const id = (ctx.idFactory?.() ?? randomUUID()) as AgentInvocation['id'];
 
   return {
     id,
@@ -95,9 +98,26 @@ export async function runSingleShotAgentPhase(
   const emit: EventEmitter = createEventEmitter(ctx, config.phase);
 
   // 1. Assert required optional context fields
-  const promptsRoot = assertField(ctx.promptsRoot, 'promptsRoot');
-  const startCommitSha = assertField(ctx.startCommitSha, 'startCommitSha');
-  const expectedBranch = assertField(ctx.expectedBranch, 'expectedBranch');
+  let promptsRoot: string;
+  let startCommitSha: string;
+  let expectedBranch: string;
+  try {
+    promptsRoot = assertField(ctx.promptsRoot, 'promptsRoot');
+    startCommitSha = assertField(ctx.startCommitSha, 'startCommitSha');
+    expectedBranch = assertField(ctx.expectedBranch, 'expectedBranch');
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'command_failed',
+      message,
+      false,
+      'Ensure the compose root provides all required context fields.',
+    );
+    emit('phase.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
+  }
   // 2. Emit phase.started (handlers already do this; the helper emits agent.invoking)
   emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
     profile: config.profile,
@@ -109,12 +129,13 @@ export async function runSingleShotAgentPhase(
     template = loadPromptTemplate(config.phase as string, config.step, { promptsRoot });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+    const isMissing = e instanceof TemplateNotFoundError;
     const failure = buildFailure(
       ctx,
       config.phase as string,
-      'missing_artifact',
+      isMissing ? 'missing_artifact' : 'command_failed',
       `Failed to load prompt template: ${message}`,
-      false,
+      !isMissing,
       'Ensure the prompt template file exists at <promptsRoot>/<phase>/<step>.md.',
     );
     emit('phase.failed', 'error', failure.message);
@@ -187,6 +208,7 @@ export async function runSingleShotAgentPhase(
 
   // 7. Invoke agent
   const startedAt = ctx.now();
+  const invocationId = AgentInvocationId(ctx.idFactory?.() ?? randomUUID());
   let agentResult: AgentInvocationResult;
   try {
     agentResult = await ctx.agent.invoke(request);
@@ -196,7 +218,7 @@ export async function runSingleShotAgentPhase(
       ctx,
       config.phase as string,
       'command_failed',
-      `Agent invocation failed: ${message}`,
+      `Agent invocation [${invocationId}] failed: ${message}`,
       true,
       'Check agent infrastructure configuration, then retry.',
     );
@@ -210,8 +232,9 @@ export async function runSingleShotAgentPhase(
     config,
     request,
     agentResult,
-    Buffer.byteLength(renderedPrompt),
+    renderedPrompt.length,
     startedAt,
+    invocationId,
   );
 
   // 9. Validate contract
@@ -225,6 +248,7 @@ export async function runSingleShotAgentPhase(
     },
     cwd: ctx.cwd,
     expectedBranch,
+    repoFullName: ctx.repoFullName,
   });
 
   if (violations.length > 0) {
