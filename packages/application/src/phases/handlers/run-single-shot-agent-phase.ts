@@ -156,7 +156,7 @@ export async function runSingleShotAgentPhase(
       config.phase as string,
       kind,
       `Failed to render prompt: ${message}`,
-      false,
+      kind !== 'missing_artifact',
       'Ensure all required input artifacts exist in the artifact store.',
     );
     emit('phase.failed', 'error', failure.message);
