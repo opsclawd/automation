@@ -165,4 +165,63 @@ describe('ValidateHandler', () => {
       }
     });
   });
+
+  describe('event emission', () => {
+    it('emits phase.started, phase.completed on pass', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx, events } = makeCtx();
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      const started = events.filter((e) => e.type === 'phase.started');
+      expect(started).toHaveLength(1);
+      expect(started[0].level).toBe('info');
+      expect(started[0].phase).toBe('validate');
+
+      const completed = events.filter((e) => e.type === 'phase.completed');
+      expect(completed).toHaveLength(1);
+      expect(completed[0].level).toBe('info');
+      expect(completed[0].phase).toBe('validate');
+      expect(completed[0].metadata).toEqual({ commands: 1 });
+    });
+
+    it('emits phase.started, phase.failed on failure', async () => {
+      const { runValidation } = deps('failed');
+      const { ctx, events } = makeCtx();
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      const started = events.filter((e) => e.type === 'phase.started');
+      expect(started).toHaveLength(1);
+      expect(started[0].phase).toBe('validate');
+
+      const failed = events.filter((e) => e.type === 'phase.failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0].level).toBe('error');
+      expect(failed[0].phase).toBe('validate');
+      expect(failed[0].message).toContain('validation failed');
+    });
+
+    it('does not emit phase.completed on failure', async () => {
+      const { runValidation } = deps('failed');
+      const { ctx, events } = makeCtx();
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      const completed = events.filter((e) => e.type === 'phase.completed');
+      expect(completed).toHaveLength(0);
+    });
+  });
 });
