@@ -14,7 +14,7 @@ detect_phase() {
     echo "create-pr"
   elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
     if [[ -f "${ISSUES_DIR}/review-task-manifest.json" ]]; then
-      echo "fix-review"
+      echo "review-fix"
     else
       echo "review-triage"
     fi
@@ -27,7 +27,7 @@ detect_phase() {
       if [[ -z "$_stored_sha" ]] || [[ "$_stored_sha" != "$_current_sha" ]]; then
         echo "validate"
       else
-        echo "whole-pr-review"
+        echo "review-fix"
       fi
     else
       echo "fix-validate"

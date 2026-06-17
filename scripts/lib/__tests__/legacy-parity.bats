@@ -1508,9 +1508,9 @@ PLAN
 }
 
 # Invariant: a fix-validate loop that passes revalidation must stay resumable at
-#   whole-pr-review even though guard_artifact_clean removes validation.result /
+#   review-fix even though guard_artifact_clean removes validation.result /
 #   validation.headsha (both are orchestrator artifacts). The orchestrator gate
-#   re-persists them after cleanup, so detect_phase resolves to whole-pr-review,
+#   re-persists them after cleanup, so detect_phase resolves to review-fix,
 #   not validate.
 # Source: PR #339 — guard_artifact_clean deleted validation.result one line
 #   before the gate read it, false-failing a passed loop and (after the gate fix)
@@ -1521,7 +1521,7 @@ PLAN
 #   validate/fix-validate.
 # TS-port contract: the TS fix-validate handler must persist validation result +
 #   head SHA durably so the resume oracle advances past validate.
-@test "parity[#339]: fix-validate passed state survives guard_artifact_clean and resumes at whole-pr-review" {
+@test "parity[#339]: fix-validate passed state survives guard_artifact_clean and resumes at review-fix" {
   source "$REPO_ROOT/scripts/lib/artifacts.sh"
   source "$REPO_ROOT/scripts/lib/detect-phase.sh"
   warn() { :; }
@@ -1556,7 +1556,7 @@ PLAN
 
   run detect_phase
   [ "$status" -eq 0 ]
-  [ "$output" = "whole-pr-review" ]
+  [ "$output" = "review-fix" ]
 }
 
 # Invariant: a fresh implementer attempt must start from a clean result slate.
