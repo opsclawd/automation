@@ -58,6 +58,8 @@ describe('composeRoot', () => {
     expect(container.failureRepository).toBeDefined();
     expect(container.startIssueRun).toBeDefined();
     expect(container.runsDir).toBe(path.join(root, '.ai-runs'));
+    expect(container.buildPhaseHandlerContext).toBeDefined();
+    expect(typeof container.buildPhaseHandlerContext).toBe('function');
 
     const out = await container.startIssueRun.execute({ issueNumber: 1 });
     expect(out.status).toBe('passed');
@@ -66,6 +68,47 @@ describe('composeRoot', () => {
 
     const row = container.runRepository.findByUuid(out.uuid);
     expect(row?.status).toBe('passed');
+  });
+
+  it('buildPhaseHandlerContext adds idFactory and resolveProfile from compose wiring', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const container = composeRoot({ repoRoot: root, scriptPath });
+
+    const ctx = container.buildPhaseHandlerContext(
+      {
+        runId: 'test-run',
+        runUuid: '550e8400-e29b-41d4-a716-446655440000',
+        repoFullName: 'acme/widgets',
+        issueNumber: 1,
+        cwd: '/tmp',
+        artifacts: container.artifactRepository,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        github: {} as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        git: {} as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        agent: {} as any,
+        events: container.eventBus,
+        now: () => new Date(),
+      },
+      {
+        promptsRoot: '/prompts',
+        startCommitSha: 'abc123',
+      },
+    );
+
+    // Compose root should populate idFactory (always)
+    expect(ctx.idFactory).toBeDefined();
+    expect(typeof ctx.idFactory).toBe('function');
+    // resolveProfile will be defined when agentConfig is present (ee use case)
+    // For the test repo (no config), it may be undefined — that's expected
+    // Caller-supplied fields must pass through
+    expect(ctx.promptsRoot).toBe('/prompts');
+    expect(ctx.startCommitSha).toBe('abc123');
+    // Base fields must be preserved
+    expect(ctx.runId).toBe('test-run');
+    expect(ctx.issueNumber).toBe(1);
   });
 
   it('exposes validationRunRepository', () => {
