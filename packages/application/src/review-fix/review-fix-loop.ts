@@ -57,17 +57,18 @@ export class ReviewFixLoop {
       );
       const review = await deps.runReview(ctx);
       if (review.overridden) {
-        this.emit(
-          input,
-          'review.verdict.overridden',
-          'warn',
-          `review returned pass but severity gate overrode to fail`,
-          {
-            iterationIndex,
-            offendingFindings: review.offendingFindings ?? [],
-            threshold: input.blockOnSeverity ?? 'high',
-          },
-        );
+        const direction: 'upgrade' | 'downgrade' =
+          review.verdict === 'fail' ? 'upgrade' : 'downgrade';
+        const message =
+          direction === 'upgrade'
+            ? `review returned pass but severity gate overrode to fail`
+            : `review returned fail but severity gate overrode to pass (all findings below threshold)`;
+        this.emit(input, 'review.verdict.overridden', 'warn', message, {
+          direction,
+          iterationIndex,
+          offendingFindings: review.offendingFindings ?? [],
+          threshold: input.blockOnSeverity ?? 'high',
+        });
       }
       loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
       deps.loops.update(loop);

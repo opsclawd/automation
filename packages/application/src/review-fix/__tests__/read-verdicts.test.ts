@@ -112,14 +112,17 @@ describe('readReviewVerdict severity gate', () => {
     expect(v).toEqual({ ok: true, verdict: 'pass' });
   });
 
-  it('agent fail is never overridden', async () => {
+  it('agent fail with all findings strictly below threshold is overridden to pass', async () => {
     const artifacts = new FakeArtifactStore();
     await artifacts.write({
       runId: 'run-1',
       relativePath: 'result.json',
       contents: JSON.stringify({
         result: 'fail',
-        findings: [],
+        findings: [
+          { severity: 'medium', summary: 'style nit' },
+          { severity: 'low', summary: 'cosmetic' },
+        ],
       }),
     });
     const agent = new FakeAgentPort();
@@ -128,7 +131,12 @@ describe('readReviewVerdict severity gate', () => {
       { artifacts, agent },
       { blockOnSeverity: 'high' },
     );
-    expect(v).toEqual({ ok: true, verdict: 'fail' });
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'pass',
+      overridden: true,
+      offendingFindings: [],
+    });
   });
 
   it('pass with no findings passes regardless of threshold', async () => {
@@ -217,5 +225,88 @@ describe('readReviewVerdict severity gate', () => {
       overridden: true,
       offendingFindings: [{ severity: 'critical', summary: 'data loss' }],
     });
+  });
+
+  it('agent fail with at least one finding at/above threshold is not overridden', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [
+          { severity: 'medium', summary: 'style' },
+          { severity: 'high', summary: 'real bug' },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({ ok: true, verdict: 'fail' });
+  });
+
+  it('agent fail with empty findings is not overridden (conservative)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({ ok: true, verdict: 'fail' });
+  });
+
+  it('agent fail with unknown severity is not overridden (conservative)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [{ severity: 'info', summary: 'note' }],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({ ok: true, verdict: 'fail' });
+  });
+
+  it('agent fail with mixed known and unknown severities keeps fail (conservative)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [
+          { severity: 'low', summary: 'cosmetic' },
+          { severity: 'info', summary: 'unparseable note' },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    // low is below threshold, but info is unknown → conservative: keep fail
+    expect(v).toEqual({ ok: true, verdict: 'fail' });
   });
 });
