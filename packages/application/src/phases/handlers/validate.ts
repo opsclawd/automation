@@ -21,6 +21,22 @@ export class ValidateHandler implements PhaseHandler {
     const emit = createEventEmitter(ctx, this.phase);
     emit('phase.started', 'info', 'validate started');
 
+    if (this.opts.commands.length === 0) {
+      const message = 'no validation commands configured (validation.commands is empty)';
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'validate',
+        kind: 'unknown',
+        message,
+        canRetry: false,
+        suggestedAction: 'Add at least one command to validation.commands in the configuration.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+      emit('phase.failed', 'error', message);
+      return { outcome: 'failed', failure };
+    }
+
     let passed: boolean;
     let validationRun: ValidationRun;
     try {

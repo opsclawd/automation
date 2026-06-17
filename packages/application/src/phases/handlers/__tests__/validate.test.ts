@@ -242,6 +242,7 @@ describe('ValidateHandler', () => {
       if (result.outcome === 'failed') {
         expect(result.failure.kind).toBe('unknown');
         expect(result.failure.message).toContain('no validation commands configured');
+        expect(result.failure.canRetry).toBe(false);
       }
     });
 
