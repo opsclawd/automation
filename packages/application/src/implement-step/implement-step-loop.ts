@@ -4,6 +4,7 @@ import {
   completeIteration,
   canIterate,
   exhaust,
+  updateOpenIteration,
   type AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -88,6 +89,8 @@ export class ImplementStepLoop {
 
       // --- QUALITY-REVIEW ---
       const qualityReview = await deps.runQualityReview(ctx);
+      loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
+      deps.loops.update(loop);
       if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);

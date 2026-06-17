@@ -7,6 +7,7 @@ import * as validationResults from './migrations/0005-validation-results.js';
 import * as prReview from './migrations/0006-pr-review.js';
 import * as agentUsage from './migrations/0007-agent-usage.js';
 import * as loops from './migrations/0008-loops.js';
+import * as qualityReviewInvocation from './migrations/0009-quality-review-invocation.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -17,6 +18,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: prReview.version, sql: prReview.sql },
   { version: agentUsage.version, sql: agentUsage.sql },
   { version: loops.version, sql: loops.sql },
+  { version: qualityReviewInvocation.version, sql: qualityReviewInvocation.sql },
 ];
 
 export function applyMigrations(db: Db): void {

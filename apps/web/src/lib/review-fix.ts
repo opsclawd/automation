@@ -2,6 +2,7 @@ export interface LoopIterationDto {
   index: number;
   outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed' | null;
   reviewInvocationId: string;
+  qualityReviewInvocationId: string | null;
   fixInvocationId: string | null;
   revalidationId: string | null;
   reviewArtifactPath: string;

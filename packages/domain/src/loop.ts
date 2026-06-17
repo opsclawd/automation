@@ -9,6 +9,7 @@ export type LoopIterationOutcome = 'resolved' | 'fixed' | 'unresolved' | 'failed
 export interface LoopIteration {
   index: number;
   reviewInvocationId: string;
+  qualityReviewInvocationId?: string;
   fixInvocationId?: string;
   revalidationId?: string;
   outcome?: LoopIterationOutcome;
@@ -124,6 +125,21 @@ export function completeIteration(
     status,
     ...(status !== 'running' ? { completedAt: input.now } : {}),
   };
+}
+
+export function updateOpenIteration(
+  loop: Loop,
+  input: { qualityReviewInvocationId: string },
+): Loop {
+  const open = openIteration(loop);
+  if (!open) {
+    throw new LoopStateError(`cannot update: loop ${loop.id} has no open iteration`);
+  }
+  const updated: LoopIteration = {
+    ...open,
+    qualityReviewInvocationId: input.qualityReviewInvocationId,
+  };
+  return { ...loop, iterations: [...loop.iterations.slice(0, -1), updated] };
 }
 
 export function exhaust(loop: Loop, now: Date): Loop {

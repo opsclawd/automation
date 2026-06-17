@@ -25,6 +25,7 @@ interface IterationRow {
   loop_id: string;
   idx: number;
   review_invocation_id: string;
+  quality_review_invocation_id: string | null;
   fix_invocation_id: string | null;
   revalidation_id: string | null;
   outcome: string | null;
@@ -37,6 +38,9 @@ function rowToIteration(r: IterationRow): LoopIteration {
     index: r.idx,
     reviewInvocationId: r.review_invocation_id,
     startedAt: new Date(r.started_at),
+    ...(r.quality_review_invocation_id !== null
+      ? { qualityReviewInvocationId: r.quality_review_invocation_id }
+      : {}),
     ...(r.fix_invocation_id !== null ? { fixInvocationId: r.fix_invocation_id } : {}),
     ...(r.revalidation_id !== null ? { revalidationId: r.revalidation_id } : {}),
     ...(r.outcome !== null ? { outcome: r.outcome as LoopIterationOutcome } : {}),
@@ -93,14 +97,15 @@ export class LoopRepository implements LoopRepositoryPort {
       this.db.prepare(`DELETE FROM loop_iterations WHERE loop_id = ?`).run(l.id);
       const insertIter = this.db.prepare(
         `INSERT INTO loop_iterations
-           (loop_id, idx, review_invocation_id, fix_invocation_id, revalidation_id, outcome, started_at, completed_at)
-         VALUES (@loop_id, @idx, @review_invocation_id, @fix_invocation_id, @revalidation_id, @outcome, @started_at, @completed_at)`,
+           (loop_id, idx, review_invocation_id, quality_review_invocation_id, fix_invocation_id, revalidation_id, outcome, started_at, completed_at)
+         VALUES (@loop_id, @idx, @review_invocation_id, @quality_review_invocation_id, @fix_invocation_id, @revalidation_id, @outcome, @started_at, @completed_at)`,
       );
       for (const it of l.iterations) {
         insertIter.run({
           loop_id: l.id,
           idx: it.index,
           review_invocation_id: it.reviewInvocationId,
+          quality_review_invocation_id: it.qualityReviewInvocationId ?? null,
           fix_invocation_id: it.fixInvocationId ?? null,
           revalidation_id: it.revalidationId ?? null,
           outcome: it.outcome ?? null,
