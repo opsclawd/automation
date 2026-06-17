@@ -1007,13 +1007,13 @@ describe('classifyExit with events (M2-06)', () => {
           timestamp: '2026-05-16T12:00:00.000Z',
         }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'Review loop hit max iterations for task 2',
           metadata: { reason: 'blocked' },
         }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'phase.failed',
           message: 'Review loop hit max iterations for task 2',
           metadata: { reason: 'Review loop hit max' },
@@ -1021,21 +1021,21 @@ describe('classifyExit with events (M2-06)', () => {
       ],
     });
     expect(failure.kind).toBe('agent_blocked');
-    expect(failure.phase).toBe('fix-review');
+    expect(failure.phase).toBe('review-fix');
   });
   it('prefers later phase.failed over stale loop.exhausted from earlier phase', () => {
     const failure = classifyExit({
       ...baseInput,
       events: [
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'fix-review loop exhausted',
           metadata: { reason: 'blocked' },
           timestamp: '2026-05-16T12:00:00.000Z',
         }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'phase.failed',
           message: 'fix-review failed after loop',
           metadata: { reason: 'Review loop hit max' },
@@ -1061,7 +1061,7 @@ describe('classifyExit with events (M2-06)', () => {
       events: [
         ev({ type: 'run.failed', message: 'run failed', timestamp: '2026-05-16T12:00:00.000Z' }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'loop exhausted',
           metadata: { reason: 'blocked' },
