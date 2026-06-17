@@ -10,6 +10,7 @@ export const sql = /* sql */ `
 --   UPDATE events SET phase = 'whole-pr-review' WHERE phase = 'review-fix';
 --   UPDATE artifacts SET phase = 'whole-pr-review' WHERE phase = 'review-fix';
 --   UPDATE failures SET phase = 'whole-pr-review' WHERE phase = 'review-fix';
+--   UPDATE loops SET phase_id = 'whole-pr-review' WHERE phase_id = 'review-fix';
 --   UPDATE runs SET current_phase = 'whole-pr-review' WHERE current_phase = 'review-fix';
 --   -- completed_phases rollback requires reconstructing the original array from
 --   -- event data or a pre-migration backup; there is no deterministic reversal
@@ -26,6 +27,9 @@ UPDATE artifacts SET phase = 'review-fix' WHERE phase IN ('whole-pr-review', 'fi
 
 -- failures
 UPDATE failures SET phase = 'review-fix' WHERE phase IN ('whole-pr-review', 'fix-review');
+
+-- loops.phase_id
+UPDATE loops SET phase_id = 'review-fix' WHERE phase_id IN ('whole-pr-review', 'fix-review');
 
 -- runs.current_phase
 UPDATE runs SET current_phase = 'review-fix' WHERE current_phase IN ('whole-pr-review', 'fix-review');

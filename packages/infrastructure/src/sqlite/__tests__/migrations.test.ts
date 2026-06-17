@@ -239,6 +239,12 @@ describe('migrations', () => {
        VALUES ('run-rf', 'fix-review', 'agent_blocked', 'x', 0, 'retry', datetime('now'))`,
     ).run();
 
+    db.prepare(
+      `INSERT INTO loops (id, run_uuid, phase_id, type, max_iterations, status, started_at)
+       VALUES ('loop-rf-1', 'run-rf', 'whole-pr-review', 'review', 5, 'completed', datetime('now')),
+              ('loop-rf-2', 'run-rf', 'fix-review', 'fix', 5, 'completed', datetime('now'))`,
+    ).run();
+
     // Apply migration 0010.
     applyMigrations(db);
 
@@ -280,6 +286,14 @@ describe('migrations', () => {
     expect((db.prepare('SELECT phase FROM failures').get() as { phase: string }).phase).toBe(
       'review-fix',
     );
+
+    // loops.phase_id must be backfilled.
+    const loopPhaseIds = (
+      db.prepare('SELECT phase_id FROM loops ORDER BY phase_id').all() as Array<{
+        phase_id: string;
+      }>
+    ).map((r) => r.phase_id);
+    expect(loopPhaseIds).toEqual(['review-fix', 'review-fix']);
 
     // runs.current_phase + completed_phases must be backfilled.
     const run = db.prepare('SELECT current_phase, completed_phases FROM runs').get() as {
