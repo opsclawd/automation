@@ -86,4 +86,83 @@ describe('ValidateHandler', () => {
     }).run(ctx);
     expect(result.outcome).toBe('passed');
   });
+
+  describe('failure paths', () => {
+    it('returns validation_failed when a command fails', async () => {
+      const { runValidation } = deps('failed');
+      const { ctx } = makeCtx();
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('validation_failed');
+        expect(result.failure.message).toContain('pnpm build');
+        expect(result.failure.phase).toBe('validate');
+        expect(result.failure.canRetry).toBe(true);
+        expect(result.failure.artifacts).toContain('validate/validation-result.json');
+      }
+    });
+
+    it('failure message lists only failing commands on mixed pass/fail', async () => {
+      const validation = new FakeValidationPort();
+      validation.result = [
+        {
+          command: 'pnpm build',
+          exitCode: 0,
+          durationMs: 1500,
+          stdout: 'Build succeeded',
+          stderr: '',
+          stdoutPath: 'validate/0-build.stdout.log',
+          stderrPath: 'validate/0-build.stderr.log',
+          outcome: 'passed',
+        },
+        {
+          command: 'pnpm lint',
+          exitCode: 1,
+          durationMs: 500,
+          stdout: '',
+          stderr: 'Lint errors found',
+          stdoutPath: 'validate/1-lint.stdout.log',
+          stderrPath: 'validate/1-lint.stderr.log',
+          outcome: 'failed',
+        },
+        {
+          command: 'pnpm typecheck',
+          exitCode: 0,
+          durationMs: 800,
+          stdout: 'No type errors',
+          stderr: '',
+          stdoutPath: 'validate/2-typecheck.stdout.log',
+          stderrPath: 'validate/2-typecheck.stderr.log',
+          outcome: 'passed',
+        },
+      ];
+      const runValidation = new RunValidation({
+        validation,
+        validationRunRepository: new FakeValidationRunRepository(),
+        failureRepository: new FakeFailureRepository(),
+        idFactory: () => 'vr2',
+        now: () => new Date('2026-06-16T00:00:00Z'),
+      });
+      const { ctx } = makeCtx();
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build', 'pnpm lint', 'pnpm typecheck'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.message).toContain('pnpm lint');
+        expect(result.failure.message).not.toContain('pnpm build');
+        expect(result.failure.message).not.toContain('pnpm typecheck');
+      }
+    });
+  });
 });
