@@ -66,12 +66,25 @@ export class ImplementHandler implements PhaseHandler {
       this.opts.steps.upsert(step);
       emit('step.started', 'info', `step ${d.index}: ${d.title}`, { index: d.index });
 
-      const result = await this.opts.runStep({
-        stepIndex: d.index,
-        stepTitle: d.title,
-        cwd: ctx.cwd,
-        ctx,
-      });
+      let result: StepRunResult;
+      try {
+        result = await this.opts.runStep({
+          stepIndex: d.index,
+          stepTitle: d.title,
+          cwd: ctx.cwd,
+          ctx,
+        });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
+        emit('step.failed', 'error', `step ${d.index} crashed: ${message}`, { index: d.index });
+        return this.fail(
+          ctx,
+          emit,
+          'command_failed',
+          `step ${d.index} (${d.title}) crashed: ${message}`,
+        );
+      }
 
       if (result.outcome === 'success') {
         this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
