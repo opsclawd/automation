@@ -41,7 +41,11 @@ export class ImplementHandler implements PhaseHandler {
     }
 
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
-    const doneIdx = new Set(existing.filter((s) => s.status === 'success').map((s) => s.index));
+    const doneIdx = new Set(
+      existing
+        .filter((s) => s.phaseId === 'implement' && s.status === 'success')
+        .map((s) => s.index),
+    );
 
     for (const d of derived) {
       if (doneIdx.has(d.index)) {
