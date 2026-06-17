@@ -1,5 +1,6 @@
 import type { PhaseName } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
+import { createEventEmitter } from '../handler.js';
 
 export interface ReviewFixHandlerOpts {
   /** Runs the M7 ReviewFixLoop and returns its terminal phase outcome.
@@ -13,13 +14,14 @@ export class ReviewFixHandler implements PhaseHandler {
   constructor(private readonly opts: ReviewFixHandlerOpts) {}
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
-    this.emit(ctx, 'phase.started', 'info', 'review-fix started');
+    const emit = createEventEmitter(ctx, this.phase);
+    emit('phase.started', 'info', 'review-fix started');
     const { phaseOutcome } = await this.opts.runLoop(ctx);
     if (phaseOutcome === 'passed') {
-      this.emit(ctx, 'phase.completed', 'info', 'review-fix converged');
+      emit('phase.completed', 'info', 'review-fix converged');
       return { outcome: 'passed' };
     }
-    this.emit(ctx, 'phase.failed', 'error', 'review-fix loop exhausted');
+    emit('phase.failed', 'error', 'review-fix loop exhausted');
     return {
       outcome: 'failed',
       failure: {
@@ -34,22 +36,5 @@ export class ReviewFixHandler implements PhaseHandler {
         detectedAt: ctx.now(),
       },
     };
-  }
-
-  private emit(
-    ctx: PhaseHandlerContext,
-    type: string,
-    level: 'info' | 'warn' | 'error',
-    message: string,
-  ): void {
-    ctx.events.publish(ctx.runUuid, {
-      runId: ctx.runUuid,
-      phase: 'review-fix',
-      level,
-      type,
-      message,
-      timestamp: ctx.now().toISOString(),
-      metadata: {},
-    });
   }
 }

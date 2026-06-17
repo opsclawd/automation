@@ -58,11 +58,15 @@ describe('ReviewFixHandler', () => {
 
       const started = events.filter((e) => e.type === 'phase.started');
       expect(started).toHaveLength(1);
+      expect(started[0].runId).toBe('human-readable-run');
+      expect(started[0].timestamp).toBe('2026-06-16T00:00:00.000Z');
       expect(started[0].level).toBe('info');
       expect(started[0].phase).toBe('review-fix');
 
       const completed = events.filter((e) => e.type === 'phase.completed');
       expect(completed).toHaveLength(1);
+      expect(completed[0].runId).toBe('human-readable-run');
+      expect(completed[0].timestamp).toBe('2026-06-16T00:00:00.000Z');
       expect(completed[0].level).toBe('info');
       expect(completed[0].phase).toBe('review-fix');
     });
@@ -78,6 +82,8 @@ describe('ReviewFixHandler', () => {
 
       const failed = events.filter((e) => e.type === 'phase.failed');
       expect(failed).toHaveLength(1);
+      expect(failed[0].runId).toBe('human-readable-run');
+      expect(failed[0].timestamp).toBe('2026-06-16T00:00:00.000Z');
       expect(failed[0].level).toBe('error');
       expect(failed[0].phase).toBe('review-fix');
       expect(failed[0].message).toBe('review-fix loop exhausted');
