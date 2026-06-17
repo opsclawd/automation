@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { readFileSync, appendFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { RunId, PhaseName, AgentProfileName, createRun } from '@ai-sdlc/domain';
-import { ConfigError, loadConfig } from '@ai-sdlc/shared';
+import { ConfigError, loadConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
+import { formatEvent } from './format-event.js';
 
 interface Flags {
   cwd?: string;
@@ -26,6 +27,18 @@ export function validateRequiredFlags(values: Flags): string[] {
 
 export function exitCodeForPhaseOutcome(outcome: 'passed' | 'failed'): number {
   return outcome === 'passed' ? 0 : 1;
+}
+
+export function serializeEventForJsonl(event: OrchestratorEvent, displayId: string): string {
+  return JSON.stringify({
+    runId: displayId,
+    ...(event.phase ? { phase: event.phase } : {}),
+    level: event.level,
+    type: event.type,
+    message: event.message,
+    timestamp: event.timestamp,
+    metadata: event.metadata ?? {},
+  });
 }
 
 /**
@@ -165,7 +178,31 @@ async function main() {
     }
   }
 
+  const eventsFile = process.env.AI_RUN_EVENTS_FILE;
+  const displayId = process.env.AI_RUN_DISPLAY_ID;
+  const appendEvent =
+    eventsFile && displayId
+      ? (event: OrchestratorEvent): void => {
+          try {
+            const jsonLine = serializeEventForJsonl(event, displayId);
+            appendFileSync(eventsFile, jsonLine + '\n');
+          } catch {
+            // Best-effort: file I/O failure must not crash the loop
+          }
+        }
+      : undefined;
+
+  let unsub: (() => void) | undefined;
   try {
+    unsub = c.eventBus.subscribe(runId, (event: OrchestratorEvent) => {
+      try {
+        console.error(formatEvent(event));
+      } catch {
+        // Best-effort: stderr write must not crash the loop
+      }
+      appendEvent?.(event);
+    });
+
     const { phaseOutcome, loop } = await c.reviewFixLoop.execute({
       runId: RunId(runId),
       phaseId: PhaseName(phaseId),
@@ -187,6 +224,12 @@ async function main() {
   } catch (e) {
     console.error(e);
     process.exit(3);
+  } finally {
+    try {
+      unsub?.();
+    } catch {
+      // Best-effort: unsubscribe failure must not overwrite the phase result
+    }
   }
 }
 

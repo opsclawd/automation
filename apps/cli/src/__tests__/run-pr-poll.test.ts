@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { parsePollArgs, exitCodeForTerminalState, runPoll, formatEvent } from '../run-pr-poll.js';
+import { parsePollArgs, exitCodeForTerminalState, runPoll } from '../run-pr-poll.js';
+import { formatEvent } from '../format-event.js';
 import type { PollArgs } from '../run-pr-poll.js';
 import type { RunPollDeps } from '../run-pr-poll.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';

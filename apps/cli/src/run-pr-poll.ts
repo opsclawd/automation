@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PollerTerminalState, RunRepositoryPort, EventBusPort } from '@ai-sdlc/application';
 import { createRun, RepositoryId, RunId, PhaseName, type RunStatus } from '@ai-sdlc/domain';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { formatEvent } from './format-event.js';
 
 export interface PollArgs {
   prNumber: number;
@@ -105,19 +105,6 @@ export interface RunPollDeps {
   };
   stderr: NodeJS.WritableStream;
   repoRoot: string;
-}
-
-export function formatEvent(event: OrchestratorEvent): string {
-  const tsMatch = event.timestamp.match(/T(\d{2}:\d{2}:\d{2})/);
-  const ts = tsMatch ? tsMatch[1] : event.timestamp.slice(0, 19);
-  const meta =
-    event.metadata && Object.keys(event.metadata).length > 0
-      ? ' ' +
-        Object.entries(event.metadata)
-          .map(([k, v]) => `${k}=${String(v)}`)
-          .join(' ')
-      : '';
-  return `[${ts}] [${event.type}] ${event.message}${meta}\n`;
 }
 
 export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number> {
