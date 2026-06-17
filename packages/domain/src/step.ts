@@ -1,3 +1,6 @@
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import type { RunId, PhaseName } from './ids.js';
+
 export type StepStatus = 'pending' | 'running' | 'success' | 'failed';
 
 export interface Step {
