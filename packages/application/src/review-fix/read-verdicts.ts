@@ -22,6 +22,19 @@ export function severityGate(
   return { blocked: offending.length > 0, offendingFindings: offending };
 }
 
+function allKnownSeveritiesBelowThreshold(
+  findings: WholePrReviewResult['findings'],
+  threshold: string,
+): boolean {
+  if (findings.length === 0) return false;
+  const thresholdRank = SEVERITY_RANK[threshold] ?? SEVERITY_RANK['high']!;
+  return findings.every((f) => {
+    const rank = SEVERITY_RANK[f.severity];
+    if (rank === undefined) return false;
+    return rank > thresholdRank;
+  });
+}
+
 export type VerdictOutcome<V> =
   | {
       ok: true;
@@ -40,14 +53,29 @@ export async function readReviewVerdict(
   if (!r.ok) return { ok: false, detail: r.detail };
   const result = r.result as WholePrReviewResult;
 
-  if (result.result === 'pass' && opts?.blockOnSeverity && result.findings.length > 0) {
+  if (opts?.blockOnSeverity && result.findings.length > 0) {
     const { blocked, offendingFindings } = severityGate(result.findings, opts.blockOnSeverity);
+
     if (blocked) {
+      if (result.result === 'pass') {
+        return {
+          ok: true,
+          verdict: 'fail',
+          overridden: true,
+          offendingFindings,
+        };
+      }
+      return { ok: true, verdict: 'fail' };
+    }
+
+    const allBelow = allKnownSeveritiesBelowThreshold(result.findings, opts.blockOnSeverity);
+
+    if (allBelow && result.result === 'fail') {
       return {
         ok: true,
-        verdict: 'fail',
+        verdict: 'pass',
         overridden: true,
-        offendingFindings,
+        offendingFindings: [],
       };
     }
   }
