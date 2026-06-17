@@ -1,4 +1,3 @@
- 
 import type { RunId, PhaseName } from './ids.js';
 
 export type StepStatus = 'pending' | 'running' | 'success' | 'failed';
@@ -22,7 +21,6 @@ export interface CreateStepInput {
   phaseId: PhaseName;
   index: number;
   title: string;
-  now?: Date;
 }
 
 export function createStep(input: CreateStepInput): Step {

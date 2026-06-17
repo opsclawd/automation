@@ -18,20 +18,4 @@ describe('createStep', () => {
     expect(s.startedAt).toBeUndefined();
     expect(s.completedAt).toBeUndefined();
   });
-
-  it('accepts an optional now parameter without error', () => {
-    const t0 = new Date('2026-06-15T00:00:00.000Z');
-    const s = createStep({
-      id: 'step-2',
-      runId: RunId('run-1'),
-      phaseId: PhaseName('validate'),
-      index: 1,
-      title: 'Lint',
-      now: t0,
-    });
-
-    expect(s.status).toBe('pending');
-    // Pending steps have no startedAt regardless of now parameter.
-    expect(s.startedAt).toBeUndefined();
-  });
 });
