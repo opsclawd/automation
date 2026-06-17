@@ -89,6 +89,26 @@ describe('ReviewFixHandler', () => {
       expect(failed[0].message).toBe('review-fix loop exhausted');
     });
 
+    it('returns a failure when runLoop throws', async () => {
+      const runLoop = async () => {
+        throw new Error('DB write failed');
+      };
+      const { ctx, events } = makeCtx();
+      const result = await new ReviewFixHandler({ runLoop }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('unknown');
+        expect(result.failure.message).toBe('review/fix loop threw: DB write failed');
+        expect(result.failure.phase).toBe('review-fix');
+        expect(result.failure.canRetry).toBe(true);
+      }
+
+      const failed = events.filter((e) => e.type === 'phase.failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0].message).toBe('review/fix loop threw: DB write failed');
+    });
+
     it('does not emit phase.completed on exhaustion', async () => {
       const runLoop = async () => ({ phaseOutcome: 'failed' as const });
       const { ctx, events } = makeCtx();

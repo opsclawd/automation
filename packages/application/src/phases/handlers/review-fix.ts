@@ -1,4 +1,4 @@
-import type { PhaseName } from '@ai-sdlc/domain';
+import type { PhaseName, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 
@@ -16,7 +16,28 @@ export class ReviewFixHandler implements PhaseHandler {
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
     emit('phase.started', 'info', 'review-fix started');
-    const { phaseOutcome } = await this.opts.runLoop(ctx);
+
+    let phaseOutcome: 'passed' | 'failed';
+    try {
+      const result = await this.opts.runLoop(ctx);
+      phaseOutcome = result.phaseOutcome;
+    } catch (e) {
+      const message = `review/fix loop threw: ${e instanceof Error ? e.message : String(e)}`;
+      const failure: Failure = {
+        runUuid: ctx.runUuid,
+        phase: 'review-fix',
+        kind: 'unknown',
+        message,
+        canRetry: true,
+        suggestedAction:
+          'Inspect the latest review.md and loop iterations, then resume or intervene.',
+        artifacts: ['review.md'],
+        detectedAt: ctx.now(),
+      };
+      emit('phase.failed', 'error', message);
+      return { outcome: 'failed', failure };
+    }
+
     if (phaseOutcome === 'passed') {
       emit('phase.completed', 'info', 'review-fix converged');
       return { outcome: 'passed' };
