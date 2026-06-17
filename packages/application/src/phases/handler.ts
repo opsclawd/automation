@@ -17,6 +17,11 @@ export interface PhaseHandlerContext {
   agent: AgentPort;
   events: EventBusPort;
   now: () => Date;
+  /**
+   * Optional context fields for agent phases.
+   * Populated via buildPhaseHandlerContext() by the compose root.
+   * Handlers that require these should assert at run() entry.
+   */
   promptsRoot?: string;
   startCommitSha?: string;
   expectedBranch?: string;
