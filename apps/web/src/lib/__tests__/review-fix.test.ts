@@ -92,6 +92,7 @@ it('LoopDto type compiles', () => {
         index: 1,
         outcome: 'resolved',
         reviewInvocationId: 'r1',
+        qualityReviewInvocationId: null,
         fixInvocationId: 'f1',
         revalidationId: 're1',
         reviewArtifactPath: 'review-fix/l1/review/whole-pr-review/iter-1/code-review.md',

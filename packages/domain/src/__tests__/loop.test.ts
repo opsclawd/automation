@@ -5,6 +5,7 @@ import {
   canIterate,
   startIteration,
   completeIteration,
+  updateOpenIteration,
   exhaust,
   LoopStateError,
   type Loop,
@@ -123,6 +124,21 @@ describe('completeIteration', () => {
   it('throws when there is no open iteration', () => {
     const l = newLoop();
     expect(() => completeIteration(l, { outcome: 'fixed', now: t1 })).toThrow(LoopStateError);
+  });
+});
+
+describe('updateOpenIteration', () => {
+  it('sets qualityReviewInvocationId on the open iteration', () => {
+    let l = startIteration(newLoop(), { reviewInvocationId: 'r1', now: t0 });
+    l = updateOpenIteration(l, { qualityReviewInvocationId: 'qr1' });
+    expect(l.iterations[0]?.qualityReviewInvocationId).toBe('qr1');
+    expect(l.iterations[0]?.reviewInvocationId).toBe('r1');
+  });
+  it('throws when there is no open iteration', () => {
+    const l = newLoop();
+    expect(() => updateOpenIteration(l, { qualityReviewInvocationId: 'qr1' })).toThrow(
+      LoopStateError,
+    );
   });
 });
 

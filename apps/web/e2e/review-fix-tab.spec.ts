@@ -24,6 +24,7 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
                 index: 1,
                 outcome: 'resolved',
                 reviewInvocationId: 'ra1',
+                qualityReviewInvocationId: null,
                 fixInvocationId: 'fa1',
                 revalidationId: 'rv1',
                 reviewArtifactPath:
@@ -49,6 +50,7 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
                 index: 1,
                 outcome: 'unresolved',
                 reviewInvocationId: 'rb1',
+                qualityReviewInvocationId: null,
                 fixInvocationId: 'fb1',
                 revalidationId: null,
                 reviewArtifactPath: 'review-fix/loop-b/review/code-review/iter-1/code-review.md',
@@ -61,6 +63,7 @@ test('Review/Fix tab renders converged and exhausted loop badges with iteration 
                 index: 2,
                 outcome: 'unresolved',
                 reviewInvocationId: 'rb2',
+                qualityReviewInvocationId: null,
                 fixInvocationId: 'fb2',
                 revalidationId: 'rv2',
                 reviewArtifactPath: 'review-fix/loop-b/review/code-review/iter-2/code-review.md',
