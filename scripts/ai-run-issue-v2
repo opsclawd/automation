@@ -2105,6 +2105,16 @@ Your review must be ENTIRELY about whether Task ${task_n} alone meets its
 requirements. If Task ${task_n} is complete and correct, the result is
 SPEC_PASS regardless of what other tasks in the plan have not been started.
 
+## BUILD GREEN OVERRIDES THE PLAN'S LETTER
+The plan is guidance; the build is the contract. If the implementation deviates
+from the plan's suggested approach BECAUSE following it literally would break the
+build (pnpm build / pnpm typecheck / pnpm test) — for example using explicit named
+exports where the plan said 'export *' but 'export *' causes a type/name collision —
+that deviation is CORRECT. Do NOT return SPEC_FAIL for a plan-letter mismatch that a
+green build requires; verify the deviation compiles/passes and, if it does, treat it
+as satisfying the requirement. Flag only genuine defects, never a build-required
+deviation from the plan's wording.
+
 ## Task Requirements
 ${task_text}
 
@@ -2329,6 +2339,16 @@ DO NOT flag any of the following as issues:
 Your review must be ENTIRELY about the quality of Task ${task_n}'s implementation.
 If Task ${task_n} is complete and correct, the result is QUALITY_PASS regardless
 of what other tasks in the plan have not been started.
+
+## BUILD GREEN OVERRIDES THE PLAN'S LETTER
+The plan is guidance; the build is the contract. If the implementation deviates
+from the plan's suggested approach BECAUSE following it literally would break the
+build (pnpm build / pnpm typecheck / pnpm test) — for example using explicit named
+exports where the plan said 'export *' but 'export *' causes a type/name collision —
+that deviation is CORRECT. Do NOT return QUALITY_FAIL for a plan-letter mismatch that
+a green build requires; verify the deviation compiles/passes and, if it does, treat it
+as satisfying the requirement. Flag only genuine defects, never a build-required
+deviation from the plan's wording.
 
 ## Task Summary
 ${task_title}

@@ -2102,3 +2102,13 @@ PLAN
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+@test "parity[#398]: spec & quality review prompts treat a green build as overriding plan-letter deviations (#379)" {
+  # A deviation from the plan that is REQUIRED to make the build (typecheck/tests)
+  # pass must NOT be failed by the per-task reviewers. Both reviewer prompts must
+  # carry the rule. Regression #379: quality-review demanded export-star that fails
+  # pnpm typecheck; the compiling explicit-named-export solution was correctly the fix.
+  run grep -c "BUILD GREEN OVERRIDES THE PLAN'S LETTER" "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+}
