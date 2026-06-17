@@ -2112,3 +2112,23 @@ PLAN
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
+
+# Invariant: the bash runner emits the canonical phase name 'review-fix' (not
+#   the legacy split names 'whole-pr-review' or 'fix-review') in timeline
+#   phase_started/phase_done events.
+# Source: #381 (review-fix phase rename — timeline collapse).
+# Failure prevented: operators reading timeline/events see two split phases
+#   instead of the single review-fix loop, causing confusion and incorrect
+#   phase-level failure classification.
+# TS-port contract: the TS ReviewFixHandler already emits 'review-fix'; the
+#   bash runner must emit the same canonical name.
+@test "parity[#381]: bash runner emits review-fix as the canonical phase name" {
+  REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  local script="${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -q '_emit_phase_started "review-fix"' "$script"
+  [ "$status" -eq 0 ]
+  run grep -q '_emit_phase_done "review-fix"' "$script"
+  [ "$status" -eq 0 ]
+  run grep -qE '_emit_phase_(started|done) "(whole-pr-review|fix-review)"' "$script"
+  [ "$status" -ne 0 ]
+}

@@ -3557,7 +3557,7 @@ if [[ "$PHASE" == "fix-validate" ]]; then
       reason="disabled"
     touch "${ISSUES_DIR}/fix-validate-done.marker"
     _emit_phase_done "fix-validate"
-    PHASE="whole-pr-review"
+    PHASE="review-fix"
   elif [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]]; then
     info "Validation passed — skipping fix-validate loop."
     emit_event "fix-validate" "info" "loop.skipped" \
@@ -3565,7 +3565,7 @@ if [[ "$PHASE" == "fix-validate" ]]; then
       reason="validation-passed"
     touch "${ISSUES_DIR}/fix-validate-done.marker"
     _emit_phase_done "fix-validate"
-    PHASE="whole-pr-review"
+    PHASE="review-fix"
   elif grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
     warn "Validation failure appears to be infrastructure-related — skipping fix-validate loop."
     emit_event "fix-validate" "warn" "loop.skipped_infra" \
@@ -3573,7 +3573,7 @@ if [[ "$PHASE" == "fix-validate" ]]; then
       reason="infra-failure"
     touch "${ISSUES_DIR}/fix-validate-done.marker"
     _emit_phase_done "fix-validate"
-    PHASE="whole-pr-review"
+    PHASE="review-fix"
   else
     while [[ "$PHASE" == "fix-validate" ]]; do
       FIX_VALIDATE_COUNT=$((FIX_VALIDATE_COUNT + 1))
@@ -3753,7 +3753,7 @@ Start now."
       git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
       touch "${ISSUES_DIR}/fix-validate-done.marker"
       _emit_phase_done "fix-validate"
-      PHASE="whole-pr-review"
+      PHASE="review-fix"
     else
       orchestrator_fail "fix-validate loop exhausted without passing validation"
     fi
@@ -3763,10 +3763,10 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 # PHASE: whole-pr-review
 # ═══════════════════════════════════════════════════════════════════════════
-if [[ "$PHASE" == "whole-pr-review" ]]; then
+if [[ "$PHASE" == "review-fix" ]]; then
   log "=== Phase: whole-pr-review ==="
-  _emit_phase_started "whole-pr-review"
-  LAST_PHASE="whole-pr-review"
+  _emit_phase_started "review-fix"
+  LAST_PHASE="review-fix"
 
   ensure_worktree
 
@@ -3841,7 +3841,7 @@ Write code-review.md now."
     esac
   fi
 
-  _emit_phase_done "whole-pr-review"
+  _emit_phase_done "review-fix"
   PHASE="review-triage"
 fi
 
@@ -4054,7 +4054,7 @@ _revalidate_is_green() {
 }
 
 if [[ "$PHASE" == "fix-review" ]]; then
-_emit_phase_started "fix-review"
+_emit_phase_started "review-fix"
 
   # Clear validation.result at fix-review start to prevent a stale "passed"
   # from the validate phase carrying forward. If fix-review fails to write
@@ -4314,7 +4314,7 @@ else
   fi
 fi
 
-_emit_phase_done "fix-review"
+_emit_phase_done "review-fix"
 PHASE="compound"
 fi
 
