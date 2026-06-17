@@ -20,7 +20,22 @@ export class SingleShotAgentHandler implements PhaseHandler {
 
     const def = getPhaseDefinition(this.phase);
     if (!def.agentContract) {
-      throw new Error(`${this.phase} phase definition missing agentContract`);
+      const message = `${this.phase} phase definition missing agentContract`;
+      emit('phase.failed', 'error', message);
+      return {
+        outcome: 'failed' as const,
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'command_failed' as const,
+          message,
+          canRetry: false,
+          suggestedAction:
+            'Ensure the phase definition includes an agentContract in the compose root.',
+          artifacts: [],
+          detectedAt: ctx.now(),
+        },
+      };
     }
 
     if (ctx.resolveProfile === undefined) {

@@ -241,6 +241,7 @@ describe('PlanWriteHandler', () => {
     expect(agent.invocations).toHaveLength(1);
     expect(agent.invocations[0]).toBeDefined();
     expect(agent.invocations[0]!.expectedArtifacts).toContain('plan.md');
+    expect(eventsOf(ctx, 'phase.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'phase.completed')).toHaveLength(1);
   });
 });

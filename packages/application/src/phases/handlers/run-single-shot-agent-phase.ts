@@ -118,12 +118,7 @@ export async function runSingleShotAgentPhase(
     emit('phase.failed', 'error', failure.message);
     return { outcome: 'failed', failure };
   }
-  // 2. Emit phase.started (handlers already do this; the helper emits agent.invoking)
-  emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
-    profile: config.profile,
-  });
-
-  // 3. Load prompt template
+  // 2. Load prompt template
   let template: string;
   try {
     template = loadPromptTemplate(config.phase as string, config.step, { promptsRoot });
@@ -208,7 +203,10 @@ export async function runSingleShotAgentPhase(
 
   // 7. Invoke agent
   const startedAt = ctx.now();
-  const invocationId = AgentInvocationId(ctx.idFactory?.() ?? randomUUID());
+  const invocationId = AgentInvocationId(ctx.idFactory?.() || randomUUID());
+  emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
+    profile: config.profile,
+  });
   let agentResult: AgentInvocationResult;
   try {
     agentResult = await ctx.agent.invoke(request);
