@@ -221,6 +221,7 @@ _emit_skipped_until() {
   esac
   for p in read_issue plan-design plan-write implement validate fix-validate review-fix review-triage compound create-pr; do
     if [[ "$p" == "$target" ]]; then break; fi
+    if [[ "$p" == "review-fix" ]] && [[ "$target" == "review-triage" ]]; then continue; fi
     _emit_phase_skipped "$p" "resume-detected"
   done
   if [[ "$1" == "fix-review" ]]; then
