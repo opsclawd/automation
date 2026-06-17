@@ -216,7 +216,7 @@ _emit_phase_skipped() {
 _emit_skipped_until() {
   local target=$1
   local p found=false
-  for p in read_issue plan-design plan-write implement validate fix-validate whole-pr-review review-triage fix-review compound create-pr; do
+  for p in read_issue plan-design plan-write implement validate fix-validate review-fix review-triage compound create-pr; do
     if [[ "$p" == "$target" ]]; then found=true; break; fi
     _emit_phase_skipped "$p" "resume-detected"
   done
@@ -3466,7 +3466,7 @@ if [[ "$PHASE" == "validate" ]]; then
 
   # Clean up stale fix-validate artifacts from any previous cycle. Without
   # this, detect_phase would see a stale fix-validate-done.marker on resume
-  # after a new validation failure and incorrectly return whole-pr-review.
+  # after a new validation failure and incorrectly return review-fix.
   rm -f "${ISSUES_DIR}/fix-validate-done.marker"
   rm -f "${ISSUES_DIR}"/fix-validate-*.log "${ISSUES_DIR}"/revalidate-fv-*.log "${ISSUES_DIR}/fix-validate-log.md"
 
@@ -3747,7 +3747,7 @@ Start now."
     if [[ "$_fv_validation_result" == "passed" ]] || [[ $_fv_infra_failure -eq 1 ]]; then
       # guard_artifact_clean removed validation.result / validation.headsha (they
       # are orchestrator artifacts). Re-persist them so the resume oracle
-      # (detect_phase) resolves to whole-pr-review on a restart after this point
+      # (detect_phase) resolves to review-fix on a restart after this point
       # — without them it falls through plan.md and redoes validate/fix-validate.
       printf '%s\n' "$_fv_validation_result" > "${ISSUES_DIR}/validation.result"
       git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
@@ -3819,18 +3819,18 @@ Write code-review.md now."
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review-fix (exit $_tee_ec)"
   fi
-  _guard_worktree "whole-pr-review" "$_worktree_state_before"
+  _guard_worktree "review-fix" "$_worktree_state_before"
   check_branch_after_agent
   # Capture exit code BEFORE guard_artifact_clean (see #337 / PR #339 pattern)
   _cleanup_ec=$_review_fix_ec
   # Copy review artifacts from worktree (before cleanup removes them)
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
-    _emit_artifact "whole-pr-review" "${ISSUES_DIR}/review.md" "review"
+    _emit_artifact "review-fix" "${ISSUES_DIR}/review.md" "review"
   fi
 
   if [[ $_cleanup_ec -eq 0 ]]; then
-    info "whole-pr-review: review/fix loop converged"
+    info "review-fix: review/fix loop converged"
     echo "passed" > "${ISSUES_DIR}/validation.result"
   else
     case $_cleanup_ec in
@@ -3884,7 +3884,7 @@ if [[ "$PHASE" == "review-triage" ]]; then
   else
   # Short-circuit: if review.md has no actionable findings, skip the agent call.
   # Heuristic: look for severity markers (Critical/High/Medium/Low) that the
-  # whole-pr-review prompt produces. If none found, write empty manifest + stub
+  # review-fix prompt produces. If none found, write empty manifest + stub
   # summary and proceed directly to fix-review.
   if ! grep -qiE '(^#+\s*)?(critical|high|medium|low)\b' "${ISSUES_DIR}/review.md" 2>/dev/null; then
     info "review.md has no severity markers; writing empty manifest and skipping review-triage agent"

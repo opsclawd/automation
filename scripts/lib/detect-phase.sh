@@ -16,9 +16,9 @@ detect_phase() {
     if [[ -f "${ISSUES_DIR}/review-task-manifest.json" ]]; then
       # "fix-review" is an internal dispatch-only key for the fix sub-phase of
       # the canonical review-fix phase. Do NOT rename to "review-fix" without
-      # coordinated changes to the bash dispatch blocks at lines 3765 and 4056
-      # of ai-run-issue-v2 which check PHASE == "fix-review" and
-      # PHASE == "review-fix" respectively.
+      # coordinated changes to the bash dispatch blocks in ai-run-issue-v2 for
+      # the fix-iteration dispatch (PHASE == "fix-review") and the whole-PR
+      # review dispatch (PHASE == "review-fix").
       echo "fix-review"
     else
       echo "review-triage"
