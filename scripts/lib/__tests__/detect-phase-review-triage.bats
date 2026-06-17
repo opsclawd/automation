@@ -19,7 +19,7 @@ teardown() {
   [ "$output" = "review-triage" ]
 }
 
-@test "detect_phase: review.md with manifest goes to review-fix" {
+@test "detect_phase: review.md with manifest goes to fix-review" {
   echo "some review content" > "${ISSUES_DIR}/review.md"
   echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
   run detect_phase

@@ -2131,4 +2131,15 @@ PLAN
   [ "$status" -eq 0 ]
   run grep -qE '_emit_phase_(started|done) "(whole-pr-review|fix-review)"' "$script"
   [ "$status" -ne 0 ]
+
+  # Sourced helpers must also use the canonical phase name in emit_event calls.
+  # Any usage of the legacy name indicates a regression like Finding 1 in #381.
+  for sh in "${REAL_REPO_ROOT}"/scripts/lib/*.sh; do
+    [[ "$sh" == */emit_event.sh ]] && continue
+    run grep -qE 'emit_event "(whole-pr-review|fix-review)"' "$sh"
+    [ "$status" -ne 0 ] || {
+      echo "FAIL: legacy phase name found in emit_event call in $(basename "$sh")"
+      false
+    }
+  done
 }

@@ -39,7 +39,7 @@ _revert_task_commits() {
   if git -C "$worktree_dir" revert --no-commit "${pre_task_head}..HEAD" 2>/dev/null; then
     git -C "$worktree_dir" commit -m "Revert: task ${task_id} — reverted commits after red revalidate" 2>/dev/null || true
     if declare -F emit_event >/dev/null 2>&1; then
-      emit_event "fix-review" "warn" "task.commits_reverted" \
+      emit_event "review-fix" "warn" "task.commits_reverted" \
         "fix-review task ${task_id}: commits reverted after red revalidate" \
         task_id="$task_id" reverted_from="$pre_task_head"
     fi
@@ -48,7 +48,7 @@ _revert_task_commits() {
       warn "Task ${task_id}: git revert failed — possibly due to conflicts or dirty tree"
     fi
     if declare -F emit_event >/dev/null 2>&1; then
-      emit_event "fix-review" "error" "task.revert_failed" \
+      emit_event "review-fix" "error" "task.revert_failed" \
         "fix-review task ${task_id}: git revert failed after red revalidate" \
         task_id="$task_id" reverted_from="$pre_task_head"
     fi

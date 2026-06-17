@@ -460,7 +460,7 @@ describe('classifyExit', () => {
       'Worktree creation failed — /dir is not a git worktree',
       'Worktree has no commits — cannot create PR',
       'Failed to create PR and no open PR exists for branch ai/issue-6',
-      'Task 1 fix-review has no findings to act on (no .md, no .log)',
+      'Task 1 review-fix has no findings to act on (no .md, no .log)',
       'agent reported BLOCKED',
       "Phase 'implement' is blocked",
       'Task 3 is NEEDS_CONTEXT',
@@ -599,11 +599,11 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('agent_blocked');
   });
 
-  it('returns missing_artifact for "fix-review has no findings" sentinel', () => {
+  it('returns missing_artifact for "review-fix has no findings" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail:
-        'Task 1 fix-review has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings.',
+        'Task 1 review-fix has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings.',
       runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('missing_artifact');

@@ -14,6 +14,11 @@ detect_phase() {
     echo "create-pr"
   elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
     if [[ -f "${ISSUES_DIR}/review-task-manifest.json" ]]; then
+      # "fix-review" is an internal dispatch-only key for the fix sub-phase of
+      # the canonical review-fix phase. Do NOT rename to "review-fix" without
+      # coordinated changes to the bash dispatch blocks at lines 3765 and 4056
+      # of ai-run-issue-v2 which check PHASE == "fix-review" and
+      # PHASE == "review-fix" respectively.
       echo "fix-review"
     else
       echo "review-triage"

@@ -14,7 +14,7 @@ const CANONICAL_PHASES: readonly string[] = [
   'create-pr',
 ];
 
-test('Timeline tab renders all 9 canonical phases (AC8)', async ({ page }) => {
+test('Timeline tab renders all 9 canonical phases', async ({ page }) => {
   const runId = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
   await page.goto(`/runs/${runId}`);
   await page.getByRole('tab', { name: 'Timeline' }).click();

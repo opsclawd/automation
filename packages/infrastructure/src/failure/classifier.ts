@@ -217,10 +217,10 @@ function pickTerminalEvent(events: ClassifierEvent[]): ClassifierEvent | undefin
   // Special case: when loop.exhausted and phase.failed are emitted for the
   // same phase (the "paired" pattern), loop.exhausted is preferred because
   // it carries the structured agent_blocked signal. A generic phase.failed
-  //   following loop.exhausted in review-fix would regress to command_failed.
+  // following loop.exhausted in review-fix would regress to command_failed.
   //
-  //   But when phase.failed comes from a LATER phase (e.g. compound or create-pr
-  //   after review-fix exhausted), it represents the true terminal failure and
+  // But when phase.failed comes from a LATER phase (e.g. compound or create-pr
+  // after review-fix exhausted), it represents the true terminal failure and
   // must not be overridden by a stale loop.exhausted from an earlier phase.
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
