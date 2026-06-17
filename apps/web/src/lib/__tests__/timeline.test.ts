@@ -155,7 +155,7 @@ describe('derivePhaseTimeline', () => {
     const timeline = derivePhaseTimeline([
       ev({
         id: 1,
-        phase: 'whole-pr-review',
+        phase: 'review-fix',
         type: 'phase.started',
         timestamp: '2026-05-16T12:00:01.000Z',
       }),
@@ -167,7 +167,7 @@ describe('derivePhaseTimeline', () => {
       }),
     ]);
     expect(timeline.map((p) => p.name)).toEqual([...CANONICAL_PHASES]);
-    expect(timeline.find((p) => p.name === 'whole-pr-review')!.status).toBe('running');
+    expect(timeline.find((p) => p.name === 'review-fix')!.status).toBe('running');
     expect(timeline.find((p) => p.name === 'plan-design')!.status).toBe('running');
   });
 

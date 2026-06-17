@@ -5,8 +5,7 @@ export const CANONICAL_PHASES = [
   'implement',
   'validate',
   'fix-validate',
-  'whole-pr-review',
-  'fix-review',
+  'review-fix',
   'compound',
   'create-pr',
 ] as const;
