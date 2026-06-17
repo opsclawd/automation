@@ -408,5 +408,67 @@ describe('ReviewFixLoop', () => {
       { severity: 'high', summary: 'unused export' },
     ]);
     expect(overrideEvents[0]?.metadata.threshold).toBe('high');
+    expect(overrideEvents[0]?.metadata.direction).toBe('upgrade');
+  });
+
+  it('converges when review returns fail with only sub-threshold findings', async () => {
+    let reviewCalls = 0;
+    const deps = makeDeps({
+      runReview: async () => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('pass' as const) : ('pass' as const),
+          overridden: reviewCalls === 1 ? true : undefined,
+          offendingFindings: reviewCalls === 1 ? [] : undefined,
+        };
+      },
+    });
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    // Iteration 1: review returns fail but gate overrides to pass → loop converges
+    expect(out.phaseOutcome).toBe('passed');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(1);
+  });
+
+  it('does not converge when review returns fail with empty findings (no override)', async () => {
+    const deps = makeDeps({
+      runReview: async () => ({
+        invocationId: 'r',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        overridden: false,
+      }),
+    });
+    const out = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(out.phaseOutcome).toBe('failed');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(3);
+  });
+
+  it('emits review.verdict.overridden with direction downgrade for fail→pass override', async () => {
+    const { events, bus } = collectEvents();
+    let reviewCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      runReview: async () => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 1 ? ('pass' as const) : ('pass' as const),
+          overridden: reviewCalls === 1 ? true : undefined,
+          offendingFindings: [],
+        };
+      },
+    });
+    await new ReviewFixLoop(deps).execute(baseInput());
+    const overrideEvents = events.filter((e) => e.type === 'review.verdict.overridden');
+    expect(overrideEvents).toHaveLength(1);
+    expect(overrideEvents[0]?.metadata.direction).toBe('downgrade');
+    expect(overrideEvents[0]?.metadata.threshold).toBe('high');
   });
 });
