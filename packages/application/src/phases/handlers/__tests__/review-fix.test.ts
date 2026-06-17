@@ -28,14 +28,20 @@ function makeCtx() {
 
 describe('ReviewFixHandler', () => {
   it('returns passed when the loop converges', async () => {
-    const runLoop = async () => ({ phaseOutcome: 'passed' as const });
+    const runLoop = async () => ({
+      phaseOutcome: 'passed' as const,
+      loopStatus: 'converged' as const,
+    });
     const { ctx } = makeCtx();
     const result = await new ReviewFixHandler({ runLoop }).run(ctx);
     expect(result.outcome).toBe('passed');
   });
 
   it('returns failed with validation_failed when the loop exhausts', async () => {
-    const runLoop = async () => ({ phaseOutcome: 'failed' as const });
+    const runLoop = async () => ({
+      phaseOutcome: 'failed' as const,
+      loopStatus: 'exhausted' as const,
+    });
     const { ctx } = makeCtx();
     const result = await new ReviewFixHandler({ runLoop }).run(ctx);
 
@@ -50,9 +56,29 @@ describe('ReviewFixHandler', () => {
     }
   });
 
+  it('returns failed with validation_failed when the loop fails on agent error', async () => {
+    const runLoop = async () => ({
+      phaseOutcome: 'failed' as const,
+      loopStatus: 'failed' as const,
+    });
+    const { ctx } = makeCtx();
+    const result = await new ReviewFixHandler({ runLoop }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('validation_failed');
+      expect(result.failure.message).toBe('review/fix loop failed');
+      expect(result.failure.phase).toBe('review-fix');
+      expect(result.failure.canRetry).toBe(true);
+    }
+  });
+
   describe('event emission', () => {
     it('emits phase.started and phase.completed on convergence', async () => {
-      const runLoop = async () => ({ phaseOutcome: 'passed' as const });
+      const runLoop = async () => ({
+        phaseOutcome: 'passed' as const,
+        loopStatus: 'converged' as const,
+      });
       const { ctx, events } = makeCtx();
       await new ReviewFixHandler({ runLoop }).run(ctx);
 
@@ -72,7 +98,10 @@ describe('ReviewFixHandler', () => {
     });
 
     it('emits phase.started and phase.failed on exhaustion', async () => {
-      const runLoop = async () => ({ phaseOutcome: 'failed' as const });
+      const runLoop = async () => ({
+        phaseOutcome: 'failed' as const,
+        loopStatus: 'exhausted' as const,
+      });
       const { ctx, events } = makeCtx();
       await new ReviewFixHandler({ runLoop }).run(ctx);
 
@@ -87,6 +116,23 @@ describe('ReviewFixHandler', () => {
       expect(failed[0].level).toBe('error');
       expect(failed[0].phase).toBe('review-fix');
       expect(failed[0].message).toBe('review-fix loop exhausted');
+    });
+
+    it('emits phase.started and phase.failed on agent failure', async () => {
+      const runLoop = async () => ({
+        phaseOutcome: 'failed' as const,
+        loopStatus: 'failed' as const,
+      });
+      const { ctx, events } = makeCtx();
+      await new ReviewFixHandler({ runLoop }).run(ctx);
+
+      const started = events.filter((e) => e.type === 'phase.started');
+      expect(started).toHaveLength(1);
+      expect(started[0].phase).toBe('review-fix');
+
+      const failed = events.filter((e) => e.type === 'phase.failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0].message).toBe('review-fix loop failed');
     });
 
     it('returns a failure when runLoop throws', async () => {
@@ -110,7 +156,10 @@ describe('ReviewFixHandler', () => {
     });
 
     it('does not emit phase.completed on exhaustion', async () => {
-      const runLoop = async () => ({ phaseOutcome: 'failed' as const });
+      const runLoop = async () => ({
+        phaseOutcome: 'failed' as const,
+        loopStatus: 'exhausted' as const,
+      });
       const { ctx, events } = makeCtx();
       await new ReviewFixHandler({ runLoop }).run(ctx);
 
