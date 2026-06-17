@@ -58,9 +58,19 @@ export class ValidateHandler implements PhaseHandler {
       return { outcome: 'passed' };
     }
 
-    const failure = validationRunToFailure(validationRun, ctx.now())!;
-    failure.suggestedAction =
-      'Inspect the failing command logs under the validate phase, fix, and resume.';
+    let failure = validationRunToFailure(validationRun, ctx.now());
+    if (!failure) {
+      failure = {
+        runUuid: ctx.runUuid,
+        phase: 'validate',
+        kind: 'unknown',
+        message: 'validation failed but could not determine the reason',
+        canRetry: true,
+        suggestedAction: 'Check the validation phase logs for details.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      };
+    }
 
     const failing = validationRun.commands
       .filter((c) => c.outcome !== 'passed')
