@@ -232,6 +232,11 @@ describe('derivePhaseTimeline', () => {
     expect(v.completedAt).toBe('2026-05-16T12:00:05.000Z');
   });
 
+  it('does not include legacy split phase names (whole-pr-review, fix-review)', () => {
+    expect(CANONICAL_PHASES).not.toContain('whole-pr-review');
+    expect(CANONICAL_PHASES).not.toContain('fix-review');
+  });
+
   it('does not overwrite failed status with late phase.completed (AC4 idempotency)', () => {
     const timeline = derivePhaseTimeline([
       ev({
