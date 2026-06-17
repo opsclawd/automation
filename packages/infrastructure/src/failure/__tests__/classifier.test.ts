@@ -850,7 +850,7 @@ describe('classifyExit with events (M2-06)', () => {
       ...baseInput,
       events: [
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'fix-review hit max iterations for task 2',
           metadata: { task: 2, iterations: 5 },
@@ -858,7 +858,7 @@ describe('classifyExit with events (M2-06)', () => {
       ],
     });
     expect(failure.kind).toBe('agent_blocked');
-    expect(failure.phase).toBe('fix-review');
+    expect(failure.phase).toBe('review-fix');
   });
   it('classifies agent_blocked via metadata.reason matching /blocked/i', () => {
     const failure = classifyExit({
