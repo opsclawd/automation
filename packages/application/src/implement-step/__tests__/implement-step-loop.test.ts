@@ -9,15 +9,20 @@ import type {
   SpecReviewResult,
   QualityReviewResult,
   FixResult,
-  FixStepOptions,
   StepLoopContext,
 } from '../types.js';
+import type { FixStepOptions } from '../../review-fix/types.js';
 
 function collectEvents() {
-  const events: Array<{ type: string; metadata: Record<string, unknown> }> = [];
+  const events: Array<{
+    type: string;
+    level: string;
+    message: string;
+    metadata: Record<string, unknown>;
+  }> = [];
   const bus = {
     publish: (_runUuid: string, e: OrchestratorEvent) =>
-      events.push({ type: e.type, metadata: e.metadata }),
+      events.push({ type: e.type, level: e.level, message: e.message, metadata: e.metadata }),
     subscribe: () => () => {},
   };
   return { events, bus };
@@ -32,9 +37,6 @@ function baseInput() {
     stepIndex: 1,
     stepTitle: 'Add login page',
     maxIterations: 3,
-    implementProfile: AgentProfileName('opencode-frontier'),
-    specReviewProfile: AgentProfileName('opencode-frontier'),
-    qualityReviewProfile: AgentProfileName('pi-qwen-local'),
     fixProfile: AgentProfileName('pi-qwen-local'),
     fixFallbackProfile: AgentProfileName('opencode-frontier'),
   };
@@ -151,7 +153,7 @@ describe('ImplementStepLoop', () => {
     expect(out.loop.iterations[1]?.outcome).toBe('resolved');
   });
 
-  it('hard-fails when the implement agent fails', async () => {
+  it('hard fails when the implement agent fails', async () => {
     const deps = makeDeps({
       runImplement: async () => ({ invocationId: 'impl-1', agentOutcome: 'failed' as const }),
     });
@@ -285,7 +287,7 @@ describe('ImplementStepLoop', () => {
     expect(esc).toHaveLength(0);
   });
 
-  it('hard-fails when spec-review agent outcome is not success', async () => {
+  it('hard fails when spec-review agent outcome is not success', async () => {
     const deps = makeDeps({
       runSpecReview: async () => ({ invocationId: 'sr-1', agentOutcome: 'timeout' as const }),
     });
@@ -297,7 +299,7 @@ describe('ImplementStepLoop', () => {
     expect(out.loop.iterations[0]?.outcome).toBe('failed');
   });
 
-  it('hard-fails when spec-review returns undefined verdict (contract violation)', async () => {
+  it('hard fails when spec-review returns undefined verdict (contract violation)', async () => {
     const deps = makeDeps({
       runSpecReview: async () => ({ invocationId: 'sr-1', agentOutcome: 'success' as const }),
     });
@@ -308,7 +310,7 @@ describe('ImplementStepLoop', () => {
     expect(out.loop.iterations[0]?.outcome).toBe('failed');
   });
 
-  it('hard-fails when quality-review agent outcome is not success', async () => {
+  it('hard fails when quality-review agent outcome is not success', async () => {
     const deps = makeDeps({
       runSpecReview: async () => ({
         invocationId: 'sr-1',
@@ -349,6 +351,8 @@ describe('ImplementStepLoop', () => {
     expect(out.outcome).toBe('failed');
     const exhausted = events.filter((e) => e.type === 'loop.exhausted');
     expect(exhausted).toHaveLength(1);
+    expect(exhausted[0]?.level).toBe('error');
+    expect(exhausted[0]?.message).toBe('implement-step loop exhausted after 3 iterations');
     expect(exhausted[0]?.metadata.iterations).toBe(3);
     expect(exhausted[0]?.metadata.maxIterations).toBe(3);
   });

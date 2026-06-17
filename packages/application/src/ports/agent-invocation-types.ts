@@ -5,6 +5,8 @@ export type { AgentRuntimeKind };
 
 export type AgentInvocationOutcome = 'success' | 'failed' | 'timeout' | 'contract_violation';
 
+export type StepAgentOutcome = AgentInvocationOutcome;
+
 export interface AgentInvocationRequest {
   profile: AgentProfileName;
   promptPath: string;

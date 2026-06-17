@@ -744,6 +744,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       const implFixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
 
+      const makeArtifactStore = (cwd: string): ArtifactStore => ({
+        async read(_runId: string, relativePath: string): Promise<string> {
+          return await readFile(join(cwd, relativePath), 'utf-8');
+        },
+        write: async () => {
+          throw new Error('not implemented');
+        },
+        list: async () => [],
+      });
+
       const runImplement = async (ctx: StepLoopContext) => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
@@ -761,11 +771,23 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
-          cwd: ctx.cwd,
-        })
-          .toString()
-          .trim();
+        let startCommitSha = '';
+        try {
+          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: ctx.cwd,
+          })
+            .toString()
+            .trim();
+        } catch (err) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'git.rev_parse_failed',
+            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { cwd: ctx.cwd },
+          });
+        }
         const result = await router.invoke({
           profile: AgentProfileName(implementProfileName),
           promptPath,
@@ -787,7 +809,19 @@ export function composeRoot(opts: ComposeOptions): Container {
               join(ctx.cwd, inv.resultJsonPath),
               join(artifactDir, `result-iter-0.json`),
             );
-          } catch {}
+          } catch (err) {
+            persistingEventBusForLoop.publish(String(ctx.runId), {
+              runId: String(ctx.runId),
+              level: 'warn',
+              type: 'artifact.copy_failed',
+              message: `Failed to copy artifact: ${err instanceof Error ? err.message : String(err)}`,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                source: join(ctx.cwd, inv.resultJsonPath),
+                destination: join(artifactDir, 'result-iter-0.json'),
+              },
+            });
+          }
         }
         return {
           invocationId,
@@ -813,11 +847,23 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
-          cwd: ctx.cwd,
-        })
-          .toString()
-          .trim();
+        let startCommitSha = '';
+        try {
+          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: ctx.cwd,
+          })
+            .toString()
+            .trim();
+        } catch (err) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'git.rev_parse_failed',
+            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { cwd: ctx.cwd },
+          });
+        }
         const result = await router.invoke({
           profile: AgentProfileName(specReviewProfileName),
           promptPath,
@@ -832,19 +878,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
-        const store: import('@ai-sdlc/application').ArtifactStore = {
-          async read(_runId: string, relativePath: string): Promise<string> {
-            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
-          },
-          write: async () => {
-            throw new Error('not implemented');
-          },
-          list: async () => [],
-        };
         const verdict = await import('@ai-sdlc/application').then((m) =>
           m.readReviewVerdict(
             patched,
-            { artifacts: store, agent: router },
+            { artifacts: makeArtifactStore(ctx.cwd), agent: router },
             { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
           ),
         );
@@ -874,11 +911,23 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
-          cwd: ctx.cwd,
-        })
-          .toString()
-          .trim();
+        let startCommitSha = '';
+        try {
+          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: ctx.cwd,
+          })
+            .toString()
+            .trim();
+        } catch (err) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'git.rev_parse_failed',
+            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { cwd: ctx.cwd },
+          });
+        }
         const result = await router.invoke({
           profile: AgentProfileName(qualityReviewProfileName),
           promptPath,
@@ -893,19 +942,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
-        const store: import('@ai-sdlc/application').ArtifactStore = {
-          async read(_runId: string, relativePath: string): Promise<string> {
-            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
-          },
-          write: async () => {
-            throw new Error('not implemented');
-          },
-          list: async () => [],
-        };
         const verdict = await import('@ai-sdlc/application').then((m) =>
           m.readReviewVerdict(
             patched,
-            { artifacts: store, agent: router },
+            { artifacts: makeArtifactStore(ctx.cwd), agent: router },
             { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
           ),
         );
@@ -940,11 +980,23 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
-          cwd: ctx.cwd,
-        })
-          .toString()
-          .trim();
+        let startCommitSha = '';
+        try {
+          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: ctx.cwd,
+          })
+            .toString()
+            .trim();
+        } catch (err) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'git.rev_parse_failed',
+            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { cwd: ctx.cwd },
+          });
+        }
         const invokeResult = await router.invoke({
           profile: AgentProfileName(profile),
           promptPath,
@@ -967,15 +1019,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
         const fixVerdict = await import('@ai-sdlc/application').then((m) =>
           m.readFixVerdict(patched, {
-            artifacts: {
-              async read(_runId: string, relativePath: string): Promise<string> {
-                return await readFile(join(ctx.cwd, relativePath), 'utf-8');
-              },
-              write: async () => {
-                throw new Error('not implemented');
-              },
-              list: async () => [],
-            },
+            artifacts: makeArtifactStore(ctx.cwd),
             agent: router,
           }),
         );
@@ -997,9 +1041,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         idFactory: () => randomUUID(),
       });
 
-      runStep = async (
-        sctx: import('@ai-sdlc/application').StepRunContext,
-      ): Promise<import('@ai-sdlc/application').StepRunResult> => {
+      runStep = async (sctx: {
+        stepIndex: number;
+        stepTitle: string;
+        cwd: string;
+        ctx: import('@ai-sdlc/application').PhaseHandlerContext;
+      }): Promise<{ outcome: 'success' | 'failed' }> => {
         const result = await implementStepLoop!.execute({
           runId: RunId(sctx.ctx.runUuid),
           phaseId: PhaseName('implement'),
@@ -1008,9 +1055,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           stepIndex: sctx.stepIndex,
           stepTitle: sctx.stepTitle,
           maxIterations: config.phases.implement.maxIterations,
-          implementProfile: AgentProfileName(implementProfileName),
-          specReviewProfile: AgentProfileName(specReviewProfileName),
-          qualityReviewProfile: AgentProfileName(qualityReviewProfileName),
           fixProfile: AgentProfileName(implFixProfileName),
           ...(implFixFallbackProfileName
             ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }

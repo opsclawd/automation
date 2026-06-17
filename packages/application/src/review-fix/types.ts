@@ -1,8 +1,7 @@
 import type { RunId, PhaseName, AgentProfileName, Loop } from '@ai-sdlc/domain';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
-
-export type StepAgentOutcome = 'success' | 'failed' | 'timeout' | 'contract_violation';
+import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 
 export interface StepContext {
   loopId: string;
