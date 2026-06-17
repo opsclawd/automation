@@ -19,19 +19,19 @@ teardown() {
   [ "$output" = "review-triage" ]
 }
 
-@test "detect_phase: review.md with manifest goes to fix-review" {
+@test "detect_phase: review.md with manifest goes to review-fix" {
   echo "some review content" > "${ISSUES_DIR}/review.md"
   echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
   run detect_phase
-  [ "$output" = "fix-review" ]
+  [ "$output" = "review-fix" ]
 }
 
-@test "detect_phase: validation passed without review.md goes to whole-pr-review" {
+@test "detect_phase: validation passed without review.md goes to review-fix" {
   touch "${ISSUES_DIR}/validation.result"
   echo "passed" > "${ISSUES_DIR}/validation.result"
   echo "abc123" > "${ISSUES_DIR}/validation.headsha"
   git() { echo "abc123"; }
   export -f git
   run detect_phase
-  [ "$output" = "whole-pr-review" ]
+  [ "$output" = "review-fix" ]
 }

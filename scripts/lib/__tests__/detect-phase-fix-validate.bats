@@ -20,11 +20,11 @@ teardown() {
   rm -rf "$TMPDIR_TEST"
 }
 
-@test "detect_phase: validation.result=passed goes to whole-pr-review" {
+@test "detect_phase: validation.result=passed goes to review-fix" {
   echo "passed" > "${ISSUES_DIR}/validation.result"
   echo "abc123" > "${ISSUES_DIR}/validation.headsha"
   _STUB_HEAD_SHA=abc123 run detect_phase
-  [ "$output" = "whole-pr-review" ]
+  [ "$output" = "review-fix" ]
 }
 
 @test "detect_phase: validation.result=failed without marker goes to fix-validate" {
@@ -33,20 +33,20 @@ teardown() {
   [ "$output" = "fix-validate" ]
 }
 
-@test "detect_phase: validation.result=failed with marker goes to whole-pr-review" {
+@test "detect_phase: validation.result=failed with marker goes to review-fix" {
   echo "failed" > "${ISSUES_DIR}/validation.result"
   touch "${ISSUES_DIR}/fix-validate-done.marker"
   echo "abc123" > "${ISSUES_DIR}/validation.headsha"
   _STUB_HEAD_SHA=abc123 run detect_phase
-  [ "$output" = "whole-pr-review" ]
+  [ "$output" = "review-fix" ]
 }
 
-@test "detect_phase: validation.result=unresolved-review with marker goes to whole-pr-review" {
+@test "detect_phase: validation.result=unresolved-review with marker goes to review-fix" {
   echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
   touch "${ISSUES_DIR}/fix-validate-done.marker"
   echo "abc123" > "${ISSUES_DIR}/validation.headsha"
   _STUB_HEAD_SHA=abc123 run detect_phase
-  [ "$output" = "whole-pr-review" ]
+  [ "$output" = "review-fix" ]
 }
 
 @test "detect_phase: validation.result=unresolved-review without marker goes to fix-validate" {
@@ -61,11 +61,11 @@ teardown() {
   [ "$output" = "custom-phase" ]
 }
 
-@test "detect_phase: validation.result=passed with matching SHA stays on whole-pr-review" {
+@test "detect_phase: validation.result=passed with matching SHA stays on review-fix" {
   echo "passed" > "${ISSUES_DIR}/validation.result"
   echo "abc123" > "${ISSUES_DIR}/validation.headsha"
   _STUB_HEAD_SHA=abc123 run detect_phase
-  [ "$output" = "whole-pr-review" ]
+  [ "$output" = "review-fix" ]
 }
 
 @test "detect_phase: validation.result=passed with mismatched SHA goes to validate" {
