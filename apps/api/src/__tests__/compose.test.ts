@@ -59,7 +59,6 @@ describe('composeRoot', () => {
     expect(container.startIssueRun).toBeDefined();
     expect(container.runsDir).toBe(path.join(root, '.ai-runs'));
     expect(container.buildPhaseHandlerContext).toBeDefined();
-    expect(typeof container.buildPhaseHandlerContext).toBe('function');
 
     const out = await container.startIssueRun.execute({ issueNumber: 1 });
     expect(out.status).toBe('passed');

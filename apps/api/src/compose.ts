@@ -272,58 +272,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     // Best-effort: fall back to 'main'
   }
 
-  // Top-level GitPort for phase handler context builders.
-  // Provides headCommitSha / headCommitShaOf only.
-  // This is separate from the GitPort inside buildPrReviewPoller
-  // to keep blast radius small. If GitPort is ever extracted into a
-  // shared adapter, consolidate both instances.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- used by later tasks (M8-10 RunExecutor)
-  const topLevelGitPort: GitPort = {
-    createWorktree: async (_input: CreateWorktreeInput) => {
-      throw new Error('GitPort.createWorktree is not wired at compose root');
-    },
-    removeWorktree: async (_worktreePath: string) => {
-      throw new Error('GitPort.removeWorktree is not wired at compose root');
-    },
-    currentBranch: async (_cwd: string) => {
-      throw new Error('GitPort.currentBranch is not wired at compose root');
-    },
-    async headCommitSha(cwd: string): Promise<string> {
-      return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
-    },
-    async headCommitShaOf(cwd: string): Promise<string | undefined> {
-      try {
-        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
-      } catch {
-        return undefined;
-      }
-    },
-    resetHard: async (_cwd: string, _commitSha: string) => {
-      throw new Error('GitPort.resetHard is not wired at compose root');
-    },
-    diff: async (_cwd: string, _base: string, _head?: string) => {
-      throw new Error('GitPort.diff is not wired at compose root');
-    },
-    commit: async (_cwd: string, _message: string) => {
-      throw new Error('GitPort.commit is not wired at compose root');
-    },
-    push: async (_input: PushInput) => {
-      throw new Error('GitPort.push is not wired at compose root');
-    },
-    remoteRef: async (_input: { cwd: string; remote: string; ref: string }) => {
-      throw new Error('GitPort.remoteRef is not wired at compose root');
-    },
-    isAncestor: async (_cwd: string, _ancestor: string, _descendant: string) => {
-      throw new Error('GitPort.isAncestor is not wired at compose root');
-    },
-    logBetween: async (_cwd: string, _base: string, _head: string) => {
-      throw new Error('GitPort.logBetween is not wired at compose root');
-    },
-    cleanUntracked: async (_cwd: string) => {
-      throw new Error('GitPort.cleanUntracked is not wired at compose root');
-    },
-  };
-
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   let reviewFixLoop: ReviewFixLoop | undefined;
