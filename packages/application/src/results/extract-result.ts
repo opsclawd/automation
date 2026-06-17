@@ -9,7 +9,7 @@ import type {
 } from '../ports/agent-invocation-types.js';
 
 export type ExtractResultOutcome<T = unknown> =
-  | { ok: true; result: T }
+  | { ok: true; result: T; rerunResult?: AgentInvocationResult }
   | {
       ok: false;
       reason: 'missing' | 'invalid';
@@ -148,5 +148,6 @@ export async function extractResult(input: ExtractResultInput): Promise<ExtractR
     };
   }
 
-  return readAndValidate(runId, rerunResult.resultJsonPath, meta, ports);
+  const rerunOutcome = await readAndValidate(runId, rerunResult.resultJsonPath, meta, ports);
+  return rerunOutcome.ok ? { ...rerunOutcome, rerunResult } : rerunOutcome;
 }

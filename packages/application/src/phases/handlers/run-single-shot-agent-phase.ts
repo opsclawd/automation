@@ -238,7 +238,7 @@ export async function runSingleShotAgentPhase(
   }
 
   // 7. Build AgentInvocation domain object
-  const invocation = buildAgentInvocation(
+  let invocation = buildAgentInvocation(
     ctx,
     config,
     request,
@@ -301,10 +301,22 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
+  // If extractResult performed a rerun, forward the rerun's endCommitSha
+  // and resultJsonPath into the invocation so post-extraction validation
+  // checks the rerun's side effects, not the original run's stale data.
+  if (extracted.rerunResult) {
+    if (extracted.rerunResult.endCommitSha) {
+      invocation = { ...invocation, endCommitSha: extracted.rerunResult.endCommitSha };
+    }
+    if (extracted.rerunResult.resultJsonPath) {
+      invocation = { ...invocation, resultJsonPath: extracted.rerunResult.resultJsonPath };
+    }
+  }
+
   // Re-validate contract after extraction. extractResult may have
   // re-invoked the agent (M4-05 rerun), whose side effects (branch
   // change, deleted artifacts, etc.) would not have been caught by
-  // the initial validation at step 9.
+  // the initial validation at step 8.
   const postExtractViolations = await validateAgentContract({
     contract: config.agentContract,
     invocation,
