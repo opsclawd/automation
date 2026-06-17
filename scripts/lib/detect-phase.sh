@@ -14,7 +14,7 @@ detect_phase() {
     echo "create-pr"
   elif [[ -f "${ISSUES_DIR}/review.md" ]]; then
     if [[ -f "${ISSUES_DIR}/review-task-manifest.json" ]]; then
-      echo "review-fix"
+      echo "fix-review"
     else
       echo "review-triage"
     fi

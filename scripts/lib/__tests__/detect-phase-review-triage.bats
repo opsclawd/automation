@@ -23,7 +23,7 @@ teardown() {
   echo "some review content" > "${ISSUES_DIR}/review.md"
   echo '[]' > "${ISSUES_DIR}/review-task-manifest.json"
   run detect_phase
-  [ "$output" = "review-fix" ]
+  [ "$output" = "fix-review" ]
 }
 
 @test "detect_phase: validation passed without review.md goes to review-fix" {

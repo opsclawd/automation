@@ -21,10 +21,20 @@ UPDATE failures SET phase = 'review-fix' WHERE phase IN ('whole-pr-review', 'fix
 UPDATE runs SET current_phase = 'review-fix' WHERE current_phase IN ('whole-pr-review', 'fix-review');
 
 -- runs.completed_phases (JSON array field)
+-- Use json_each/json_group_array with DISTINCT to avoid duplicates
+-- when both whole-pr-review and fix-review exist in the same array.
 UPDATE runs
-SET completed_phases = REPLACE(
-    REPLACE(completed_phases, '"whole-pr-review"', '"review-fix"'),
-    '"fix-review"', '"review-fix"')
+SET completed_phases = (
+  SELECT json_group_array(DISTINCT replaced)
+  FROM (
+    SELECT CASE
+      WHEN value = 'whole-pr-review' THEN 'review-fix'
+      WHEN value = 'fix-review' THEN 'review-fix'
+      ELSE value
+    END AS replaced
+    FROM json_each(runs.completed_phases)
+  )
+)
 WHERE completed_phases LIKE '%whole-pr-review%'
    OR completed_phases LIKE '%fix-review%';
 `;

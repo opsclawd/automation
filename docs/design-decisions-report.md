@@ -12,7 +12,7 @@ UUID-identified, scoped to exactly one approved Repository (`RepositoryId`) and 
 ## Q2 — Phase structure
 
 **How does review/fix fit into the phase model?**
-Review/fix is a single Phase (`review-fix`) with an internal Loop in the **target** domain model. Each Loop iteration = one review + one fix. Phase sequence advances monotonically. As of M8-06 (#381), the observability surface (`apps/web/src/lib/timeline.ts`, classifier, DB, scripts) uses the single canonical `review-fix` phase name. The `review` + `fix-review` → `review-fix` collapse was completed as a coordinated rename across config, code, tests, and docs. Loop-internal routing keys (`whole-pr-review`, `fix-review`, `whole-pr-fix-review`, `fix-review-architect`) remain in `phaseProfiles` for agent-profile dispatch within the review-fix loop.
+Review/fix is a single Phase (`review-fix`) with an internal Loop in the **target** domain model. Each Loop iteration = one review + one fix. Phase sequence advances monotonically. As of M8-06, the observability surface (`apps/web/src/lib/timeline.ts`, classifier, DB, scripts) uses the single canonical `review-fix` phase name. The `review` + `fix-review` → `review-fix` collapse was completed as a coordinated rename across config, code, tests, and docs. Loop-internal routing keys (`whole-pr-review`, `fix-review`, `whole-pr-fix-review`, `fix-review-architect`) remain in `phaseProfiles` for agent-profile dispatch within the review-fix loop.
 
 ## Q3 — Implement phase internals
 

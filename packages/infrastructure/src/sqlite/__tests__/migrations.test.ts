@@ -292,7 +292,6 @@ describe('migrations', () => {
       'implement',
       'validate',
       'review-fix',
-      'review-fix',
       'compound',
     ]);
 
