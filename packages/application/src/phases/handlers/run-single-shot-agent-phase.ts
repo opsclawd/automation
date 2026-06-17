@@ -1,0 +1,274 @@
+import { randomUUID } from 'node:crypto';
+import type { AgentContract, AgentProfileName, Failure, PhaseName } from '@ai-sdlc/domain';
+import type {
+  AgentInvocationRequest,
+  AgentInvocationResult,
+} from '../../ports/agent-invocation-types.js';
+import type { PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
+import { createEventEmitter } from '../handler.js';
+import { loadPromptTemplate } from '../../prompts/load-prompt-template.js';
+import { renderPrompt } from '../../prompts/render-prompt.js';
+import { TemplateError } from '../../prompts/errors.js';
+import { validateAgentContract } from '../../agent/validate-agent-contract.js';
+import { extractResult } from '../../results/extract-result.js';
+import type { AgentInvocation } from '@ai-sdlc/domain';
+
+export interface SingleShotConfig {
+  phase: PhaseName;
+  profile: AgentProfileName;
+  step: string;
+  vars: Record<string, string>;
+  agentContract: AgentContract;
+}
+
+function assertField<T>(value: T | undefined, name: string): T {
+  if (value === undefined) {
+    throw new Error(
+      `Missing required context field '${name}'. ` +
+        `Agent phases require promptsRoot, startCommitSha, expectedBranch, and resolveProfile. ` +
+        `These are populated by buildPhaseHandlerContext() in the compose root.`,
+    );
+  }
+  return value;
+}
+
+function buildAgentInvocation(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfig,
+  request: AgentInvocationRequest,
+  result: AgentInvocationResult,
+  promptChars: number,
+  startedAt: Date,
+): AgentInvocation {
+  const endedAt = ctx.now();
+  const id = (ctx.idFactory?.() ?? randomUUID()) as AgentInvocation['id'];
+
+  return {
+    id,
+    runId: ctx.runUuid as AgentInvocation['runId'],
+    phaseId: config.phase,
+    profile: config.profile,
+    runtime: result.runtime,
+    provider: result.provider,
+    model: result.model,
+    promptPath: request.promptPath,
+    promptChars,
+    stdoutPath: result.stdoutPath,
+    stderrPath: result.stderrPath,
+    startedAt,
+    endedAt,
+    startCommitSha: request.startCommitSha,
+    ...(result.endCommitSha ? { endCommitSha: result.endCommitSha } : {}),
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    timeoutMs: request.timeoutMs ?? 0,
+    outcome: result.outcome,
+    contractViolations: result.contractViolations,
+    ...(result.resultJsonPath ? { resultJsonPath: result.resultJsonPath } : {}),
+  };
+}
+
+function buildFailure(
+  ctx: PhaseHandlerContext,
+  phase: string,
+  kind: Failure['kind'],
+  message: string,
+  canRetry: boolean,
+  suggestedAction: string,
+): Failure {
+  return {
+    runUuid: ctx.runUuid,
+    phase,
+    kind,
+    message,
+    canRetry,
+    suggestedAction,
+    artifacts: [],
+    detectedAt: ctx.now(),
+  };
+}
+
+export async function runSingleShotAgentPhase(
+  ctx: PhaseHandlerContext,
+  config: SingleShotConfig,
+): Promise<PhaseResult> {
+  const emit: EventEmitter = createEventEmitter(ctx, config.phase);
+
+  // 1. Assert required optional context fields
+  const promptsRoot = assertField(ctx.promptsRoot, 'promptsRoot');
+  const startCommitSha = assertField(ctx.startCommitSha, 'startCommitSha');
+  const expectedBranch = assertField(ctx.expectedBranch, 'expectedBranch');
+  assertField(ctx.resolveProfile, 'resolveProfile');
+
+  // 2. Emit phase.started (handlers already do this; the helper emits agent.invoking)
+  emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
+    profile: config.profile,
+  });
+
+  // 3. Load prompt template
+  let template: string;
+  try {
+    template = loadPromptTemplate(config.phase as string, config.step, { promptsRoot });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'missing_artifact',
+      `Failed to load prompt template: ${message}`,
+      false,
+      'Ensure the prompt template file exists at <promptsRoot>/<phase>/<step>.md.',
+    );
+    emit('phase.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
+  }
+
+  // 4. Render prompt
+  let renderedPrompt: string;
+  try {
+    renderedPrompt = await renderPrompt(template, {
+      runId: ctx.runUuid,
+      vars: config.vars,
+      artifacts: ctx.artifacts,
+    });
+  } catch (e) {
+    const kind: Failure['kind'] =
+      e instanceof TemplateError && e.message.includes('missing artifact')
+        ? 'missing_artifact'
+        : 'missing_artifact';
+    const message = e instanceof Error ? e.message : String(e);
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      kind,
+      `Failed to render prompt: ${message}`,
+      false,
+      'Ensure all required input artifacts exist in the artifact store.',
+    );
+    emit('phase.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
+  }
+
+  // 5. Write rendered prompt to artifact store
+  const promptRelativePath = 'prompt.md';
+  try {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: config.phase as string,
+      relativePath: promptRelativePath,
+      contents: renderedPrompt,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'command_failed',
+      `Failed to write prompt artifact: ${message}`,
+      true,
+      'Check disk space and permissions, then retry.',
+    );
+    emit('phase.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
+  }
+  emit('artifact.created', 'info', `wrote ${promptRelativePath}`, {
+    path: promptRelativePath,
+  });
+
+  // 6. Build AgentInvocationRequest
+  const request: AgentInvocationRequest = {
+    profile: config.profile,
+    promptPath: promptRelativePath,
+    expectedArtifacts: config.agentContract.requiredArtifacts ?? [],
+    cwd: ctx.cwd,
+    runId: ctx.runUuid,
+    repoId: ctx.repoFullName,
+    phaseId: config.phase as string,
+    startCommitSha,
+  };
+
+  // 7. Invoke agent
+  const startedAt = ctx.now();
+  let agentResult: AgentInvocationResult;
+  try {
+    agentResult = await ctx.agent.invoke(request);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'command_failed',
+      `Agent invocation failed: ${message}`,
+      true,
+      'Check agent infrastructure configuration, then retry.',
+    );
+    emit('phase.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
+  }
+
+  // 8. Build AgentInvocation domain object
+  const invocation = buildAgentInvocation(
+    ctx,
+    config,
+    request,
+    agentResult,
+    Buffer.byteLength(renderedPrompt),
+    startedAt,
+  );
+
+  // 9. Validate contract
+  const violations = await validateAgentContract({
+    contract: config.agentContract,
+    invocation,
+    ports: {
+      artifacts: ctx.artifacts,
+      git: ctx.git,
+      github: ctx.github,
+    },
+    cwd: ctx.cwd,
+    expectedBranch,
+  });
+
+  if (violations.length > 0) {
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'agent_contract_violation',
+      `Agent contract violations: ${violations.join(', ')}`,
+      false,
+      'Review agent output and contract requirements. The agent violated its instructions.',
+    );
+    emit('phase.blocked', 'error', failure.message, { violations });
+    return { outcome: 'blocked', failure };
+  }
+
+  // 10. Extract result (M4-05 single rerun handled internally)
+  const extracted = await extractResult({
+    invocation,
+    ports: {
+      artifacts: ctx.artifacts,
+      agent: ctx.agent,
+    },
+    rerunContext: {
+      cwd: ctx.cwd,
+      repoId: ctx.repoFullName,
+    },
+  });
+
+  if (!extracted.ok) {
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'invalid_result',
+      `Result extraction failed: ${extracted.detail}`,
+      false,
+      'Review the agent output and result schema. The agent produced an invalid result.',
+    );
+    emit('phase.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
+  }
+
+  // 11. Success
+  emit('phase.completed', 'info', `${config.phase as string} completed`);
+  return { outcome: 'passed' };
+}
