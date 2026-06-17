@@ -45,6 +45,7 @@ import {
   applyReactivation,
   pollTaskResultSchema,
   ReviewFixLoop,
+  ImplementStepLoop,
   readReviewVerdict,
   readFixVerdict,
   type ArtifactStore,
@@ -62,6 +63,9 @@ import {
   type FixStepResult,
   type RevalidationResult,
   type PhaseHandlerContextFactory,
+  type ImplementStepLoop as ImplementStepLoopType,
+  type StepLoopContext,
+  type FixStepOptions,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
@@ -151,6 +155,13 @@ export interface Container {
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   buildPhaseHandlerContext: PhaseHandlerContextFactory;
   reviewFixLoop?: ReviewFixLoop;
+  implementStepLoop?: ImplementStepLoopType;
+  runStep?: (sctx: {
+    stepIndex: number;
+    stepTitle: string;
+    cwd: string;
+    ctx: import('@ai-sdlc/application').PhaseHandlerContext;
+  }) => Promise<{ outcome: 'success' | 'failed' }>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -275,6 +286,8 @@ export function composeRoot(opts: ComposeOptions): Container {
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   let reviewFixLoop: ReviewFixLoop | undefined;
+  let implementStepLoop: ImplementStepLoopType | undefined;
+  let runStep: Container['runStep'] | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
@@ -719,6 +732,292 @@ export function composeRoot(opts: ComposeOptions): Container {
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
+
+      const implementProfileName: string =
+        config.agent.phaseProfiles['implement']?.profile ?? 'opencode-frontier';
+      const specReviewProfileName: string =
+        config.agent.phaseProfiles['spec-review']?.profile ?? 'opencode-frontier';
+      const qualityReviewProfileName: string =
+        config.agent.phaseProfiles['quality-review']?.profile ?? 'pi-qwen-local';
+      const implFixProfileName: string =
+        config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
+      const implFixFallbackProfileName: string | undefined =
+        config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+
+      const runImplement = async (ctx: StepLoopContext) => {
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+        const promptDir = join(baseTmpDir, 'implement-step-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);
+        const implementPrompt = [
+          '# TASK',
+          `Step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+          '',
+          '## CONTEXT',
+          `Working directory: ${ctx.cwd}`,
+          `Repository: ${ctx.repoId}`,
+          '',
+          'Read plan.md and implement this step. Write a summary to implementation-log.md.',
+        ].join('\n');
+        writeFileSync(promptPath, implementPrompt, 'utf-8');
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
+        const result = await router.invoke({
+          profile: AgentProfileName(implementProfileName),
+          promptPath,
+          expectedArtifacts: ['result.json'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: 'implement',
+          startCommitSha,
+        });
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        // Preserve to iteration-stable path
+        const artifactDir = join(runsDir, runDir, 'implement-step', `step-${ctx.stepIndex}`);
+        mkdirSync(artifactDir, { recursive: true });
+        if (inv?.resultJsonPath) {
+          try {
+            copyFileSync(
+              join(ctx.cwd, inv.resultJsonPath),
+              join(artifactDir, `result-iter-0.json`),
+            );
+          } catch {}
+        }
+        return {
+          invocationId,
+          agentOutcome: result.outcome,
+        };
+      };
+
+      const runSpecReview = async (ctx: StepLoopContext) => {
+        const promptDir = join(baseTmpDir, 'implement-step-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `spec-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
+        );
+        const reviewPrompt = [
+          '# TASK',
+          `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+          '',
+          'Check that the implementation matches plan.md task requirements exactly.',
+          '',
+          '## OUTPUT',
+          'Write result.json: { "result": "pass" | "fail" }',
+        ].join('\n');
+        writeFileSync(promptPath, reviewPrompt, 'utf-8');
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
+        const result = await router.invoke({
+          profile: AgentProfileName(specReviewProfileName),
+          promptPath,
+          expectedArtifacts: ['result.json'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: 'spec-review',
+          startCommitSha,
+        });
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        if (!inv) return { invocationId, agentOutcome: result.outcome };
+        const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        const store: import('@ai-sdlc/application').ArtifactStore = {
+          async read(_runId: string, relativePath: string): Promise<string> {
+            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
+          },
+          write: async () => {
+            throw new Error('not implemented');
+          },
+          list: async () => [],
+        };
+        const verdict = await import('@ai-sdlc/application').then((m) =>
+          m.readReviewVerdict(
+            patched,
+            { artifacts: store, agent: router },
+            { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          ),
+        );
+        if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
+        return {
+          invocationId,
+          agentOutcome: 'success' as const,
+          verdict: verdict.verdict,
+        };
+      };
+
+      const runQualityReview = async (ctx: StepLoopContext) => {
+        const promptDir = join(baseTmpDir, 'implement-step-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `quality-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
+        );
+        const reviewPrompt = [
+          '# TASK',
+          `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+          '',
+          'Check for code quality: maintainability, performance, security, test coverage.',
+          '',
+          '## OUTPUT',
+          'Write result.json: { "result": "pass" | "fail" }',
+        ].join('\n');
+        writeFileSync(promptPath, reviewPrompt, 'utf-8');
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
+        const result = await router.invoke({
+          profile: AgentProfileName(qualityReviewProfileName),
+          promptPath,
+          expectedArtifacts: ['result.json'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: 'quality-review',
+          startCommitSha,
+        });
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        if (!inv) return { invocationId, agentOutcome: result.outcome };
+        const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        const store: import('@ai-sdlc/application').ArtifactStore = {
+          async read(_runId: string, relativePath: string): Promise<string> {
+            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
+          },
+          write: async () => {
+            throw new Error('not implemented');
+          },
+          list: async () => [],
+        };
+        const verdict = await import('@ai-sdlc/application').then((m) =>
+          m.readReviewVerdict(
+            patched,
+            { artifacts: store, agent: router },
+            { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
+          ),
+        );
+        if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
+        return {
+          invocationId,
+          agentOutcome: 'success' as const,
+          verdict: verdict.verdict,
+        };
+      };
+
+      const implRunFix = async (ctx: StepLoopContext, opts: FixStepOptions) => {
+        const promptDir = join(baseTmpDir, 'implement-step-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `fix-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
+        );
+        const profile =
+          opts.useFallback && implFixFallbackProfileName
+            ? implFixFallbackProfileName
+            : implFixProfileName;
+        const fixPrompt = [
+          '# TASK',
+          `Fix implementation issues for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+          '',
+          '## CONTEXT',
+          'Read any review findings in the working directory and apply the suggested fixes.',
+          '',
+          '## OUTPUT',
+          'Write result.json: { "result": "done_with_fixes" | "done_no_fixes_needed" | "cannot_fix" }',
+        ].join('\n');
+        writeFileSync(promptPath, fixPrompt, 'utf-8');
+        rmSync(join(ctx.cwd, 'result.json'), { force: true });
+        const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          cwd: ctx.cwd,
+        })
+          .toString()
+          .trim();
+        const invokeResult = await router.invoke({
+          profile: AgentProfileName(profile),
+          promptPath,
+          expectedArtifacts: ['result.json'],
+          cwd: ctx.cwd,
+          runId: String(ctx.runId),
+          repoId: ctx.repoId,
+          phaseId: 'fix-review',
+          startCommitSha,
+          ...(opts.previousInvocationId
+            ? {
+                fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
+                fallbackReason: 'two_consecutive_fix_failures',
+              }
+            : {}),
+        });
+        const invocationId = newestInvocationId(String(ctx.runId));
+        const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+        if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
+        const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        const fixVerdict = await import('@ai-sdlc/application').then((m) =>
+          m.readFixVerdict(patched, {
+            artifacts: {
+              async read(_runId: string, relativePath: string): Promise<string> {
+                return await readFile(join(ctx.cwd, relativePath), 'utf-8');
+              },
+              write: async () => {
+                throw new Error('not implemented');
+              },
+              list: async () => [],
+            },
+            agent: router,
+          }),
+        );
+        return {
+          invocationId,
+          agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
+          ...(fixVerdict.ok ? { verdict: fixVerdict.verdict } : {}),
+        };
+      };
+
+      implementStepLoop = new ImplementStepLoop({
+        runImplement,
+        runSpecReview,
+        runQualityReview,
+        runFix: implRunFix,
+        loops: loopRepository,
+        events: persistingEventBusForLoop,
+        now: () => new Date(),
+        idFactory: () => randomUUID(),
+      });
+
+      runStep = async (
+        sctx: import('@ai-sdlc/application').StepRunContext,
+      ): Promise<import('@ai-sdlc/application').StepRunResult> => {
+        const result = await implementStepLoop!.execute({
+          runId: RunId(sctx.ctx.runUuid),
+          phaseId: PhaseName('implement'),
+          repoId: sctx.ctx.repoFullName,
+          cwd: sctx.cwd,
+          stepIndex: sctx.stepIndex,
+          stepTitle: sctx.stepTitle,
+          maxIterations: config.phases.implement.maxIterations,
+          implementProfile: AgentProfileName(implementProfileName),
+          specReviewProfile: AgentProfileName(specReviewProfileName),
+          qualityReviewProfile: AgentProfileName(qualityReviewProfileName),
+          fixProfile: AgentProfileName(implFixProfileName),
+          ...(implFixFallbackProfileName
+            ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }
+            : {}),
+        });
+        return { outcome: result.outcome };
+      };
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
@@ -1113,6 +1412,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
     buildPrReviewPoller,
     ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
+    ...(implementStepLoop !== undefined ? { implementStepLoop } : {}),
+    ...(runStep !== undefined ? { runStep } : {}),
     buildPhaseHandlerContext: (base, opts) => {
       const idFactory = () => randomUUID();
       return {
