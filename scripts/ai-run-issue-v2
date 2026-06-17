@@ -3845,7 +3845,6 @@ Write code-review.md now."
     esac
   fi
 
-  _emit_phase_done "review-fix"
   PHASE="review-triage"
 fi
 
