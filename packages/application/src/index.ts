@@ -21,3 +21,11 @@ export * from './review-fix/types.js';
 export * from './review-fix/review-fix-loop.js';
 export * from './review-fix/read-verdicts.js';
 export * from './phases/index.js';
+export type {
+  StepLoopContext,
+  FixResult,
+  ImplementStepLoopDeps,
+  ImplementStepLoopInput,
+  ImplementStepLoopResult,
+} from './implement-step/types.js';
+export * from './implement-step/implement-step-loop.js';
