@@ -54,7 +54,7 @@ export function serializeEventForJsonl(event: OrchestratorEvent, displayId: stri
  *   NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
  *     apps/cli/src/run-review-fix.ts \
  *     --cwd <worktree> --run-id <uuid> --repo-id <owner/repo> \
- *     --repo-root <canonical-repo-root> --phase-id whole-pr-review
+ *     --repo-root <canonical-repo-root> --phase-id review-fix
  *
  * runStartupSweeps:false is mandatory (issue #107).
  */
@@ -129,13 +129,10 @@ async function main() {
     );
   }
 
-  const phaseId = values['phase-id'] ?? 'whole-pr-review';
-  const maxIterationsArg = values['max-iterations'];
-  const maxIterations = maxIterationsArg
-    ? parseInt(maxIterationsArg, 10)
-    : phaseId === 'whole-pr-review'
-      ? (config.phases.wholePrFix?.maxIterations ?? config.phases.reviewFix.maxIterations)
-      : config.phases.reviewFix.maxIterations;
+  const phaseId = values['phase-id'] ?? 'review-fix';
+  const maxIterations = values['max-iterations']
+    ? parseInt(values['max-iterations'], 10)
+    : config.phases.reviewFix.maxIterations;
 
   let architectPlan:
     | {

@@ -72,7 +72,7 @@ describe('run-review-fix CLI helpers', () => {
     it('includes phase when present', () => {
       const event = {
         runId: 'uuid-does-not-matter',
-        phase: 'whole-pr-review',
+        phase: 'review-fix',
         level: 'warn' as const,
         type: 'review.verdict.overridden',
         message: 'severity gate overrode pass to fail',
@@ -81,7 +81,7 @@ describe('run-review-fix CLI helpers', () => {
       };
       const line = serializeEventForJsonl(event, 'display-1');
       const parsed = JSON.parse(line);
-      expect(parsed.phase).toBe('whole-pr-review');
+      expect(parsed.phase).toBe('review-fix');
     });
 
     it('omits phase when absent', () => {

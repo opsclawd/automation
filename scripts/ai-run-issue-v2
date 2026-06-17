@@ -3818,7 +3818,7 @@ Write code-review.md now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
-    --phase-id "whole-pr-review" \
+    --phase-id "review-fix" \
     2>&1 | tee -a "${ISSUES_DIR}/review-fix.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review-fix (exit $_tee_ec)"
@@ -4285,7 +4285,7 @@ else
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
-    --phase-id "fix-review" \
+    --phase-id "review-fix" \
     "${_ARCHITECT_PLAN_FLAG[@]}" \
     2>&1 | tee -a "${ISSUES_DIR}/fix-review-cli.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then

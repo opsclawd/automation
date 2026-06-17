@@ -130,7 +130,7 @@ describe('run-review-fix integration', () => {
 
     const { phaseOutcome, loop } = await c.reviewFixLoop!.execute({
       runId: RunId(runUuid),
-      phaseId: PhaseName('whole-pr-review'),
+      phaseId: PhaseName('review-fix'),
       repoId: 'test/test',
       cwd: repoRoot,
       maxIterations: 3,
@@ -170,7 +170,7 @@ describe('run-review-fix integration', () => {
 
     const { phaseOutcome, loop } = await c.reviewFixLoop!.execute({
       runId: RunId(runUuid),
-      phaseId: PhaseName('whole-pr-review'),
+      phaseId: PhaseName('review-fix'),
       repoId: 'test/test',
       cwd: repoRoot,
       maxIterations: 2,
