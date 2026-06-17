@@ -248,4 +248,65 @@ describe('readReviewVerdict severity gate', () => {
     );
     expect(v).toEqual({ ok: true, verdict: 'fail' });
   });
+
+  it('agent fail with empty findings is not overridden (conservative)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({ ok: true, verdict: 'fail' });
+  });
+
+  it('agent fail with unknown severity is not overridden (conservative)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [{ severity: 'info', summary: 'note' }],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({ ok: true, verdict: 'fail' });
+  });
+
+  it('agent fail with mixed known and unknown severities keeps fail (conservative)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [
+          { severity: 'low', summary: 'cosmetic' },
+          { severity: 'info', summary: 'unparseable note' },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    // low is below threshold, but info is unknown → conservative: keep fail
+    expect(v).toEqual({ ok: true, verdict: 'fail' });
+  });
 });

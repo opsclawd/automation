@@ -4,7 +4,7 @@ export const wholePrReviewResultSchema = z.object({
   result: z.enum(['pass', 'fail']),
   findings: z.array(
     z.object({
-      severity: z.enum(['critical', 'high', 'medium', 'low']),
+      severity: z.string(),
       summary: z.string().min(1),
     }),
   ),
