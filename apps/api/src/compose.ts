@@ -718,6 +718,22 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
       };
 
+      const resolveStartCommitSha = (cwd: string, runId: string): string => {
+        try {
+          return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
+        } catch (err) {
+          persistingEventBusForLoop.publish(runId, {
+            runId,
+            level: 'warn',
+            type: 'git.rev_parse_failed',
+            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { cwd },
+          });
+          return '';
+        }
+      };
+
       const rollbackFix = async (ctx: StepContext, targetSha: string): Promise<void> => {
         execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
       };
@@ -771,33 +787,30 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        let startCommitSha = '';
+        const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        let result;
         try {
-          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          result = await router.invoke({
+            profile: AgentProfileName(implementProfileName),
+            promptPath,
+            expectedArtifacts: ['result.json'],
             cwd: ctx.cwd,
-          })
-            .toString()
-            .trim();
+            runId: String(ctx.runId),
+            repoId: ctx.repoId,
+            phaseId: 'implement',
+            startCommitSha,
+          });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
             runId: String(ctx.runId),
-            level: 'warn',
-            type: 'git.rev_parse_failed',
-            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
-            metadata: { cwd: ctx.cwd },
+            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
           });
+          return { invocationId: '', agentOutcome: 'failed' as const };
         }
-        const result = await router.invoke({
-          profile: AgentProfileName(implementProfileName),
-          promptPath,
-          expectedArtifacts: ['result.json'],
-          cwd: ctx.cwd,
-          runId: String(ctx.runId),
-          repoId: ctx.repoId,
-          phaseId: 'implement',
-          startCommitSha,
-        });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         // Preserve to iteration-stable path
@@ -847,43 +860,38 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        let startCommitSha = '';
+        const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        let result;
         try {
-          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          result = await router.invoke({
+            profile: AgentProfileName(specReviewProfileName),
+            promptPath,
+            expectedArtifacts: ['result.json'],
             cwd: ctx.cwd,
-          })
-            .toString()
-            .trim();
+            runId: String(ctx.runId),
+            repoId: ctx.repoId,
+            phaseId: 'spec-review',
+            startCommitSha,
+          });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
             runId: String(ctx.runId),
-            level: 'warn',
-            type: 'git.rev_parse_failed',
-            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
-            metadata: { cwd: ctx.cwd },
+            metadata: { phaseId: 'spec-review', stepIndex: ctx.stepIndex },
           });
+          return { invocationId: '', agentOutcome: 'failed' as const };
         }
-        const result = await router.invoke({
-          profile: AgentProfileName(specReviewProfileName),
-          promptPath,
-          expectedArtifacts: ['result.json'],
-          cwd: ctx.cwd,
-          runId: String(ctx.runId),
-          repoId: ctx.repoId,
-          phaseId: 'spec-review',
-          startCommitSha,
-        });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
-        const verdict = await import('@ai-sdlc/application').then((m) =>
-          m.readReviewVerdict(
-            patched,
-            { artifacts: makeArtifactStore(ctx.cwd), agent: router },
-            { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
-          ),
+        const verdict = await readReviewVerdict(
+          patched,
+          { artifacts: makeArtifactStore(ctx.cwd), agent: router },
+          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
         return {
@@ -911,43 +919,38 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        let startCommitSha = '';
+        const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        let result;
         try {
-          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          result = await router.invoke({
+            profile: AgentProfileName(qualityReviewProfileName),
+            promptPath,
+            expectedArtifacts: ['result.json'],
             cwd: ctx.cwd,
-          })
-            .toString()
-            .trim();
+            runId: String(ctx.runId),
+            repoId: ctx.repoId,
+            phaseId: 'quality-review',
+            startCommitSha,
+          });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
             runId: String(ctx.runId),
-            level: 'warn',
-            type: 'git.rev_parse_failed',
-            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
-            metadata: { cwd: ctx.cwd },
+            metadata: { phaseId: 'quality-review', stepIndex: ctx.stepIndex },
           });
+          return { invocationId: '', agentOutcome: 'failed' as const };
         }
-        const result = await router.invoke({
-          profile: AgentProfileName(qualityReviewProfileName),
-          promptPath,
-          expectedArtifacts: ['result.json'],
-          cwd: ctx.cwd,
-          runId: String(ctx.runId),
-          repoId: ctx.repoId,
-          phaseId: 'quality-review',
-          startCommitSha,
-        });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
-        const verdict = await import('@ai-sdlc/application').then((m) =>
-          m.readReviewVerdict(
-            patched,
-            { artifacts: makeArtifactStore(ctx.cwd), agent: router },
-            { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
-          ),
+        const verdict = await readReviewVerdict(
+          patched,
+          { artifacts: makeArtifactStore(ctx.cwd), agent: router },
+          { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
         return {
@@ -980,49 +983,44 @@ export function composeRoot(opts: ComposeOptions): Container {
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
-        let startCommitSha = '';
+        const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+        let invokeResult;
         try {
-          startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+          invokeResult = await router.invoke({
+            profile: AgentProfileName(profile),
+            promptPath,
+            expectedArtifacts: ['result.json'],
             cwd: ctx.cwd,
-          })
-            .toString()
-            .trim();
+            runId: String(ctx.runId),
+            repoId: ctx.repoId,
+            phaseId: 'fix-review',
+            startCommitSha,
+            ...(opts.previousInvocationId
+              ? {
+                  fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
+                  fallbackReason: 'two_consecutive_fix_failures',
+                }
+              : {}),
+          });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
             runId: String(ctx.runId),
-            level: 'warn',
-            type: 'git.rev_parse_failed',
-            message: `git rev-parse HEAD failed: ${err instanceof Error ? err.message : String(err)}`,
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
-            metadata: { cwd: ctx.cwd },
+            metadata: { phaseId: 'fix-review', stepIndex: ctx.stepIndex },
           });
+          return { invocationId: '', agentOutcome: 'failed' as const };
         }
-        const invokeResult = await router.invoke({
-          profile: AgentProfileName(profile),
-          promptPath,
-          expectedArtifacts: ['result.json'],
-          cwd: ctx.cwd,
-          runId: String(ctx.runId),
-          repoId: ctx.repoId,
-          phaseId: 'fix-review',
-          startCommitSha,
-          ...(opts.previousInvocationId
-            ? {
-                fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
-                fallbackReason: 'two_consecutive_fix_failures',
-              }
-            : {}),
-        });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
-        const fixVerdict = await import('@ai-sdlc/application').then((m) =>
-          m.readFixVerdict(patched, {
-            artifacts: makeArtifactStore(ctx.cwd),
-            agent: router,
-          }),
-        );
+        const fixVerdict = await readFixVerdict(patched, {
+          artifacts: makeArtifactStore(ctx.cwd),
+          agent: router,
+        });
         return {
           invocationId,
           agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
@@ -1037,6 +1035,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         runFix: implRunFix,
         loops: loopRepository,
         events: persistingEventBusForLoop,
+        fixProfile: AgentProfileName(implFixProfileName),
+        ...(implFixFallbackProfileName
+          ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }
+          : {}),
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
@@ -1047,7 +1049,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         cwd: string;
         ctx: import('@ai-sdlc/application').PhaseHandlerContext;
       }): Promise<{ outcome: 'success' | 'failed' }> => {
-        const result = await implementStepLoop!.execute({
+        if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
+        const result = await implementStepLoop.execute({
           runId: RunId(sctx.ctx.runUuid),
           phaseId: PhaseName('implement'),
           repoId: sctx.ctx.repoFullName,
@@ -1055,10 +1058,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           stepIndex: sctx.stepIndex,
           stepTitle: sctx.stepTitle,
           maxIterations: config.phases.implement.maxIterations,
-          fixProfile: AgentProfileName(implFixProfileName),
-          ...(implFixFallbackProfileName
-            ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }
-            : {}),
         });
         return { outcome: result.outcome };
       };

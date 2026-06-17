@@ -12,6 +12,7 @@ import type {
   StepLoopContext,
 } from '../types.js';
 import type { FixStepOptions } from '../../review-fix/types.js';
+import type { EventBusPort } from '../../ports/event-bus-port.js';
 
 function collectEvents() {
   const events: Array<{
@@ -20,7 +21,7 @@ function collectEvents() {
     message: string;
     metadata: Record<string, unknown>;
   }> = [];
-  const bus = {
+  const bus: EventBusPort = {
     publish: (_runUuid: string, e: OrchestratorEvent) =>
       events.push({ type: e.type, level: e.level, message: e.message, metadata: e.metadata }),
     subscribe: () => () => {},
@@ -37,8 +38,6 @@ function baseInput() {
     stepIndex: 1,
     stepTitle: 'Add login page',
     maxIterations: 3,
-    fixProfile: AgentProfileName('pi-qwen-local'),
-    fixFallbackProfile: AgentProfileName('opencode-frontier'),
   };
 }
 
@@ -67,6 +66,8 @@ function makeDeps(over: Partial<ImplementStepLoopDeps>): ImplementStepLoopDeps {
     }),
     loops: new FakeLoopRepository(),
     events: bus,
+    fixProfile: AgentProfileName('pi-qwen-local'),
+    fixFallbackProfile: AgentProfileName('opencode-frontier'),
     now: () => new Date('2026-06-17T00:00:00.000Z'),
     idFactory: () => 'loop-1',
     ...over,
@@ -222,8 +223,8 @@ describe('ImplementStepLoop', () => {
     expect(esc).toHaveLength(1);
     expect(esc[0]?.metadata.triggerOwner).toBe('use_case');
     expect(esc[0]?.metadata.triggerReason).toBe('two_consecutive_fix_failures');
-    expect(esc[0]?.metadata.fromProfile).toBe(baseInput().fixProfile);
-    expect(esc[0]?.metadata.toProfile).toBe(baseInput().fixFallbackProfile);
+    expect(esc[0]?.metadata.fromProfile).toBe(deps.fixProfile);
+    expect(esc[0]?.metadata.toProfile).toBe(deps.fixFallbackProfile);
   });
 
   it('escalates on iteration 3 when fix fails on iterations 1 and 2', async () => {
@@ -413,6 +414,7 @@ describe('ImplementStepLoop', () => {
     const { events, bus } = collectEvents();
     const deps = makeDeps({
       events: bus,
+      fixFallbackProfile: undefined,
       runSpecReview: async () => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
@@ -423,8 +425,7 @@ describe('ImplementStepLoop', () => {
         agentOutcome: 'failed' as const,
       }),
     });
-    const input = { ...baseInput(), fixFallbackProfile: undefined };
-    const out = await new ImplementStepLoop(deps).execute(input);
+    const out = await new ImplementStepLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('failed');
     const esc = events.filter((e) => e.type === 'phase.fallback.escalated');
     expect(esc).toHaveLength(0);

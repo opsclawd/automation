@@ -2,6 +2,7 @@ import type { RunId, PhaseName, AgentProfileName, Loop } from '@ai-sdlc/domain';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
+import type { FixStepOptions } from '../review-fix/types.js';
 
 export interface StepLoopContext {
   loopId: string;
@@ -37,8 +38,6 @@ export interface FixResult {
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
 }
 
-import type { FixStepOptions } from '../review-fix/types.js';
-
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext) => Promise<ImplementResult>;
   runSpecReview: (ctx: StepLoopContext) => Promise<SpecReviewResult>;
@@ -46,6 +45,8 @@ export interface ImplementStepLoopDeps {
   runFix: (ctx: StepLoopContext, opts: FixStepOptions) => Promise<FixResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;
+  fixProfile: AgentProfileName;
+  fixFallbackProfile?: AgentProfileName;
   now: () => Date;
   idFactory: () => string;
 }
@@ -58,8 +59,6 @@ export interface ImplementStepLoopInput {
   stepIndex: number;
   stepTitle: string;
   maxIterations: number;
-  fixProfile: AgentProfileName;
-  fixFallbackProfile?: AgentProfileName;
 }
 
 export interface ImplementStepLoopResult {

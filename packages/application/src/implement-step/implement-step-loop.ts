@@ -46,8 +46,11 @@ export class ImplementStepLoop {
     // --- PRE-LOOP: IMPLEMENT ---
     const implementResult = await deps.runImplement(baseCtx);
     if (implementResult.agentOutcome !== 'success') {
+      this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
+        index: 1,
+      });
       loop = startIteration(loop, {
-        reviewInvocationId: implementResult.invocationId,
+        reviewInvocationId: '',
         now: deps.now(),
       });
       loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
@@ -102,7 +105,7 @@ export class ImplementStepLoop {
 
       // --- FALLBACK ESCALATION ---
       const escalateForFixFailures = consecutiveFixFailures >= 2;
-      const useFallback = escalateForFixFailures && input.fixFallbackProfile !== undefined;
+      const useFallback = escalateForFixFailures && deps.fixFallbackProfile !== undefined;
       if (useFallback) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
       }
@@ -191,9 +194,10 @@ export class ImplementStepLoop {
   }
 
   private emitEscalation(input: ImplementStepLoopInput, triggerReason: string): void {
-    const toProfile = input.fixFallbackProfile as AgentProfileName;
+    const { deps } = this;
+    const toProfile = deps.fixFallbackProfile as AgentProfileName;
     this.emit(input, 'phase.fallback.escalated', 'warn', `escalating fix to ${toProfile}`, {
-      fromProfile: input.fixProfile as unknown as string,
+      fromProfile: deps.fixProfile as unknown as string,
       toProfile: toProfile as unknown as string,
       triggerReason,
       triggerOwner: 'use_case',
