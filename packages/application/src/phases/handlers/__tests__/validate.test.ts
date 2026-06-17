@@ -101,10 +101,11 @@ describe('ValidateHandler', () => {
       expect(result.outcome).toBe('failed');
       if (result.outcome === 'failed') {
         expect(result.failure.kind).toBe('validation_failed');
-        expect(result.failure.message).toContain('pnpm build');
+        expect(result.failure.message).toContain('validation command(s) failed');
         expect(result.failure.phase).toBe('validate');
         expect(result.failure.canRetry).toBe(true);
         expect(result.failure.artifacts).toContain('validate/validation-result.json');
+        expect(result.failure.artifacts).toContain('validate/0-build.stdout.log');
       }
     });
 
@@ -159,9 +160,10 @@ describe('ValidateHandler', () => {
 
       expect(result.outcome).toBe('failed');
       if (result.outcome === 'failed') {
-        expect(result.failure.message).toContain('pnpm lint');
-        expect(result.failure.message).not.toContain('pnpm build');
-        expect(result.failure.message).not.toContain('pnpm typecheck');
+        expect(result.failure.message).toContain('validation command(s) failed');
+        expect(result.failure.message).toContain('lint');
+        expect(result.failure.artifacts).toContain('validate/1-lint.stdout.log');
+        expect(result.failure.artifacts).toContain('validate/1-lint.stderr.log');
       }
     });
   });
@@ -207,7 +209,7 @@ describe('ValidateHandler', () => {
       expect(failed).toHaveLength(1);
       expect(failed[0].level).toBe('error');
       expect(failed[0].phase).toBe('validate');
-      expect(failed[0].message).toContain('validation failed');
+      expect(failed[0].message).toContain('validation command(s) failed');
     });
 
     it('does not emit phase.completed on failure', async () => {
@@ -222,6 +224,51 @@ describe('ValidateHandler', () => {
 
       const completed = events.filter((e) => e.type === 'phase.completed');
       expect(completed).toHaveLength(0);
+    });
+  });
+
+  describe('error handling', () => {
+    it('returns failed with kind unknown when commands array is empty', async () => {
+      const { runValidation } = deps('passed');
+      const { ctx } = makeCtx();
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: [],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('unknown');
+        expect(result.failure.message).toContain('no validation commands configured');
+      }
+    });
+
+    it('forwards cwd, logDir, commands, and timeoutSeconds to RunValidation', async () => {
+      const validation = new FakeValidationPort();
+      validation.result = allPassResults();
+      const runValidation = new RunValidation({
+        validation,
+        validationRunRepository: new FakeValidationRunRepository(),
+        failureRepository: new FakeFailureRepository(),
+        idFactory: () => 'vr-fwd',
+        now: () => new Date('2026-06-16T00:00:00Z'),
+      });
+      const { ctx } = makeCtx();
+
+      await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 120,
+        logDir: '/custom/log/dir',
+      }).run(ctx);
+
+      expect(validation.lastInput).toBeDefined();
+      expect(validation.lastInput!.cwd).toBe('/tmp/wt');
+      expect(validation.lastInput!.commands).toEqual(['pnpm build']);
+      expect(validation.lastInput!.timeoutSeconds).toBe(120);
+      expect(validation.lastInput!.logDir).toBe('/custom/log/dir');
     });
   });
 });
