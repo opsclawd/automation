@@ -25,7 +25,7 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   implement: 'implement',
   compound: 'compound',
   'create-pr': 'create-pr',
-  'review-fix': 'fix-review',
+  'review-fix': null,
   read_issue: null,
   validate: null,
   'pr-review-poll': null,
