@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # detect_phase: determine which orchestrator phase to resume from based on
 # sentinel files in ISSUES_DIR.  Sourced by ai-run-issue-v2 and bats tests.
+#
+# NOTE: Return values are primarily canonical phase names (read_issue,
+# plan-design, plan-write, validate, fix-validate, review-fix, review-triage,
+# compound, create-pr, done).  However, some branches return internal dispatch
+# keys rather than canonical names — specifically "fix-review" (returned when
+# review.md and review-task-manifest.json both exist).  This dispatch key is
+# consumed by ai-run-issue-v2 for internal sub-phase routing inside the
+# review-fix phase.  Callers MUST handle both canonical names and dispatch keys.
 
 detect_phase() {
   if [[ -n "${ORCHESTRATOR_PHASE:-}" ]]; then
