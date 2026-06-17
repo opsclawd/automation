@@ -12,3 +12,4 @@ export * from './fake-agent-invocation-port.js';
 export * from './fake-failure-repository.js';
 export * from './fake-pr-review-repository.js';
 export * from './fake-loop-repository.js';
+export * from './fake-step-repository.js';

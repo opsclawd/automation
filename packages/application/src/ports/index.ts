@@ -39,3 +39,4 @@ export type { EventBusPort } from './event-bus-port.js';
 export type { AgentRuntimeKind } from '@ai-sdlc/domain';
 export type { AgentUsagePort } from './agent-usage-port.js';
 export type { LoopRepositoryPort } from './loop-repository-port.js';
+export type { StepRepositoryPort } from './step-repository-port.js';
