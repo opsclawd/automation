@@ -224,6 +224,19 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
+  if (agentResult.outcome !== 'success') {
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      agentResult.outcome === 'timeout' ? 'timeout' : 'command_failed',
+      `Agent invocation [${invocationId}] failed with outcome '${agentResult.outcome}' (exit code ${agentResult.exitCode})`,
+      true,
+      'Check agent infrastructure and timeout settings, then retry.',
+    );
+    emit('phase.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
+  }
+
   // 8. Build AgentInvocation domain object
   const invocation = buildAgentInvocation(
     ctx,

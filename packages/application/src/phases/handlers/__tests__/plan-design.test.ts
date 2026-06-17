@@ -420,6 +420,48 @@ describe.each([
     }
   });
 
+  it('returns failed when agent outcome is failed (non-throwing)', async () => {
+    setupCtx();
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Test\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult({ outcome: 'failed', exitCode: 1 }));
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+      expect(result.failure.canRetry).toBe(true);
+    }
+    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+  });
+
+  it('returns failed when agent outcome is timeout', async () => {
+    setupCtx();
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'read_issue',
+      relativePath: 'issue.md',
+      contents: '# Test\n',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult({ outcome: 'timeout', exitCode: 124 }));
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('timeout');
+      expect(result.failure.canRetry).toBe(true);
+    }
+    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+  });
+
   it('returns blocked when validateAgentContract finds violations', async () => {
     setupCtx();
     await ctx.artifacts.write({
