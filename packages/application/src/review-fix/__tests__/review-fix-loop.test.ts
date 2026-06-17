@@ -419,7 +419,7 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('pass' as const) : ('pass' as const),
+          verdict: 'pass' as const,
           overridden: reviewCalls === 1 ? true : undefined,
           offendingFindings: reviewCalls === 1 ? [] : undefined,
         };
@@ -459,7 +459,7 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('pass' as const) : ('pass' as const),
+          verdict: 'pass' as const,
           overridden: reviewCalls === 1 ? true : undefined,
           offendingFindings: [],
         };
