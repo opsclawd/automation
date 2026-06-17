@@ -42,3 +42,17 @@ test-results/
 cache/
 .ai-orchestrator.local.json
 /result.json
+
+# Stray agent/orchestrator scratch that has leaked into commits before
+# (full_diff.patch #161, review-plan-task-5.md #334). See #280/#314/#405.
+# Canonical exclude list lives in scripts/lib/artifacts.sh → orchestrator_artifact_paths();
+# these patterns are belt-and-suspenders against per-task scratch leaking from worktree roots.
+/full_diff.patch
+/diff.patch
+/review-plan-task-*.md
+/quality-review-task-*.md
+/quality-review-task-*.result
+/spec-review-task-*.md
+/spec-review-task-*.result
+/fix-review-task-*.md
+/fix-review-task-*.result
