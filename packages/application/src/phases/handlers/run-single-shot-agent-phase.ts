@@ -301,6 +301,36 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
+  // Re-validate contract after extraction. extractResult may have
+  // re-invoked the agent (M4-05 rerun), whose side effects (branch
+  // change, deleted artifacts, etc.) would not have been caught by
+  // the initial validation at step 9.
+  const postExtractViolations = await validateAgentContract({
+    contract: config.agentContract,
+    invocation,
+    ports: {
+      artifacts: ctx.artifacts,
+      git: ctx.git,
+      github: ctx.github,
+    },
+    cwd: ctx.cwd,
+    expectedBranch,
+    repoFullName: ctx.repoFullName,
+  });
+
+  if (postExtractViolations.length > 0) {
+    const failure = buildFailure(
+      ctx,
+      config.phase as string,
+      'agent_contract_violation',
+      `Agent contract violations (post-extraction): ${postExtractViolations.join(', ')}`,
+      false,
+      'Review agent output and contract requirements. The agent violated its instructions during rerun.',
+    );
+    emit('phase.blocked', 'error', failure.message, { violations: postExtractViolations });
+    return { outcome: 'blocked', failure };
+  }
+
   // 11. Success
   emit('phase.completed', 'info', `${config.phase as string} completed`);
   return { outcome: 'passed' };
