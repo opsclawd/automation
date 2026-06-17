@@ -137,7 +137,7 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
-  // 4. Render prompt
+  // 3. Render prompt
   let renderedPrompt: string;
   try {
     renderedPrompt = await renderPrompt(template, {
@@ -163,7 +163,7 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
-  // 5. Write rendered prompt to artifact store
+  // 4. Write rendered prompt to artifact store
   const promptRelativePath = 'prompt.md';
   try {
     await ctx.artifacts.write({
@@ -189,7 +189,7 @@ export async function runSingleShotAgentPhase(
     path: promptRelativePath,
   });
 
-  // 6. Build AgentInvocationRequest
+  // 5. Build AgentInvocationRequest
   const request: AgentInvocationRequest = {
     profile: config.profile,
     promptPath: promptRelativePath,
@@ -201,7 +201,7 @@ export async function runSingleShotAgentPhase(
     startCommitSha,
   };
 
-  // 7. Invoke agent
+  // 6. Invoke agent
   const startedAt = ctx.now();
   const invocationId = AgentInvocationId(ctx.idFactory?.() || randomUUID());
   emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
@@ -237,7 +237,7 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
-  // 8. Build AgentInvocation domain object
+  // 7. Build AgentInvocation domain object
   const invocation = buildAgentInvocation(
     ctx,
     config,
@@ -248,7 +248,7 @@ export async function runSingleShotAgentPhase(
     invocationId,
   );
 
-  // 9. Validate contract
+  // 8. Validate contract
   const violations = await validateAgentContract({
     contract: config.agentContract,
     invocation,
@@ -275,7 +275,7 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'blocked', failure };
   }
 
-  // 10. Extract result (M4-05 single rerun handled internally)
+  // 9. Extract result (M4-05 single rerun handled internally)
   const extracted = await extractResult({
     invocation,
     ports: {
@@ -331,7 +331,7 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'blocked', failure };
   }
 
-  // 11. Success
+  // 10. Success
   emit('phase.completed', 'info', `${config.phase as string} completed`);
   return { outcome: 'passed' };
 }
