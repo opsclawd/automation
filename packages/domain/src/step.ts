@@ -1,4 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 import type { RunId, PhaseName } from './ids.js';
 
 export type StepStatus = 'pending' | 'running' | 'success' | 'failed';
@@ -14,4 +14,24 @@ export interface Step {
   status: StepStatus;
   startedAt?: Date;
   completedAt?: Date;
+}
+
+export interface CreateStepInput {
+  id: string;
+  runId: RunId;
+  phaseId: PhaseName;
+  index: number;
+  title: string;
+  now?: Date;
+}
+
+export function createStep(input: CreateStepInput): Step {
+  return {
+    id: input.id,
+    runId: input.runId,
+    phaseId: input.phaseId,
+    index: input.index,
+    title: input.title,
+    status: 'pending',
+  };
 }
