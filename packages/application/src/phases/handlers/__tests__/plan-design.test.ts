@@ -307,16 +307,19 @@ describe('runSingleShotAgentPhase error paths', () => {
     );
   });
 
-  it('throws when resolveProfile is missing', async () => {
+  it('returns failed when resolveProfile is missing', async () => {
     setupCtx({
       promptsRoot: '/p',
       startCommitSha: 'abc',
       expectedBranch: 'main',
     });
     ctx.resolveProfile = undefined as unknown as PhaseHandlerContext['resolveProfile'];
-    // The handler calls ctx.resolveProfile!('plan-design') which throws a
-    // TypeError before the helper's assertField check is reached.
-    await expect(handler.run(ctx)).rejects.toThrow('ctx.resolveProfile is not a function');
+
+    const result = await handler.run(ctx);
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('command_failed');
+    }
   });
 
   it('returns failed when loadPromptTemplate throws', async () => {

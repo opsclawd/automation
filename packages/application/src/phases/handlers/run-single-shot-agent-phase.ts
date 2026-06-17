@@ -98,8 +98,6 @@ export async function runSingleShotAgentPhase(
   const promptsRoot = assertField(ctx.promptsRoot, 'promptsRoot');
   const startCommitSha = assertField(ctx.startCommitSha, 'startCommitSha');
   const expectedBranch = assertField(ctx.expectedBranch, 'expectedBranch');
-  assertField(ctx.resolveProfile, 'resolveProfile');
-
   // 2. Emit phase.started (handlers already do this; the helper emits agent.invoking)
   emit('agent.invoking', 'info', `invoking agent for ${config.phase}`, {
     profile: config.profile,
@@ -135,7 +133,7 @@ export async function runSingleShotAgentPhase(
     const kind: Failure['kind'] =
       e instanceof TemplateError && e.message.includes('missing artifact')
         ? 'missing_artifact'
-        : 'missing_artifact';
+        : 'command_failed';
     const message = e instanceof Error ? e.message : String(e);
     const failure = buildFailure(
       ctx,
