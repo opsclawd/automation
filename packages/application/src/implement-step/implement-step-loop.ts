@@ -5,7 +5,6 @@ import {
   canIterate,
   exhaust,
   updateOpenIteration,
-  type AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -198,7 +197,7 @@ export class ImplementStepLoop {
 
   private emitEscalation(input: ImplementStepLoopInput, triggerReason: string): void {
     const { deps } = this;
-    const toProfile = deps.fixFallbackProfile as AgentProfileName;
+    const toProfile = deps.fixFallbackProfile!;
     this.emit(input, 'phase.fallback.escalated', 'warn', `escalating fix to ${toProfile}`, {
       fromProfile: deps.fixProfile as unknown as string,
       toProfile: toProfile as unknown as string,
