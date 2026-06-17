@@ -1,4 +1,4 @@
-import type { PhaseName, Failure } from '@ai-sdlc/domain';
+import type { PhaseName, Failure, AgentProfileName } from '@ai-sdlc/domain';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
@@ -17,6 +17,16 @@ export interface PhaseHandlerContext {
   agent: AgentPort;
   events: EventBusPort;
   now: () => Date;
+  /**
+   * Optional context fields for agent phases.
+   * Populated via buildPhaseHandlerContext() by the compose root.
+   * Handlers that require these should assert at run() entry.
+   */
+  promptsRoot?: string;
+  startCommitSha?: string;
+  expectedBranch?: string;
+  resolveProfile?: (phase: string) => AgentProfileName;
+  idFactory?: () => string;
 }
 
 export type PhaseOutcome = 'passed' | 'failed' | 'blocked' | 'skipped';
@@ -49,4 +59,32 @@ export function createEventEmitter(ctx: PhaseHandlerContext, phase: PhaseName): 
       metadata,
     });
   };
+}
+
+export type PhaseHandlerContextFactory = (
+  base: Omit<
+    PhaseHandlerContext,
+    'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+  >,
+  opts?: Partial<
+    Pick<
+      PhaseHandlerContext,
+      'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+    >
+  >,
+) => PhaseHandlerContext;
+
+export function buildPhaseHandlerContext(
+  base: Omit<
+    PhaseHandlerContext,
+    'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+  >,
+  opts?: Partial<
+    Pick<
+      PhaseHandlerContext,
+      'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+    >
+  >,
+): PhaseHandlerContext {
+  return { ...base, ...opts };
 }

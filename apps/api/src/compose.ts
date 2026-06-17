@@ -61,6 +61,7 @@ import {
   type ReviewStepResult,
   type FixStepResult,
   type RevalidationResult,
+  type PhaseHandlerContextFactory,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
@@ -148,6 +149,7 @@ export interface Container {
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
+  buildPhaseHandlerContext: PhaseHandlerContextFactory;
   reviewFixLoop?: ReviewFixLoop;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
@@ -1111,6 +1113,17 @@ export function composeRoot(opts: ComposeOptions): Container {
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
     buildPrReviewPoller,
     ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
+    buildPhaseHandlerContext: (base, opts) => {
+      const idFactory = () => randomUUID();
+      return {
+        ...base,
+        // Always-provided optional fields via compose root wiring:
+        ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
+        idFactory,
+        // Caller-supplied optional fields take precedence:
+        ...opts,
+      };
+    },
   };
 }
 

@@ -173,3 +173,5 @@ export type EventTailerFactory = (input: {
   drainAndStop(): Promise<void>;
   stop(): Promise<void>;
 };
+
+export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/handler.js';
