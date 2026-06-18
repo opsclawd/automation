@@ -25,7 +25,7 @@ describe('phase definitions registry', () => {
       'review-fix',
       'compound',
       'create-pr',
-      'pr-review-poll',
+      'post-pr-review',
     ]);
   });
 
@@ -129,7 +129,7 @@ describe('phase definitions registry', () => {
     });
 
     it('returns null for the last phase', () => {
-      expect(nextPhase('pr-review-poll' as PhaseName, [])).toBeNull();
+      expect(nextPhase('post-pr-review' as PhaseName, [])).toBeNull();
     });
 
     it('skips phases in the skip list', () => {
