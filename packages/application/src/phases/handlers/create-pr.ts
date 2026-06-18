@@ -47,7 +47,29 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
-    // ── Stage 1: Agent drafts pr-summary.md ──
+    // ── Stage 1: Idempotency — reuse existing PR if pr-url.txt exists ──
+    let prUrl: string | undefined;
+    try {
+      prUrl = (await ctx.artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+    } catch {
+      prUrl = undefined;
+    }
+
+    if (prUrl) {
+      emit('pr.reused', 'info', `reusing existing PR url ${prUrl}`, { url: prUrl });
+      try {
+        await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
+          remove: ['ai:in-progress'],
+          add: ['ai:pr-ready'],
+        });
+      } catch (e) {
+        emit('github.label_update_failed', 'warn', `label update failed: ${(e as Error).message}`);
+      }
+      emit('phase.completed', 'info', 'create-pr complete');
+      return { outcome: 'passed' };
+    }
+
+    // ── Stage 2: Agent drafts pr-summary.md ──
     const draft = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
       profile,
@@ -60,7 +82,7 @@ export class CreatePrHandler implements PhaseHandler {
 
     if (draft.outcome !== 'passed') return draft;
 
-    // ── Stage 2: Deterministic GitHub operations ──
+    // ── Stage 3: Deterministic GitHub operations ──
 
     // Read the summary the agent produced
     let summary: string;
@@ -80,59 +102,45 @@ export class CreatePrHandler implements PhaseHandler {
 
     const title = _firstHeadingOrLine(summary, ctx.issueNumber);
 
-    // Idempotency: if pr-url.txt already exists for this run, reuse it
-    let prUrl: string | undefined;
+    // Push the branch so gh pr create's --head ref exists on remote.
     try {
-      prUrl = (await ctx.artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
-    } catch {
-      prUrl = undefined;
+      await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch });
+    } catch (e) {
+      const msg = `failed to push branch ${this.opts.headBranch}: ${(e as Error).message}`;
+      emit('phase.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'git_failed',
+        msg,
+        true,
+        'Check git remote/auth state; resume create-pr.',
+      );
     }
 
-    if (!prUrl) {
-      // Push the branch so gh pr create's --head ref exists on remote.
-      try {
-        await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch });
-      } catch (e) {
-        const msg = `failed to push branch ${this.opts.headBranch}: ${(e as Error).message}`;
-        emit('phase.failed', 'error', msg);
-        return this._fail(
-          ctx,
-          'git_failed',
-          msg,
-          true,
-          'Check git remote/auth state; resume create-pr.',
-        );
-      }
-
-      try {
-        // TODO: GitHubPort.findOpenPrForBranch(repoFullName, headBranch) for cross-process idempotency.
-        const pr = await ctx.github.createPullRequest({
-          repoFullName: ctx.repoFullName,
-          baseBranch: this.opts.baseBranch,
-          headBranch: this.opts.headBranch,
-          title,
-          body: summary,
-        });
-        prUrl = pr.url;
-        emit('pr.created', 'info', `opened PR ${pr.number}`, { number: pr.number, url: pr.url });
-      } catch (e) {
-        const msg = `failed to create PR: ${(e as Error).message}`;
-        emit('phase.failed', 'error', msg);
-        return this._fail(
-          ctx,
-          'github_failed',
-          msg,
-          true,
-          'Check gh auth/branch state; resume create-pr.',
-        );
-      }
-    } else {
-      emit('pr.reused', 'info', `reusing existing PR url ${prUrl}`, { url: prUrl });
+    try {
+      // TODO: GitHubPort.findOpenPrForBranch(repoFullName, headBranch) for cross-process idempotency.
+      const pr = await ctx.github.createPullRequest({
+        repoFullName: ctx.repoFullName,
+        baseBranch: this.opts.baseBranch,
+        headBranch: this.opts.headBranch,
+        title,
+        body: summary,
+      });
+      prUrl = pr.url;
+      emit('pr.created', 'info', `opened PR ${pr.number}`, { number: pr.number, url: pr.url });
+    } catch (e) {
+      const msg = `failed to create PR: ${(e as Error).message}`;
+      emit('phase.failed', 'error', msg);
+      return this._fail(
+        ctx,
+        'github_failed',
+        msg,
+        true,
+        'Check gh auth/branch state; resume create-pr.',
+      );
     }
 
     // Update issue labels (non-fatal on failure)
-    // Sequenced before pr-url.txt write so label mutation is not gated
-    // by artifact storage availability.
     try {
       await ctx.github.updateIssueLabels(ctx.repoFullName, ctx.issueNumber, {
         remove: ['ai:in-progress'],

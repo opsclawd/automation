@@ -121,7 +121,7 @@ describe('CreatePrHandler', () => {
   });
 
   it('does not create a second PR when pr-url.txt already exists', async () => {
-    const { artifacts, github, ctx, events } = build();
+    const { artifacts, github, agent, ctx, events } = build();
 
     await artifacts.write({ runId: ctx.runUuid, relativePath: 'plan.md', contents: '# Plan' });
     // Pre-seed pr-url.txt from prior run attempt
@@ -139,6 +139,9 @@ describe('CreatePrHandler', () => {
     }).run(ctx);
 
     expect(res.outcome).toBe('passed');
+
+    // Agent was not invoked — we reuse the existing PR without drafting a new summary
+    expect(agent.invocations).toHaveLength(0);
 
     // No new PR created
     expect(github.createdPrInputs).toHaveLength(0);
