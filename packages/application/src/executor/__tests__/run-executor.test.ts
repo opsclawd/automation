@@ -75,6 +75,42 @@ function registerAllPassed(registry: PhaseHandlerRegistry): void {
 
 const fixedNow = new Date('2026-01-01T00:00:00Z');
 
+function contextFactoryWithStoredArtifacts(paths: string[]): () => PhaseHandlerContext {
+  const stored = paths.map((p) => ({
+    runId: 'test-uuid',
+    relativePath: p,
+    absolutePath: `/tmp/${p}`,
+    bytes: p.length,
+    createdAt: fixedNow,
+  }));
+  return () => ({
+    runId: 'test-uuid',
+    runUuid: 'test-uuid',
+    repoFullName: 'acme/widgets',
+    issueNumber: 42,
+    cwd: '/tmp/worktree',
+    artifacts: {
+      read: async () => '',
+      write: async () => ({
+        runId: 'test-uuid',
+        relativePath: '',
+        absolutePath: '',
+        bytes: 0,
+        createdAt: fixedNow,
+      }),
+      list: async () => stored,
+    },
+    github: {} as never,
+    git: {} as never,
+    agent: {} as never,
+    events: {
+      publish: vi.fn(),
+      subscribe: vi.fn().mockReturnValue(() => {}),
+    },
+    now: () => fixedNow,
+  });
+}
+
 function makeDeps(overrides?: {
   runRepository?: Partial<RunRepositoryPort>;
   failureRepository?: Partial<FailureRepositoryPort>;
@@ -619,7 +655,15 @@ describe('RunExecutor', () => {
     registerAllPassed(registry);
 
     const phaseRepo = new FakePhaseRepository();
-    const deps = makeDeps({ registry, phaseRepository: phaseRepo });
+    const deps = makeDeps({
+      registry,
+      phaseRepository: phaseRepo,
+      contextFactory: contextFactoryWithStoredArtifacts([
+        'issue.md',
+        'issue-comments.md',
+        'design.md',
+      ]),
+    });
     const executor = new RunExecutor(deps);
 
     // Simulate a run that completed read_issue and plan-design before a crash.
@@ -671,7 +715,22 @@ describe('RunExecutor', () => {
     registerAllPassed(registry);
 
     const phaseRepo = new FakePhaseRepository();
-    const deps = makeDeps({ registry, phaseRepository: phaseRepo });
+    const deps = makeDeps({
+      registry,
+      phaseRepository: phaseRepo,
+      contextFactory: contextFactoryWithStoredArtifacts([
+        'issue.md',
+        'issue-comments.md',
+        'design.md',
+        'plan.md',
+        'implementation-log.md',
+        'validation-result.json',
+        'review.md',
+        'review-fix-log.md',
+        'pr-summary.md',
+        'pr-url.txt',
+      ]),
+    });
     const executor = new RunExecutor(deps);
 
     // Simulate a run that completed phases up to create-pr, with compound

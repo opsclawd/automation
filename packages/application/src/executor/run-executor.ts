@@ -59,6 +59,23 @@ export class RunExecutor {
     const completedSet = new Set(currentRun.completedPhases);
     const previouslySkippedSet = new Set(currentRun.skippedPhases);
 
+    // When resuming with completedPhases, verify that declared outputs
+    // actually exist in the artifact store.  If they are missing (crash,
+    // manual cleanup, data corruption) we fail fast with a clear mismatch
+    // error instead of trustingly accumulating the path into
+    // presentArtifacts and letting a downstream handler hit an
+    // ArtifactNotFoundError with a confusing message.
+    let storedArtifacts: Set<string> | undefined;
+    if (completedSet.size > 0) {
+      try {
+        const ctx = this.deps.contextFactory();
+        const stored = await ctx.artifacts.list(run.uuid);
+        storedArtifacts = new Set(stored.map((a) => a.relativePath));
+      } catch {
+        // non-fatal — proceed with declared outputs only
+      }
+    }
+
     // Main phase loop — iterate in canonical order. Skipped phases are
     // recorded at their natural position so persisted phase ordering
     // remains correct even when the run fails before reaching a skipped
@@ -68,9 +85,14 @@ export class RunExecutor {
       const phaseDef = PHASE_DEFINITIONS[phaseName]!;
 
       // Phases that truly passed (were not skipped) accumulate declared
-      // outputs so downstream input gating can rely on them.
+      // outputs so downstream input gating can rely on them.  When
+      // storedArtifacts is available we verify each output against the
+      // store first; a mismatch fails the run immediately.
       if (completedSet.has(phaseName as string) && !previouslySkippedSet.has(phaseName as string)) {
         for (const output of phaseDef.outputs) {
+          if (storedArtifacts && !storedArtifacts.has(output)) {
+            return this.failOnResumeArtifactMismatch(currentRun, phaseDef, output, now(), phases);
+          }
           if (!presentArtifacts.includes(output)) {
             presentArtifacts.push(output);
           }
@@ -424,6 +446,39 @@ export class RunExecutor {
       at,
     );
     return { run, phases };
+  }
+
+  private failOnResumeArtifactMismatch(
+    currentRun: Run,
+    phaseDef: PhaseDefinition,
+    missingArtifact: string,
+    at: Date,
+    phases: PhaseRecord[],
+  ): ExecuteRunOutput {
+    const msg = `phase '${String(phaseDef.name)}' completed per DB but its output '${missingArtifact}' is missing from the artifact store`;
+    const failure: Failure = {
+      runUuid: currentRun.uuid,
+      phase: phaseDef.name as string,
+      kind: 'missing_artifact',
+      message: msg,
+      canRetry: false,
+      suggestedAction:
+        `Artifact '${missingArtifact}' is declared as an output of phase '${String(phaseDef.name)}' ` +
+        `but no longer exists in the store. Restore it from backup or reset the run to ` +
+        `re-execute the phase.`,
+      artifacts: [],
+      detectedAt: at,
+    };
+    const phase: Phase = {
+      id: this.phaseId(currentRun.uuid, phaseDef.name),
+      runUuid: currentRun.uuid,
+      name: phaseDef.name as string,
+      status: 'failed',
+      attempt: 1,
+      startedAt: at,
+      completedAt: at,
+    };
+    return this.failRun(currentRun, phaseDef, phase, failure, at, phases);
   }
 
   private failOnMissingInput(
