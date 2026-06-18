@@ -87,6 +87,10 @@ export class RunExecutor {
       }
 
       if (skipSet.has(phaseName as string)) {
+        currentRun = {
+          ...currentRun,
+          skippedPhases: [...currentRun.skippedPhases, phaseName as string],
+        };
         const phase: Phase = {
           id: this.phaseId(run.uuid, phaseName),
           runUuid: run.uuid,
@@ -97,6 +101,9 @@ export class RunExecutor {
           completedAt: now(),
         };
         this.deps.phaseRepository.insert(phase);
+        this.deps.runRepository.update(run.uuid, {
+          skippedPhases: currentRun.skippedPhases,
+        });
         phases.push({ phase: phaseName, status: 'skipped' });
         this.emit(
           run.displayId,

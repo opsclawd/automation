@@ -198,6 +198,15 @@ describe('RunExecutor', () => {
     // Skipped phases persisted via insert
     const skippedInserts = phaseRepo.inserted.filter((p) => p.status === 'skipped');
     expect(skippedInserts).toHaveLength(1);
+
+    // Run's skippedPhases includes the skipped phase
+    expect(result.run.skippedPhases).toEqual(['compound']);
+
+    // Run repository updated with skippedPhases
+    expect(deps.runRepository.update).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ skippedPhases: ['compound'] }),
+    );
   });
 
   it('preserves handler-returned skipped outcome — status is skipped, no outputs accumulated', async () => {
@@ -655,6 +664,68 @@ describe('RunExecutor', () => {
     // Handler for read_issue should never have been called (no new insert for it)
     expect(runningInserts.map((p) => p.name)).not.toContain('read_issue');
     expect(runningInserts.map((p) => p.name)).not.toContain('plan-design');
+  });
+
+  it('resumes correctly when run has both completedPhases and skippedPhases', async () => {
+    const registry = new PhaseHandlerRegistry();
+    registerAllPassed(registry);
+
+    const phaseRepo = new FakePhaseRepository();
+    const deps = makeDeps({ registry, phaseRepository: phaseRepo });
+    const executor = new RunExecutor(deps);
+
+    // Simulate a run that completed phases up to create-pr, with compound
+    // skipped.  create-pr's handler returned passed, but post-pr-review
+    // hasn't run yet — this mirrors the pause-after-resting scenario.
+    const resumedRun: Run = {
+      ...makeRun(),
+      completedPhases: [
+        'read_issue',
+        'plan-design',
+        'plan-write',
+        'implement',
+        'validate',
+        'review-fix',
+        'create-pr',
+      ],
+      skippedPhases: ['compound'],
+    };
+
+    const input: ExecuteRunInput = {
+      run: resumedRun,
+      skip: [makePhaseName('compound')],
+      presentArtifacts: [],
+    };
+
+    const result = await executor.execute(input);
+
+    // All 9 phases recorded in output
+    expect(result.phases).toHaveLength(9);
+
+    // Previously-skipped compound shows as skipped (not re-inserted)
+    const compoundPhase = result.phases.find((p) => p.phase === makePhaseName('compound'))!;
+    expect(compoundPhase.status).toBe('skipped');
+
+    // Remaining incomplete phase (post-pr-review) executed and passed
+    const remainingPhases = result.phases.filter(
+      (p) => p.phase === makePhaseName('post-pr-review'),
+    );
+    expect(remainingPhases).toHaveLength(1);
+    expect(remainingPhases[0]!.status).toBe('passed');
+
+    expect(result.run.status).toBe('passed');
+
+    // Phase repo: only post-pr-review was inserted (as 'running')
+    const runningInserts = phaseRepo.inserted.filter((p) => p.status === 'running');
+    expect(runningInserts).toHaveLength(1);
+    expect(runningInserts[0]!.name).toBe('post-pr-review');
+
+    // Skipped phases were NOT re-inserted via the skipSet branch
+    const skippedInserts = phaseRepo.inserted.filter((p) => p.status === 'skipped');
+    expect(skippedInserts).toHaveLength(0);
+
+    // The previously-skipped phase appears in final run's skippedPhases
+    expect(result.run.skippedPhases).toEqual(['compound']);
   });
 
   it('honours cancellation by checking before the final passRun', async () => {
