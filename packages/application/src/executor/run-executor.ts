@@ -202,6 +202,7 @@ export class RunExecutor {
     this.deps.failureRepository.insert(failure);
     this.deps.runRepository.update(run.uuid, {
       status: 'failed',
+      currentPhase: null,
       completedAt: at,
       failureReason: failure.message,
     });
@@ -264,7 +265,7 @@ export class RunExecutor {
     this.emit(
       run.displayId,
       run.uuid,
-      phaseDef.name as string,
+      undefined,
       'warn',
       'run.blocked',
       `run blocked at phase '${String(phaseDef.name)}'`,
