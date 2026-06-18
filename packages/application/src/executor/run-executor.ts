@@ -151,8 +151,7 @@ export class RunExecutor {
       }
 
       switch (result.outcome) {
-        case 'passed':
-        case 'skipped': {
+        case 'passed': {
           currentRun = completePhase(currentRun, phaseDef.name as string);
           phase.status = 'passed';
           phase.completedAt = now();
@@ -182,6 +181,34 @@ export class RunExecutor {
             'info',
             'phase.completed',
             `phase '${String(phaseDef.name)}' completed`,
+            now(),
+          );
+          break;
+        }
+        case 'skipped': {
+          currentRun = completePhase(currentRun, phaseDef.name as string);
+          phase.status = 'skipped';
+          phase.completedAt = now();
+          this.deps.phaseRepository.update(phase);
+          this.deps.runRepository.update(run.uuid, {
+            currentPhase: null,
+            completedPhases: currentRun.completedPhases,
+          });
+          // Do NOT accumulate declared outputs — the handler chose not to run
+          const stored = await ctx.artifacts.list(run.uuid);
+          for (const a of stored) {
+            if (!presentArtifacts.includes(a.relativePath)) {
+              presentArtifacts.push(a.relativePath);
+            }
+          }
+          phases.push({ phase: phaseDef.name, status: 'skipped' });
+          this.emit(
+            run.displayId,
+            run.uuid,
+            phaseDef.name as string,
+            'info',
+            'phase.skipped',
+            `phase '${String(phaseDef.name)}' skipped by handler`,
             now(),
           );
           break;

@@ -200,6 +200,55 @@ describe('RunExecutor', () => {
     expect(skippedInserts).toHaveLength(1);
   });
 
+  it('preserves handler-returned skipped outcome — status is skipped, no outputs accumulated', async () => {
+    const registry = new PhaseHandlerRegistry();
+    registry.register(makeStubHandler('read_issue'));
+    registry.register(makeStubHandler('plan-design', 'skipped'));
+    registry.register(makeStubHandler('plan-write'));
+
+    const phaseRepo = new FakePhaseRepository();
+    const deps = makeDeps({ registry, phaseRepository: phaseRepo });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const input: ExecuteRunInput = {
+      run,
+      skip: [],
+      presentArtifacts: [],
+    };
+    const result = await executor.execute(input);
+
+    // read_issue passes, plan-design's handler returned skipped, plan-write's
+    // input gate fails because design.md was never accumulated as present
+    expect(result.phases).toHaveLength(3);
+    expect(result.phases[0]!.status).toBe('passed');
+    expect(result.phases[0]!.phase).toBe(makePhaseName('read_issue'));
+    expect(result.phases[1]!.status).toBe('skipped');
+    expect(result.phases[1]!.phase).toBe(makePhaseName('plan-design'));
+    // plan-write is recorded as failed because its required input (design.md)
+    // was never accumulated — the skipped handler did not produce it
+    expect(result.phases[2]!.status).toBe('failed');
+    expect(result.phases[2]!.phase).toBe(makePhaseName('plan-write'));
+
+    // Skipped phase persisted via update (started as running, then updated to skipped)
+    const skippedUpdates = phaseRepo.updated.filter((p) => p.status === 'skipped');
+    expect(skippedUpdates).toHaveLength(1);
+    expect(skippedUpdates[0]!.name).toBe('plan-design');
+
+    // Event published for phase.skipped (not phase.completed)
+    expect(deps.events.publish).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({
+        type: 'phase.skipped',
+        phase: 'plan-design',
+      }),
+    );
+
+    // The run fails because of the missing_artifact on plan-write
+    expect(result.run.status).toBe('failed');
+    expect(result.run.failureReason).toContain("phase 'plan-write'");
+  });
+
   it('stops the phase loop on resting — no subsequent phases, phase status preserved, run not passed', async () => {
     const registry = new PhaseHandlerRegistry();
     registry.register(makeStubHandler('read_issue', 'resting'));
