@@ -68,14 +68,14 @@ export class PostPrReviewHandler implements PhaseHandler {
         return { outcome: 'passed' };
 
       case 'max_polls':
-        this.opts.setRunStatus('failed');
-        this._emitRun(ctx, 'run.failed', 'error', 'max poll attempts exceeded', {
+        this.opts.setRunStatus('waiting');
+        this._emitRun(ctx, 'run.ready', 'info', 'max poll attempts reached — run waiting', {
           signal: 'max_polls',
         });
-        emit('phase.failed', 'error', 'max poll attempts exceeded — phase failed', {
+        emit('phase.completed', 'info', 'max poll attempts reached — phase complete', {
           signal: 'max_polls',
         });
-        return this._fail(ctx, 'max poll attempts exceeded', 'max_polls');
+        return { outcome: 'passed' };
 
       case 'blocked':
         this.opts.setRunStatus('blocked');

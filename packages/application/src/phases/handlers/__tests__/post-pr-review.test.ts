@@ -109,7 +109,7 @@ describe('PostPrReviewHandler', () => {
     expect(events.some((e) => e.type === 'run.cancelled')).toBe(true);
   });
 
-  it('fails the Run on max_polls with run.failed event and failure', async () => {
+  it('sets the Run to READY (waiting) when poll budget exhausted', async () => {
     const setRunStatus = vi.fn();
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'max_polls' as const }),
@@ -117,14 +117,9 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
-    expect(res.outcome).toBe('failed');
-    if (res.outcome === 'failed') {
-      expect(res.failure.kind).toBe('polling_failed');
-      expect(res.failure.message).toContain('max poll attempts exceeded');
-      expect(res.failure.phase).toBe('post-pr-review');
-    }
-    expect(setRunStatus).toHaveBeenCalledWith('failed');
-    expect(events.some((e) => e.type === 'run.failed')).toBe(true);
+    expect(res.outcome).toBe('passed');
+    expect(setRunStatus).toHaveBeenCalledWith('waiting');
+    expect(events.some((e) => e.type === 'run.ready')).toBe(true);
   });
 
   it('blocks the Run on blocked signal with run.blocked event and failure', async () => {
