@@ -113,8 +113,9 @@ describe('CreatePrHandler', () => {
     expect(created).toHaveLength(1);
     expect(created[0]!.level).toBe('info');
 
-    // runSingleShotAgentPhase emits its own phase.completed, then the handler
-    // emits another after GitHub operations complete — both are valid.
+    // The handler emits phase.completed after all GitHub operations complete.
+    // runSingleShotAgentPhase skips its own completion when skipResultExtraction
+    // is set, so the timestamp and duration reflect the full create-pr work.
     const completed = events.filter((e) => e.type === 'phase.completed');
     expect(completed.length).toBeGreaterThanOrEqual(1);
   });

@@ -361,6 +361,12 @@ export async function runSingleShotAgentPhase(
   }
 
   // 10. Success
-  emit('phase.completed', 'info', `${config.phase as string} completed`);
+  // When skipResultExtraction is set, the parent handler performs additional
+  // deterministic work (e.g. GitHub operations) before completion. Skip the
+  // phase.completed emit so the parent handler's own emit captures the true
+  // completion time including those side effects.
+  if (!config.skipResultExtraction) {
+    emit('phase.completed', 'info', `${config.phase as string} completed`);
+  }
   return { outcome: 'passed' };
 }
