@@ -22,6 +22,7 @@ export interface RunRepositoryUpdatePatch {
   status?: RunStatus;
   currentPhase?: string | null;
   completedPhases?: string[];
+  skippedPhases?: string[];
   completedAt?: Date;
   failureReason?: string;
   exitCode?: number;

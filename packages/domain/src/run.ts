@@ -18,6 +18,7 @@ export interface Run {
   status: RunStatus;
   currentPhase?: string;
   completedPhases: string[];
+  skippedPhases: string[];
   startedAt: Date;
   completedAt?: Date;
   failureReason?: string;
@@ -46,6 +47,7 @@ export function createRun(input: CreateRunInput): Run {
     type: input.type ?? 'issue_to_pr',
     status: 'running',
     completedPhases: [],
+    skippedPhases: [],
     startedAt: input.startedAt,
   };
 }
@@ -79,6 +81,27 @@ export function completePhase(run: Run, phase: string): Run {
   }
   const { currentPhase, ...rest } = run;
   return { ...rest, completedPhases: [...run.completedPhases, currentPhase] };
+}
+
+export function skipPhase(run: Run, phase: string): Run {
+  if (run.currentPhase === undefined) {
+    throw new RunStateError(
+      `cannot skip phase '${phase}': run ${run.displayId} has no currentPhase`,
+    );
+  }
+  if (run.currentPhase !== phase) {
+    throw new RunStateError(
+      `cannot skip phase '${phase}': run ${run.displayId} is on '${run.currentPhase}'`,
+    );
+  }
+  if (run.completedPhases.includes(phase) || run.skippedPhases.includes(phase)) {
+    throw new RunStateError(
+      `cannot skip phase '${phase}': run ${run.displayId} already recorded phase '${phase}'`,
+    );
+  }
+  const { currentPhase: _cp, ...rest } = run;
+  void _cp;
+  return { ...rest, skippedPhases: [...run.skippedPhases, phase] };
 }
 
 export function passRun(run: Run, at: Date): Run {

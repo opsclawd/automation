@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { createRun, startPhase, completePhase, passRun, failRun, RunStateError } from '../run.js';
+import {
+  createRun,
+  startPhase,
+  completePhase,
+  skipPhase,
+  passRun,
+  failRun,
+  RunStateError,
+} from '../run.js';
 
 const base = {
   uuid: '11111111-1111-1111-1111-111111111111',
@@ -38,6 +46,34 @@ describe('Run state machine', () => {
   it('completePhase throws when no phase is in progress', () => {
     const r = createRun(base);
     expect(() => completePhase(r, 'read_issue')).toThrow(RunStateError);
+  });
+
+  it('skipPhase clears currentPhase and appends to skippedPhases', () => {
+    let r = createRun(base);
+    r = startPhase(r, 'read_issue');
+    r = skipPhase(r, 'read_issue');
+    expect(r.skippedPhases).toEqual(['read_issue']);
+    expect(r.completedPhases).toEqual([]);
+    expect(r.currentPhase).toBeUndefined();
+  });
+
+  it('skipPhase requires the matching phase name', () => {
+    let r = createRun(base);
+    r = startPhase(r, 'read_issue');
+    expect(() => skipPhase(r, 'other_phase')).toThrow(RunStateError);
+  });
+
+  it('skipPhase throws when no phase is in progress', () => {
+    const r = createRun(base);
+    expect(() => skipPhase(r, 'read_issue')).toThrow(RunStateError);
+  });
+
+  it('skipPhase does not add to completedPhases', () => {
+    let r = createRun(base);
+    r = startPhase(r, 'read_issue');
+    r = skipPhase(r, 'read_issue');
+    expect(r.completedPhases).toEqual([]);
+    expect(r.skippedPhases).toEqual(['read_issue']);
   });
 
   it('startPhase throws when a phase is already in progress', () => {

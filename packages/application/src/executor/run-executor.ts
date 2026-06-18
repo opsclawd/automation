@@ -1,5 +1,5 @@
 import type { Run, Phase, PhaseName, PhaseStatus, Failure } from '@ai-sdlc/domain';
-import { startPhase, completePhase, failRun, passRun, blockRun } from '@ai-sdlc/domain';
+import { startPhase, completePhase, skipPhase, failRun, passRun, blockRun } from '@ai-sdlc/domain';
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
@@ -57,6 +57,7 @@ export class RunExecutor {
 
     const skipSet: Set<string> = new Set(skip.map((s) => s as string));
     const completedSet = new Set(currentRun.completedPhases);
+    const previouslySkippedSet = new Set(currentRun.skippedPhases);
 
     // Main phase loop — iterate in canonical order. Skipped phases are
     // recorded at their natural position so persisted phase ordering
@@ -66,13 +67,22 @@ export class RunExecutor {
     for (const phaseName of CANONICAL_PHASE_ORDER) {
       const phaseDef = PHASE_DEFINITIONS[phaseName]!;
 
-      if (completedSet.has(phaseName as string)) {
+      // Phases that truly passed (were not skipped) accumulate declared
+      // outputs so downstream input gating can rely on them.
+      if (completedSet.has(phaseName as string) && !previouslySkippedSet.has(phaseName as string)) {
         for (const output of phaseDef.outputs) {
           if (!presentArtifacts.includes(output)) {
             presentArtifacts.push(output);
           }
         }
         phases.push({ phase: phaseName, status: 'passed' });
+        continue;
+      }
+
+      // Previously skipped phases are skipped again on resume but do NOT
+      // accumulate declared outputs — the handler chose not to produce them.
+      if (previouslySkippedSet.has(phaseName as string)) {
+        phases.push({ phase: phaseName, status: 'skipped' });
         continue;
       }
 
@@ -213,11 +223,11 @@ export class RunExecutor {
           break;
         }
         case 'skipped': {
-          currentRun = completePhase(currentRun, phaseDef.name as string);
+          currentRun = skipPhase(currentRun, phaseDef.name as string);
           phase.status = 'skipped';
           phase.completedAt = now();
-          // Refresh artifact presence BEFORE persisting phase completion.
-          // Non-fatal on failure since the handler chose not to run.
+          // Refresh actual artifact presence from the artifact store —
+          // do NOT accumulate declared outputs (the handler chose not to run).
           try {
             const stored = await ctx.artifacts.list(run.uuid);
             for (const a of stored) {
@@ -231,7 +241,7 @@ export class RunExecutor {
           this.deps.phaseRepository.update(phase);
           this.deps.runRepository.update(run.uuid, {
             currentPhase: null,
-            completedPhases: currentRun.completedPhases,
+            skippedPhases: currentRun.skippedPhases,
           });
           // Do NOT accumulate declared outputs — the handler chose not to run
           phases.push({ phase: phaseDef.name, status: 'skipped' });
