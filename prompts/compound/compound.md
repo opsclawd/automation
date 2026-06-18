@@ -2,7 +2,7 @@
 
 ## CONTEXT
 Plan: {{artifact:plan.md}}
-{{#if artifact:design.md}}Design: {{artifact:design.md}}{{/if}}
+Design: {{artifact:design.md}}
 
 ## TASK
 Review the implementation and capture learnings.
