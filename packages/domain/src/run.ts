@@ -8,12 +8,7 @@ export type RunStatus =
   | 'blocked'
   | 'needs_human_review';
 
-const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set([
-  'passed',
-  'failed',
-  'cancelled',
-  'blocked',
-]);
+const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(['passed', 'failed', 'cancelled']);
 
 export interface Run {
   uuid: string;
