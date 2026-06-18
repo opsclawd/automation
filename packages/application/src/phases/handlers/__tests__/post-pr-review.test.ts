@@ -62,7 +62,7 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
-    expect(res.outcome).toBe('passed');
+    expect(res.outcome).toBe('resting');
     expect(setRunStatus).toHaveBeenCalledWith('waiting');
     expect(events.some((e) => e.type === 'run.ready')).toBe(true);
   });
@@ -75,7 +75,7 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
-    expect(res.outcome).toBe('passed');
+    expect(res.outcome).toBe('resting');
     expect(setRunStatus).not.toHaveBeenCalled();
     expect(events.some((e) => e.type === 'post-pr-review.poll.pending')).toBe(true);
     expect(events.filter((e) => e.type === 'post-pr-review.poll.pending')[0].phase).toBe(
@@ -91,7 +91,7 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
-    expect(res.outcome).toBe('passed');
+    expect(res.outcome).toBe('resting');
     expect(setRunStatus).toHaveBeenCalledWith('cancelled');
     expect(events.some((e) => e.type === 'run.cancelled_timeout')).toBe(true);
   });
@@ -104,7 +104,7 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
-    expect(res.outcome).toBe('passed');
+    expect(res.outcome).toBe('resting');
     expect(setRunStatus).toHaveBeenCalledWith('cancelled');
     expect(events.some((e) => e.type === 'run.cancelled')).toBe(true);
   });
@@ -117,7 +117,7 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
-    expect(res.outcome).toBe('passed');
+    expect(res.outcome).toBe('resting');
     expect(setRunStatus).toHaveBeenCalledWith('waiting');
     expect(events.some((e) => e.type === 'run.ready')).toBe(true);
   });

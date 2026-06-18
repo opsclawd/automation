@@ -42,40 +42,40 @@ export class PostPrReviewHandler implements PhaseHandler {
         this._emitRun(ctx, 'run.ready', 'info', 'all reviews addressed — awaiting merge', {
           signal: 'all_resolved',
         });
-        emit('phase.completed', 'info', 'all reviews resolved — phase complete', {
+        emit('phase.completed', 'info', 'all reviews resolved — phase resting', {
           signal: 'all_resolved',
         });
-        return { outcome: 'passed' };
+        return { outcome: 'resting' };
 
       case 'pending':
         emit('post-pr-review.poll.pending', 'info', 'reviews still pending', { signal: 'pending' });
-        return { outcome: 'passed' };
+        return { outcome: 'resting' };
 
       case 'timed_out':
         this.opts.setRunStatus('cancelled');
         this._emitRun(ctx, 'run.cancelled_timeout', 'warn', 'ready timeout exceeded', {
           signal: 'timed_out',
         });
-        emit('phase.completed', 'info', 'timeout — phase complete', { signal: 'timed_out' });
-        return { outcome: 'passed' };
+        emit('phase.completed', 'info', 'timeout — phase resting', { signal: 'timed_out' });
+        return { outcome: 'resting' };
 
       case 'cancelled':
         this.opts.setRunStatus('cancelled');
         this._emitRun(ctx, 'run.cancelled', 'info', 'PR review cancelled', { signal: 'cancelled' });
-        emit('phase.completed', 'info', 'PR review cancelled — phase complete', {
+        emit('phase.completed', 'info', 'PR review cancelled — phase resting', {
           signal: 'cancelled',
         });
-        return { outcome: 'passed' };
+        return { outcome: 'resting' };
 
       case 'max_polls':
         this.opts.setRunStatus('waiting');
         this._emitRun(ctx, 'run.ready', 'info', 'max poll attempts reached — run waiting', {
           signal: 'max_polls',
         });
-        emit('phase.completed', 'info', 'max poll attempts reached — phase complete', {
+        emit('phase.completed', 'info', 'max poll attempts reached — phase resting', {
           signal: 'max_polls',
         });
-        return { outcome: 'passed' };
+        return { outcome: 'resting' };
 
       case 'blocked':
         this.opts.setRunStatus('blocked');
