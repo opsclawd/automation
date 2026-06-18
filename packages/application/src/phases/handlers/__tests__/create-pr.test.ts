@@ -176,4 +176,160 @@ describe('CreatePrHandler', () => {
       remove: ['ai:in-progress'],
     });
   });
+
+  it('returns agent_contract_violation when pr-summary.md is missing', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+    const agent = new FakeAgentPort({
+      'opencode-frontier': [
+        (req) => {
+          // Write result.json but NOT pr-summary.md — contract violation
+          void artifacts.write({
+            runId: req.runId,
+            relativePath: 'result.json',
+            contents: JSON.stringify({ result: 'ready', summary: 'pr drafted' }),
+          });
+          return successResult();
+        },
+      ],
+    });
+    const events: OrchestratorEvent[] = [];
+    const ctx = {
+      runId: 'run-1',
+      runUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      repoFullName: 'acme/widgets',
+      issueNumber: 7,
+      cwd: '/tmp/wt',
+      artifacts,
+      github,
+      git: new FakeGitPort(),
+      agent,
+      events: {
+        publish: (_u: string, e: OrchestratorEvent) => events.push(e),
+        subscribe: () => () => {},
+      },
+      now: () => new Date('2026-06-16T00:00:00Z'),
+      promptsRoot: '/tmp/prompts',
+      startCommitSha: 'abc123',
+      expectedBranch: 'feat/issue-7',
+      resolveProfile: () => 'opencode-frontier',
+      idFactory: () => 'inv-1',
+    } as unknown as PhaseHandlerContext;
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan',
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'ready', summary: 'pr drafted' }),
+    });
+
+    const res = await new CreatePrHandler({
+      baseBranch: 'main',
+      headBranch: 'feat/issue-7',
+      template: TEMPLATE,
+    }).run(ctx);
+
+    // runSingleShotAgentPhase catches the missing artifact as 'blocked' with 'agent_contract_violation'
+    expect(res.outcome).toBe('blocked');
+    if (res.outcome === 'blocked') {
+      expect(res.failure.kind).toBe('agent_contract_violation');
+    }
+
+    // No PR was created
+    expect(github.createdPrInputs).toHaveLength(0);
+
+    // No pr-url.txt written
+    await expect(artifacts.read(ctx.runUuid, 'pr-url.txt')).rejects.toThrow();
+  });
+
+  it('returns github_failed when createPullRequest throws', async () => {
+    const artifacts = new FakeArtifactStore();
+    const github = new FakeGitHubPort();
+
+    // Override createPullRequest to throw
+    github.createPullRequest = () => Promise.reject(new Error('422 Unprocessable Entity'));
+
+    const agent = new FakeAgentPort({
+      'opencode-frontier': [
+        (req) => {
+          void artifacts.write({
+            runId: req.runId,
+            relativePath: 'pr-summary.md',
+            contents: '# Fix issue #7\n\nThis PR resolves the problem.',
+          });
+          void artifacts.write({
+            runId: req.runId,
+            relativePath: 'result.json',
+            contents: JSON.stringify({
+              result: 'created',
+              prNumber: 1,
+              prUrl: 'https://example/pr/1',
+            }),
+          });
+          return successResult();
+        },
+      ],
+    });
+    const events: OrchestratorEvent[] = [];
+    const ctx = {
+      runId: 'run-1',
+      runUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      repoFullName: 'acme/widgets',
+      issueNumber: 7,
+      cwd: '/tmp/wt',
+      artifacts,
+      github,
+      git: new FakeGitPort(),
+      agent,
+      events: {
+        publish: (_u: string, e: OrchestratorEvent) => events.push(e),
+        subscribe: () => () => {},
+      },
+      now: () => new Date('2026-06-16T00:00:00Z'),
+      promptsRoot: '/tmp/prompts',
+      startCommitSha: 'abc123',
+      expectedBranch: 'feat/issue-7',
+      resolveProfile: () => 'opencode-frontier',
+      idFactory: () => 'inv-1',
+    } as unknown as PhaseHandlerContext;
+
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan',
+    });
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'created',
+        prNumber: 1,
+        prUrl: 'https://example/pr/1',
+      }),
+    });
+
+    const res = await new CreatePrHandler({
+      baseBranch: 'main',
+      headBranch: 'feat/issue-7',
+      template: TEMPLATE,
+    }).run(ctx);
+
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('github_failed');
+      expect(res.failure.message).toContain('422 Unprocessable Entity');
+      expect(res.failure.canRetry).toBe(true);
+    }
+
+    // No pr-url.txt written
+    await expect(artifacts.read(ctx.runUuid, 'pr-url.txt')).rejects.toThrow();
+
+    // failed event emitted
+    const failedEvents = events.filter((e) => e.type === 'phase.failed');
+    expect(failedEvents).toHaveLength(1);
+  });
 });
