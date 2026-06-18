@@ -17,8 +17,14 @@ export interface SingleShotConfig {
   phase: PhaseName;
   profile: AgentProfileName;
   step: string;
+  /** Injected prompt template (tests). When provided, skips loadPromptTemplate. */
+  template?: string;
   vars: Record<string, string>;
   agentContract: AgentContract;
+  /** Skip result extraction for phases where the agent drafts artifacts without
+   *  producing a result.json (e.g. create-pr, where the result values like
+   *  prNumber/prUrl are only known after the handler's deterministic steps). */
+  skipResultExtraction?: boolean;
 }
 
 function assertField<T>(value: T | undefined, name: string): T {
@@ -98,11 +104,12 @@ export async function runSingleShotAgentPhase(
   const emit: EventEmitter = createEventEmitter(ctx, config.phase);
 
   // 1. Assert required optional context fields
-  let promptsRoot: string;
+  let promptsRoot: string | undefined;
   let startCommitSha: string;
   let expectedBranch: string;
   try {
-    promptsRoot = assertField(ctx.promptsRoot, 'promptsRoot');
+    promptsRoot =
+      config.template === undefined ? assertField(ctx.promptsRoot, 'promptsRoot') : undefined;
     startCommitSha = assertField(ctx.startCommitSha, 'startCommitSha');
     expectedBranch = assertField(ctx.expectedBranch, 'expectedBranch');
   } catch (e) {
@@ -120,21 +127,27 @@ export async function runSingleShotAgentPhase(
   }
   // 2. Load prompt template
   let template: string;
-  try {
-    template = loadPromptTemplate(config.phase as string, config.step, { promptsRoot });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    const isMissing = e instanceof TemplateNotFoundError;
-    const failure = buildFailure(
-      ctx,
-      config.phase as string,
-      isMissing ? 'missing_artifact' : 'command_failed',
-      `Failed to load prompt template: ${message}`,
-      !isMissing,
-      'Ensure the prompt template file exists at <promptsRoot>/<phase>/<step>.md.',
-    );
-    emit('phase.failed', 'error', failure.message);
-    return { outcome: 'failed', failure };
+  if (config.template !== undefined) {
+    template = config.template;
+  } else {
+    try {
+      template = loadPromptTemplate(config.phase as string, config.step, {
+        promptsRoot: promptsRoot!,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const isMissing = e instanceof TemplateNotFoundError;
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        isMissing ? 'missing_artifact' : 'command_failed',
+        `Failed to load prompt template: ${message}`,
+        !isMissing,
+        'Ensure the prompt template file exists at <promptsRoot>/<phase>/<step>.md.',
+      );
+      emit('phase.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
   }
 
   // 3. Render prompt
@@ -276,74 +289,84 @@ export async function runSingleShotAgentPhase(
   }
 
   // 9. Extract result (M4-05 single rerun handled internally)
-  const extracted = await extractResult({
-    invocation,
-    ports: {
-      artifacts: ctx.artifacts,
-      agent: ctx.agent,
-    },
-    rerunContext: {
+  //    Skipped for phases where the agent produces draft artifacts only,
+  //    and the result values are determined by handler-level operations.
+  if (!config.skipResultExtraction) {
+    const extracted = await extractResult({
+      invocation,
+      ports: {
+        artifacts: ctx.artifacts,
+        agent: ctx.agent,
+      },
+      rerunContext: {
+        cwd: ctx.cwd,
+        repoId: ctx.repoFullName,
+      },
+    });
+
+    if (!extracted.ok) {
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'invalid_result',
+        `Result extraction failed: ${extracted.detail}`,
+        false,
+        'Review the agent output and result schema. The agent produced an invalid result.',
+      );
+      emit('phase.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
+
+    // If extractResult performed a rerun, forward the rerun's endCommitSha
+    // and resultJsonPath into the invocation so post-extraction validation
+    // checks the rerun's side effects, not the original run's stale data.
+    if (extracted.rerunResult) {
+      if (extracted.rerunResult.endCommitSha) {
+        invocation = { ...invocation, endCommitSha: extracted.rerunResult.endCommitSha };
+      }
+      if (extracted.rerunResult.resultJsonPath) {
+        invocation = { ...invocation, resultJsonPath: extracted.rerunResult.resultJsonPath };
+      }
+    }
+
+    // Re-validate contract after extraction. extractResult may have
+    // re-invoked the agent (M4-05 rerun), whose side effects (branch
+    // change, deleted artifacts, etc.) would not have been caught by
+    // the initial validation at step 8.
+    const postExtractViolations = await validateAgentContract({
+      contract: config.agentContract,
+      invocation,
+      ports: {
+        artifacts: ctx.artifacts,
+        git: ctx.git,
+        github: ctx.github,
+      },
       cwd: ctx.cwd,
-      repoId: ctx.repoFullName,
-    },
-  });
+      expectedBranch,
+      repoFullName: ctx.repoFullName,
+    });
 
-  if (!extracted.ok) {
-    const failure = buildFailure(
-      ctx,
-      config.phase as string,
-      'invalid_result',
-      `Result extraction failed: ${extracted.detail}`,
-      false,
-      'Review the agent output and result schema. The agent produced an invalid result.',
-    );
-    emit('phase.failed', 'error', failure.message);
-    return { outcome: 'failed', failure };
-  }
-
-  // If extractResult performed a rerun, forward the rerun's endCommitSha
-  // and resultJsonPath into the invocation so post-extraction validation
-  // checks the rerun's side effects, not the original run's stale data.
-  if (extracted.rerunResult) {
-    if (extracted.rerunResult.endCommitSha) {
-      invocation = { ...invocation, endCommitSha: extracted.rerunResult.endCommitSha };
+    if (postExtractViolations.length > 0) {
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        'agent_contract_violation',
+        `Agent contract violations (post-extraction): ${postExtractViolations.join(', ')}`,
+        false,
+        'Review agent output and contract requirements. The agent violated its instructions during rerun.',
+      );
+      emit('phase.blocked', 'error', failure.message, { violations: postExtractViolations });
+      return { outcome: 'blocked', failure };
     }
-    if (extracted.rerunResult.resultJsonPath) {
-      invocation = { ...invocation, resultJsonPath: extracted.rerunResult.resultJsonPath };
-    }
-  }
-
-  // Re-validate contract after extraction. extractResult may have
-  // re-invoked the agent (M4-05 rerun), whose side effects (branch
-  // change, deleted artifacts, etc.) would not have been caught by
-  // the initial validation at step 8.
-  const postExtractViolations = await validateAgentContract({
-    contract: config.agentContract,
-    invocation,
-    ports: {
-      artifacts: ctx.artifacts,
-      git: ctx.git,
-      github: ctx.github,
-    },
-    cwd: ctx.cwd,
-    expectedBranch,
-    repoFullName: ctx.repoFullName,
-  });
-
-  if (postExtractViolations.length > 0) {
-    const failure = buildFailure(
-      ctx,
-      config.phase as string,
-      'agent_contract_violation',
-      `Agent contract violations (post-extraction): ${postExtractViolations.join(', ')}`,
-      false,
-      'Review agent output and contract requirements. The agent violated its instructions during rerun.',
-    );
-    emit('phase.blocked', 'error', failure.message, { violations: postExtractViolations });
-    return { outcome: 'blocked', failure };
   }
 
   // 10. Success
-  emit('phase.completed', 'info', `${config.phase as string} completed`);
+  // When skipResultExtraction is set, the parent handler performs additional
+  // deterministic work (e.g. GitHub operations) before completion. Skip the
+  // phase.completed emit so the parent handler's own emit captures the true
+  // completion time including those side effects.
+  if (!config.skipResultExtraction) {
+    emit('phase.completed', 'info', `${config.phase as string} completed`);
+  }
   return { outcome: 'passed' };
 }
