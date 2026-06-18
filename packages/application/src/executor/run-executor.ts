@@ -70,7 +70,7 @@ export class RunExecutor {
         'info',
         'phase.skipped',
         `phase '${String(phaseName)}' skipped`,
-        now,
+        now(),
       );
     }
 
@@ -83,7 +83,7 @@ export class RunExecutor {
         assertInputsAvailable(phaseDef, presentArtifacts);
       } catch (e) {
         if (e instanceof MissingRequiredInputError) {
-          return this.failOnMissingInput(currentRun, phaseDef, e, now, phases);
+          return this.failOnMissingInput(currentRun, phaseDef, e, now(), phases);
         }
         throw e;
       }
@@ -108,7 +108,7 @@ export class RunExecutor {
         'info',
         'phase.started',
         `starting phase '${String(phaseDef.name)}'`,
-        now,
+        now(),
       );
 
       // Run handler
@@ -135,15 +135,15 @@ export class RunExecutor {
             'info',
             'phase.completed',
             `phase '${String(phaseDef.name)}' completed`,
-            now,
+            now(),
           );
           break;
         }
         case 'failed': {
-          return this.failRun(currentRun, phaseDef, phase, result.failure, now, phases);
+          return this.failRun(currentRun, phaseDef, phase, result.failure, now(), phases);
         }
         case 'blocked': {
-          return this.blockRun(currentRun, phaseDef, phase, result.failure, now, phases);
+          return this.blockRun(currentRun, phaseDef, phase, result.failure, now(), phases);
         }
       }
     }
@@ -158,7 +158,7 @@ export class RunExecutor {
       'info',
       'run.completed',
       'all phases completed successfully',
-      now,
+      now(),
     );
     return { run: finalRun, phases };
   }
@@ -230,7 +230,9 @@ export class RunExecutor {
       `run blocked at phase '${String(phaseDef.name)}'`,
       at,
     );
-    return { run: { ...currentRun, currentPhase: undefined, status: 'blocked' }, phases };
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { currentPhase, ...rest } = currentRun;
+    return { run: { ...rest, status: 'blocked' }, phases };
   }
 
   private failOnMissingInput(
@@ -273,7 +275,7 @@ export class RunExecutor {
     level: 'info' | 'warn' | 'error',
     type: string,
     message: string,
-    now: () => Date,
+    now: Date,
   ): void {
     this.deps.events.publish(runUuid, {
       runId,
@@ -281,7 +283,7 @@ export class RunExecutor {
       level,
       type,
       message,
-      timestamp: now().toISOString(),
+      timestamp: now.toISOString(),
       metadata: {},
     });
   }
