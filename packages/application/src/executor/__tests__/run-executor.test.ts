@@ -225,6 +225,7 @@ describe('RunExecutor', () => {
     // Run is NOT passed — it retains its pre-passRun status
     expect(result.run.status).not.toBe('passed');
     expect(result.run.currentPhase).toBeUndefined();
+    expect(result.run.completedPhases).toEqual([]);
 
     // Event reflects resting, not completion
     expect(deps.events.publish).toHaveBeenCalledWith(

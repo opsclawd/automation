@@ -168,13 +168,13 @@ export class RunExecutor {
           break;
         }
         case 'resting': {
-          currentRun = completePhase(currentRun, phaseDef.name as string);
           phase.status = 'resting';
           phase.completedAt = now();
           this.deps.phaseRepository.update(phase);
+          const restingRun = { ...currentRun };
+          delete restingRun.currentPhase;
           this.deps.runRepository.update(run.uuid, {
             currentPhase: null,
-            completedPhases: currentRun.completedPhases,
           });
           phases.push({ phase: phaseDef.name, status: 'resting' });
           this.emit(
@@ -186,7 +186,7 @@ export class RunExecutor {
             `phase '${String(phaseDef.name)}' resting — run paused`,
             now(),
           );
-          return { run: currentRun, phases };
+          return { run: restingRun, phases };
         }
         case 'failed': {
           return this.failRun(currentRun, phaseDef, phase, result.failure, now(), phases);
