@@ -55,6 +55,7 @@ export class CreatePrHandler implements PhaseHandler {
       ...(this.opts.template !== undefined ? { template: this.opts.template } : {}),
       vars: { issue_number: String(ctx.issueNumber) },
       agentContract: def.agentContract!,
+      skipResultExtraction: true,
     });
 
     if (draft.outcome !== 'passed') return draft;

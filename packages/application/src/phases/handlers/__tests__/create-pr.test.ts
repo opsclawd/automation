@@ -39,15 +39,6 @@ function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
           relativePath: 'pr-summary.md',
           contents: '# Fix issue #7\n\nThis PR resolves the problem.',
         });
-        void artifacts.write({
-          runId: req.runId,
-          relativePath: 'result.json',
-          contents: JSON.stringify({
-            result: 'created',
-            prNumber: 1,
-            prUrl: 'https://example/pr/1',
-          }),
-        });
         return successResult();
       },
     ],
@@ -85,13 +76,6 @@ describe('CreatePrHandler', () => {
 
     // Seed required input artifact (plan.md)
     await artifacts.write({ runId: ctx.runUuid, relativePath: 'plan.md', contents: '# Plan' });
-
-    // Seed result.json (runSingleShotAgentPhase's extractResult needs it)
-    await artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ result: 'created', prNumber: 1, prUrl: 'https://example/pr/1' }),
-    });
 
     const res = await new CreatePrHandler({
       baseBranch: 'main',
@@ -141,12 +125,6 @@ describe('CreatePrHandler', () => {
       relativePath: 'pr-url.txt',
       contents: existingUrl + '\n',
     });
-    // Seed result.json for extractResult
-    await artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ result: 'ready', summary: 'pr drafted' }),
-    });
 
     const res = await new CreatePrHandler({
       baseBranch: 'main',
@@ -182,13 +160,8 @@ describe('CreatePrHandler', () => {
     const github = new FakeGitHubPort();
     const agent = new FakeAgentPort({
       'opencode-frontier': [
-        (req) => {
-          // Write result.json but NOT pr-summary.md — contract violation
-          void artifacts.write({
-            runId: req.runId,
-            relativePath: 'result.json',
-            contents: JSON.stringify({ result: 'ready', summary: 'pr drafted' }),
-          });
+        () => {
+          // Agent writes nothing — contract violation for missing pr-summary.md
           return successResult();
         },
       ],
@@ -220,11 +193,6 @@ describe('CreatePrHandler', () => {
       runId: ctx.runUuid,
       relativePath: 'plan.md',
       contents: '# Plan',
-    });
-    await artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ result: 'ready', summary: 'pr drafted' }),
     });
 
     const res = await new CreatePrHandler({
@@ -261,15 +229,6 @@ describe('CreatePrHandler', () => {
             relativePath: 'pr-summary.md',
             contents: '# Fix issue #7\n\nThis PR resolves the problem.',
           });
-          void artifacts.write({
-            runId: req.runId,
-            relativePath: 'result.json',
-            contents: JSON.stringify({
-              result: 'created',
-              prNumber: 1,
-              prUrl: 'https://example/pr/1',
-            }),
-          });
           return successResult();
         },
       ],
@@ -301,15 +260,6 @@ describe('CreatePrHandler', () => {
       runId: ctx.runUuid,
       relativePath: 'plan.md',
       contents: '# Plan',
-    });
-    await artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({
-        result: 'created',
-        prNumber: 1,
-        prUrl: 'https://example/pr/1',
-      }),
     });
 
     const res = await new CreatePrHandler({
