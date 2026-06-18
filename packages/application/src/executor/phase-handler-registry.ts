@@ -17,7 +17,7 @@ export class PhaseHandlerRegistry {
 
 export class UnregisteredPhaseError extends Error {
   constructor(phase: PhaseName) {
-    super(`no PhaseHandler registered for 'PhaseName(${phase})'`);
+    super(`no PhaseHandler registered for '${String(phase)}'`);
     this.name = 'UnregisteredPhaseError';
   }
 }

@@ -24,7 +24,7 @@ describe('PhaseHandlerRegistry', () => {
     const registry = new PhaseHandlerRegistry();
     expect(() => registry.get(PhaseName('read_issue'))).toThrow(UnregisteredPhaseError);
     expect(() => registry.get(PhaseName('read_issue'))).toThrow(
-      "no PhaseHandler registered for 'PhaseName(read_issue)'",
+      "no PhaseHandler registered for 'read_issue'",
     );
   });
 

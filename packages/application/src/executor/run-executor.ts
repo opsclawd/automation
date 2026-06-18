@@ -1,6 +1,6 @@
 import type { Run, Phase, PhaseName, PhaseStatus, Failure } from '@ai-sdlc/domain';
 import { startPhase, completePhase, failRun, passRun } from '@ai-sdlc/domain';
-import type { PhaseHandlerContext } from '../phases/handler.js';
+import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
   orderedPhases,
@@ -113,7 +113,22 @@ export class RunExecutor {
 
       // Run handler
       const ctx = this.deps.contextFactory();
-      const result = await handler.run(ctx);
+      let result: PhaseResult;
+      try {
+        result = await handler.run(ctx);
+      } catch (err) {
+        const failure: Failure = {
+          runUuid: currentRun.uuid,
+          phase: phaseDef.name as string,
+          kind: 'command_failed',
+          message: err instanceof Error ? err.message : String(err),
+          canRetry: false,
+          suggestedAction: 'Inspect handler execution error.',
+          artifacts: [],
+          detectedAt: now(),
+        };
+        return this.failRun(currentRun, phaseDef, phase, failure, now(), phases);
+      }
 
       switch (result.outcome) {
         case 'passed':
@@ -171,10 +186,19 @@ export class RunExecutor {
     at: Date,
     phases: PhaseRecord[],
   ): ExecuteRunOutput {
+    if (failure.runUuid !== currentRun.uuid) {
+      throw new Error(
+        `handler returned failure with mismatched runUuid: expected ${currentRun.uuid}, got ${failure.runUuid}`,
+      );
+    }
     const run = failRun(currentRun, failure.message, at);
     phase.status = 'failed';
     phase.completedAt = at;
-    this.deps.phaseRepository.update(phase);
+    if (phase.startedAt) {
+      this.deps.phaseRepository.update(phase);
+    } else {
+      this.deps.phaseRepository.insert(phase);
+    }
     this.deps.failureRepository.insert(failure);
     this.deps.runRepository.update(run.uuid, {
       status: 'failed',
@@ -211,6 +235,11 @@ export class RunExecutor {
     at: Date,
     phases: PhaseRecord[],
   ): ExecuteRunOutput {
+    if (failure.runUuid !== currentRun.uuid) {
+      throw new Error(
+        `handler returned failure with mismatched runUuid: expected ${currentRun.uuid}, got ${failure.runUuid}`,
+      );
+    }
     phase.status = 'blocked';
     phase.completedAt = at;
     this.deps.phaseRepository.update(phase);
@@ -226,13 +255,22 @@ export class RunExecutor {
       currentRun.uuid,
       phaseDef.name as string,
       'warn',
+      'phase.blocked',
+      failure.message,
+      at,
+    );
+    this.emit(
+      currentRun.displayId,
+      currentRun.uuid,
+      phaseDef.name as string,
+      'warn',
       'run.blocked',
       `run blocked at phase '${String(phaseDef.name)}'`,
       at,
     );
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { currentPhase, ...rest } = currentRun;
-    return { run: { ...rest, status: 'blocked' }, phases };
+    const run = { ...currentRun, status: 'blocked' as const };
+    delete run.currentPhase;
+    return { run, phases };
   }
 
   private failOnMissingInput(
@@ -260,7 +298,6 @@ export class RunExecutor {
       attempt: 1,
       completedAt: at,
     };
-    this.deps.phaseRepository.insert(phase);
     return this.failRun(currentRun, phaseDef, phase, failure, at, phases);
   }
 
