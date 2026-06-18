@@ -176,9 +176,13 @@ export class RunExecutor {
         return this.failRun(currentRun, phaseDef, phase, failure, now(), phases);
       }
 
-      // Re-read persisted run state — cancellation may have occurred during handler execution
+      // Re-read persisted run state — cancellation may have occurred during handler execution.
+      // Skip this guard when the handler returned `resting`: some handlers (e.g.
+      // PostPrReviewHandler for timed_out/cancelled signals) set a terminal run
+      // status and then return resting, and the resting branch must still run its
+      // phase bookkeeping (update phase status, clear currentPhase).
       const cancelledAfterHandler = this.deps.runRepository.findByUuid(run.uuid);
-      if (cancelledAfterHandler?.status === 'cancelled') {
+      if (cancelledAfterHandler?.status === 'cancelled' && result.outcome !== 'resting') {
         return { run: cancelledAfterHandler, phases };
       }
 

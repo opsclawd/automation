@@ -531,6 +531,48 @@ describe('RunExecutor', () => {
     );
   });
 
+  it('allows resting handler-owned cancellation to complete phase bookkeeping', async () => {
+    // Simulates PostPrReviewHandler's signal=cancelled/timed_out pattern:
+    // the handler calls setRunStatus('cancelled') then returns { outcome: 'resting' }.
+    // The cancellation guard must not intercept — the resting branch should still
+    // update the phase row and clear currentPhase.
+    const registry = new PhaseHandlerRegistry();
+    registry.register({
+      phase: makePhaseName('read_issue'),
+      run: async (): Promise<PhaseResult> => ({ outcome: 'resting' }),
+    });
+
+    const cancelledRun = { ...makeRun(), status: 'cancelled' as const };
+    // First call (pre-handler guard) returns undefined — let the handler run.
+    // Second call (post-handler guard) returns cancelledRun.
+    const findByUuid = vi.fn().mockReturnValueOnce(undefined).mockReturnValueOnce(cancelledRun);
+
+    const phaseRepo = new FakePhaseRepository();
+    const deps = makeDeps({ registry, runRepository: { findByUuid }, phaseRepository: phaseRepo });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
+
+    // Phase was updated to resting (not left as running)
+    const restingUpdates = phaseRepo.updated.filter((p) => p.status === 'resting');
+    expect(restingUpdates).toHaveLength(1);
+    expect(restingUpdates[0]!.name).toBe('read_issue');
+
+    // currentPhase cleared — the resting branch runs its bookkeeping
+    expect(deps.runRepository.update).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ currentPhase: null }),
+    );
+
+    // Phase recorded as resting (not left as running)
+    expect(result.phases).toHaveLength(1);
+    expect(result.phases[0]!.status).toBe('resting');
+    expect(result.phases[0]!.phase).toBe(makePhaseName('read_issue'));
+    // currentPhase cleared in returned run
+    expect(result.run.currentPhase).toBeUndefined();
+  });
+
   it('stops execution with cancelled status when handler throws and run was cancelled externally', async () => {
     const registry = new PhaseHandlerRegistry();
 
