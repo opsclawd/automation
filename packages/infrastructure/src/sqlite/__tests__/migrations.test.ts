@@ -313,4 +313,48 @@ describe('migrations', () => {
 
     db.close();
   });
+
+  it('0010 does not rename whole-pr-review terminal events when fix-review events also exist (review #381)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai-orch-mig-'));
+    const db = openDatabase(join(dir, 'db.sqlite'));
+
+    applyMigrations(db);
+
+    db.prepare('DELETE FROM schema_version WHERE version = 10').run();
+
+    // Seed a run that has completed whole-pr-review and moved on to fix-review.
+    // The phase.completed from whole-pr-review must NOT be renamed to review-fix
+    // because it would make the merged phase appear complete in the timeline.
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, started_at, current_phase, completed_phases)
+       VALUES ('run-dual', 'run-dual', 200, 'issue', 'running', datetime('now'), 'fix-review',
+               '["plan-design","implement","validate","whole-pr-review"]')`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO events (run_uuid, phase, level, type, message, timestamp, metadata)
+       VALUES ('run-dual', 'whole-pr-review', 'info', 'phase.started', 'x', datetime('now'), '{}'),
+              ('run-dual', 'whole-pr-review', 'info', 'phase.completed', 'x', datetime('now'), '{}'),
+              ('run-dual', 'fix-review', 'info', 'phase.started', 'x', datetime('now'), '{}')`,
+    ).run();
+
+    applyMigrations(db);
+
+    const eventPhases = db.prepare('SELECT phase, type FROM events ORDER BY phase').all() as Array<{
+      phase: string;
+      type: string;
+    }>;
+
+    // phase.started from whole-pr-review → renamed to review-fix ✓
+    // phase.started from fix-review → renamed to review-fix ✓
+    // phase.completed from whole-pr-review → NOT renamed (stays whole-pr-review) ✓
+    expect(eventPhases.map((r) => r.phase)).toEqual([
+      'review-fix',
+      'review-fix',
+      'whole-pr-review',
+    ]);
+    expect(eventPhases.find((r) => r.phase === 'whole-pr-review')!.type).toBe('phase.completed');
+
+    db.close();
+  });
 });

@@ -19,12 +19,29 @@ export const sql = /* sql */ `
 --   -- completed_phases rollback requires reconstructing the original array from
 --   -- event data or a pre-migration backup; there is no deterministic reversal
 --   -- because whole-pr-review and fix-review are collapsed into a single value.
+--   -- Note: events with phase='whole-pr-review' that were excluded from rename
+--   -- (terminal events on dual-phase runs) are already 'whole-pr-review' and
+--   -- should not be re-updated — the rollback above must only target 'review-fix'.
 
 -- phases
 UPDATE phases SET name = 'review-fix' WHERE name IN ('whole-pr-review', 'fix-review');
 
 -- events
-UPDATE events SET phase = 'review-fix' WHERE phase IN ('whole-pr-review', 'fix-review');
+-- For runs with events from both legacy phases, skip terminal events from
+-- whole-pr-review to prevent the merged review-fix timeline from appearing
+-- complete before fix-review events (see #381 review comment).
+UPDATE events SET phase = 'review-fix'
+WHERE phase IN ('whole-pr-review', 'fix-review')
+  AND NOT (
+    phase = 'whole-pr-review'
+    AND type IN ('phase.completed', 'phase.failed', 'phase.skipped')
+    AND run_uuid IN (
+      SELECT DISTINCT e1.run_uuid
+      FROM events e1
+      INNER JOIN events e2 ON e1.run_uuid = e2.run_uuid
+      WHERE e1.phase = 'whole-pr-review' AND e2.phase = 'fix-review'
+    )
+  );
 
 -- artifacts
 UPDATE artifacts SET phase = 'review-fix' WHERE phase IN ('whole-pr-review', 'fix-review');
