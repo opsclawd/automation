@@ -44,7 +44,7 @@ export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('review-fix'),
   makePhaseName('compound'),
   makePhaseName('create-pr'),
-  makePhaseName('pr-review-poll'),
+  makePhaseName('post-pr-review'),
 ];
 
 const _phaseDefinitions = {
@@ -110,8 +110,8 @@ const _phaseDefinitions = {
     retrySafety: 'unsafe',
     skippable: false,
   },
-  'pr-review-poll': {
-    name: makePhaseName('pr-review-poll'),
+  'post-pr-review': {
+    name: makePhaseName('post-pr-review'),
     inputs: { required: ['pr-url.txt'], optional: [] },
     outputs: ['comments.json', 'reviews.json'],
     retrySafety: 'safe',
