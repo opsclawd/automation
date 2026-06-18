@@ -460,7 +460,7 @@ describe('classifyExit', () => {
       'Worktree creation failed — /dir is not a git worktree',
       'Worktree has no commits — cannot create PR',
       'Failed to create PR and no open PR exists for branch ai/issue-6',
-      'Task 1 fix-review has no findings to act on (no .md, no .log)',
+      'Task 1 review-fix has no findings to act on (no .md, no .log)',
       'agent reported BLOCKED',
       "Phase 'implement' is blocked",
       'Task 3 is NEEDS_CONTEXT',
@@ -599,11 +599,11 @@ describe('classifyExit', () => {
     expect(f.kind).toBe('agent_blocked');
   });
 
-  it('returns missing_artifact for "fix-review has no findings" sentinel', () => {
+  it('returns missing_artifact for "review-fix has no findings" sentinel', () => {
     const f = classifyExit({
       exitCode: 1,
       combinedLogTail:
-        'Task 1 fix-review has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings.',
+        'Task 1 review-fix has no findings to act on (no .md, no .log). Reviewer agents must write detailed findings.',
       runUuid: 'test-uuid',
     });
     expect(f.kind).toBe('missing_artifact');
@@ -850,7 +850,7 @@ describe('classifyExit with events (M2-06)', () => {
       ...baseInput,
       events: [
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'fix-review hit max iterations for task 2',
           metadata: { task: 2, iterations: 5 },
@@ -858,7 +858,7 @@ describe('classifyExit with events (M2-06)', () => {
       ],
     });
     expect(failure.kind).toBe('agent_blocked');
-    expect(failure.phase).toBe('fix-review');
+    expect(failure.phase).toBe('review-fix');
   });
   it('classifies agent_blocked via metadata.reason matching /blocked/i', () => {
     const failure = classifyExit({
@@ -1007,13 +1007,13 @@ describe('classifyExit with events (M2-06)', () => {
           timestamp: '2026-05-16T12:00:00.000Z',
         }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'Review loop hit max iterations for task 2',
           metadata: { reason: 'blocked' },
         }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'phase.failed',
           message: 'Review loop hit max iterations for task 2',
           metadata: { reason: 'Review loop hit max' },
@@ -1021,21 +1021,21 @@ describe('classifyExit with events (M2-06)', () => {
       ],
     });
     expect(failure.kind).toBe('agent_blocked');
-    expect(failure.phase).toBe('fix-review');
+    expect(failure.phase).toBe('review-fix');
   });
   it('prefers later phase.failed over stale loop.exhausted from earlier phase', () => {
     const failure = classifyExit({
       ...baseInput,
       events: [
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'fix-review loop exhausted',
           metadata: { reason: 'blocked' },
           timestamp: '2026-05-16T12:00:00.000Z',
         }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'phase.failed',
           message: 'fix-review failed after loop',
           metadata: { reason: 'Review loop hit max' },
@@ -1061,7 +1061,7 @@ describe('classifyExit with events (M2-06)', () => {
       events: [
         ev({ type: 'run.failed', message: 'run failed', timestamp: '2026-05-16T12:00:00.000Z' }),
         ev({
-          phase: 'fix-review',
+          phase: 'review-fix',
           type: 'loop.exhausted',
           message: 'loop exhausted',
           metadata: { reason: 'blocked' },

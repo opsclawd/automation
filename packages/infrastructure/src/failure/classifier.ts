@@ -217,10 +217,10 @@ function pickTerminalEvent(events: ClassifierEvent[]): ClassifierEvent | undefin
   // Special case: when loop.exhausted and phase.failed are emitted for the
   // same phase (the "paired" pattern), loop.exhausted is preferred because
   // it carries the structured agent_blocked signal. A generic phase.failed
-  // following loop.exhausted in fix-review would regress to command_failed.
+  // following loop.exhausted in review-fix would regress to command_failed.
   //
   // But when phase.failed comes from a LATER phase (e.g. compound or create-pr
-  // after fix-review exhausted), it represents the true terminal failure and
+  // after review-fix exhausted), it represents the true terminal failure and
   // must not be overridden by a stale loop.exhausted from an earlier phase.
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
@@ -249,7 +249,7 @@ function findPairedLoopExhausted(
 ): ClassifierEvent | undefined {
   // A loop.exhausted is "paired" with phase.failed when it appears in the
   // same phase, earlier in the stream. This handles the common pattern where
-  // a fix-review loop emits both events for the same exhaustion incident.
+  //   a review-fix loop emits both events for the same exhaustion incident.
   if (phaseFailed.phase === undefined) return undefined;
   for (let j = phaseFailedIndex - 1; j >= 0; j--) {
     const candidate = events[j]!;
@@ -281,7 +281,7 @@ function buildFailureFromEvent(e: ClassifierEvent, input: ClassifyExitInput): Fa
 
   if (e.type === 'loop.exhausted') {
     kind = 'agent_blocked';
-    suggestedAction = 'The fix-review loop hit max iterations — inspect the latest review.md.';
+    suggestedAction = 'The review-fix loop hit max iterations — inspect the latest review.md.';
   } else if (e.type === 'run.failed') {
     kind = 'unknown';
     suggestedAction = 'Inspect combined.log and stderr.log for the cause.';

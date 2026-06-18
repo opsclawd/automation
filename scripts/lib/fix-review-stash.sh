@@ -61,7 +61,7 @@ _stash_and_conditionally_commit() {
         git -C "$worktree_dir" add -A 2>/dev/null
         if git -C "$worktree_dir" commit -m "$commit_msg" 2>/dev/null; then
           if declare -F emit_event >/dev/null 2>&1; then
-            emit_event "fix-review" "info" "task.work_committed" \
+            emit_event "review-fix" "info" "task.work_committed" \
               "fix-review task ${task_id}: uncommitted work committed after green revalidate" \
               task_id="$task_id"
           fi
@@ -70,7 +70,7 @@ _stash_and_conditionally_commit() {
             warn "Task ${task_id}: commit failed after stash pop"
           fi
           if declare -F emit_event >/dev/null 2>&1; then
-            emit_event "fix-review" "warn" "task.commit_failed" \
+            emit_event "review-fix" "warn" "task.commit_failed" \
               "fix-review task ${task_id}: commit failed after stash pop" \
               task_id="$task_id"
           fi
@@ -80,7 +80,7 @@ _stash_and_conditionally_commit() {
           warn "Task ${task_id}: stash pop left conflict markers — skipping commit"
         fi
         if declare -F emit_event >/dev/null 2>&1; then
-          emit_event "fix-review" "warn" "task.stash_conflict" \
+          emit_event "review-fix" "warn" "task.stash_conflict" \
             "fix-review task ${task_id}: stash pop left conflict markers — skipping commit" \
             task_id="$task_id"
         fi
@@ -90,7 +90,7 @@ _stash_and_conditionally_commit() {
         warn "Task ${task_id}: stash pop failed — stash may conflict. Keeping stash for debugging."
       fi
       if declare -F emit_event >/dev/null 2>&1; then
-        emit_event "fix-review" "warn" "task.stash_pop_failed" \
+        emit_event "review-fix" "warn" "task.stash_pop_failed" \
           "fix-review task ${task_id}: stash pop failed" \
           task_id="$task_id"
       fi
@@ -102,7 +102,7 @@ _stash_and_conditionally_commit() {
       warn "Task ${task_id}: revalidation red — stashed artifacts retained for debugging"
     fi
     if declare -F emit_event >/dev/null 2>&1; then
-      emit_event "fix-review" "info" "task.stash_retained" \
+      emit_event "review-fix" "info" "task.stash_retained" \
         "fix-review task ${task_id}: stash retained (revalidation red)" \
         task_id="$task_id"
     fi

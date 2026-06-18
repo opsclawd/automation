@@ -5,8 +5,7 @@ export const CANONICAL_PHASES = [
   'implement',
   'validate',
   'fix-validate',
-  'whole-pr-review',
-  'fix-review',
+  'review-fix',
   'compound',
   'create-pr',
 ] as const;
@@ -80,7 +79,7 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
         break;
       }
       case 'phase.skipped':
-        entry.status = 'skipped';
+        if (entry.status === 'pending' || entry.status === 'running') entry.status = 'skipped';
         break;
       case 'artifact.created': {
         const path = typeof meta.path === 'string' ? meta.path : null;

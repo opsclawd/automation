@@ -25,7 +25,7 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   implement: 'implement',
   compound: 'compound',
   'create-pr': 'create-pr',
-  'review-fix': 'fix-review',
+  'review-fix': null,
   read_issue: null,
   validate: null,
   'pr-review-poll': null,
@@ -36,6 +36,9 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'plan-write': { schema: planWriteResultSchema, retrySafe: true },
   implement: { schema: implementResultSchema, retrySafe: false },
   'quality-review': { schema: qualityReviewResultSchema, retrySafe: true },
+  // Retained as loop-internal routing schemas for agent invocation dispatch
+  // within the review-fix phase (see design decision in design-decisions-report.md).
+  // These are NOT reachable via PHASE_NAME_MIGRATION_MAP for result.json production.
   'fix-review': { schema: fixReviewResultSchema, retrySafe: false },
   'create-pr': { schema: createPrResultSchema, retrySafe: false },
   'post-pr-review': { schema: postPrReviewResultSchema, retrySafe: false },

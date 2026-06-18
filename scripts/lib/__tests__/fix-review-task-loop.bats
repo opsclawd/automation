@@ -229,8 +229,8 @@ JSON
   [ "$status" -eq 0 ]
 }
 
-@test "ai-run-issue-v2 clears validation.result at fix-review phase start" {
+@test "ai-run-issue-v2 clears validation.result at review-fix phase start" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -A5 '_emit_phase_started "fix-review"' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -A5 '_emit_phase_started "review-fix"' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
   [[ "$output" == *"validation.result"* ]]
 }

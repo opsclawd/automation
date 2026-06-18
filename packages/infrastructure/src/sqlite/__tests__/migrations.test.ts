@@ -14,7 +14,7 @@ describe('migrations', () => {
     applyMigrations(db);
     applyMigrations(db);
     const versions = db.prepare('SELECT version FROM schema_version').all();
-    expect(versions).toHaveLength(9);
+    expect(versions).toHaveLength(10);
     db.close();
   });
 
@@ -154,23 +154,23 @@ describe('migrations', () => {
     const eventPhases = (
       db.prepare('SELECT phase FROM events ORDER BY phase').all() as Array<{ phase: string }>
     ).map((r) => r.phase);
-    expect(eventPhases).toEqual(['post-pr-review', 'whole-pr-review']);
+    expect(eventPhases).toEqual(['post-pr-review', 'review-fix']);
 
     // phases
     const phaseNames = (
       db.prepare('SELECT name FROM phases ORDER BY name').all() as Array<{ name: string }>
     ).map((r) => r.name);
-    expect(phaseNames).toEqual(['post-pr-review', 'whole-pr-review']);
+    expect(phaseNames).toEqual(['post-pr-review', 'review-fix']);
 
     // artifacts
     const artifactPhases = (
       db.prepare('SELECT phase FROM artifacts ORDER BY phase').all() as Array<{ phase: string }>
     ).map((r) => r.phase);
-    expect(artifactPhases).toEqual(['post-pr-review', 'whole-pr-review']);
+    expect(artifactPhases).toEqual(['post-pr-review', 'review-fix']);
 
     // failures
     expect((db.prepare('SELECT phase FROM failures').get() as { phase: string }).phase).toBe(
-      'whole-pr-review',
+      'review-fix',
     );
 
     // runs.current_phase + runs.completed_phases
@@ -178,15 +178,182 @@ describe('migrations', () => {
       current_phase: string;
       completed_phases: string;
     };
-    expect(run.current_phase).toBe('whole-pr-review');
+    expect(run.current_phase).toBe('review-fix');
     expect(JSON.parse(run.completed_phases)).toEqual([
       'plan-design',
       'plan-write',
       'implement',
       'validate',
-      'whole-pr-review',
+      'review-fix',
       'post-pr-review',
     ]);
+
+    db.close();
+  });
+
+  it('0010 backfills whole-pr-review and fix-review to review-fix (not agent_invocations, not loops)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai-orch-mig-'));
+    const db = openDatabase(join(dir, 'db.sqlite'));
+
+    // Apply all migrations to set up the schema.
+    applyMigrations(db);
+
+    // Unregister version 10 so applyMigrations will re-run 0010 after seeding.
+    db.prepare('DELETE FROM schema_version WHERE version = 10').run();
+
+    // Seed legacy split-phase data into every phase-bearing column.
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, started_at, current_phase, completed_phases)
+       VALUES ('run-rf', 'run-rf', 100, 'issue', 'running', datetime('now'), 'whole-pr-review',
+               '["plan-design","implement","validate","whole-pr-review","fix-review","compound"]')`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO agent_invocations
+        (id, run_uuid, phase_id, profile, runtime, provider, model, prompt_path, prompt_chars, stdout_path, stderr_path, started_at, start_commit_sha, timeout_ms, contract_violations)
+       VALUES
+        ('inv-rf-1', 'run-rf', 'whole-pr-review', 'd', 'l', 'o', 'm', '/x', 0, '/x', '/x', datetime('now'), '${'0'.repeat(40)}', 1, '[]'),
+        ('inv-rf-2', 'run-rf', 'fix-review', 'd', 'l', 'o', 'm', '/x', 0, '/x', '/x', datetime('now'), '${'0'.repeat(40)}', 1, '[]')`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO events (run_uuid, phase, level, type, message, timestamp, metadata)
+       VALUES ('run-rf', 'whole-pr-review', 'info', 'phase.started', 'x', datetime('now'), '{}'),
+              ('run-rf', 'fix-review', 'info', 'phase.done', 'x', datetime('now'), '{}')`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO phases (id, run_uuid, name, status, started_at)
+       VALUES ('ph-rf-1', 'run-rf', 'whole-pr-review', 'completed', datetime('now')),
+              ('ph-rf-2', 'run-rf', 'fix-review', 'completed', datetime('now'))`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO artifacts (id, run_uuid, phase, type, path, created_at)
+       VALUES ('a-rf-1', 'run-rf', 'whole-pr-review', 'review', '/tmp/r.md', datetime('now')),
+              ('a-rf-2', 'run-rf', 'fix-review', 'log', '/tmp/f.log', datetime('now'))`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO failures (run_uuid, phase, kind, message, can_retry, suggested_action, detected_at)
+       VALUES ('run-rf', 'fix-review', 'agent_blocked', 'x', 0, 'retry', datetime('now'))`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO loops (id, run_uuid, phase_id, type, max_iterations, status, started_at)
+       VALUES ('loop-rf-1', 'run-rf', 'whole-pr-review', 'review', 5, 'completed', datetime('now')),
+              ('loop-rf-2', 'run-rf', 'fix-review', 'fix', 5, 'completed', datetime('now'))`,
+    ).run();
+
+    // Apply migration 0010.
+    applyMigrations(db);
+
+    // agent_invocations.phase_id must NOT be backfilled (loop-internal routing keys).
+    expect(
+      (
+        db.prepare("SELECT phase_id FROM agent_invocations WHERE id = 'inv-rf-1'").get() as {
+          phase_id: string;
+        }
+      ).phase_id,
+    ).toBe('whole-pr-review');
+    expect(
+      (
+        db.prepare("SELECT phase_id FROM agent_invocations WHERE id = 'inv-rf-2'").get() as {
+          phase_id: string;
+        }
+      ).phase_id,
+    ).toBe('fix-review');
+
+    // events.phase must be backfilled.
+    const eventPhases = (
+      db.prepare('SELECT phase FROM events ORDER BY phase').all() as Array<{ phase: string }>
+    ).map((r) => r.phase);
+    expect(eventPhases).toEqual(['review-fix', 'review-fix']);
+
+    // phases.name must be backfilled.
+    const phaseNames = (
+      db.prepare('SELECT name FROM phases ORDER BY name').all() as Array<{ name: string }>
+    ).map((r) => r.name);
+    expect(phaseNames).toEqual(['review-fix', 'review-fix']);
+
+    // artifacts.phase must be backfilled.
+    const artPhases = (
+      db.prepare('SELECT phase FROM artifacts ORDER BY phase').all() as Array<{ phase: string }>
+    ).map((r) => r.phase);
+    expect(artPhases).toEqual(['review-fix', 'review-fix']);
+
+    // failures.phase must be backfilled.
+    expect((db.prepare('SELECT phase FROM failures').get() as { phase: string }).phase).toBe(
+      'review-fix',
+    );
+
+    // loops.phase_id must NOT be backfilled — the route constructs artifact
+    // paths from l.phaseId (review-fix.ts:30-37) and on-disk files for old
+    // runs live under the original phase directory name.
+    const loopPhaseIds = (
+      db.prepare('SELECT phase_id FROM loops ORDER BY phase_id').all() as Array<{
+        phase_id: string;
+      }>
+    ).map((r) => r.phase_id);
+    expect(loopPhaseIds).toEqual(['fix-review', 'whole-pr-review']);
+
+    // runs.current_phase + completed_phases must be backfilled.
+    const run = db.prepare('SELECT current_phase, completed_phases FROM runs').get() as {
+      current_phase: string;
+      completed_phases: string;
+    };
+    expect(run.current_phase).toBe('review-fix');
+    expect(JSON.parse(run.completed_phases)).toEqual([
+      'plan-design',
+      'implement',
+      'validate',
+      'review-fix',
+      'compound',
+    ]);
+
+    db.close();
+  });
+
+  it('0010 does not rename whole-pr-review terminal events when fix-review events also exist (review #381)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai-orch-mig-'));
+    const db = openDatabase(join(dir, 'db.sqlite'));
+
+    applyMigrations(db);
+
+    db.prepare('DELETE FROM schema_version WHERE version = 10').run();
+
+    // Seed a run that has completed whole-pr-review and moved on to fix-review.
+    // The phase.completed from whole-pr-review must NOT be renamed to review-fix
+    // because it would make the merged phase appear complete in the timeline.
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, started_at, current_phase, completed_phases)
+       VALUES ('run-dual', 'run-dual', 200, 'issue', 'running', datetime('now'), 'fix-review',
+               '["plan-design","implement","validate","whole-pr-review"]')`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO events (run_uuid, phase, level, type, message, timestamp, metadata)
+       VALUES ('run-dual', 'whole-pr-review', 'info', 'phase.started', 'x', datetime('now'), '{}'),
+              ('run-dual', 'whole-pr-review', 'info', 'phase.completed', 'x', datetime('now'), '{}'),
+              ('run-dual', 'fix-review', 'info', 'phase.started', 'x', datetime('now'), '{}')`,
+    ).run();
+
+    applyMigrations(db);
+
+    const eventPhases = db.prepare('SELECT phase, type FROM events ORDER BY phase').all() as Array<{
+      phase: string;
+      type: string;
+    }>;
+
+    // phase.started from whole-pr-review → renamed to review-fix ✓
+    // phase.started from fix-review → renamed to review-fix ✓
+    // phase.completed from whole-pr-review → NOT renamed (stays whole-pr-review) ✓
+    expect(eventPhases.map((r) => r.phase)).toEqual([
+      'review-fix',
+      'review-fix',
+      'whole-pr-review',
+    ]);
+    expect(eventPhases.find((r) => r.phase === 'whole-pr-review')!.type).toBe('phase.completed');
 
     db.close();
   });

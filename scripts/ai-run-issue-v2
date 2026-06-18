@@ -215,13 +215,17 @@ _emit_phase_skipped() {
 }
 _emit_skipped_until() {
   local target=$1
-  local p found=false
-  for p in read_issue plan-design plan-write implement validate fix-validate whole-pr-review review-triage fix-review compound create-pr; do
-    if [[ "$p" == "$target" ]]; then found=true; break; fi
+  local p
+  case "$target" in
+    fix-review) target="review-fix" ;;
+  esac
+  for p in read_issue plan-design plan-write implement validate fix-validate review-fix review-triage compound create-pr; do
+    if [[ "$p" == "$target" ]]; then break; fi
+    if [[ "$p" == "review-fix" ]] && [[ "$target" == "review-triage" ]]; then continue; fi
     _emit_phase_skipped "$p" "resume-detected"
   done
-  if [[ "$found" == "false" ]]; then
-    warn "_emit_skipped_until did not find phase '$target' in canonical list"
+  if [[ "$1" == "fix-review" ]]; then
+    _emit_phase_skipped "review-triage" "resume-detected"
   fi
 }
 _emit_artifact() {
@@ -856,7 +860,7 @@ handle_contradiction_reconciliation() {
 
   CONTRADICTION_RETRIED=1
   log "  Contradiction detected: review FAIL + fix-review DONE_NO_FIXES_NEEDED — re-running failing review once for task ${task_num}"
-  emit_event "fix-review" "warn" "contradiction.detected" \
+  emit_event "review-fix" "warn" "contradiction.detected" \
     "review/fix contradiction for task ${task_num}, re-running review" \
     task="${task_num}" iteration="${REVIEW_LOOPS}" spec="${spec_status}" quality="${quality_status}"
 
@@ -3132,7 +3136,7 @@ This is an implement-step problem, not a reviewer contract violation."
     while [[ $REVIEW_LOOPS -lt $MAX_REVIEW_FIX_ITERATIONS ]]; do
       REVIEW_LOOPS=$((REVIEW_LOOPS + 1))
       log "  Review-fix loop ${REVIEW_LOOPS}/${MAX_REVIEW_FIX_ITERATIONS} for task ${TASK_NUM}"
-      emit_event "fix-review" "info" "loop.iteration.started" \
+      emit_event "review-fix" "info" "loop.iteration.started" \
         "fix-review loop ${REVIEW_LOOPS}/${MAX_REVIEW_FIX_ITERATIONS} for task ${TASK_NUM}" \
         task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" max="${MAX_REVIEW_FIX_ITERATIONS}"
       log "  Cancel window: press Ctrl+C within 10s to abort..."
@@ -3241,7 +3245,7 @@ This is an implement-step problem, not a reviewer contract violation."
         QUALITY_PASS QUALITY_FAIL \
         "QUALITY_FAIL")
 
-      emit_event "fix-review" "info" "loop.iteration.completed" \
+      emit_event "review-fix" "info" "loop.iteration.completed" \
         "fix-review loop ${REVIEW_LOOPS} completed (spec=${SPEC_STATUS:-?}, quality=${QUALITY_STATUS:-?})" \
         task="${TASK_NUM}" iteration="${REVIEW_LOOPS}" \
         spec="${SPEC_STATUS:-unknown}" quality="${QUALITY_STATUS:-unknown}"
@@ -3399,7 +3403,7 @@ with open(path, 'w') as f:
     fi
 
     if [[ $REVIEW_LOOPS -ge $MAX_REVIEW_FIX_ITERATIONS ]] && [[ "$SPEC_STATUS" != "SPEC_PASS" || "$QUALITY_STATUS" != "QUALITY_PASS" ]]; then
-      emit_event "fix-review" "error" "loop.exhausted" \
+      emit_event "review-fix" "error" "loop.exhausted" \
         "fix-review hit max iterations for task ${TASK_NUM}" \
         task="${TASK_NUM}" iterations="$REVIEW_LOOPS"
       _exh_defect="implementation_defect"
@@ -3466,7 +3470,7 @@ if [[ "$PHASE" == "validate" ]]; then
 
   # Clean up stale fix-validate artifacts from any previous cycle. Without
   # this, detect_phase would see a stale fix-validate-done.marker on resume
-  # after a new validation failure and incorrectly return whole-pr-review.
+  # after a new validation failure and incorrectly return review-fix.
   rm -f "${ISSUES_DIR}/fix-validate-done.marker"
   rm -f "${ISSUES_DIR}"/fix-validate-*.log "${ISSUES_DIR}"/revalidate-fv-*.log "${ISSUES_DIR}/fix-validate-log.md"
 
@@ -3557,7 +3561,7 @@ if [[ "$PHASE" == "fix-validate" ]]; then
       reason="disabled"
     touch "${ISSUES_DIR}/fix-validate-done.marker"
     _emit_phase_done "fix-validate"
-    PHASE="whole-pr-review"
+    PHASE="review-fix"
   elif [[ "$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null)" == "passed" ]]; then
     info "Validation passed — skipping fix-validate loop."
     emit_event "fix-validate" "info" "loop.skipped" \
@@ -3565,7 +3569,7 @@ if [[ "$PHASE" == "fix-validate" ]]; then
       reason="validation-passed"
     touch "${ISSUES_DIR}/fix-validate-done.marker"
     _emit_phase_done "fix-validate"
-    PHASE="whole-pr-review"
+    PHASE="review-fix"
   elif grep -qiE '(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\[install failed\])' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
     warn "Validation failure appears to be infrastructure-related — skipping fix-validate loop."
     emit_event "fix-validate" "warn" "loop.skipped_infra" \
@@ -3573,7 +3577,7 @@ if [[ "$PHASE" == "fix-validate" ]]; then
       reason="infra-failure"
     touch "${ISSUES_DIR}/fix-validate-done.marker"
     _emit_phase_done "fix-validate"
-    PHASE="whole-pr-review"
+    PHASE="review-fix"
   else
     while [[ "$PHASE" == "fix-validate" ]]; do
       FIX_VALIDATE_COUNT=$((FIX_VALIDATE_COUNT + 1))
@@ -3747,13 +3751,13 @@ Start now."
     if [[ "$_fv_validation_result" == "passed" ]] || [[ $_fv_infra_failure -eq 1 ]]; then
       # guard_artifact_clean removed validation.result / validation.headsha (they
       # are orchestrator artifacts). Re-persist them so the resume oracle
-      # (detect_phase) resolves to whole-pr-review on a restart after this point
+      # (detect_phase) resolves to review-fix on a restart after this point
       # — without them it falls through plan.md and redoes validate/fix-validate.
       printf '%s\n' "$_fv_validation_result" > "${ISSUES_DIR}/validation.result"
       git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
       touch "${ISSUES_DIR}/fix-validate-done.marker"
       _emit_phase_done "fix-validate"
-      PHASE="whole-pr-review"
+      PHASE="review-fix"
     else
       orchestrator_fail "fix-validate loop exhausted without passing validation"
     fi
@@ -3761,12 +3765,12 @@ Start now."
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PHASE: whole-pr-review
+# PHASE: review-fix (whole-PR review)
 # ═══════════════════════════════════════════════════════════════════════════
-if [[ "$PHASE" == "whole-pr-review" ]]; then
-  log "=== Phase: whole-pr-review ==="
-  _emit_phase_started "whole-pr-review"
-  LAST_PHASE="whole-pr-review"
+if [[ "$PHASE" == "review-fix" ]]; then
+  log "=== Phase: review-fix (review) ==="
+  _emit_phase_started "review-fix"
+  LAST_PHASE="review-fix"
 
   ensure_worktree
 
@@ -3806,6 +3810,13 @@ Categorize findings:
 
 Write code-review.md now."
 
+  _WHOLE_PR_MAX_ITERATIONS_FLAG=()
+  if [[ -f "$_ACTIVE_CONFIG" ]]; then
+    _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ACTIVE_CONFIG" 2>/dev/null)
+    if [[ "$_val" =~ ^[1-9][0-9]*$ ]]; then
+      _WHOLE_PR_MAX_ITERATIONS_FLAG=(--max-iterations "$MAX_WHOLE_PR_FIX_ITERATIONS")
+    fi
+  fi
   _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
   ! NODE_OPTIONS='--conditions=development' node --import "$_TSX_LOADER" \
@@ -3814,23 +3825,24 @@ Write code-review.md now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
-    --phase-id "whole-pr-review" \
+    --phase-id "review-fix" \
+    "${_WHOLE_PR_MAX_ITERATIONS_FLAG[@]}" \
     2>&1 | tee -a "${ISSUES_DIR}/review-fix.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then
     orchestrator_fail "tee failed writing log for review-fix (exit $_tee_ec)"
   fi
-  _guard_worktree "whole-pr-review" "$_worktree_state_before"
+  _guard_worktree "review-fix" "$_worktree_state_before"
   check_branch_after_agent
   # Capture exit code BEFORE guard_artifact_clean (see #337 / PR #339 pattern)
   _cleanup_ec=$_review_fix_ec
   # Copy review artifacts from worktree (before cleanup removes them)
   if [[ -f "${WORKTREE_DIR}/code-review.md" ]]; then
     cp "${WORKTREE_DIR}/code-review.md" "${ISSUES_DIR}/review.md"
-    _emit_artifact "whole-pr-review" "${ISSUES_DIR}/review.md" "review"
+    _emit_artifact "review-fix" "${ISSUES_DIR}/review.md" "review"
   fi
 
   if [[ $_cleanup_ec -eq 0 ]]; then
-    info "whole-pr-review: review/fix loop converged"
+    info "review-fix: review/fix loop converged"
     echo "passed" > "${ISSUES_DIR}/validation.result"
   else
     case $_cleanup_ec in
@@ -3841,7 +3853,6 @@ Write code-review.md now."
     esac
   fi
 
-  _emit_phase_done "whole-pr-review"
   PHASE="review-triage"
 fi
 
@@ -3871,7 +3882,10 @@ fi
 if [[ "$PHASE" == "review-triage" ]]; then
   log "=== Phase: review-triage ==="
   _emit_phase_started "review-triage"
-  LAST_PHASE="review-triage"
+  # Intentionally NOT setting LAST_PHASE here — review-triage is an internal
+  # substep of the collapsed review-fix canonical phase. If the triage agent
+  # fails, orchestrator_fail must emit phase.failed for review-fix so the
+  # timeline correctly shows Review / Fix as failed rather than stuck running.
   ensure_worktree
 
   if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
@@ -3884,7 +3898,7 @@ if [[ "$PHASE" == "review-triage" ]]; then
   else
   # Short-circuit: if review.md has no actionable findings, skip the agent call.
   # Heuristic: look for severity markers (Critical/High/Medium/Low) that the
-  # whole-pr-review prompt produces. If none found, write empty manifest + stub
+  # review-fix prompt produces. If none found, write empty manifest + stub
   # summary and proceed directly to fix-review.
   if ! grep -qiE '(^#+\s*)?(critical|high|medium|low)\b' "${ISSUES_DIR}/review.md" 2>/dev/null; then
     info "review.md has no severity markers; writing empty manifest and skipping review-triage agent"
@@ -4054,7 +4068,8 @@ _revalidate_is_green() {
 }
 
 if [[ "$PHASE" == "fix-review" ]]; then
-_emit_phase_started "fix-review"
+_emit_phase_started "review-fix"
+LAST_PHASE="review-fix"
 
   # Clear validation.result at fix-review start to prevent a stale "passed"
   # from the validate phase carrying forward. If fix-review fails to write
@@ -4088,7 +4103,7 @@ else
     info "No actionable fix tasks in review-task-manifest (${FIX_REVIEW_TASK_COUNT} finding(s), all deferred/skipped). Nothing to fix; exiting fix-review."
     echo "ALL_FIXED" > "${ISSUES_DIR}/fix-status.txt"
     echo "passed" > "${ISSUES_DIR}/validation.result"
-    emit_event "fix-review" "info" "phase.completed" \
+    emit_event "review-fix" "info" "phase.completed" \
       "fix-review completed: no actionable fix tasks" \
       status="ALL_FIXED"
     FIX_REVIEW_EMPTY=1
@@ -4101,7 +4116,7 @@ fi
 # agent invocations. Fail fast instead.
 if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 ]]; then
   info "Running pre-flight baseline check..."
-  emit_event "fix-review" "info" "preflight.started" \
+  emit_event "review-fix" "info" "preflight.started" \
     "running pre-flight baseline validation"
 
   _preflight_log="${ISSUES_DIR}/fix-review-baseline.log"
@@ -4134,14 +4149,14 @@ if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 ]]; then
   fi
 
   if [[ $_preflight_exit -ne 0 ]]; then
-    emit_event "fix-review" "error" "preflight.failed" \
+    emit_event "review-fix" "error" "preflight.failed" \
       "fix-review baseline check failed — test suite is not green" \
       exitCode="$_preflight_exit"
     orchestrator_fail "fix-review baseline check failed — test suite is not green before entering task loop. See fix-review-baseline.log for details."
   fi
 
   info "Pre-flight baseline check passed."
-  emit_event "fix-review" "info" "preflight.passed" \
+  emit_event "review-fix" "info" "preflight.passed" \
     "fix-review baseline check passed"
 fi
 
@@ -4153,7 +4168,7 @@ if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 && "$FIX_REVIE
   _has_fix_tasks=$(echo "$FIX_REVIEW_MANIFEST" | jq '[.[] | select(.action == "fix" or .action == null)] | length')
   if [[ "$_has_fix_tasks" -gt 0 ]]; then
     info "Running cohesive architect pass before fix loop..."
-    emit_event "fix-review" "info" "architect_pass_started" \
+    emit_event "review-fix" "info" "architect_pass_started" \
       "cohesive architect pass starting" \
       task_count="$_has_fix_tasks"
 
@@ -4224,12 +4239,12 @@ Only include tasks that have action=fix or action=null. Skip defer/skip tasks.
       git -C "${WORKTREE_DIR}" reset --hard 2>/dev/null || true
       rm -f "${ISSUES_DIR}/fix-review-architect.log"
       warn "Architect pass produced uncommitted changes — discarding plan, proceeding without"
-      emit_event "fix-review" "warn" "architect_pass_failed" \
+      emit_event "review-fix" "warn" "architect_pass_failed" \
         "architect pass mutated code — plan discarded" \
         reason="mutation"
     elif [[ $_architect_ec -ne 0 ]]; then
       warn "Architect pass failed (exit $_architect_ec) — proceeding without plan"
-      emit_event "fix-review" "warn" "architect_pass_failed" \
+      emit_event "review-fix" "warn" "architect_pass_failed" \
         "architect pass failed" \
         reason="exit_code" exit_code="$_architect_ec"
     elif [[ -f "${WORKTREE_DIR}/review-fix-plan.json" ]]; then
@@ -4237,29 +4252,29 @@ Only include tasks that have action=fix or action=null. Skip defer/skip tasks.
       if jq -e '.version and (.tasks | type == "array")' "${WORKTREE_DIR}/review-fix-plan.json" >/dev/null 2>&1; then
         FIX_REVIEW_ARCHITECT_PLAN="${WORKTREE_DIR}/review-fix-plan.json"
         info "Architect pass completed — plan saved to ${FIX_REVIEW_ARCHITECT_PLAN}"
-        emit_event "fix-review" "info" "architect_pass_completed" \
+        emit_event "review-fix" "info" "architect_pass_completed" \
           "architect pass completed" \
           tasks="$(jq '.tasks | length' "${WORKTREE_DIR}/review-fix-plan.json")"
       else
         warn "Architect pass produced invalid plan structure — proceeding without"
-        emit_event "fix-review" "warn" "architect_pass_failed" \
+        emit_event "review-fix" "warn" "architect_pass_failed" \
           "architect pass produced invalid plan structure" \
           reason="invalid_structure"
       fi
     else
       warn "Architect pass produced no plan file — proceeding without"
-      emit_event "fix-review" "warn" "architect_pass_failed" \
+      emit_event "review-fix" "warn" "architect_pass_failed" \
         "architect pass produced no plan file" \
         reason="no_output"
     fi
   else
-    emit_event "fix-review" "info" "architect_pass_skipped" \
+    emit_event "review-fix" "info" "architect_pass_skipped" \
       "architect pass skipped (no fix tasks)" \
       reason="no_fix_tasks"
   fi
 else
   if [[ "$FIX_REVIEW_ARCHITECT_ENABLED" != "true" ]]; then
-    emit_event "fix-review" "info" "architect_pass_skipped" \
+    emit_event "review-fix" "info" "architect_pass_skipped" \
       "architect pass skipped (disabled in config)" \
       reason="disabled"
   fi
@@ -4280,7 +4295,7 @@ else
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
-    --phase-id "fix-review" \
+    --phase-id "review-fix" \
     "${_ARCHITECT_PLAN_FLAG[@]}" \
     2>&1 | tee -a "${ISSUES_DIR}/fix-review-cli.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
   if [[ $_tee_ec -ne 0 ]]; then
@@ -4297,12 +4312,12 @@ else
     echo "HAS_UNRESOLVED" > "${ISSUES_DIR}/fix-status.txt"
     warn "fix-review exited with unresolved findings — overriding validation.result to block ai:pr-ready."
     echo "unresolved-review" > "${ISSUES_DIR}/validation.result"
-    emit_event "fix-review" "warn" "phase.unresolved_findings" \
+    emit_event "review-fix" "warn" "phase.unresolved_findings" \
       "fix-review exited with unresolved findings; validation.result overridden" \
       status="HAS_UNRESOLVED"
   fi
 
-  emit_event "fix-review" "info" "phase.completed" \
+  emit_event "review-fix" "info" "phase.completed" \
     "fix-review completed" \
     status="${_cleanup_ec}"
 
@@ -4314,7 +4329,7 @@ else
   fi
 fi
 
-_emit_phase_done "fix-review"
+_emit_phase_done "review-fix"
 PHASE="compound"
 fi
 

@@ -13,8 +13,7 @@ const PHASE_LABELS: Record<string, string> = {
   implement: 'Implement',
   validate: 'Validate',
   'fix-validate': 'Fix Validate',
-  'whole-pr-review': 'Whole-PR Review',
-  'fix-review': 'Fix Review',
+  'review-fix': 'Review / Fix',
   compound: 'Compound',
   'create-pr': 'Create PR',
 };
