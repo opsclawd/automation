@@ -116,7 +116,7 @@ describe('CreatePrHandler', () => {
     // The handler emits phase.completed after all GitHub operations complete.
     // runSingleShotAgentPhase skips its own completion when skipResultExtraction
     // is set, so the timestamp and duration reflect the full create-pr work.
-    const completed = events.filter((e) => e.type === 'phase.completed');
+    const completed = events.filter((e) => e.type === 'create_pr.completed');
     expect(completed.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -293,7 +293,7 @@ describe('CreatePrHandler', () => {
     await expect(artifacts.read(ctx.runUuid, 'pr-url.txt')).rejects.toThrow();
 
     // failed event emitted
-    const failedEvents = events.filter((e) => e.type === 'phase.failed');
+    const failedEvents = events.filter((e) => e.type === 'create_pr.failed');
     expect(failedEvents).toHaveLength(1);
   });
 });

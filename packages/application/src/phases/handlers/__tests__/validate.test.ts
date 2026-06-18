@@ -176,12 +176,12 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      const started = events.filter((e) => e.type === 'phase.started');
+      const started = events.filter((e) => e.type === 'validate.started');
       expect(started).toHaveLength(1);
       expect(started[0].level).toBe('info');
       expect(started[0].phase).toBe('validate');
 
-      const completed = events.filter((e) => e.type === 'phase.completed');
+      const completed = events.filter((e) => e.type === 'validate.completed');
       expect(completed).toHaveLength(1);
       expect(completed[0].level).toBe('info');
       expect(completed[0].phase).toBe('validate');
@@ -198,11 +198,11 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      const started = events.filter((e) => e.type === 'phase.started');
+      const started = events.filter((e) => e.type === 'validate.started');
       expect(started).toHaveLength(1);
       expect(started[0].phase).toBe('validate');
 
-      const failed = events.filter((e) => e.type === 'phase.failed');
+      const failed = events.filter((e) => e.type === 'validate.failed');
       expect(failed).toHaveLength(1);
       expect(failed[0].level).toBe('error');
       expect(failed[0].phase).toBe('validate');
@@ -219,7 +219,7 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      const completed = events.filter((e) => e.type === 'phase.completed');
+      const completed = events.filter((e) => e.type === 'validate.completed');
       expect(completed).toHaveLength(0);
     });
   });

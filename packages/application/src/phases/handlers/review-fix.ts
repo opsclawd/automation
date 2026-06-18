@@ -18,7 +18,7 @@ export class ReviewFixHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', 'review-fix started');
+    emit('review_fix.started', 'info', 'review-fix started');
 
     let phaseOutcome: 'passed' | 'failed';
     let loopStatus: 'converged' | 'failed' | 'exhausted';
@@ -39,12 +39,12 @@ export class ReviewFixHandler implements PhaseHandler {
         artifacts: ['review.md'],
         detectedAt: ctx.now(),
       };
-      emit('phase.failed', 'error', message);
+      emit('review_fix.failed', 'error', message);
       return { outcome: 'failed', failure };
     }
 
     if (phaseOutcome === 'passed') {
-      emit('phase.completed', 'info', 'review-fix converged');
+      emit('review_fix.completed', 'info', 'review-fix converged');
       return { outcome: 'passed' };
     }
     const terminalStatus: 'exhausted' | 'failed' =
@@ -55,7 +55,7 @@ export class ReviewFixHandler implements PhaseHandler {
         : 'review/fix loop failed';
     const eventMessage =
       terminalStatus === 'exhausted' ? 'review-fix loop exhausted' : 'review-fix loop failed';
-    emit('phase.failed', 'error', eventMessage);
+    emit('review_fix.failed', 'error', eventMessage);
     return {
       outcome: 'failed',
       failure: {

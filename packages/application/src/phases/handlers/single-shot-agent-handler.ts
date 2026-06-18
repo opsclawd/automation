@@ -16,12 +16,12 @@ export class SingleShotAgentHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', `starting ${this.phase}`);
+    emit(`${String(this.phase)}.started`, 'info', `starting ${this.phase}`);
 
     const def = getPhaseDefinition(this.phase);
     if (!def.agentContract) {
       const message = `${this.phase} phase definition missing agentContract`;
-      emit('phase.failed', 'error', message);
+      emit(`${String(this.phase)}.failed`, 'error', message);
       return {
         outcome: 'failed' as const,
         failure: {
@@ -39,7 +39,7 @@ export class SingleShotAgentHandler implements PhaseHandler {
     }
 
     if (ctx.resolveProfile === undefined) {
-      emit('phase.failed', 'error', 'resolveProfile not available on context');
+      emit(`${String(this.phase)}.failed`, 'error', 'resolveProfile not available on context');
       return {
         outcome: 'failed' as const,
         failure: {
@@ -58,7 +58,7 @@ export class SingleShotAgentHandler implements PhaseHandler {
     const profile = ctx.resolveProfile(this.phase);
     if (!profile) {
       const message = `resolveProfile returned empty for phase '${this.phase}'`;
-      emit('phase.failed', 'error', message);
+      emit(`${String(this.phase)}.failed`, 'error', message);
       return {
         outcome: 'failed' as const,
         failure: {

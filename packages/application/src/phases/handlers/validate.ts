@@ -19,7 +19,7 @@ export class ValidateHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', 'validate started');
+    emit('validate.started', 'info', 'validate started');
 
     if (this.opts.commands.length === 0) {
       const message = 'no validation commands configured (validation.commands is empty)';
@@ -33,7 +33,7 @@ export class ValidateHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      emit('phase.failed', 'error', message);
+      emit('validate.failed', 'error', message);
       return { outcome: 'failed', failure };
     }
 
@@ -63,12 +63,12 @@ export class ValidateHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      emit('phase.failed', 'error', message);
+      emit('validate.failed', 'error', message);
       return { outcome: 'failed', failure };
     }
 
     if (passed) {
-      emit('phase.completed', 'info', 'validation passed', {
+      emit('validate.completed', 'info', 'validation passed', {
         commands: validationRun.commands.length,
       });
       return { outcome: 'passed' };
@@ -92,7 +92,7 @@ export class ValidateHandler implements PhaseHandler {
       .filter((c) => c.outcome !== 'passed')
       .map((c) => c.command);
 
-    emit('phase.failed', 'error', failure.message, { failing });
+    emit('validate.failed', 'error', failure.message, { failing });
     return { outcome: 'failed', failure };
   }
 }

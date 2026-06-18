@@ -179,10 +179,10 @@ describe('PlanDesignHandler', () => {
     expect(req.startCommitSha).toBe('abc123');
 
     // Verify lifecycle events
-    expect(eventsOf(ctx, 'phase.started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-design.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'agent.invoking')).toHaveLength(1);
     expect(eventsOf(ctx, 'artifact.created')).toHaveLength(1); // prompt.md
-    expect(eventsOf(ctx, 'phase.completed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-design.completed')).toHaveLength(1);
   });
 });
 
@@ -241,8 +241,8 @@ describe('PlanWriteHandler', () => {
     expect(agent.invocations).toHaveLength(1);
     expect(agent.invocations[0]).toBeDefined();
     expect(agent.invocations[0]!.expectedArtifacts).toContain('plan.md');
-    expect(eventsOf(ctx, 'phase.started')).toHaveLength(1);
-    expect(eventsOf(ctx, 'phase.completed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(1);
   });
 });
 
@@ -362,7 +362,7 @@ describe.each([
     if (result.outcome === 'failed') {
       expect(result.failure.kind).toBe('missing_artifact');
     }
-    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, `${String(handler.phase)}.failed`)).toHaveLength(1);
   });
 
   it('returns failed when loadPromptTemplate throws generic error', async () => {
@@ -400,7 +400,7 @@ describe.each([
       expect(result.failure.kind).toBe('command_failed');
       expect(result.failure.canRetry).toBe(true);
     }
-    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, `${String(handler.phase)}.failed`)).toHaveLength(1);
   });
 
   it('returns failed when agent.invoke() throws', async () => {
@@ -438,7 +438,7 @@ describe.each([
       expect(result.failure.kind).toBe('command_failed');
       expect(result.failure.canRetry).toBe(true);
     }
-    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, `${String(handler.phase)}.failed`)).toHaveLength(1);
   });
 
   it('returns failed when agent outcome is timeout', async () => {
@@ -459,7 +459,7 @@ describe.each([
       expect(result.failure.kind).toBe('timeout');
       expect(result.failure.canRetry).toBe(true);
     }
-    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, `${String(handler.phase)}.failed`)).toHaveLength(1);
   });
 
   it('returns blocked when validateAgentContract finds violations', async () => {
@@ -488,7 +488,7 @@ describe.each([
     if (result.outcome === 'blocked') {
       expect(result.failure.kind).toBe('agent_contract_violation');
     }
-    expect(eventsOf(ctx, 'phase.blocked')).toHaveLength(1);
+    expect(eventsOf(ctx, `${String(handler.phase)}.blocked`)).toHaveLength(1);
   });
 
   it('returns failed when extractResult returns ok:false', async () => {
@@ -573,6 +573,6 @@ describe.each([
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
     expect(agent.invocations).toHaveLength(2);
-    expect(eventsOf(ctx, 'phase.completed')).toHaveLength(1);
+    expect(eventsOf(ctx, `${String(handler.phase)}.completed`)).toHaveLength(1);
   });
 });
