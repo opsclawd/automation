@@ -28,6 +28,7 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   'review-fix': null,
   read_issue: null,
   validate: null,
+  'pr-review-poll': 'post-pr-review',
   'post-pr-review': null,
 };
 

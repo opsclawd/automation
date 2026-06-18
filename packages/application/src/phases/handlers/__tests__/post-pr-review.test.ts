@@ -32,7 +32,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'pending' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     await handler.run(c);
@@ -47,7 +46,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'merged' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
@@ -61,7 +59,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'all_resolved' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
@@ -75,7 +72,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'pending' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
@@ -92,7 +88,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'timed_out' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
@@ -106,7 +101,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'cancelled' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
@@ -120,7 +114,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'max_polls' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
@@ -139,7 +132,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'blocked' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
@@ -160,7 +152,6 @@ describe('PostPrReviewHandler', () => {
         signal: 'bogus' as unknown as import('../post-pr-review.js').PollSignal,
       }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c } = ctx();
     const res = await handler.run(c);
@@ -178,7 +169,6 @@ describe('PostPrReviewHandler', () => {
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'merged' as const }),
       setRunStatus,
-      readyMaxDays: 7,
     });
     const { ctx: c, events } = ctx();
     await handler.run(c);

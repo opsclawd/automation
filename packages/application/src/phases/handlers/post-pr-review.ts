@@ -1,6 +1,7 @@
 import { PhaseName } from '@ai-sdlc/domain';
-import type { RunStatus, Failure } from '@ai-sdlc/domain';
+import type { RunStatus } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
+import { createEventEmitter } from '../handler.js';
 
 export type PollSignal =
   | 'all_resolved'
@@ -14,7 +15,6 @@ export type PollSignal =
 export interface PostPrReviewHandlerOpts {
   runPoll: (ctx: PhaseHandlerContext) => Promise<{ signal: PollSignal }>;
   setRunStatus: (status: RunStatus) => void;
-  readyMaxDays: number;
 }
 
 export class PostPrReviewHandler implements PhaseHandler {
@@ -23,74 +23,69 @@ export class PostPrReviewHandler implements PhaseHandler {
   constructor(private readonly opts: PostPrReviewHandlerOpts) {}
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
-    this._emitPhase(ctx, 'phase.started', 'info', 'post-pr-review started');
+    const emit = createEventEmitter(ctx, this.phase);
+    emit('phase.started', 'info', 'post-pr-review started');
 
     const { signal } = await this.opts.runPoll(ctx);
 
     switch (signal) {
       case 'merged':
         this.opts.setRunStatus('passed');
-        this._emitRun(ctx, 'run.completed', 'info', 'PR merged — run complete');
+        this._emitRun(ctx, 'run.completed', 'info', 'PR merged — run complete', {
+          signal: 'merged',
+        });
+        emit('phase.completed', 'info', 'PR merged — phase complete', { signal: 'merged' });
         return { outcome: 'passed' };
 
       case 'all_resolved':
         this.opts.setRunStatus('waiting');
-        this._emitRun(ctx, 'run.ready', 'info', 'all reviews addressed — awaiting merge');
+        this._emitRun(ctx, 'run.ready', 'info', 'all reviews addressed — awaiting merge', {
+          signal: 'all_resolved',
+        });
+        emit('phase.completed', 'info', 'all reviews resolved — phase complete', {
+          signal: 'all_resolved',
+        });
         return { outcome: 'passed' };
 
       case 'pending':
-        this._emitPhase(ctx, 'post-pr-review.poll.pending', 'info', 'reviews still pending');
+        emit('post-pr-review.poll.pending', 'info', 'reviews still pending', { signal: 'pending' });
         return { outcome: 'passed' };
 
       case 'timed_out':
         this.opts.setRunStatus('cancelled');
-        this._emitRun(ctx, 'run.cancelled_timeout', 'warn', 'ready timeout exceeded');
+        this._emitRun(ctx, 'run.cancelled_timeout', 'warn', 'ready timeout exceeded', {
+          signal: 'timed_out',
+        });
+        emit('phase.completed', 'info', 'timeout — phase complete', { signal: 'timed_out' });
         return { outcome: 'passed' };
 
       case 'cancelled':
         this.opts.setRunStatus('cancelled');
-        this._emitRun(ctx, 'run.cancelled', 'info', 'PR review cancelled');
+        this._emitRun(ctx, 'run.cancelled', 'info', 'PR review cancelled', { signal: 'cancelled' });
+        emit('phase.completed', 'info', 'PR review cancelled — phase complete', {
+          signal: 'cancelled',
+        });
         return { outcome: 'passed' };
 
       case 'max_polls':
         this.opts.setRunStatus('failed');
-        this._emitRun(ctx, 'run.failed', 'error', 'max poll attempts exceeded');
-        return {
-          outcome: 'failed',
-          failure: this._failure(ctx, 'max poll attempts exceeded', 'max_polls'),
-        };
+        this._emitRun(ctx, 'run.failed', 'error', 'max poll attempts exceeded', {
+          signal: 'max_polls',
+        });
+        emit('phase.failed', 'error', 'max poll attempts exceeded — phase failed', {
+          signal: 'max_polls',
+        });
+        return this._fail(ctx, 'max poll attempts exceeded', 'max_polls');
 
       case 'blocked':
         this.opts.setRunStatus('blocked');
-        this._emitRun(ctx, 'run.blocked', 'warn', 'PR review blocked');
-        return {
-          outcome: 'blocked',
-          failure: this._failure(ctx, 'PR review blocked', 'blocked'),
-        };
+        this._emitRun(ctx, 'run.blocked', 'warn', 'PR review blocked', { signal: 'blocked' });
+        emit('phase.failed', 'error', 'PR review blocked — phase failed', { signal: 'blocked' });
+        return this._fail(ctx, 'PR review blocked', 'blocked', 'blocked');
 
       default:
-        return {
-          outcome: 'failed',
-          failure: this._failure(ctx, `unknown poll signal: ${signal}`, signal),
-        };
+        return this._fail(ctx, `unknown poll signal: ${signal}`, signal);
     }
-  }
-
-  private _emitPhase(
-    ctx: PhaseHandlerContext,
-    type: string,
-    level: 'info' | 'warn' | 'error',
-    message: string,
-  ): void {
-    ctx.events.publish(ctx.runUuid, {
-      runId: ctx.runId,
-      phase: this.phase,
-      level,
-      type,
-      message,
-      timestamp: ctx.now().toISOString(),
-      metadata: {},
-    });
   }
 
   private _emitRun(
@@ -98,6 +93,7 @@ export class PostPrReviewHandler implements PhaseHandler {
     type: string,
     level: 'info' | 'warn' | 'error',
     message: string,
+    metadata: Record<string, unknown> = {},
   ): void {
     ctx.events.publish(ctx.runUuid, {
       runId: ctx.runId,
@@ -105,20 +101,28 @@ export class PostPrReviewHandler implements PhaseHandler {
       type,
       message,
       timestamp: ctx.now().toISOString(),
-      metadata: {},
+      metadata,
     });
   }
 
-  private _failure(ctx: PhaseHandlerContext, message: string, signal: string): Failure {
+  private _fail(
+    ctx: PhaseHandlerContext,
+    message: string,
+    signal: string,
+    outcome: 'failed' | 'blocked' = 'failed',
+  ): PhaseResult {
     return {
-      runUuid: ctx.runUuid,
-      phase: this.phase,
-      kind: 'polling_failed',
-      message,
-      canRetry: false,
-      suggestedAction: `Poll returned signal '${signal}'. Check the PR review poller logs.`,
-      artifacts: [],
-      detectedAt: ctx.now(),
+      outcome,
+      failure: {
+        runUuid: ctx.runUuid,
+        phase: this.phase,
+        kind: 'polling_failed',
+        message,
+        canRetry: false,
+        suggestedAction: `Poll returned signal '${signal}'. Check the PR review poller logs.`,
+        artifacts: [],
+        detectedAt: ctx.now(),
+      },
     };
   }
 }
