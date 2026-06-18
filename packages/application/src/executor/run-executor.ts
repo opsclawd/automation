@@ -3,6 +3,8 @@ import { startPhase, completePhase, failRun, passRun, blockRun } from '@ai-sdlc/
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
+  CANONICAL_PHASE_ORDER,
+  PHASE_DEFINITIONS,
   orderedPhases,
   assertInputsAvailable,
   MissingRequiredInputError,
@@ -49,50 +51,54 @@ export class RunExecutor {
     const presentArtifacts: string[] = [...input.presentArtifacts];
     let currentRun: Run = { ...run };
 
-    const phaseDefs = orderedPhases(skip);
+    // Validate skip list — throws if a phase isn't skippable or skipping
+    // would orphan a required input in a downstream phase
+    orderedPhases(skip);
 
-    // Skip phases already completed (resume scenario — worker crash/retry or
-    // reactivating a waiting run). Accumulate declared outputs from completed
-    // phases so downstream input gating passes.
+    const skipSet: Set<string> = new Set(skip.map((s) => s as string));
     const completedSet = new Set(currentRun.completedPhases);
-    const remainingPhaseDefs = phaseDefs.filter((def) => !completedSet.has(def.name as string));
-    for (const def of phaseDefs) {
-      if (completedSet.has(def.name as string)) {
-        for (const output of def.outputs) {
+
+    // Main phase loop — iterate in canonical order. Skipped phases are
+    // recorded at their natural position so persisted phase ordering
+    // remains correct even when the run fails before reaching a skipped
+    // phase. Completed phases (resume scenario) accumulate their outputs
+    // so downstream input gating passes.
+    for (const phaseName of CANONICAL_PHASE_ORDER) {
+      const phaseDef = PHASE_DEFINITIONS[phaseName]!;
+
+      if (completedSet.has(phaseName as string)) {
+        for (const output of phaseDef.outputs) {
           if (!presentArtifacts.includes(output)) {
             presentArtifacts.push(output);
           }
         }
-        phases.push({ phase: def.name, status: 'passed' });
+        phases.push({ phase: phaseName, status: 'passed' });
+        continue;
       }
-    }
 
-    // Record skipped phases pre-loop
-    for (const phaseName of skip) {
-      const phase: Phase = {
-        id: this.phaseId(run.uuid, phaseName),
-        runUuid: run.uuid,
-        name: phaseName as string,
-        status: 'skipped',
-        attempt: 1,
-        startedAt: now(),
-        completedAt: now(),
-      };
-      this.deps.phaseRepository.insert(phase);
-      phases.push({ phase: phaseName, status: 'skipped' });
-      this.emit(
-        run.displayId,
-        run.uuid,
-        phaseName as string,
-        'info',
-        'phase.skipped',
-        `phase '${String(phaseName)}' skipped`,
-        now(),
-      );
-    }
-
-    // Main phase loop
-    for (const phaseDef of remainingPhaseDefs) {
+      if (skipSet.has(phaseName as string)) {
+        const phase: Phase = {
+          id: this.phaseId(run.uuid, phaseName),
+          runUuid: run.uuid,
+          name: phaseName as string,
+          status: 'skipped',
+          attempt: 1,
+          startedAt: now(),
+          completedAt: now(),
+        };
+        this.deps.phaseRepository.insert(phase);
+        phases.push({ phase: phaseName, status: 'skipped' });
+        this.emit(
+          run.displayId,
+          run.uuid,
+          phaseName as string,
+          'info',
+          'phase.skipped',
+          `phase '${String(phaseName)}' skipped`,
+          now(),
+        );
+        continue;
+      }
       const handler = this.deps.registry.get(phaseDef.name);
 
       // Input gating
