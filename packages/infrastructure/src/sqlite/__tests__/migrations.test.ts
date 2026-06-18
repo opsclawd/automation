@@ -191,7 +191,7 @@ describe('migrations', () => {
     db.close();
   });
 
-  it('0010 backfills whole-pr-review and fix-review to review-fix (not agent_invocations)', () => {
+  it('0010 backfills whole-pr-review and fix-review to review-fix (not agent_invocations, not loops)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ai-orch-mig-'));
     const db = openDatabase(join(dir, 'db.sqlite'));
 
@@ -287,13 +287,15 @@ describe('migrations', () => {
       'review-fix',
     );
 
-    // loops.phase_id must be backfilled.
+    // loops.phase_id must NOT be backfilled — the route constructs artifact
+    // paths from l.phaseId (review-fix.ts:30-37) and on-disk files for old
+    // runs live under the original phase directory name.
     const loopPhaseIds = (
       db.prepare('SELECT phase_id FROM loops ORDER BY phase_id').all() as Array<{
         phase_id: string;
       }>
     ).map((r) => r.phase_id);
-    expect(loopPhaseIds).toEqual(['review-fix', 'review-fix']);
+    expect(loopPhaseIds).toEqual(['fix-review', 'whole-pr-review']);
 
     // runs.current_phase + completed_phases must be backfilled.
     const run = db.prepare('SELECT current_phase, completed_phases FROM runs').get() as {

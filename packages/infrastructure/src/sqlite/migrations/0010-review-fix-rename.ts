@@ -4,13 +4,17 @@ export const sql = /* sql */ `
 -- Decision #381: whole-pr-review + fix-review → review-fix (timeline collapse).
 -- agent_invocations.phase_id is intentionally NOT touched — loop-internal routing
 -- keys must remain unchanged per design decision 2.
+-- loops.phase_id is intentionally NOT touched — the review-fix route
+-- (apps/api/src/routes/review-fix.ts) constructs artifact-file paths from
+-- l.phaseId.  On-disk artifacts for pre-0010 loops were written under the old
+-- phase-name directory (via String(ctx.phaseId) in compose.ts), so rewriting
+-- loops.phase_id would cause artifact-link 404s for old runs.
 --
 -- ROLLBACK (if needed):
 --   UPDATE phases SET name = 'whole-pr-review' WHERE name = 'review-fix';
 --   UPDATE events SET phase = 'whole-pr-review' WHERE phase = 'review-fix';
 --   UPDATE artifacts SET phase = 'whole-pr-review' WHERE phase = 'review-fix';
 --   UPDATE failures SET phase = 'whole-pr-review' WHERE phase = 'review-fix';
---   UPDATE loops SET phase_id = 'whole-pr-review' WHERE phase_id = 'review-fix';
 --   UPDATE runs SET current_phase = 'whole-pr-review' WHERE current_phase = 'review-fix';
 --   -- completed_phases rollback requires reconstructing the original array from
 --   -- event data or a pre-migration backup; there is no deterministic reversal
@@ -28,8 +32,10 @@ UPDATE artifacts SET phase = 'review-fix' WHERE phase IN ('whole-pr-review', 'fi
 -- failures
 UPDATE failures SET phase = 'review-fix' WHERE phase IN ('whole-pr-review', 'fix-review');
 
--- loops.phase_id
-UPDATE loops SET phase_id = 'review-fix' WHERE phase_id IN ('whole-pr-review', 'fix-review');
+-- loops.phase_id is intentionally NOT backfilled — the review-fix route
+-- constructs artifact-file paths from l.phaseId (review-fix.ts:30-37), and
+-- on-disk files for old runs live under the original phase directory names.
+-- See the header comment for details.
 
 -- runs.current_phase
 UPDATE runs SET current_phase = 'review-fix' WHERE current_phase IN ('whole-pr-review', 'fix-review');
