@@ -111,12 +111,10 @@ const _phaseDefinitions = {
     skippable: false,
   },
   'post-pr-review': {
-    // safe is correct because setRunStatus is idempotent — retrying after a
-    // transient failure re-emits events but produces the same state transition.
     name: makePhaseName('post-pr-review'),
     inputs: { required: ['pr-url.txt'], optional: [] },
     outputs: ['comments.json', 'reviews.json'],
-    retrySafety: 'safe',
+    retrySafety: 'unsafe',
     skippable: false,
   },
 } satisfies Record<string, PhaseDefinition>;
