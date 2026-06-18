@@ -52,7 +52,7 @@ export class CreatePrHandler implements PhaseHandler {
       phase: this.phase,
       profile,
       step: 'create-pr',
-      template: this.opts.template,
+      ...(this.opts.template !== undefined ? { template: this.opts.template } : {}),
       vars: { issue_number: String(ctx.issueNumber) },
       agentContract: def.agentContract!,
     });
