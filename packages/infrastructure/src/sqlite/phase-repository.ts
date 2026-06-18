@@ -1,4 +1,5 @@
 import type { Phase, PhaseStatus } from '@ai-sdlc/domain';
+import type { PhaseRepositoryPort } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
 interface PhaseRow {
@@ -11,9 +12,17 @@ interface PhaseRow {
   completed_at: string | null;
 }
 
-/** Used directly by compose.ts — no port type exists in @ai-sdlc/application. */
-export class PhaseRepository {
+/** Used directly by compose.ts — implements @ai-sdlc/application PhaseRepositoryPort. */
+export class PhaseRepository implements PhaseRepositoryPort {
   constructor(private readonly db: Db) {}
+
+  insert(phase: Phase): void {
+    this.upsert(phase);
+  }
+
+  update(phase: Phase): void {
+    this.upsert(phase);
+  }
 
   upsert(phase: Phase): void {
     this.db
