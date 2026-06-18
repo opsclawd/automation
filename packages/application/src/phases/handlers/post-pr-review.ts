@@ -78,10 +78,10 @@ export class PostPrReviewHandler implements PhaseHandler {
         return { outcome: 'resting' };
 
       case 'blocked':
-        this.opts.setRunStatus('blocked');
+        this.opts.setRunStatus('waiting');
         this._emitRun(ctx, 'run.blocked', 'warn', 'PR review blocked', { signal: 'blocked' });
-        emit('phase.failed', 'error', 'PR review blocked — phase failed', { signal: 'blocked' });
-        return this._fail(ctx, 'PR review blocked', 'blocked', 'blocked');
+        emit('phase.completed', 'info', 'PR review blocked — phase resting', { signal: 'blocked' });
+        return { outcome: 'resting' };
 
       default:
         return this._fail(ctx, `unknown poll signal: ${signal}`, signal);

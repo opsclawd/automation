@@ -122,7 +122,7 @@ describe('PostPrReviewHandler', () => {
     expect(events.some((e) => e.type === 'run.ready')).toBe(true);
   });
 
-  it('blocks the Run on blocked signal with run.blocked event and failure', async () => {
+  it('rests the Run on blocked signal with run.blocked event', async () => {
     const setRunStatus = vi.fn();
     const handler = new PostPrReviewHandler({
       runPoll: async () => ({ signal: 'blocked' as const }),
@@ -130,13 +130,8 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     const res = await handler.run(c);
-    expect(res.outcome).toBe('blocked');
-    if (res.outcome === 'blocked') {
-      expect(res.failure.kind).toBe('polling_failed');
-      expect(res.failure.message).toContain('PR review blocked');
-      expect(res.failure.phase).toBe('post-pr-review');
-    }
-    expect(setRunStatus).toHaveBeenCalledWith('blocked');
+    expect(res.outcome).toBe('resting');
+    expect(setRunStatus).toHaveBeenCalledWith('waiting');
     expect(events.some((e) => e.type === 'run.blocked')).toBe(true);
   });
 
