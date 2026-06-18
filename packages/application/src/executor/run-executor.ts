@@ -147,6 +147,14 @@ export class RunExecutor {
               presentArtifacts.push(output);
             }
           }
+          // Refresh artifact presence from the actual store — what the handler
+          // produced takes precedence over declared outputs.
+          const stored = await ctx.artifacts.list(run.uuid);
+          for (const a of stored) {
+            if (!presentArtifacts.includes(a.relativePath)) {
+              presentArtifacts.push(a.relativePath);
+            }
+          }
           phases.push({ phase: phaseDef.name, status: 'passed' });
           this.emit(
             run.displayId,
