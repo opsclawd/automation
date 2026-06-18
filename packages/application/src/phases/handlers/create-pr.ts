@@ -1,6 +1,7 @@
 import type { PhaseName, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
+import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { getPhaseDefinition } from '../phase-definitions.js';
 import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 
@@ -51,8 +52,20 @@ export class CreatePrHandler implements PhaseHandler {
     let prUrl: string | undefined;
     try {
       prUrl = (await ctx.artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
-    } catch {
-      prUrl = undefined;
+    } catch (e) {
+      if (e instanceof ArtifactNotFoundError) {
+        prUrl = undefined;
+      } else {
+        const msg = `failed to read pr-url.txt: ${(e as Error).message}`;
+        emit('phase.failed', 'error', msg);
+        return this._fail(
+          ctx,
+          'command_failed',
+          msg,
+          false,
+          'Check artifact store health and resume create-pr.',
+        );
+      }
     }
 
     if (prUrl) {
