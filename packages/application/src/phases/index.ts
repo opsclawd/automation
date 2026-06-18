@@ -6,3 +6,4 @@ export * from './handlers/plan-write.js';
 export * from './derive-steps.js';
 export * from './handlers/implement.js';
 export * from './handlers/validate.js';
+export * from './handlers/compound.js';
