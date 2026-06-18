@@ -451,4 +451,95 @@ describe('RunExecutor', () => {
       expect.objectContaining({ type: 'run.completed' }),
     );
   });
+
+  it('stops execution with cancelled status when run was cancelled externally during handler execution', async () => {
+    const registry = new PhaseHandlerRegistry();
+
+    const cancelledRun = { ...makeRun(), status: 'cancelled' as const };
+    const findByUuid = vi
+      .fn()
+      .mockReturnValueOnce(undefined) // line 118: before handler
+      .mockReturnValueOnce(cancelledRun); // line 148: after handler
+
+    registry.register(makeStubHandler('read_issue'));
+
+    const deps = makeDeps({ registry, runRepository: { findByUuid } });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
+
+    expect(result.run.status).toBe('cancelled');
+    expect(result.phases).toHaveLength(0);
+
+    expect(deps.runRepository.update).not.toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ status: 'passed' }),
+    );
+    expect(deps.runRepository.update).not.toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ status: 'failed' }),
+    );
+  });
+
+  it('stops execution with cancelled status when handler throws and run was cancelled externally', async () => {
+    const registry = new PhaseHandlerRegistry();
+
+    const cancelledRun = { ...makeRun(), status: 'cancelled' as const };
+    const findByUuid = vi
+      .fn()
+      .mockReturnValueOnce(undefined) // line 118: before handler
+      .mockReturnValueOnce(cancelledRun); // line 131: catch block
+
+    registry.register({
+      phase: makePhaseName('read_issue'),
+      run: async () => {
+        throw new Error('crash');
+      },
+    });
+
+    const deps = makeDeps({ registry, runRepository: { findByUuid } });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
+
+    expect(result.run.status).toBe('cancelled');
+    expect(result.phases).toHaveLength(0);
+
+    expect(deps.runRepository.update).not.toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ status: 'failed' }),
+    );
+    expect(deps.failureRepository.insert).not.toHaveBeenCalled();
+  });
+
+  it('honours cancellation by checking before the final passRun', async () => {
+    const registry = new PhaseHandlerRegistry();
+    registerAllPassed(registry);
+
+    // Return a cancelled run for every call after the first N calls
+    // (which are consumed by the loop iteration checks)
+    let callCount = 0;
+    const cancelledRun = { ...makeRun(), status: 'cancelled' as const };
+    const findByUuid = vi.fn(() => {
+      callCount++;
+      // Each phase iteration: 2 calls (before handler + after handler) = 18 for 9 phases
+      // The 19th call would be the final passRun guard
+      return callCount <= 18 ? undefined : cancelledRun;
+    });
+
+    const deps = makeDeps({ registry, runRepository: { findByUuid } });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
+
+    expect(result.run.status).toBe('cancelled');
+
+    expect(deps.runRepository.update).not.toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ status: 'passed' }),
+    );
+  });
 });

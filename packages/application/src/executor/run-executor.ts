@@ -112,12 +112,25 @@ export class RunExecutor {
         now(),
       );
 
+      // Re-read persisted run state — run may have been cancelled during phase
+      // start bookkeeping or a previous handler. If so, bail immediately instead
+      // of writing a terminal status that could resurrect the run.
+      const cancelled = this.deps.runRepository.findByUuid(run.uuid);
+      if (cancelled?.status === 'cancelled') {
+        return { run: cancelled, phases };
+      }
+
       // Run handler
       const ctx = this.deps.contextFactory();
       let result: PhaseResult;
       try {
         result = await handler.run(ctx);
       } catch (err) {
+        // Re-read again — cancellation may have occurred during handler execution
+        const cancelledNow = this.deps.runRepository.findByUuid(run.uuid);
+        if (cancelledNow?.status === 'cancelled') {
+          return { run: cancelledNow, phases };
+        }
         const failure: Failure = {
           runUuid: currentRun.uuid,
           phase: phaseDef.name as string,
@@ -129,6 +142,12 @@ export class RunExecutor {
           detectedAt: now(),
         };
         return this.failRun(currentRun, phaseDef, phase, failure, now(), phases);
+      }
+
+      // Re-read persisted run state — cancellation may have occurred during handler execution
+      const cancelledAfterHandler = this.deps.runRepository.findByUuid(run.uuid);
+      if (cancelledAfterHandler?.status === 'cancelled') {
+        return { run: cancelledAfterHandler, phases };
       }
 
       switch (result.outcome) {
@@ -197,6 +216,12 @@ export class RunExecutor {
       }
     }
 
+    // Re-read persisted state — run may have been cancelled during the last handler
+    const cancelledFinal = this.deps.runRepository.findByUuid(run.uuid);
+    if (cancelledFinal?.status === 'cancelled') {
+      return { run: cancelledFinal, phases };
+    }
+
     // All phases passed — mark run passed
     const finalRun = passRun(currentRun, now());
     this.deps.runRepository.update(run.uuid, { status: 'passed', completedAt: now() });
@@ -220,6 +245,12 @@ export class RunExecutor {
     at: Date,
     phases: PhaseRecord[],
   ): ExecuteRunOutput {
+    // Safety net: if the run was cancelled externally, don't overwrite the terminal status
+    const cancelled = this.deps.runRepository.findByUuid(currentRun.uuid);
+    if (cancelled?.status === 'cancelled') {
+      return { run: cancelled, phases };
+    }
+
     if (failure.runUuid !== currentRun.uuid) {
       throw new Error(
         `handler returned failure with mismatched runUuid: expected ${currentRun.uuid}, got ${failure.runUuid}`,
@@ -270,6 +301,12 @@ export class RunExecutor {
     at: Date,
     phases: PhaseRecord[],
   ): ExecuteRunOutput {
+    // Safety net: if the run was cancelled externally, don't overwrite the terminal status
+    const cancelled = this.deps.runRepository.findByUuid(currentRun.uuid);
+    if (cancelled?.status === 'cancelled') {
+      return { run: cancelled, phases };
+    }
+
     if (failure.runUuid !== currentRun.uuid) {
       throw new Error(
         `handler returned failure with mismatched runUuid: expected ${currentRun.uuid}, got ${failure.runUuid}`,
