@@ -97,7 +97,7 @@ export class CreatePrHandler implements PhaseHandler {
         emit('phase.failed', 'error', msg);
         return this._fail(
           ctx,
-          'github_failed',
+          'git_failed',
           msg,
           true,
           'Check git remote/auth state; resume create-pr.',
