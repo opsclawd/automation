@@ -1,5 +1,5 @@
 import type { Run, Phase, PhaseName, PhaseStatus, Failure } from '@ai-sdlc/domain';
-import { startPhase, completePhase, failRun, passRun } from '@ai-sdlc/domain';
+import { startPhase, completePhase, failRun, passRun, blockRun } from '@ai-sdlc/domain';
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
@@ -10,14 +10,14 @@ import {
 import type { RunRepositoryPort, FailureRepositoryPort } from '../ports.js';
 import type { PhaseRepositoryPort } from '../ports/phase-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
-import type { PhaseHandlerRegistry } from './phase-handler-registry.js';
+import type { PhaseHandlerRegistryPort } from '../ports/phase-handler-registry-port.js';
 
 export interface RunExecutorDeps {
   runRepository: RunRepositoryPort;
   failureRepository: FailureRepositoryPort;
   phaseRepository: PhaseRepositoryPort;
   events: EventBusPort;
-  registry: PhaseHandlerRegistry;
+  registry: PhaseHandlerRegistryPort;
   contextFactory: () => PhaseHandlerContext;
   now?: () => Date;
 }
@@ -240,19 +240,21 @@ export class RunExecutor {
         `handler returned failure with mismatched runUuid: expected ${currentRun.uuid}, got ${failure.runUuid}`,
       );
     }
+    const run = blockRun(currentRun, failure.message, at);
     phase.status = 'blocked';
     phase.completedAt = at;
     this.deps.phaseRepository.update(phase);
     this.deps.failureRepository.insert(failure);
-    this.deps.runRepository.update(currentRun.uuid, {
+    this.deps.runRepository.update(run.uuid, {
       status: 'blocked',
       currentPhase: null,
+      completedAt: at,
       failureReason: failure.message,
     });
     phases.push({ phase: phaseDef.name, status: 'blocked', failure });
     this.emit(
-      currentRun.displayId,
-      currentRun.uuid,
+      run.displayId,
+      run.uuid,
       phaseDef.name as string,
       'warn',
       'phase.blocked',
@@ -260,16 +262,14 @@ export class RunExecutor {
       at,
     );
     this.emit(
-      currentRun.displayId,
-      currentRun.uuid,
+      run.displayId,
+      run.uuid,
       phaseDef.name as string,
       'warn',
       'run.blocked',
       `run blocked at phase '${String(phaseDef.name)}'`,
       at,
     );
-    const run = { ...currentRun, status: 'blocked' as const };
-    delete run.currentPhase;
     return { run, phases };
   }
 

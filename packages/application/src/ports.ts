@@ -175,4 +175,6 @@ export type EventTailerFactory = (input: {
   stop(): Promise<void>;
 };
 
+export type { PhaseHandlerRegistryPort } from './ports/phase-handler-registry-port.js';
+
 export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/handler.js';

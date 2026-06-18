@@ -104,6 +104,15 @@ export function failRun(run: Run, reason: string, at: Date = new Date()): Run {
   return next;
 }
 
+export function blockRun(run: Run, reason: string, at: Date = new Date()): Run {
+  if (TERMINAL_STATUSES.has(run.status)) {
+    throw new RunStateError(`cannot block run ${run.displayId}: already ${run.status}`);
+  }
+  const next: Run = { ...run, status: 'blocked', completedAt: at, failureReason: reason };
+  delete next.currentPhase;
+  return next;
+}
+
 export function cancelRun(run: Run, reason?: string, at: Date = new Date()): Run {
   if (TERMINAL_STATUSES.has(run.status)) {
     throw new RunStateError(`cannot cancel run ${run.displayId}: already ${run.status}`);

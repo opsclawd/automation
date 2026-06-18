@@ -20,7 +20,9 @@ const ALL_PHASES = [
   'post-pr-review',
 ] as const;
 
-const ALL_ARTIFACTS = ['issue.md', 'design.md', 'plan.md', 'pr-url.txt'];
+// Only the artifacts needed to satisfy required inputs for all phases in a full pipeline run.
+// Not a comprehensive list of all phase outputs — just the minimum to avoid MissingRequiredInputError.
+const MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE = ['issue.md', 'design.md', 'plan.md', 'pr-url.txt'];
 
 function makeRun(overrides?: Partial<Run>): Run {
   return createRun({
@@ -152,7 +154,7 @@ describe('RunExecutor', () => {
     const input: ExecuteRunInput = {
       run,
       skip: [],
-      presentArtifacts: ALL_ARTIFACTS,
+      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
     };
 
     const result = await executor.execute(input);
@@ -180,7 +182,7 @@ describe('RunExecutor', () => {
     const input: ExecuteRunInput = {
       run,
       skip: [makePhaseName('compound')],
-      presentArtifacts: ALL_ARTIFACTS,
+      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
     };
 
     const result = await executor.execute(input);
@@ -211,7 +213,11 @@ describe('RunExecutor', () => {
     const executor = new RunExecutor(deps);
     const run = makeRun();
 
-    const input: ExecuteRunInput = { run, skip: [], presentArtifacts: ALL_ARTIFACTS };
+    const input: ExecuteRunInput = {
+      run,
+      skip: [],
+      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
+    };
     const result = await executor.execute(input);
 
     expect(result.run.status).toBe('passed');
@@ -315,6 +321,65 @@ describe('RunExecutor', () => {
     );
   });
 
+  it('handles handler throwing an exception — converts to command_failed failure', async () => {
+    const registry = new PhaseHandlerRegistry();
+    registry.register({
+      phase: makePhaseName('read_issue'),
+      run: async () => {
+        throw new Error('handler crash');
+      },
+    });
+
+    const phaseRepo = new FakePhaseRepository();
+    const deps = makeDeps({ registry, phaseRepository: phaseRepo });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+    const result = await executor.execute(input);
+
+    expect(result.run.status).toBe('failed');
+    expect(result.run.failureReason).toBe('handler crash');
+    expect(result.phases).toHaveLength(1);
+    expect(result.phases[0]!.status).toBe('failed');
+    expect(result.phases[0]!.failure).toBeDefined();
+    expect(result.phases[0]!.failure!.kind).toBe('command_failed');
+    expect(result.phases[0]!.failure!.message).toBe('handler crash');
+
+    expect(deps.failureRepository.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'command_failed', message: 'handler crash' }),
+    );
+
+    // Phase was inserted with startedAt before handler ran, so failRun calls update
+    const phaseUpdates = phaseRepo.updated.filter((p) => p.status === 'failed');
+    expect(phaseUpdates).toHaveLength(1);
+
+    // Events published for phase.failed and run.failed
+    expect(deps.events.publish).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ type: 'phase.failed', level: 'error' }),
+    );
+    expect(deps.events.publish).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ type: 'run.failed', level: 'error' }),
+    );
+  });
+
+  it('propagates InvalidSkipListError when skip list contains non-skippable phase', async () => {
+    const registry = new PhaseHandlerRegistry();
+    const deps = makeDeps({ registry });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const input: ExecuteRunInput = {
+      run,
+      skip: [makePhaseName('create-pr')],
+      presentArtifacts: [],
+    };
+
+    await expect(executor.execute(input)).rejects.toThrow('not skippable');
+  });
+
   it('throws UnregisteredPhaseError when registry has no handler for a phase', async () => {
     const registry = new PhaseHandlerRegistry();
     const deps = makeDeps({ registry });
@@ -335,7 +400,11 @@ describe('RunExecutor', () => {
     const executor = new RunExecutor(deps);
     const run = makeRun();
 
-    const input: ExecuteRunInput = { run, skip: [], presentArtifacts: ALL_ARTIFACTS };
+    const input: ExecuteRunInput = {
+      run,
+      skip: [],
+      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
+    };
     await executor.execute(input);
 
     // Verify phase inserts: each phase starts with status 'running'

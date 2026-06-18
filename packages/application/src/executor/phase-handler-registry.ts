@@ -1,7 +1,8 @@
 import type { PhaseName } from '@ai-sdlc/domain';
 import type { PhaseHandler } from '../phases/handler.js';
+import type { PhaseHandlerRegistryPort } from '../ports/phase-handler-registry-port.js';
 
-export class PhaseHandlerRegistry {
+export class PhaseHandlerRegistry implements PhaseHandlerRegistryPort {
   private readonly handlers = new Map<PhaseName, PhaseHandler>();
 
   register(handler: PhaseHandler): void {
