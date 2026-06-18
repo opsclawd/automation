@@ -1,0 +1,132 @@
+import { describe, it, expect } from 'vitest';
+import { CreatePrHandler } from '../create-pr.js';
+import {
+  FakeArtifactStore,
+  FakeAgentPort,
+  FakeGitPort,
+  FakeGitHubPort,
+} from '../../../test-doubles/index.js';
+import type { AgentInvocationResult } from '../../../ports/agent-invocation-types.js';
+import type { PhaseHandlerContext } from '../../handler.js';
+import type { OrchestratorEvent } from '@ai-sdlc/shared';
+
+function successResult(overrides?: Partial<AgentInvocationResult>): AgentInvocationResult {
+  return {
+    runtime: 'opencode',
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-20250514',
+    exitCode: 0,
+    durationMs: 5000,
+    stdoutPath: '/tmp/stdout',
+    stderrPath: '/tmp/stderr',
+    resultJsonPath: 'result.json',
+    contractViolations: [],
+    outcome: 'success',
+    ...overrides,
+  };
+}
+
+const TEMPLATE = '# Create PR for issue {{var:issue_number}}\n\n{{artifact:plan.md}}';
+
+function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
+  const artifacts = new FakeArtifactStore();
+  const github = new FakeGitHubPort();
+  const agent = new FakeAgentPort({
+    'opencode-frontier': [
+      (req) => {
+        void artifacts.write({
+          runId: req.runId,
+          relativePath: 'pr-summary.md',
+          contents: '# Fix issue #7\n\nThis PR resolves the problem.',
+        });
+        void artifacts.write({
+          runId: req.runId,
+          relativePath: 'result.json',
+          contents: JSON.stringify({
+            result: 'created',
+            prNumber: 1,
+            prUrl: 'https://example/pr/1',
+          }),
+        });
+        return successResult();
+      },
+    ],
+  });
+  const git = new FakeGitPort();
+  const events: OrchestratorEvent[] = [];
+  const ctx = {
+    runId: 'run-1',
+    runUuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    repoFullName: 'acme/widgets',
+    issueNumber: 7,
+    cwd: '/tmp/wt',
+    artifacts,
+    github,
+    git,
+    agent,
+    events: {
+      publish: (_u: string, e: OrchestratorEvent) => events.push(e),
+      subscribe: () => () => {},
+    },
+    now: () => new Date('2026-06-16T00:00:00Z'),
+    promptsRoot: '/tmp/prompts',
+    startCommitSha: 'abc123',
+    expectedBranch: 'feat/issue-7',
+    resolveProfile: () => 'opencode-frontier',
+    idFactory: () => 'inv-1',
+    ...ctxOverrides,
+  } as unknown as PhaseHandlerContext;
+  return { artifacts, github, agent, git, events, ctx };
+}
+
+describe('CreatePrHandler', () => {
+  it('drafts summary, opens PR, writes pr-url.txt, flips labels', async () => {
+    const { artifacts, github, ctx, events } = build();
+
+    // Seed required input artifact (plan.md)
+    await artifacts.write({ runId: ctx.runUuid, relativePath: 'plan.md', contents: '# Plan' });
+
+    // Seed result.json (runSingleShotAgentPhase's extractResult needs it)
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'created', prNumber: 1, prUrl: 'https://example/pr/1' }),
+    });
+
+    const res = await new CreatePrHandler({
+      baseBranch: 'main',
+      headBranch: 'feat/issue-7',
+      template: TEMPLATE,
+    }).run(ctx);
+
+    expect(res.outcome).toBe('passed');
+
+    // PR was created
+    expect(github.createdPrInputs).toHaveLength(1);
+    expect(github.createdPrInputs[0]!.headBranch).toBe('feat/issue-7');
+    expect(github.createdPrInputs[0]!.baseBranch).toBe('main');
+    expect(github.createdPrInputs[0]!.title).toBe('Fix issue #7');
+
+    // pr-url.txt written
+    expect(await artifacts.read(ctx.runUuid, 'pr-url.txt')).toContain('https://example/pr/');
+
+    // Labels flipped
+    expect(github.labelChanges).toHaveLength(1);
+    expect(github.labelChanges[0]).toMatchObject({
+      repoFullName: 'acme/widgets',
+      issueNumber: 7,
+      add: ['ai:pr-ready'],
+      remove: ['ai:in-progress'],
+    });
+
+    // Events emitted
+    const created = events.filter((e) => e.type === 'pr.created');
+    expect(created).toHaveLength(1);
+    expect(created[0]!.level).toBe('info');
+
+    // runSingleShotAgentPhase emits its own phase.completed, then the handler
+    // emits another after GitHub operations complete — both are valid.
+    const completed = events.filter((e) => e.type === 'phase.completed');
+    expect(completed.length).toBeGreaterThanOrEqual(1);
+  });
+});
