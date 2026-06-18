@@ -6,10 +6,10 @@ export class FakePhaseRepository implements PhaseRepositoryPort {
   updated: Phase[] = [];
 
   insert(phase: Phase): void {
-    this.inserted.push(phase);
+    this.inserted.push({ ...phase });
   }
 
   update(phase: Phase): void {
-    this.updated.push(phase);
+    this.updated.push({ ...phase });
   }
 }
