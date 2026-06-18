@@ -1,4 +1,11 @@
-export type PhaseStatus = 'pending' | 'running' | 'passed' | 'failed' | 'skipped' | 'blocked';
+export type PhaseStatus =
+  | 'pending'
+  | 'running'
+  | 'passed'
+  | 'failed'
+  | 'skipped'
+  | 'blocked'
+  | 'resting';
 
 export interface Phase {
   id: string;

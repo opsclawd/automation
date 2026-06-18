@@ -200,12 +200,11 @@ describe('RunExecutor', () => {
     expect(skippedInserts).toHaveLength(1);
   });
 
-  it('treats resting outcome as passed — phase completes, run continues', async () => {
+  it('stops the phase loop on resting — no subsequent phases, phase status preserved, run not passed', async () => {
     const registry = new PhaseHandlerRegistry();
     registry.register(makeStubHandler('read_issue', 'resting'));
-    for (const name of ALL_PHASES.slice(1)) {
-      registry.register(makeStubHandler(name));
-    }
+    // Register handler for next phase — should NOT be reached
+    registry.register(makeStubHandler('plan-design'));
 
     const deps = makeDeps({ registry });
     const executor = new RunExecutor(deps);
@@ -218,11 +217,24 @@ describe('RunExecutor', () => {
     };
     const result = await executor.execute(input);
 
-    expect(result.run.status).toBe('passed');
-    expect(result.phases).toHaveLength(9);
-    // The first phase recorded as passed even though handler returned 'resting'
-    expect(result.phases[0]!.status).toBe('passed');
-    expect(result.phases[8]!.status).toBe('passed');
+    // Only the resting phase executed
+    expect(result.phases).toHaveLength(1);
+    expect(result.phases[0]!.status).toBe('resting');
+    expect(result.phases[0]!.phase).toBe(makePhaseName('read_issue'));
+
+    // Run is NOT passed — it retains its pre-passRun status
+    expect(result.run.status).not.toBe('passed');
+    expect(result.run.currentPhase).toBeUndefined();
+
+    // Event reflects resting, not completion
+    expect(deps.events.publish).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ type: 'phase.resting' }),
+    );
+    expect(deps.events.publish).not.toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ type: 'run.completed' }),
+    );
   });
 
   it('stops on first phase failure and marks run failed', async () => {

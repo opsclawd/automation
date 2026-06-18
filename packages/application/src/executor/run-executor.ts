@@ -133,7 +133,6 @@ export class RunExecutor {
 
       switch (result.outcome) {
         case 'passed':
-        case 'resting':
         case 'skipped': {
           currentRun = completePhase(currentRun, phaseDef.name as string);
           phase.status = 'passed';
@@ -159,6 +158,27 @@ export class RunExecutor {
             now(),
           );
           break;
+        }
+        case 'resting': {
+          currentRun = completePhase(currentRun, phaseDef.name as string);
+          phase.status = 'resting';
+          phase.completedAt = now();
+          this.deps.phaseRepository.update(phase);
+          this.deps.runRepository.update(run.uuid, {
+            currentPhase: null,
+            completedPhases: currentRun.completedPhases,
+          });
+          phases.push({ phase: phaseDef.name, status: 'resting' });
+          this.emit(
+            run.displayId,
+            run.uuid,
+            phaseDef.name as string,
+            'info',
+            'phase.resting',
+            `phase '${String(phaseDef.name)}' resting — run paused`,
+            now(),
+          );
+          return { run: currentRun, phases };
         }
         case 'failed': {
           return this.failRun(currentRun, phaseDef, phase, result.failure, now(), phases);
