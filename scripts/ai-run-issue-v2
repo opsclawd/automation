@@ -3882,7 +3882,10 @@ fi
 if [[ "$PHASE" == "review-triage" ]]; then
   log "=== Phase: review-triage ==="
   _emit_phase_started "review-triage"
-  LAST_PHASE="review-triage"
+  # Intentionally NOT setting LAST_PHASE here — review-triage is an internal
+  # substep of the collapsed review-fix canonical phase. If the triage agent
+  # fails, orchestrator_fail must emit phase.failed for review-fix so the
+  # timeline correctly shows Review / Fix as failed rather than stuck running.
   ensure_worktree
 
   if [[ ! -f "${ISSUES_DIR}/review.md" ]]; then
