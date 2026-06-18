@@ -89,6 +89,21 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     if (!prUrl) {
+      // Push the branch so gh pr create's --head ref exists on remote.
+      try {
+        await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch });
+      } catch (e) {
+        const msg = `failed to push branch ${this.opts.headBranch}: ${(e as Error).message}`;
+        emit('phase.failed', 'error', msg);
+        return this._fail(
+          ctx,
+          'github_failed',
+          msg,
+          true,
+          'Check git remote/auth state; resume create-pr.',
+        );
+      }
+
       try {
         // TODO: GitHubPort.findOpenPrForBranch(repoFullName, headBranch) for cross-process idempotency.
         const pr = await ctx.github.createPullRequest({

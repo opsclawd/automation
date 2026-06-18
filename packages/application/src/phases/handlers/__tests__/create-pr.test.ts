@@ -72,7 +72,7 @@ function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
 
 describe('CreatePrHandler', () => {
   it('drafts summary, opens PR, writes pr-url.txt, flips labels', async () => {
-    const { artifacts, github, ctx, events } = build();
+    const { artifacts, github, git, ctx, events } = build();
 
     // Seed required input artifact (plan.md)
     await artifacts.write({ runId: ctx.runUuid, relativePath: 'plan.md', contents: '# Plan' });
@@ -84,6 +84,10 @@ describe('CreatePrHandler', () => {
     }).run(ctx);
 
     expect(res.outcome).toBe('passed');
+
+    // Branch was pushed before PR creation
+    expect(git.pushes).toHaveLength(1);
+    expect(git.pushes[0]).toMatchObject({ cwd: '/tmp/wt', branch: 'feat/issue-7' });
 
     // PR was created
     expect(github.createdPrInputs).toHaveLength(1);
