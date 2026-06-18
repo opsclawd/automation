@@ -3811,8 +3811,11 @@ Categorize findings:
 Write code-review.md now."
 
   _WHOLE_PR_MAX_ITERATIONS_FLAG=()
-  if [[ -f "$_ACTIVE_CONFIG" ]] && jq -e '.phases.wholePrFix.maxIterations' "$_ACTIVE_CONFIG" >/dev/null 2>&1; then
-    _WHOLE_PR_MAX_ITERATIONS_FLAG=(--max-iterations "$MAX_WHOLE_PR_FIX_ITERATIONS")
+  if [[ -f "$_ACTIVE_CONFIG" ]]; then
+    _val=$(jq -r '.phases.wholePrFix.maxIterations // empty' "$_ACTIVE_CONFIG" 2>/dev/null)
+    if [[ "$_val" =~ ^[1-9][0-9]*$ ]]; then
+      _WHOLE_PR_MAX_ITERATIONS_FLAG=(--max-iterations "$MAX_WHOLE_PR_FIX_ITERATIONS")
+    fi
   fi
   _worktree_state_before=$(_capture_worktree_state)
   _review_fix_ec=0
