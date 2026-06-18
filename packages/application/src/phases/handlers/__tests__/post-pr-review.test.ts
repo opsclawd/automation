@@ -112,7 +112,7 @@ describe('PostPrReviewHandler', () => {
   it('sets the Run to READY (waiting) when poll budget exhausted', async () => {
     const setRunStatus = vi.fn();
     const handler = new PostPrReviewHandler({
-      runPoll: async () => ({ signal: 'max_polls' as const }),
+      runPoll: async () => ({ signal: 'max_polls_reached' as const }),
       setRunStatus,
     });
     const { ctx: c, events } = ctx();

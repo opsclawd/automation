@@ -9,7 +9,7 @@ export type PollSignal =
   | 'pending'
   | 'timed_out'
   | 'cancelled'
-  | 'max_polls'
+  | 'max_polls_reached'
   | 'blocked';
 
 export interface PostPrReviewHandlerOpts {
@@ -67,13 +67,13 @@ export class PostPrReviewHandler implements PhaseHandler {
         });
         return { outcome: 'resting' };
 
-      case 'max_polls':
+      case 'max_polls_reached':
         this.opts.setRunStatus('waiting');
         this._emitRun(ctx, 'run.ready', 'info', 'max poll attempts reached — run waiting', {
-          signal: 'max_polls',
+          signal: 'max_polls_reached',
         });
         emit('phase.completed', 'info', 'max poll attempts reached — phase resting', {
-          signal: 'max_polls',
+          signal: 'max_polls_reached',
         });
         return { outcome: 'resting' };
 
