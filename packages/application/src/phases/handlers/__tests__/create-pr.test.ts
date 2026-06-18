@@ -129,4 +129,51 @@ describe('CreatePrHandler', () => {
     const completed = events.filter((e) => e.type === 'phase.completed');
     expect(completed.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('does not create a second PR when pr-url.txt already exists', async () => {
+    const { artifacts, github, ctx, events } = build();
+
+    await artifacts.write({ runId: ctx.runUuid, relativePath: 'plan.md', contents: '# Plan' });
+    // Pre-seed pr-url.txt from prior run attempt
+    const existingUrl = 'https://example/pr/existing';
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'pr-url.txt',
+      contents: existingUrl + '\n',
+    });
+    // Seed result.json for extractResult
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'ready', summary: 'pr drafted' }),
+    });
+
+    const res = await new CreatePrHandler({
+      baseBranch: 'main',
+      headBranch: 'feat/issue-7',
+      template: TEMPLATE,
+    }).run(ctx);
+
+    expect(res.outcome).toBe('passed');
+
+    // No new PR created
+    expect(github.createdPrInputs).toHaveLength(0);
+
+    // Existing URL preserved
+    const written = (await artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+    expect(written).toBe(existingUrl);
+
+    // Reuse event emitted
+    const reused = events.filter((e) => e.type === 'pr.reused');
+    expect(reused).toHaveLength(1);
+    expect(reused[0]!.level).toBe('info');
+    expect(reused[0]!.metadata).toMatchObject({ url: existingUrl });
+
+    // Labels still flipped
+    expect(github.labelChanges).toHaveLength(1);
+    expect(github.labelChanges[0]).toMatchObject({
+      add: ['ai:pr-ready'],
+      remove: ['ai:in-progress'],
+    });
+  });
 });
