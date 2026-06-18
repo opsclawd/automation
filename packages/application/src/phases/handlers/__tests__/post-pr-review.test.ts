@@ -86,4 +86,104 @@ describe('PostPrReviewHandler', () => {
       'post-pr-review',
     );
   });
+
+  it('cancels the Run on timed_out with run.cancelled_timeout event', async () => {
+    const setRunStatus = vi.fn();
+    const handler = new PostPrReviewHandler({
+      runPoll: async () => ({ signal: 'timed_out' as const }),
+      setRunStatus,
+      readyMaxDays: 7,
+    });
+    const { ctx: c, events } = ctx();
+    const res = await handler.run(c);
+    expect(res.outcome).toBe('passed');
+    expect(setRunStatus).toHaveBeenCalledWith('cancelled');
+    expect(events.some((e) => e.type === 'run.cancelled_timeout')).toBe(true);
+  });
+
+  it('cancels the Run on cancelled signal with run.cancelled event', async () => {
+    const setRunStatus = vi.fn();
+    const handler = new PostPrReviewHandler({
+      runPoll: async () => ({ signal: 'cancelled' as const }),
+      setRunStatus,
+      readyMaxDays: 7,
+    });
+    const { ctx: c, events } = ctx();
+    const res = await handler.run(c);
+    expect(res.outcome).toBe('passed');
+    expect(setRunStatus).toHaveBeenCalledWith('cancelled');
+    expect(events.some((e) => e.type === 'run.cancelled')).toBe(true);
+  });
+
+  it('fails the Run on max_polls with run.failed event and failure', async () => {
+    const setRunStatus = vi.fn();
+    const handler = new PostPrReviewHandler({
+      runPoll: async () => ({ signal: 'max_polls' as const }),
+      setRunStatus,
+      readyMaxDays: 7,
+    });
+    const { ctx: c, events } = ctx();
+    const res = await handler.run(c);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('polling_failed');
+      expect(res.failure.message).toContain('max poll attempts exceeded');
+      expect(res.failure.phase).toBe('post-pr-review');
+    }
+    expect(setRunStatus).toHaveBeenCalledWith('failed');
+    expect(events.some((e) => e.type === 'run.failed')).toBe(true);
+  });
+
+  it('blocks the Run on blocked signal with run.blocked event and failure', async () => {
+    const setRunStatus = vi.fn();
+    const handler = new PostPrReviewHandler({
+      runPoll: async () => ({ signal: 'blocked' as const }),
+      setRunStatus,
+      readyMaxDays: 7,
+    });
+    const { ctx: c, events } = ctx();
+    const res = await handler.run(c);
+    expect(res.outcome).toBe('blocked');
+    if (res.outcome === 'blocked') {
+      expect(res.failure.kind).toBe('polling_failed');
+      expect(res.failure.message).toContain('PR review blocked');
+      expect(res.failure.phase).toBe('post-pr-review');
+    }
+    expect(setRunStatus).toHaveBeenCalledWith('blocked');
+    expect(events.some((e) => e.type === 'run.blocked')).toBe(true);
+  });
+
+  it('returns failed PhaseResult on unknown signal without calling setRunStatus', async () => {
+    const setRunStatus = vi.fn();
+    const handler = new PostPrReviewHandler({
+      runPoll: async () => ({
+        signal: 'bogus' as unknown as import('../post-pr-review.js').PollSignal,
+      }),
+      setRunStatus,
+      readyMaxDays: 7,
+    });
+    const { ctx: c } = ctx();
+    const res = await handler.run(c);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('polling_failed');
+      expect(res.failure.message).toContain('unknown poll signal: bogus');
+      expect(res.failure.phase).toBe('post-pr-review');
+    }
+    expect(setRunStatus).not.toHaveBeenCalled();
+  });
+
+  it('run-level events omit the phase field', async () => {
+    const setRunStatus = vi.fn();
+    const handler = new PostPrReviewHandler({
+      runPoll: async () => ({ signal: 'merged' as const }),
+      setRunStatus,
+      readyMaxDays: 7,
+    });
+    const { ctx: c, events } = ctx();
+    await handler.run(c);
+    const completed = events.find((e) => e.type === 'run.completed');
+    expect(completed).toBeDefined();
+    expect(completed!.phase).toBeUndefined();
+  });
 });
