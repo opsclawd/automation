@@ -216,18 +216,24 @@ export class RunExecutor {
           currentRun = completePhase(currentRun, phaseDef.name as string);
           phase.status = 'skipped';
           phase.completedAt = now();
+          // Refresh artifact presence BEFORE persisting phase completion.
+          // Non-fatal on failure since the handler chose not to run.
+          try {
+            const stored = await ctx.artifacts.list(run.uuid);
+            for (const a of stored) {
+              if (!presentArtifacts.includes(a.relativePath)) {
+                presentArtifacts.push(a.relativePath);
+              }
+            }
+          } catch {
+            // non-fatal — handler chose to skip, no declared outputs to lose
+          }
           this.deps.phaseRepository.update(phase);
           this.deps.runRepository.update(run.uuid, {
             currentPhase: null,
             completedPhases: currentRun.completedPhases,
           });
           // Do NOT accumulate declared outputs — the handler chose not to run
-          const stored = await ctx.artifacts.list(run.uuid);
-          for (const a of stored) {
-            if (!presentArtifacts.includes(a.relativePath)) {
-              presentArtifacts.push(a.relativePath);
-            }
-          }
           phases.push({ phase: phaseDef.name, status: 'skipped' });
           this.emit(
             run.displayId,
