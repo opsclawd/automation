@@ -449,6 +449,7 @@ export class RunExecutor {
       name: phaseDef.name as string,
       status: 'failed',
       attempt: 1,
+      startedAt: at,
       completedAt: at,
     };
     return this.failRun(currentRun, phaseDef, phase, failure, at, phases);
