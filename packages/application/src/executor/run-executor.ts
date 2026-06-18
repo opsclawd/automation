@@ -43,9 +43,10 @@ export class RunExecutor {
   constructor(private readonly deps: RunExecutorDeps) {}
 
   async execute(input: ExecuteRunInput): Promise<ExecuteRunOutput> {
-    const { run, skip, presentArtifacts } = input;
+    const { run, skip } = input;
     const now = this.deps.now ?? (() => new Date());
     const phases: PhaseRecord[] = [];
+    const presentArtifacts: string[] = [...input.presentArtifacts];
     let currentRun: Run = { ...run };
 
     const phaseDefs = orderedPhases(skip);
@@ -142,6 +143,11 @@ export class RunExecutor {
             currentPhase: null,
             completedPhases: currentRun.completedPhases,
           });
+          for (const output of phaseDef.outputs) {
+            if (!presentArtifacts.includes(output)) {
+              presentArtifacts.push(output);
+            }
+          }
           phases.push({ phase: phaseDef.name, status: 'passed' });
           this.emit(
             run.displayId,

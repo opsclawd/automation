@@ -20,10 +20,6 @@ const ALL_PHASES = [
   'post-pr-review',
 ] as const;
 
-// Only the artifacts needed to satisfy required inputs for all phases in a full pipeline run.
-// Not a comprehensive list of all phase outputs — just the minimum to avoid MissingRequiredInputError.
-const MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE = ['issue.md', 'design.md', 'plan.md', 'pr-url.txt'];
-
 function makeRun(overrides?: Partial<Run>): Run {
   return createRun({
     uuid: 'test-uuid',
@@ -151,10 +147,12 @@ describe('RunExecutor', () => {
     const executor = new RunExecutor(deps);
     const run = makeRun();
 
+    // No preloaded artifacts — the executor accumulates declared outputs from each
+    // completed phase, satisfying downstream required inputs automatically.
     const input: ExecuteRunInput = {
       run,
       skip: [],
-      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
+      presentArtifacts: [],
     };
 
     const result = await executor.execute(input);
@@ -182,7 +180,7 @@ describe('RunExecutor', () => {
     const input: ExecuteRunInput = {
       run,
       skip: [makePhaseName('compound')],
-      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
+      presentArtifacts: [],
     };
 
     const result = await executor.execute(input);
@@ -216,7 +214,7 @@ describe('RunExecutor', () => {
     const input: ExecuteRunInput = {
       run,
       skip: [],
-      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
+      presentArtifacts: [],
     };
     const result = await executor.execute(input);
 
@@ -293,10 +291,9 @@ describe('RunExecutor', () => {
     );
   });
 
-  it('missing required input produces a failure with kind missing_artifact', async () => {
+  it('accumulates declared outputs from completed phases, satisfying downstream required inputs', async () => {
     const registry = new PhaseHandlerRegistry();
-    registry.register(makeStubHandler('read_issue'));
-    registry.register(makeStubHandler('plan-design'));
+    registerAllPassed(registry);
 
     const deps = makeDeps({ registry });
     const executor = new RunExecutor(deps);
@@ -305,20 +302,18 @@ describe('RunExecutor', () => {
     const input: ExecuteRunInput = {
       run,
       skip: [],
-      presentArtifacts: [], // missing 'issue.md' which plan-design requires
+      presentArtifacts: [], // no preloaded artifacts
     };
 
     const result = await executor.execute(input);
 
-    // read_issue passes (no required inputs), plan-design fails on missing input
-    expect(result.run.status).toBe('failed');
-    expect(result.run.failureReason).toContain('missing required inputs: issue.md');
-    const failedPhase = result.phases.find((p) => p.status === 'failed');
-    expect(failedPhase).toBeDefined();
-    expect(failedPhase!.phase).toBe(makePhaseName('plan-design'));
-    expect(deps.failureRepository.insert).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'missing_artifact', canRetry: false }),
-    );
+    // No preloaded artifacts, yet all phases pass because each completed phase's
+    // declared outputs are appended to presentArtifacts, satisfying downstream inputs.
+    expect(result.run.status).toBe('passed');
+    expect(result.phases).toHaveLength(9);
+    for (const pr of result.phases) {
+      expect(pr.status).toBe('passed');
+    }
   });
 
   it('handles handler throwing an exception — converts to command_failed failure', async () => {
@@ -403,7 +398,7 @@ describe('RunExecutor', () => {
     const input: ExecuteRunInput = {
       run,
       skip: [],
-      presentArtifacts: MINIMAL_ARTIFACTS_FOR_FULL_PIPELINE,
+      presentArtifacts: [],
     };
     await executor.execute(input);
 
