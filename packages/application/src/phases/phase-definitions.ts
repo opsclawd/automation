@@ -98,7 +98,7 @@ const _phaseDefinitions = {
     name: makePhaseName('compound'),
     inputs: { required: ['plan.md'], optional: ['design.md'] },
     outputs: ['compound.md'],
-    agentContract: { requiredArtifacts: ['compound.md'], mustNotChangeBranch: true },
+    agentContract: { requiredArtifacts: ['compound.md', 'result.json'], mustNotChangeBranch: true },
     retrySafety: 'unsafe',
     skippable: true,
   },
