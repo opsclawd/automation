@@ -3,21 +3,18 @@ import { RunId, PhaseName } from '@ai-sdlc/domain';
 import { RunValidation } from '../run-validation.js';
 import { FakeValidationPort } from '../test-doubles/fake-validation-port.js';
 import { FakeValidationRunRepository } from '../test-doubles/fake-validation-run-repository.js';
-import { FakeFailureRepository } from '../test-doubles/fake-failure-repository.js';
 
 const RUN = RunId('44444444-4444-4444-4444-444444444444');
 
 function makeUseCase(port: FakeValidationPort, repo: FakeValidationRunRepository) {
   let n = 0;
-  const failureRepository = new FakeFailureRepository();
   const useCase = new RunValidation({
     validation: port,
     validationRunRepository: repo,
-    failureRepository,
     idFactory: () => `vrun-${++n}`,
     now: () => new Date('2026-05-28T12:00:00Z'),
   });
-  return { useCase, failureRepository };
+  return { useCase };
 }
 
 function passResult(i: number, command: string) {
@@ -154,7 +151,7 @@ describe('RunValidation', () => {
       },
     ];
     const repo = new FakeValidationRunRepository();
-    const { useCase, failureRepository } = makeUseCase(port, repo);
+    const { useCase } = makeUseCase(port, repo);
     const out = await useCase.execute({
       runId: RUN,
       phaseId: PhaseName('validate'),
@@ -166,8 +163,6 @@ describe('RunValidation', () => {
     expect(out.validationRun.commands[0].kind).toBe('build');
     expect(out.validationRun.commands[1].kind).toBe('typecheck');
     expect(out.validationRun.commands[1].classifier).toContain('error TS2345');
-    expect(failureRepository.inserted).toHaveLength(1);
-    expect(failureRepository.inserted[0].kind).toBe('validation_failed');
   });
   it('emits no Failure when validation passes', async () => {
     const port = new FakeValidationPort();
@@ -184,7 +179,7 @@ describe('RunValidation', () => {
       },
     ];
     const repo = new FakeValidationRunRepository();
-    const { useCase, failureRepository } = makeUseCase(port, repo);
+    const { useCase } = makeUseCase(port, repo);
     await useCase.execute({
       runId: RUN,
       phaseId: PhaseName('validate'),
@@ -193,6 +188,5 @@ describe('RunValidation', () => {
       commands: ['pnpm build'],
       timeoutSeconds: 300,
     });
-    expect(failureRepository.inserted).toHaveLength(0);
   });
 });

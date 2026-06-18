@@ -3,7 +3,6 @@ import { ValidateHandler } from '../validate.js';
 import { RunValidation } from '../../../run-validation.js';
 import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
 import { FakeValidationRunRepository } from '../../../test-doubles/fake-validation-run-repository.js';
-import { FakeFailureRepository } from '../../../test-doubles/fake-failure-repository.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { ValidationCommandResult } from '../../../ports/validation-port.js';
@@ -44,7 +43,6 @@ function deps(passing: 'passed' | 'failed') {
   const runValidation = new RunValidation({
     validation,
     validationRunRepository: new FakeValidationRunRepository(),
-    failureRepository: new FakeFailureRepository(),
     idFactory: () => 'vr1',
     now: () => new Date('2026-06-16T00:00:00Z'),
   });
@@ -146,7 +144,6 @@ describe('ValidateHandler', () => {
       const runValidation = new RunValidation({
         validation,
         validationRunRepository: new FakeValidationRunRepository(),
-        failureRepository: new FakeFailureRepository(),
         idFactory: () => 'vr2',
         now: () => new Date('2026-06-16T00:00:00Z'),
       });
@@ -252,7 +249,6 @@ describe('ValidateHandler', () => {
       const runValidation = new RunValidation({
         validation,
         validationRunRepository: new FakeValidationRunRepository(),
-        failureRepository: new FakeFailureRepository(),
         idFactory: () => 'vr-fwd',
         now: () => new Date('2026-06-16T00:00:00Z'),
       });
