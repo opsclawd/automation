@@ -79,7 +79,7 @@ export function derivePhaseTimeline(events: ApiEvent[]): PhaseTimelineEntry[] {
         break;
       }
       case 'phase.skipped':
-        if (entry.status === 'pending') entry.status = 'skipped';
+        if (entry.status === 'pending' || entry.status === 'running') entry.status = 'skipped';
         break;
       case 'artifact.created': {
         const path = typeof meta.path === 'string' ? meta.path : null;
