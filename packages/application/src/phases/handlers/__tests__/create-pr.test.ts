@@ -44,6 +44,7 @@ function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
     ],
   });
   const git = new FakeGitPort();
+  git.currentBranchByCwd.set('/tmp/wt', 'feat/issue-7');
   const events: OrchestratorEvent[] = [];
   const ctx = {
     runId: 'run-1',
@@ -161,6 +162,8 @@ describe('CreatePrHandler', () => {
 
   it('returns agent_contract_violation when pr-summary.md is missing', async () => {
     const artifacts = new FakeArtifactStore();
+    const git = new FakeGitPort();
+    git.currentBranchByCwd.set('/tmp/wt', 'feat/issue-7');
     const github = new FakeGitHubPort();
     const agent = new FakeAgentPort({
       'opencode-frontier': [
@@ -179,7 +182,7 @@ describe('CreatePrHandler', () => {
       cwd: '/tmp/wt',
       artifacts,
       github,
-      git: new FakeGitPort(),
+      git,
       agent,
       events: {
         publish: (_u: string, e: OrchestratorEvent) => events.push(e),
@@ -225,6 +228,9 @@ describe('CreatePrHandler', () => {
     // Override createPullRequest to throw
     github.createPullRequest = () => Promise.reject(new Error('422 Unprocessable Entity'));
 
+    const git = new FakeGitPort();
+    git.currentBranchByCwd.set('/tmp/wt', 'feat/issue-7');
+
     const agent = new FakeAgentPort({
       'opencode-frontier': [
         (req) => {
@@ -246,7 +252,7 @@ describe('CreatePrHandler', () => {
       cwd: '/tmp/wt',
       artifacts,
       github,
-      git: new FakeGitPort(),
+      git,
       agent,
       events: {
         publish: (_u: string, e: OrchestratorEvent) => events.push(e),
