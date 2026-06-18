@@ -155,24 +155,29 @@ export class RunExecutor {
           currentRun = completePhase(currentRun, phaseDef.name as string);
           phase.status = 'passed';
           phase.completedAt = now();
-          this.deps.phaseRepository.update(phase);
-          this.deps.runRepository.update(run.uuid, {
-            currentPhase: null,
-            completedPhases: currentRun.completedPhases,
-          });
           for (const output of phaseDef.outputs) {
             if (!presentArtifacts.includes(output)) {
               presentArtifacts.push(output);
             }
           }
-          // Refresh artifact presence from the actual store — what the handler
-          // produced takes precedence over declared outputs.
-          const stored = await ctx.artifacts.list(run.uuid);
-          for (const a of stored) {
-            if (!presentArtifacts.includes(a.relativePath)) {
-              presentArtifacts.push(a.relativePath);
+          // Refresh artifact presence from the artifact store BEFORE
+          // persisting phase completion. If the store is unavailable we
+          // still have the declared outputs — no need to fail the phase.
+          try {
+            const stored = await ctx.artifacts.list(run.uuid);
+            for (const a of stored) {
+              if (!presentArtifacts.includes(a.relativePath)) {
+                presentArtifacts.push(a.relativePath);
+              }
             }
+          } catch {
+            // non-fatal — declared outputs already accumulated
           }
+          this.deps.phaseRepository.update(phase);
+          this.deps.runRepository.update(run.uuid, {
+            currentPhase: null,
+            completedPhases: currentRun.completedPhases,
+          });
           phases.push({ phase: phaseDef.name, status: 'passed' });
           this.emit(
             run.displayId,
