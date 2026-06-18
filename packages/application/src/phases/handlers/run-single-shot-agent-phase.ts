@@ -17,6 +17,8 @@ export interface SingleShotConfig {
   phase: PhaseName;
   profile: AgentProfileName;
   step: string;
+  /** Injected prompt template (tests). When provided, skips loadPromptTemplate. */
+  template?: string;
   vars: Record<string, string>;
   agentContract: AgentContract;
 }
@@ -98,11 +100,12 @@ export async function runSingleShotAgentPhase(
   const emit: EventEmitter = createEventEmitter(ctx, config.phase);
 
   // 1. Assert required optional context fields
-  let promptsRoot: string;
+  let promptsRoot: string | undefined;
   let startCommitSha: string;
   let expectedBranch: string;
   try {
-    promptsRoot = assertField(ctx.promptsRoot, 'promptsRoot');
+    promptsRoot =
+      config.template === undefined ? assertField(ctx.promptsRoot, 'promptsRoot') : undefined;
     startCommitSha = assertField(ctx.startCommitSha, 'startCommitSha');
     expectedBranch = assertField(ctx.expectedBranch, 'expectedBranch');
   } catch (e) {
@@ -120,21 +123,27 @@ export async function runSingleShotAgentPhase(
   }
   // 2. Load prompt template
   let template: string;
-  try {
-    template = loadPromptTemplate(config.phase as string, config.step, { promptsRoot });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    const isMissing = e instanceof TemplateNotFoundError;
-    const failure = buildFailure(
-      ctx,
-      config.phase as string,
-      isMissing ? 'missing_artifact' : 'command_failed',
-      `Failed to load prompt template: ${message}`,
-      !isMissing,
-      'Ensure the prompt template file exists at <promptsRoot>/<phase>/<step>.md.',
-    );
-    emit('phase.failed', 'error', failure.message);
-    return { outcome: 'failed', failure };
+  if (config.template !== undefined) {
+    template = config.template;
+  } else {
+    try {
+      template = loadPromptTemplate(config.phase as string, config.step, {
+        promptsRoot: promptsRoot!,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const isMissing = e instanceof TemplateNotFoundError;
+      const failure = buildFailure(
+        ctx,
+        config.phase as string,
+        isMissing ? 'missing_artifact' : 'command_failed',
+        `Failed to load prompt template: ${message}`,
+        !isMissing,
+        'Ensure the prompt template file exists at <promptsRoot>/<phase>/<step>.md.',
+      );
+      emit('phase.failed', 'error', failure.message);
+      return { outcome: 'failed', failure };
+    }
   }
 
   // 3. Render prompt
