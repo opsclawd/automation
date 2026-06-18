@@ -51,6 +51,22 @@ export class RunExecutor {
 
     const phaseDefs = orderedPhases(skip);
 
+    // Skip phases already completed (resume scenario — worker crash/retry or
+    // reactivating a waiting run). Accumulate declared outputs from completed
+    // phases so downstream input gating passes.
+    const completedSet = new Set(currentRun.completedPhases);
+    const remainingPhaseDefs = phaseDefs.filter((def) => !completedSet.has(def.name as string));
+    for (const def of phaseDefs) {
+      if (completedSet.has(def.name as string)) {
+        for (const output of def.outputs) {
+          if (!presentArtifacts.includes(output)) {
+            presentArtifacts.push(output);
+          }
+        }
+        phases.push({ phase: def.name, status: 'passed' });
+      }
+    }
+
     // Record skipped phases pre-loop
     for (const phaseName of skip) {
       const phase: Phase = {
@@ -76,7 +92,7 @@ export class RunExecutor {
     }
 
     // Main phase loop
-    for (const phaseDef of phaseDefs) {
+    for (const phaseDef of remainingPhaseDefs) {
       const handler = this.deps.registry.get(phaseDef.name);
 
       // Input gating

@@ -563,6 +563,58 @@ describe('RunExecutor', () => {
     expect(deps.failureRepository.insert).not.toHaveBeenCalled();
   });
 
+  it('resumes from first incomplete phase when run has completedPhases', async () => {
+    const registry = new PhaseHandlerRegistry();
+    registerAllPassed(registry);
+
+    const phaseRepo = new FakePhaseRepository();
+    const deps = makeDeps({ registry, phaseRepository: phaseRepo });
+    const executor = new RunExecutor(deps);
+
+    // Simulate a run that completed read_issue and plan-design before a crash.
+    // createRun() always sets completedPhases: [], so we overwrite after creation.
+    const resumedRun: Run = {
+      ...makeRun(),
+      completedPhases: ['read_issue', 'plan-design'],
+    };
+
+    const input: ExecuteRunInput = {
+      run: resumedRun,
+      skip: [],
+      presentArtifacts: [],
+    };
+
+    const result = await executor.execute(input);
+
+    // Only the 7 remaining phases execute (9 total - 2 completed)
+    expect(result.phases).toHaveLength(9);
+    expect(result.run.status).toBe('passed');
+    expect(result.run.completedPhases).toEqual([
+      'read_issue',
+      'plan-design',
+      'plan-write',
+      'implement',
+      'validate',
+      'review-fix',
+      'compound',
+      'create-pr',
+      'post-pr-review',
+    ]);
+
+    // Phase repository should only have inserts for the 7 new phases,
+    // not for the already-completed ones
+    const runningInserts = phaseRepo.inserted.filter((p) => p.status === 'running');
+    expect(runningInserts).toHaveLength(7);
+
+    // runRepository updates: 7 phase starts + 7 completions + 1 final pass = 15
+    // (not 19 as when all 9 run from scratch)
+    expect(deps.runRepository.update).toHaveBeenCalledTimes(15);
+
+    // Handler for read_issue should never have been called (no new insert for it)
+    expect(runningInserts.map((p) => p.name)).not.toContain('read_issue');
+    expect(runningInserts.map((p) => p.name)).not.toContain('plan-design');
+  });
+
   it('honours cancellation by checking before the final passRun', async () => {
     const registry = new PhaseHandlerRegistry();
     registerAllPassed(registry);
