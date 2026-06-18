@@ -89,7 +89,7 @@ describe('run-validation integration', () => {
 
     expect(out.passed).toBe(false);
     expect(out.validationRun.commands).toHaveLength(2);
-    const failure = c.failureRepository.findLatestByRun(runUuid);
-    expect(failure?.kind).toBe('validation_failed');
+    expect(out.failure).toBeDefined();
+    expect(out.failure!.kind).toBe('validation_failed');
   });
 });

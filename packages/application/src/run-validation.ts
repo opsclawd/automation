@@ -4,6 +4,7 @@ import {
   type PhaseName,
   type ValidationRun,
   type ValidationCommandRecord,
+  type Failure,
 } from '@ai-sdlc/domain';
 import type { ValidationPort } from './ports/validation-port.js';
 import type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
@@ -11,6 +12,7 @@ import {
   classifyCommandKind,
   summarizeValidationFailure,
 } from './validation/classify-validation.js';
+import { validationRunToFailure } from './validation/validation-run-to-failure.js';
 
 export interface RunValidationDeps {
   validation: ValidationPort;
@@ -32,6 +34,7 @@ export interface RunValidationInputUC {
 export interface RunValidationOutput {
   validationRun: ValidationRun;
   passed: boolean;
+  failure?: Failure;
 }
 
 /**
@@ -98,6 +101,11 @@ export class RunValidation {
     };
     this.deps.validationRunRepository.save(validationRun);
 
-    return { validationRun, passed: validationRunPassed(validationRun) };
+    const passed = validationRunPassed(validationRun);
+    const failure = passed
+      ? undefined
+      : (validationRunToFailure(validationRun, this.deps.now()) ?? undefined);
+
+    return { validationRun, passed, ...(failure ? { failure } : {}) };
   }
 }

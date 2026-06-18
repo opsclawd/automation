@@ -112,7 +112,7 @@ async function main() {
   const logDir = join(c.runsDir, displayId, 'validate');
 
   try {
-    const { validationRun, passed } = await c.runValidation.execute({
+    const result = await c.runValidation.execute({
       runId: RunId(runId),
       phaseId: PhaseName(phaseId),
       cwd: values.cwd!,
@@ -120,12 +120,17 @@ async function main() {
       commands: config.validation.commands,
       timeoutSeconds: config.validation.timeout,
     });
+    const { validationRun, passed, failure } = result;
 
     if (createdSynthetic) {
       c.runRepository.update(runId, {
         status: passed ? 'passed' : 'failed',
         completedAt: new Date(),
       });
+    }
+
+    if (failure) {
+      c.failureRepository.insert(failure);
     }
 
     for (const cmd of validationRun.commands) {
