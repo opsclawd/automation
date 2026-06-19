@@ -82,7 +82,8 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
 
       const heartbeatInterval = setInterval(
         () => {
-          leases.heartbeat(job.repoId, workerId, deps.now(), new Date(Date.now() + deps.ttlMs));
+          const now = deps.now();
+          leases.heartbeat(job.repoId, workerId, now, new Date(now.getTime() + deps.ttlMs));
         },
         Math.max(Math.floor(deps.ttlMs / 2), 1_000),
       );
