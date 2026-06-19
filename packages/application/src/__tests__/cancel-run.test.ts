@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { Run, RunStatus } from '@ai-sdlc/domain';
+import type { Run, RunStatus, RunId, RepositoryId } from '@ai-sdlc/domain';
 import { CancelRun } from '../cancel-run.js';
-import type { RunRecord, RunRepositoryPort, RunRepositoryUpdatePatch } from '../ports.js';
+import type {
+  RunRecord,
+  RunRepositoryPort,
+  RunRepositoryUpdatePatch,
+  GitPort,
+  WorkerLeasePort,
+  RunAbortPort,
+} from '../ports.js';
 
 interface RecordedUpdate {
   uuid: string;
@@ -22,9 +29,7 @@ class FakeRunRepo implements RunRepositoryPort {
     let latest: RunRecord | undefined;
     for (const r of this.runs.values()) {
       if (r.issueNumber === issueNumber) {
-        if (!latest || r.startedAt > latest.startedAt) {
-          latest = r;
-        }
+        if (!latest || r.startedAt > latest.startedAt) latest = r;
       }
     }
     return latest;
@@ -61,9 +66,7 @@ class FakeRunRepo implements RunRepositoryPort {
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
     const r = this.runs.get(uuid);
-    if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) {
-      return false;
-    }
+    if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) return false;
     r.status = patch.status;
     r.completedAt = patch.completedAt;
     r.failureReason = patch.failureReason;
@@ -83,9 +86,38 @@ class FakeRunRepo implements RunRepositoryPort {
 }
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
+const runId = (s: string) => s as RunId;
+
+const noopAbort: RunAbortPort = { register: () => {}, abort: () => {}, unregister: () => {} };
+const noopGit = { resetHard: () => Promise.resolve() } as GitPort;
+const noopLeases: WorkerLeasePort = {
+  acquire: () => {
+    throw new Error('unexpected');
+  },
+  heartbeat: () => {},
+  release: () => {},
+  current: () => undefined,
+  reclaimExpired: () => [],
+};
+const noopFindCwd = () => '/tmp/worktree';
+const noopFindStartSha = () => 'abc123';
+const noopFindRepoId = () => 'repo-1' as RepositoryId;
+
+function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.constructor>[0]> = {}) {
+  return new CancelRun({
+    runRepository: deps.runRepository ?? new FakeRunRepo(),
+    runAbort: deps.runAbort ?? noopAbort,
+    git: deps.git ?? noopGit,
+    leases: deps.leases ?? noopLeases,
+    findCwd: deps.findCwd ?? noopFindCwd,
+    findStartCommitSha: deps.findStartCommitSha ?? noopFindStartSha,
+    findRepoId: deps.findRepoId ?? noopFindRepoId,
+    now: deps.now ?? fixedNow,
+  });
+}
 
 describe('CancelRun', () => {
-  it('cancels an active run by issue number', () => {
+  it('cancels an active run by runId', async () => {
     const repo = new FakeRunRepo();
     repo.addRun({
       uuid: 'abc-123',
@@ -96,21 +128,21 @@ describe('CancelRun', () => {
       completedPhases: [],
       startedAt: new Date('2026-05-13T19:00:00Z'),
     });
-    const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
-    usecase.execute({ issueNumber: 7, reason: 'user requested' });
+    const usecase = makeCancelRun({ runRepository: repo });
+    await usecase.execute({ runId: runId('abc-123'), reason: 'user requested' });
     expect(repo.updates).toHaveLength(1);
     expect(repo.updates[0]!.patch.status).toBe('cancelled');
     expect(repo.updates[0]!.patch.failureReason).toBe('user requested');
     expect(repo.updates[0]!.patch.completedAt).toEqual(fixedNow());
   });
 
-  it('throws when no active run exists for the issue', () => {
+  it('throws when no run exists for the given runId', async () => {
     const repo = new FakeRunRepo();
-    const usecase = new CancelRun({ runRepository: repo });
-    expect(() => usecase.execute({ issueNumber: 99 })).toThrow(/no active run/i);
+    const usecase = makeCancelRun({ runRepository: repo });
+    await expect(usecase.execute({ runId: runId('nonexistent') })).rejects.toThrow(/no run found/i);
   });
 
-  it('throws when the run is already terminal', () => {
+  it('throws when the run is already terminal', async () => {
     const repo = new FakeRunRepo();
     repo.addRun({
       uuid: 'abc-456',
@@ -121,11 +153,11 @@ describe('CancelRun', () => {
       completedPhases: [],
       startedAt: new Date('2026-05-13T19:00:00Z'),
     });
-    const usecase = new CancelRun({ runRepository: repo });
-    expect(() => usecase.execute({ issueNumber: 3 })).toThrow(/already passed/i);
+    const usecase = makeCancelRun({ runRepository: repo });
+    await expect(usecase.execute({ runId: runId('abc-456') })).rejects.toThrow(/already passed/i);
   });
 
-  it('cancels without a reason', () => {
+  it('cancels without a reason', async () => {
     const repo = new FakeRunRepo();
     repo.addRun({
       uuid: 'abc-789',
@@ -136,12 +168,12 @@ describe('CancelRun', () => {
       completedPhases: [],
       startedAt: new Date('2026-05-13T19:00:00Z'),
     });
-    const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
-    usecase.execute({ issueNumber: 10 });
+    const usecase = makeCancelRun({ runRepository: repo });
+    await usecase.execute({ runId: runId('abc-789') });
     expect(repo.updates[0]!.patch.failureReason).toBeUndefined();
   });
 
-  it('cancels an active run by uuid using uuid-targeted update', () => {
+  it('marks the run as cancelled via updateStatusByUuid', async () => {
     const repo = new FakeRunRepo();
     repo.addRun({
       uuid: 'xyz-001',
@@ -152,55 +184,11 @@ describe('CancelRun', () => {
       completedPhases: [],
       startedAt: new Date('2026-05-13T19:00:00Z'),
     });
-    const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
-    usecase.execute({ uuid: 'xyz-001', reason: 'manual override' });
+    const usecase = makeCancelRun({ runRepository: repo });
+    await usecase.execute({ runId: runId('xyz-001'), reason: 'manual override' });
     expect(repo.updates).toHaveLength(1);
     expect(repo.updates[0]!.uuid).toBe('xyz-001');
     expect(repo.updates[0]!.patch.status).toBe('cancelled');
     expect(repo.updates[0]!.patch.failureReason).toBe('manual override');
-  });
-
-  it('uuid path only cancels the targeted run when multiple runs share an issue', () => {
-    const repo = new FakeRunRepo();
-    const oldRun: RunRecord = {
-      uuid: 'old-uuid',
-      displayId: 'issue-20-20260513-000000',
-      issueNumber: 20,
-      type: 'issue_to_pr',
-      status: 'running',
-      completedPhases: [],
-      startedAt: new Date('2026-05-13T19:00:00Z'),
-    };
-    const newRun: RunRecord = {
-      uuid: 'new-uuid',
-      displayId: 'issue-20-20260513-001500',
-      issueNumber: 20,
-      type: 'issue_to_pr',
-      status: 'running',
-      completedPhases: [],
-      startedAt: new Date('2026-05-13T19:15:00Z'),
-    };
-    repo.addRun(oldRun);
-    repo.addRun(newRun);
-    const usecase = new CancelRun({ runRepository: repo, now: fixedNow });
-    usecase.execute({ uuid: 'old-uuid', reason: 'stale' });
-    expect(repo.updates).toHaveLength(1);
-    expect(repo.updates[0]!.uuid).toBe('old-uuid');
-    expect(repo.updates[0]!.patch.status).toBe('cancelled');
-  });
-
-  it('uuid path throws when run is already terminal', () => {
-    const repo = new FakeRunRepo();
-    repo.addRun({
-      uuid: 'already-passed',
-      displayId: 'issue-30-20260513-000000',
-      issueNumber: 30,
-      type: 'issue_to_pr',
-      status: 'passed',
-      completedPhases: [],
-      startedAt: new Date('2026-05-13T19:00:00Z'),
-    });
-    const usecase = new CancelRun({ runRepository: repo });
-    expect(() => usecase.execute({ uuid: 'already-passed' })).toThrow(/already passed/i);
   });
 });
