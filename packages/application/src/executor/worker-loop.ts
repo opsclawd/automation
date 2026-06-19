@@ -72,27 +72,38 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         ttlMs: deps.ttlMs,
       });
 
-      queue.markRunning(job.id, deps.now());
-      started = true;
+      const heartbeatInterval = setInterval(
+        () => {
+          leases.heartbeat(job.repoId, workerId, deps.now(), new Date(Date.now() + deps.ttlMs));
+        },
+        Math.max(Math.floor(deps.ttlMs / 2), 1_000),
+      );
 
-      const worktree = await deps.prepareWorktree({
-        repoId: job.repoId,
-        runId: job.runId,
-      });
+      try {
+        queue.markRunning(job.id, deps.now());
+        started = true;
 
-      const run = deps.findRun(job.runId);
-      if (!run) {
-        throw new Error(`run ${job.runId} not found for job ${job.id}`);
+        const worktree = await deps.prepareWorktree({
+          repoId: job.repoId,
+          runId: job.runId,
+        });
+
+        const run = deps.findRun(job.runId);
+        if (!run) {
+          throw new Error(`run ${job.runId} not found for job ${job.id}`);
+        }
+
+        const result = await deps.executeRun({ run, workerId, cwd: worktree.cwd });
+
+        if (result.ok) {
+          queue.markSucceeded(job.id, deps.now());
+        } else {
+          queue.markFailed(job.id, deps.now());
+        }
+        return;
+      } finally {
+        clearInterval(heartbeatInterval);
       }
-
-      const result = await deps.executeRun({ run, workerId, cwd: worktree.cwd });
-
-      if (result.ok) {
-        queue.markSucceeded(job.id, deps.now());
-      } else {
-        queue.markFailed(job.id, deps.now());
-      }
-      return;
     } catch (err) {
       if (err instanceof WorkerLeaseConflictError) {
         queue.releaseClaim(job.id);
