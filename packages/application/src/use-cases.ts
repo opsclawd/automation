@@ -9,11 +9,11 @@ export interface StartIssueRunUseCase {
 }
 
 export interface ResumeRunUseCase {
-  execute(input: { runId: RunId; fromPhase?: string }): Promise<void>;
+  execute(input: { runId: RunId; fromPhase?: string; workerId: WorkerId }): Promise<void>;
 }
 
 export interface RetryFailedPhaseUseCase {
-  execute(input: { runId: RunId }): Promise<void>;
+  execute(input: { runId: RunId; workerId: WorkerId }): Promise<void>;
 }
 
 export interface CancelRunUseCase {
