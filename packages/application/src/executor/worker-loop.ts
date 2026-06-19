@@ -29,9 +29,17 @@ export interface WorkerLoopDeps {
   }) => void;
 }
 
+function isRunnable(status: string): boolean {
+  return status === 'idle' || status === 'busy';
+}
+
 export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Promise<void> {
   const { registry, queue, leases } = deps;
 
+  const entryStatus = registry.findById(workerId)?.status;
+  if (entryStatus && !isRunnable(entryStatus)) {
+    return;
+  }
   registry.markIdle(workerId);
 
   leases.reclaimExpired({
@@ -108,8 +116,12 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       if (err instanceof WorkerLeaseConflictError) {
         queue.releaseClaim(job.id);
         skippedJobIds.add(job.id);
-        registry.markIdle(workerId);
-        continue;
+        const afterConflict = registry.findById(workerId);
+        if (afterConflict && isRunnable(afterConflict.status)) {
+          registry.markIdle(workerId);
+          continue;
+        }
+        return;
       }
       if (started) {
         queue.markFailed(job.id, deps.now());
@@ -119,7 +131,10 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       return;
     } finally {
       leases.release(job.repoId, workerId);
-      registry.markIdle(workerId);
+      const afterRelease = registry.findById(workerId);
+      if (afterRelease && isRunnable(afterRelease.status)) {
+        registry.markIdle(workerId);
+      }
     }
   }
 }
