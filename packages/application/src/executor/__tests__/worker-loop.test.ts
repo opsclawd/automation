@@ -225,7 +225,7 @@ describe('workerLoop', () => {
 
     const job = s.queue.findById(JobId('j1'));
     expect(job).toBeDefined();
-    expect(job!.status).toBe('claimed');
+    expect(job!.status).toBe('queued');
     expect(s.leases.current(RepositoryId('r1'))?.workerId).toBe('w2');
   });
 

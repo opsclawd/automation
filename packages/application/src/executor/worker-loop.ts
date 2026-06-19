@@ -72,6 +72,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     }
   } catch (err) {
     if (err instanceof WorkerLeaseConflictError) {
+      queue.releaseClaim(job.id);
       return;
     }
     queue.markFailed(job.id, deps.now());

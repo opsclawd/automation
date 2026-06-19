@@ -7,6 +7,7 @@ export interface EnqueueJobInput {
 export interface JobQueuePort {
   enqueue(input: EnqueueJobInput): void;
   claimNext(input: { workerId: WorkerId }): Job | undefined;
+  releaseClaim(jobId: JobId): void;
   markRunning(jobId: JobId, now: Date): void;
   markSucceeded(jobId: JobId, now: Date): void;
   markFailed(jobId: JobId, now: Date): void;
