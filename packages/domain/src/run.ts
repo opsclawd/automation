@@ -191,10 +191,12 @@ export function resumeRun(run: Run, phase?: string): Run {
       `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed'`,
     );
   }
-  const { completedAt, failureReason, currentPhase, ...rest } = run;
-  void completedAt;
-  void failureReason;
-  void currentPhase;
+  const {
+    completedAt: _completedAt,
+    failureReason: _failureReason,
+    currentPhase: _currentPhase,
+    ...rest
+  } = run;
   return {
     ...rest,
     status: 'running',

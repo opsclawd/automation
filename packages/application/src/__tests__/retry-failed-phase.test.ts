@@ -91,7 +91,7 @@ describe('RetryFailedPhase', () => {
     ).rejects.toThrow(/no run found/i);
   });
 
-  it('delegates to resumeRun even for non-failed runs (no canResume guard in RetryFailedPhase)', async () => {
+  it('throws when run is not failed (guards against non-failed status)', async () => {
     const runRepo = new FakeRunRepoForRetry();
     runRepo.add(makeFailedRun({ status: 'running' }));
     const resumeRun = new FakeResumeRun();
@@ -100,9 +100,10 @@ describe('RetryFailedPhase', () => {
       phaseRepo: new FakePhaseRepository(),
       resumeRun,
     });
-    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
-    expect(resumeRun.calls).toHaveLength(1);
-    expect(resumeRun.calls[0]!.fromPhase).toBe('implement');
+    await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
+      /cannot retry phase.*status.*running/i,
+    );
+    expect(resumeRun.calls).toHaveLength(0);
   });
 
   it('throws when run has no currentPhase', async () => {

@@ -77,6 +77,7 @@ export class ResumeRun implements ResumeRunUseCase {
         this.deps.phaseRepo.insert(phase);
       }
 
+      const reactivated = resumeRun(run, input.fromPhase);
       const job = createJob({
         id: `resume-${input.runId}-${now().getTime()}` as JobId,
         runId: input.runId,
@@ -85,13 +86,13 @@ export class ResumeRun implements ResumeRunUseCase {
         priority: 10,
         createdAt: now(),
       });
-      const reactivated = resumeRun(run, input.fromPhase);
+      this.deps.queue.enqueue({ job });
       this.deps.runRepository.update(input.runId, {
         status: reactivated.status,
         currentPhase: reactivated.currentPhase ?? null,
+        completedPhases: reactivated.completedPhases,
+        skippedPhases: reactivated.skippedPhases,
       });
-
-      this.deps.queue.enqueue({ job });
     } catch (err) {
       this.deps.leases.release(repo.id, input.workerId);
       throw err;

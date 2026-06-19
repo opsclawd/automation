@@ -50,31 +50,39 @@ export class CancelRun implements CancelRunUseCase {
       console.error(`CancelRun: unregister failed for ${input.runId}`, err);
     }
 
-    // Step 4: Reset worktree (best-effort)
+    // Step 4-5: Cleanup (best-effort)
+    let repoId: RepositoryId | undefined;
     try {
-      const repoId = this.deps.findRepoId(input.runId);
-      const cwd = this.deps.findCwd(repoId, input.runId);
-      const startCommitSha = this.deps.findStartCommitSha(input.runId);
-      await git.resetHard(cwd, startCommitSha);
-    } catch (err) {
-      console.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
+      repoId = this.deps.findRepoId(input.runId);
+    } catch {
+      // findRepoId not available — skip cleanup steps
     }
 
-    // Step 5: Release lease (best-effort)
-    try {
-      const repoId = this.deps.findRepoId(input.runId);
-      const lease = leases.current(repoId);
-      if (lease) {
-        if (lease.runId !== input.runId) {
-          console.error(
-            `CancelRun: lease runId mismatch for repo ${repoId}: expected ${input.runId}, got ${lease.runId}`,
-          );
-        } else {
-          leases.release(repoId, lease.workerId);
-        }
+    if (repoId !== undefined) {
+      // Step 4: Reset worktree (best-effort)
+      try {
+        const cwd = this.deps.findCwd(repoId, input.runId);
+        const startCommitSha = this.deps.findStartCommitSha(input.runId);
+        await git.resetHard(cwd, startCommitSha);
+      } catch (err) {
+        console.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
       }
-    } catch (err) {
-      console.error(`CancelRun: lease release failed for ${input.runId}`, err);
+
+      // Step 5: Release lease (best-effort)
+      try {
+        const lease = leases.current(repoId);
+        if (lease) {
+          if (lease.runId !== input.runId) {
+            console.error(
+              `CancelRun: lease runId mismatch for repo ${repoId}: expected ${input.runId}, got ${lease.runId}`,
+            );
+          } else {
+            leases.release(repoId, lease.workerId);
+          }
+        }
+      } catch (err) {
+        console.error(`CancelRun: lease release failed for ${input.runId}`, err);
+      }
     }
   }
 }

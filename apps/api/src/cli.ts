@@ -225,7 +225,7 @@ export function buildProgram(): Command {
                 const code = (killErr as NodeJS.ErrnoException).code;
                 if (code === 'EPERM') {
                   console.error(
-                    `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
+                    `Warning: run cancelled in DB but could not signal PID ${pid} (permission denied). The process may still be running.`,
                   );
                 }
               }

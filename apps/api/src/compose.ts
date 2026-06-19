@@ -272,8 +272,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       removeWorktree: async () => {},
       currentBranch: async () => '',
       headCommitSha: async () => '',
-      resetHard: async (cwd: string, commitSha: string) => {
+      resetHard: (cwd: string, commitSha: string) => {
         execFileSync('git', ['reset', '--hard', commitSha], { cwd });
+        return Promise.resolve();
       },
       diff: async () => '',
       commit: async () => '',

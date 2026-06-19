@@ -80,7 +80,7 @@ const seededRepo = {
 describe('ResumeRun', () => {
   it('resumes a failed run', async () => {
     const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun());
+    runRepo.add(makeRun({ completedPhases: ['phase-1'], skippedPhases: ['phase-2'] }));
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const leases = new FakeWorkerLeasePort(registry);
@@ -101,6 +101,8 @@ describe('ResumeRun', () => {
     await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
     expect(runRepo.updates).toHaveLength(1);
     expect(runRepo.updates[0]!.patch.status).toBe('running');
+    expect(runRepo.updates[0]!.patch.completedPhases).toEqual([]);
+    expect(runRepo.updates[0]!.patch.skippedPhases).toEqual([]);
   });
 
   it('throws when run is not found', async () => {
