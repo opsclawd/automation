@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Run, RunStatus, RunId, RepositoryId } from '@ai-sdlc/domain';
+import type { Run, RunStatus, RunId, RepositoryId, WorkerLease } from '@ai-sdlc/domain';
 import { CancelRun } from '../cancel-run.js';
 import type {
   RunRecord,
@@ -192,21 +192,41 @@ describe('CancelRun', () => {
     expect(repo.updates[0]!.patch.failureReason).toBe('manual override');
   });
 
-  /* eslint-disable @typescript-eslint/no-explicit-any */
   describe('ordering', () => {
     it('calls runAbort.abort() before git.resetHard()', async () => {
       const callOrder: string[] = [];
-      const runAbort = {
+      const runAbort: RunAbortPort = {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
         },
         unregister: () => {},
       };
-      const git = {
+      const git: GitPort = {
+        createWorktree: async () => {},
+        removeWorktree: async () => {},
+        currentBranch: async () => '',
+        headCommitSha: async () => '',
         resetHard: async () => {
           callOrder.push('reset');
         },
+        diff: async () => '',
+        commit: async () => '',
+        push: async () => {},
+        remoteRef: async () => undefined,
+        isAncestor: async () => false,
+        logBetween: async () => [],
+        cleanUntracked: async () => {},
+        headCommitShaOf: async () => undefined,
+      };
+      const leases: WorkerLeasePort = {
+        acquire: () => {
+          throw new Error('unexpected');
+        },
+        heartbeat: () => {},
+        release: () => {},
+        current: () => undefined,
+        reclaimExpired: () => [],
       };
       const repo = new FakeRunRepo();
       repo.addRun({
@@ -220,17 +240,12 @@ describe('CancelRun', () => {
       });
       const usecase = new CancelRun({
         runRepository: repo,
-        runAbort: runAbort as any,
-        git: git as any,
-        leases: {
-          current: () => undefined,
-          release: () => {
-            callOrder.push('release');
-          },
-        } as any,
+        runAbort,
+        git,
+        leases,
         findCwd: () => '/tmp/worktree',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as any,
+        findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('order-1') });
@@ -241,15 +256,27 @@ describe('CancelRun', () => {
 
     it('calls git.resetHard() before leases.release()', async () => {
       const callOrder: string[] = [];
-      const git = {
+      const git: GitPort = {
+        createWorktree: async () => {},
+        removeWorktree: async () => {},
+        currentBranch: async () => '',
+        headCommitSha: async () => '',
         resetHard: async () => {
           callOrder.push('reset');
         },
+        diff: async () => '',
+        commit: async () => '',
+        push: async () => {},
+        remoteRef: async () => undefined,
+        isAncestor: async () => false,
+        logBetween: async () => [],
+        cleanUntracked: async () => {},
+        headCommitShaOf: async () => undefined,
       };
-      const leaseObj = {
-        repoId: 'repo-1' as any,
-        workerId: 'w-1' as any,
-        runId: 'order-2' as any,
+      const leaseObj: WorkerLease = {
+        repoId: 'repo-1' as RepositoryId,
+        workerId: 'w-1' as unknown as WorkerLease['workerId'],
+        runId: 'order-2' as unknown as WorkerLease['runId'],
         acquiredAt: new Date(),
         heartbeatAt: new Date(),
         expiresAt: new Date(),
@@ -264,19 +291,25 @@ describe('CancelRun', () => {
         completedPhases: [],
         startedAt: new Date('2026-05-13T19:00:00Z'),
       });
+      const leases: WorkerLeasePort = {
+        acquire: () => {
+          throw new Error('unexpected');
+        },
+        heartbeat: () => {},
+        release: () => {
+          callOrder.push('release');
+        },
+        current: () => leaseObj,
+        reclaimExpired: () => [],
+      };
       const usecase = new CancelRun({
         runRepository: repo,
-        runAbort: noopAbort as any,
-        git: git as any,
-        leases: {
-          current: () => leaseObj,
-          release: () => {
-            callOrder.push('release');
-          },
-        } as any,
+        runAbort: noopAbort,
+        git,
+        leases,
         findCwd: () => '/tmp/worktree',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as any,
+        findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('order-2') });
@@ -296,26 +329,48 @@ describe('CancelRun', () => {
         completedPhases: [],
         startedAt: new Date('2026-05-13T19:00:00Z'),
       });
+      const runAbort: RunAbortPort = {
+        register: () => {},
+        abort: () => {
+          throw new Error('abort fail');
+        },
+        unregister: () => {
+          throw new Error('unregister fail');
+        },
+      };
+      const git: GitPort = {
+        createWorktree: async () => {},
+        removeWorktree: async () => {},
+        currentBranch: async () => '',
+        headCommitSha: async () => '',
+        resetHard: async () => {
+          throw new Error('reset fail');
+        },
+        diff: async () => '',
+        commit: async () => '',
+        push: async () => {},
+        remoteRef: async () => undefined,
+        isAncestor: async () => false,
+        logBetween: async () => [],
+        cleanUntracked: async () => {},
+        headCommitShaOf: async () => undefined,
+      };
+      const leases: WorkerLeasePort = {
+        acquire: () => {
+          throw new Error('unexpected');
+        },
+        heartbeat: () => {},
+        release: () => {},
+        current: () => {
+          throw new Error('lease fail');
+        },
+        reclaimExpired: () => [],
+      };
       const usecase = new CancelRun({
         runRepository: repo,
-        runAbort: {
-          register: () => {},
-          abort: () => {
-            throw new Error('abort fail');
-          },
-          unregister: () => {},
-        } as any,
-        git: {
-          resetHard: async () => {
-            throw new Error('reset fail');
-          },
-        } as any,
-        leases: {
-          current: () => {
-            throw new Error('lease fail');
-          },
-          release: () => {},
-        } as any,
+        runAbort,
+        git,
+        leases,
         findCwd: () => {
           throw new Error('cwd fail');
         },
@@ -344,29 +399,49 @@ describe('CancelRun', () => {
         completedPhases: [],
         startedAt: new Date('2026-05-13T19:00:00Z'),
       });
+      const runAbort: RunAbortPort = {
+        register: () => {},
+        abort: () => {
+          throw new Error('abort fail');
+        },
+        unregister: () => {},
+      };
+      const git: GitPort = {
+        createWorktree: async () => {},
+        removeWorktree: async () => {},
+        currentBranch: async () => '',
+        headCommitSha: async () => '',
+        resetHard: async () => {
+          callOrder.push('reset');
+        },
+        diff: async () => '',
+        commit: async () => '',
+        push: async () => {},
+        remoteRef: async () => undefined,
+        isAncestor: async () => false,
+        logBetween: async () => [],
+        cleanUntracked: async () => {},
+        headCommitShaOf: async () => undefined,
+      };
+      const leases: WorkerLeasePort = {
+        acquire: () => {
+          throw new Error('unexpected');
+        },
+        heartbeat: () => {},
+        release: () => {
+          callOrder.push('release');
+        },
+        current: () => undefined,
+        reclaimExpired: () => [],
+      };
       const usecase = new CancelRun({
         runRepository: repo,
-        runAbort: {
-          register: () => {},
-          abort: () => {
-            throw new Error('abort fail');
-          },
-          unregister: () => {},
-        } as any,
-        git: {
-          resetHard: async () => {
-            callOrder.push('reset');
-          },
-        } as any,
-        leases: {
-          current: () => undefined,
-          release: () => {
-            callOrder.push('release');
-          },
-        } as any,
+        runAbort,
+        git,
+        leases,
         findCwd: () => '/tmp/worktree',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as any,
+        findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('abort-throws') });
@@ -387,29 +462,49 @@ describe('CancelRun', () => {
         completedPhases: [],
         startedAt: new Date('2026-05-13T19:00:00Z'),
       });
+      const runAbort: RunAbortPort = {
+        register: () => {},
+        abort: () => {
+          callOrder.push('abort');
+        },
+        unregister: () => {},
+      };
+      const git: GitPort = {
+        createWorktree: async () => {},
+        removeWorktree: async () => {},
+        currentBranch: async () => '',
+        headCommitSha: async () => '',
+        resetHard: async () => {
+          throw new Error('reset fail');
+        },
+        diff: async () => '',
+        commit: async () => '',
+        push: async () => {},
+        remoteRef: async () => undefined,
+        isAncestor: async () => false,
+        logBetween: async () => [],
+        cleanUntracked: async () => {},
+        headCommitShaOf: async () => undefined,
+      };
+      const leases: WorkerLeasePort = {
+        acquire: () => {
+          throw new Error('unexpected');
+        },
+        heartbeat: () => {},
+        release: () => {
+          callOrder.push('release');
+        },
+        current: () => undefined,
+        reclaimExpired: () => [],
+      };
       const usecase = new CancelRun({
         runRepository: repo,
-        runAbort: {
-          register: () => {},
-          abort: () => {
-            callOrder.push('abort');
-          },
-          unregister: () => {},
-        } as any,
-        git: {
-          resetHard: async () => {
-            throw new Error('reset fail');
-          },
-        } as any,
-        leases: {
-          current: () => undefined,
-          release: () => {
-            callOrder.push('release');
-          },
-        } as any,
+        runAbort,
+        git,
+        leases,
         findCwd: () => '/tmp/worktree',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as any,
+        findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('reset-throws') });
@@ -430,29 +525,49 @@ describe('CancelRun', () => {
         completedPhases: [],
         startedAt: new Date('2026-05-13T19:00:00Z'),
       });
+      const runAbort: RunAbortPort = {
+        register: () => {},
+        abort: () => {
+          callOrder.push('abort');
+        },
+        unregister: () => {},
+      };
+      const git: GitPort = {
+        createWorktree: async () => {},
+        removeWorktree: async () => {},
+        currentBranch: async () => '',
+        headCommitSha: async () => '',
+        resetHard: async () => {
+          callOrder.push('reset');
+        },
+        diff: async () => '',
+        commit: async () => '',
+        push: async () => {},
+        remoteRef: async () => undefined,
+        isAncestor: async () => false,
+        logBetween: async () => [],
+        cleanUntracked: async () => {},
+        headCommitShaOf: async () => undefined,
+      };
+      const leases: WorkerLeasePort = {
+        acquire: () => {
+          throw new Error('unexpected');
+        },
+        heartbeat: () => {},
+        release: () => {},
+        current: () => {
+          throw new Error('lease fail');
+        },
+        reclaimExpired: () => [],
+      };
       const usecase = new CancelRun({
         runRepository: repo,
-        runAbort: {
-          register: () => {},
-          abort: () => {
-            callOrder.push('abort');
-          },
-          unregister: () => {},
-        } as any,
-        git: {
-          resetHard: async () => {
-            callOrder.push('reset');
-          },
-        } as any,
-        leases: {
-          current: () => {
-            throw new Error('lease fail');
-          },
-          release: () => {},
-        } as any,
+        runAbort,
+        git,
+        leases,
         findCwd: () => '/tmp/worktree',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as any,
+        findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('lease-throws') });
@@ -461,5 +576,4 @@ describe('CancelRun', () => {
       expect(callOrder).toEqual(['abort', 'reset']);
     });
   });
-  /* eslint-enable @typescript-eslint/no-explicit-any */
 });

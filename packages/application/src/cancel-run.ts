@@ -34,6 +34,11 @@ export class CancelRun implements CancelRunUseCase {
     } catch {
       /* continue */
     }
+    try {
+      runAbort.unregister(input.runId);
+    } catch {
+      /* continue */
+    }
 
     // Step 3: Reset worktree (best-effort)
     try {

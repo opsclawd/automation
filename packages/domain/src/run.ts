@@ -193,8 +193,13 @@ export function resumeRun(run: Run, phase?: string): Run {
       `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed'`,
     );
   }
-  const { completedAt: _ca, failureReason: _fr, ...rest } = { ...run, status: 'running' as const };
-  const resumed: Run = rest as Run;
-  if (phase !== undefined) resumed.currentPhase = phase;
+  const { completedAt: _ca, failureReason: _fr, ...rest } = run;
+  void _ca;
+  void _fr;
+  const resumed: Run = {
+    ...rest,
+    status: 'running',
+    ...(phase !== undefined ? { currentPhase: phase } : {}),
+  };
   return resumed;
 }

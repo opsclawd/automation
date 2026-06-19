@@ -19,6 +19,7 @@ export interface ResumeRunDeps {
   queue: JobQueuePort;
   stepRepo: StepRepositoryPort;
   phaseRepo: PhaseRepositoryPort;
+  findRepoId: (runId: RunId) => RepositoryId;
   now?: () => Date;
 }
 
@@ -33,11 +34,15 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: status is '${run.status}'`);
     }
 
+    const repoId = this.deps.findRepoId(input.runId);
     const repo =
-      this.deps.repos.findById(input.runId as unknown as RepositoryId) ??
+      this.deps.repos.findById(repoId) ??
       (() => {
         throw new Error(`No repo found for run ${input.runId}`);
       })();
+    if (!repo.enabled) {
+      throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
+    }
 
     this.deps.leases.acquire({
       repoId: repo.id,
@@ -65,14 +70,8 @@ export class ResumeRun implements ResumeRunUseCase {
       this.deps.phaseRepo.insert(phase);
     }
 
-    const reactivated = resumeRun(run, input.fromPhase);
-    this.deps.runRepository.update(input.runId, {
-      status: reactivated.status,
-      currentPhase: reactivated.currentPhase ?? null,
-    });
-
     const job = createJob({
-      id: `resume-${input.runId}-${Date.now()}` as JobId,
+      id: `resume-${input.runId}-${now().getTime()}` as JobId,
       runId: input.runId,
       repoId: repo.id,
       issueNumber: run.issueNumber as IssueNumber,
@@ -80,5 +79,11 @@ export class ResumeRun implements ResumeRunUseCase {
       createdAt: now(),
     });
     this.deps.queue.enqueue({ job });
+
+    const reactivated = resumeRun(run, input.fromPhase);
+    this.deps.runRepository.update(input.runId, {
+      status: reactivated.status,
+      currentPhase: reactivated.currentPhase ?? null,
+    });
   }
 }
