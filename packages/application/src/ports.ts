@@ -113,6 +113,7 @@ export type {
 } from './ports/validation-port.js';
 export type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
 export type { PhaseRepositoryPort } from './ports/phase-repository-port.js';
+export type { StepRepositoryPort } from './ports/step-repository-port.js';
 export type { ArtifactStore, WriteArtifactInput, Artifact } from './ports/artifact-store.js';
 export { ArtifactNotFoundError } from './ports/artifact-store.js';
 
