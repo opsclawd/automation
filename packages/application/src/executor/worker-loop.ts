@@ -43,11 +43,11 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       return;
     }
 
-    registry.markBusy(workerId);
-
     let started = false;
 
     try {
+      registry.markBusy(workerId);
+
       leases.acquire({
         repoId: job.repoId,
         workerId,
