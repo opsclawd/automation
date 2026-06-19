@@ -71,6 +71,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     }
 
     let started = false;
+    let acquired = false;
 
     try {
       registry.markBusy(workerId);
@@ -82,6 +83,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         now: deps.now(),
         ttlMs: deps.ttlMs,
       });
+      acquired = true;
 
       const abortController = new AbortController();
 
@@ -156,7 +158,15 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       }
       return;
     } finally {
-      leases.release(job.repoId, workerId);
+      // Only release a lease this tick actually acquired. If acquire() threw a
+      // WorkerLeaseConflictError for a lease already held by this same workerId
+      // (e.g. a worker process restarted and re-registered before its prior
+      // unexpired lease was reclaimed), releasing it here would drop a lease we
+      // never owned this tick — bypassing the reclaim safety path and leaving
+      // the repo unprotected with the prior run still active.
+      if (acquired) {
+        leases.release(job.repoId, workerId);
+      }
       const afterRelease = registry.findById(workerId);
       if (afterRelease && isRunnable(afterRelease.status)) {
         registry.markIdle(workerId);

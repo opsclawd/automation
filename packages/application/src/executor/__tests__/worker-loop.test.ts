@@ -284,6 +284,54 @@ describe('workerLoop', () => {
     expect(s.leases.current(RepositoryId('r1'))?.workerId).toBe('w2');
   });
 
+  it('does not release a pre-existing lease held by the same worker on acquire conflict', async () => {
+    const s = setup();
+    // Simulate a worker restart: w1 already holds an unexpired lease on r1 for a
+    // prior run (e.g. the process restarted and re-registered as idle before its
+    // previous lease was reclaimed).
+    s.leases.acquire({
+      repoId: RepositoryId('r1'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-old'),
+      now: s.now,
+      ttlMs: 60_000,
+    });
+
+    // A fresh job for the same repo is queued; w1 will claim it and conflict on
+    // acquire because it still holds the prior (unexpired) lease.
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: executeOk,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-old'), RunId('run-1')]),
+      now: () => s.now, // keep the prior lease unexpired
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+    });
+
+    // The new job is released back to queued (conflict), and crucially the prior
+    // lease this tick did NOT acquire must be preserved — not dropped by finally.
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('queued');
+    const lease = s.leases.current(RepositoryId('r1'));
+    expect(lease?.workerId).toBe('w1');
+    expect(lease?.runId).toBe('run-old');
+  });
+
   it('reclaimExpired recovers a dead worker lease so new worker can proceed', async () => {
     const s = setup();
     const onLeaseReclaimed = vi.fn();
