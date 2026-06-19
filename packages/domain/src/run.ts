@@ -180,3 +180,23 @@ export function reactivate(run: Run): Run {
   }
   return { ...run, status: 'running' };
 }
+
+export function canResume(run: Run): boolean {
+  return run.status === 'failed';
+}
+
+export function canRetryPhase(run: Run): boolean {
+  return run.status === 'failed';
+}
+
+export function resumeRun(run: Run, phase?: string): Run {
+  if (run.status !== 'failed') {
+    throw new RunStateError(
+      `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed'`,
+    );
+  }
+  const resumed: Run = { ...run, status: 'running', currentPhase: phase };
+  delete resumed.completedAt;
+  delete resumed.failureReason;
+  return resumed;
+}
