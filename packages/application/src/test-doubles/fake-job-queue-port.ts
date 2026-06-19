@@ -5,6 +5,8 @@ import {
   type RunId,
   type WorkerId,
   claimJob,
+  unclaimJob,
+  resetJobToQueued,
   markJobRunning,
   markJobSucceeded,
   markJobFailed,
@@ -30,10 +32,9 @@ export class FakeJobQueuePort implements JobQueuePort {
     this.jobs.set(input.job.id, input.job);
   }
 
-  claimNext(input: { workerId: WorkerId }): Job | undefined {
+  claimNext(input: { workerId: WorkerId; skipJobIds?: Set<JobId> }): Job | undefined {
     const queued = [...this.jobs.values()]
-      .filter((j) => j.status === 'queued')
-      // Sort: descending priority, then ascending createdAt, then ascending id
+      .filter((j) => j.status === 'queued' && !input.skipJobIds?.has(j.id))
       .sort(
         (a, b) =>
           b.priority - a.priority ||
@@ -45,6 +46,14 @@ export class FakeJobQueuePort implements JobQueuePort {
     const claimed = claimJob(next, input.workerId, new Date());
     this.jobs.set(claimed.id, claimed);
     return claimed;
+  }
+
+  releaseClaim(jobId: JobId): void {
+    this.update(jobId, (j) => unclaimJob(j));
+  }
+
+  resetToQueued(jobId: JobId): void {
+    this.update(jobId, (j) => resetJobToQueued(j));
   }
 
   markRunning(jobId: JobId, now: Date): void {

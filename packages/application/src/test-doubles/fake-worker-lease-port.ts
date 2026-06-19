@@ -70,13 +70,14 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
       if (!workerStale) continue;
       if (!input.recoverableRunIds.has(lease.runId)) continue;
       input.resetWorktree(lease.repoId);
-      this.leases.delete(lease.repoId);
       input.onReclaimed({
         repoId: lease.repoId,
         previousWorkerId: lease.workerId,
         previousRunId: lease.runId,
+        reclaimedByWorkerId: input.reclaimedByWorkerId,
         reason: 'expired + worker stale + run recoverable',
       });
+      this.leases.delete(lease.repoId);
       reclaimed.push(lease);
     }
     return reclaimed;

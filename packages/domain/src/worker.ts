@@ -29,6 +29,9 @@ export function markWorkerBusy(w: Worker): Worker {
   return { ...w, status: 'busy' };
 }
 export function markWorkerIdle(w: Worker): Worker {
+  if (w.status === 'stopping' || w.status === 'unhealthy') {
+    return w;
+  }
   return { ...w, status: 'idle' };
 }
 export function markWorkerStopping(w: Worker): Worker {

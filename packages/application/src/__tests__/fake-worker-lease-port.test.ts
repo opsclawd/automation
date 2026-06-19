@@ -91,6 +91,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => false,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toEqual([]);
@@ -111,6 +112,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => true,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toEqual([]);
@@ -131,6 +133,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set(),
       isWorkerAlive: () => false,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toEqual([]);
@@ -153,6 +156,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => false,
       resetWorktree,
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed,
     });
     expect(reclaimed).toHaveLength(1);
@@ -162,9 +166,40 @@ describe('FakeWorkerLeasePort', () => {
         repoId: 'r',
         previousWorkerId: 'w1',
         previousRunId: 'run-1',
+        reclaimedByWorkerId: 'w2',
       }),
     );
     expect(leases.current(RepositoryId('r'))).toBeUndefined();
+  });
+
+  it('reclaimExpired preserves the lease when onReclaimed throws', () => {
+    const { registry, leases } = makePorts();
+    registry.register(createWorker({ id: WorkerId('w1'), hostname: 'h', processId: 1, now: now0 }));
+    leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+
+    // onReclaimed requeues the claimed/running job; if that write fails the lease
+    // MUST NOT be deleted, otherwise the repo is left unprotected with a
+    // non-claimable job still recorded as active. See worker-lease-port contract.
+    expect(() =>
+      leases.reclaimExpired({
+        now: new Date(now0.getTime() + 120_000),
+        recoverableRunIds: new Set([RunId('run-1')]),
+        isWorkerAlive: () => false,
+        resetWorktree: () => {},
+        reclaimedByWorkerId: WorkerId('w2'),
+        onReclaimed: () => {
+          throw new Error('requeue failed');
+        },
+      }),
+    ).toThrow('requeue failed');
+
+    expect(leases.current(RepositoryId('r'))?.workerId).toBe('w1');
   });
 
   it('reclaimExpired succeeds when worker is marked unhealthy even if isWorkerAlive returns true', () => {
@@ -183,6 +218,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => true,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toHaveLength(1);

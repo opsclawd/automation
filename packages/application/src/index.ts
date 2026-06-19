@@ -23,6 +23,7 @@ export * from './review-fix/read-verdicts.js';
 export * from './phases/index.js';
 export * from './executor/phase-handler-registry.js';
 export * from './executor/run-executor.js';
+export * from './executor/worker-loop.js';
 export type {
   StepLoopContext,
   FixResult,
