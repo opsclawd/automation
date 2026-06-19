@@ -14,6 +14,9 @@ export class FakePhaseRepository implements PhaseRepositoryPort {
   }
 
   listByRun(runUuid: string): Phase[] {
-    return this.inserted.filter((p) => p.runUuid === runUuid).map((p) => ({ ...p }));
+    const merged = new Map<string, Phase>();
+    for (const p of this.inserted) merged.set(p.id, { ...p });
+    for (const p of this.updated) merged.set(p.id, { ...p });
+    return [...merged.values()].filter((p) => p.runUuid === runUuid);
   }
 }

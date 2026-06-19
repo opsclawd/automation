@@ -85,13 +85,13 @@ export class ResumeRun implements ResumeRunUseCase {
         priority: 10,
         createdAt: now(),
       });
-      this.deps.queue.enqueue({ job });
-
       const reactivated = resumeRun(run, input.fromPhase);
       this.deps.runRepository.update(input.runId, {
         status: reactivated.status,
         currentPhase: reactivated.currentPhase ?? null,
       });
+
+      this.deps.queue.enqueue({ job });
     } catch (err) {
       this.deps.leases.release(repo.id, input.workerId);
       throw err;

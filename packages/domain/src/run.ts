@@ -195,10 +195,11 @@ export function resumeRun(run: Run, phase?: string): Run {
   void completedAt;
   void failureReason;
   void currentPhase;
-  const resumed: Run = {
+  return {
     ...rest,
     status: 'running',
+    completedPhases: phase !== undefined ? rest.completedPhases : [],
+    skippedPhases: phase !== undefined ? rest.skippedPhases : [],
     ...(phase !== undefined ? { currentPhase: phase } : {}),
   };
-  return resumed;
 }

@@ -308,6 +308,11 @@ export function composeRoot(opts: ComposeOptions): Container {
     },
   });
 
+  // TODO(#388): Wire ResumeRun and RetryFailedPhase use cases with their
+  // infrastructure dependencies.
+  // const resumeRun = new ResumeRun({ ... });
+  // const retryFailedPhase = new RetryFailedPhase({ ... });
+
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';
   try {
