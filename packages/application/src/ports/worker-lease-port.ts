@@ -14,6 +14,13 @@ export interface ReclaimExpiredInput {
   isWorkerAlive(workerId: WorkerId): boolean;
   resetWorktree(repoId: RepositoryId): void;
   reclaimedByWorkerId: WorkerId;
+  /**
+   * Called for each reclaimed lease BEFORE the lease is deleted.
+   * Implementations MUST invoke this before removing the lease entry so the
+   * callback can safely requeue claimed/running jobs. If the callback throws,
+   * the lease MUST be preserved (not deleted) to prevent a job from being left
+   * in a non-claimable state without an active lease protecting the repo.
+   */
   onReclaimed(info: {
     repoId: RepositoryId;
     previousWorkerId: WorkerId;
