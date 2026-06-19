@@ -54,7 +54,12 @@ function setup() {
   return { repos, queue, registry, leases, now };
 }
 
-const executeOk = async () => ({ ok: true as const });
+const executeOk = async (_input: {
+  run: Run;
+  workerId: WorkerId;
+  cwd: string;
+  signal: AbortSignal;
+}) => ({ ok: true as const });
 const executeThrow = async () => {
   throw new Error('executeRun crashed');
 };
@@ -186,6 +191,56 @@ describe('workerLoop', () => {
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
   });
+
+  it('heartbeat failure during executeRun fails the job immediately', async () => {
+    const s = setup();
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    vi.spyOn(s.leases, 'heartbeat').mockImplementation(() => {
+      throw new Error('heartbeat failed');
+    });
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: async ({ signal }) => {
+        await new Promise<never>((_, reject) => {
+          if (signal.aborted) {
+            reject(new Error('heartbeat failed during job execution'));
+            return;
+          }
+          signal.addEventListener(
+            'abort',
+            () => {
+              reject(new Error('heartbeat failed during job execution'));
+            },
+            { once: true },
+          );
+        });
+        return { ok: true };
+      },
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 10,
+      findRun: (runId) => makeRun(runId as string),
+    });
+
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+  }, 10_000);
 
   it('WorkerLeaseConflictError caught: worker skips job without crashing', async () => {
     const s = setup();

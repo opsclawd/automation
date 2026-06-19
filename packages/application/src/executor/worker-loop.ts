@@ -12,7 +12,12 @@ export interface WorkerLoopDeps {
   queue: JobQueuePort;
   leases: WorkerLeasePort;
   repos: RepositoryPort;
-  executeRun: (input: { run: Run; workerId: WorkerId; cwd: string }) => Promise<{ ok: boolean }>;
+  executeRun: (input: {
+    run: Run;
+    workerId: WorkerId;
+    cwd: string;
+    signal: AbortSignal;
+  }) => Promise<{ ok: boolean }>;
   prepareWorktree: (input: { repoId: RepositoryId; runId: RunId }) => Promise<{ cwd: string }>;
   resetWorktree: (repoId: RepositoryId) => void;
   isWorkerAlive: (workerId: WorkerId) => boolean;
@@ -78,7 +83,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         ttlMs: deps.ttlMs,
       });
 
-      let heartbeatFailed = false;
+      const abortController = new AbortController();
 
       const heartbeatInterval = setInterval(
         () => {
@@ -86,8 +91,8 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
             const now = deps.now();
             leases.heartbeat(job.repoId, workerId, now, new Date(now.getTime() + deps.ttlMs));
           } catch {
-            heartbeatFailed = true;
             clearInterval(heartbeatInterval);
+            abortController.abort();
           }
         },
         Math.max(Math.floor(deps.ttlMs / 2), 1_000),
@@ -107,11 +112,22 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
           throw new Error(`run ${job.runId} not found for job ${job.id}`);
         }
 
-        const result = await deps.executeRun({ run, workerId, cwd: worktree.cwd });
-
-        if (heartbeatFailed) {
-          throw new Error('heartbeat failed during job execution');
-        }
+        const result = await Promise.race([
+          deps.executeRun({ run, workerId, cwd: worktree.cwd, signal: abortController.signal }),
+          new Promise<never>((_, reject) => {
+            if (abortController.signal.aborted) {
+              reject(new Error('heartbeat failed during job execution'));
+              return;
+            }
+            abortController.signal.addEventListener(
+              'abort',
+              () => {
+                reject(new Error('heartbeat failed during job execution'));
+              },
+              { once: true },
+            );
+          }),
+        ]);
 
         if (result.ok) {
           queue.markSucceeded(job.id, deps.now());
