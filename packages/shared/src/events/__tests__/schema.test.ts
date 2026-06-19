@@ -46,7 +46,6 @@ describe('eventSchema', () => {
   });
 
   it('defaults metadata to {}', () => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { metadata: _m, ...withoutMeta } = minimal;
     const parsed = eventSchema.parse(withoutMeta);
     expect(parsed.metadata).toEqual({});

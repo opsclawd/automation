@@ -25,14 +25,17 @@ export class CancelRun implements CancelRunUseCase {
     }
     const { runAbort, git, leases } = this.deps;
 
-    // Step 1: Abort agent (best-effort)
+    // Step 1: Validate and transform domain state — MUST happen before side effects
+    const cancelled = cancelRun(run, input.reason, now());
+
+    // Step 2: Abort agent (best-effort)
     try {
       runAbort.abort(input.runId);
     } catch {
       /* continue */
     }
 
-    // Step 2: Reset worktree (best-effort)
+    // Step 3: Reset worktree (best-effort)
     try {
       const repoId = this.deps.findRepoId(input.runId);
       const cwd = this.deps.findCwd(repoId, input.runId);
@@ -42,7 +45,7 @@ export class CancelRun implements CancelRunUseCase {
       /* continue */
     }
 
-    // Step 3: Release lease (best-effort)
+    // Step 4: Release lease (best-effort)
     try {
       const repoId = this.deps.findRepoId(input.runId);
       const lease = leases.current(repoId);
@@ -51,8 +54,7 @@ export class CancelRun implements CancelRunUseCase {
       /* continue */
     }
 
-    // Step 4: Mark cancelled (MUST succeed — throws on failure)
-    const cancelled = cancelRun(run, input.reason, now());
+    // Step 5: Persist cancelled state (MUST succeed — throws on failure)
     const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
       status: cancelled.status,
       completedAt: cancelled.completedAt!,

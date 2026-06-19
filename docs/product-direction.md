@@ -158,15 +158,15 @@ Model choice matters, but it is not the product.
 
 The product should support cheap/strong/adversarial model assignment by phase:
 
-| Work type | Preferred model class |
-| --- | --- |
-| Issue intake, extraction, summarization | Cheap / local / small model |
-| Planning and architecture | Strong reasoning model |
-| Implementation | Capable coding model with good edit reliability |
-| Internal review | Cheap-to-medium reviewer or adversarial model depending on risk |
-| PR review comment repair | Strong implementation model with review context |
-| Adversarial verification | Skeptical reviewer model |
-| Reply drafting and routine summaries | Cheap model |
+| Work type                               | Preferred model class                                           |
+| --------------------------------------- | --------------------------------------------------------------- |
+| Issue intake, extraction, summarization | Cheap / local / small model                                     |
+| Planning and architecture               | Strong reasoning model                                          |
+| Implementation                          | Capable coding model with good edit reliability                 |
+| Internal review                         | Cheap-to-medium reviewer or adversarial model depending on risk |
+| PR review comment repair                | Strong implementation model with review context                 |
+| Adversarial verification                | Skeptical reviewer model                                        |
+| Reply drafting and routine summaries    | Cheap model                                                     |
 
 The orchestrator should measure reliability by phase over time and allow model swaps without changing the core workflow engine.
 
@@ -206,14 +206,14 @@ Do not build these until the single-tenant control plane is dependable:
 
 ## Decision log
 
-| Date | Decision | Rationale | Revisit trigger |
-| --- | --- | --- | --- |
-| 2026-06-02 | Position the product as an AI SDLC control plane, not a coding agent. | Coding agents commoditize; orchestration, state, gates, retries, and recovery are the wedge. | If agent runtimes provide durable, configurable, model-routed, review-gated pipelines with equivalent visibility. |
-| 2026-06-02 | Keep manual enqueue and autonomous execution. | Avoid unsafe arbitrary automation while preserving the leverage of end-to-end delivery. | When repository policy, issue triage, and risk classification are mature. |
-| 2026-06-02 | Enforce one active issue per repository. | Prevent worktree/branch contamination, duplicate work, merge conflicts, and stale plans. | When path-aware concurrency and conflict prediction are reliable. |
-| 2026-06-02 | Scale across repositories before scaling within a repository. | Multi-repo concurrency provides value with lower coordination risk. | When a single repo queue becomes the dominant bottleneck. |
-| 2026-06-02 | Treat agent runtimes as adapters behind orchestration state. | The orchestrator must own lifecycle state, retry policy, failure semantics, and auditability. | If one runtime becomes mandatory and provides all required control-plane semantics. |
-| 2026-06-02 | Make review bots first-class gates. | The valuable outcome is reviewed/approved PR throughput, not raw generated diffs. | If human-only review replaces bot review or PR approval policy changes. |
+| Date       | Decision                                                              | Rationale                                                                                     | Revisit trigger                                                                                                   |
+| ---------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 2026-06-02 | Position the product as an AI SDLC control plane, not a coding agent. | Coding agents commoditize; orchestration, state, gates, retries, and recovery are the wedge.  | If agent runtimes provide durable, configurable, model-routed, review-gated pipelines with equivalent visibility. |
+| 2026-06-02 | Keep manual enqueue and autonomous execution.                         | Avoid unsafe arbitrary automation while preserving the leverage of end-to-end delivery.       | When repository policy, issue triage, and risk classification are mature.                                         |
+| 2026-06-02 | Enforce one active issue per repository.                              | Prevent worktree/branch contamination, duplicate work, merge conflicts, and stale plans.      | When path-aware concurrency and conflict prediction are reliable.                                                 |
+| 2026-06-02 | Scale across repositories before scaling within a repository.         | Multi-repo concurrency provides value with lower coordination risk.                           | When a single repo queue becomes the dominant bottleneck.                                                         |
+| 2026-06-02 | Treat agent runtimes as adapters behind orchestration state.          | The orchestrator must own lifecycle state, retry policy, failure semantics, and auditability. | If one runtime becomes mandatory and provides all required control-plane semantics.                               |
+| 2026-06-02 | Make review bots first-class gates.                                   | The valuable outcome is reviewed/approved PR throughput, not raw generated diffs.             | If human-only review replaces bot review or PR approval policy changes.                                           |
 
 ## Success metrics
 

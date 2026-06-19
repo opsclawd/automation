@@ -211,11 +211,9 @@ export function buildProgram(): Command {
             }
             const run = c.runRepository.findByUuid(uuid);
             if (!run) {
-              throw new Error(`No active run found for uuid ${uuid}`);
+              throw new Error(`No run found for uuid ${uuid}`);
             }
-            if (run.status === 'passed' || run.status === 'failed' || run.status === 'cancelled') {
-              throw new Error(`Run ${uuid} is already ${run.status}`);
-            }
+            // Domain validation is handled by the use case (single source of truth)
             const pid = run.pid;
             await c.cancelRun.execute({
               runId: RunId(uuid),

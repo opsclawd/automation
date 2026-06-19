@@ -68,13 +68,7 @@ import {
   type FixStepOptions,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
-import {
-  AgentProfileName,
-  AgentInvocationId,
-  PhaseName,
-  RunId,
-  RepositoryId,
-} from '@ai-sdlc/domain';
+import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -276,7 +270,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       removeWorktree: async () => {},
       currentBranch: async () => '',
       headCommitSha: async () => '',
-      resetHard: async () => {},
+      resetHard: async (cwd: string, commitSha: string) => {
+        execFileSync('git', ['reset', '--hard', commitSha], { cwd });
+      },
       diff: async () => '',
       commit: async () => '',
       push: async () => {},
@@ -297,7 +293,9 @@ export function composeRoot(opts: ComposeOptions): Container {
     },
     findCwd: () => '/tmp',
     findStartCommitSha: () => 'HEAD',
-    findRepoId: () => '' as unknown as RepositoryId,
+    findRepoId: () => {
+      throw new Error('findRepoId not wired in compose');
+    },
   });
 
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.

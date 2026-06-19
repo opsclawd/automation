@@ -334,7 +334,7 @@ describe('CLI runs cancel command', () => {
       await runsCmd.parseAsync(['cancel', '--uuid', 'nonexistent-uuid'], { from: 'user' });
       spy.mockRestore();
       exitSpy.mockRestore();
-      expect(consoleErrs.join('')).toMatch(/no active run found/i);
+      expect(consoleErrs.join('')).toMatch(/no run found/i);
     } finally {
       process.chdir(savedCwd);
     }

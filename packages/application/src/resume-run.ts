@@ -53,8 +53,6 @@ export class ResumeRun implements ResumeRunUseCase {
         .filter((s: Step) => s.phaseId === input.fromPhase);
       for (const step of steps) {
         const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
-        void _sa;
-        void _ca;
         this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
       }
       const phase = {
