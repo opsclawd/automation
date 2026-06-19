@@ -9,7 +9,12 @@ export interface StartIssueRunUseCase {
 }
 
 export interface ResumeRunUseCase {
-  execute(input: { runId: RunId; fromPhase?: string; workerId: WorkerId }): Promise<void>;
+  execute(input: {
+    runId: RunId;
+    fromPhase?: string;
+    workerId: WorkerId;
+    attempt?: number;
+  }): Promise<void>;
 }
 
 export interface RetryFailedPhaseUseCase {

@@ -15,3 +15,4 @@ export * from './fake-loop-repository.js';
 export * from './fake-step-repository.js';
 export * from './fake-phase-repository.js';
 export * from './fake-run-abort-port.js';
+export * from './fake-resume-run.js';

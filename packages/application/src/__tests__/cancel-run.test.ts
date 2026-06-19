@@ -210,7 +210,7 @@ describe('CancelRun', () => {
     repo.updateStatusByUuid = () => false;
     const usecase = makeCancelRun({ runRepository: repo });
     await expect(usecase.execute({ runId: runId('concurrent-cancel') })).rejects.toThrow(
-      /already running/i,
+      /concurrent modification/i,
     );
   });
 

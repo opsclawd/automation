@@ -208,6 +208,27 @@ describe('ResumeRun', () => {
     expect(jobs[0]!.status).toBe('queued');
   });
 
+  it('throws when repo is disabled', async () => {
+    const runRepo = new FakeRunRepoForResume();
+    runRepo.add(makeRun());
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const repos = new FakeRepositoryPort([{ ...seededRepo, enabled: false }]);
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases: new FakeWorkerLeasePort(registry),
+      queue: new FakeJobQueuePort(repos),
+      stepRepo: new FakeStepRepository(),
+      phaseRepo: new FakePhaseRepository(),
+      findRepoId: (r) => repoid(r),
+      now: fixedNow,
+    });
+    await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
+      /disabled/i,
+    );
+  });
+
   it('with fromPhase resets steps and sets currentPhase', async () => {
     const runRepo = new FakeRunRepoForResume();
     runRepo.add(makeRun());

@@ -31,13 +31,13 @@ export class CancelRun implements CancelRunUseCase {
     // Step 2: Abort agent (best-effort)
     try {
       runAbort.abort(input.runId);
-    } catch {
-      /* continue */
+    } catch (err) {
+      console.error(`CancelRun: abort failed for ${input.runId}`, err);
     }
     try {
       runAbort.unregister(input.runId);
-    } catch {
-      /* continue */
+    } catch (err) {
+      console.error(`CancelRun: unregister failed for ${input.runId}`, err);
     }
 
     // Step 3: Reset worktree (best-effort)
@@ -46,17 +46,25 @@ export class CancelRun implements CancelRunUseCase {
       const cwd = this.deps.findCwd(repoId, input.runId);
       const startCommitSha = this.deps.findStartCommitSha(input.runId);
       await git.resetHard(cwd, startCommitSha);
-    } catch {
-      /* continue */
+    } catch (err) {
+      console.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
     }
 
     // Step 4: Release lease (best-effort)
     try {
       const repoId = this.deps.findRepoId(input.runId);
       const lease = leases.current(repoId);
-      if (lease) leases.release(repoId, lease.workerId);
-    } catch {
-      /* continue */
+      if (lease) {
+        if (lease.runId !== input.runId) {
+          console.error(
+            `CancelRun: lease runId mismatch for repo ${repoId}: expected ${input.runId}, got ${lease.runId}`,
+          );
+        } else {
+          leases.release(repoId, lease.workerId);
+        }
+      }
+    } catch (err) {
+      console.error(`CancelRun: lease release failed for ${input.runId}`, err);
     }
 
     // Step 5: Persist cancelled state (MUST succeed — throws on failure)
@@ -66,7 +74,7 @@ export class CancelRun implements CancelRunUseCase {
       ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
     });
     if (!updated) {
-      throw new Error(`Run ${input.runId} is already ${run.status}`);
+      throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
     }
   }
 }

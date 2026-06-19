@@ -27,7 +27,12 @@ export interface ResumeRunDeps {
 export class ResumeRun implements ResumeRunUseCase {
   constructor(private readonly deps: ResumeRunDeps) {}
 
-  async execute(input: { runId: RunId; fromPhase?: string; workerId: WorkerId }): Promise<void> {
+  async execute(input: {
+    runId: RunId;
+    fromPhase?: string;
+    workerId: WorkerId;
+    attempt?: number;
+  }): Promise<void> {
     const now = this.deps.now ?? (() => new Date());
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
@@ -45,6 +50,24 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
 
+    if (input.fromPhase) {
+      const steps = this.deps.stepRepo
+        .listForRun(input.runId)
+        .filter((s: Step) => s.phaseId === input.fromPhase);
+      for (const step of steps) {
+        const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
+        this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
+      }
+      const phase = {
+        id: input.fromPhase,
+        runUuid: input.runId,
+        name: input.fromPhase,
+        status: 'pending' as const,
+        attempt: input.attempt ?? 1,
+      };
+      this.deps.phaseRepo.insert(phase);
+    }
+
     this.deps.leases.acquire({
       repoId: repo.id,
       workerId: input.workerId,
@@ -54,24 +77,6 @@ export class ResumeRun implements ResumeRunUseCase {
     });
 
     try {
-      if (input.fromPhase) {
-        const steps = this.deps.stepRepo
-          .listForRun(input.runId)
-          .filter((s: Step) => s.phaseId === input.fromPhase);
-        for (const step of steps) {
-          const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
-          this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
-        }
-        const phase = {
-          id: input.fromPhase,
-          runUuid: input.runId,
-          name: input.fromPhase,
-          status: 'pending' as const,
-          attempt: 1,
-        };
-        this.deps.phaseRepo.insert(phase);
-      }
-
       const job = createJob({
         id: `resume-${input.runId}-${now().getTime()}` as JobId,
         runId: input.runId,

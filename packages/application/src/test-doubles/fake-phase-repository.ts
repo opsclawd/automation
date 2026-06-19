@@ -12,4 +12,8 @@ export class FakePhaseRepository implements PhaseRepositoryPort {
   update(phase: Phase): void {
     this.updated.push({ ...phase });
   }
+
+  listByRun(runUuid: string): Phase[] {
+    return this.inserted.filter((p) => p.runUuid === runUuid).map((p) => ({ ...p }));
+  }
 }

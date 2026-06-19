@@ -185,15 +185,16 @@ export function canResume(run: Run): boolean {
   return run.status === 'failed';
 }
 
-export const canRetryPhase = canResume;
-
 export function resumeRun(run: Run, phase?: string): Run {
   if (run.status !== 'failed') {
     throw new RunStateError(
       `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed'`,
     );
   }
-  const { completedAt: _ca, failureReason: _fr, currentPhase: _cp, ...rest } = run;
+  const { completedAt, failureReason, currentPhase, ...rest } = run;
+  void completedAt;
+  void failureReason;
+  void currentPhase;
   const resumed: Run = {
     ...rest,
     status: 'running',

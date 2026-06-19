@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { RunId, WorkerId } from '@ai-sdlc/domain';
 import { RetryFailedPhase } from '../retry-failed-phase.js';
 import type { RunRecord, RunRepositoryPort } from '../ports.js';
-import type { ResumeRunUseCase } from '../use-cases.js';
+import { FakeResumeRun } from '../test-doubles/fake-resume-run.js';
+import { FakePhaseRepository } from '../test-doubles/fake-phase-repository.js';
 
 const wid = (s: string) => s as WorkerId;
 const rid = (s: string) => s as RunId;
@@ -31,13 +32,6 @@ class FakeRunRepoForRetry implements RunRepositoryPort {
   }
 }
 
-class FakeResumeRun implements ResumeRunUseCase {
-  calls: Array<{ runId: RunId; fromPhase?: string; workerId: WorkerId }> = [];
-  async execute(input: { runId: RunId; fromPhase?: string; workerId: WorkerId }) {
-    this.calls.push(input);
-  }
-}
-
 function makeFailedRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
     uuid: 'run-rp-1',
@@ -54,22 +48,42 @@ function makeFailedRun(overrides: Partial<RunRecord> = {}): RunRecord {
 }
 
 describe('RetryFailedPhase', () => {
-  it('delegates to resumeRun with fromPhase = run.currentPhase', async () => {
+  it('delegates to resumeRun with fromPhase = run.currentPhase and attempt count', async () => {
     const runRepo = new FakeRunRepoForRetry();
     runRepo.add(makeFailedRun());
     const resumeRun = new FakeResumeRun();
-    const usecase = new RetryFailedPhase({ runRepository: runRepo, resumeRun });
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
     await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
     expect(resumeRun.calls).toHaveLength(1);
     expect(resumeRun.calls[0]!.runId).toBe('run-rp-1');
     expect(resumeRun.calls[0]!.fromPhase).toBe('implement');
     expect(resumeRun.calls[0]!.workerId).toBe('w-1');
+    expect(resumeRun.calls[0]!.attempt).toBe(1);
+  });
+
+  it('increments attempt count when phase was retried before', async () => {
+    const runRepo = new FakeRunRepoForRetry();
+    runRepo.add(makeFailedRun());
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    phaseRepo.insert({
+      id: 'implement',
+      runUuid: 'run-rp-1',
+      name: 'implement',
+      status: 'failed',
+      attempt: 1,
+    });
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls[0]!.attempt).toBe(2);
   });
 
   it('throws when run is not found', async () => {
     const runRepo = new FakeRunRepoForRetry();
     const usecase = new RetryFailedPhase({
       runRepository: runRepo,
+      phaseRepo: new FakePhaseRepository(),
       resumeRun: new FakeResumeRun(),
     });
     await expect(
@@ -82,6 +96,7 @@ describe('RetryFailedPhase', () => {
     runRepo.add(makeFailedRun({ status: 'running' }));
     const usecase = new RetryFailedPhase({
       runRepository: runRepo,
+      phaseRepo: new FakePhaseRepository(),
       resumeRun: new FakeResumeRun(),
     });
     await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
@@ -94,6 +109,7 @@ describe('RetryFailedPhase', () => {
     runRepo.add(makeFailedRun({ currentPhase: undefined }));
     const usecase = new RetryFailedPhase({
       runRepository: runRepo,
+      phaseRepo: new FakePhaseRepository(),
       resumeRun: new FakeResumeRun(),
     });
     await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(

@@ -264,7 +264,8 @@ export class AgentRuntimeRouter implements AgentPort {
           if (fallbackAdapter) {
             const triggerReason = this.determineTriggerReason(result);
 
-            const { abortSignal: _spent, ...rest } = request;
+            const { abortSignal, ...rest } = request;
+            void abortSignal;
             const fallbackRequest: AgentInvocationRequest = {
               ...rest,
               profile: AgentProfileName(fallbackProfileName),
