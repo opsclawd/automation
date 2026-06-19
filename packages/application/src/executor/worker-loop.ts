@@ -20,6 +20,12 @@ export interface WorkerLoopDeps {
   now: () => Date;
   ttlMs: number;
   findRun: (runId: RunId) => Run | undefined;
+  onLeaseReclaimed?: (info: {
+    repoId: RepositoryId;
+    previousWorkerId: WorkerId;
+    previousRunId: RunId;
+    reason: string;
+  }) => void;
 }
 
 export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Promise<void> {
@@ -32,7 +38,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     recoverableRunIds: deps.recoverableRunIds,
     isWorkerAlive: deps.isWorkerAlive,
     resetWorktree: deps.resetWorktree,
-    onReclaimed: (_info) => {},
+    onReclaimed: (info) => deps.onLeaseReclaimed?.(info),
   });
 
   const skippedJobIds = new Set<JobId>();

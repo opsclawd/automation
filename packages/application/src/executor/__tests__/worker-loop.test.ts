@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   createWorker,
   IssueNumber,
@@ -231,6 +231,7 @@ describe('workerLoop', () => {
 
   it('reclaimExpired recovers a dead worker lease so new worker can proceed', async () => {
     const s = setup();
+    const onLeaseReclaimed = vi.fn();
     // Register w3 and mark it stopping
     s.registry.register(
       createWorker({ id: WorkerId('w3'), hostname: 'h', processId: 3, now: s.now }),
@@ -272,10 +273,17 @@ describe('workerLoop', () => {
       now: () => lateNow,
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
+      onLeaseReclaimed,
     });
 
     expect(s.queue.findById(JobId('j1'))!.status).toBe('succeeded');
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+    expect(onLeaseReclaimed).toHaveBeenCalledWith({
+      repoId: RepositoryId('r1'),
+      previousWorkerId: WorkerId('w1'),
+      previousRunId: RunId('run-old'),
+      reason: 'expired + worker stale + run recoverable',
+    });
   });
 
   it('skips lease-conflicted repo job and runs next claimable job from different repo', async () => {
