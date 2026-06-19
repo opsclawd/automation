@@ -78,10 +78,17 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         ttlMs: deps.ttlMs,
       });
 
+      let heartbeatFailed = false;
+
       const heartbeatInterval = setInterval(
         () => {
-          const now = deps.now();
-          leases.heartbeat(job.repoId, workerId, now, new Date(now.getTime() + deps.ttlMs));
+          try {
+            const now = deps.now();
+            leases.heartbeat(job.repoId, workerId, now, new Date(now.getTime() + deps.ttlMs));
+          } catch {
+            heartbeatFailed = true;
+            clearInterval(heartbeatInterval);
+          }
         },
         Math.max(Math.floor(deps.ttlMs / 2), 1_000),
       );
@@ -101,6 +108,10 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         }
 
         const result = await deps.executeRun({ run, workerId, cwd: worktree.cwd });
+
+        if (heartbeatFailed) {
+          throw new Error('heartbeat failed during job execution');
+        }
 
         if (result.ok) {
           queue.markSucceeded(job.id, deps.now());
