@@ -29,7 +29,9 @@ class FakeRunRepo implements RunRepositoryPort {
     let latest: RunRecord | undefined;
     for (const r of this.runs.values()) {
       if (r.issueNumber === issueNumber) {
-        if (!latest || r.startedAt > latest.startedAt) latest = r;
+        if (!latest || r.startedAt > latest.startedAt) {
+          latest = r;
+        }
       }
     }
     return latest;
@@ -66,7 +68,9 @@ class FakeRunRepo implements RunRepositoryPort {
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
     const r = this.runs.get(uuid);
-    if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) return false;
+    if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) {
+      return false;
+    }
     r.status = patch.status;
     r.completedAt = patch.completedAt;
     r.failureReason = patch.failureReason;
@@ -99,7 +103,7 @@ const noopLeases: WorkerLeasePort = {
   current: () => undefined,
   reclaimExpired: () => [],
 };
-const noopFindCwd = () => '/tmp/worktree';
+const noopFindCwd = () => '/tmp';
 const noopFindStartSha = () => 'abc123';
 const noopFindRepoId = () => 'repo-1' as RepositoryId;
 
@@ -261,7 +265,7 @@ describe('CancelRun', () => {
         runAbort,
         git,
         leases,
-        findCwd: () => '/tmp/worktree',
+        findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
@@ -325,7 +329,7 @@ describe('CancelRun', () => {
         runAbort: noopAbort,
         git,
         leases,
-        findCwd: () => '/tmp/worktree',
+        findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
@@ -457,7 +461,7 @@ describe('CancelRun', () => {
         runAbort,
         git,
         leases,
-        findCwd: () => '/tmp/worktree',
+        findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
@@ -520,7 +524,7 @@ describe('CancelRun', () => {
         runAbort,
         git,
         leases,
-        findCwd: () => '/tmp/worktree',
+        findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,
@@ -583,7 +587,7 @@ describe('CancelRun', () => {
         runAbort,
         git,
         leases,
-        findCwd: () => '/tmp/worktree',
+        findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
         now: fixedNow,

@@ -194,9 +194,6 @@ export function resumeRun(run: Run, phase?: string): Run {
     );
   }
   const { completedAt: _ca, failureReason: _fr, currentPhase: _cp, ...rest } = run;
-  void _ca;
-  void _fr;
-  void _cp;
   const resumed: Run = {
     ...rest,
     status: 'running',

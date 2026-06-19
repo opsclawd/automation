@@ -215,10 +215,6 @@ export function buildProgram(): Command {
             }
             // Domain validation is handled by the use case (single source of truth)
             const pid = run.pid;
-            await c.cancelRun.execute({
-              runId: RunId(uuid),
-              ...(opts.reason ? { reason: opts.reason } : {}),
-            });
             if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
                 process.kill(pid, 'SIGTERM');
@@ -226,11 +222,15 @@ export function buildProgram(): Command {
                 const code = (killErr as NodeJS.ErrnoException).code;
                 if (code === 'EPERM') {
                   console.error(
-                    `Warning: run cancelled in DB but could not signal PID ${pid} (permission denied). The process may still be running.`,
+                    `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
                   );
                 }
               }
             }
+            await c.cancelRun.execute({
+              runId: RunId(uuid),
+              ...(opts.reason ? { reason: opts.reason } : {}),
+            });
             process.stdout.write('Run cancelled successfully\n');
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));

@@ -53,38 +53,43 @@ export class ResumeRun implements ResumeRunUseCase {
       ttlMs: LEASE_TTL_MS,
     });
 
-    if (input.fromPhase) {
-      const steps = this.deps.stepRepo
-        .listForRun(input.runId)
-        .filter((s: Step) => s.phaseId === input.fromPhase);
-      for (const step of steps) {
-        const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
-        this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
+    try {
+      if (input.fromPhase) {
+        const steps = this.deps.stepRepo
+          .listForRun(input.runId)
+          .filter((s: Step) => s.phaseId === input.fromPhase);
+        for (const step of steps) {
+          const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
+          this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
+        }
+        const phase = {
+          id: input.fromPhase,
+          runUuid: input.runId,
+          name: input.fromPhase,
+          status: 'pending' as const,
+          attempt: 1,
+        };
+        this.deps.phaseRepo.insert(phase);
       }
-      const phase = {
-        id: input.fromPhase,
-        runUuid: input.runId,
-        name: input.fromPhase,
-        status: 'pending' as const,
-        attempt: 1,
-      };
-      this.deps.phaseRepo.insert(phase);
+
+      const job = createJob({
+        id: `resume-${input.runId}-${now().getTime()}` as JobId,
+        runId: input.runId,
+        repoId: repo.id,
+        issueNumber: IssueNumber(run.issueNumber),
+        priority: 10,
+        createdAt: now(),
+      });
+      this.deps.queue.enqueue({ job });
+
+      const reactivated = resumeRun(run, input.fromPhase);
+      this.deps.runRepository.update(input.runId, {
+        status: reactivated.status,
+        currentPhase: reactivated.currentPhase ?? null,
+      });
+    } catch (err) {
+      this.deps.leases.release(repo.id, input.workerId);
+      throw err;
     }
-
-    const job = createJob({
-      id: `resume-${input.runId}-${now().getTime()}` as JobId,
-      runId: input.runId,
-      repoId: repo.id,
-      issueNumber: IssueNumber(run.issueNumber),
-      priority: 10,
-      createdAt: now(),
-    });
-    this.deps.queue.enqueue({ job });
-
-    const reactivated = resumeRun(run, input.fromPhase);
-    this.deps.runRepository.update(input.runId, {
-      status: reactivated.status,
-      currentPhase: reactivated.currentPhase ?? null,
-    });
   }
 }
