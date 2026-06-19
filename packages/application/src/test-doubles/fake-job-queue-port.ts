@@ -6,6 +6,7 @@ import {
   type WorkerId,
   claimJob,
   unclaimJob,
+  resetJobToQueued,
   markJobRunning,
   markJobSucceeded,
   markJobFailed,
@@ -49,6 +50,10 @@ export class FakeJobQueuePort implements JobQueuePort {
 
   releaseClaim(jobId: JobId): void {
     this.update(jobId, (j) => unclaimJob(j));
+  }
+
+  resetToQueued(jobId: JobId): void {
+    this.update(jobId, (j) => resetJobToQueued(j));
   }
 
   markRunning(jobId: JobId, now: Date): void {

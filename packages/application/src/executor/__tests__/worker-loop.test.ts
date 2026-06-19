@@ -287,6 +287,54 @@ describe('workerLoop', () => {
     });
   });
 
+  it('requeues reclaimed lease job left in running state by crashed worker', async () => {
+    const s = setup();
+
+    // Create a job for run-old and simulate w1 having marked it running before crashing
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j-old'),
+        runId: RunId('run-old'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+    // Advance job through claimed→running (w1 crashed after markRunning)
+    s.queue.claimNext({ workerId: WorkerId('w1') });
+    s.queue.markRunning(JobId('j-old'), s.now);
+
+    // Give w1 a lease that expired
+    const lease = s.leases.acquire({
+      repoId: RepositoryId('r1'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-old'),
+      now: s.now,
+      ttlMs: 60_000,
+    });
+
+    const lateNow = new Date(lease.expiresAt.getTime() + 1000);
+
+    await workerLoop(WorkerId('w2'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: executeOk,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: () => false,
+      recoverableRunIds: new Set([RunId('run-old')]),
+      now: () => lateNow,
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+    });
+
+    // The old job was requeued then claimed+executed by w2
+    expect(s.queue.findById(JobId('j-old'))!.status).toBe('succeeded');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+  });
+
   it('skips lease-conflicted repo job and runs next claimable job from different repo', async () => {
     const s = setup();
     // r1 is busy — another worker holds the lease

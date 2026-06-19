@@ -40,7 +40,15 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     isWorkerAlive: deps.isWorkerAlive,
     resetWorktree: deps.resetWorktree,
     reclaimedByWorkerId: workerId,
-    onReclaimed: (info) => deps.onLeaseReclaimed?.(info),
+    onReclaimed: (info) => {
+      const jobs = queue.listForRun(info.previousRunId);
+      for (const job of jobs) {
+        if (job.status === 'claimed' || job.status === 'running') {
+          queue.resetToQueued(job.id);
+        }
+      }
+      deps.onLeaseReclaimed?.(info);
+    },
   });
 
   const skippedJobIds = new Set<JobId>();

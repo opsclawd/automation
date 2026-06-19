@@ -111,3 +111,16 @@ export function unclaimJob(job: Job): Job {
   void claimedAt;
   return { ...rest, status: 'queued' };
 }
+
+export function resetJobToQueued(job: Job): Job {
+  if (job.status !== 'claimed' && job.status !== 'running') {
+    throw new JobStateError(
+      `cannot reset job ${job.id} to queued: status is '${job.status}', expected 'claimed' or 'running'`,
+    );
+  }
+  const { claimedBy, claimedAt, startedAt, ...rest } = job;
+  void claimedBy;
+  void claimedAt;
+  void startedAt;
+  return { ...rest, status: 'queued' };
+}
