@@ -1,0 +1,29 @@
+import { canResume } from '@ai-sdlc/domain';
+import type { RunId, WorkerId } from '@ai-sdlc/domain';
+import type { RunRepositoryPort } from './ports.js';
+import type { RetryFailedPhaseUseCase, ResumeRunUseCase } from './use-cases.js';
+
+export interface RetryFailedPhaseDeps {
+  runRepository: RunRepositoryPort;
+  resumeRun: ResumeRunUseCase;
+}
+
+export class RetryFailedPhase implements RetryFailedPhaseUseCase {
+  constructor(private readonly deps: RetryFailedPhaseDeps) {}
+
+  async execute(input: { runId: RunId; workerId: WorkerId }): Promise<void> {
+    const run = this.deps.runRepository.findByUuid(input.runId);
+    if (!run) throw new Error(`No run found for ${input.runId}`);
+    if (!canResume(run)) {
+      throw new Error(`Cannot retry phase for run ${input.runId}: status is '${run.status}'`);
+    }
+    if (!run.currentPhase) {
+      throw new Error(`Cannot retry phase for run ${input.runId}: no current phase to retry`);
+    }
+    return this.deps.resumeRun.execute({
+      runId: input.runId,
+      fromPhase: run.currentPhase,
+      workerId: input.workerId,
+    });
+  }
+}
