@@ -34,8 +34,15 @@ describe('Worker', () => {
     const w = createWorker(w0);
     expect(markWorkerBusy(w).status).toBe('busy');
   });
-  it('markWorkerIdle sets status to idle', () => {
+  it('markWorkerIdle sets busy/idle to idle', () => {
     const w = createWorker(w0);
     expect(markWorkerIdle(w).status).toBe('idle');
+    expect(markWorkerIdle(markWorkerBusy(w)).status).toBe('idle');
+  });
+  it('markWorkerIdle preserves stopping/unhealthy', () => {
+    const w = markWorkerStopping(createWorker(w0));
+    expect(markWorkerIdle(w).status).toBe('stopping');
+    const u = markWorkerUnhealthy(createWorker(w0));
+    expect(markWorkerIdle(u).status).toBe('unhealthy');
   });
 });
