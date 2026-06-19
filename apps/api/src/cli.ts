@@ -211,7 +211,13 @@ export function buildProgram(): Command {
             }
             if (opts.reason) input.reason = opts.reason;
             const run = c.runRepository.findByUuid(input.uuid);
-            const pid = run?.pid;
+            if (!run) {
+              throw new Error(`No active run found for uuid ${input.uuid}`);
+            }
+            if (run.status === 'passed' || run.status === 'failed' || run.status === 'cancelled') {
+              throw new Error(`Run ${input.uuid} is already ${run.status}`);
+            }
+            const pid = run.pid;
             c.cancelRun.execute(input);
             if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
