@@ -213,7 +213,10 @@ export function buildProgram(): Command {
             if (!run) {
               throw new Error(`No run found for uuid ${uuid}`);
             }
-            // Domain validation is handled by the use case (single source of truth)
+            await c.cancelRun.execute({
+              runId: RunId(uuid),
+              ...(opts.reason ? { reason: opts.reason } : {}),
+            });
             const pid = run.pid;
             if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
@@ -227,10 +230,6 @@ export function buildProgram(): Command {
                 }
               }
             }
-            await c.cancelRun.execute({
-              runId: RunId(uuid),
-              ...(opts.reason ? { reason: opts.reason } : {}),
-            });
             process.stdout.write('Run cancelled successfully\n');
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));

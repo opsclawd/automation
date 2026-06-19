@@ -28,7 +28,17 @@ export class CancelRun implements CancelRunUseCase {
     // Step 1: Validate and transform domain state — MUST happen before side effects
     const cancelled = cancelRun(run, input.reason, now());
 
-    // Step 2: Abort agent (best-effort)
+    // Step 2: Persist cancelled state (MUST succeed — throws on failure)
+    const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
+      status: cancelled.status,
+      completedAt: cancelled.completedAt!,
+      ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
+    });
+    if (!updated) {
+      throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
+    }
+
+    // Step 3: Abort agent (best-effort)
     try {
       runAbort.abort(input.runId);
     } catch (err) {
@@ -40,7 +50,7 @@ export class CancelRun implements CancelRunUseCase {
       console.error(`CancelRun: unregister failed for ${input.runId}`, err);
     }
 
-    // Step 3: Reset worktree (best-effort)
+    // Step 4: Reset worktree (best-effort)
     try {
       const repoId = this.deps.findRepoId(input.runId);
       const cwd = this.deps.findCwd(repoId, input.runId);
@@ -50,7 +60,7 @@ export class CancelRun implements CancelRunUseCase {
       console.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
     }
 
-    // Step 4: Release lease (best-effort)
+    // Step 5: Release lease (best-effort)
     try {
       const repoId = this.deps.findRepoId(input.runId);
       const lease = leases.current(repoId);
@@ -65,16 +75,6 @@ export class CancelRun implements CancelRunUseCase {
       }
     } catch (err) {
       console.error(`CancelRun: lease release failed for ${input.runId}`, err);
-    }
-
-    // Step 5: Persist cancelled state (MUST succeed — throws on failure)
-    const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
-      status: cancelled.status,
-      completedAt: cancelled.completedAt!,
-      ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
-    });
-    if (!updated) {
-      throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
     }
   }
 }

@@ -9,7 +9,6 @@ import {
   blockRun,
   cancelRun,
   canResume,
-  canResume,
   resumeRun,
   RunStateError,
 } from '../run.js';
@@ -120,18 +119,6 @@ describe('Run state machine', () => {
       expect(canResume(passRun(createRun(base), new Date()))).toBe(false);
       expect(canResume(blockRun(createRun(base), 'blocked'))).toBe(false);
       expect(canResume(cancelRun(createRun(base)))).toBe(false);
-    });
-  });
-
-  describe('canRetryPhase', () => {
-    it('returns true for failed runs', () => {
-      const r = failRun(createRun(base), 'boom');
-      expect(canResume(r)).toBe(true);
-    });
-
-    it('returns false for non-failed runs', () => {
-      expect(canResume(createRun(base))).toBe(false);
-      expect(canResume(passRun(createRun(base), new Date()))).toBe(false);
     });
   });
 
