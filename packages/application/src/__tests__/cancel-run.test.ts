@@ -191,4 +191,275 @@ describe('CancelRun', () => {
     expect(repo.updates[0]!.patch.status).toBe('cancelled');
     expect(repo.updates[0]!.patch.failureReason).toBe('manual override');
   });
+
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  describe('ordering', () => {
+    it('calls runAbort.abort() before git.resetHard()', async () => {
+      const callOrder: string[] = [];
+      const runAbort = {
+        register: () => {},
+        abort: () => {
+          callOrder.push('abort');
+        },
+        unregister: () => {},
+      };
+      const git = {
+        resetHard: async () => {
+          callOrder.push('reset');
+        },
+      };
+      const repo = new FakeRunRepo();
+      repo.addRun({
+        uuid: 'order-1',
+        displayId: 'issue-1-20260513-000000',
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const usecase = new CancelRun({
+        runRepository: repo,
+        runAbort: runAbort as any,
+        git: git as any,
+        leases: {
+          current: () => undefined,
+          release: () => {
+            callOrder.push('release');
+          },
+        } as any,
+        findCwd: () => '/tmp/worktree',
+        findStartCommitSha: () => 'sha',
+        findRepoId: () => 'repo-1' as any,
+        now: fixedNow,
+      });
+      await usecase.execute({ runId: runId('order-1') });
+      const abortIdx = callOrder.indexOf('abort');
+      const resetIdx = callOrder.indexOf('reset');
+      expect(abortIdx).toBeLessThan(resetIdx);
+    });
+
+    it('calls git.resetHard() before leases.release()', async () => {
+      const callOrder: string[] = [];
+      const git = {
+        resetHard: async () => {
+          callOrder.push('reset');
+        },
+      };
+      const leaseObj = {
+        repoId: 'repo-1' as any,
+        workerId: 'w-1' as any,
+        runId: 'order-2' as any,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(),
+      };
+      const repo = new FakeRunRepo();
+      repo.addRun({
+        uuid: 'order-2',
+        displayId: 'issue-2-20260513-000000',
+        issueNumber: 2,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const usecase = new CancelRun({
+        runRepository: repo,
+        runAbort: noopAbort as any,
+        git: git as any,
+        leases: {
+          current: () => leaseObj,
+          release: () => {
+            callOrder.push('release');
+          },
+        } as any,
+        findCwd: () => '/tmp/worktree',
+        findStartCommitSha: () => 'sha',
+        findRepoId: () => 'repo-1' as any,
+        now: fixedNow,
+      });
+      await usecase.execute({ runId: runId('order-2') });
+      const resetIdx = callOrder.indexOf('reset');
+      const releaseIdx = callOrder.indexOf('release');
+      expect(resetIdx).toBeLessThan(releaseIdx);
+    });
+
+    it('marks cancelled even when all best-effort steps throw', async () => {
+      const repo = new FakeRunRepo();
+      repo.addRun({
+        uuid: 'best-effort',
+        displayId: 'issue-3-20260513-000000',
+        issueNumber: 3,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const usecase = new CancelRun({
+        runRepository: repo,
+        runAbort: {
+          register: () => {},
+          abort: () => {
+            throw new Error('abort fail');
+          },
+          unregister: () => {},
+        } as any,
+        git: {
+          resetHard: async () => {
+            throw new Error('reset fail');
+          },
+        } as any,
+        leases: {
+          current: () => {
+            throw new Error('lease fail');
+          },
+          release: () => {},
+        } as any,
+        findCwd: () => {
+          throw new Error('cwd fail');
+        },
+        findStartCommitSha: () => {
+          throw new Error('sha fail');
+        },
+        findRepoId: () => {
+          throw new Error('repoId fail');
+        },
+        now: fixedNow,
+      });
+      await usecase.execute({ runId: runId('best-effort') });
+      expect(repo.updates).toHaveLength(1);
+      expect(repo.updates[0]!.patch.status).toBe('cancelled');
+    });
+
+    it('marks cancelled when abort throws but other steps proceed', async () => {
+      const callOrder: string[] = [];
+      const repo = new FakeRunRepo();
+      repo.addRun({
+        uuid: 'abort-throws',
+        displayId: 'issue-4-20260513-000000',
+        issueNumber: 4,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const usecase = new CancelRun({
+        runRepository: repo,
+        runAbort: {
+          register: () => {},
+          abort: () => {
+            throw new Error('abort fail');
+          },
+          unregister: () => {},
+        } as any,
+        git: {
+          resetHard: async () => {
+            callOrder.push('reset');
+          },
+        } as any,
+        leases: {
+          current: () => undefined,
+          release: () => {
+            callOrder.push('release');
+          },
+        } as any,
+        findCwd: () => '/tmp/worktree',
+        findStartCommitSha: () => 'sha',
+        findRepoId: () => 'repo-1' as any,
+        now: fixedNow,
+      });
+      await usecase.execute({ runId: runId('abort-throws') });
+      expect(repo.updates).toHaveLength(1);
+      expect(repo.updates[0]!.patch.status).toBe('cancelled');
+      expect(callOrder).toContain('reset');
+    });
+
+    it('marks cancelled when resetHard throws but other steps proceed', async () => {
+      const callOrder: string[] = [];
+      const repo = new FakeRunRepo();
+      repo.addRun({
+        uuid: 'reset-throws',
+        displayId: 'issue-5-20260513-000000',
+        issueNumber: 5,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const usecase = new CancelRun({
+        runRepository: repo,
+        runAbort: {
+          register: () => {},
+          abort: () => {
+            callOrder.push('abort');
+          },
+          unregister: () => {},
+        } as any,
+        git: {
+          resetHard: async () => {
+            throw new Error('reset fail');
+          },
+        } as any,
+        leases: {
+          current: () => undefined,
+          release: () => {
+            callOrder.push('release');
+          },
+        } as any,
+        findCwd: () => '/tmp/worktree',
+        findStartCommitSha: () => 'sha',
+        findRepoId: () => 'repo-1' as any,
+        now: fixedNow,
+      });
+      await usecase.execute({ runId: runId('reset-throws') });
+      expect(repo.updates).toHaveLength(1);
+      expect(repo.updates[0]!.patch.status).toBe('cancelled');
+      expect(callOrder).toContain('abort');
+    });
+
+    it('marks cancelled when lease release throws but other steps proceed', async () => {
+      const callOrder: string[] = [];
+      const repo = new FakeRunRepo();
+      repo.addRun({
+        uuid: 'lease-throws',
+        displayId: 'issue-6-20260513-000000',
+        issueNumber: 6,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const usecase = new CancelRun({
+        runRepository: repo,
+        runAbort: {
+          register: () => {},
+          abort: () => {
+            callOrder.push('abort');
+          },
+          unregister: () => {},
+        } as any,
+        git: {
+          resetHard: async () => {
+            callOrder.push('reset');
+          },
+        } as any,
+        leases: {
+          current: () => {
+            throw new Error('lease fail');
+          },
+          release: () => {},
+        } as any,
+        findCwd: () => '/tmp/worktree',
+        findStartCommitSha: () => 'sha',
+        findRepoId: () => 'repo-1' as any,
+        now: fixedNow,
+      });
+      await usecase.execute({ runId: runId('lease-throws') });
+      expect(repo.updates).toHaveLength(1);
+      expect(repo.updates[0]!.patch.status).toBe('cancelled');
+      expect(callOrder).toEqual(['abort', 'reset']);
+    });
+  });
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 });
