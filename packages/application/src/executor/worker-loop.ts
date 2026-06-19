@@ -45,6 +45,8 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
 
     registry.markBusy(workerId);
 
+    let started = false;
+
     try {
       leases.acquire({
         repoId: job.repoId,
@@ -55,6 +57,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
       });
 
       queue.markRunning(job.id, deps.now());
+      started = true;
 
       const worktree = await deps.prepareWorktree({
         repoId: job.repoId,
@@ -81,7 +84,11 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         registry.markIdle(workerId);
         continue;
       }
-      queue.markFailed(job.id, deps.now());
+      if (started) {
+        queue.markFailed(job.id, deps.now());
+      } else {
+        queue.releaseClaim(job.id);
+      }
       return;
     } finally {
       leases.release(job.repoId, workerId);
