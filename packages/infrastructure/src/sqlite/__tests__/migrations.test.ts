@@ -14,7 +14,7 @@ describe('migrations', () => {
     applyMigrations(db);
     applyMigrations(db);
     const versions = db.prepare('SELECT version FROM schema_version').all();
-    expect(versions).toHaveLength(10);
+    expect(versions).toHaveLength(11);
     db.close();
   });
 

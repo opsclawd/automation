@@ -30,7 +30,7 @@ export class ImplementHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', 'implement started');
+    emit('implement.started', 'info', 'implement started');
 
     const planMd = await this.readPlan(ctx, emit);
     if (typeof planMd !== 'string') return planMd;
@@ -96,7 +96,7 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
-    emit('phase.completed', 'info', 'implement complete');
+    emit('implement.completed', 'info', 'implement complete');
     return { outcome: 'passed' };
   }
 
@@ -126,7 +126,7 @@ export class ImplementHandler implements PhaseHandler {
     kind: FailureKind,
     message: string,
   ): PhaseResult {
-    emit('phase.failed', 'error', message);
+    emit('implement.failed', 'error', message);
     return {
       outcome: 'failed',
       failure: {

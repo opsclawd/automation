@@ -9,7 +9,7 @@ export class ReadIssueHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', 'reading issue');
+    emit('read_issue.started', 'info', 'reading issue');
 
     let issue: GitHubIssue;
     try {
@@ -25,7 +25,7 @@ export class ReadIssueHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      emit('phase.failed', 'error', failure.message);
+      emit('read_issue.failed', 'error', failure.message);
       return { outcome: 'failed', failure };
     }
 
@@ -40,7 +40,7 @@ export class ReadIssueHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      emit('phase.blocked', 'error', failure.message);
+      emit('read_issue.blocked', 'error', failure.message);
       return { outcome: 'blocked', failure };
     }
 
@@ -52,7 +52,7 @@ export class ReadIssueHandler implements PhaseHandler {
     result = await this.writeArtifact(ctx, emit, 'issue.md', issueMd);
     if (result) return result;
 
-    emit('phase.completed', 'info', 'read issue complete');
+    emit('read_issue.completed', 'info', 'read issue complete');
     return { outcome: 'passed' };
   }
 
@@ -80,7 +80,7 @@ export class ReadIssueHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      emit('phase.failed', 'error', failure.message);
+      emit('read_issue.failed', 'error', failure.message);
       return { outcome: 'failed', failure };
     }
     emit('artifact.created', 'info', `wrote ${filename}`, { path: filename });

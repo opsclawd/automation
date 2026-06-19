@@ -1,9 +1,8 @@
 import { PhaseName, RunId } from '@ai-sdlc/domain';
-import type { Failure, ValidationRun } from '@ai-sdlc/domain';
+import type { Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import type { RunValidation } from '../../run-validation.js';
-import { validationRunToFailure } from '../../validation/validation-run-to-failure.js';
 
 export interface ValidateHandlerOpts {
   runValidation: RunValidation;
@@ -19,7 +18,7 @@ export class ValidateHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', 'validate started');
+    emit('validate.started', 'info', 'validate started');
 
     if (this.opts.commands.length === 0) {
       const message = 'no validation commands configured (validation.commands is empty)';
@@ -33,12 +32,13 @@ export class ValidateHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      emit('phase.failed', 'error', message);
+      emit('validate.failed', 'error', message);
       return { outcome: 'failed', failure };
     }
 
     let passed: boolean;
-    let validationRun: ValidationRun;
+    let failure: Failure | undefined;
+    let validationRunLength: number | undefined;
     try {
       const result = await this.opts.runValidation.execute({
         runId: RunId(ctx.runUuid),
@@ -49,10 +49,11 @@ export class ValidateHandler implements PhaseHandler {
         timeoutSeconds: this.opts.timeoutSeconds,
       });
       passed = result.passed;
-      validationRun = result.validationRun;
+      failure = result.failure;
+      validationRunLength = result.validationRun.commands.length;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const failure: Failure = {
+      failure = {
         runUuid: ctx.runUuid,
         phase: 'validate',
         kind: 'unknown',
@@ -63,18 +64,17 @@ export class ValidateHandler implements PhaseHandler {
         artifacts: [],
         detectedAt: ctx.now(),
       };
-      emit('phase.failed', 'error', message);
+      emit('validate.failed', 'error', message);
       return { outcome: 'failed', failure };
     }
 
     if (passed) {
-      emit('phase.completed', 'info', 'validation passed', {
-        commands: validationRun.commands.length,
+      emit('validate.completed', 'info', 'validation passed', {
+        commands: validationRunLength,
       });
       return { outcome: 'passed' };
     }
 
-    let failure = validationRunToFailure(validationRun, ctx.now());
     if (!failure) {
       failure = {
         runUuid: ctx.runUuid,
@@ -88,11 +88,7 @@ export class ValidateHandler implements PhaseHandler {
       };
     }
 
-    const failing = validationRun.commands
-      .filter((c) => c.outcome !== 'passed')
-      .map((c) => c.command);
-
-    emit('phase.failed', 'error', failure.message, { failing });
+    emit('validate.failed', 'error', failure.message);
     return { outcome: 'failed', failure };
   }
 }

@@ -122,7 +122,7 @@ export async function runSingleShotAgentPhase(
       false,
       'Ensure the compose root provides all required context fields.',
     );
-    emit('phase.failed', 'error', failure.message);
+    emit(`${String(config.phase)}.failed`, 'error', failure.message);
     return { outcome: 'failed', failure };
   }
   // 2. Load prompt template
@@ -145,7 +145,7 @@ export async function runSingleShotAgentPhase(
         !isMissing,
         'Ensure the prompt template file exists at <promptsRoot>/<phase>/<step>.md.',
       );
-      emit('phase.failed', 'error', failure.message);
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
       return { outcome: 'failed', failure };
     }
   }
@@ -172,7 +172,7 @@ export async function runSingleShotAgentPhase(
       kind !== 'missing_artifact',
       'Ensure all required input artifacts exist in the artifact store.',
     );
-    emit('phase.failed', 'error', failure.message);
+    emit(`${String(config.phase)}.failed`, 'error', failure.message);
     return { outcome: 'failed', failure };
   }
 
@@ -195,7 +195,7 @@ export async function runSingleShotAgentPhase(
       true,
       'Check disk space and permissions, then retry.',
     );
-    emit('phase.failed', 'error', failure.message);
+    emit(`${String(config.phase)}.failed`, 'error', failure.message);
     return { outcome: 'failed', failure };
   }
   emit('artifact.created', 'info', `wrote ${promptRelativePath}`, {
@@ -233,7 +233,7 @@ export async function runSingleShotAgentPhase(
       true,
       'Check agent infrastructure configuration, then retry.',
     );
-    emit('phase.failed', 'error', failure.message);
+    emit(`${String(config.phase)}.failed`, 'error', failure.message);
     return { outcome: 'failed', failure };
   }
 
@@ -246,7 +246,7 @@ export async function runSingleShotAgentPhase(
       true,
       'Check agent infrastructure and timeout settings, then retry.',
     );
-    emit('phase.failed', 'error', failure.message);
+    emit(`${String(config.phase)}.failed`, 'error', failure.message);
     return { outcome: 'failed', failure };
   }
 
@@ -284,7 +284,7 @@ export async function runSingleShotAgentPhase(
       false,
       'Review agent output and contract requirements. The agent violated its instructions.',
     );
-    emit('phase.blocked', 'error', failure.message, { violations });
+    emit(`${String(config.phase)}.blocked`, 'error', failure.message, { violations });
     return { outcome: 'blocked', failure };
   }
 
@@ -313,7 +313,7 @@ export async function runSingleShotAgentPhase(
         false,
         'Review the agent output and result schema. The agent produced an invalid result.',
       );
-      emit('phase.failed', 'error', failure.message);
+      emit(`${String(config.phase)}.failed`, 'error', failure.message);
       return { outcome: 'failed', failure };
     }
 
@@ -355,7 +355,9 @@ export async function runSingleShotAgentPhase(
         false,
         'Review agent output and contract requirements. The agent violated its instructions during rerun.',
       );
-      emit('phase.blocked', 'error', failure.message, { violations: postExtractViolations });
+      emit(`${String(config.phase)}.blocked`, 'error', failure.message, {
+        violations: postExtractViolations,
+      });
       return { outcome: 'blocked', failure };
     }
   }
@@ -366,7 +368,7 @@ export async function runSingleShotAgentPhase(
   // phase.completed emit so the parent handler's own emit captures the true
   // completion time including those side effects.
   if (!config.skipResultExtraction) {
-    emit('phase.completed', 'info', `${config.phase as string} completed`);
+    emit(`${String(config.phase)}.completed`, 'info', `${config.phase as string} completed`);
   }
   return { outcome: 'passed' };
 }

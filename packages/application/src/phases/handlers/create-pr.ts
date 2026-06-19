@@ -19,12 +19,12 @@ export class CreatePrHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', 'starting create-pr');
+    emit('create_pr.started', 'info', 'starting create-pr');
 
     // Guard: resolveProfile must be present
     if (!ctx.resolveProfile) {
       const msg = 'resolveProfile not available on context';
-      emit('phase.failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
         'command_failed',
@@ -38,7 +38,7 @@ export class CreatePrHandler implements PhaseHandler {
     const profile = ctx.resolveProfile(this.phase);
     if (!profile) {
       const msg = `resolveProfile returned empty for phase 'create-pr'`;
-      emit('phase.failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
         'command_failed',
@@ -57,7 +57,7 @@ export class CreatePrHandler implements PhaseHandler {
         prUrl = undefined;
       } else {
         const msg = `failed to read pr-url.txt: ${(e as Error).message}`;
-        emit('phase.failed', 'error', msg);
+        emit('create_pr.failed', 'error', msg);
         return this._fail(
           ctx,
           'command_failed',
@@ -78,7 +78,7 @@ export class CreatePrHandler implements PhaseHandler {
       } catch (e) {
         emit('github.label_update_failed', 'warn', `label update failed: ${(e as Error).message}`);
       }
-      emit('phase.completed', 'info', 'create-pr complete');
+      emit('create_pr.completed', 'info', 'create-pr complete');
       return { outcome: 'passed' };
     }
 
@@ -103,7 +103,7 @@ export class CreatePrHandler implements PhaseHandler {
       summary = await ctx.artifacts.read(ctx.runUuid, 'pr-summary.md');
     } catch {
       const msg = 'agent succeeded but pr-summary.md is missing';
-      emit('phase.failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
         'missing_artifact',
@@ -120,7 +120,7 @@ export class CreatePrHandler implements PhaseHandler {
       await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch });
     } catch (e) {
       const msg = `failed to push branch ${this.opts.headBranch}: ${(e as Error).message}`;
-      emit('phase.failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
         'git_failed',
@@ -143,7 +143,7 @@ export class CreatePrHandler implements PhaseHandler {
       emit('pr.created', 'info', `opened PR ${pr.number}`, { number: pr.number, url: pr.url });
     } catch (e) {
       const msg = `failed to create PR: ${(e as Error).message}`;
-      emit('phase.failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
         'github_failed',
@@ -174,7 +174,7 @@ export class CreatePrHandler implements PhaseHandler {
       });
     } catch (e) {
       const msg = `failed to write pr-url.txt: ${(e as Error).message}`;
-      emit('phase.failed', 'error', msg);
+      emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
         'command_failed',
@@ -184,7 +184,7 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
-    emit('phase.completed', 'info', 'create-pr complete');
+    emit('create_pr.completed', 'info', 'create-pr complete');
     return { outcome: 'passed' };
   }
 

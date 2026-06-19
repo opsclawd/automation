@@ -3,7 +3,6 @@ import { ValidateHandler } from '../validate.js';
 import { RunValidation } from '../../../run-validation.js';
 import { FakeValidationPort } from '../../../test-doubles/fake-validation-port.js';
 import { FakeValidationRunRepository } from '../../../test-doubles/fake-validation-run-repository.js';
-import { FakeFailureRepository } from '../../../test-doubles/fake-failure-repository.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { ValidationCommandResult } from '../../../ports/validation-port.js';
@@ -44,7 +43,6 @@ function deps(passing: 'passed' | 'failed') {
   const runValidation = new RunValidation({
     validation,
     validationRunRepository: new FakeValidationRunRepository(),
-    failureRepository: new FakeFailureRepository(),
     idFactory: () => 'vr1',
     now: () => new Date('2026-06-16T00:00:00Z'),
   });
@@ -146,7 +144,6 @@ describe('ValidateHandler', () => {
       const runValidation = new RunValidation({
         validation,
         validationRunRepository: new FakeValidationRunRepository(),
-        failureRepository: new FakeFailureRepository(),
         idFactory: () => 'vr2',
         now: () => new Date('2026-06-16T00:00:00Z'),
       });
@@ -179,12 +176,12 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      const started = events.filter((e) => e.type === 'phase.started');
+      const started = events.filter((e) => e.type === 'validate.started');
       expect(started).toHaveLength(1);
       expect(started[0].level).toBe('info');
       expect(started[0].phase).toBe('validate');
 
-      const completed = events.filter((e) => e.type === 'phase.completed');
+      const completed = events.filter((e) => e.type === 'validate.completed');
       expect(completed).toHaveLength(1);
       expect(completed[0].level).toBe('info');
       expect(completed[0].phase).toBe('validate');
@@ -201,11 +198,11 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      const started = events.filter((e) => e.type === 'phase.started');
+      const started = events.filter((e) => e.type === 'validate.started');
       expect(started).toHaveLength(1);
       expect(started[0].phase).toBe('validate');
 
-      const failed = events.filter((e) => e.type === 'phase.failed');
+      const failed = events.filter((e) => e.type === 'validate.failed');
       expect(failed).toHaveLength(1);
       expect(failed[0].level).toBe('error');
       expect(failed[0].phase).toBe('validate');
@@ -222,7 +219,7 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      const completed = events.filter((e) => e.type === 'phase.completed');
+      const completed = events.filter((e) => e.type === 'validate.completed');
       expect(completed).toHaveLength(0);
     });
   });
@@ -252,7 +249,6 @@ describe('ValidateHandler', () => {
       const runValidation = new RunValidation({
         validation,
         validationRunRepository: new FakeValidationRunRepository(),
-        failureRepository: new FakeFailureRepository(),
         idFactory: () => 'vr-fwd',
         now: () => new Date('2026-06-16T00:00:00Z'),
       });

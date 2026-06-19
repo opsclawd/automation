@@ -57,12 +57,12 @@ describe('ReadIssueHandler', () => {
     expect(artifactCreatedEvents[1].metadata).toEqual({ path: 'issue.md' });
     expect(artifactCreatedEvents.every((e) => e.level === 'info')).toBe(true);
 
-    const startedEvents = events.filter((e) => e.type === 'phase.started');
+    const startedEvents = events.filter((e) => e.type === 'read_issue.started');
     expect(startedEvents).toHaveLength(1);
     expect(startedEvents[0].level).toBe('info');
     expect(startedEvents[0].phase).toBe('read_issue');
 
-    const completedEvents = events.filter((e) => e.type === 'phase.completed');
+    const completedEvents = events.filter((e) => e.type === 'read_issue.completed');
     expect(completedEvents).toHaveLength(1);
     expect(completedEvents[0].level).toBe('info');
     expect(completedEvents[0].phase).toBe('read_issue');
@@ -89,7 +89,7 @@ describe('ReadIssueHandler', () => {
       artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'issue.md'),
     ).rejects.toThrow(ArtifactNotFoundError);
 
-    const blockedEvents = events.filter((e) => e.type === 'phase.blocked');
+    const blockedEvents = events.filter((e) => e.type === 'read_issue.blocked');
     expect(blockedEvents).toHaveLength(1);
     expect(blockedEvents[0].level).toBe('error');
     expect(blockedEvents[0].phase).toBe('read_issue');
@@ -125,7 +125,7 @@ describe('ReadIssueHandler', () => {
       expect(result.failure.kind).toBe('github_failed');
     }
 
-    const failedEvents = events.filter((e) => e.type === 'phase.failed');
+    const failedEvents = events.filter((e) => e.type === 'read_issue.failed');
     expect(failedEvents).toHaveLength(1);
     expect(failedEvents[0].level).toBe('error');
     expect(failedEvents[0].phase).toBe('read_issue');
@@ -151,7 +151,7 @@ describe('ReadIssueHandler', () => {
       expect(result.failure.kind).toBe('unknown');
     }
 
-    const failedEvents = events.filter((e) => e.type === 'phase.failed');
+    const failedEvents = events.filter((e) => e.type === 'read_issue.failed');
     expect(failedEvents).toHaveLength(1);
     expect(failedEvents[0].level).toBe('error');
     expect(failedEvents[0].phase).toBe('read_issue');

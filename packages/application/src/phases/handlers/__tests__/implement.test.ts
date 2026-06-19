@@ -71,8 +71,8 @@ describe('ImplementHandler', () => {
 
     expect(events.filter((e) => e.type === 'step.started')).toHaveLength(2);
     expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(2);
-    expect(events.filter((e) => e.type === 'phase.started')).toHaveLength(1);
-    expect(events.filter((e) => e.type === 'phase.completed')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'implement.started')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'implement.completed')).toHaveLength(1);
   });
 
   it('resume skips already-successful steps', async () => {
@@ -191,7 +191,7 @@ describe('ImplementHandler', () => {
     expect(step!.status).toBe('failed');
 
     expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(1);
-    expect(events.filter((e) => e.type === 'phase.failed')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
   });
 
   it('empty plan fails fast with invalid_result', async () => {
@@ -214,7 +214,7 @@ describe('ImplementHandler', () => {
     }
 
     expect(runStep).not.toHaveBeenCalled();
-    expect(events.filter((e) => e.type === 'phase.failed')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
   });
 
   it('missing plan.md fails with missing_artifact', async () => {
@@ -231,6 +231,6 @@ describe('ImplementHandler', () => {
     }
 
     expect(runStep).not.toHaveBeenCalled();
-    expect(events.filter((e) => e.type === 'phase.failed')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
   });
 });

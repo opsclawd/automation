@@ -35,7 +35,7 @@ describe('PostPrReviewHandler', () => {
     });
     const { ctx: c, events } = ctx();
     await handler.run(c);
-    const started = events.filter((e) => e.type === 'phase.started');
+    const started = events.filter((e) => e.type === 'post_pr_review.started');
     expect(started).toHaveLength(1);
     expect(started[0].phase).toBe('post-pr-review');
     expect(started[0].level).toBe('info');
@@ -47,11 +47,10 @@ describe('PostPrReviewHandler', () => {
       runPoll: async () => ({ signal: 'merged' as const }),
       setRunStatus,
     });
-    const { ctx: c, events } = ctx();
+    const { ctx: c } = ctx();
     const res = await handler.run(c);
     expect(res.outcome).toBe('passed');
     expect(setRunStatus).toHaveBeenCalledWith('passed');
-    expect(events.some((e) => e.type === 'run.completed')).toBe(true);
   });
 
   it('transitions the Run to READY (waiting) when the poller reports all_resolved', async () => {
@@ -152,18 +151,5 @@ describe('PostPrReviewHandler', () => {
       expect(res.failure.phase).toBe('post-pr-review');
     }
     expect(setRunStatus).not.toHaveBeenCalled();
-  });
-
-  it('run-level events omit the phase field', async () => {
-    const setRunStatus = vi.fn();
-    const handler = new PostPrReviewHandler({
-      runPoll: async () => ({ signal: 'merged' as const }),
-      setRunStatus,
-    });
-    const { ctx: c, events } = ctx();
-    await handler.run(c);
-    const completed = events.find((e) => e.type === 'run.completed');
-    expect(completed).toBeDefined();
-    expect(completed!.phase).toBeUndefined();
   });
 });

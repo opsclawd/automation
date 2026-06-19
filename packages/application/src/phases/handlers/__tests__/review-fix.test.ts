@@ -82,14 +82,14 @@ describe('ReviewFixHandler', () => {
       const { ctx, events } = makeCtx();
       await new ReviewFixHandler({ runLoop }).run(ctx);
 
-      const started = events.filter((e) => e.type === 'phase.started');
+      const started = events.filter((e) => e.type === 'review_fix.started');
       expect(started).toHaveLength(1);
       expect(started[0].runId).toBe('human-readable-run');
       expect(started[0].timestamp).toBe('2026-06-16T00:00:00.000Z');
       expect(started[0].level).toBe('info');
       expect(started[0].phase).toBe('review-fix');
 
-      const completed = events.filter((e) => e.type === 'phase.completed');
+      const completed = events.filter((e) => e.type === 'review_fix.completed');
       expect(completed).toHaveLength(1);
       expect(completed[0].runId).toBe('human-readable-run');
       expect(completed[0].timestamp).toBe('2026-06-16T00:00:00.000Z');
@@ -105,11 +105,11 @@ describe('ReviewFixHandler', () => {
       const { ctx, events } = makeCtx();
       await new ReviewFixHandler({ runLoop }).run(ctx);
 
-      const started = events.filter((e) => e.type === 'phase.started');
+      const started = events.filter((e) => e.type === 'review_fix.started');
       expect(started).toHaveLength(1);
       expect(started[0].phase).toBe('review-fix');
 
-      const failed = events.filter((e) => e.type === 'phase.failed');
+      const failed = events.filter((e) => e.type === 'review_fix.failed');
       expect(failed).toHaveLength(1);
       expect(failed[0].runId).toBe('human-readable-run');
       expect(failed[0].timestamp).toBe('2026-06-16T00:00:00.000Z');
@@ -126,11 +126,11 @@ describe('ReviewFixHandler', () => {
       const { ctx, events } = makeCtx();
       await new ReviewFixHandler({ runLoop }).run(ctx);
 
-      const started = events.filter((e) => e.type === 'phase.started');
+      const started = events.filter((e) => e.type === 'review_fix.started');
       expect(started).toHaveLength(1);
       expect(started[0].phase).toBe('review-fix');
 
-      const failed = events.filter((e) => e.type === 'phase.failed');
+      const failed = events.filter((e) => e.type === 'review_fix.failed');
       expect(failed).toHaveLength(1);
       expect(failed[0].message).toBe('review-fix loop failed');
     });
@@ -150,7 +150,7 @@ describe('ReviewFixHandler', () => {
         expect(result.failure.canRetry).toBe(true);
       }
 
-      const failed = events.filter((e) => e.type === 'phase.failed');
+      const failed = events.filter((e) => e.type === 'review_fix.failed');
       expect(failed).toHaveLength(1);
       expect(failed[0].message).toBe('review/fix loop threw: DB write failed');
     });
@@ -163,7 +163,7 @@ describe('ReviewFixHandler', () => {
       const { ctx, events } = makeCtx();
       await new ReviewFixHandler({ runLoop }).run(ctx);
 
-      const completed = events.filter((e) => e.type === 'phase.completed');
+      const completed = events.filter((e) => e.type === 'review_fix.completed');
       expect(completed).toHaveLength(0);
     });
   });

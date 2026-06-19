@@ -24,17 +24,16 @@ export class PostPrReviewHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
-    emit('phase.started', 'info', 'post-pr-review started');
+    emit('post_pr_review.started', 'info', 'post-pr-review started');
 
     const { signal } = await this.opts.runPoll(ctx);
 
     switch (signal) {
       case 'merged':
         this.opts.setRunStatus('passed');
-        this._emitRun(ctx, 'run.completed', 'info', 'PR merged — run complete', {
+        emit('post_pr_review.completed', 'info', 'PR merged — phase complete', {
           signal: 'merged',
         });
-        emit('phase.completed', 'info', 'PR merged — phase complete', { signal: 'merged' });
         return { outcome: 'passed' };
 
       case 'all_resolved':
@@ -42,7 +41,7 @@ export class PostPrReviewHandler implements PhaseHandler {
         this._emitRun(ctx, 'run.ready', 'info', 'all reviews addressed — awaiting merge', {
           signal: 'all_resolved',
         });
-        emit('phase.completed', 'info', 'all reviews resolved — phase resting', {
+        emit('post_pr_review.completed', 'info', 'all reviews resolved — phase resting', {
           signal: 'all_resolved',
         });
         return { outcome: 'resting' };
@@ -56,13 +55,15 @@ export class PostPrReviewHandler implements PhaseHandler {
         this._emitRun(ctx, 'run.cancelled_timeout', 'warn', 'ready timeout exceeded', {
           signal: 'timed_out',
         });
-        emit('phase.completed', 'info', 'timeout — phase resting', { signal: 'timed_out' });
+        emit('post_pr_review.completed', 'info', 'timeout — phase resting', {
+          signal: 'timed_out',
+        });
         return { outcome: 'resting' };
 
       case 'cancelled':
         this.opts.setRunStatus('cancelled');
         this._emitRun(ctx, 'run.cancelled', 'info', 'PR review cancelled', { signal: 'cancelled' });
-        emit('phase.completed', 'info', 'PR review cancelled — phase resting', {
+        emit('post_pr_review.completed', 'info', 'PR review cancelled — phase resting', {
           signal: 'cancelled',
         });
         return { outcome: 'resting' };
@@ -72,7 +73,7 @@ export class PostPrReviewHandler implements PhaseHandler {
         this._emitRun(ctx, 'run.ready', 'info', 'max poll attempts reached — run waiting', {
           signal: 'max_polls_reached',
         });
-        emit('phase.completed', 'info', 'max poll attempts reached — phase resting', {
+        emit('post_pr_review.completed', 'info', 'max poll attempts reached — phase resting', {
           signal: 'max_polls_reached',
         });
         return { outcome: 'resting' };
@@ -80,7 +81,9 @@ export class PostPrReviewHandler implements PhaseHandler {
       case 'blocked':
         this.opts.setRunStatus('waiting');
         this._emitRun(ctx, 'run.blocked', 'warn', 'PR review blocked', { signal: 'blocked' });
-        emit('phase.completed', 'info', 'PR review blocked — phase resting', { signal: 'blocked' });
+        emit('post_pr_review.completed', 'info', 'PR review blocked — phase resting', {
+          signal: 'blocked',
+        });
         return { outcome: 'resting' };
 
       default:

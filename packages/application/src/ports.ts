@@ -22,6 +22,7 @@ export interface RunRepositoryUpdatePatch {
   status?: RunStatus;
   currentPhase?: string | null;
   completedPhases?: string[];
+  skippedPhases?: string[];
   completedAt?: Date;
   failureReason?: string;
   exitCode?: number;
@@ -111,6 +112,7 @@ export type {
   ValidationCommandResult,
 } from './ports/validation-port.js';
 export type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
+export type { PhaseRepositoryPort } from './ports/phase-repository-port.js';
 export type { ArtifactStore, WriteArtifactInput, Artifact } from './ports/artifact-store.js';
 export { ArtifactNotFoundError } from './ports/artifact-store.js';
 
@@ -173,5 +175,7 @@ export type EventTailerFactory = (input: {
   drainAndStop(): Promise<void>;
   stop(): Promise<void>;
 };
+
+export type { PhaseHandlerRegistryPort } from './ports/phase-handler-registry-port.js';
 
 export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/handler.js';

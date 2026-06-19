@@ -9,6 +9,7 @@ interface RunRow {
   status: string;
   current_phase: string | null;
   completed_phases: string;
+  skipped_phases: string;
   started_at: string;
   completed_at: string | null;
   failure_reason: string | null;
@@ -40,9 +41,9 @@ export class RunRepository {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, issue_number, type, status, current_phase,
-          completed_phases, started_at, completed_at, failure_reason, pid)
+          completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid)
          VALUES (@uuid, @display_id, @issue_number, @type, @status, @current_phase,
-          @completed_phases, @started_at, @completed_at, @failure_reason, @pid)`,
+          @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid)`,
       )
       .run({
         uuid: run.uuid,
@@ -52,6 +53,7 @@ export class RunRepository {
         status: run.status,
         current_phase: run.currentPhase ?? null,
         completed_phases: JSON.stringify(run.completedPhases),
+        skipped_phases: JSON.stringify(run.skippedPhases ?? []),
         started_at: run.startedAt.toISOString(),
         completed_at: run.completedAt?.toISOString() ?? null,
         failure_reason: run.failureReason ?? null,
@@ -106,6 +108,7 @@ export class RunRepository {
       status: RunStatus;
       currentPhase: string | null;
       completedPhases: string[];
+      skippedPhases: string[];
       completedAt: Date;
       failureReason: string;
       exitCode: number;
@@ -125,6 +128,10 @@ export class RunRepository {
     if (patch.completedPhases !== undefined) {
       fields.push('completed_phases = @completed_phases');
       params.completed_phases = JSON.stringify(patch.completedPhases);
+    }
+    if (patch.skippedPhases !== undefined) {
+      fields.push('skipped_phases = @skipped_phases');
+      params.skipped_phases = JSON.stringify(patch.skippedPhases);
     }
     if (patch.completedAt !== undefined) {
       fields.push('completed_at = @completed_at');
@@ -207,6 +214,7 @@ function toRecord(row: RunRow): RunRecord {
     type: row.type as Run['type'],
     status: row.status as RunStatus,
     completedPhases: JSON.parse(row.completed_phases) as string[],
+    skippedPhases: JSON.parse(row.skipped_phases) as string[],
     startedAt: new Date(row.started_at),
     ...(row.current_phase !== null ? { currentPhase: row.current_phase } : {}),
     ...(row.completed_at !== null ? { completedAt: new Date(row.completed_at) } : {}),

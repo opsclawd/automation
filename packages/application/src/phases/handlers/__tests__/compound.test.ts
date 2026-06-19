@@ -150,10 +150,10 @@ describe('CompoundHandler', () => {
     expect(req.expectedArtifacts).toContain('compound.md');
     expect(req.startCommitSha).toBe('abc123');
 
-    expect(eventsOf(ctx, 'phase.started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.started')).toHaveLength(1);
     expect(eventsOf(ctx, 'agent.invoking')).toHaveLength(1);
     expect(eventsOf(ctx, 'artifact.created')).toHaveLength(1);
-    expect(eventsOf(ctx, 'phase.completed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.completed')).toHaveLength(1);
   });
 
   it('returns failed when agent outcome is failed (non-throwing)', async () => {
@@ -175,7 +175,7 @@ describe('CompoundHandler', () => {
       expect(result.failure.kind).toBe('command_failed');
       expect(result.failure.canRetry).toBe(true);
     }
-    expect(eventsOf(ctx, 'phase.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.failed')).toHaveLength(1);
   });
 
   it('returns blocked when validateAgentContract finds violations (missing compound.md)', async () => {
@@ -202,6 +202,6 @@ describe('CompoundHandler', () => {
     if (result.outcome === 'blocked') {
       expect(result.failure.kind).toBe('agent_contract_violation');
     }
-    expect(eventsOf(ctx, 'phase.blocked')).toHaveLength(1);
+    expect(eventsOf(ctx, 'compound.blocked')).toHaveLength(1);
   });
 });
