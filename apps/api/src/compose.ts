@@ -264,6 +264,8 @@ export function composeRoot(opts: ComposeOptions): Container {
   const startIssueRun = new StartIssueRun(deps);
   const cancelRun = new CancelRun({
     runRepository,
+    // TODO(#388): Wire a real AbortController registry from the agent runtime layer.
+    // Currently noop so cancel best-effort agent abort is non-functional.
     runAbort: { register: () => {}, abort: () => {}, unregister: () => {} },
     git: {
       createWorktree: async () => {},
@@ -282,6 +284,10 @@ export function composeRoot(opts: ComposeOptions): Container {
       cleanUntracked: async () => {},
       headCommitShaOf: async () => undefined,
     },
+    // TODO(#388): Wire WorkerLeaseRepository once the lease infrastructure is ready.
+    // `acquire` throws because CancelRun should never need to acquire — leases are
+    // acquired by run-start/resume flows. `release` is a noop — leases are never
+    // freed on cancel, blocking other workers from the repo.
     leases: {
       acquire: () => {
         throw new Error('leases not wired in compose');
@@ -293,6 +299,10 @@ export function composeRoot(opts: ComposeOptions): Container {
     },
     findCwd: () => '/tmp',
     findStartCommitSha: () => 'HEAD',
+    // TODO(#388): Wire findRepoId by looking up repo from run metadata or maintaining
+    // a runId→repoId mapping. Currently throws in cancel flow so git reset and lease
+    // release are skipped (caught by best-effort try/catch).  Also wire findCwd to
+    // resolve the actual worktree path and findStartCommitSha.
     findRepoId: () => {
       throw new Error('findRepoId not wired in compose');
     },

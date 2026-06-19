@@ -1,5 +1,6 @@
 import { canResume, resumeRun, createJob } from '@ai-sdlc/domain';
-import type { RunId, WorkerId, IssueNumber, RepositoryId, JobId, Step } from '@ai-sdlc/domain';
+import { IssueNumber } from '@ai-sdlc/domain';
+import type { RunId, WorkerId, RepositoryId, JobId, Step } from '@ai-sdlc/domain';
 import type {
   RunRepositoryPort,
   RepositoryPort,
@@ -74,7 +75,7 @@ export class ResumeRun implements ResumeRunUseCase {
       id: `resume-${input.runId}-${now().getTime()}` as JobId,
       runId: input.runId,
       repoId: repo.id,
-      issueNumber: run.issueNumber as IssueNumber,
+      issueNumber: IssueNumber(run.issueNumber),
       priority: 10,
       createdAt: now(),
     });
