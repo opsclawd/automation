@@ -278,6 +278,62 @@ describe('workerLoop', () => {
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   });
 
+  it('skips lease-conflicted repo job and runs next claimable job from different repo', async () => {
+    const s = setup();
+    // r1 is busy — another worker holds the lease
+    s.leases.acquire({
+      repoId: RepositoryId('r1'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-0'),
+      now: s.now,
+      ttlMs: 60_000,
+    });
+
+    // Oldest queued job is for r1 (blocked), next is for r2 (claimable)
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j2'),
+        runId: RunId('run-2'),
+        repoId: RepositoryId('r2'),
+        issueNumber: IssueNumber(2),
+        createdAt: new Date(s.now.getTime() + 1000),
+      }),
+    });
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: executeOk,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1'), RunId('run-2')]),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+    });
+
+    // j1 was released back to queued (r1 lease still held by w2)
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('queued');
+    // j2 was claimed and executed
+    expect(s.queue.findById(JobId('j2'))!.status).toBe('succeeded');
+    // r1 lease still belongs to original holder
+    expect(s.leases.current(RepositoryId('r1'))?.workerId).toBe('w2');
+    // r2 lease was released
+    expect(s.leases.current(RepositoryId('r2'))).toBeUndefined();
+  });
+
   it('no jobs available: returns without side effects', async () => {
     const s = setup();
 

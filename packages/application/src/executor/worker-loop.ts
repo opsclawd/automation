@@ -1,4 +1,4 @@
-import type { WorkerId, RepositoryId, RunId, Run } from '@ai-sdlc/domain';
+import type { WorkerId, JobId, RepositoryId, RunId, Run } from '@ai-sdlc/domain';
 import type {
   WorkerRegistryPort,
   JobQueuePort,
@@ -35,49 +35,57 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     onReclaimed: (_info) => {},
   });
 
-  const job = queue.claimNext({ workerId });
-  if (!job) {
-    return;
-  }
+  const skippedJobIds = new Set<JobId>();
 
-  registry.markBusy(workerId);
-
-  try {
-    leases.acquire({
-      repoId: job.repoId,
-      workerId,
-      runId: job.runId,
-      now: deps.now(),
-      ttlMs: deps.ttlMs,
-    });
-
-    queue.markRunning(job.id, deps.now());
-
-    const worktree = await deps.prepareWorktree({
-      repoId: job.repoId,
-      runId: job.runId,
-    });
-
-    const run = deps.findRun(job.runId);
-    if (!run) {
-      throw new Error(`run ${job.runId} not found for job ${job.id}`);
-    }
-
-    const result = await deps.executeRun({ run, workerId, cwd: worktree.cwd });
-
-    if (result.ok) {
-      queue.markSucceeded(job.id, deps.now());
-    } else {
-      queue.markFailed(job.id, deps.now());
-    }
-  } catch (err) {
-    if (err instanceof WorkerLeaseConflictError) {
-      queue.releaseClaim(job.id);
+  while (true) {
+    const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds });
+    if (!job) {
       return;
     }
-    queue.markFailed(job.id, deps.now());
-  } finally {
-    leases.release(job.repoId, workerId);
-    registry.markIdle(workerId);
+
+    registry.markBusy(workerId);
+
+    try {
+      leases.acquire({
+        repoId: job.repoId,
+        workerId,
+        runId: job.runId,
+        now: deps.now(),
+        ttlMs: deps.ttlMs,
+      });
+
+      queue.markRunning(job.id, deps.now());
+
+      const worktree = await deps.prepareWorktree({
+        repoId: job.repoId,
+        runId: job.runId,
+      });
+
+      const run = deps.findRun(job.runId);
+      if (!run) {
+        throw new Error(`run ${job.runId} not found for job ${job.id}`);
+      }
+
+      const result = await deps.executeRun({ run, workerId, cwd: worktree.cwd });
+
+      if (result.ok) {
+        queue.markSucceeded(job.id, deps.now());
+      } else {
+        queue.markFailed(job.id, deps.now());
+      }
+      return;
+    } catch (err) {
+      if (err instanceof WorkerLeaseConflictError) {
+        queue.releaseClaim(job.id);
+        skippedJobIds.add(job.id);
+        registry.markIdle(workerId);
+        continue;
+      }
+      queue.markFailed(job.id, deps.now());
+      return;
+    } finally {
+      leases.release(job.repoId, workerId);
+      registry.markIdle(workerId);
+    }
   }
 }
