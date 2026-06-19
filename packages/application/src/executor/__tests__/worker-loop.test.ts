@@ -412,4 +412,26 @@ describe('workerLoop', () => {
     const w = s.registry.findById(WorkerId('w1'));
     expect(w!.status).toBe('idle');
   });
+
+  it('reentrant call while worker is busy is rejected', async () => {
+    const s = setup();
+    s.registry.markBusy(WorkerId('w1'));
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: executeOk,
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set(),
+      now: () => new Date(),
+      ttlMs: 60_000,
+      findRun: (runId) => makeRun(runId as string),
+    });
+
+    expect(s.registry.findById(WorkerId('w1'))!.status).toBe('busy');
+  });
 });

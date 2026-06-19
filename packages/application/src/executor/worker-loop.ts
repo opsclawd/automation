@@ -36,11 +36,9 @@ function isRunnable(status: string): boolean {
 export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Promise<void> {
   const { registry, queue, leases } = deps;
 
-  const entryStatus = registry.findById(workerId)?.status;
-  if (entryStatus && !isRunnable(entryStatus)) {
+  if (registry.findById(workerId)?.status !== 'idle') {
     return;
   }
-  registry.markIdle(workerId);
 
   leases.reclaimExpired({
     now: deps.now(),
