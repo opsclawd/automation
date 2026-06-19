@@ -68,7 +68,13 @@ import {
   type FixStepOptions,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
+import {
+  AgentProfileName,
+  AgentInvocationId,
+  PhaseName,
+  RunId,
+  RepositoryId,
+} from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -262,7 +268,37 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
   const startIssueRun = new StartIssueRun(deps);
-  const cancelRun = new CancelRun({ runRepository });
+  const cancelRun = new CancelRun({
+    runRepository,
+    runAbort: { register: () => {}, abort: () => {}, unregister: () => {} },
+    git: {
+      createWorktree: async () => {},
+      removeWorktree: async () => {},
+      currentBranch: async () => '',
+      headCommitSha: async () => '',
+      resetHard: async () => {},
+      diff: async () => '',
+      commit: async () => '',
+      push: async () => {},
+      remoteRef: async () => undefined,
+      isAncestor: async () => false,
+      logBetween: async () => [],
+      cleanUntracked: async () => {},
+      headCommitShaOf: async () => undefined,
+    },
+    leases: {
+      acquire: () => {
+        throw new Error('leases not wired in compose');
+      },
+      heartbeat: () => {},
+      release: () => {},
+      current: () => undefined,
+      reclaimExpired: () => [],
+    },
+    findCwd: () => '/tmp',
+    findStartCommitSha: () => 'HEAD',
+    findRepoId: () => '' as unknown as RepositoryId,
+  });
 
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';

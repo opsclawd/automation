@@ -2,8 +2,8 @@ import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RunId } from '@ai-sdlc/domain';
 import { composeRoot, type ComposeOptions } from './compose.js';
-import type { CancelRunInput } from '@ai-sdlc/application';
 
 export function findRepoRoot(
   startDir: string,
@@ -198,27 +198,29 @@ export function buildProgram(): Command {
               scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
             };
             const c = composeRoot(options);
-            const input = {} as CancelRunInput;
+            let uuid: string;
             if (opts.uuid) {
-              input.uuid = opts.uuid;
+              uuid = opts.uuid;
             } else {
               const run = c.runRepository.findByIssueNumber(opts.issue!);
               if (!run) {
                 console.error(`No run found for issue ${opts.issue}`);
                 process.exit(1);
               }
-              input.uuid = run.uuid;
+              uuid = run.uuid;
             }
-            if (opts.reason) input.reason = opts.reason;
-            const run = c.runRepository.findByUuid(input.uuid);
+            const run = c.runRepository.findByUuid(uuid);
             if (!run) {
-              throw new Error(`No active run found for uuid ${input.uuid}`);
+              throw new Error(`No active run found for uuid ${uuid}`);
             }
             if (run.status === 'passed' || run.status === 'failed' || run.status === 'cancelled') {
-              throw new Error(`Run ${input.uuid} is already ${run.status}`);
+              throw new Error(`Run ${uuid} is already ${run.status}`);
             }
             const pid = run.pid;
-            c.cancelRun.execute(input);
+            await c.cancelRun.execute({
+              runId: RunId(uuid),
+              ...(opts.reason ? { reason: opts.reason } : {}),
+            });
             if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
                 process.kill(pid, 'SIGTERM');
