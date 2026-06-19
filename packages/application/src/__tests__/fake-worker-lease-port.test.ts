@@ -91,6 +91,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => false,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toEqual([]);
@@ -111,6 +112,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => true,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toEqual([]);
@@ -131,6 +133,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set(),
       isWorkerAlive: () => false,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toEqual([]);
@@ -153,6 +156,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => false,
       resetWorktree,
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed,
     });
     expect(reclaimed).toHaveLength(1);
@@ -162,6 +166,7 @@ describe('FakeWorkerLeasePort', () => {
         repoId: 'r',
         previousWorkerId: 'w1',
         previousRunId: 'run-1',
+        reclaimedByWorkerId: 'w2',
       }),
     );
     expect(leases.current(RepositoryId('r'))).toBeUndefined();
@@ -183,6 +188,7 @@ describe('FakeWorkerLeasePort', () => {
       recoverableRunIds: new Set([RunId('run-1')]),
       isWorkerAlive: () => true,
       resetWorktree: () => {},
+      reclaimedByWorkerId: WorkerId('w2'),
       onReclaimed: () => {},
     });
     expect(reclaimed).toHaveLength(1);

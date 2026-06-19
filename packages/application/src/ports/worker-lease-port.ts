@@ -13,10 +13,12 @@ export interface ReclaimExpiredInput {
   recoverableRunIds: ReadonlySet<RunId>;
   isWorkerAlive(workerId: WorkerId): boolean;
   resetWorktree(repoId: RepositoryId): void;
+  reclaimedByWorkerId: WorkerId;
   onReclaimed(info: {
     repoId: RepositoryId;
     previousWorkerId: WorkerId;
     previousRunId: RunId;
+    reclaimedByWorkerId: WorkerId;
     reason: string;
   }): void;
 }

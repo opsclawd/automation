@@ -24,6 +24,7 @@ export interface WorkerLoopDeps {
     repoId: RepositoryId;
     previousWorkerId: WorkerId;
     previousRunId: RunId;
+    reclaimedByWorkerId: WorkerId;
     reason: string;
   }) => void;
 }
@@ -38,6 +39,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
     recoverableRunIds: deps.recoverableRunIds,
     isWorkerAlive: deps.isWorkerAlive,
     resetWorktree: deps.resetWorktree,
+    reclaimedByWorkerId: workerId,
     onReclaimed: (info) => deps.onLeaseReclaimed?.(info),
   });
 

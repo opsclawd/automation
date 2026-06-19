@@ -75,6 +75,7 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
         repoId: lease.repoId,
         previousWorkerId: lease.workerId,
         previousRunId: lease.runId,
+        reclaimedByWorkerId: input.reclaimedByWorkerId,
         reason: 'expired + worker stale + run recoverable',
       });
       reclaimed.push(lease);

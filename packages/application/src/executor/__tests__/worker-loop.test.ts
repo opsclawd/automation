@@ -282,6 +282,7 @@ describe('workerLoop', () => {
       repoId: RepositoryId('r1'),
       previousWorkerId: WorkerId('w1'),
       previousRunId: RunId('run-old'),
+      reclaimedByWorkerId: WorkerId('w2'),
       reason: 'expired + worker stale + run recoverable',
     });
   });
