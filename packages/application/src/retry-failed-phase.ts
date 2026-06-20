@@ -22,14 +22,15 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
     if (!phaseName) {
       throw new Error(`Cannot retry phase for run ${input.runId}: no current phase to retry`);
     }
-    const previousAttempts = phases.filter(
-      (p) => p.name === phaseName && p.status === 'failed',
-    ).length;
+    const failedPhaseAttempts = phases
+      .filter((p) => p.name === phaseName && p.status === 'failed')
+      .map((p) => p.attempt ?? 0);
+    const maxAttempt = failedPhaseAttempts.length > 0 ? Math.max(...failedPhaseAttempts) : 0;
     return this.deps.resumeRun.execute({
       runId: input.runId,
       fromPhase: phaseName,
       workerId: input.workerId,
-      attempt: previousAttempts + 1,
+      attempt: maxAttempt + 1,
     });
   }
 }
