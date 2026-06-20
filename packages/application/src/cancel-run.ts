@@ -69,26 +69,24 @@ export class CancelRun implements CancelRunUseCase {
       this.deps.logger.error(`CancelRun: unregister failed for ${input.runId}`, err);
     }
 
-    // Step 4-5: Cleanup (best-effort)
+    // Step 4: Reset worktree (best-effort) — independent of repoId
+    try {
+      const cwd = this.deps.findCwd(input.runId);
+      const startCommitSha = this.deps.findStartCommitSha(input.runId);
+      await git.resetHard(cwd, startCommitSha);
+      await git.cleanUntracked(cwd);
+    } catch (err) {
+      this.deps.logger.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
+    }
+
+    // Step 5: Release lease (best-effort) — requires repoId
     let repoId: RepositoryId | undefined;
     try {
       repoId = this.deps.findRepoId(input.runId);
     } catch (err) {
       this.deps.logger.error(`CancelRun: findRepoId failed for ${input.runId}`, err);
     }
-
     if (repoId !== undefined) {
-      // Step 4: Reset worktree (best-effort)
-      try {
-        const cwd = this.deps.findCwd(repoId, input.runId);
-        const startCommitSha = this.deps.findStartCommitSha(input.runId);
-        await git.resetHard(cwd, startCommitSha);
-        await git.cleanUntracked(cwd);
-      } catch (err) {
-        this.deps.logger.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
-      }
-
-      // Step 5: Release lease (best-effort)
       try {
         const lease = leases.current(repoId);
         if (lease) {

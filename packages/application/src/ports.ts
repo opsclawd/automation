@@ -1,11 +1,4 @@
-import type {
-  Run,
-  RunStatus,
-  Failure,
-  ClassifyExitInput,
-  RepositoryId,
-  RunId,
-} from '@ai-sdlc/domain';
+import type { Run, RunStatus, Failure, ClassifyExitInput, RunId } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
 /**
@@ -203,6 +196,6 @@ export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/h
 export type { RunAbortPort } from './ports/run-abort-port.js';
 
 export type { LoggerPort } from './ports/logger-port.js';
-export type ResolveWorktreeCwdFn = (repoId: RepositoryId, runId: RunId) => string;
+export type ResolveWorktreeCwdFn = (runId: RunId) => string;
 export type ResolveStartCommitShaFn = (runId: RunId) => string;
 export type ResolveRefShaFn = (cwd: string, ref: string) => string | undefined;

@@ -324,7 +324,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       current: () => undefined,
       reclaimExpired: () => [],
     },
-    findCwd: (repoId: RepositoryId, runId: RunId) => {
+    findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
       return join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
