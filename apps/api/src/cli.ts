@@ -217,10 +217,6 @@ export function buildProgram(): Command {
             if (!run) {
               throw new Error(`No run found for uuid ${uuid}`);
             }
-            await c.cancelRun.execute({
-              runId: RunId(uuid),
-              ...(opts.reason ? { reason: opts.reason } : {}),
-            });
             const pid = run.pid;
             if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
@@ -229,11 +225,15 @@ export function buildProgram(): Command {
                 const code = (killErr as NodeJS.ErrnoException).code;
                 if (code === 'EPERM') {
                   console.error(
-                    `Warning: run cancelled in DB but could not signal PID ${pid} (permission denied). The process may still be running.`,
+                    `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
                   );
                 }
               }
             }
+            await c.cancelRun.execute({
+              runId: RunId(uuid),
+              ...(opts.reason ? { reason: opts.reason } : {}),
+            });
             process.stdout.write('Run cancelled successfully\n');
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
