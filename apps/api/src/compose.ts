@@ -317,12 +317,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       const run = runRepository.findByUuid(runId);
       if (!run) return 'HEAD';
       if (run.startCommitSha) return run.startCommitSha;
-      try {
-        const cwd = join(runsDir, run.displayId);
-        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
-      } catch {
-        return 'HEAD';
-      }
+      return 'HEAD';
     },
     // findRepoId resolves the repo full name at compose time via `gh repo view`.
     // Returns undefined when unresolved so CancelRun's best-effort cleanups skip
