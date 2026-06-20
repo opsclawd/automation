@@ -195,6 +195,29 @@ export interface ComposeOptions {
   runStartupSweeps?: boolean;
 }
 
+class AbortRegistry {
+  private readonly entries = new Map<
+    string,
+    { controller: AbortController; done: Promise<void> }
+  >();
+
+  register(runId: string, controller: AbortController, done: Promise<void>): void {
+    this.entries.set(runId, { controller, done });
+  }
+
+  async abort(runId: string): Promise<void> {
+    const entry = this.entries.get(runId);
+    if (entry) {
+      entry.controller.abort();
+      await entry.done;
+    }
+  }
+
+  unregister(runId: string): void {
+    this.entries.delete(runId);
+  }
+}
+
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
@@ -281,12 +304,12 @@ export function composeRoot(opts: ComposeOptions): Container {
     error: (msg, ...args) => console.error(msg, ...args),
   };
 
+  const abortRegistry = new AbortRegistry();
+
   const cancelRun = new CancelRun({
     runRepository,
     logger,
-    // TODO(#388): Wire a real AbortController registry from the agent runtime layer.
-    // Currently noop so cancel best-effort agent abort is non-functional.
-    runAbort: { register: () => {}, abort: () => {}, unregister: () => {} },
+    runAbort: abortRegistry,
     git: {
       createWorktree: async () => {},
       removeWorktree: async () => {},
