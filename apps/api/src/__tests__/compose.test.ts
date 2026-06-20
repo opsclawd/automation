@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
-import { ReviewFixLoop } from '@ai-sdlc/application';
+import { ReviewFixLoop, RunExecutor } from '@ai-sdlc/application';
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PrReviewPollerDeps } from '@ai-sdlc/application';
@@ -480,6 +480,9 @@ exit 1
     const c = composeRoot({ repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
     expect(c.runExecutor).toBeDefined();
     expect(c.phaseRegistry).toBeDefined();
+    expect(c.runExecutor).toBeInstanceOf(RunExecutor);
+    expect(c.phaseRegistry.get(PhaseName('read_issue'))).toBeDefined();
+    expect(typeof c.phaseRegistry.get(PhaseName('read_issue'))!.run).toBe('function');
   });
 
   it('reviewFixLoop.execute converges when review immediately passes', async () => {

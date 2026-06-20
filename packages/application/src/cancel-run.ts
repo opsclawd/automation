@@ -70,6 +70,10 @@ export class CancelRun implements CancelRunUseCase {
     }
 
     // Step 4: Reset worktree (best-effort) — independent of repoId
+    // If the worktree directory was never created (e.g., run failed before
+    // worktree setup), resetHard/cleanUntracked throw on missing directories.
+    // The catch block logs and swallows the error, which is benign — the run
+    // is already being cancelled and logging the issue is sufficient.
     try {
       const cwd = this.deps.findCwd(input.runId);
       const startCommitSha = this.deps.findStartCommitSha(input.runId);

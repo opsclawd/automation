@@ -734,12 +734,16 @@ class FakeEventRepository implements EventRepositoryPort {
 }
 
 class FakeEventBus implements EventBusPort {
-  published: Array<{ runUuid: string; type: string }> = [];
-  subscribe(): () => void {
-    return () => {};
+  published: Array<{ runUuid: string; event: OrchestratorEvent }> = [];
+  private listeners = new Map<string, Set<(event: OrchestratorEvent) => void>>();
+  subscribe(runUuid: string, listener: (event: OrchestratorEvent) => void): () => void {
+    if (!this.listeners.has(runUuid)) this.listeners.set(runUuid, new Set());
+    this.listeners.get(runUuid)!.add(listener);
+    return () => this.listeners.get(runUuid)?.delete(listener);
   }
   publish(runUuid: string, event: OrchestratorEvent): void {
-    this.published.push({ runUuid, type: event.type });
+    this.published.push({ runUuid, event });
+    this.listeners.get(runUuid)?.forEach((fn) => fn(event));
   }
 }
 
@@ -796,7 +800,7 @@ describe('StartIssueRun event ingestion', () => {
     expect(eventRepo.events[0]!.type).toBe('run.started');
     expect(eventBus.published).toHaveLength(1);
     expect(eventBus.published[0]!.runUuid).toBe(out.uuid);
-    expect(eventBus.published[0]!.type).toBe('run.started');
+    expect(eventBus.published[0]!.event.type).toBe('run.started');
   });
 
   it('rejects events whose runId does not match the active run', async () => {

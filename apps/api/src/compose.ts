@@ -50,6 +50,7 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
+  CANONICAL_PHASE_ORDER,
   type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -64,6 +65,7 @@ import {
   type ReviewStepResult,
   type FixStepResult,
   type RevalidationResult,
+  type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
@@ -394,20 +396,14 @@ export function composeRoot(opts: ComposeOptions): Container {
   // const retryFailedPhase = new RetryFailedPhase({ ... });
 
   const phaseRegistry = new PhaseHandlerRegistry();
-  for (const phaseName of [
-    'read_issue',
-    'plan-design',
-    'plan-write',
-    'implement',
-    'validate',
-    'review-fix',
-    'compound',
-    'create-pr',
-    'post-pr-review',
-  ] as const) {
+  for (const phaseName of CANONICAL_PHASE_ORDER) {
     phaseRegistry.register({
-      phase: PhaseName(phaseName),
-      run: async () => ({ outcome: 'passed' }),
+      phase: phaseName,
+      run: async () => {
+        throw new Error(
+          `Phase handler for "${phaseName}" is not wired — register a real PhaseHandler implementation before invoking RunExecutor`,
+        );
+      },
     });
   }
 
@@ -1224,14 +1220,57 @@ export function composeRoot(opts: ComposeOptions): Container {
         return { outcome: result.outcome };
       };
 
+      // In-memory artifact store for the context factory — handlers receive
+      // a real store via buildPhaseHandlerContext in the agent phase flow.
+      // Returning [] from list means resume validation will fail if real
+      // handlers are invoked (expected — handlers are not yet wired).
+      const stubArtifactStore: ArtifactStore = {
+        write: async () => {
+          throw new Error('not implemented');
+        },
+        read: async () => {
+          throw new Error('not implemented');
+        },
+        list: async () => [],
+      };
       runExecutor = new RunExecutor({
         runRepository,
         failureRepository,
         phaseRepository,
         events: eventBus,
         registry: phaseRegistry,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        contextFactory: () => ({}) as any,
+        contextFactory: () =>
+          ({
+            runId: '',
+            runUuid: '',
+            repoFullName: '',
+            issueNumber: 0,
+            cwd: '',
+            artifacts: stubArtifactStore,
+            github: {
+              getIssue: () => {
+                throw new Error(
+                  'PhaseHandlerContext.github is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
+                );
+              },
+            } as never,
+            git: {
+              resetHard: () => {
+                throw new Error(
+                  'PhaseHandlerContext.git is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
+                );
+              },
+            } as never,
+            agent: {
+              run: () => {
+                throw new Error(
+                  'PhaseHandlerContext.agent is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
+                );
+              },
+            } as never,
+            events: eventBus,
+            now: () => new Date(),
+          }) as PhaseHandlerContext,
       });
     }
   } catch (err) {
