@@ -1,6 +1,12 @@
 import { cancelRun } from '@ai-sdlc/domain';
 import type { RunId, RepositoryId } from '@ai-sdlc/domain';
-import type { RunRepositoryPort, RunAbortPort, GitPort, WorkerLeasePort } from './ports.js';
+import type {
+  RunRepositoryPort,
+  RunAbortPort,
+  GitPort,
+  WorkerLeasePort,
+  LoggerPort,
+} from './ports.js';
 import type { CancelRunUseCase } from './use-cases.js';
 
 export interface CancelRunDeps {
@@ -11,6 +17,7 @@ export interface CancelRunDeps {
   findCwd: (repoId: RepositoryId, runId: RunId) => string;
   findStartCommitSha: (runId: RunId) => string;
   findRepoId: (runId: RunId) => RepositoryId;
+  logger: LoggerPort;
   now?: () => Date;
 }
 
@@ -46,23 +53,20 @@ export class CancelRun implements CancelRunUseCase {
     try {
       runAbort.abort(input.runId);
     } catch (err) {
-      console.error(`CancelRun: abort failed for ${input.runId}`, err);
+      this.deps.logger.error(`CancelRun: abort failed for ${input.runId}`, err);
     }
     try {
       runAbort.unregister(input.runId);
     } catch (err) {
-      console.error(`CancelRun: unregister failed for ${input.runId}`, err);
+      this.deps.logger.error(`CancelRun: unregister failed for ${input.runId}`, err);
     }
 
-    // TODO(#logging-story): Replace console.error with a Logger port once the
-    // logging port story is settled. Application layer should use port-injected
-    // logger per AGENTS.md layer rules.
     // Step 4-5: Cleanup (best-effort)
     let repoId: RepositoryId | undefined;
     try {
       repoId = this.deps.findRepoId(input.runId);
-    } catch {
-      // findRepoId not available — skip cleanup steps
+    } catch (err) {
+      this.deps.logger.error(`CancelRun: findRepoId failed for ${input.runId}`, err);
     }
 
     if (repoId !== undefined) {
@@ -72,7 +76,7 @@ export class CancelRun implements CancelRunUseCase {
         const startCommitSha = this.deps.findStartCommitSha(input.runId);
         await git.resetHard(cwd, startCommitSha);
       } catch (err) {
-        console.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
+        this.deps.logger.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
       }
 
       // Step 5: Release lease (best-effort)
@@ -80,7 +84,7 @@ export class CancelRun implements CancelRunUseCase {
         const lease = leases.current(repoId);
         if (lease) {
           if (lease.runId !== input.runId) {
-            console.error(
+            this.deps.logger.error(
               `CancelRun: lease runId mismatch for repo ${repoId}: expected ${input.runId}, got ${lease.runId}`,
             );
           } else {
@@ -88,7 +92,7 @@ export class CancelRun implements CancelRunUseCase {
           }
         }
       } catch (err) {
-        console.error(`CancelRun: lease release failed for ${input.runId}`, err);
+        this.deps.logger.error(`CancelRun: lease release failed for ${input.runId}`, err);
       }
     }
   }

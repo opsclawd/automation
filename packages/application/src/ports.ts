@@ -188,3 +188,7 @@ export type { PhaseHandlerRegistryPort } from './ports/phase-handler-registry-po
 export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/handler.js';
 
 export type { RunAbortPort } from './ports/run-abort-port.js';
+
+export interface LoggerPort {
+  error(message: string, ...args: unknown[]): void;
+}

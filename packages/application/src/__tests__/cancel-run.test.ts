@@ -8,6 +8,7 @@ import type {
   GitPort,
   WorkerLeasePort,
   RunAbortPort,
+  LoggerPort,
 } from '../ports.js';
 
 interface RecordedUpdate {
@@ -125,6 +126,7 @@ const noopLeases: WorkerLeasePort = {
 const noopFindCwd = () => '/tmp';
 const noopFindStartSha = () => 'abc123';
 const noopFindRepoId = () => 'repo-1' as RepositoryId;
+const noopLogger: LoggerPort = { error: () => {} };
 
 function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.constructor>[0]> = {}) {
   return new CancelRun({
@@ -135,6 +137,7 @@ function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.const
     findCwd: deps.findCwd ?? noopFindCwd,
     findStartCommitSha: deps.findStartCommitSha ?? noopFindStartSha,
     findRepoId: deps.findRepoId ?? noopFindRepoId,
+    logger: deps.logger ?? noopLogger,
     now: deps.now ?? fixedNow,
   });
 }
@@ -287,6 +290,7 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
+        logger: noopLogger,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('order-1') });
@@ -351,6 +355,7 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
+        logger: noopLogger,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('order-2') });
@@ -421,6 +426,7 @@ describe('CancelRun', () => {
         findRepoId: () => {
           throw new Error('repoId fail');
         },
+        logger: noopLogger,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('best-effort') });
@@ -483,6 +489,7 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
+        logger: noopLogger,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('abort-throws') });
@@ -546,6 +553,7 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
+        logger: noopLogger,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('reset-throws') });
@@ -609,6 +617,7 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
+        logger: noopLogger,
         now: fixedNow,
       });
       await usecase.execute({ runId: runId('lease-throws') });

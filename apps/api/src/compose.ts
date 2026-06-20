@@ -268,8 +268,13 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
   const startIssueRun = new StartIssueRun(deps);
+  const logger: { error: (message: string, ...args: unknown[]) => void } = {
+    error: (msg, ...args) => console.error(msg, ...args),
+  };
+
   const cancelRun = new CancelRun({
     runRepository,
+    logger,
     // TODO(#388): Wire a real AbortController registry from the agent runtime layer.
     // Currently noop so cancel best-effort agent abort is non-functional.
     runAbort: { register: () => {}, abort: () => {}, unregister: () => {} },

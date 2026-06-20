@@ -65,7 +65,25 @@ export class ResumeRun implements ResumeRunUseCase {
         priority: 10,
         createdAt: now(),
       });
-      this.deps.queue.enqueue({ job });
+
+      if (input.fromPhase) {
+        const steps = this.deps.stepRepo
+          .listForRun(input.runId)
+          .filter((s: Step) => s.phaseId != null && s.phaseId === input.fromPhase);
+        for (const step of steps) {
+          const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
+          this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
+        }
+        const phase = {
+          id: input.fromPhase,
+          runUuid: input.runId,
+          name: input.fromPhase,
+          status: 'pending' as const,
+          attempt: input.attempt ?? 1,
+        };
+        this.deps.phaseRepo.insert(phase);
+      }
+
       const updated = this.deps.runRepository.atomicUpdateByUuid(
         input.runId,
         {
@@ -80,23 +98,7 @@ export class ResumeRun implements ResumeRunUseCase {
         throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
       }
 
-      if (input.fromPhase) {
-        const steps = this.deps.stepRepo
-          .listForRun(input.runId)
-          .filter((s: Step) => s.phaseId === input.fromPhase);
-        for (const step of steps) {
-          const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
-          this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
-        }
-        const phase = {
-          id: input.fromPhase,
-          runUuid: input.runId,
-          name: input.fromPhase,
-          status: 'pending' as const,
-          attempt: input.attempt ?? 1,
-        };
-        this.deps.phaseRepo.insert(phase);
-      }
+      this.deps.queue.enqueue({ job });
     } catch (err) {
       this.deps.leases.release(repo.id, input.workerId);
       throw err;
