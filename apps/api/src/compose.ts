@@ -48,6 +48,8 @@ import {
   ImplementStepLoop,
   readReviewVerdict,
   readFixVerdict,
+  PhaseHandlerRegistry,
+  RunExecutor,
   type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -144,6 +146,8 @@ export function resolveProfileForPhase(agent: AgentConfig, phaseName: string): A
 export interface Container {
   runRepository: RunRepository;
   phaseRepository: PhaseRepository;
+  phaseRegistry: PhaseHandlerRegistry;
+  runExecutor?: RunExecutor;
   eventRepository: EventRepository;
   artifactRepository: ArtifactRepository;
   failureRepository: FailureRepository;
@@ -389,6 +393,24 @@ export function composeRoot(opts: ComposeOptions): Container {
   // const resumeRun = new ResumeRun({ ... });
   // const retryFailedPhase = new RetryFailedPhase({ ... });
 
+  const phaseRegistry = new PhaseHandlerRegistry();
+  for (const phaseName of [
+    'read_issue',
+    'plan-design',
+    'plan-write',
+    'implement',
+    'validate',
+    'review-fix',
+    'compound',
+    'create-pr',
+    'post-pr-review',
+  ] as const) {
+    phaseRegistry.register({
+      phase: phaseName,
+      run: async () => ({ outcome: 'passed' }),
+    });
+  }
+
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';
   try {
@@ -427,6 +449,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let reviewFixLoop: ReviewFixLoop | undefined;
   let implementStepLoop: ImplementStepLoopType | undefined;
   let runStep: Container['runStep'] | undefined;
+  let runExecutor: RunExecutor | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
@@ -1200,6 +1223,16 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         return { outcome: result.outcome };
       };
+
+      runExecutor = new RunExecutor({
+        runRepository,
+        failureRepository,
+        phaseRepository,
+        events: eventBus,
+        registry: phaseRegistry,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        contextFactory: () => ({}) as any,
+      });
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
@@ -1581,6 +1614,8 @@ export function composeRoot(opts: ComposeOptions): Container {
   return {
     runRepository,
     phaseRepository,
+    phaseRegistry,
+    ...(runExecutor !== undefined ? { runExecutor } : {}),
     eventRepository,
     artifactRepository,
     failureRepository,
