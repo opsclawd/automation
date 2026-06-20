@@ -216,7 +216,9 @@ class AbortRegistry {
     const entry = this.entries.get(runId);
     if (entry) {
       entry.controller.abort();
-      await Promise.race([entry.done.catch(() => {}), new Promise<void>((resolve) => setTimeout(resolve, 30_000))]);
+      let timer: NodeJS.Timeout;
+      const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, 30_000); });
+      await Promise.race([entry.done.catch(() => {}), timeout]).finally(() => clearTimeout(timer));
     }
   }
 
