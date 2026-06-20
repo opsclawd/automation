@@ -2143,3 +2143,55 @@ PLAN
     }
   done
 }
+
+# Invariant: *.patch scratch files (e.g. diff.patch created by a reviewer doing
+#   `git diff > diff.patch`) are excluded from git ls-files --others --exclude-standard
+#   after seed_excludes() runs. This prevents them from appearing in the
+#   read-only violation set and causing false-positive orchestrator_fail.
+# Source: #405.
+# Failure prevented: quality-review-task-2 failed with "read-only reviewer
+#   modified source files (contract violation): diff.patch" when the only change
+#   was an untracked diff.patch at the worktree root.
+# TS-port contract: the TS orchestrator must also exclude *.patch / diff.patch
+#   from its worktree scan (either via info/exclude seeding or its own exclusion list).
+@test "parity[#405]: seed_excludes writes *.patch so diff.patch is invisible to git ls-files" {
+  local repo
+  repo="$(mktemp -d)"
+  _test_dir="$repo"
+
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "test@example.com"
+  git -C "$repo" config user.name "test"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m "init"
+
+  local ORIG_WORKTREE_DIR="${WORKTREE_DIR:-}"
+  export WORKTREE_DIR="$repo"
+  log()        { :; }
+  warn()       { :; }
+  emit_event() { :; }
+
+  # Source seed_excludes from the live script
+  # shellcheck source=../../ai-run-issue-v2
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  pushd "$repo" >/dev/null
+  seed_excludes
+  popd >/dev/null
+
+  # Drop a diff.patch (the exact file that triggered #405)
+  echo "scratch" > "$repo/diff.patch"
+  echo "scratch" > "$repo/review.patch"
+
+  # git ls-files --others --exclude-standard must NOT report either file
+  run bash -c "git -C '$repo' ls-files --others --exclude-standard"
+  [ "$status" -eq 0 ]
+  # diff.patch must not appear
+  run grep -q "diff.patch" <<< "$output"
+  [ "$status" -ne 0 ]
+  # *.patch must not appear
+  run grep -q "review.patch" <<< "$output"
+  [ "$status" -ne 0 ]
+
+  export WORKTREE_DIR="$ORIG_WORKTREE_DIR"
+}

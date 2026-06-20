@@ -522,6 +522,8 @@ seed_excludes() {
     mkdir -p "$git_dir/info"
     grep -qF 'legacy-parity.bats' "$git_dir/info/attributes" 2>/dev/null \
       || echo 'scripts/lib/__tests__/legacy-parity.bats merge=union' >> "$git_dir/info/attributes"
+    grep -qxF '*.patch' "$exclude_file" || echo '*.patch' >> "$exclude_file"
+    grep -qxF 'diff.patch' "$exclude_file" || echo 'diff.patch' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -552,6 +554,8 @@ fix-status.txt
 implement-task-*.md
 fix-review-task-*.md
 review-plan*.md
+diff.patch
+*.patch
 fix-review-task-*.log
 next-env.d.ts
 node_modules/
