@@ -293,7 +293,10 @@ export function composeRoot(opts: ComposeOptions): Container {
       remoteRef: async () => undefined,
       isAncestor: async () => false,
       logBetween: async () => [],
-      cleanUntracked: async () => {},
+      cleanUntracked: (cwd: string) => {
+        execFileSync('git', ['clean', '-fd'], { cwd });
+        return Promise.resolve();
+      },
       headCommitShaOf: async () => undefined,
     },
     // TODO(#388): Wire WorkerLeaseRepository once the lease infrastructure is ready.

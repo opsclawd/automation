@@ -83,6 +83,7 @@ export class CancelRun implements CancelRunUseCase {
         const cwd = this.deps.findCwd(repoId, input.runId);
         const startCommitSha = this.deps.findStartCommitSha(input.runId);
         await git.resetHard(cwd, startCommitSha);
+        await git.cleanUntracked(cwd);
       } catch (err) {
         this.deps.logger.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
       }
