@@ -3026,6 +3026,27 @@ ${_dirty_after_recovery}
 This is an implement-step problem, not a reviewer contract violation."
     fi
 
+    # --- Type-check gate (interim stopgap for #422) -------------------------
+    # The implementer's DONE status is review-only, and spec-review cannot catch
+    # signature/contract drift because it never compiles. Build the lib packages
+    # (so cross-package .d.ts is fresh) and typecheck before review, failing the
+    # task early on type errors (branded types, port/impl signature drift)
+    # instead of letting them surface later as a confusing whole-run failure.
+    # Four such failures hit #387/#388 (findRepoId, cancel guards, RunAbortPort
+    # register, PhaseName branding). Remove when the TS executor's per-task
+    # validation lands (#422) or the bash path retires (#365).
+    if [[ "${DID_IMPLEMENT:-0}" == "1" ]]; then
+      log "  Task ${TASK_NUM}: typecheck gate (build libs + typecheck) before review..."
+      if ! _tc_out=$( cd "$WORKTREE_DIR" && pnpm --filter "./packages/*" build && pnpm typecheck 2>&1 ); then
+        orchestrator_fail "Task ${TASK_NUM}: typecheck failed after implement. The implementer introduced a type error spec-review cannot catch (e.g. branded-type or port/impl signature drift). Fix it and re-run.
+
+Typecheck output (last 40 lines):
+$(printf '%s\n' "$_tc_out" | tail -40)"
+      fi
+      log "  Task ${TASK_NUM}: typecheck gate passed"
+    fi
+    # ------------------------------------------------------------------------
+
     # Step 2: Initial spec + quality reviews, then fix loop (max $MAX_REVIEW_FIX_ITERATIONS iterations).
     # We always run initial reviews here — even on resume. Reaching this point
     # on a resumed run means find_first_incomplete_task returned this task
