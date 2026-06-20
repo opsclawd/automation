@@ -89,8 +89,6 @@ export class ResumeRun implements ResumeRunUseCase {
       }
 
       try {
-        this.deps.queue.enqueue({ job });
-
         if (input.fromPhase) {
           const steps = this.deps.stepRepo
             .listForRun(input.runId)
@@ -108,6 +106,8 @@ export class ResumeRun implements ResumeRunUseCase {
           };
           this.deps.phaseRepo.insert(phase);
         }
+
+        this.deps.queue.enqueue({ job });
       } catch (err) {
         const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
           input.runId,

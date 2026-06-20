@@ -235,7 +235,7 @@ describe('ResumeRun', () => {
     expect(runRepo.updates[0]!.patch.currentPhase).toBeNull();
   });
 
-  it('reverts status on enqueue failure, steps/phases not modified', async () => {
+  it('reverts status on enqueue failure, steps/phases are written but run rolls back', async () => {
     class FakeQueueWithThrow extends FakeJobQueuePort {
       override enqueue(): void {
         throw new Error('queue unavailable');
@@ -276,10 +276,10 @@ describe('ResumeRun', () => {
     const run = runRepo.findByUuid('run-1')!;
     expect(run.status).toBe('failed');
     const steps = stepRepo.listForRun(rid('run-1'));
-    expect(steps[0]!.status).toBe('failed');
-    expect(steps[0]!.startedAt).toBeDefined();
-    expect(steps[0]!.completedAt).toBeDefined();
-    expect(phaseRepo.listByRun(rid('run-1'))).toHaveLength(0);
+    expect(steps[0]!.status).toBe('pending');
+    expect(steps[0]!.startedAt).toBeUndefined();
+    expect(steps[0]!.completedAt).toBeUndefined();
+    expect(phaseRepo.listByRun(rid('run-1'))).toHaveLength(1);
     expect(leases.current(repoid('run-1'))).toBeUndefined();
   });
 
