@@ -70,6 +70,8 @@ describe('ResumeRun', () => {
     expect(runRepo.updates[0]!.patch.status).toBe('running');
     expect(runRepo.updates[0]!.patch.completedPhases).toEqual(['phase-1']);
     expect(runRepo.updates[0]!.patch.skippedPhases).toEqual(['phase-2']);
+    expect(runRepo.updates[0]!.patch.completedAt).toBeNull();
+    expect(runRepo.updates[0]!.patch.failureReason).toBeNull();
   });
 
   it('throws when run is not found', async () => {

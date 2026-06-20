@@ -105,7 +105,7 @@ export class RunRepository {
     }
     if (patch.completedAt !== undefined) {
       fields.push('completed_at = @completed_at');
-      params.completed_at = patch.completedAt.toISOString();
+      params.completed_at = patch.completedAt?.toISOString() ?? null;
     }
     if (patch.failureReason !== undefined) {
       fields.push('failure_reason = @failure_reason');
@@ -175,7 +175,7 @@ export class RunRepository {
     }
     if (patch.completedAt !== undefined) {
       fields.push('completed_at = @completed_at');
-      params.completed_at = patch.completedAt.toISOString();
+      params.completed_at = patch.completedAt?.toISOString() ?? null;
     }
     if (patch.failureReason !== undefined) {
       fields.push('failure_reason = @failure_reason');

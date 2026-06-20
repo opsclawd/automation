@@ -47,8 +47,20 @@ export class FakeRunRepository implements RunRepositoryPort {
     }
     if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
     if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
-    if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
-    if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
+    if (patch.completedAt !== undefined) {
+      if (patch.completedAt === null) {
+        delete (r as { completedAt?: unknown }).completedAt;
+      } else {
+        r.completedAt = patch.completedAt;
+      }
+    }
+    if (patch.failureReason !== undefined) {
+      if (patch.failureReason === null) {
+        delete (r as { failureReason?: unknown }).failureReason;
+      } else {
+        r.failureReason = patch.failureReason;
+      }
+    }
     if (patch.exitCode !== undefined) r.exitCode = patch.exitCode;
     if (patch.durationMs !== undefined) r.durationMs = patch.durationMs;
   }
@@ -152,8 +164,20 @@ export class FakeRunRepository implements RunRepositoryPort {
     }
     if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
     if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
-    if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
-    if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
+    if (patch.completedAt !== undefined) {
+      if (patch.completedAt === null) {
+        delete (r as { completedAt?: unknown }).completedAt;
+      } else {
+        r.completedAt = patch.completedAt;
+      }
+    }
+    if (patch.failureReason !== undefined) {
+      if (patch.failureReason === null) {
+        delete (r as { failureReason?: unknown }).failureReason;
+      } else {
+        r.failureReason = patch.failureReason;
+      }
+    }
     if (patch.exitCode !== undefined) r.exitCode = patch.exitCode;
     if (patch.durationMs !== undefined) r.durationMs = patch.durationMs;
     this.updates.push({ uuid, patch });

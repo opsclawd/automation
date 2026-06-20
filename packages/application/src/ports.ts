@@ -31,8 +31,8 @@ export interface RunRepositoryUpdatePatch {
   currentPhase?: string | null;
   completedPhases?: string[];
   skippedPhases?: string[];
-  completedAt?: Date;
-  failureReason?: string;
+  completedAt?: Date | null;
+  failureReason?: string | null;
   exitCode?: number;
   durationMs?: number;
 }
