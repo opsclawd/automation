@@ -86,26 +86,26 @@ export class ResumeRun implements ResumeRunUseCase {
         throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
       }
 
-      if (input.fromPhase) {
-        const steps = this.deps.stepRepo
-          .listForRun(input.runId)
-          .filter((s: Step) => s.phaseId != null && s.phaseId === input.fromPhase);
-        for (const step of steps) {
-          const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
-          this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
-        }
-        const phase = {
-          id: input.fromPhase,
-          runUuid: input.runId,
-          name: input.fromPhase,
-          status: 'pending' as const,
-          attempt: input.attempt ?? 1,
-        };
-        this.deps.phaseRepo.insert(phase);
-      }
-
       try {
         this.deps.queue.enqueue({ job });
+
+        if (input.fromPhase) {
+          const steps = this.deps.stepRepo
+            .listForRun(input.runId)
+            .filter((s: Step) => s.phaseId != null && s.phaseId === input.fromPhase);
+          for (const step of steps) {
+            const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
+            this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
+          }
+          const phase = {
+            id: input.fromPhase,
+            runUuid: input.runId,
+            name: input.fromPhase,
+            status: 'pending' as const,
+            attempt: input.attempt ?? 1,
+          };
+          this.deps.phaseRepo.insert(phase);
+        }
       } catch (err) {
         const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
           input.runId,

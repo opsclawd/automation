@@ -41,12 +41,16 @@ export class CancelRun implements CancelRunUseCase {
     // NOTE: There is a TOCTOU window between the domain validation above and
     // this SQL UPDATE. The DB-level guard (WHERE status NOT IN terminal) and
     // the `!updated` check below catch concurrent terminal transitions.
-    const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
-      status: cancelled.status,
-      completedAt: cancelled.completedAt!,
-      currentPhase: null,
-      ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
-    });
+    const updated = this.deps.runRepository.atomicUpdateByUuid(
+      input.runId,
+      {
+        status: cancelled.status,
+        completedAt: cancelled.completedAt!,
+        currentPhase: null,
+        ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
+      },
+      run.status,
+    );
     if (!updated) {
       throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
     }

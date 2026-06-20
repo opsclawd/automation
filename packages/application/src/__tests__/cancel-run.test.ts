@@ -94,7 +94,7 @@ describe('CancelRun', () => {
     expect(repo.updates[0]!.patch.failureReason).toBeUndefined();
   });
 
-  it('marks the run as cancelled via updateStatusByUuid', async () => {
+  it('marks the run as cancelled via atomicUpdateByUuid', async () => {
     const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'xyz-001',
@@ -113,7 +113,7 @@ describe('CancelRun', () => {
     expect(repo.updates[0]!.patch.failureReason).toBe('manual override');
   });
 
-  it('throws when updateStatusByUuid returns false (concurrent cancellation)', async () => {
+  it('throws when atomicUpdateByUuid returns false (concurrent cancellation)', async () => {
     const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'concurrent-cancel',
@@ -124,7 +124,7 @@ describe('CancelRun', () => {
       completedPhases: [],
       startedAt: new Date('2026-05-13T19:00:00Z'),
     });
-    repo.updateStatusByUuid = () => false;
+    repo.atomicUpdateByUuid = () => false;
     const usecase = makeCancelRun({ runRepository: repo });
     await expect(usecase.execute({ runId: runId('concurrent-cancel') })).rejects.toThrow(
       /concurrent modification/i,

@@ -234,6 +234,54 @@ describe('ResumeRun', () => {
     expect(runRepo.updates[0]!.patch.currentPhase).toBe('test-phase');
   });
 
+  it('reverts status on enqueue failure, steps/phases not modified', async () => {
+    class FakeQueueWithThrow extends FakeJobQueuePort {
+      override enqueue(): void {
+        throw new Error('queue unavailable');
+      }
+    }
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeQueueWithThrow(repos);
+    const stepRepo = new FakeStepRepository();
+    stepRepo.upsert({
+      id: 's1',
+      runId: 'run-1',
+      phaseId: 'test-phase',
+      index: 0,
+      title: 'Step 1',
+      status: 'failed',
+      startedAt: new Date(),
+      completedAt: new Date(),
+    });
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      findRepoId: (r) => repoid(r),
+      now: fixedNow,
+    });
+    await expect(
+      usecase.execute({ runId: rid('run-1'), workerId: wid('w-1'), fromPhase: 'test-phase' }),
+    ).rejects.toThrow(/queue unavailable/);
+    const run = runRepo.findByUuid('run-1')!;
+    expect(run.status).toBe('failed');
+    const steps = stepRepo.listForRun(rid('run-1'));
+    expect(steps[0]!.status).toBe('failed');
+    expect(steps[0]!.startedAt).toBeDefined();
+    expect(steps[0]!.completedAt).toBeDefined();
+    expect(phaseRepo.listByRun(rid('run-1'))).toHaveLength(0);
+    expect(leases.current(repoid('run-1'))).toBeUndefined();
+  });
+
   it('releases lease when atomicUpdateByUuid fails', async () => {
     class FakeRunRepoWithFailedAtomicUpdate extends FakeRunRepository {
       override atomicUpdateByUuid(): boolean {

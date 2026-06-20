@@ -6,6 +6,13 @@ export interface RecordedUpdate {
   patch: RunRepositoryUpdatePatch;
 }
 
+/**
+ * Fake implementation of RunRepositoryPort for testing.
+ *
+ * NOTE: `findByUuid` returns a live reference to the stored record.
+ * Mutating the returned object will also mutate the internal store.
+ * If snapshot semantics are needed, return a shallow copy instead.
+ */
 export class FakeRunRepository implements RunRepositoryPort {
   runs: Map<string, RunRecord> = new Map();
   updates: RecordedUpdate[] = [];
