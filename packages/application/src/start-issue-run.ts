@@ -38,6 +38,7 @@ export interface StartIssueRunDeps {
 
 export interface StartIssueRunInput {
   issueNumber: number;
+  startCommitSha?: string;
 }
 
 export interface StartIssueRunOutput {
@@ -61,7 +62,10 @@ export class StartIssueRun {
       issueNumber: input.issueNumber,
       startedAt,
     });
-    this.deps.runRepository.insertIfNoActive(run);
+    this.deps.runRepository.insertIfNoActive({
+      ...run,
+      ...(input.startCommitSha ? { startCommitSha: input.startCommitSha } : {}),
+    });
     let dir: RunDirectoryHandle;
     try {
       dir = this.deps.runDirectoryFactory({ rootDir: this.deps.runsDir, run });
