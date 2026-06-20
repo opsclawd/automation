@@ -62,6 +62,25 @@ export class ImplementStepLoop {
       return { outcome: 'failed', loop };
     }
 
+    // --- PRE-LOOP: TYPECHECK GATE ---
+    const tcResult = await deps.runTypecheck(baseCtx);
+    if (tcResult.outcome === 'fail') {
+      this.emit(
+        input,
+        'step.typecheck.failed',
+        'error',
+        `step ${input.stepIndex} failed typecheck gate`,
+        {
+          index: input.stepIndex,
+          output: tcResult.output.slice(0, 2000),
+        },
+      );
+      loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+      loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+      deps.loops.update(loop);
+      return { outcome: 'failed', loop };
+    }
+
     // Enter review-fix loop
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -72,7 +91,7 @@ export class ImplementStepLoop {
       });
 
       // --- SPEC-REVIEW ---
-      const specReview = await deps.runSpecReview(ctx);
+      const specReview = await deps.runSpecReview(ctx, tcResult);
       loop = startIteration(loop, {
         reviewInvocationId: specReview.invocationId,
         now: deps.now(),
@@ -87,7 +106,7 @@ export class ImplementStepLoop {
       }
 
       // --- QUALITY-REVIEW ---
-      const qualityReview = await deps.runQualityReview(ctx);
+      const qualityReview = await deps.runQualityReview(ctx, tcResult);
       loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
       deps.loops.update(loop);
       if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
