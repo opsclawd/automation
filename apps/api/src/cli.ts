@@ -106,7 +106,8 @@ export function buildProgram(): Command {
         process.on('unhandledRejection', unhandledHandler);
 
         try {
-          const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot })
+          const baseRef = `origin/${c.defaultBranch}`;
+          const startCommitSha = execFileSync('git', ['rev-parse', baseRef], { cwd: repoRoot })
             .toString()
             .trim();
           const out = await c.startIssueRun.execute({

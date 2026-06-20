@@ -155,6 +155,7 @@ export interface Container {
   cancelRun: CancelRun;
   runsDir: string;
   baseTmpDir: string;
+  defaultBranch: string;
   eventBus: EventBusPort;
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
@@ -1534,6 +1535,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     cancelRun,
     runsDir,
     baseTmpDir,
+    defaultBranch: resolvedDefaultBranch,
     eventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
