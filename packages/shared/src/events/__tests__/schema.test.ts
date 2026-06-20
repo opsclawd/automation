@@ -46,8 +46,7 @@ describe('eventSchema', () => {
   });
 
   it('defaults metadata to {}', () => {
-    const { metadata, ...withoutMeta } = minimal;
-    void metadata;
+    const { metadata: _metadata, ...withoutMeta } = minimal;
     const parsed = eventSchema.parse(withoutMeta);
     expect(parsed.metadata).toEqual({});
   });

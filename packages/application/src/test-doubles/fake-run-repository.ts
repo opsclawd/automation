@@ -106,7 +106,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     }
     r.status = patch.status;
     r.completedAt = patch.completedAt;
-    if ('currentPhase' in patch) {
+    if (patch.currentPhase !== undefined) {
       if (patch.currentPhase === null) {
         delete (r as { currentPhase?: unknown }).currentPhase;
       } else {

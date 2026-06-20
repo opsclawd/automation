@@ -8,10 +8,15 @@ import type {
   JobQueuePort,
   PhaseRepositoryPort,
   StepRepositoryPort,
+  LoggerPort,
 } from './ports.js';
 import type { ResumeRunUseCase } from './use-cases.js';
 
-const LEASE_TTL_MS = 120_000;
+// Acquired before atomic CAS to prevent concurrent workers from claiming the
+// same run. Tradeoff: a crash between lease acquisition and the CAS orphans
+// the lease for LEASE_TTL_MS. Tuned to 30s as a reasonable recovery bound.
+const LEASE_TTL_MS = 30_000;
+const RESUME_JOB_PRIORITY = 10;
 
 export interface ResumeRunDeps {
   runRepository: RunRepositoryPort;
@@ -21,6 +26,7 @@ export interface ResumeRunDeps {
   stepRepo: StepRepositoryPort;
   phaseRepo: PhaseRepositoryPort;
   findRepoId: (runId: RunId) => RepositoryId;
+  logger: LoggerPort;
   now?: () => Date;
 }
 
@@ -62,7 +68,7 @@ export class ResumeRun implements ResumeRunUseCase {
         runId: input.runId,
         repoId: repo.id,
         issueNumber: IssueNumber(run.issueNumber),
-        priority: 10,
+        priority: RESUME_JOB_PRIORITY,
         createdAt: now(),
       });
 
@@ -107,7 +113,7 @@ export class ResumeRun implements ResumeRunUseCase {
           'running' as RunStatus,
         );
         if (!rollbackOk) {
-          console.error(
+          this.deps.logger.error(
             `ResumeRun: rollback CAS failed for ${input.runId} — status may be orphaned as 'running'`,
           );
         }

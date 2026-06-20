@@ -1,4 +1,5 @@
 import type { Run, RunStatus } from '@ai-sdlc/domain';
+import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application';
 import type { Db } from './database.js';
 
 interface RunRow {
@@ -81,16 +82,7 @@ export class RunRepository {
 
   atomicUpdateByUuid(
     uuid: string,
-    patch: Partial<{
-      status: RunStatus;
-      currentPhase: string | null;
-      completedPhases: string[];
-      skippedPhases: string[];
-      completedAt: Date;
-      failureReason: string;
-      exitCode: number;
-      durationMs: number;
-    }>,
+    patch: RunRepositoryUpdatePatch,
     expectedStatus: RunStatus,
   ): boolean {
     const fields: string[] = [];
@@ -162,19 +154,7 @@ export class RunRepository {
     return { runs: rows.map(toRecord), total };
   }
 
-  update(
-    uuid: string,
-    patch: Partial<{
-      status: RunStatus;
-      currentPhase: string | null;
-      completedPhases: string[];
-      skippedPhases: string[];
-      completedAt: Date;
-      failureReason: string;
-      exitCode: number;
-      durationMs: number;
-    }>,
-  ): void {
+  update(uuid: string, patch: RunRepositoryUpdatePatch): void {
     const fields: string[] = [];
     const params: Record<string, unknown> = { uuid };
     if (patch.status !== undefined) {
