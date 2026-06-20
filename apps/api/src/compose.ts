@@ -406,7 +406,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     'post-pr-review',
   ] as const) {
     phaseRegistry.register({
-      phase: phaseName,
+      phase: PhaseName(phaseName),
       run: async () => ({ outcome: 'passed' }),
     });
   }
