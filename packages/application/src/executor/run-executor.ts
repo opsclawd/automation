@@ -153,12 +153,14 @@ export class RunExecutor {
       // Transition: start phase
       currentRun = startPhase(currentRun, phaseDef.name as string);
 
+      const existingPhases = this.deps.phaseRepository.listByRun(run.uuid);
+      const existingPhase = existingPhases.find((p) => p.name === phaseDef.name);
       const phase: Phase = {
         id: this.phaseId(run.uuid, phaseDef.name),
         runUuid: run.uuid,
         name: phaseDef.name as string,
         status: 'running',
-        attempt: 1,
+        attempt: existingPhase?.attempt ?? 1,
         startedAt: now(),
       };
       this.deps.phaseRepository.insert(phase);
