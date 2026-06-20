@@ -136,6 +136,39 @@ describe('Run state machine', () => {
       expect(resumed.failureReason).toBeUndefined();
     });
 
+    it('preserves completedPhases on full resume', () => {
+      let r = createRun(base);
+      r = startPhase(r, 'read_issue');
+      r = completePhase(r, 'read_issue');
+      r = startPhase(r, 'implement');
+      r = failRun(r, 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.completedPhases).toEqual(['read_issue']);
+      expect(resumed.skippedPhases).toEqual([]);
+    });
+
+    it('preserves skippedPhases on full resume', () => {
+      let r = createRun(base);
+      r = startPhase(r, 'skip_me');
+      r = skipPhase(r, 'skip_me');
+      r = failRun(r, 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.completedPhases).toEqual([]);
+      expect(resumed.skippedPhases).toEqual(['skip_me']);
+    });
+
+    it('preserves completed and skipped phases on phase-specific resume', () => {
+      let r = createRun(base);
+      r = startPhase(r, 'read_issue');
+      r = completePhase(r, 'read_issue');
+      r = startPhase(r, 'implement');
+      r = failRun(r, 'boom');
+      const resumed = resumeRun(r, 'implement');
+      expect(resumed.completedPhases).toEqual(['read_issue']);
+      expect(resumed.skippedPhases).toEqual([]);
+      expect(resumed.currentPhase).toBe('implement');
+    });
+
     it('sets currentPhase when phase is provided', () => {
       const r = failRun(createRun(base), 'boom');
       const resumed = resumeRun(r, 'implement');

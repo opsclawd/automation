@@ -208,8 +208,8 @@ export function resumeRun(run: Run, phase?: string): Run {
   return {
     ...rest,
     status: 'running',
-    completedPhases: phase !== undefined ? rest.completedPhases : [],
-    skippedPhases: phase !== undefined ? rest.skippedPhases : [],
+    completedPhases: rest.completedPhases,
+    skippedPhases: rest.skippedPhases,
     ...(phase !== undefined ? { currentPhase: phase } : {}),
   };
 }

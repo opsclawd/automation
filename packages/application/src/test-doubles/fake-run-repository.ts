@@ -11,7 +11,7 @@ export class FakeRunRepository implements RunRepositoryPort {
   updates: RecordedUpdate[] = [];
 
   addRun(r: RunRecord): void {
-    this.runs.set(r.uuid, r);
+    this.runs.set(r.uuid, { ...r });
   }
 
   insertIfNoActive(run: Run): void {
@@ -23,11 +23,25 @@ export class FakeRunRepository implements RunRepositoryPort {
         throw new Error(`An active run already exists for issue ${run.issueNumber}`);
       }
     }
-    this.runs.set(run.uuid, run as RunRecord);
+    this.runs.set(run.uuid, { ...run } as RunRecord);
   }
 
   update(uuid: string, patch: RunRepositoryUpdatePatch): void {
     this.updates.push({ uuid, patch });
+    const r = this.runs.get(uuid);
+    if (!r) return;
+    if (patch.status !== undefined) r.status = patch.status;
+    if (patch.currentPhase !== undefined) {
+      if (patch.currentPhase === null) {
+        delete (r as { currentPhase?: unknown }).currentPhase;
+      } else {
+        r.currentPhase = patch.currentPhase;
+      }
+    }
+    if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
+    if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
+    if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
+    if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
   }
 
   findByUuid(uuid: string): RunRecord | undefined {
@@ -85,13 +99,14 @@ export class FakeRunRepository implements RunRepositoryPort {
     }
     r.status = patch.status;
     r.completedAt = patch.completedAt;
+    delete (r as { currentPhase?: unknown }).currentPhase;
     if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
     this.updates.push({
       uuid,
       patch: {
         status: patch.status,
         completedAt: patch.completedAt,
-        ...(patch.failureReason ? { failureReason: patch.failureReason } : {}),
+        ...(patch.failureReason !== undefined ? { failureReason: patch.failureReason } : {}),
       },
     });
     return true;

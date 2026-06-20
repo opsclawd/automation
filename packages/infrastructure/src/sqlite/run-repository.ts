@@ -253,7 +253,8 @@ export class RunRepository {
   ): boolean {
     const result = this.db
       .prepare(
-        `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
+        `UPDATE runs SET status = @status, completed_at = @completed_at,
+           failure_reason = @failure_reason, current_phase = NULL
          WHERE uuid = @uuid AND status NOT IN ('passed','failed','cancelled')`,
       )
       .run({

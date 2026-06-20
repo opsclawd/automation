@@ -68,8 +68,8 @@ describe('ResumeRun', () => {
     await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
     expect(runRepo.updates).toHaveLength(1);
     expect(runRepo.updates[0]!.patch.status).toBe('running');
-    expect(runRepo.updates[0]!.patch.completedPhases).toEqual([]);
-    expect(runRepo.updates[0]!.patch.skippedPhases).toEqual([]);
+    expect(runRepo.updates[0]!.patch.completedPhases).toEqual(['phase-1']);
+    expect(runRepo.updates[0]!.patch.skippedPhases).toEqual(['phase-2']);
   });
 
   it('throws when run is not found', async () => {
@@ -232,5 +232,33 @@ describe('ResumeRun', () => {
     expect(steps[0]!.startedAt).toBeUndefined();
     expect(steps[0]!.completedAt).toBeUndefined();
     expect(runRepo.updates[0]!.patch.currentPhase).toBe('test-phase');
+  });
+
+  it('releases lease when atomicUpdateByUuid fails', async () => {
+    class FakeRunRepoWithFailedAtomicUpdate extends FakeRunRepository {
+      override atomicUpdateByUuid(): boolean {
+        return false;
+      }
+    }
+    const runRepo = new FakeRunRepoWithFailedAtomicUpdate();
+    runRepo.addRun(makeRun());
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue: new FakeJobQueuePort(repos),
+      stepRepo: new FakeStepRepository(),
+      phaseRepo: new FakePhaseRepository(),
+      findRepoId: (r) => repoid(r),
+      now: fixedNow,
+    });
+    await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
+      /concurrent modification/,
+    );
+    expect(leases.current(repoid('run-1'))).toBeUndefined();
   });
 });
