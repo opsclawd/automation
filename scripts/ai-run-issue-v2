@@ -2185,7 +2185,8 @@ After writing BOTH files you are DONE. Do NOT:
 You MUST emit no further actions after the .result file is written.
 Any action after writing .result is a contract violation.
 
-CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
+CRITICAL: Do NOT write any files other than the two mandatory output files above. No scratch files, no \`git diff > file\`, no temporary files of any kind."
 
     if [[ -n "${SPEC_CORRECTIVE_WARNING:-}" ]]; then
       SPEC_REVIEWER_PROMPT="${SPEC_CORRECTIVE_WARNING}
@@ -2452,7 +2453,8 @@ After writing BOTH files you are DONE. Do NOT:
 You MUST emit no further actions after the .result file is written.
 Any action after writing .result is a contract violation.
 
-CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
+CRITICAL: Do NOT write any files other than the two mandatory output files above. No scratch files, no \`git diff > file\`, no temporary files of any kind."
 
     if [[ -n "${QUALITY_CORRECTIVE_WARNING:-}" ]]; then
       QUALITY_REVIEWER_PROMPT="${QUALITY_CORRECTIVE_WARNING}
@@ -4010,6 +4012,7 @@ Read ./review.md and produce two files:
 - Do NOT modify any code files.
 - Do NOT run git commands.
 - Output ONLY review-task-manifest.json and review-triage.md.
+- Do NOT write any other files. No scratch files, no \`git diff > file\`, no temporary files.
 - Stop after writing both files.
 Write review-task-manifest.json and review-triage.md now."
   _worktree_state_before=$(_capture_worktree_state)

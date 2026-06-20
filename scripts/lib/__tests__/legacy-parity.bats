@@ -2289,3 +2289,25 @@ PLAN
   # Untracked violations must be empty
   [ -z "$_untracked_violations" ]
 }
+
+# Invariant: spec-review, quality-review, and review-triage prompts in
+#   ai-run-issue-v2 explicitly forbid writing non-artifact files (no scratch,
+#   no git diff > file). This is the root-cause defense; the guard is the safety net.
+# Source: #405.
+# Failure prevented: agents write diff.patch as a working step, leaving it in
+#   the worktree; the guard then fires a false-positive orchestrator_fail.
+# TS-port contract: the TS whole-pr-review prompt must contain equivalent
+#   no-scratch instruction (Task 4 of this plan adds it to compose.ts).
+@test "parity[#405]: reviewer prompts forbid writing non-artifact scratch files" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # Spec reviewer must contain the no-scratch clause
+  run grep -q "Do NOT write any files other than" "$script"
+  [ "$status" -eq 0 ]
+  # Quality reviewer must also contain it (grep -c should return >=2)
+  local count
+  count=$(grep -c "Do NOT write any files other than" "$script" || true)
+  [ "$count" -ge 2 ]
+  # Triage prompt must contain its variant
+  run grep -q "Do NOT write any other files" "$script"
+  [ "$status" -eq 0 ]
+}
