@@ -100,7 +100,7 @@ export class ResumeRun implements ResumeRunUseCase {
             this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
           }
           const phase = {
-            id: input.fromPhase,
+            id: `${input.runId}-${input.fromPhase}`,
             runUuid: input.runId,
             name: input.fromPhase,
             status: 'pending' as const,
