@@ -653,8 +653,9 @@ exit 1
     db.close();
 
     const c = composeRoot({ repoRoot: root, scriptPath });
-    const run = c.runRepository.findByUuid('findcwd-test-uuid');
-    expect(run?.displayId).toBe('issue-99-20260601-000000');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cwd = (c.cancelRun as any).deps.findCwd('findcwd-test-uuid' as RunId);
+    expect(cwd).toContain('issue-99');
   });
 
   it('cancelRun findStartCommitSha reads from run record', () => {
