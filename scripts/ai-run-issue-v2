@@ -2289,7 +2289,29 @@ ${history_excerpt}"
       _worktree_violations="${_worktree_violations}${_cleaned}"
       rm -f "$_pre_dirty_sigs"
       if [[ -n "$_worktree_violations" ]]; then
-        orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+        local _current_untracked _tracked_violations="" _untracked_violations=""
+        _current_untracked=$(git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null | sort)
+        while IFS= read -r _vfile; do
+          [[ -z "$_vfile" ]] && continue
+          if printf '%s\n' "$_current_untracked" | grep -qxF "$_vfile"; then
+            _untracked_violations+="${_vfile} "
+          else
+            _tracked_violations+="${_vfile} "
+          fi
+        done < <(printf '%s\n' "${_worktree_violations}" | tr ' ' '\n' | grep -v '^$')
+        if [[ -n "$_tracked_violations" ]]; then
+          orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified tracked source files (contract violation): ${_tracked_violations}"
+        elif [[ -n "$_untracked_violations" ]]; then
+          warn "spec-review-task-${task_n}: read-only reviewer left untracked scratch files — cleaning automatically: ${_untracked_violations}"
+          emit_event "spec-review-task-${task_n}" "warn" "read-only.scratch.cleaned" \
+            "Untracked scratch files left by read-only reviewer; auto-cleaned to allow run to continue" \
+            phase="spec-review-task-${task_n}" \
+            scratchFiles="${_untracked_violations}"
+          for _scratch_file in ${_untracked_violations}; do
+            [[ -z "$_scratch_file" ]] && continue
+            rm -f "$WORKTREE_DIR/$_scratch_file"
+          done
+        fi
     fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/spec-review-task-${task_n}.log" 2>/dev/null; then
@@ -2534,7 +2556,29 @@ ${history_excerpt}"
       _worktree_violations="${_worktree_violations}${_cleaned}"
       rm -f "$_pre_dirty_sigs"
       if [[ -n "$_worktree_violations" ]]; then
-        orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+        local _current_untracked _tracked_violations="" _untracked_violations=""
+        _current_untracked=$(git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null | sort)
+        while IFS= read -r _vfile; do
+          [[ -z "$_vfile" ]] && continue
+          if printf '%s\n' "$_current_untracked" | grep -qxF "$_vfile"; then
+            _untracked_violations+="${_vfile} "
+          else
+            _tracked_violations+="${_vfile} "
+          fi
+        done < <(printf '%s\n' "${_worktree_violations}" | tr ' ' '\n' | grep -v '^$')
+        if [[ -n "$_tracked_violations" ]]; then
+          orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified tracked source files (contract violation): ${_tracked_violations}"
+        elif [[ -n "$_untracked_violations" ]]; then
+          warn "quality-review-task-${task_n}: read-only reviewer left untracked scratch files — cleaning automatically: ${_untracked_violations}"
+          emit_event "quality-review-task-${task_n}" "warn" "read-only.scratch.cleaned" \
+            "Untracked scratch files left by read-only reviewer; auto-cleaned to allow run to continue" \
+            phase="quality-review-task-${task_n}" \
+            scratchFiles="${_untracked_violations}"
+          for _scratch_file in ${_untracked_violations}; do
+            [[ -z "$_scratch_file" ]] && continue
+            rm -f "$WORKTREE_DIR/$_scratch_file"
+          done
+        fi
     fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
