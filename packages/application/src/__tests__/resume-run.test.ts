@@ -302,6 +302,56 @@ describe('ResumeRun', () => {
     expect(leases.current(repoid('run-1'))).toBeUndefined();
   });
 
+  it('preserves successful steps when resuming from phase, only resets non-success steps', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const stepRepo = new FakeStepRepository();
+    stepRepo.upsert({
+      id: 's1',
+      runId: 'run-1',
+      phaseId: 'test-phase',
+      index: 0,
+      title: 'Step 1',
+      status: 'success',
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      completedAt: new Date('2026-06-01T00:05:00Z'),
+    });
+    stepRepo.upsert({
+      id: 's2',
+      runId: 'run-1',
+      phaseId: 'test-phase',
+      index: 1,
+      title: 'Step 2',
+      status: 'failed',
+      startedAt: new Date('2026-06-01T00:06:00Z'),
+      completedAt: new Date('2026-06-01T00:10:00Z'),
+    });
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases: new FakeWorkerLeasePort(registry),
+      queue: new FakeJobQueuePort(repos),
+      stepRepo,
+      phaseRepo: new FakePhaseRepository(),
+      findRepoId: (r) => repoid(r),
+      now: fixedNow,
+    });
+    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1'), fromPhase: 'test-phase' });
+    const steps = stepRepo.listForRun(rid('run-1'));
+    expect(steps).toHaveLength(2);
+    const s1 = steps.find((s) => s.id === 's1')!;
+    const s2 = steps.find((s) => s.id === 's2')!;
+    expect(s1.status).toBe('success');
+    expect(s1.startedAt).toEqual(new Date('2026-06-01T00:00:00Z'));
+    expect(s1.completedAt).toEqual(new Date('2026-06-01T00:05:00Z'));
+    expect(s2.status).toBe('pending');
+    expect(s2.startedAt).toBeUndefined();
+    expect(s2.completedAt).toBeUndefined();
+  });
+
   it('releases lease when atomicUpdateByUuid fails', async () => {
     class FakeRunRepoWithFailedAtomicUpdate extends FakeRunRepository {
       override atomicUpdateByUuid(): boolean {

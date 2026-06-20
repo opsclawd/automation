@@ -109,6 +109,7 @@ export class ResumeRun implements ResumeRunUseCase {
       try {
         if (input.fromPhase) {
           for (const step of savedSteps) {
+            if (step.status === 'success') continue;
             const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
             this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
           }
