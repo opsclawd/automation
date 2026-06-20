@@ -522,6 +522,8 @@ seed_excludes() {
     mkdir -p "$git_dir/info"
     grep -qF 'legacy-parity.bats' "$git_dir/info/attributes" 2>/dev/null \
       || echo 'scripts/lib/__tests__/legacy-parity.bats merge=union' >> "$git_dir/info/attributes"
+    grep -qxF '*.patch' "$exclude_file" || echo '*.patch' >> "$exclude_file"
+    grep -qxF 'diff.patch' "$exclude_file" || echo 'diff.patch' >> "$exclude_file"
     return 0
   fi
   cat >> "$exclude_file" << 'EOF'
@@ -552,6 +554,8 @@ fix-status.txt
 implement-task-*.md
 fix-review-task-*.md
 review-plan*.md
+diff.patch
+*.patch
 fix-review-task-*.log
 next-env.d.ts
 node_modules/
@@ -2181,7 +2185,8 @@ After writing BOTH files you are DONE. Do NOT:
 You MUST emit no further actions after the .result file is written.
 Any action after writing .result is a contract violation.
 
-CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
+CRITICAL: Do NOT write any files other than the two mandatory output files above. No scratch files, no \`git diff > file\`, no temporary files of any kind."
 
     if [[ -n "${SPEC_CORRECTIVE_WARNING:-}" ]]; then
       SPEC_REVIEWER_PROMPT="${SPEC_CORRECTIVE_WARNING}
@@ -2285,7 +2290,29 @@ ${history_excerpt}"
       _worktree_violations="${_worktree_violations}${_cleaned}"
       rm -f "$_pre_dirty_sigs"
       if [[ -n "$_worktree_violations" ]]; then
-        orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+        local _current_untracked _tracked_violations="" _untracked_violations=""
+        _current_untracked=$(git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null | sort)
+        while IFS= read -r _vfile; do
+          [[ -z "$_vfile" ]] && continue
+          if printf '%s\n' "$_current_untracked" | grep -qxF "$_vfile"; then
+            _untracked_violations+="${_vfile} "
+          else
+            _tracked_violations+="${_vfile} "
+          fi
+        done < <(printf '%s\n' "${_worktree_violations}" | tr ' ' '\n' | grep -v '^$')
+        if [[ -n "$_tracked_violations" ]]; then
+          orchestrator_fail "spec-review-task-${task_n}: read-only reviewer modified tracked source files (contract violation): ${_tracked_violations}"
+        elif [[ -n "$_untracked_violations" ]]; then
+          warn "spec-review-task-${task_n}: read-only reviewer left untracked scratch files — cleaning automatically: ${_untracked_violations}"
+          emit_event "spec-review-task-${task_n}" "warn" "read-only.scratch.cleaned" \
+            "Untracked scratch files left by read-only reviewer; auto-cleaned to allow run to continue" \
+            phase="spec-review-task-${task_n}" \
+            scratchFiles="${_untracked_violations}"
+          for _scratch_file in ${_untracked_violations}; do
+            [[ -z "$_scratch_file" ]] && continue
+            rm -f "$WORKTREE_DIR/$_scratch_file"
+          done
+        fi
     fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/spec-review-task-${task_n}.log" 2>/dev/null; then
@@ -2426,7 +2453,8 @@ After writing BOTH files you are DONE. Do NOT:
 You MUST emit no further actions after the .result file is written.
 Any action after writing .result is a contract violation.
 
-CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
+CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}.
+CRITICAL: Do NOT write any files other than the two mandatory output files above. No scratch files, no \`git diff > file\`, no temporary files of any kind."
 
     if [[ -n "${QUALITY_CORRECTIVE_WARNING:-}" ]]; then
       QUALITY_REVIEWER_PROMPT="${QUALITY_CORRECTIVE_WARNING}
@@ -2530,7 +2558,29 @@ ${history_excerpt}"
       _worktree_violations="${_worktree_violations}${_cleaned}"
       rm -f "$_pre_dirty_sigs"
       if [[ -n "$_worktree_violations" ]]; then
-        orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified source files (contract violation): ${_worktree_violations}"
+        local _current_untracked _tracked_violations="" _untracked_violations=""
+        _current_untracked=$(git -C "$WORKTREE_DIR" ls-files --others --exclude-standard 2>/dev/null | sort)
+        while IFS= read -r _vfile; do
+          [[ -z "$_vfile" ]] && continue
+          if printf '%s\n' "$_current_untracked" | grep -qxF "$_vfile"; then
+            _untracked_violations+="${_vfile} "
+          else
+            _tracked_violations+="${_vfile} "
+          fi
+        done < <(printf '%s\n' "${_worktree_violations}" | tr ' ' '\n' | grep -v '^$')
+        if [[ -n "$_tracked_violations" ]]; then
+          orchestrator_fail "quality-review-task-${task_n}: read-only reviewer modified tracked source files (contract violation): ${_tracked_violations}"
+        elif [[ -n "$_untracked_violations" ]]; then
+          warn "quality-review-task-${task_n}: read-only reviewer left untracked scratch files — cleaning automatically: ${_untracked_violations}"
+          emit_event "quality-review-task-${task_n}" "warn" "read-only.scratch.cleaned" \
+            "Untracked scratch files left by read-only reviewer; auto-cleaned to allow run to continue" \
+            phase="quality-review-task-${task_n}" \
+            scratchFiles="${_untracked_violations}"
+          for _scratch_file in ${_untracked_violations}; do
+            [[ -z "$_scratch_file" ]] && continue
+            rm -f "$WORKTREE_DIR/$_scratch_file"
+          done
+        fi
     fi
     if [[ $_agent_ec -eq 2 ]]; then
       if grep -qE '(unknown phase|unknown profile|no agent config|must pass|missing required flag|prompt file not found|not configured)' "${ISSUES_DIR}/quality-review-task-${task_n}.log" 2>/dev/null; then
@@ -3962,6 +4012,7 @@ Read ./review.md and produce two files:
 - Do NOT modify any code files.
 - Do NOT run git commands.
 - Output ONLY review-task-manifest.json and review-triage.md.
+- Do NOT write any other files. No scratch files, no \`git diff > file\`, no temporary files.
 - Stop after writing both files.
 Write review-task-manifest.json and review-triage.md now."
   _worktree_state_before=$(_capture_worktree_state)

@@ -2143,3 +2143,171 @@ PLAN
     }
   done
 }
+
+# Invariant: *.patch scratch files (e.g. diff.patch created by a reviewer doing
+#   `git diff > diff.patch`) are excluded from git ls-files --others --exclude-standard
+#   after seed_excludes() runs. This prevents them from appearing in the
+#   read-only violation set and causing false-positive orchestrator_fail.
+# Source: #405.
+# Failure prevented: quality-review-task-2 failed with "read-only reviewer
+#   modified source files (contract violation): diff.patch" when the only change
+#   was an untracked diff.patch at the worktree root.
+# TS-port contract: the TS orchestrator must also exclude *.patch / diff.patch
+#   from its worktree scan (either via info/exclude seeding or its own exclusion list).
+@test "parity[#405]: seed_excludes writes *.patch so diff.patch is invisible to git ls-files" {
+  local repo
+  repo="$(mktemp -d)"
+  _test_dir="$repo"
+
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "test@example.com"
+  git -C "$repo" config user.name "test"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m "init"
+
+  local ORIG_WORKTREE_DIR="${WORKTREE_DIR:-}"
+  export WORKTREE_DIR="$repo"
+  log()        { :; }
+  warn()       { :; }
+  emit_event() { :; }
+
+  # Source seed_excludes from the live script
+  # shellcheck source=../../ai-run-issue-v2
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  pushd "$repo" >/dev/null
+  seed_excludes
+  popd >/dev/null
+
+  # Drop a diff.patch (the exact file that triggered #405)
+  echo "scratch" > "$repo/diff.patch"
+  echo "scratch" > "$repo/review.patch"
+
+  # git ls-files --others --exclude-standard must NOT report either file
+  run bash -c "git -C '$repo' ls-files --others --exclude-standard"
+  [ "$status" -eq 0 ]
+  # diff.patch must not appear
+  run grep -q "diff.patch" <<< "$output"
+  [ "$status" -ne 0 ]
+  # *.patch must not appear
+  run grep -q "review.patch" <<< "$output"
+  [ "$status" -ne 0 ]
+
+  export WORKTREE_DIR="$ORIG_WORKTREE_DIR"
+}
+
+# Invariant: the inline read-only violation check in run_spec_reviewer /
+#   run_quality_reviewer must treat untracked-only violations as a non-fatal
+#   scratch event (warn + rm, no orchestrator_fail) rather than a source-mutation
+#   contract violation.
+# Source: #405.
+# Failure prevented: quality-review-task-2 hard-failed with orchestrator_fail
+#   when the only post-review change was an untracked diff.patch (no tracked
+#   source file was touched). The run aborted on what was effectively a NOP.
+# TS-port contract: the TS read-only guard must classify an untracked-only
+#   violation set as scratch (not a contract violation); tracked-file mutations
+#   must still hard-fail. Pure classification decision — runtime-agnostic.
+@test "parity[#405]: untracked-only violation is classified as scratch (not tracked mutation)" {
+  local repo
+  repo="$(mktemp -d)"
+  _test_dir="$repo"
+
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "test@example.com"
+  git -C "$repo" config user.name "test"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m "init"
+
+  # Simulate reviewer creating a scratch file (NOT tracked by git)
+  echo "scratch diff content" > "$repo/diff.patch"
+
+  # The current untracked set
+  local _current_untracked
+  _current_untracked=$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null | sort)
+
+  # Simulate the violation set containing only the untracked file
+  local _worktree_violations="diff.patch"
+
+  # Split logic (mirrors what run_spec_reviewer / run_quality_reviewer now do)
+  local _tracked_violations="" _untracked_violations=""
+  while IFS= read -r _vfile; do
+    [[ -z "$_vfile" ]] && continue
+    if printf '%s\n' "$_current_untracked" | grep -qxF "$_vfile"; then
+      _untracked_violations+="${_vfile} "
+    else
+      _tracked_violations+="${_vfile} "
+    fi
+  done < <(printf '%s\n' "${_worktree_violations}" | tr ' ' '\n' | grep -v '^$')
+
+  # No tracked violations — must be empty
+  [ -z "$_tracked_violations" ]
+  # Untracked violations — must contain diff.patch
+  run grep -q "diff.patch" <<< "$_untracked_violations"
+  [ "$status" -eq 0 ]
+}
+
+# Invariant: if a reviewer modifies a tracked source file, the inline guard
+#   must still classify it as a tracked violation (hard-fail path).
+# Source: #405.
+@test "parity[#405]: tracked-file modification is classified as tracked violation (hard-fail path)" {
+  local repo
+  repo="$(mktemp -d)"
+  _test_dir="$repo"
+
+  git -C "$repo" init -q
+  git -C "$repo" config user.email "test@example.com"
+  git -C "$repo" config user.name "test"
+  echo base > "$repo/app.ts"
+  git -C "$repo" add app.ts
+  git -C "$repo" commit -q -m "init"
+
+  # Simulate reviewer modifying a tracked file (staged, not just untracked)
+  echo "modified" >> "$repo/app.ts"
+  git -C "$repo" add app.ts
+
+  # The current untracked set (app.ts is tracked/staged, not untracked)
+  local _current_untracked
+  _current_untracked=$(git -C "$repo" ls-files --others --exclude-standard 2>/dev/null | sort)
+
+  # Simulate violation set from the diff
+  local _worktree_violations="app.ts"
+
+  local _tracked_violations="" _untracked_violations=""
+  while IFS= read -r _vfile; do
+    [[ -z "$_vfile" ]] && continue
+    if printf '%s\n' "$_current_untracked" | grep -qxF "$_vfile"; then
+      _untracked_violations+="${_vfile} "
+    else
+      _tracked_violations+="${_vfile} "
+    fi
+  done < <(printf '%s\n' "${_worktree_violations}" | tr ' ' '\n' | grep -v '^$')
+
+  # app.ts must be in tracked violations (not untracked)
+  run grep -q "app.ts" <<< "$_tracked_violations"
+  [ "$status" -eq 0 ]
+  # Untracked violations must be empty
+  [ -z "$_untracked_violations" ]
+}
+
+# Invariant: spec-review, quality-review, and review-triage prompts in
+#   ai-run-issue-v2 explicitly forbid writing non-artifact files (no scratch,
+#   no git diff > file). This is the root-cause defense; the guard is the safety net.
+# Source: #405.
+# Failure prevented: agents write diff.patch as a working step, leaving it in
+#   the worktree; the guard then fires a false-positive orchestrator_fail.
+# TS-port contract: the TS whole-pr-review prompt must contain equivalent
+#   no-scratch instruction (Task 4 of this plan adds it to compose.ts).
+@test "parity[#405]: reviewer prompts forbid writing non-artifact scratch files" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # Spec reviewer must contain the no-scratch clause
+  run grep -q "Do NOT write any files other than" "$script"
+  [ "$status" -eq 0 ]
+  # Quality reviewer must also contain it (grep -c should return >=2)
+  local count
+  count=$(grep -c "Do NOT write any files other than" "$script" || true)
+  [ "$count" -ge 2 ]
+  # Triage prompt must contain its variant
+  run grep -q "Do NOT write any other files" "$script"
+  [ "$status" -eq 0 ]
+}
