@@ -329,6 +329,24 @@ export function composeRoot(opts: ComposeOptions): Container {
       const run = runRepository.findByUuid(runId);
       if (!run) return 'HEAD';
       if (run.startCommitSha) return run.startCommitSha;
+      // Resolve from the worktree's branch at cancel time.
+      // The issue branch was created from origin/<defaultBranch>; the merge
+      // base gives the original commit even if origin/<defaultBranch> has
+      // advanced since worktree creation. This avoids capturing the SHA from
+      // repoRoot before the worktree exists (which could be stale).
+      const branchName = `issue-${run.issueNumber}`;
+      try {
+        const sha = execFileSync(
+          'git',
+          ['merge-base', branchName, `origin/${resolvedDefaultBranch}`],
+          { cwd: opts.repoRoot },
+        )
+          .toString()
+          .trim();
+        if (sha) return sha;
+      } catch {
+        // Fall through to HEAD
+      }
       return 'HEAD';
     },
     // findRepoId resolves the repo full name at compose time via `gh repo view`.
