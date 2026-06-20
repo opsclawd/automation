@@ -1,5 +1,5 @@
 import type { Run, RunStatus } from '@ai-sdlc/domain';
-import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application';
+import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
 interface RunRow {
