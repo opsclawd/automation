@@ -1,47 +1,107 @@
 import { cancelRun } from '@ai-sdlc/domain';
-import type { RunRepositoryPort } from './ports.js';
-
-export interface CancelRunInput {
-  issueNumber?: number;
-  uuid?: string;
-  reason?: string;
-}
+import type { RunId, RepositoryId } from '@ai-sdlc/domain';
+import type {
+  RunRepositoryPort,
+  RunAbortPort,
+  GitPort,
+  WorkerLeasePort,
+  LoggerPort,
+  ResolveWorktreeCwdFn,
+  ResolveStartCommitShaFn,
+} from './ports.js';
+import type { CancelRunUseCase } from './use-cases.js';
 
 export interface CancelRunDeps {
   runRepository: RunRepositoryPort;
+  runAbort: RunAbortPort;
+  git: GitPort;
+  leases: WorkerLeasePort;
+  findCwd: ResolveWorktreeCwdFn;
+  findStartCommitSha: ResolveStartCommitShaFn;
+  // Best-effort: returns undefined when the run→repo mapping is unresolved, in
+  // which case the worktree-reset and lease-release cleanups are skipped cleanly.
+  findRepoId: (runId: RunId) => RepositoryId | undefined;
+  logger: LoggerPort;
   now?: () => Date;
 }
 
-export class CancelRun {
+export class CancelRun implements CancelRunUseCase {
   constructor(private readonly deps: CancelRunDeps) {}
 
-  execute(input: CancelRunInput): void {
+  async execute(input: { runId: RunId; reason?: string }): Promise<void> {
     const now = this.deps.now ?? (() => new Date());
-    const existing = input.uuid
-      ? this.deps.runRepository.findByUuid(input.uuid)
-      : this.deps.runRepository.findByIssueNumber(input.issueNumber!);
-    if (!existing) {
-      const identifier = input.uuid ?? `issue ${input.issueNumber}`;
-      throw new Error(`No active run found for ${identifier}`);
+    const run = this.deps.runRepository.findByUuid(input.runId);
+    if (!run) {
+      throw new Error(`No run found for ${input.runId}`);
     }
-    const cancelled = cancelRun(existing, input.reason, now());
-    const patch = {
-      status: cancelled.status,
-      completedAt: cancelled.completedAt!,
-      ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
-    };
-    if (input.uuid) {
-      const updated = this.deps.runRepository.updateStatusByUuid(existing.uuid, patch);
-      if (!updated) {
-        throw new Error(`Run ${existing.uuid} is already ${existing.status}`);
+    const { runAbort, git, leases } = this.deps;
+
+    // Step 1: Validate and transform domain state — MUST happen before side effects
+    const cancelled = cancelRun(run, input.reason, now());
+
+    // Step 2: Persist cancelled state (MUST succeed — throws on failure)
+    // NOTE: There is a TOCTOU window between the domain validation above and
+    // this SQL UPDATE. The DB-level guard (WHERE status NOT IN terminal) and
+    // the `!updated` check below catch concurrent terminal transitions.
+    const updated = this.deps.runRepository.atomicUpdateByUuid(
+      input.runId,
+      {
+        status: cancelled.status,
+        completedAt: cancelled.completedAt!,
+        currentPhase: null,
+        ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
+      },
+      run.status,
+    );
+    if (!updated) {
+      throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
+    }
+
+    // Step 3: Abort agent (best-effort)
+    try {
+      runAbort.abort(input.runId);
+    } catch (err) {
+      this.deps.logger.error(`CancelRun: abort failed for ${input.runId}`, err);
+    }
+    try {
+      runAbort.unregister(input.runId);
+    } catch (err) {
+      this.deps.logger.error(`CancelRun: unregister failed for ${input.runId}`, err);
+    }
+
+    // Step 4-5: Cleanup (best-effort)
+    let repoId: RepositoryId | undefined;
+    try {
+      repoId = this.deps.findRepoId(input.runId);
+    } catch (err) {
+      this.deps.logger.error(`CancelRun: findRepoId failed for ${input.runId}`, err);
+    }
+
+    if (repoId !== undefined) {
+      // Step 4: Reset worktree (best-effort)
+      try {
+        const cwd = this.deps.findCwd(repoId, input.runId);
+        const startCommitSha = this.deps.findStartCommitSha(input.runId);
+        await git.resetHard(cwd, startCommitSha);
+        await git.cleanUntracked(cwd);
+      } catch (err) {
+        this.deps.logger.error(`CancelRun: worktree reset failed for ${input.runId}`, err);
       }
-    } else {
-      const updated = this.deps.runRepository.updateStatusByIssueNumber(
-        existing.issueNumber,
-        patch,
-      );
-      if (!updated) {
-        throw new Error(`Run for issue ${existing.issueNumber} is already ${existing.status}`);
+
+      // Step 5: Release lease (best-effort)
+      try {
+        const lease = leases.current(repoId);
+        if (lease) {
+          if (lease.runId !== input.runId) {
+            this.deps.logger.error(
+              `CancelRun: lease runId mismatch for repo ${repoId}: expected ${input.runId}, got ${lease.runId}`,
+            );
+          } else {
+            leases.release(repoId, lease.workerId);
+          }
+        }
+      } catch (err) {
+        this.deps.logger.error(`CancelRun: lease release failed for ${input.runId}`, err);
       }
     }
   }

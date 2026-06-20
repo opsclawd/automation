@@ -1,4 +1,11 @@
-import type { Run, RunStatus, Failure, ClassifyExitInput } from '@ai-sdlc/domain';
+import type {
+  Run,
+  RunStatus,
+  Failure,
+  ClassifyExitInput,
+  RepositoryId,
+  RunId,
+} from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
 /**
@@ -16,6 +23,7 @@ export interface RunRecord extends Run {
   exitCode?: number;
   durationMs?: number;
   pid?: number;
+  startCommitSha?: string;
 }
 
 export interface RunRepositoryUpdatePatch {
@@ -23,15 +31,21 @@ export interface RunRepositoryUpdatePatch {
   currentPhase?: string | null;
   completedPhases?: string[];
   skippedPhases?: string[];
-  completedAt?: Date;
-  failureReason?: string;
+  completedAt?: Date | null;
+  failureReason?: string | null;
   exitCode?: number;
   durationMs?: number;
+  startCommitSha?: string;
 }
 
 export interface RunRepositoryPort {
   insertIfNoActive(run: Run): void;
   update(uuid: string, patch: RunRepositoryUpdatePatch): void;
+  atomicUpdateByUuid(
+    uuid: string,
+    patch: RunRepositoryUpdatePatch,
+    expectedStatus: RunStatus,
+  ): boolean;
   findByUuid(uuid: string): RunRecord | undefined;
   findByIssueNumber(issueNumber: number): RunRecord | undefined;
   findActiveRuns(): RunRecord[];
@@ -41,7 +55,12 @@ export interface RunRepositoryPort {
   ): boolean;
   updateStatusByUuid(
     uuid: string,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+    patch: {
+      status: RunStatus;
+      completedAt: Date;
+      failureReason?: string;
+      currentPhase?: string | null;
+    },
   ): boolean;
 }
 
@@ -113,6 +132,7 @@ export type {
 } from './ports/validation-port.js';
 export type { ValidationRunRepositoryPort } from './ports/validation-run-repository-port.js';
 export type { PhaseRepositoryPort } from './ports/phase-repository-port.js';
+export type { StepRepositoryPort } from './ports/step-repository-port.js';
 export type { ArtifactStore, WriteArtifactInput, Artifact } from './ports/artifact-store.js';
 export { ArtifactNotFoundError } from './ports/artifact-store.js';
 
@@ -179,3 +199,10 @@ export type EventTailerFactory = (input: {
 export type { PhaseHandlerRegistryPort } from './ports/phase-handler-registry-port.js';
 
 export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/handler.js';
+
+export type { RunAbortPort } from './ports/run-abort-port.js';
+
+export type { LoggerPort } from './ports/logger-port.js';
+export type ResolveWorktreeCwdFn = (repoId: RepositoryId, runId: RunId) => string;
+export type ResolveStartCommitShaFn = (runId: RunId) => string;
+export type ResolveRefShaFn = (cwd: string, ref: string) => string | undefined;

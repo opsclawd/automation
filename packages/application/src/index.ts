@@ -1,6 +1,8 @@
 export const packageName = '@ai-sdlc/application';
 export * from './start-issue-run.js';
 export * from './cancel-run.js';
+export * from './resume-run.js';
+export * from './retry-failed-phase.js';
 export * from './sweep-orphaned-runs.js';
 export * from './ports.js';
 export * from './use-cases.js';

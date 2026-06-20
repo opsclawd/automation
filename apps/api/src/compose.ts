@@ -66,9 +66,16 @@ import {
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
   type FixStepOptions,
+  type ResolveRefShaFn,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
+import {
+  AgentProfileName,
+  AgentInvocationId,
+  PhaseName,
+  RunId,
+  RepositoryId,
+} from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -149,6 +156,7 @@ export interface Container {
   cancelRun: CancelRun;
   runsDir: string;
   baseTmpDir: string;
+  defaultBranch: string;
   eventBus: EventBusPort;
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
@@ -261,8 +269,102 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.model !== undefined) deps.model = opts.model;
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
+  deps.resolveRefSha = ((cwd: string, ref: string) => {
+    try {
+      return execFileSync('git', ['rev-parse', ref], { cwd }).toString().trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }) satisfies ResolveRefShaFn;
   const startIssueRun = new StartIssueRun(deps);
-  const cancelRun = new CancelRun({ runRepository });
+  const logger: { error: (message: string, ...args: unknown[]) => void } = {
+    error: (msg, ...args) => console.error(msg, ...args),
+  };
+
+  const cancelRun = new CancelRun({
+    runRepository,
+    logger,
+    // TODO(#388): Wire a real AbortController registry from the agent runtime layer.
+    // Currently noop so cancel best-effort agent abort is non-functional.
+    runAbort: { register: () => {}, abort: () => {}, unregister: () => {} },
+    git: {
+      createWorktree: async () => {},
+      removeWorktree: async () => {},
+      currentBranch: async () => '',
+      headCommitSha: async () => '',
+      resetHard: (cwd: string, commitSha: string) => {
+        execFileSync('git', ['reset', '--hard', commitSha], { cwd });
+        return Promise.resolve();
+      },
+      diff: async () => '',
+      commit: async () => '',
+      push: async () => {},
+      remoteRef: async () => undefined,
+      isAncestor: async () => false,
+      logBetween: async () => [],
+      cleanUntracked: (cwd: string) => {
+        // -x also removes worktree-ignored orchestrator artifacts (result.json,
+        // *.md, *.result, logs) that the script seeds into .git/info/exclude, so
+        // a cancelled/reset run can't leak stale results into the next run on the
+        // reused worktree. node_modules is excluded to avoid an expensive reinstall.
+        execFileSync('git', ['clean', '-fdx', '-e', 'node_modules'], { cwd });
+        return Promise.resolve();
+      },
+      headCommitShaOf: async () => undefined,
+    },
+    // TODO(#388): Wire WorkerLeaseRepository once the lease infrastructure is ready.
+    // `acquire` throws because CancelRun should never need to acquire — leases are
+    // acquired by run-start/resume flows. `release` is a noop (tracked in #388).
+    leases: {
+      acquire: () => {
+        throw new Error('leases not wired in compose');
+      },
+      heartbeat: () => {},
+      release: () => {},
+      current: () => undefined,
+      reclaimExpired: () => [],
+    },
+    findCwd: (repoId: RepositoryId, runId: RunId) => {
+      const run = runRepository.findByUuid(runId);
+      if (!run) throw new Error(`findCwd: no run found for ${runId}`);
+      return join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+    },
+    findStartCommitSha: (runId: RunId) => {
+      const run = runRepository.findByUuid(runId);
+      if (!run) return 'HEAD';
+      if (run.startCommitSha) return run.startCommitSha;
+      // Resolve from the worktree's branch at cancel time.
+      // The issue branch (`ai/issue-<n>`, per scripts/ai-run-issue-v2) was
+      // created from origin/<defaultBranch>; the merge base gives the original
+      // commit even if origin/<defaultBranch> has advanced since worktree
+      // creation. This avoids capturing the SHA from repoRoot before the
+      // worktree exists (which could be stale).
+      const branchName = `ai/issue-${run.issueNumber}`;
+      try {
+        const sha = execFileSync(
+          'git',
+          ['merge-base', branchName, `origin/${resolvedDefaultBranch}`],
+          { cwd: opts.repoRoot },
+        )
+          .toString()
+          .trim();
+        if (sha) return sha;
+      } catch {
+        // Fall through to HEAD
+      }
+      return 'HEAD';
+    },
+    // findRepoId resolves the repo full name at compose time via `gh repo view`.
+    // Returns undefined when unresolved so CancelRun's best-effort cleanups skip
+    // cleanly instead of throwing. Full run→repo wiring lands in #388.
+    findRepoId: (_runId: RunId): RepositoryId | undefined =>
+      resolvedRepoFullName ? (resolvedRepoFullName as RepositoryId) : undefined,
+  });
+
+  // TODO(#388): Wire ResumeRun and RetryFailedPhase use cases with their
+  // infrastructure dependencies.
+  // const resumeRun = new ResumeRun({ ... });
+  // const retryFailedPhase = new RetryFailedPhase({ ... });
 
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';
@@ -280,6 +382,21 @@ export function composeRoot(opts: ComposeOptions): Container {
     if (out) resolvedDefaultBranch = out;
   } catch {
     // Best-effort: fall back to 'main'
+  }
+
+  // Resolve repo full name eagerly for findRepoId in cancel flow.
+  let resolvedRepoFullName: string | undefined;
+  try {
+    const out = execFileSync(
+      'gh',
+      ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
+      { cwd: opts.repoRoot },
+    )
+      .toString()
+      .trim();
+    if (out) resolvedRepoFullName = out;
+  } catch (err) {
+    console.error(`CancelRun: failed to resolve repo full name for ${opts.repoRoot}`, err);
   }
 
   let agentRuntime: AgentRuntimeRouter | undefined;
@@ -1192,7 +1309,11 @@ export function composeRoot(opts: ComposeOptions): Container {
       },
       async cleanUntracked(cwd: string): Promise<void> {
         const { execFileSync } = await import('node:child_process');
-        execFileSync('git', ['clean', '-fd'], { cwd });
+        // -x also removes worktree-ignored orchestrator artifacts (result.json,
+        // *.md, *.result, logs) that the script seeds into .git/info/exclude, so
+        // a cancelled/reset run can't leak stale results into the next run on the
+        // reused worktree. node_modules is excluded to avoid an expensive reinstall.
+        execFileSync('git', ['clean', '-fdx', '-e', 'node_modules'], { cwd });
       },
     };
     const processor = new ProcessPrReviewComments({
@@ -1449,6 +1570,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     cancelRun,
     runsDir,
     baseTmpDir,
+    defaultBranch: resolvedDefaultBranch,
     eventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,

@@ -2,8 +2,8 @@ import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { RunId } from '@ai-sdlc/domain';
 import { composeRoot, type ComposeOptions } from './compose.js';
-import type { CancelRunInput } from '@ai-sdlc/application';
 
 export function findRepoRoot(
   startDir: string,
@@ -105,7 +105,9 @@ export function buildProgram(): Command {
         process.on('unhandledRejection', unhandledHandler);
 
         try {
-          const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
+          const out = await c.startIssueRun.execute({
+            issueNumber: opts.issue,
+          });
           // Use process.stdout.write with a callback (not console.log) because
           // process.exit() does not wait for stdout to flush.
           await new Promise<void>((resolve, reject) =>
@@ -198,21 +200,22 @@ export function buildProgram(): Command {
               scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
             };
             const c = composeRoot(options);
-            const input = {} as CancelRunInput;
+            let uuid: string;
             if (opts.uuid) {
-              input.uuid = opts.uuid;
+              uuid = opts.uuid;
             } else {
               const run = c.runRepository.findByIssueNumber(opts.issue!);
               if (!run) {
                 console.error(`No run found for issue ${opts.issue}`);
                 process.exit(1);
               }
-              input.uuid = run.uuid;
+              uuid = run.uuid;
             }
-            if (opts.reason) input.reason = opts.reason;
-            const run = c.runRepository.findByUuid(input.uuid);
-            const pid = run?.pid;
-            c.cancelRun.execute(input);
+            const run = c.runRepository.findByUuid(uuid);
+            if (!run) {
+              throw new Error(`No run found for uuid ${uuid}`);
+            }
+            const pid = run.pid;
             if (pid !== undefined && pid !== null && pid !== process.pid) {
               try {
                 process.kill(pid, 'SIGTERM');
@@ -220,11 +223,15 @@ export function buildProgram(): Command {
                 const code = (killErr as NodeJS.ErrnoException).code;
                 if (code === 'EPERM') {
                   console.error(
-                    `Warning: run cancelled in DB but could not signal PID ${pid} (permission denied). The process may still be running.`,
+                    `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
                   );
                 }
               }
             }
+            await c.cancelRun.execute({
+              runId: RunId(uuid),
+              ...(opts.reason ? { reason: opts.reason } : {}),
+            });
             process.stdout.write('Run cancelled successfully\n');
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));

@@ -14,3 +14,5 @@ export * from './fake-pr-review-repository.js';
 export * from './fake-loop-repository.js';
 export * from './fake-step-repository.js';
 export * from './fake-phase-repository.js';
+export * from './fake-resume-run.js';
+export * from './fake-run-repository.js';

@@ -10,6 +10,7 @@ import * as loops from './migrations/0008-loops.js';
 import * as qualityReviewInvocation from './migrations/0009-quality-review-invocation.js';
 import * as reviewFixRename from './migrations/0010-review-fix-rename.js';
 import * as addSkippedPhases from './migrations/0011-add-skipped-phases-column.js';
+import * as addStartCommitSha from './migrations/0012-add-start-commit-sha-column.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -23,6 +24,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: qualityReviewInvocation.version, sql: qualityReviewInvocation.sql },
   { version: reviewFixRename.version, sql: reviewFixRename.sql },
   { version: addSkippedPhases.version, sql: addSkippedPhases.sql },
+  { version: addStartCommitSha.version, sql: addStartCommitSha.sql },
 ];
 
 export function applyMigrations(db: Db): void {

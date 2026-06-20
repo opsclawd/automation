@@ -8,6 +8,7 @@ import type {
   EventBusPort,
   EventTailerFactory,
   FailureRepositoryPort,
+  ResolveRefShaFn,
   RunBashScriptFn,
   RunDirectoryFactory,
   RunDirectoryHandle,
@@ -34,6 +35,7 @@ export interface StartIssueRunDeps {
   tee?: boolean;
   now?: () => Date;
   logger?: { error: (msg: string, err?: unknown) => void };
+  resolveRefSha?: ResolveRefShaFn;
 }
 
 export interface StartIssueRunInput {
@@ -197,6 +199,29 @@ export class StartIssueRun {
             logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
           }
           throw err;
+        }
+        // Capture the actual start commit SHA from the worktree after the
+        // script's fetch and worktree creation. The script fetches
+        // origin/<baseBranch> before creating the worktree, so resolving the
+        // ref from the worktree directory gives the correct baseline SHA.
+        // The worktree lives at <repoRoot>/.ai-worktrees/issue-<n> (sibling of
+        // runsDir = <repoRoot>/.ai-runs), NOT under runsDir. Derived via string
+        // because the node:path module is disallowed in this layer (depcruise
+        // rule application-no-io-except-prompt-template).
+        if (this.deps.resolveRefSha) {
+          try {
+            const repoRoot = this.deps.runsDir.replace(/\/\.ai-runs$/, '');
+            const worktreeRoot = `${repoRoot}/.ai-worktrees/issue-${run.issueNumber}`;
+            const sha = this.deps.resolveRefSha(
+              worktreeRoot,
+              `origin/${this.deps.baseBranch ?? 'main'}`,
+            );
+            if (sha) {
+              this.deps.runRepository.update(run.uuid, { startCommitSha: sha });
+            }
+          } catch (e) {
+            logger.error(`Failed to capture startCommitSha from worktree for ${run.displayId}`, e);
+          }
         }
         const completedAt = now();
         const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';

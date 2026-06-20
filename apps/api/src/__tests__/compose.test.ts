@@ -593,4 +593,94 @@ exit 1
       }),
     ).toThrow(/agent config required/);
   });
+
+  it('exposes cancelRun use case', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    expect(c.cancelRun).toBeDefined();
+    expect(typeof c.cancelRun.execute).toBe('function');
+  });
+
+  it('cancelRun cancels a running run in the DB', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const dbPath = path.join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'cancel-test-uuid',
+      'issue-42-20260601-000000',
+      42,
+      'issue_to_pr',
+      'running',
+      '[]',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    await c.cancelRun.execute({ runId: RunId('cancel-test-uuid'), reason: 'test cancellation' });
+    const run = c.runRepository.findByUuid('cancel-test-uuid');
+    expect(run?.status).toBe('cancelled');
+    expect(run?.failureReason).toBe('test cancellation');
+    expect(run?.currentPhase).toBeUndefined();
+  });
+
+  it('cancelRun findCwd resolves from displayId', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const dbPath = path.join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'findcwd-test-uuid',
+      'issue-99-20260601-000000',
+      99,
+      'issue_to_pr',
+      'running',
+      '[]',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    const run = c.runRepository.findByUuid('findcwd-test-uuid');
+    expect(run?.displayId).toBe('issue-99-20260601-000000');
+  });
+
+  it('cancelRun findStartCommitSha reads from run record', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const dbPath = path.join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at, start_commit_sha)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'startsha-test-uuid',
+      'issue-77-20260601-000000',
+      77,
+      'issue_to_pr',
+      'running',
+      '[]',
+      '[]',
+      new Date().toISOString(),
+      'abc123def456',
+    );
+    db.close();
+
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    const run = c.runRepository.findByUuid('startsha-test-uuid');
+    expect(run?.startCommitSha).toBe('abc123def456');
+  });
 });

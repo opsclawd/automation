@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Failure, Run, ClassifyExitInput, RunStatus } from '@ai-sdlc/domain';
+import type { Failure, Run, ClassifyExitInput } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { StartIssueRun } from '../start-issue-run.js';
 import type {
@@ -11,79 +11,25 @@ import type {
   RunBashScriptFn,
   RunDirectoryFactory,
   RunDirectoryHandle,
-  RunRepositoryPort,
   RunRepositoryUpdatePatch,
-  RunRecord,
   TmpDirectoryFactory,
 } from '../ports.js';
+import { FakeRunRepository as FakeRunRepositoryBase } from '../test-doubles/fake-run-repository.js';
 
-interface RecordedUpdate {
-  uuid: string;
-  patch: RunRepositoryUpdatePatch;
-}
-
-class FakeRunRepository implements RunRepositoryPort {
+class FakeRunRepository extends FakeRunRepositoryBase {
   inserted: Run[] = [];
-  updates: RecordedUpdate[] = [];
-  active = new Set<number>();
+
   insertIfNoActive(run: Run): void {
-    if (this.active.has(run.issueNumber)) {
-      throw new Error(`An active run already exists for issue ${run.issueNumber}`);
-    }
+    super.insertIfNoActive(run);
     this.inserted.push(run);
-    this.active.add(run.issueNumber);
   }
-  update(uuid: string, patch: RunRepositoryUpdatePatch): void {
-    this.updates.push({ uuid, patch });
-  }
-  findByUuid(_uuid: string): RunRecord | undefined {
-    return undefined;
-  }
+
   finalPatch(uuid: string): RunRepositoryUpdatePatch {
     const merged: RunRepositoryUpdatePatch = {};
     for (const u of this.updates) {
       if (u.uuid === uuid) Object.assign(merged, u.patch);
     }
     return merged;
-  }
-  findByIssueNumber(issueNumber: number): RunRecord | undefined {
-    const inserted = this.inserted.find((r) => r.issueNumber === issueNumber);
-    if (!inserted) return undefined;
-    // Check if a terminal status was applied via update()
-    let status = inserted.status;
-    let completedAt: Date | undefined;
-    let failureReason: string | undefined;
-    for (const u of this.updates) {
-      if (u.patch.status) status = u.patch.status;
-      if (u.patch.completedAt) completedAt = u.patch.completedAt;
-      if (u.patch.failureReason) failureReason = u.patch.failureReason;
-    }
-    return {
-      uuid: inserted.uuid,
-      displayId: inserted.displayId,
-      issueNumber: inserted.issueNumber,
-      type: inserted.type,
-      status,
-      completedPhases: inserted.completedPhases,
-      startedAt: inserted.startedAt,
-      ...(completedAt ? { completedAt } : {}),
-      ...(failureReason ? { failureReason } : {}),
-    };
-  }
-  findActiveRuns(): RunRecord[] {
-    return [];
-  }
-  updateStatusByIssueNumber(
-    _issueNumber: number,
-    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    return true;
-  }
-  updateStatusByUuid(
-    _uuid: string,
-    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    return true;
   }
 }
 
@@ -228,6 +174,34 @@ describe('StartIssueRun', () => {
     expect(calls[0]!.env.AI_ISSUE_NUMBER).toBe('42');
   });
 
+  it('captures startCommitSha from the .ai-worktrees worktree path, not runsDir', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const refCalls: Array<{ cwd: string; ref: string }> = [];
+    const resolveRefSha = (cwd: string, ref: string) => {
+      refCalls.push({ cwd, ref });
+      return 'base-sha-123';
+    };
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      resolveRefSha,
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 42 });
+    // Must resolve from the actual worktree dir (sibling of runsDir), not under it.
+    expect(refCalls).toEqual([{ cwd: '/fake/.ai-worktrees/issue-42', ref: 'origin/main' }]);
+    expect(repo.findByUuid(out.uuid)?.startCommitSha).toBe('base-sha-123');
+  });
+
   it('marks run failed on non-zero exit and sets failureReason', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
@@ -282,7 +256,15 @@ describe('StartIssueRun', () => {
   it('refuses to start a second active run for the same issue', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
-    repo.active.add(7);
+    repo.addRun({
+      uuid: 'pre-existing',
+      displayId: 'issue-7-20260513-000000',
+      issueNumber: 7,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+    });
     const { factory } = fakeDirectoryFactory();
     const { fn: bash } = fakeBash({ exitCode: 0 });
     const usecase = new StartIssueRun({
@@ -737,26 +719,7 @@ describe('StartIssueRun', () => {
 });
 
 class FakeRunRepositoryWithLookup extends FakeRunRepository {
-  findByUuid(uuid: string): RunRecord | undefined {
-    const inserted = this.inserted.find((r) => r.uuid === uuid);
-    if (!inserted) return undefined;
-    let status = inserted.status;
-    let completedAt: Date | undefined;
-    for (const u of this.updates) {
-      if (u.uuid === uuid && u.patch.status) status = u.patch.status;
-      if (u.uuid === uuid && u.patch.completedAt) completedAt = u.patch.completedAt;
-    }
-    return {
-      uuid: inserted.uuid,
-      displayId: inserted.displayId,
-      issueNumber: inserted.issueNumber,
-      type: inserted.type,
-      status,
-      completedPhases: inserted.completedPhases,
-      startedAt: inserted.startedAt,
-      ...(completedAt ? { completedAt } : {}),
-    };
-  }
+  // Uses the base class findByUuid which looks up in the runs map
 }
 
 class FakeEventRepository implements EventRepositoryPort {

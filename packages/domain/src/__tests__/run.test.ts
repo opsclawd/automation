@@ -6,6 +6,10 @@ import {
   skipPhase,
   passRun,
   failRun,
+  blockRun,
+  cancelRun,
+  canResume,
+  resumeRun,
   RunStateError,
 } from '../run.js';
 
@@ -102,5 +106,89 @@ describe('Run state machine', () => {
   it('createRun accepts consolidate type', () => {
     const r = createRun({ ...base, type: 'consolidate' });
     expect(r.type).toBe('consolidate');
+  });
+
+  describe('canResume', () => {
+    it('returns true for failed runs', () => {
+      const r = failRun(createRun(base), 'boom');
+      expect(canResume(r)).toBe(true);
+    });
+
+    it('returns false for running, passed, cancelled, waiting runs', () => {
+      expect(canResume(createRun(base))).toBe(false);
+      expect(canResume(passRun(createRun(base), new Date()))).toBe(false);
+      expect(canResume(blockRun(createRun(base), 'blocked'))).toBe(false);
+      expect(canResume(cancelRun(createRun(base)))).toBe(false);
+    });
+  });
+
+  describe('resumeRun', () => {
+    it('transitions failed → running', () => {
+      const r = failRun(createRun(base), 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.status).toBe('running');
+    });
+
+    it('clears completedAt and failureReason', () => {
+      const r = failRun(createRun(base), 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.completedAt).toBeUndefined();
+      expect(resumed.failureReason).toBeUndefined();
+    });
+
+    it('preserves completedPhases on full resume', () => {
+      let r = createRun(base);
+      r = startPhase(r, 'read_issue');
+      r = completePhase(r, 'read_issue');
+      r = startPhase(r, 'implement');
+      r = failRun(r, 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.completedPhases).toEqual(['read_issue']);
+      expect(resumed.skippedPhases).toEqual([]);
+    });
+
+    it('preserves skippedPhases on full resume', () => {
+      let r = createRun(base);
+      r = startPhase(r, 'skip_me');
+      r = skipPhase(r, 'skip_me');
+      r = failRun(r, 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.completedPhases).toEqual([]);
+      expect(resumed.skippedPhases).toEqual(['skip_me']);
+    });
+
+    it('preserves completed and skipped phases on phase-specific resume', () => {
+      let r = createRun(base);
+      r = startPhase(r, 'read_issue');
+      r = completePhase(r, 'read_issue');
+      r = startPhase(r, 'implement');
+      r = failRun(r, 'boom');
+      const resumed = resumeRun(r, 'implement');
+      expect(resumed.completedPhases).toEqual(['read_issue']);
+      expect(resumed.skippedPhases).toEqual([]);
+      expect(resumed.currentPhase).toBe('implement');
+    });
+
+    it('sets currentPhase when phase is provided', () => {
+      const r = failRun(createRun(base), 'boom');
+      const resumed = resumeRun(r, 'implement');
+      expect(resumed.currentPhase).toBe('implement');
+    });
+
+    it('leaves currentPhase undefined when phase is not provided', () => {
+      const r = failRun(createRun(base), 'boom');
+      const resumed = resumeRun(r);
+      expect(resumed.currentPhase).toBeUndefined();
+    });
+
+    it('throws when run is not failed', () => {
+      const r = createRun(base);
+      expect(() => resumeRun(r)).toThrow(RunStateError);
+    });
+
+    it('throws when run is passed', () => {
+      const r = passRun(createRun(base), new Date());
+      expect(() => resumeRun(r)).toThrow(RunStateError);
+    });
   });
 });
