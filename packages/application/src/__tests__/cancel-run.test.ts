@@ -177,7 +177,7 @@ describe('CancelRun', () => {
         completedPhases: [],
         startedAt: new Date('2026-05-13T19:00:00Z'),
       });
-      const usecase = new CancelRun({
+      const usecase = makeCancelRun({
         runRepository: repo,
         runAbort,
         git,
@@ -185,8 +185,6 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
-        logger: noopLogger,
-        now: fixedNow,
       });
       await usecase.execute({ runId: runId('order-1') });
       const abortIdx = callOrder.indexOf('abort');
@@ -242,16 +240,13 @@ describe('CancelRun', () => {
         current: () => leaseObj,
         reclaimExpired: () => [],
       };
-      const usecase = new CancelRun({
+      const usecase = makeCancelRun({
         runRepository: repo,
-        runAbort: noopAbort,
         git,
         leases,
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
-        logger: noopLogger,
-        now: fixedNow,
       });
       await usecase.execute({ runId: runId('order-2') });
       const resetIdx = callOrder.indexOf('reset');
@@ -307,7 +302,7 @@ describe('CancelRun', () => {
         },
         reclaimExpired: () => [],
       };
-      const usecase = new CancelRun({
+      const usecase = makeCancelRun({
         runRepository: repo,
         runAbort,
         git,
@@ -376,7 +371,7 @@ describe('CancelRun', () => {
         current: () => undefined,
         reclaimExpired: () => [],
       };
-      const usecase = new CancelRun({
+      const usecase = makeCancelRun({
         runRepository: repo,
         runAbort,
         git,
@@ -384,8 +379,6 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
-        logger: noopLogger,
-        now: fixedNow,
       });
       await usecase.execute({ runId: runId('abort-throws') });
       expect(repo.updates).toHaveLength(1);
@@ -440,7 +433,7 @@ describe('CancelRun', () => {
         current: () => undefined,
         reclaimExpired: () => [],
       };
-      const usecase = new CancelRun({
+      const usecase = makeCancelRun({
         runRepository: repo,
         runAbort,
         git,
@@ -448,8 +441,6 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
-        logger: noopLogger,
-        now: fixedNow,
       });
       await usecase.execute({ runId: runId('reset-throws') });
       expect(repo.updates).toHaveLength(1);
@@ -504,7 +495,7 @@ describe('CancelRun', () => {
         },
         reclaimExpired: () => [],
       };
-      const usecase = new CancelRun({
+      const usecase = makeCancelRun({
         runRepository: repo,
         runAbort,
         git,
@@ -512,8 +503,6 @@ describe('CancelRun', () => {
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
         findRepoId: () => 'repo-1' as RepositoryId,
-        logger: noopLogger,
-        now: fixedNow,
       });
       await usecase.execute({ runId: runId('lease-throws') });
       expect(repo.updates).toHaveLength(1);
