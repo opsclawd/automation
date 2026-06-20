@@ -119,6 +119,8 @@ export class ResumeRun implements ResumeRunUseCase {
         }
         throw err;
       }
+
+      this.deps.leases.release(repo.id, input.workerId);
     } catch (err) {
       this.deps.leases.release(repo.id, input.workerId);
       throw err;

@@ -131,7 +131,7 @@ describe('ResumeRun', () => {
     );
   });
 
-  it('acquires a lease on resume', async () => {
+  it('releases lease after successful resume', async () => {
     const runRepo = new FakeRunRepository();
     runRepo.addRun(makeRun());
     const registry = new FakeWorkerRegistryPort();
@@ -150,8 +150,7 @@ describe('ResumeRun', () => {
     });
     await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
     const lease = leases.current(repoid('run-1'));
-    expect(lease).toBeDefined();
-    expect(lease!.workerId).toBe('w-1');
+    expect(lease).toBeUndefined();
   });
 
   it('enqueues a job on resume', async () => {
