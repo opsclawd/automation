@@ -1245,7 +1245,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         contextFactory: () =>
           ({
             runId: '',
-            runUuid: '',
+            runUuid: 'stub',
             repoFullName: '',
             issueNumber: 0,
             cwd: '',
