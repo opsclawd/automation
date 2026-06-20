@@ -18,7 +18,9 @@ export interface CancelRunDeps {
   leases: WorkerLeasePort;
   findCwd: ResolveWorktreeCwdFn;
   findStartCommitSha: ResolveStartCommitShaFn;
-  findRepoId: (runId: RunId) => RepositoryId;
+  // Best-effort: returns undefined when the run→repo mapping is unresolved, in
+  // which case the worktree-reset and lease-release cleanups are skipped cleanly.
+  findRepoId: (runId: RunId) => RepositoryId | undefined;
   logger: LoggerPort;
   now?: () => Date;
 }

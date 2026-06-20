@@ -325,15 +325,10 @@ export function composeRoot(opts: ComposeOptions): Container {
       }
     },
     // findRepoId resolves the repo full name at compose time via `gh repo view`.
-    // If that fails, cleanups are best-effort skipped from cancel-run.ts.
-    findRepoId: (runId: RunId) => {
-      if (resolvedRepoFullName) return resolvedRepoFullName as RepositoryId;
-      const run = runRepository.findByUuid(runId);
-      if (run) {
-        console.error(`CancelRun: findRepoId skipped for ${runId} — repo full name not resolved`);
-      }
-      throw new Error(`findRepoId not available for run ${runId}`);
-    },
+    // Returns undefined when unresolved so CancelRun's best-effort cleanups skip
+    // cleanly instead of throwing. Full run→repo wiring lands in #388.
+    findRepoId: (_runId: RunId): RepositoryId | undefined =>
+      resolvedRepoFullName ? (resolvedRepoFullName as RepositoryId) : undefined,
   });
 
   // TODO(#388): Wire ResumeRun and RetryFailedPhase use cases with their
