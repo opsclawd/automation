@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -106,10 +105,7 @@ export function buildProgram(): Command {
         process.on('unhandledRejection', unhandledHandler);
 
         try {
-          const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot })
-            .toString()
-            .trim();
-          const out = await c.startIssueRun.execute({ issueNumber: opts.issue, startCommitSha });
+          const out = await c.startIssueRun.execute({ issueNumber: opts.issue });
           // Use process.stdout.write with a callback (not console.log) because
           // process.exit() does not wait for stdout to flush.
           await new Promise<void>((resolve, reject) =>
