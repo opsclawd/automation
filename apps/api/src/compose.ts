@@ -217,7 +217,9 @@ class AbortRegistry {
     if (entry) {
       entry.controller.abort();
       let timer: NodeJS.Timeout;
-      const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, 30_000); });
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, 30_000);
+      });
       await Promise.race([entry.done.catch(() => {}), timeout]).finally(() => clearTimeout(timer));
     }
   }
@@ -548,6 +550,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '## CRITICAL RULES',
           '- Do NOT ask questions.',
           '- Do NOT switch branches. All work must stay on the current branch.',
+          '- Do NOT write any other files. No scratch files, no `git diff > file`, no temporary files.',
           '- Write code-review.md first, then result.json.',
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
