@@ -6,6 +6,8 @@ import type {
   GitPort,
   WorkerLeasePort,
   LoggerPort,
+  ResolveWorktreeCwdFn,
+  ResolveStartCommitShaFn,
 } from './ports.js';
 import type { CancelRunUseCase } from './use-cases.js';
 
@@ -14,8 +16,8 @@ export interface CancelRunDeps {
   runAbort: RunAbortPort;
   git: GitPort;
   leases: WorkerLeasePort;
-  findCwd: (repoId: RepositoryId, runId: RunId) => string;
-  findStartCommitSha: (runId: RunId) => string;
+  findCwd: ResolveWorktreeCwdFn;
+  findStartCommitSha: ResolveStartCommitShaFn;
   findRepoId: (runId: RunId) => RepositoryId;
   logger: LoggerPort;
   now?: () => Date;
@@ -38,11 +40,7 @@ export class CancelRun implements CancelRunUseCase {
     // Step 2: Persist cancelled state (MUST succeed — throws on failure)
     const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
       status: cancelled.status,
-      completedAt:
-        cancelled.completedAt ??
-        (() => {
-          throw new Error('cancelRun did not set completedAt');
-        })(),
+      completedAt: cancelled.completedAt!,
       ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
     });
     if (!updated) {

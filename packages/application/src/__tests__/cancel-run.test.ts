@@ -1,113 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { Run, RunStatus, RunId, RepositoryId, WorkerLease } from '@ai-sdlc/domain';
+import type { RunId, RepositoryId, WorkerLease } from '@ai-sdlc/domain';
 import { CancelRun } from '../cancel-run.js';
-import type {
-  RunRecord,
-  RunRepositoryPort,
-  RunRepositoryUpdatePatch,
-  GitPort,
-  WorkerLeasePort,
-  RunAbortPort,
-  LoggerPort,
-} from '../ports.js';
-
-interface RecordedUpdate {
-  uuid: string;
-  patch: RunRepositoryUpdatePatch;
-}
-
-class FakeRunRepo implements RunRepositoryPort {
-  runs: Map<string, RunRecord> = new Map();
-  updates: RecordedUpdate[] = [];
-  insertIfNoActive(_run: Run): void {}
-  update(uuid: string, patch: RunRepositoryUpdatePatch): void {
-    this.updates.push({ uuid, patch });
-  }
-  findByUuid(uuid: string): RunRecord | undefined {
-    return this.runs.get(uuid);
-  }
-  findByIssueNumber(issueNumber: number): RunRecord | undefined {
-    let latest: RunRecord | undefined;
-    for (const r of this.runs.values()) {
-      if (r.issueNumber === issueNumber) {
-        if (!latest || r.startedAt > latest.startedAt) {
-          latest = r;
-        }
-      }
-    }
-    return latest;
-  }
-  findActiveRuns(): RunRecord[] {
-    return Array.from(this.runs.values()).filter(
-      (r) => !['passed', 'failed', 'cancelled'].includes(r.status),
-    );
-  }
-  updateStatusByIssueNumber(
-    issueNumber: number,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    for (const [uuid, r] of this.runs) {
-      if (r.issueNumber === issueNumber && !['passed', 'failed', 'cancelled'].includes(r.status)) {
-        r.status = patch.status;
-        r.completedAt = patch.completedAt;
-        r.failureReason = patch.failureReason;
-        this.updates.push({
-          uuid,
-          patch: {
-            status: patch.status,
-            completedAt: patch.completedAt,
-            ...(patch.failureReason ? { failureReason: patch.failureReason } : {}),
-          },
-        });
-        return true;
-      }
-    }
-    return false;
-  }
-  updateStatusByUuid(
-    uuid: string,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    const r = this.runs.get(uuid);
-    if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) {
-      return false;
-    }
-    r.status = patch.status;
-    r.completedAt = patch.completedAt;
-    r.failureReason = patch.failureReason;
-    this.updates.push({
-      uuid,
-      patch: {
-        status: patch.status,
-        completedAt: patch.completedAt,
-        ...(patch.failureReason ? { failureReason: patch.failureReason } : {}),
-      },
-    });
-    return true;
-  }
-  atomicUpdateByUuid(
-    uuid: string,
-    patch: RunRepositoryUpdatePatch,
-    expectedStatus: RunStatus,
-  ): boolean {
-    const r = this.runs.get(uuid);
-    if (!r || r.status !== expectedStatus) {
-      return false;
-    }
-    if (patch.status !== undefined) r.status = patch.status;
-    if (patch.currentPhase !== undefined) r.currentPhase = patch.currentPhase;
-    if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
-    if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
-    if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
-    if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
-    this.updates.push({ uuid, patch });
-    return true;
-  }
-
-  addRun(r: RunRecord): void {
-    this.runs.set(r.uuid, r);
-  }
-}
+import type { GitPort, WorkerLeasePort, RunAbortPort, LoggerPort } from '../ports.js';
+import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 const runId = (s: string) => s as RunId;
@@ -130,7 +25,7 @@ const noopLogger: LoggerPort = { error: () => {} };
 
 function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.constructor>[0]> = {}) {
   return new CancelRun({
-    runRepository: deps.runRepository ?? new FakeRunRepo(),
+    runRepository: deps.runRepository ?? new FakeRunRepository(),
     runAbort: deps.runAbort ?? noopAbort,
     git: deps.git ?? noopGit,
     leases: deps.leases ?? noopLeases,
@@ -144,7 +39,7 @@ function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.const
 
 describe('CancelRun', () => {
   it('cancels an active run by runId', async () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'abc-123',
       displayId: 'issue-7-20260513-000000',
@@ -163,13 +58,13 @@ describe('CancelRun', () => {
   });
 
   it('throws when no run exists for the given runId', async () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     const usecase = makeCancelRun({ runRepository: repo });
     await expect(usecase.execute({ runId: runId('nonexistent') })).rejects.toThrow(/no run found/i);
   });
 
   it('throws when the run is already terminal', async () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'abc-456',
       displayId: 'issue-3-20260513-000000',
@@ -184,7 +79,7 @@ describe('CancelRun', () => {
   });
 
   it('cancels without a reason', async () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'abc-789',
       displayId: 'issue-10-20260513-000000',
@@ -200,7 +95,7 @@ describe('CancelRun', () => {
   });
 
   it('marks the run as cancelled via updateStatusByUuid', async () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'xyz-001',
       displayId: 'issue-15-20260513-000000',
@@ -219,7 +114,7 @@ describe('CancelRun', () => {
   });
 
   it('throws when updateStatusByUuid returns false (concurrent cancellation)', async () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'concurrent-cancel',
       displayId: 'issue-8-20260513-000000',
@@ -272,7 +167,7 @@ describe('CancelRun', () => {
         current: () => undefined,
         reclaimExpired: () => [],
       };
-      const repo = new FakeRunRepo();
+      const repo = new FakeRunRepository();
       repo.addRun({
         uuid: 'order-1',
         displayId: 'issue-1-20260513-000000',
@@ -326,7 +221,7 @@ describe('CancelRun', () => {
         heartbeatAt: new Date(),
         expiresAt: new Date(),
       };
-      const repo = new FakeRunRepo();
+      const repo = new FakeRunRepository();
       repo.addRun({
         uuid: 'order-2',
         displayId: 'issue-2-20260513-000000',
@@ -365,7 +260,7 @@ describe('CancelRun', () => {
     });
 
     it('marks cancelled even when all best-effort steps throw', async () => {
-      const repo = new FakeRunRepo();
+      const repo = new FakeRunRepository();
       repo.addRun({
         uuid: 'best-effort',
         displayId: 'issue-3-20260513-000000',
@@ -436,7 +331,7 @@ describe('CancelRun', () => {
 
     it('marks cancelled when abort throws but other steps proceed', async () => {
       const callOrder: string[] = [];
-      const repo = new FakeRunRepo();
+      const repo = new FakeRunRepository();
       repo.addRun({
         uuid: 'abort-throws',
         displayId: 'issue-4-20260513-000000',
@@ -500,7 +395,7 @@ describe('CancelRun', () => {
 
     it('marks cancelled when resetHard throws but other steps proceed', async () => {
       const callOrder: string[] = [];
-      const repo = new FakeRunRepo();
+      const repo = new FakeRunRepository();
       repo.addRun({
         uuid: 'reset-throws',
         displayId: 'issue-5-20260513-000000',
@@ -564,7 +459,7 @@ describe('CancelRun', () => {
 
     it('marks cancelled when lease release throws but other steps proceed', async () => {
       const callOrder: string[] = [];
-      const repo = new FakeRunRepo();
+      const repo = new FakeRunRepository();
       repo.addRun({
         uuid: 'lease-throws',
         displayId: 'issue-6-20260513-000000',

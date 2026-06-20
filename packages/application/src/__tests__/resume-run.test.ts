@@ -7,8 +7,8 @@ import { FakeJobQueuePort } from '../test-doubles/fake-job-queue-port.js';
 import { FakeStepRepository } from '../test-doubles/fake-step-repository.js';
 import { FakePhaseRepository } from '../test-doubles/fake-phase-repository.js';
 import { FakeWorkerRegistryPort } from '../test-doubles/fake-worker-registry-port.js';
-import type { Run, RunStatus } from '@ai-sdlc/domain';
-import type { RunRecord, RunRepositoryPort, RunRepositoryUpdatePatch } from '../ports.js';
+import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
+import type { RunRecord } from '../ports.js';
 
 const wid = (s: string) => s as WorkerId;
 const rid = (s: string) => s as RunId;
@@ -16,55 +16,6 @@ const repoid = (s: string) => s as RepositoryId;
 
 const fakeNow = new Date('2026-06-01T00:00:00Z');
 const fixedNow = () => fakeNow;
-
-class FakeRunRepoForResume implements RunRepositoryPort {
-  private runs = new Map<string, RunRecord>();
-  updates: Array<{ uuid: string; patch: RunRepositoryUpdatePatch }> = [];
-  findByUuid(uuid: string) {
-    return this.runs.get(uuid);
-  }
-  update(uuid: string, patch: RunRepositoryUpdatePatch) {
-    this.updates.push({ uuid, patch });
-  }
-  add(run: RunRecord) {
-    this.runs.set(run.uuid, run);
-  }
-  insertIfNoActive(_run: Run): void {}
-  findByIssueNumber(_issueNumber: number): RunRecord | undefined {
-    return undefined;
-  }
-  findActiveRuns(): RunRecord[] {
-    return [];
-  }
-  updateStatusByIssueNumber(
-    _issueNumber: number,
-    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    return false;
-  }
-  updateStatusByUuid(
-    _uuid: string,
-    _patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    return false;
-  }
-  atomicUpdateByUuid(
-    uuid: string,
-    patch: RunRepositoryUpdatePatch,
-    expectedStatus: RunStatus,
-  ): boolean {
-    const r = this.runs.get(uuid);
-    if (!r || r.status !== expectedStatus) {
-      return false;
-    }
-    if (patch.status !== undefined) r.status = patch.status;
-    if (patch.currentPhase !== undefined) r.currentPhase = patch.currentPhase;
-    if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
-    if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
-    this.updates.push({ uuid, patch });
-    return true;
-  }
-}
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -95,8 +46,8 @@ const seededRepo = {
 
 describe('ResumeRun', () => {
   it('resumes a failed run', async () => {
-    const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun({ completedPhases: ['phase-1'], skippedPhases: ['phase-2'] }));
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ completedPhases: ['phase-1'], skippedPhases: ['phase-2'] }));
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const leases = new FakeWorkerLeasePort(registry);
@@ -122,7 +73,7 @@ describe('ResumeRun', () => {
   });
 
   it('throws when run is not found', async () => {
-    const runRepo = new FakeRunRepoForResume();
+    const runRepo = new FakeRunRepository();
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const usecase = new ResumeRun({
@@ -141,8 +92,8 @@ describe('ResumeRun', () => {
   });
 
   it('throws when run is not failed', async () => {
-    const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun({ status: 'running' }));
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'running' }));
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const usecase = new ResumeRun({
@@ -161,8 +112,8 @@ describe('ResumeRun', () => {
   });
 
   it('throws when run is passed', async () => {
-    const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun({ status: 'passed' }));
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'passed' }));
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const usecase = new ResumeRun({
@@ -181,8 +132,8 @@ describe('ResumeRun', () => {
   });
 
   it('acquires a lease on resume', async () => {
-    const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun());
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const leases = new FakeWorkerLeasePort(registry);
@@ -204,8 +155,8 @@ describe('ResumeRun', () => {
   });
 
   it('enqueues a job on resume', async () => {
-    const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun());
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const repos = new FakeRepositoryPort([seededRepo]);
@@ -227,8 +178,8 @@ describe('ResumeRun', () => {
   });
 
   it('throws when repo is disabled', async () => {
-    const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun());
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const repos = new FakeRepositoryPort([{ ...seededRepo, enabled: false }]);
@@ -248,8 +199,8 @@ describe('ResumeRun', () => {
   });
 
   it('with fromPhase resets steps and sets currentPhase', async () => {
-    const runRepo = new FakeRunRepoForResume();
-    runRepo.add(makeRun());
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const repos = new FakeRepositoryPort([seededRepo]);

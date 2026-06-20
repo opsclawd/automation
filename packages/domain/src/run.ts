@@ -185,6 +185,14 @@ export function canResume(run: Run): boolean {
   return run.status === 'failed';
 }
 
+/**
+ * Resume a failed run.
+ *
+ * When `phase` is provided (phase-level retry), the run resumes from that
+ * specific phase — prior completed and skipped phases are preserved.
+ * When `phase` is omitted (full restart), completed and skipped phases are
+ * cleared and the run restarts from the first phase.
+ */
 export function resumeRun(run: Run, phase?: string): Run {
   if (run.status !== 'failed') {
     throw new RunStateError(

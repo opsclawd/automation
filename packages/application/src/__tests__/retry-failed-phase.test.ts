@@ -1,39 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { RunId, WorkerId } from '@ai-sdlc/domain';
 import { RetryFailedPhase } from '../retry-failed-phase.js';
-import type { RunRecord, RunRepositoryPort } from '../ports.js';
+import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
+import type { RunRecord } from '../ports.js';
 import { FakeResumeRun } from '../test-doubles/fake-resume-run.js';
 import { FakePhaseRepository } from '../test-doubles/fake-phase-repository.js';
 
 const wid = (s: string) => s as WorkerId;
 const rid = (s: string) => s as RunId;
-
-class FakeRunRepoForRetry implements RunRepositoryPort {
-  private runs = new Map<string, RunRecord>();
-  findByUuid(uuid: string) {
-    return this.runs.get(uuid);
-  }
-  add(run: RunRecord) {
-    this.runs.set(run.uuid, run);
-  }
-  insertIfNoActive() {}
-  update() {}
-  findByIssueNumber() {
-    return undefined;
-  }
-  findActiveRuns() {
-    return [];
-  }
-  updateStatusByIssueNumber() {
-    return false;
-  }
-  updateStatusByUuid() {
-    return false;
-  }
-  atomicUpdateByUuid() {
-    return false;
-  }
-}
 
 function makeFailedRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
@@ -52,8 +26,8 @@ function makeFailedRun(overrides: Partial<RunRecord> = {}): RunRecord {
 
 describe('RetryFailedPhase', () => {
   it('delegates to resumeRun with fromPhase = run.currentPhase and attempt count', async () => {
-    const runRepo = new FakeRunRepoForRetry();
-    runRepo.add(makeFailedRun());
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun());
     const resumeRun = new FakeResumeRun();
     const phaseRepo = new FakePhaseRepository();
     const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
@@ -66,8 +40,8 @@ describe('RetryFailedPhase', () => {
   });
 
   it('increments attempt count when phase was retried before', async () => {
-    const runRepo = new FakeRunRepoForRetry();
-    runRepo.add(makeFailedRun());
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun());
     const resumeRun = new FakeResumeRun();
     const phaseRepo = new FakePhaseRepository();
     phaseRepo.insert({
@@ -83,7 +57,7 @@ describe('RetryFailedPhase', () => {
   });
 
   it('throws when run is not found', async () => {
-    const runRepo = new FakeRunRepoForRetry();
+    const runRepo = new FakeRunRepository();
     const usecase = new RetryFailedPhase({
       runRepository: runRepo,
       phaseRepo: new FakePhaseRepository(),
@@ -95,8 +69,8 @@ describe('RetryFailedPhase', () => {
   });
 
   it('throws when run is not failed (guards against non-failed status)', async () => {
-    const runRepo = new FakeRunRepoForRetry();
-    runRepo.add(makeFailedRun({ status: 'running' }));
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ status: 'running' }));
     const resumeRun = new FakeResumeRun();
     const usecase = new RetryFailedPhase({
       runRepository: runRepo,
@@ -110,8 +84,8 @@ describe('RetryFailedPhase', () => {
   });
 
   it('throws when run has no currentPhase', async () => {
-    const runRepo = new FakeRunRepoForRetry();
-    runRepo.add(makeFailedRun({ currentPhase: undefined }));
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ currentPhase: undefined }));
     const usecase = new RetryFailedPhase({
       runRepository: runRepo,
       phaseRepo: new FakePhaseRepository(),

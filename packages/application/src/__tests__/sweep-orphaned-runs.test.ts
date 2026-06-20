@@ -1,88 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { Run, RunStatus } from '@ai-sdlc/domain';
 import { SweepOrphanedRuns } from '../sweep-orphaned-runs.js';
-import type { RunRecord, RunRepositoryPort, RunRepositoryUpdatePatch } from '../ports.js';
-
-interface RecordedUpdate {
-  uuid: string;
-  patch: RunRepositoryUpdatePatch;
-}
-
-class FakeRunRepo implements RunRepositoryPort {
-  runs: Map<string, RunRecord> = new Map();
-  updates: RecordedUpdate[] = [];
-  insertIfNoActive(_run: Run): void {}
-  update(uuid: string, patch: RunRepositoryUpdatePatch): void {
-    this.updates.push({ uuid, patch });
-  }
-  findByUuid(_uuid: string): RunRecord | undefined {
-    return undefined;
-  }
-  findByIssueNumber(_issueNumber: number): RunRecord | undefined {
-    return undefined;
-  }
-  findActiveRuns(): RunRecord[] {
-    return Array.from(this.runs.values()).filter(
-      (r) => !['passed', 'failed', 'cancelled'].includes(r.status),
-    );
-  }
-  updateStatusByIssueNumber(
-    issueNumber: number,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    for (const [uuid, r] of this.runs) {
-      if (r.issueNumber === issueNumber && !['passed', 'failed', 'cancelled'].includes(r.status)) {
-        r.status = patch.status;
-        r.completedAt = patch.completedAt;
-        r.failureReason = patch.failureReason;
-        this.updates.push({ uuid, patch });
-        return true;
-      }
-    }
-    return false;
-  }
-  updateStatusByUuid(
-    uuid: string,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
-  ): boolean {
-    const r = this.runs.get(uuid);
-    if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) {
-      return false;
-    }
-    r.status = patch.status;
-    r.completedAt = patch.completedAt;
-    r.failureReason = patch.failureReason;
-    this.updates.push({ uuid, patch });
-    return true;
-  }
-  atomicUpdateByUuid(
-    uuid: string,
-    patch: RunRepositoryUpdatePatch,
-    expectedStatus: RunStatus,
-  ): boolean {
-    const r = this.runs.get(uuid);
-    if (!r || r.status !== expectedStatus) {
-      return false;
-    }
-    if (patch.status !== undefined) r.status = patch.status;
-    if (patch.currentPhase !== undefined) r.currentPhase = patch.currentPhase;
-    if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
-    if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
-    if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
-    if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
-    this.updates.push({ uuid, patch });
-    return true;
-  }
-  addRun(r: RunRecord): void {
-    this.runs.set(r.uuid, r);
-  }
-}
+import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
 describe('SweepOrphanedRuns', () => {
   it('cancels runs whose PID is dead', () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'orphan-1',
       displayId: 'issue-1-20260513-000000',
@@ -103,7 +27,7 @@ describe('SweepOrphanedRuns', () => {
   });
 
   it('skips runs whose PID is still alive', () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'alive-1',
       displayId: 'issue-2-20260513-000000',
@@ -122,7 +46,7 @@ describe('SweepOrphanedRuns', () => {
   });
 
   it('skips runs with null PID (pre-migration rows)', () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'old-1',
       displayId: 'issue-3-20260513-000000',
@@ -140,7 +64,7 @@ describe('SweepOrphanedRuns', () => {
   });
 
   it('handles empty active runs list', () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     const isProcessAlive = () => false;
     const usecase = new SweepOrphanedRuns({ runRepository: repo, isProcessAlive });
     const result = usecase.execute();
@@ -148,7 +72,7 @@ describe('SweepOrphanedRuns', () => {
   });
 
   it('sweeps multiple orphaned runs', () => {
-    const repo = new FakeRunRepo();
+    const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'o1',
       displayId: 'issue-10-20260513-000000',

@@ -66,6 +66,20 @@ export class ResumeRun implements ResumeRunUseCase {
         createdAt: now(),
       });
 
+      const updated = this.deps.runRepository.atomicUpdateByUuid(
+        input.runId,
+        {
+          status: reactivated.status,
+          currentPhase: reactivated.currentPhase ?? null,
+          completedPhases: reactivated.completedPhases,
+          skippedPhases: reactivated.skippedPhases,
+        },
+        'failed' as RunStatus,
+      );
+      if (!updated) {
+        throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
+      }
+
       if (input.fromPhase) {
         const steps = this.deps.stepRepo
           .listForRun(input.runId)
@@ -82,20 +96,6 @@ export class ResumeRun implements ResumeRunUseCase {
           attempt: input.attempt ?? 1,
         };
         this.deps.phaseRepo.insert(phase);
-      }
-
-      const updated = this.deps.runRepository.atomicUpdateByUuid(
-        input.runId,
-        {
-          status: reactivated.status,
-          currentPhase: reactivated.currentPhase ?? null,
-          completedPhases: reactivated.completedPhases,
-          skippedPhases: reactivated.skippedPhases,
-        },
-        'failed' as RunStatus,
-      );
-      if (!updated) {
-        throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
       }
 
       this.deps.queue.enqueue({ job });
