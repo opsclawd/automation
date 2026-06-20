@@ -7,7 +7,11 @@ import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 const runId = (s: string) => s as RunId;
 
-const noopAbort: RunAbortPort = { register: () => {}, abort: () => {}, unregister: () => {} };
+const noopAbort: RunAbortPort = {
+  register: () => {},
+  abort: () => Promise.resolve(),
+  unregister: () => {},
+};
 const noopGit = { resetHard: () => Promise.resolve() } as GitPort;
 const noopLeases: WorkerLeasePort = {
   acquire: () => {
@@ -138,6 +142,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
+          return Promise.resolve();
         },
         unregister: () => {},
       };
@@ -267,7 +272,7 @@ describe('CancelRun', () => {
       });
       const runAbort: RunAbortPort = {
         register: () => {},
-        abort: () => {
+        abort: async () => {
           throw new Error('abort fail');
         },
         unregister: () => {
@@ -338,7 +343,7 @@ describe('CancelRun', () => {
       });
       const runAbort: RunAbortPort = {
         register: () => {},
-        abort: () => {
+        abort: async () => {
           throw new Error('abort fail');
         },
         unregister: () => {},
@@ -402,6 +407,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
+          return Promise.resolve();
         },
         unregister: () => {},
       };
@@ -464,6 +470,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
+          return Promise.resolve();
         },
         unregister: () => {},
       };

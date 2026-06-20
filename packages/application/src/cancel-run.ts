@@ -59,7 +59,7 @@ export class CancelRun implements CancelRunUseCase {
 
     // Step 3: Abort agent (best-effort)
     try {
-      runAbort.abort(input.runId);
+      await runAbort.abort(input.runId);
     } catch (err) {
       this.deps.logger.error(`CancelRun: abort failed for ${input.runId}`, err);
     }
