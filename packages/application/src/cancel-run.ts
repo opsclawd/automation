@@ -41,6 +41,7 @@ export class CancelRun implements CancelRunUseCase {
     const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
       status: cancelled.status,
       completedAt: cancelled.completedAt!,
+      currentPhase: null,
       ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
     });
     if (!updated) {

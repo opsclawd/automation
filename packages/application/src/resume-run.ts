@@ -80,6 +80,8 @@ export class ResumeRun implements ResumeRunUseCase {
         throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
       }
 
+      this.deps.queue.enqueue({ job });
+
       if (input.fromPhase) {
         const steps = this.deps.stepRepo
           .listForRun(input.runId)
@@ -97,8 +99,6 @@ export class ResumeRun implements ResumeRunUseCase {
         };
         this.deps.phaseRepo.insert(phase);
       }
-
-      this.deps.queue.enqueue({ job });
     } catch (err) {
       this.deps.leases.release(repo.id, input.workerId);
       throw err;

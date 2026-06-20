@@ -249,18 +249,24 @@ export class RunRepository {
 
   updateStatusByUuid(
     uuid: string,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+    patch: {
+      status: RunStatus;
+      completedAt: Date;
+      failureReason?: string;
+      currentPhase?: string | null;
+    },
   ): boolean {
     const result = this.db
       .prepare(
         `UPDATE runs SET status = @status, completed_at = @completed_at,
-           failure_reason = @failure_reason, current_phase = NULL
+           failure_reason = @failure_reason, current_phase = @current_phase
          WHERE uuid = @uuid AND status NOT IN ('passed','failed','cancelled')`,
       )
       .run({
         status: patch.status,
         completed_at: patch.completedAt.toISOString(),
         failure_reason: patch.failureReason ?? null,
+        current_phase: patch.currentPhase ?? null,
         uuid,
       });
     return result.changes > 0;

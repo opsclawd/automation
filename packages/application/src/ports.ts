@@ -54,7 +54,12 @@ export interface RunRepositoryPort {
   ): boolean;
   updateStatusByUuid(
     uuid: string,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+    patch: {
+      status: RunStatus;
+      completedAt: Date;
+      failureReason?: string;
+      currentPhase?: string | null;
+    },
   ): boolean;
 }
 

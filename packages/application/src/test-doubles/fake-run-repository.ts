@@ -91,7 +91,12 @@ export class FakeRunRepository implements RunRepositoryPort {
 
   updateStatusByUuid(
     uuid: string,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+    patch: {
+      status: RunStatus;
+      completedAt: Date;
+      failureReason?: string;
+      currentPhase?: string | null;
+    },
   ): boolean {
     const r = this.runs.get(uuid);
     if (!r || ['passed', 'failed', 'cancelled'].includes(r.status)) {
@@ -99,13 +104,20 @@ export class FakeRunRepository implements RunRepositoryPort {
     }
     r.status = patch.status;
     r.completedAt = patch.completedAt;
-    delete (r as { currentPhase?: unknown }).currentPhase;
+    if ('currentPhase' in patch) {
+      if (patch.currentPhase === null) {
+        delete (r as { currentPhase?: unknown }).currentPhase;
+      } else {
+        r.currentPhase = patch.currentPhase;
+      }
+    }
     if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
     this.updates.push({
       uuid,
       patch: {
         status: patch.status,
         completedAt: patch.completedAt,
+        ...(patch.currentPhase !== undefined ? { currentPhase: patch.currentPhase } : {}),
         ...(patch.failureReason !== undefined ? { failureReason: patch.failureReason } : {}),
       },
     });
