@@ -35,6 +35,7 @@ export interface RunRepositoryUpdatePatch {
   failureReason?: string | null;
   exitCode?: number;
   durationMs?: number;
+  startCommitSha?: string;
 }
 
 export interface RunRepositoryPort {
@@ -204,3 +205,4 @@ export type { RunAbortPort } from './ports/run-abort-port.js';
 export type { LoggerPort } from './ports/logger-port.js';
 export type ResolveWorktreeCwdFn = (repoId: RepositoryId, runId: RunId) => string;
 export type ResolveStartCommitShaFn = (runId: RunId) => string;
+export type ResolveRefShaFn = (cwd: string, ref: string) => string | undefined;

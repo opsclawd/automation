@@ -66,6 +66,7 @@ import {
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
   type FixStepOptions,
+  type ResolveRefShaFn,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import {
@@ -268,6 +269,13 @@ export function composeRoot(opts: ComposeOptions): Container {
   if (opts.model !== undefined) deps.model = opts.model;
   if (opts.agentCli !== undefined) deps.agentCli = opts.agentCli;
   if (opts.tee !== undefined) deps.tee = opts.tee;
+  deps.resolveRefSha = ((cwd: string, ref: string) => {
+    try {
+      return execFileSync('git', ['rev-parse', ref], { cwd }).toString().trim() || undefined;
+    } catch {
+      return undefined;
+    }
+  }) satisfies ResolveRefShaFn;
   const startIssueRun = new StartIssueRun(deps);
   const logger: { error: (message: string, ...args: unknown[]) => void } = {
     error: (msg, ...args) => console.error(msg, ...args),

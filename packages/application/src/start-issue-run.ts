@@ -8,6 +8,7 @@ import type {
   EventBusPort,
   EventTailerFactory,
   FailureRepositoryPort,
+  ResolveRefShaFn,
   RunBashScriptFn,
   RunDirectoryFactory,
   RunDirectoryHandle,
@@ -34,11 +35,11 @@ export interface StartIssueRunDeps {
   tee?: boolean;
   now?: () => Date;
   logger?: { error: (msg: string, err?: unknown) => void };
+  resolveRefSha?: ResolveRefShaFn;
 }
 
 export interface StartIssueRunInput {
   issueNumber: number;
-  startCommitSha?: string;
 }
 
 export interface StartIssueRunOutput {
@@ -62,10 +63,7 @@ export class StartIssueRun {
       issueNumber: input.issueNumber,
       startedAt,
     });
-    this.deps.runRepository.insertIfNoActive({
-      ...run,
-      ...(input.startCommitSha ? { startCommitSha: input.startCommitSha } : {}),
-    });
+    this.deps.runRepository.insertIfNoActive(run);
     let dir: RunDirectoryHandle;
     try {
       dir = this.deps.runDirectoryFactory({ rootDir: this.deps.runsDir, run });
@@ -201,6 +199,24 @@ export class StartIssueRun {
             logger.error(`Failed to write run.json for ${run.displayId}`, writeErr);
           }
           throw err;
+        }
+        // Capture the actual start commit SHA from the worktree after the
+        // script's fetch and worktree creation. The script fetches
+        // origin/<baseBranch> before creating the worktree, so resolving the
+        // ref from the worktree directory gives the correct baseline SHA.
+        if (this.deps.resolveRefSha) {
+          try {
+            const worktreeRoot = `${this.deps.runsDir}/issue-${run.issueNumber}`;
+            const sha = this.deps.resolveRefSha(
+              worktreeRoot,
+              `origin/${this.deps.baseBranch ?? 'main'}`,
+            );
+            if (sha) {
+              this.deps.runRepository.update(run.uuid, { startCommitSha: sha });
+            }
+          } catch (e) {
+            logger.error(`Failed to capture startCommitSha from worktree for ${run.displayId}`, e);
+          }
         }
         const completedAt = now();
         const finalStatus: 'passed' | 'failed' = exec.exitCode === 0 ? 'passed' : 'failed';

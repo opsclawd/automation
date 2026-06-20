@@ -63,6 +63,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     }
     if (patch.exitCode !== undefined) r.exitCode = patch.exitCode;
     if (patch.durationMs !== undefined) r.durationMs = patch.durationMs;
+    if (patch.startCommitSha !== undefined) r.startCommitSha = patch.startCommitSha;
   }
 
   findByUuid(uuid: string): RunRecord | undefined {
@@ -180,6 +181,7 @@ export class FakeRunRepository implements RunRepositoryPort {
     }
     if (patch.exitCode !== undefined) r.exitCode = patch.exitCode;
     if (patch.durationMs !== undefined) r.durationMs = patch.durationMs;
+    if (patch.startCommitSha !== undefined) r.startCommitSha = patch.startCommitSha;
     this.updates.push({ uuid, patch });
     return true;
   }
