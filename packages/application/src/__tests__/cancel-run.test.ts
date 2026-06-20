@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { RunId, RepositoryId, WorkerLease } from '@ai-sdlc/domain';
+import type { RunId, RepositoryId } from '@ai-sdlc/domain';
 import { CancelRun } from '../cancel-run.js';
 import type { GitPort, WorkerLeasePort, RunAbortPort, LoggerPort } from '../ports.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';

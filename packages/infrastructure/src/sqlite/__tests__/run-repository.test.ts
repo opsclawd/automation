@@ -318,4 +318,58 @@ describe('RunRepository', () => {
     expect(updated).toBe(false);
     db.close();
   });
+
+  it('atomicUpdateByUuid returns true when expectedStatus matches', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-9-20260513-000000',
+      issueNumber: 9,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const updated = repo.atomicUpdateByUuid('u1', { status: 'failed' }, 'running');
+    expect(updated).toBe(true);
+    const row = repo.findByUuid('u1');
+    expect(row?.status).toBe('failed');
+    db.close();
+  });
+
+  it('atomicUpdateByUuid returns false when expectedStatus does not match', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-10-20260513-000000',
+      issueNumber: 10,
+      type: 'issue_to_pr',
+      status: 'passed',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const updated = repo.atomicUpdateByUuid('u1', { status: 'failed' }, 'running');
+    expect(updated).toBe(false);
+    db.close();
+  });
+
+  it('atomicUpdateByUuid does not modify row on status mismatch', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-11-20260513-000000',
+      issueNumber: 11,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    repo.atomicUpdateByUuid('u1', { status: 'failed' }, 'cancelled');
+    const row = repo.findByUuid('u1');
+    expect(row?.status).toBe('running');
+    db.close();
+  });
 });

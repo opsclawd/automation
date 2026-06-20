@@ -38,6 +38,9 @@ export class CancelRun implements CancelRunUseCase {
     const cancelled = cancelRun(run, input.reason, now());
 
     // Step 2: Persist cancelled state (MUST succeed — throws on failure)
+    // NOTE: There is a TOCTOU window between the domain validation above and
+    // this SQL UPDATE. The DB-level guard (WHERE status NOT IN terminal) and
+    // the `!updated` check below catch concurrent terminal transitions.
     const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
       status: cancelled.status,
       completedAt: cancelled.completedAt!,

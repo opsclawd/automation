@@ -80,17 +80,6 @@ export class ResumeRun implements ResumeRunUseCase {
         throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
       }
 
-      try {
-        this.deps.queue.enqueue({ job });
-      } catch (err) {
-        this.deps.runRepository.atomicUpdateByUuid(
-          input.runId,
-          { status: 'failed' as RunStatus },
-          'running' as RunStatus,
-        );
-        throw err;
-      }
-
       if (input.fromPhase) {
         const steps = this.deps.stepRepo
           .listForRun(input.runId)
@@ -107,6 +96,22 @@ export class ResumeRun implements ResumeRunUseCase {
           attempt: input.attempt ?? 1,
         };
         this.deps.phaseRepo.insert(phase);
+      }
+
+      try {
+        this.deps.queue.enqueue({ job });
+      } catch (err) {
+        const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
+          input.runId,
+          { status: 'failed' as RunStatus },
+          'running' as RunStatus,
+        );
+        if (!rollbackOk) {
+          console.error(
+            `ResumeRun: rollback CAS failed for ${input.runId} — status may be orphaned as 'running'`,
+          );
+        }
+        throw err;
       }
     } catch (err) {
       this.deps.leases.release(repo.id, input.workerId);

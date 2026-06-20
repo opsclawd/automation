@@ -260,14 +260,17 @@ export class RunRepository {
     const params: Record<string, unknown> = {
       status: patch.status,
       completed_at: patch.completedAt.toISOString(),
-      failure_reason: patch.failureReason ?? null,
       uuid,
     };
+    if (patch.failureReason !== undefined) {
+      fields.push('failure_reason = @failure_reason');
+      params.failure_reason = patch.failureReason;
+    }
     if (patch.currentPhase !== undefined) {
       fields.push('current_phase = @current_phase');
       params.current_phase = patch.currentPhase;
     }
-    const sql = `UPDATE runs SET ${fields.join(', ')}${patch.failureReason !== undefined ? ', failure_reason = @failure_reason' : ''} WHERE uuid = @uuid AND status NOT IN ('passed','failed','cancelled')`;
+    const sql = `UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid AND status NOT IN ('passed','failed','cancelled')`;
     const result = this.db.prepare(sql).run(params);
     return result.changes > 0;
   }
