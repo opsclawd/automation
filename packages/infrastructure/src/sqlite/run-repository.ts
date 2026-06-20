@@ -256,19 +256,19 @@ export class RunRepository {
       currentPhase?: string | null;
     },
   ): boolean {
-    const result = this.db
-      .prepare(
-        `UPDATE runs SET status = @status, completed_at = @completed_at,
-           failure_reason = @failure_reason, current_phase = @current_phase
-         WHERE uuid = @uuid AND status NOT IN ('passed','failed','cancelled')`,
-      )
-      .run({
-        status: patch.status,
-        completed_at: patch.completedAt.toISOString(),
-        failure_reason: patch.failureReason ?? null,
-        current_phase: patch.currentPhase ?? null,
-        uuid,
-      });
+    const fields: string[] = ['status = @status', 'completed_at = @completed_at'];
+    const params: Record<string, unknown> = {
+      status: patch.status,
+      completed_at: patch.completedAt.toISOString(),
+      failure_reason: patch.failureReason ?? null,
+      uuid,
+    };
+    if (patch.currentPhase !== undefined) {
+      fields.push('current_phase = @current_phase');
+      params.current_phase = patch.currentPhase;
+    }
+    const sql = `UPDATE runs SET ${fields.join(', ')}${patch.failureReason !== undefined ? ', failure_reason = @failure_reason' : ''} WHERE uuid = @uuid AND status NOT IN ('passed','failed','cancelled')`;
+    const result = this.db.prepare(sql).run(params);
     return result.changes > 0;
   }
 }

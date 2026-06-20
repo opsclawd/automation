@@ -42,6 +42,8 @@ export class FakeRunRepository implements RunRepositoryPort {
     if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
     if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
     if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
+    if (patch.exitCode !== undefined) r.exitCode = patch.exitCode;
+    if (patch.durationMs !== undefined) r.durationMs = patch.durationMs;
   }
 
   findByUuid(uuid: string): RunRecord | undefined {
@@ -145,6 +147,8 @@ export class FakeRunRepository implements RunRepositoryPort {
     if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
     if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
     if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
+    if (patch.exitCode !== undefined) r.exitCode = patch.exitCode;
+    if (patch.durationMs !== undefined) r.durationMs = patch.durationMs;
     this.updates.push({ uuid, patch });
     return true;
   }

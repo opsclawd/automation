@@ -80,7 +80,16 @@ export class ResumeRun implements ResumeRunUseCase {
         throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
       }
 
-      this.deps.queue.enqueue({ job });
+      try {
+        this.deps.queue.enqueue({ job });
+      } catch (err) {
+        this.deps.runRepository.atomicUpdateByUuid(
+          input.runId,
+          { status: 'failed' as RunStatus },
+          'running' as RunStatus,
+        );
+        throw err;
+      }
 
       if (input.fromPhase) {
         const steps = this.deps.stepRepo

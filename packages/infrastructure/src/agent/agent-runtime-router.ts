@@ -264,10 +264,7 @@ export class AgentRuntimeRouter implements AgentPort {
           if (fallbackAdapter) {
             const triggerReason = this.determineTriggerReason(result);
 
-            const { abortSignal, ...rest } = request;
-            // abortSignal is intentionally dropped from fallback request —
-            // the fallback adapter manages its own cancellation.
-            void abortSignal;
+            const { abortSignal: _abortSignal, ...rest } = request;
             const fallbackRequest: AgentInvocationRequest = {
               ...rest,
               profile: AgentProfileName(fallbackProfileName),

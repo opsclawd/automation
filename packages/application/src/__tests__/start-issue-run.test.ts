@@ -12,7 +12,6 @@ import type {
   RunDirectoryFactory,
   RunDirectoryHandle,
   RunRepositoryUpdatePatch,
-  RunRecord,
   TmpDirectoryFactory,
 } from '../ports.js';
 import { FakeRunRepository as FakeRunRepositoryBase } from '../test-doubles/fake-run-repository.js';
@@ -25,29 +24,6 @@ class FakeRunRepository extends FakeRunRepositoryBase {
     this.inserted.push(run);
   }
 
-  findByUuid(uuid: string): RunRecord | undefined {
-    const run = super.findByUuid(uuid);
-    if (!run) return undefined;
-    // Reconstruct from updates to reflect in-flight status changes
-    let status = run.status;
-    let completedAt: Date | undefined;
-    let failureReason: string | undefined;
-    for (const u of this.updates) {
-      if (u.uuid === uuid) {
-        if (u.patch.status) status = u.patch.status;
-        if (u.patch.completedAt) completedAt = u.patch.completedAt;
-        if (u.patch.failureReason) failureReason = u.patch.failureReason;
-      }
-    }
-    return {
-      ...run,
-      status,
-      ...(completedAt ? { completedAt } : {}),
-      ...(failureReason ? { failureReason } : {}),
-    };
-  }
-
-  // Provide a helper to merge all updates for a given run UUID.
   finalPatch(uuid: string): RunRepositoryUpdatePatch {
     const merged: RunRepositoryUpdatePatch = {};
     for (const u of this.updates) {
