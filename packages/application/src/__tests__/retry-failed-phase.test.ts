@@ -83,7 +83,28 @@ describe('RetryFailedPhase', () => {
     expect(resumeRun.calls).toHaveLength(0);
   });
 
-  it('throws when run has no currentPhase', async () => {
+  it('derives phase from phase records when run.currentPhase is undefined', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ currentPhase: undefined }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    phaseRepo.insert({
+      id: 'implement',
+      runUuid: 'run-rp-1',
+      name: 'implement',
+      status: 'failed',
+      attempt: 1,
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      completedAt: new Date('2026-06-01T01:00:00Z'),
+    });
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.fromPhase).toBe('implement');
+    expect(resumeRun.calls[0]!.attempt).toBe(2);
+  });
+
+  it('throws when run has no currentPhase and no failed phase records', async () => {
     const runRepo = new FakeRunRepository();
     runRepo.addRun(makeFailedRun({ currentPhase: undefined }));
     const usecase = new RetryFailedPhase({

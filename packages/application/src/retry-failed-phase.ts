@@ -1,4 +1,4 @@
-import type { RunId, WorkerId } from '@ai-sdlc/domain';
+import type { Phase, RunId, WorkerId } from '@ai-sdlc/domain';
 import type { RunRepositoryPort, PhaseRepositoryPort } from './ports.js';
 import type { RetryFailedPhaseUseCase, ResumeRunUseCase } from './use-cases.js';
 
@@ -17,18 +17,26 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
     if (run.status !== 'failed') {
       throw new Error(`Cannot retry phase for run ${input.runId}: status is '${run.status}'`);
     }
-    if (!run.currentPhase) {
+    const phases = this.deps.phaseRepo.listByRun(input.runId);
+    const phaseName = run.currentPhase ?? latestFailedPhaseName(phases);
+    if (!phaseName) {
       throw new Error(`Cannot retry phase for run ${input.runId}: no current phase to retry`);
     }
-    const phases = this.deps.phaseRepo.listByRun(input.runId);
     const previousAttempts = phases.filter(
-      (p) => p.name === run.currentPhase && p.status === 'failed',
+      (p) => p.name === phaseName && p.status === 'failed',
     ).length;
     return this.deps.resumeRun.execute({
       runId: input.runId,
-      fromPhase: run.currentPhase,
+      fromPhase: phaseName,
       workerId: input.workerId,
       attempt: previousAttempts + 1,
     });
   }
+}
+
+function latestFailedPhaseName(phases: Phase[]): string | undefined {
+  const failed = phases.filter((p) => p.status === 'failed');
+  if (failed.length === 0) return undefined;
+  failed.sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0));
+  return failed[0]!.name;
 }
