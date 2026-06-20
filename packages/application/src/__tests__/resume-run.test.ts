@@ -250,6 +250,8 @@ describe('ResumeRun', () => {
     const repos = new FakeRepositoryPort([seededRepo]);
     const queue = new FakeQueueWithThrow(repos);
     const stepRepo = new FakeStepRepository();
+    const stepStartedAt = new Date();
+    const stepCompletedAt = new Date();
     stepRepo.upsert({
       id: 's1',
       runId: 'run-1',
@@ -257,10 +259,21 @@ describe('ResumeRun', () => {
       index: 0,
       title: 'Step 1',
       status: 'failed',
-      startedAt: new Date(),
-      completedAt: new Date(),
+      startedAt: stepStartedAt,
+      completedAt: stepCompletedAt,
     });
     const phaseRepo = new FakePhaseRepository();
+    const phaseStartedAt = new Date();
+    const phaseCompletedAt = new Date();
+    phaseRepo.insert({
+      id: 'run-1-test-phase',
+      runUuid: 'run-1',
+      name: 'test-phase',
+      status: 'failed',
+      attempt: 1,
+      startedAt: phaseStartedAt,
+      completedAt: phaseCompletedAt,
+    });
     const usecase = new ResumeRun({
       runRepository: runRepo,
       repos,
@@ -279,10 +292,13 @@ describe('ResumeRun', () => {
     expect(run.completedAt).toEqual(completedAt);
     expect(run.failureReason).toBe('lint failed');
     const steps = stepRepo.listForRun(rid('run-1'));
-    expect(steps[0]!.status).toBe('pending');
-    expect(steps[0]!.startedAt).toBeUndefined();
-    expect(steps[0]!.completedAt).toBeUndefined();
-    expect(phaseRepo.listByRun(rid('run-1'))).toHaveLength(1);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]!.status).toBe('failed');
+    expect(steps[0]!.startedAt).toEqual(stepStartedAt);
+    expect(steps[0]!.completedAt).toEqual(stepCompletedAt);
+    const phases = phaseRepo.listByRun(rid('run-1'));
+    expect(phases).toHaveLength(1);
+    expect(phases[0]!.status).toBe('failed');
     expect(leases.current(repoid('run-1'))).toBeUndefined();
   });
 

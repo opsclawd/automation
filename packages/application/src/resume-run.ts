@@ -1,6 +1,6 @@
 import { canResume, resumeRun, createJob } from '@ai-sdlc/domain';
 import { IssueNumber } from '@ai-sdlc/domain';
-import type { RunId, WorkerId, RepositoryId, JobId, Step, RunStatus } from '@ai-sdlc/domain';
+import type { RunId, WorkerId, RepositoryId, JobId, Step, Phase, RunStatus } from '@ai-sdlc/domain';
 import type {
   RunRepositoryPort,
   RepositoryPort,
@@ -78,6 +78,18 @@ export class ResumeRun implements ResumeRunUseCase {
         createdAt: now(),
       });
 
+      // Save original step/phase state (for rollback if enqueue fails)
+      const savedSteps: Step[] = [];
+      let savedPhase: Phase | undefined;
+      if (input.fromPhase) {
+        const originalSteps = this.deps.stepRepo
+          .listForRun(input.runId)
+          .filter((s: Step) => s.phaseId != null && s.phaseId === input.fromPhase);
+        savedSteps.push(...originalSteps);
+        const existingPhases = this.deps.phaseRepo.listByRun(input.runId);
+        savedPhase = existingPhases.find((p) => p.name === input.fromPhase);
+      }
+
       const updated = this.deps.runRepository.atomicUpdateByUuid(
         input.runId,
         {
@@ -96,10 +108,7 @@ export class ResumeRun implements ResumeRunUseCase {
 
       try {
         if (input.fromPhase) {
-          const steps = this.deps.stepRepo
-            .listForRun(input.runId)
-            .filter((s: Step) => s.phaseId != null && s.phaseId === input.fromPhase);
-          for (const step of steps) {
+          for (const step of savedSteps) {
             const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
             this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
           }
@@ -131,6 +140,14 @@ export class ResumeRun implements ResumeRunUseCase {
           this.deps.logger.error(
             `ResumeRun: rollback CAS failed for ${input.runId} — status may be orphaned as 'running'`,
           );
+        }
+        // Restore step states
+        for (const step of savedSteps) {
+          this.deps.stepRepo.upsert({ ...step });
+        }
+        // Restore phase state (undo the pending insert that overwrote the original)
+        if (savedPhase) {
+          this.deps.phaseRepo.update({ ...savedPhase });
         }
         throw err;
       }
