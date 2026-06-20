@@ -303,7 +303,11 @@ export function composeRoot(opts: ComposeOptions): Container {
       isAncestor: async () => false,
       logBetween: async () => [],
       cleanUntracked: (cwd: string) => {
-        execFileSync('git', ['clean', '-fd'], { cwd });
+        // -x also removes worktree-ignored orchestrator artifacts (result.json,
+        // *.md, *.result, logs) that the script seeds into .git/info/exclude, so
+        // a cancelled/reset run can't leak stale results into the next run on the
+        // reused worktree. node_modules is excluded to avoid an expensive reinstall.
+        execFileSync('git', ['clean', '-fdx', '-e', 'node_modules'], { cwd });
         return Promise.resolve();
       },
       headCommitShaOf: async () => undefined,
@@ -330,11 +334,12 @@ export function composeRoot(opts: ComposeOptions): Container {
       if (!run) return 'HEAD';
       if (run.startCommitSha) return run.startCommitSha;
       // Resolve from the worktree's branch at cancel time.
-      // The issue branch was created from origin/<defaultBranch>; the merge
-      // base gives the original commit even if origin/<defaultBranch> has
-      // advanced since worktree creation. This avoids capturing the SHA from
-      // repoRoot before the worktree exists (which could be stale).
-      const branchName = `issue-${run.issueNumber}`;
+      // The issue branch (`ai/issue-<n>`, per scripts/ai-run-issue-v2) was
+      // created from origin/<defaultBranch>; the merge base gives the original
+      // commit even if origin/<defaultBranch> has advanced since worktree
+      // creation. This avoids capturing the SHA from repoRoot before the
+      // worktree exists (which could be stale).
+      const branchName = `ai/issue-${run.issueNumber}`;
       try {
         const sha = execFileSync(
           'git',
@@ -1304,7 +1309,11 @@ export function composeRoot(opts: ComposeOptions): Container {
       },
       async cleanUntracked(cwd: string): Promise<void> {
         const { execFileSync } = await import('node:child_process');
-        execFileSync('git', ['clean', '-fd'], { cwd });
+        // -x also removes worktree-ignored orchestrator artifacts (result.json,
+        // *.md, *.result, logs) that the script seeds into .git/info/exclude, so
+        // a cancelled/reset run can't leak stale results into the next run on the
+        // reused worktree. node_modules is excluded to avoid an expensive reinstall.
+        execFileSync('git', ['clean', '-fdx', '-e', 'node_modules'], { cwd });
       },
     };
     const processor = new ProcessPrReviewComments({

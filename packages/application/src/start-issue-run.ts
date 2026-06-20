@@ -204,9 +204,14 @@ export class StartIssueRun {
         // script's fetch and worktree creation. The script fetches
         // origin/<baseBranch> before creating the worktree, so resolving the
         // ref from the worktree directory gives the correct baseline SHA.
+        // The worktree lives at <repoRoot>/.ai-worktrees/issue-<n> (sibling of
+        // runsDir = <repoRoot>/.ai-runs), NOT under runsDir. Derived via string
+        // because the node:path module is disallowed in this layer (depcruise
+        // rule application-no-io-except-prompt-template).
         if (this.deps.resolveRefSha) {
           try {
-            const worktreeRoot = `${this.deps.runsDir}/issue-${run.issueNumber}`;
+            const repoRoot = this.deps.runsDir.replace(/\/\.ai-runs$/, '');
+            const worktreeRoot = `${repoRoot}/.ai-worktrees/issue-${run.issueNumber}`;
             const sha = this.deps.resolveRefSha(
               worktreeRoot,
               `origin/${this.deps.baseBranch ?? 'main'}`,

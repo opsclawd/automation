@@ -174,6 +174,34 @@ describe('StartIssueRun', () => {
     expect(calls[0]!.env.AI_ISSUE_NUMBER).toBe('42');
   });
 
+  it('captures startCommitSha from the .ai-worktrees worktree path, not runsDir', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash } = fakeBash({ exitCode: 0 });
+    const refCalls: Array<{ cwd: string; ref: string }> = [];
+    const resolveRefSha = (cwd: string, ref: string) => {
+      refCalls.push({ cwd, ref });
+      return 'base-sha-123';
+    };
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      resolveRefSha,
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 42 });
+    // Must resolve from the actual worktree dir (sibling of runsDir), not under it.
+    expect(refCalls).toEqual([{ cwd: '/fake/.ai-worktrees/issue-42', ref: 'origin/main' }]);
+    expect(repo.findByUuid(out.uuid)?.startCommitSha).toBe('base-sha-123');
+  });
+
   it('marks run failed on non-zero exit and sets failureReason', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
