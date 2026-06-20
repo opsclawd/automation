@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RunExecutor } from '../run-executor.js';
 import { PhaseHandlerRegistry } from '../phase-handler-registry.js';
-import type { PhaseHandler, PhaseHandlerContext } from '../../phases/handler.js';
+import type { PhaseHandler } from '../../phases/handler.js';
 import type { Run, Failure } from '@ai-sdlc/domain';
 import { createRun, PhaseName as makePhaseName } from '@ai-sdlc/domain';
 import {
@@ -22,13 +22,6 @@ function makeRun(overrides?: Partial<Run>): Run {
   });
 }
 
-function makeHandler(phase: string): PhaseHandler {
-  return {
-    phase: makePhaseName(phase),
-    run: async (_ctx: PhaseHandlerContext) => ({ outcome: 'passed' as const }),
-  };
-}
-
 function makeFailure(overrides?: Partial<Failure>): Failure {
   return {
     runUuid: 'test-uuid',
@@ -42,53 +35,71 @@ function makeFailure(overrides?: Partial<Failure>): Failure {
   };
 }
 
+function makeExecutor(overrides?: {
+  handlers?: Array<{ phase: string; run: PhaseHandler['run'] }>;
+  runOverrides?: Partial<Run>;
+}): {
+  executor: RunExecutor;
+  runRepo: FakeRunRepository;
+  phaseRepo: FakePhaseRepository;
+  failureRepo: FakeFailureRepository;
+  artifactStore: FakeArtifactStore;
+  eventBus: FakeEventBus;
+  registry: PhaseHandlerRegistry;
+  run: Run;
+} {
+  const runRepo = new FakeRunRepository();
+  const phaseRepo = new FakePhaseRepository();
+  const failureRepo = new FakeFailureRepository();
+  const artifactStore = new FakeArtifactStore();
+  const eventBus = new FakeEventBus();
+  const run = makeRun(overrides?.runOverrides);
+  runRepo.addRun({ ...run, startCommitSha: 'abc123' });
+  const registry = new PhaseHandlerRegistry();
+  const phases = [
+    'read_issue',
+    'plan-design',
+    'plan-write',
+    'implement',
+    'validate',
+    'review-fix',
+    'compound',
+    'create-pr',
+    'post-pr-review',
+  ];
+  for (const p of phases) {
+    const override = overrides?.handlers?.find((h) => h.phase === p);
+    registry.register({
+      phase: makePhaseName(p),
+      run: override?.run ?? (async () => ({ outcome: 'passed' as const })),
+    });
+  }
+  const executor = new RunExecutor({
+    runRepository: runRepo,
+    failureRepository: failureRepo,
+    phaseRepository: phaseRepo,
+    events: eventBus,
+    registry,
+    contextFactory: () => ({
+      runId: run.uuid,
+      runUuid: run.uuid,
+      repoFullName: 'owner/repo',
+      issueNumber: run.issueNumber,
+      cwd: '/tmp/test-worktree',
+      artifacts: artifactStore,
+      github: {} as never,
+      git: {} as never,
+      agent: {} as never,
+      events: eventBus,
+      now: () => new Date('2026-01-01T00:00:00Z'),
+    }),
+  });
+  return { executor, runRepo, phaseRepo, failureRepo, artifactStore, eventBus, registry, run };
+}
+
 describe('RunExecutor end-to-end', () => {
   it('completes a full run through all 9 phases with in-memory fakes', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
-
-    const run = makeRun();
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    const phases = [
-      'read_issue',
-      'plan-design',
-      'plan-write',
-      'implement',
-      'validate',
-      'review-fix',
-      'compound',
-      'create-pr',
-      'post-pr-review',
-    ];
-    for (const p of phases) {
-      registry.register(makeHandler(p));
-    }
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
-    });
+    const { executor, run } = makeExecutor();
 
     const result = await executor.execute({
       run,
@@ -104,51 +115,7 @@ describe('RunExecutor end-to-end', () => {
   });
 
   it('persists state after each phase transition', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
-
-    const run = makeRun();
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    const phases = [
-      'read_issue',
-      'plan-design',
-      'plan-write',
-      'implement',
-      'validate',
-      'review-fix',
-      'compound',
-      'create-pr',
-      'post-pr-review',
-    ];
-    for (const p of phases) {
-      registry.register(makeHandler(p));
-    }
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
-    });
+    const { executor, runRepo, phaseRepo, run } = makeExecutor();
 
     await executor.execute({ run, skip: [], presentArtifacts: [] });
 
@@ -163,51 +130,7 @@ describe('RunExecutor end-to-end', () => {
   });
 
   it('skips the compound phase when in skip list', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
-
-    const run = makeRun();
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    const phases = [
-      'read_issue',
-      'plan-design',
-      'plan-write',
-      'implement',
-      'validate',
-      'review-fix',
-      'compound',
-      'create-pr',
-      'post-pr-review',
-    ];
-    for (const p of phases) {
-      registry.register(makeHandler(p));
-    }
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
-    });
+    const { executor, run } = makeExecutor();
 
     const result = await executor.execute({
       run,
@@ -221,40 +144,13 @@ describe('RunExecutor end-to-end', () => {
   });
 
   it('marks run as failed when a handler returns failed outcome', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
-
-    const run = makeRun();
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    registry.register({
-      phase: makePhaseName('read_issue'),
-      run: async () => ({ outcome: 'failed', failure: makeFailure() }),
-    });
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
+    const { executor, runRepo, failureRepo, run } = makeExecutor({
+      handlers: [
+        {
+          phase: 'read_issue',
+          run: async () => ({ outcome: 'failed' as const, failure: makeFailure() }),
+        },
+      ],
     });
 
     const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
@@ -273,40 +169,16 @@ describe('RunExecutor end-to-end', () => {
   });
 
   it('pauses run when a handler returns blocked outcome', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
-
-    const run = makeRun();
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    registry.register({
-      phase: makePhaseName('read_issue'),
-      run: async () => ({ outcome: 'blocked', failure: makeFailure({ kind: 'agent_blocked' }) }),
-    });
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
+    const { executor, runRepo, run } = makeExecutor({
+      handlers: [
+        {
+          phase: 'read_issue',
+          run: async () => ({
+            outcome: 'blocked' as const,
+            failure: makeFailure({ kind: 'agent_blocked' }),
+          }),
+        },
+      ],
     });
 
     const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
@@ -320,40 +192,13 @@ describe('RunExecutor end-to-end', () => {
   });
 
   it('pauses run when a handler returns resting outcome', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
-
-    const run = makeRun();
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    registry.register({
-      phase: makePhaseName('read_issue'),
-      run: async () => ({ outcome: 'resting' }),
-    });
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
+    const { executor, runRepo, run } = makeExecutor({
+      handlers: [
+        {
+          phase: 'read_issue',
+          run: async () => ({ outcome: 'resting' as const }),
+        },
+      ],
     });
 
     const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
@@ -363,45 +208,21 @@ describe('RunExecutor end-to-end', () => {
     expect(result.phases).toHaveLength(1);
     expect(result.phases[0]!.status).toBe('resting');
     expect(result.run.currentPhase).toBeUndefined();
+
+    const persistedRun = runRepo.findByUuid(run.uuid);
+    expect(persistedRun?.status).toBe('running');
   });
 
   it('marks run as failed when a handler throws an exception', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
-
-    const run = makeRun();
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    registry.register({
-      phase: makePhaseName('read_issue'),
-      run: async () => {
-        throw new Error('handler crash');
-      },
-    });
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
+    const { executor, run } = makeExecutor({
+      handlers: [
+        {
+          phase: 'read_issue',
+          run: async () => {
+            throw new Error('handler crash');
+          },
+        },
+      ],
     });
 
     const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
@@ -412,57 +233,15 @@ describe('RunExecutor end-to-end', () => {
   });
 
   it('resumes correctly when completedPhases are present', async () => {
-    const runRepo = new FakeRunRepository();
-    const phaseRepo = new FakePhaseRepository();
-    const failureRepo = new FakeFailureRepository();
-    const artifactStore = new FakeArtifactStore();
-    const eventBus = new FakeEventBus();
+    const { executor, artifactStore, run } = makeExecutor({
+      runOverrides: { completedPhases: ['read_issue'] },
+    });
 
-    // Write the artifact that read_issue produces so the resume check passes
     await artifactStore.write({ runId: 'test-uuid', relativePath: 'issue.md', contents: 'test' });
     await artifactStore.write({
       runId: 'test-uuid',
       relativePath: 'issue-comments.md',
       contents: 'test',
-    });
-
-    const run = makeRun({ completedPhases: ['read_issue'] });
-    runRepo.addRun({ ...run, startCommitSha: 'abc123' });
-
-    const registry = new PhaseHandlerRegistry();
-    for (const p of [
-      'read_issue',
-      'plan-design',
-      'plan-write',
-      'implement',
-      'validate',
-      'review-fix',
-      'compound',
-      'create-pr',
-      'post-pr-review',
-    ]) {
-      registry.register(makeHandler(p));
-    }
-
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: phaseRepo,
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: run.uuid,
-        runUuid: run.uuid,
-        repoFullName: 'owner/repo',
-        issueNumber: run.issueNumber,
-        cwd: '/tmp/test-worktree',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date('2026-01-01T00:00:00Z'),
-      }),
     });
 
     const result = await executor.execute({ run, skip: [], presentArtifacts: [] });

@@ -11,6 +11,7 @@ export type FailureKind =
   | 'github_failed'
   | 'git_failed'
   | 'polling_failed'
+  | 'handler_not_wired'
   | 'unknown';
 
 export interface Failure {

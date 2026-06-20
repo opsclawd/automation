@@ -196,6 +196,7 @@ export type { PhaseHandlerContext, PhaseHandlerContextFactory } from './phases/h
 export type { RunAbortPort } from './ports/run-abort-port.js';
 
 export type { LoggerPort } from './ports/logger-port.js';
+/** Resolve the worktree CWD for a run. Must throw if the run is not found. */
 export type ResolveWorktreeCwdFn = (runId: RunId) => string;
 export type ResolveStartCommitShaFn = (runId: RunId) => string;
 export type ResolveRefShaFn = (cwd: string, ref: string) => string | undefined;

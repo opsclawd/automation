@@ -41,6 +41,15 @@ export interface ExecuteRunOutput {
   phases: PhaseRecord[];
 }
 
+export class HandlerNotWiredError extends Error {
+  constructor(phase: string) {
+    super(
+      `Handler for phase "${phase}" is not wired — register a real PhaseHandler implementation before invoking RunExecutor`,
+    );
+    this.name = 'HandlerNotWiredError';
+  }
+}
+
 export class RunExecutor {
   constructor(private readonly deps: RunExecutorDeps) {}
 
@@ -185,6 +194,11 @@ export class RunExecutor {
 
       // Run handler
       const ctx = this.deps.contextFactory();
+      if (!ctx.runUuid) {
+        throw new Error(
+          'RunExecutor contextFactory returned empty runUuid — wire a real contextFactory before invoking RunExecutor',
+        );
+      }
       let result: PhaseResult;
       try {
         result = await handler.run(ctx);
@@ -193,6 +207,19 @@ export class RunExecutor {
         const cancelledNow = this.deps.runRepository.findByUuid(run.uuid);
         if (cancelledNow?.status === 'cancelled') {
           return { run: cancelledNow, phases };
+        }
+        if (err instanceof HandlerNotWiredError) {
+          const failure: Failure = {
+            runUuid: currentRun.uuid,
+            phase: phaseDef.name as string,
+            kind: 'handler_not_wired',
+            message: err.message,
+            canRetry: false,
+            suggestedAction: `Phase handler for "${phaseDef.name}" is not wired. Register a real PhaseHandler implementation before invoking RunExecutor.`,
+            artifacts: [],
+            detectedAt: now(),
+          };
+          return this.blockRun(currentRun, phaseDef, phase, failure, now(), phases);
         }
         const failure: Failure = {
           runUuid: currentRun.uuid,

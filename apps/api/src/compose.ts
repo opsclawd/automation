@@ -50,6 +50,7 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
+  HandlerNotWiredError,
   CANONICAL_PHASE_ORDER,
   type ArtifactStore,
   type StartIssueRunDeps,
@@ -215,7 +216,7 @@ class AbortRegistry {
     const entry = this.entries.get(runId);
     if (entry) {
       entry.controller.abort();
-      await entry.done;
+      await Promise.race([entry.done, new Promise((resolve) => setTimeout(resolve, 30_000))]);
     }
   }
 
@@ -400,9 +401,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     phaseRegistry.register({
       phase: phaseName,
       run: async () => {
-        throw new Error(
-          `Phase handler for "${phaseName}" is not wired — register a real PhaseHandler implementation before invoking RunExecutor`,
-        );
+        throw new HandlerNotWiredError(phaseName as string);
       },
     });
   }
@@ -1231,7 +1230,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         read: async () => {
           throw new Error('not implemented');
         },
-        list: async () => [],
+        list: async () => {
+          throw new Error('not implemented');
+        },
       };
       runExecutor = new RunExecutor({
         runRepository,

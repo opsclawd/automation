@@ -4,7 +4,6 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { StartIssueRun } from '../start-issue-run.js';
 import type {
   ClassifyExitFn,
-  EventBusPort,
   EventRepositoryPort,
   EventTailerFactory,
   FailureRepositoryPort,
@@ -15,6 +14,7 @@ import type {
   TmpDirectoryFactory,
 } from '../ports.js';
 import { FakeRunRepository as FakeRunRepositoryBase } from '../test-doubles/fake-run-repository.js';
+import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
 
 class FakeRunRepository extends FakeRunRepositoryBase {
   inserted: Run[] = [];
@@ -730,20 +730,6 @@ class FakeEventRepository implements EventRepositoryPort {
   }
   listByRunSince(): Array<{ id: number; runUuid: string; type: string; [k: string]: unknown }> {
     return [];
-  }
-}
-
-class FakeEventBus implements EventBusPort {
-  published: Array<{ runUuid: string; event: OrchestratorEvent }> = [];
-  private listeners = new Map<string, Set<(event: OrchestratorEvent) => void>>();
-  subscribe(runUuid: string, listener: (event: OrchestratorEvent) => void): () => void {
-    if (!this.listeners.has(runUuid)) this.listeners.set(runUuid, new Set());
-    this.listeners.get(runUuid)!.add(listener);
-    return () => this.listeners.get(runUuid)?.delete(listener);
-  }
-  publish(runUuid: string, event: OrchestratorEvent): void {
-    this.published.push({ runUuid, event });
-    this.listeners.get(runUuid)?.forEach((fn) => fn(event));
   }
 }
 
