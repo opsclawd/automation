@@ -62,6 +62,12 @@ export class ResumeRun implements ResumeRunUseCase {
     });
 
     try {
+      const savedCompletedAt = run.completedAt;
+      const savedFailureReason = run.failureReason;
+      const savedCurrentPhase = run.currentPhase;
+      const savedCompletedPhases = run.completedPhases;
+      const savedSkippedPhases = run.skippedPhases;
+
       const reactivated = resumeRun(run, input.fromPhase);
       const job = createJob({
         id: `resume-${input.runId}-${now().getTime()}` as JobId,
@@ -111,7 +117,14 @@ export class ResumeRun implements ResumeRunUseCase {
       } catch (err) {
         const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
           input.runId,
-          { status: 'failed' as RunStatus },
+          {
+            status: 'failed' as RunStatus,
+            completedAt: savedCompletedAt ?? null,
+            failureReason: savedFailureReason ?? null,
+            currentPhase: savedCurrentPhase ?? null,
+            completedPhases: savedCompletedPhases,
+            skippedPhases: savedSkippedPhases,
+          },
           'running' as RunStatus,
         );
         if (!rollbackOk) {

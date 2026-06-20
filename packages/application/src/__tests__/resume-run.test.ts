@@ -235,14 +235,15 @@ describe('ResumeRun', () => {
     expect(runRepo.updates[0]!.patch.currentPhase).toBeNull();
   });
 
-  it('reverts status on enqueue failure, steps/phases are written but run rolls back', async () => {
+  it('reverts status on enqueue failure, restores failure metadata', async () => {
     class FakeQueueWithThrow extends FakeJobQueuePort {
       override enqueue(): void {
         throw new Error('queue unavailable');
       }
     }
     const runRepo = new FakeRunRepository();
-    runRepo.addRun(makeRun());
+    const completedAt = new Date('2026-06-01T12:00:00Z');
+    runRepo.addRun(makeRun({ completedAt, failureReason: 'lint failed' }));
     const registry = new FakeWorkerRegistryPort();
     registry.register({ workerId: wid('w-1'), status: 'healthy' });
     const leases = new FakeWorkerLeasePort(registry);
@@ -275,6 +276,8 @@ describe('ResumeRun', () => {
     ).rejects.toThrow(/queue unavailable/);
     const run = runRepo.findByUuid('run-1')!;
     expect(run.status).toBe('failed');
+    expect(run.completedAt).toEqual(completedAt);
+    expect(run.failureReason).toBe('lint failed');
     const steps = stepRepo.listForRun(rid('run-1'));
     expect(steps[0]!.status).toBe('pending');
     expect(steps[0]!.startedAt).toBeUndefined();
