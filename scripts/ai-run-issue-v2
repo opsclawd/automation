@@ -2113,15 +2113,20 @@ Your review must be ENTIRELY about whether Task ${task_n} alone meets its
 requirements. If Task ${task_n} is complete and correct, the result is
 SPEC_PASS regardless of what other tasks in the plan have not been started.
 
+## TYPECHECK RESULT (do not re-run — read-only phase)
+The orchestrator already ran \`pnpm -r typecheck\` after implement completed.
+Result: ${_TASK_TYPECHECK_SIGNAL:-UNKNOWN}
+
 ## BUILD GREEN OVERRIDES THE PLAN'S LETTER
-The plan is guidance; the build is the contract. If the implementation deviates
+The plan is guidance; the typecheck is the contract. If the implementation deviates
 from the plan's suggested approach BECAUSE following it literally would break the
-build (pnpm build / pnpm typecheck / pnpm test) — for example using explicit named
-exports where the plan said 'export *' but 'export *' causes a type/name collision —
-that deviation is CORRECT. Do NOT return SPEC_FAIL for a plan-letter mismatch that a
-green build requires; verify the deviation compiles/passes and, if it does, treat it
-as satisfying the requirement. Flag only genuine defects, never a build-required
-deviation from the plan's wording.
+build (\`pnpm -r typecheck\`) — for example using explicit named exports where the
+plan said 'export *' but 'export *' causes a type collision — that deviation is
+CORRECT. The TYPECHECK RESULT above is the authoritative signal:
+- PASS → a plan-letter deviation that compiles is acceptable; do NOT return SPEC_FAIL for it.
+- FAIL → the step is already blocked; surface the type errors above, not plan-letter issues.
+Do NOT run \`pnpm typecheck\` yourself — this is a read-only phase; running it writes
+.tsbuildinfo and trips the mutation guard.
 
 ## Task Requirements
 ${task_text}
@@ -2371,15 +2376,20 @@ Your review must be ENTIRELY about the quality of Task ${task_n}'s implementatio
 If Task ${task_n} is complete and correct, the result is QUALITY_PASS regardless
 of what other tasks in the plan have not been started.
 
+## TYPECHECK RESULT (do not re-run — read-only phase)
+The orchestrator already ran \`pnpm -r typecheck\` after implement completed.
+Result: ${_TASK_TYPECHECK_SIGNAL:-UNKNOWN}
+
 ## BUILD GREEN OVERRIDES THE PLAN'S LETTER
-The plan is guidance; the build is the contract. If the implementation deviates
+The plan is guidance; the typecheck is the contract. If the implementation deviates
 from the plan's suggested approach BECAUSE following it literally would break the
-build (pnpm build / pnpm typecheck / pnpm test) — for example using explicit named
-exports where the plan said 'export *' but 'export *' causes a type/name collision —
-that deviation is CORRECT. Do NOT return QUALITY_FAIL for a plan-letter mismatch that
-a green build requires; verify the deviation compiles/passes and, if it does, treat it
-as satisfying the requirement. Flag only genuine defects, never a build-required
-deviation from the plan's wording.
+build (\`pnpm -r typecheck\`) — for example using explicit named exports where the
+plan said 'export *' but 'export *' causes a type collision — that deviation is
+CORRECT. The TYPECHECK RESULT above is the authoritative signal:
+- PASS → a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it.
+- FAIL → the step is already blocked; surface the type errors above, not plan-letter issues.
+Do NOT run \`pnpm typecheck\` yourself — this is a read-only phase; running it writes
+.tsbuildinfo and trips the mutation guard.
 
 ## Task Summary
 ${task_title}
@@ -3076,24 +3086,26 @@ ${_dirty_after_recovery}
 This is an implement-step problem, not a reviewer contract violation."
     fi
 
-    # --- Type-check gate (interim stopgap for #422) -------------------------
-    # The implementer's DONE status is review-only, and spec-review cannot catch
-    # signature/contract drift because it never compiles. Build the lib packages
-    # (so cross-package .d.ts is fresh) and typecheck before review, failing the
-    # task early on type errors (branded types, port/impl signature drift)
-    # instead of letting them surface later as a confusing whole-run failure.
-    # Four such failures hit #387/#388 (findRepoId, cancel guards, RunAbortPort
-    # register, PhaseName branding). Remove when the TS executor's per-task
-    # validation lands (#422) or the bash path retires (#365).
+    # --- Type-check gate (per-task, #403) ----------------------------------
+    # Full-repo typecheck after every implement step: the blast-radius detector.
+    # pnpm -r typecheck catches cross-package contract drift instantly (branded
+    # types, port/impl arity, required-field additions) before spec/quality review.
+    # Reviewers cannot run this themselves (read-only phase); result is injected
+    # into reviewer prompts via _TASK_TYPECHECK_SIGNAL.
     if [[ "${DID_IMPLEMENT:-0}" == "1" ]]; then
-      log "  Task ${TASK_NUM}: typecheck gate (build libs + typecheck) before review..."
-      if ! _tc_out=$( cd "$WORKTREE_DIR" && pnpm --filter "./packages/*" build && pnpm typecheck 2>&1 ); then
-        orchestrator_fail "Task ${TASK_NUM}: typecheck failed after implement. The implementer introduced a type error spec-review cannot catch (e.g. branded-type or port/impl signature drift). Fix it and re-run.
+      log "  Task ${TASK_NUM}: per-step typecheck gate (pnpm -r typecheck)..."
+      _tc_raw=""
+      if ! _tc_raw=$( pnpm -r typecheck 2>&1 ); then
+        _TASK_TYPECHECK_SIGNAL="FAIL: $(printf '%s\n' "$_tc_raw" | tail -100)"
+        orchestrator_fail "Task ${TASK_NUM}: typecheck failed after implement — type error introduced.
 
-Typecheck output (last 40 lines):
-$(printf '%s\n' "$_tc_out" | tail -40)"
+Typecheck output (last 100 lines):
+$(printf '%s\n' "$_tc_raw" | tail -100)"
       fi
+      _TASK_TYPECHECK_SIGNAL="PASS"
       log "  Task ${TASK_NUM}: typecheck gate passed"
+    else
+      _TASK_TYPECHECK_SIGNAL="PASS (no implement step ran)"
     fi
     # ------------------------------------------------------------------------
 
