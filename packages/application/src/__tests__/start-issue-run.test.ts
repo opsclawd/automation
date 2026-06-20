@@ -4,7 +4,6 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { StartIssueRun } from '../start-issue-run.js';
 import type {
   ClassifyExitFn,
-  EventBusPort,
   EventRepositoryPort,
   EventTailerFactory,
   FailureRepositoryPort,
@@ -15,6 +14,7 @@ import type {
   TmpDirectoryFactory,
 } from '../ports.js';
 import { FakeRunRepository as FakeRunRepositoryBase } from '../test-doubles/fake-run-repository.js';
+import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
 
 class FakeRunRepository extends FakeRunRepositoryBase {
   inserted: Run[] = [];
@@ -733,16 +733,6 @@ class FakeEventRepository implements EventRepositoryPort {
   }
 }
 
-class FakeEventBus implements EventBusPort {
-  published: Array<{ runUuid: string; type: string }> = [];
-  subscribe(): () => void {
-    return () => {};
-  }
-  publish(runUuid: string, event: OrchestratorEvent): void {
-    this.published.push({ runUuid, type: event.type });
-  }
-}
-
 describe('StartIssueRun event ingestion', () => {
   it('tails events.jsonl and inserts events into EventRepository + EventBus during run', async () => {
     const repo = new FakeRunRepository();
@@ -796,7 +786,7 @@ describe('StartIssueRun event ingestion', () => {
     expect(eventRepo.events[0]!.type).toBe('run.started');
     expect(eventBus.published).toHaveLength(1);
     expect(eventBus.published[0]!.runUuid).toBe(out.uuid);
-    expect(eventBus.published[0]!.type).toBe('run.started');
+    expect(eventBus.published[0]!.event.type).toBe('run.started');
   });
 
   it('rejects events whose runId does not match the active run', async () => {

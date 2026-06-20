@@ -48,6 +48,10 @@ import {
   ImplementStepLoop,
   readReviewVerdict,
   readFixVerdict,
+  PhaseHandlerRegistry,
+  RunExecutor,
+  HandlerNotWiredError,
+  CANONICAL_PHASE_ORDER,
   type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -62,6 +66,7 @@ import {
   type ReviewStepResult,
   type FixStepResult,
   type RevalidationResult,
+  type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
@@ -144,6 +149,8 @@ export function resolveProfileForPhase(agent: AgentConfig, phaseName: string): A
 export interface Container {
   runRepository: RunRepository;
   phaseRepository: PhaseRepository;
+  phaseRegistry: PhaseHandlerRegistry;
+  runExecutor?: RunExecutor;
   eventRepository: EventRepository;
   artifactRepository: ArtifactRepository;
   failureRepository: FailureRepository;
@@ -193,6 +200,31 @@ export interface ComposeOptions {
    *  composing inside a child process that owns a tmp dir the sweep
    *  would delete out from under it (e.g. run-agent.ts). */
   runStartupSweeps?: boolean;
+}
+
+class AbortRegistry {
+  private readonly entries = new Map<
+    string,
+    { controller: AbortController; done: Promise<void> }
+  >();
+
+  register(runId: string, controller: AbortController, done: Promise<void>): void {
+    this.entries.set(runId, { controller, done });
+  }
+
+  async abort(runId: string): Promise<void> {
+    const entry = this.entries.get(runId);
+    if (entry) {
+      entry.controller.abort();
+      let timer: NodeJS.Timeout;
+      const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, 30_000); });
+      await Promise.race([entry.done.catch(() => {}), timeout]).finally(() => clearTimeout(timer));
+    }
+  }
+
+  unregister(runId: string): void {
+    this.entries.delete(runId);
+  }
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
@@ -281,12 +313,12 @@ export function composeRoot(opts: ComposeOptions): Container {
     error: (msg, ...args) => console.error(msg, ...args),
   };
 
+  const abortRegistry = new AbortRegistry();
+
   const cancelRun = new CancelRun({
     runRepository,
     logger,
-    // TODO(#388): Wire a real AbortController registry from the agent runtime layer.
-    // Currently noop so cancel best-effort agent abort is non-functional.
-    runAbort: { register: () => {}, abort: () => {}, unregister: () => {} },
+    runAbort: abortRegistry,
     git: {
       createWorktree: async () => {},
       removeWorktree: async () => {},
@@ -324,7 +356,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       current: () => undefined,
       reclaimExpired: () => [],
     },
-    findCwd: (repoId: RepositoryId, runId: RunId) => {
+    findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
       return join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
@@ -366,6 +398,16 @@ export function composeRoot(opts: ComposeOptions): Container {
   // const resumeRun = new ResumeRun({ ... });
   // const retryFailedPhase = new RetryFailedPhase({ ... });
 
+  const phaseRegistry = new PhaseHandlerRegistry();
+  for (const phaseName of CANONICAL_PHASE_ORDER) {
+    phaseRegistry.register({
+      phase: phaseName,
+      run: async () => {
+        throw new HandlerNotWiredError(phaseName as string);
+      },
+    });
+  }
+
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';
   try {
@@ -404,6 +446,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let reviewFixLoop: ReviewFixLoop | undefined;
   let implementStepLoop: ImplementStepLoopType | undefined;
   let runStep: Container['runStep'] | undefined;
+  let runExecutor: RunExecutor | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
@@ -1177,6 +1220,61 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         return { outcome: result.outcome };
       };
+
+      // In-memory artifact store for the context factory — handlers receive
+      // a real store via buildPhaseHandlerContext in the agent phase flow.
+      // Returning [] from list means resume validation will fail if real
+      // handlers are invoked (expected — handlers are not yet wired).
+      const stubArtifactStore: ArtifactStore = {
+        write: async () => {
+          throw new Error('not implemented');
+        },
+        read: async () => {
+          throw new Error('not implemented');
+        },
+        list: async () => {
+          throw new Error('not implemented');
+        },
+      };
+      runExecutor = new RunExecutor({
+        runRepository,
+        failureRepository,
+        phaseRepository,
+        events: eventBus,
+        registry: phaseRegistry,
+        contextFactory: () =>
+          ({
+            runId: '',
+            runUuid: 'stub',
+            repoFullName: '',
+            issueNumber: 0,
+            cwd: '',
+            artifacts: stubArtifactStore,
+            github: {
+              getIssue: () => {
+                throw new Error(
+                  'PhaseHandlerContext.github is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
+                );
+              },
+            } as never,
+            git: {
+              resetHard: () => {
+                throw new Error(
+                  'PhaseHandlerContext.git is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
+                );
+              },
+            } as never,
+            agent: {
+              run: () => {
+                throw new Error(
+                  'PhaseHandlerContext.agent is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
+                );
+              },
+            } as never,
+            events: eventBus,
+            now: () => new Date(),
+          }) as PhaseHandlerContext,
+      });
     }
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;
@@ -1558,6 +1656,8 @@ export function composeRoot(opts: ComposeOptions): Container {
   return {
     runRepository,
     phaseRepository,
+    phaseRegistry,
+    ...(runExecutor !== undefined ? { runExecutor } : {}),
     eventRepository,
     artifactRepository,
     failureRepository,

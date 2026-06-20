@@ -41,6 +41,15 @@ export interface ExecuteRunOutput {
   phases: PhaseRecord[];
 }
 
+export class HandlerNotWiredError extends Error {
+  constructor(phase: string) {
+    super(
+      `Handler for phase "${phase}" is not wired — register a real PhaseHandler implementation before invoking RunExecutor`,
+    );
+    this.name = 'HandlerNotWiredError';
+  }
+}
+
 export class RunExecutor {
   constructor(private readonly deps: RunExecutorDeps) {}
 
@@ -179,20 +188,38 @@ export class RunExecutor {
       // start bookkeeping or a previous handler. If so, bail immediately instead
       // of writing a terminal status that could resurrect the run.
       const cancelled = this.deps.runRepository.findByUuid(run.uuid);
-      if (cancelled?.status === 'cancelled') {
+      if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
         return { run: cancelled, phases };
       }
 
       // Run handler
       const ctx = this.deps.contextFactory();
+      if (!ctx.runUuid) {
+        throw new Error(
+          'RunExecutor contextFactory returned empty runUuid — wire a real contextFactory before invoking RunExecutor',
+        );
+      }
       let result: PhaseResult;
       try {
         result = await handler.run(ctx);
       } catch (err) {
         // Re-read again — cancellation may have occurred during handler execution
         const cancelledNow = this.deps.runRepository.findByUuid(run.uuid);
-        if (cancelledNow?.status === 'cancelled') {
+        if (cancelledNow && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledNow.status)) {
           return { run: cancelledNow, phases };
+        }
+        if (err instanceof HandlerNotWiredError) {
+          const failure: Failure = {
+            runUuid: currentRun.uuid,
+            phase: phaseDef.name as string,
+            kind: 'handler_not_wired',
+            message: err.message,
+            canRetry: false,
+            suggestedAction: `Phase handler for "${phaseDef.name}" is not wired. Register a real PhaseHandler implementation before invoking RunExecutor.`,
+            artifacts: [],
+            detectedAt: now(),
+          };
+          return this.blockRun(currentRun, phaseDef, phase, failure, now(), phases);
         }
         const failure: Failure = {
           runUuid: currentRun.uuid,
@@ -213,7 +240,7 @@ export class RunExecutor {
       // status and then return resting, and the resting branch must still run its
       // phase bookkeeping (update phase status, clear currentPhase).
       const cancelledAfterHandler = this.deps.runRepository.findByUuid(run.uuid);
-      if (cancelledAfterHandler?.status === 'cancelled' && result.outcome !== 'resting') {
+      if (cancelledAfterHandler && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledAfterHandler.status) && result.outcome !== 'resting') {
         return { run: cancelledAfterHandler, phases };
       }
 
@@ -323,7 +350,7 @@ export class RunExecutor {
 
     // Re-read persisted state — run may have been cancelled during the last handler
     const cancelledFinal = this.deps.runRepository.findByUuid(run.uuid);
-    if (cancelledFinal?.status === 'cancelled') {
+    if (cancelledFinal && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledFinal.status)) {
       return { run: cancelledFinal, phases };
     }
 
@@ -350,9 +377,9 @@ export class RunExecutor {
     at: Date,
     phases: PhaseRecord[],
   ): ExecuteRunOutput {
-    // Safety net: if the run was cancelled externally, don't overwrite the terminal status
+    // Safety net: if the run was externally set to a terminal state, don't overwrite it
     const cancelled = this.deps.runRepository.findByUuid(currentRun.uuid);
-    if (cancelled?.status === 'cancelled') {
+    if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
       return { run: cancelled, phases };
     }
 
@@ -406,9 +433,9 @@ export class RunExecutor {
     at: Date,
     phases: PhaseRecord[],
   ): ExecuteRunOutput {
-    // Safety net: if the run was cancelled externally, don't overwrite the terminal status
+    // Safety net: if the run was externally set to a terminal state, don't overwrite it
     const cancelled = this.deps.runRepository.findByUuid(currentRun.uuid);
-    if (cancelled?.status === 'cancelled') {
+    if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
       return { run: cancelled, phases };
     }
 

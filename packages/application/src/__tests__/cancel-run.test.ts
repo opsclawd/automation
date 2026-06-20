@@ -7,7 +7,11 @@ import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 const runId = (s: string) => s as RunId;
 
-const noopAbort: RunAbortPort = { register: () => {}, abort: () => {}, unregister: () => {} };
+const noopAbort: RunAbortPort = {
+  register: () => {},
+  abort: () => Promise.resolve(),
+  unregister: () => {},
+};
 const noopGit = { resetHard: () => Promise.resolve() } as GitPort;
 const noopLeases: WorkerLeasePort = {
   acquire: () => {
@@ -138,6 +142,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
+          return Promise.resolve();
         },
         unregister: () => {},
       };
@@ -267,7 +272,7 @@ describe('CancelRun', () => {
       });
       const runAbort: RunAbortPort = {
         register: () => {},
-        abort: () => {
+        abort: async () => {
           throw new Error('abort fail');
         },
         unregister: () => {
@@ -338,7 +343,7 @@ describe('CancelRun', () => {
       });
       const runAbort: RunAbortPort = {
         register: () => {},
-        abort: () => {
+        abort: async () => {
           throw new Error('abort fail');
         },
         unregister: () => {},
@@ -402,6 +407,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
+          return Promise.resolve();
         },
         unregister: () => {},
       };
@@ -464,6 +470,7 @@ describe('CancelRun', () => {
         register: () => {},
         abort: () => {
           callOrder.push('abort');
+          return Promise.resolve();
         },
         unregister: () => {},
       };
@@ -508,6 +515,69 @@ describe('CancelRun', () => {
       expect(repo.updates).toHaveLength(1);
       expect(repo.updates[0]!.patch.status).toBe('cancelled');
       expect(callOrder).toEqual(['abort', 'reset']);
+    });
+
+    it('resets worktree even when findRepoId returns undefined', async () => {
+      const callOrder: string[] = [];
+      const repo = new FakeRunRepository();
+      repo.addRun({
+        uuid: 'no-repo',
+        displayId: 'issue-10-20260513-000000',
+        issueNumber: 10,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T19:00:00Z'),
+      });
+      const git: GitPort = {
+        createWorktree: async () => {},
+        removeWorktree: async () => {},
+        currentBranch: async () => '',
+        headCommitSha: async () => '',
+        resetHard: async () => {
+          callOrder.push('reset');
+        },
+        diff: async () => '',
+        commit: async () => '',
+        push: async () => {},
+        remoteRef: async () => undefined,
+        isAncestor: async () => false,
+        logBetween: async () => [],
+        cleanUntracked: async () => {
+          callOrder.push('clean');
+        },
+        headCommitShaOf: async () => undefined,
+      };
+      const leases: WorkerLeasePort = {
+        acquire: () => {
+          throw new Error('unexpected');
+        },
+        heartbeat: () => {},
+        release: () => {
+          callOrder.push('release');
+        },
+        current: () => {
+          throw new Error('should not be called');
+        },
+        reclaimExpired: () => [],
+      };
+      const usecase = makeCancelRun({
+        runRepository: repo,
+        runAbort: noopAbort,
+        git,
+        leases,
+        findCwd: () => '/tmp',
+        findStartCommitSha: () => 'sha',
+        findRepoId: () => undefined,
+        logger: noopLogger,
+        now: fixedNow,
+      });
+      await usecase.execute({ runId: runId('no-repo') });
+      expect(repo.updates).toHaveLength(1);
+      expect(repo.updates[0]!.patch.status).toBe('cancelled');
+      expect(callOrder).toContain('reset');
+      expect(callOrder).toContain('clean');
+      expect(callOrder).not.toContain('release');
     });
   });
 });

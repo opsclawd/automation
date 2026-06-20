@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
-import { ReviewFixLoop } from '@ai-sdlc/application';
+import { ReviewFixLoop, RunExecutor } from '@ai-sdlc/application';
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PrReviewPollerDeps } from '@ai-sdlc/application';
@@ -452,6 +452,39 @@ exit 1
     expect(typeof c.reviewFixLoop!.execute).toBe('function');
   });
 
+  it('exposes runExecutor and phaseRegistry on the container', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3 },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const c = composeRoot({ repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
+    expect(c.runExecutor).toBeDefined();
+    expect(c.phaseRegistry).toBeDefined();
+    expect(c.runExecutor).toBeInstanceOf(RunExecutor);
+    expect(c.phaseRegistry.get(PhaseName('read_issue'))).toBeDefined();
+    expect(typeof c.phaseRegistry.get(PhaseName('read_issue'))!.run).toBe('function');
+  });
+
   it('reviewFixLoop.execute converges when review immediately passes', async () => {
     const bus = {
       publish: (_runUuid: string, _event: OrchestratorEvent) => {},
@@ -653,8 +686,9 @@ exit 1
     db.close();
 
     const c = composeRoot({ repoRoot: root, scriptPath });
-    const run = c.runRepository.findByUuid('findcwd-test-uuid');
-    expect(run?.displayId).toBe('issue-99-20260601-000000');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cwd = (c.cancelRun as any).deps.findCwd('findcwd-test-uuid' as RunId);
+    expect(cwd).toContain('issue-99');
   });
 
   it('cancelRun findStartCommitSha reads from run record', () => {
