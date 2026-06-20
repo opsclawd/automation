@@ -197,7 +197,7 @@ describe('ResumeRun', () => {
     );
   });
 
-  it('with fromPhase resets steps and sets currentPhase', async () => {
+  it('with fromPhase resets steps but defers currentPhase to executor', async () => {
     const runRepo = new FakeRunRepository();
     runRepo.addRun(makeRun());
     const registry = new FakeWorkerRegistryPort();
@@ -230,7 +230,7 @@ describe('ResumeRun', () => {
     expect(steps[0]!.status).toBe('pending');
     expect(steps[0]!.startedAt).toBeUndefined();
     expect(steps[0]!.completedAt).toBeUndefined();
-    expect(runRepo.updates[0]!.patch.currentPhase).toBe('test-phase');
+    expect(runRepo.updates[0]!.patch.currentPhase).toBeNull();
   });
 
   it('reverts status on enqueue failure, steps/phases not modified', async () => {

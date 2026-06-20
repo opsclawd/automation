@@ -76,7 +76,7 @@ export class ResumeRun implements ResumeRunUseCase {
         input.runId,
         {
           status: reactivated.status,
-          currentPhase: reactivated.currentPhase ?? null,
+          currentPhase: null,
           completedPhases: reactivated.completedPhases,
           skippedPhases: reactivated.skippedPhases,
         },
