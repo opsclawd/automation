@@ -31,7 +31,11 @@ export class CancelRun implements CancelRunUseCase {
     // Step 2: Persist cancelled state (MUST succeed — throws on failure)
     const updated = this.deps.runRepository.updateStatusByUuid(input.runId, {
       status: cancelled.status,
-      completedAt: cancelled.completedAt!,
+      completedAt:
+        cancelled.completedAt ??
+        (() => {
+          throw new Error('cancelRun did not set completedAt');
+        })(),
       ...(cancelled.failureReason ? { failureReason: cancelled.failureReason } : {}),
     });
     if (!updated) {
@@ -50,6 +54,9 @@ export class CancelRun implements CancelRunUseCase {
       console.error(`CancelRun: unregister failed for ${input.runId}`, err);
     }
 
+    // TODO(#logging-story): Replace console.error with a Logger port once the
+    // logging port story is settled. Application layer should use port-injected
+    // logger per AGENTS.md layer rules.
     // Step 4-5: Cleanup (best-effort)
     let repoId: RepositoryId | undefined;
     try {

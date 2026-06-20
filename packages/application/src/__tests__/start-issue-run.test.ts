@@ -85,6 +85,9 @@ class FakeRunRepository implements RunRepositoryPort {
   ): boolean {
     return true;
   }
+  atomicUpdateByUuid(): boolean {
+    return true;
+  }
 }
 
 class FakeFailureRepository implements FailureRepositoryPort {

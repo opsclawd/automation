@@ -30,6 +30,9 @@ class FakeRunRepoForRetry implements RunRepositoryPort {
   updateStatusByUuid() {
     return false;
   }
+  atomicUpdateByUuid() {
+    return false;
+  }
 }
 
 function makeFailedRun(overrides: Partial<RunRecord> = {}): RunRecord {

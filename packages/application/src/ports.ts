@@ -16,6 +16,7 @@ export interface RunRecord extends Run {
   exitCode?: number;
   durationMs?: number;
   pid?: number;
+  startCommitSha?: string;
 }
 
 export interface RunRepositoryUpdatePatch {
@@ -32,6 +33,11 @@ export interface RunRepositoryUpdatePatch {
 export interface RunRepositoryPort {
   insertIfNoActive(run: Run): void;
   update(uuid: string, patch: RunRepositoryUpdatePatch): void;
+  atomicUpdateByUuid(
+    uuid: string,
+    patch: RunRepositoryUpdatePatch,
+    expectedStatus: RunStatus,
+  ): boolean;
   findByUuid(uuid: string): RunRecord | undefined;
   findByIssueNumber(issueNumber: number): RunRecord | undefined;
   findActiveRuns(): RunRecord[];

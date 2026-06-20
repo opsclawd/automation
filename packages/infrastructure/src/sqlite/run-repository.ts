@@ -16,6 +16,7 @@ interface RunRow {
   exit_code: number | null;
   duration_ms: number | null;
   pid: number | null;
+  start_commit_sha: string | null;
 }
 
 /**
@@ -31,6 +32,7 @@ export interface RunRecord extends Run {
   exitCode?: number;
   durationMs?: number;
   pid?: number;
+  startCommitSha?: string;
 }
 
 /** Implements RunRepositoryPort (@ai-sdlc/application). */
@@ -41,9 +43,9 @@ export class RunRepository {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, issue_number, type, status, current_phase,
-          completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid)
+        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha)
          VALUES (@uuid, @display_id, @issue_number, @type, @status, @current_phase,
-          @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid)`,
+           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha)`,
       )
       .run({
         uuid: run.uuid,
@@ -58,6 +60,7 @@ export class RunRepository {
         completed_at: run.completedAt?.toISOString() ?? null,
         failure_reason: run.failureReason ?? null,
         pid: pid ?? null,
+        start_commit_sha: (run as RunRecord).startCommitSha ?? null,
       });
   }
 
@@ -74,6 +77,63 @@ export class RunRepository {
       this.insert(r, process.pid);
     });
     tx(run);
+  }
+
+  atomicUpdateByUuid(
+    uuid: string,
+    patch: Partial<{
+      status: RunStatus;
+      currentPhase: string | null;
+      completedPhases: string[];
+      skippedPhases: string[];
+      completedAt: Date;
+      failureReason: string;
+      exitCode: number;
+      durationMs: number;
+    }>,
+    expectedStatus: RunStatus,
+  ): boolean {
+    const fields: string[] = [];
+    const params: Record<string, unknown> = { uuid, expected_status: expectedStatus };
+    if (patch.status !== undefined) {
+      fields.push('status = @status');
+      params.status = patch.status;
+    }
+    if (patch.currentPhase !== undefined) {
+      fields.push('current_phase = @current_phase');
+      params.current_phase = patch.currentPhase;
+    }
+    if (patch.completedPhases !== undefined) {
+      fields.push('completed_phases = @completed_phases');
+      params.completed_phases = JSON.stringify(patch.completedPhases);
+    }
+    if (patch.skippedPhases !== undefined) {
+      fields.push('skipped_phases = @skipped_phases');
+      params.skipped_phases = JSON.stringify(patch.skippedPhases);
+    }
+    if (patch.completedAt !== undefined) {
+      fields.push('completed_at = @completed_at');
+      params.completed_at = patch.completedAt.toISOString();
+    }
+    if (patch.failureReason !== undefined) {
+      fields.push('failure_reason = @failure_reason');
+      params.failure_reason = patch.failureReason;
+    }
+    if (patch.exitCode !== undefined) {
+      fields.push('exit_code = @exit_code');
+      params.exit_code = patch.exitCode;
+    }
+    if (patch.durationMs !== undefined) {
+      fields.push('duration_ms = @duration_ms');
+      params.duration_ms = patch.durationMs;
+    }
+    if (fields.length === 0) return false;
+    const result = this.db
+      .prepare(
+        `UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid AND status = @expected_status`,
+      )
+      .run(params);
+    return result.changes > 0;
   }
 
   findByUuid(uuid: string): RunRecord | undefined {
@@ -222,5 +282,6 @@ function toRecord(row: RunRow): RunRecord {
     ...(row.exit_code !== null ? { exitCode: row.exit_code } : {}),
     ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
     ...(row.pid !== null ? { pid: row.pid } : {}),
+    ...(row.start_commit_sha !== null ? { startCommitSha: row.start_commit_sha } : {}),
   };
 }

@@ -48,6 +48,22 @@ class FakeRunRepoForResume implements RunRepositoryPort {
   ): boolean {
     return false;
   }
+  atomicUpdateByUuid(
+    uuid: string,
+    patch: RunRepositoryUpdatePatch,
+    expectedStatus: RunStatus,
+  ): boolean {
+    const r = this.runs.get(uuid);
+    if (!r || r.status !== expectedStatus) {
+      return false;
+    }
+    if (patch.status !== undefined) r.status = patch.status;
+    if (patch.currentPhase !== undefined) r.currentPhase = patch.currentPhase;
+    if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
+    if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
+    this.updates.push({ uuid, patch });
+    return true;
+  }
 }
 
 function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {

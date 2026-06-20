@@ -84,6 +84,25 @@ class FakeRunRepo implements RunRepositoryPort {
     });
     return true;
   }
+  atomicUpdateByUuid(
+    uuid: string,
+    patch: RunRepositoryUpdatePatch,
+    expectedStatus: RunStatus,
+  ): boolean {
+    const r = this.runs.get(uuid);
+    if (!r || r.status !== expectedStatus) {
+      return false;
+    }
+    if (patch.status !== undefined) r.status = patch.status;
+    if (patch.currentPhase !== undefined) r.currentPhase = patch.currentPhase;
+    if (patch.completedPhases !== undefined) r.completedPhases = patch.completedPhases;
+    if (patch.skippedPhases !== undefined) r.skippedPhases = patch.skippedPhases;
+    if (patch.completedAt !== undefined) r.completedAt = patch.completedAt;
+    if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
+    this.updates.push({ uuid, patch });
+    return true;
+  }
+
   addRun(r: RunRecord): void {
     this.runs.set(r.uuid, r);
   }

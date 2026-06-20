@@ -128,6 +128,7 @@ function makeDeps(overrides?: {
       findActiveRuns: vi.fn().mockReturnValue([]),
       updateStatusByIssueNumber: vi.fn().mockReturnValue(true),
       updateStatusByUuid: vi.fn().mockReturnValue(true),
+      atomicUpdateByUuid: vi.fn().mockReturnValue(true),
       ...overrides?.runRepository,
     },
     failureRepository: {

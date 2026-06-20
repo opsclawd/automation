@@ -68,7 +68,13 @@ import {
   type FixStepOptions,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
-import { AgentProfileName, AgentInvocationId, PhaseName, RunId } from '@ai-sdlc/domain';
+import {
+  AgentProfileName,
+  AgentInvocationId,
+  PhaseName,
+  RunId,
+  RepositoryId,
+} from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
   OpenCodeAgentAdapter,
@@ -287,8 +293,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     },
     // TODO(#388): Wire WorkerLeaseRepository once the lease infrastructure is ready.
     // `acquire` throws because CancelRun should never need to acquire — leases are
-    // acquired by run-start/resume flows. `release` is a noop — leases are never
-    // freed on cancel, blocking other workers from the repo.
+    // acquired by run-start/resume flows. `release` is a noop (tracked in #388).
     leases: {
       acquire: () => {
         throw new Error('leases not wired in compose');
@@ -298,14 +303,31 @@ export function composeRoot(opts: ComposeOptions): Container {
       current: () => undefined,
       reclaimExpired: () => [],
     },
-    findCwd: () => '/tmp',
-    findStartCommitSha: () => 'HEAD',
-    // TODO(#388): Wire findRepoId by looking up repo from run metadata or maintaining
-    // a runId→repoId mapping. Currently throws in cancel flow so git reset and lease
-    // release are skipped (caught by best-effort try/catch).  Also wire findCwd to
-    // resolve the actual worktree path and findStartCommitSha.
-    findRepoId: () => {
-      throw new Error('findRepoId not wired in compose');
+    findCwd: (repoId: RepositoryId, runId: RunId) => {
+      const run = runRepository.findByUuid(runId);
+      if (!run) throw new Error(`findCwd: no run found for ${runId}`);
+      return join(runsDir, run.displayId);
+    },
+    findStartCommitSha: (runId: RunId) => {
+      const run = runRepository.findByUuid(runId);
+      if (!run) return 'HEAD';
+      if (run.startCommitSha) return run.startCommitSha;
+      try {
+        const cwd = join(runsDir, run.displayId);
+        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
+      } catch {
+        return 'HEAD';
+      }
+    },
+    // findRepoId resolves the repo full name at compose time via `gh repo view`.
+    // If that fails, cleanups are best-effort skipped from cancel-run.ts.
+    findRepoId: (runId: RunId) => {
+      if (resolvedRepoFullName) return resolvedRepoFullName as RepositoryId;
+      const run = runRepository.findByUuid(runId);
+      if (run) {
+        console.error(`CancelRun: findRepoId skipped for ${runId} — repo full name not resolved`);
+      }
+      throw new Error(`findRepoId not available for run ${runId}`);
     },
   });
 
@@ -330,6 +352,21 @@ export function composeRoot(opts: ComposeOptions): Container {
     if (out) resolvedDefaultBranch = out;
   } catch {
     // Best-effort: fall back to 'main'
+  }
+
+  // Resolve repo full name eagerly for findRepoId in cancel flow.
+  let resolvedRepoFullName: string | undefined;
+  try {
+    const out = execFileSync(
+      'gh',
+      ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
+      { cwd: opts.repoRoot },
+    )
+      .toString()
+      .trim();
+    if (out) resolvedRepoFullName = out;
+  } catch (err) {
+    console.error(`CancelRun: failed to resolve repo full name for ${opts.repoRoot}`, err);
   }
 
   let agentRuntime: AgentRuntimeRouter | undefined;
