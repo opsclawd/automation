@@ -100,7 +100,7 @@ export class GitWorktreeAdapter implements GitPort {
         return exact?.split('\t')[0] ?? undefined;
       }
 
-      const branchLine = lines.find((l) => l.includes(`refs/heads/${input.ref}`));
+      const branchLine = lines.find((l) => l.endsWith(`\trefs/heads/${input.ref}`));
       return (branchLine ?? lines[0]!).split('\t')[0];
     } catch {
       return undefined;
