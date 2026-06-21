@@ -42,7 +42,10 @@ export async function git(cwd: string, args: string[], timeoutMs?: number): Prom
   } catch (err) {
     const execaErr = err as { stderr?: string; timedOut?: boolean; code?: string };
     if (execaErr.code === 'ENOENT') {
-      throw new Error(`git command not found: is git installed and on PATH?`);
+      throw new GitFailedError(cwd, args.join(' '), 'git not found on PATH', {
+        cause: err,
+        timedOut: false,
+      });
     }
     const stderr = execaErr.stderr ?? (err as Error)?.message ?? 'unknown';
     throw new GitFailedError(cwd, args.join(' '), stderr, {
