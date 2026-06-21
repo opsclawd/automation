@@ -902,19 +902,24 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const buildContext = (run: Run): PhaseHandlerContext => {
         const cwd = join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
-        return composeBuildPhaseHandlerContext({
-          runId: run.displayId,
-          runUuid: run.uuid,
-          repoFullName: resolvedRepoFullName ?? '',
-          issueNumber: run.issueNumber,
-          cwd,
-          artifacts: makeArtifactStore(cwd),
-          github: new GhCliAdapter(),
-          git: gitAdapter,
-          agent: agentRuntime!,
-          events: eventBus,
-          now: () => new Date(),
-        });
+        return composeBuildPhaseHandlerContext(
+          {
+            runId: run.displayId,
+            runUuid: run.uuid,
+            repoFullName: resolvedRepoFullName ?? '',
+            issueNumber: run.issueNumber,
+            cwd,
+            artifacts: makeArtifactStore(cwd),
+            github: new GhCliAdapter({ cwd }),
+            git: gitAdapter,
+            agent: agentRuntime!,
+            events: eventBus,
+            now: () => new Date(),
+          },
+          {
+            startCommitSha: run.startCommitSha,
+          },
+        );
       };
 
       const runImplement = async (ctx: StepLoopContext) => {
