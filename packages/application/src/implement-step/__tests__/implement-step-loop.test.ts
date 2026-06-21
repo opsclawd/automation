@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
@@ -477,5 +477,75 @@ describe('ImplementStepLoop', () => {
     const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
     expect(out.outcome).toBe('failed');
     expect(out.loop.status).toBe('exhausted');
+  });
+
+  describe('typecheck gate (post-implement, pre-review)', () => {
+    it('returns failed when typecheck fails, without calling spec or quality review', async () => {
+      const specSpy = vi.fn<() => Promise<SpecReviewResult>>().mockResolvedValue({
+        invocationId: 'sr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      });
+      const qualSpy = vi.fn<() => Promise<QualityReviewResult>>().mockResolvedValue({
+        invocationId: 'qr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      });
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'error TS2345: Type mismatch',
+        }),
+        runSpecReview: async (_ctx, _tcResult) => specSpy(),
+        runQualityReview: async (_ctx, _tcResult) => qualSpy(),
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('failed');
+      expect(specSpy).not.toHaveBeenCalled();
+      expect(qualSpy).not.toHaveBeenCalled();
+    });
+
+    it('passes typecheck result into spec reviewer', async () => {
+      const tcResult: TypecheckResult = { outcome: 'pass', output: 'All good' };
+      let capturedTc: TypecheckResult | undefined;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => tcResult,
+        runSpecReview: async (_ctx, tc) => {
+          capturedTc = tc;
+          return { invocationId: 'sr-1', agentOutcome: 'success', verdict: 'pass' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(capturedTc).toEqual(tcResult);
+    });
+
+    it('passes typecheck result into quality reviewer', async () => {
+      const tcResult: TypecheckResult = { outcome: 'pass', output: 'All good' };
+      let capturedTc: TypecheckResult | undefined;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => tcResult,
+        runQualityReview: async (_ctx, tc) => {
+          capturedTc = tc;
+          return { invocationId: 'qr-1', agentOutcome: 'success', verdict: 'pass' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(capturedTc).toEqual(tcResult);
+    });
+
+    it('emits step.typecheck.failed event when typecheck fails', async () => {
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'error TS9999: kaboom',
+        }),
+      });
+      const depsWithBus = { ...deps, events: bus };
+      await new ImplementStepLoop(depsWithBus).execute(baseInput());
+      const tcFailed = events.find((e) => e.type === 'step.typecheck.failed');
+      expect(tcFailed).toBeDefined();
+      expect(tcFailed?.level).toBe('error');
+    });
   });
 });
