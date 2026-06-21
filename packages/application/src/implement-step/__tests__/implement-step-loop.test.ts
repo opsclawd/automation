@@ -533,6 +533,40 @@ describe('ImplementStepLoop', () => {
       expect(capturedTc).toEqual(tcResult);
     });
 
+    it('re-runs typecheck on iteration 2 after fix and fails when typecheck regresses', async () => {
+      let tcCalls = 0;
+      let specCalls = 0;
+      const qualSpy = vi.fn<() => Promise<QualityReviewResult>>().mockResolvedValue({
+        invocationId: 'qr-1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      });
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          tcCalls += 1;
+          return tcCalls === 1
+            ? { outcome: 'pass', output: '' }
+            : { outcome: 'fail', output: 'error TS2345 after fix' };
+        },
+        runSpecReview: async (_ctx, _tcResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx, _tcResult) => qualSpy(),
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('failed');
+      expect(tcCalls).toBe(2); // pre-loop + iteration 2 re-run
+      // Iteration 1: spec fails → quality runs → fix runs
+      // Iteration 2: typecheck re-run fails → spec/quality NOT called
+      expect(specCalls).toBe(1);
+      expect(qualSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('emits step.typecheck.failed event when typecheck fails', async () => {
       const { events, bus } = collectEvents();
       const deps = makeDeps({

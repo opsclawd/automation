@@ -63,7 +63,7 @@ export class ImplementStepLoop {
     }
 
     // --- PRE-LOOP: TYPECHECK GATE ---
-    const tcResult = await deps.runTypecheck(baseCtx);
+    let tcResult = await deps.runTypecheck(baseCtx);
     if (tcResult.outcome === 'fail') {
       this.emit(
         input,
@@ -85,6 +85,29 @@ export class ImplementStepLoop {
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
+
+      // Re-run typecheck on iterations 2+ (code may have changed after fix)
+      if (iterationIndex > 1) {
+        tcResult = await deps.runTypecheck(baseCtx);
+        if (tcResult.outcome === 'fail') {
+          this.emit(
+            input,
+            'step.typecheck.failed',
+            'error',
+            `step ${input.stepIndex} iteration ${iterationIndex} typecheck failed after fix`,
+            {
+              index: input.stepIndex,
+              iteration: iterationIndex,
+              output: tcResult.output.slice(0, 2000),
+            },
+          );
+          loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'failed');
+          return { outcome: 'failed', loop };
+        }
+      }
 
       this.emit(input, 'loop.iteration.started', 'info', `iteration ${iterationIndex} started`, {
         index: iterationIndex,
