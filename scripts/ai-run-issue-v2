@@ -4555,9 +4555,10 @@ Start now."
     fi
   fi
 
-  # Capture validation.result before guard_artifact_clean removes it — it is
-  # an orchestrator artifact (#434). Re-persist after cleanup so create-pr
-  # reads the correct status (same pattern as fix-validate lines ~3820–3839).
+  # Capture validation artifacts before guard_artifact_clean removes them — they
+  # are orchestrator artifacts (#434). Re-persist after cleanup so detect_phase
+  # and create-pr read the correct values (same pattern as fix-validate lines
+  # ~3820–3840).
   _compound_validation_result="$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || true)"
 
   # Safety net: remove any non-compound-draft artifacts the compound agent
@@ -4568,6 +4569,8 @@ Start now."
   if [[ -n "$_compound_validation_result" ]]; then
     printf '%s\n' "$_compound_validation_result" > "${ISSUES_DIR}/validation.result"
   fi
+  # Re-persist validation.headsha so detect_phase SHA guard works on resume.
+  git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
 
   _emit_phase_done "compound"
   PHASE="create-pr"
