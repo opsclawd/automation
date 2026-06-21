@@ -20,6 +20,9 @@ export interface ReclaimExpiredInput {
    * callback can safely requeue claimed/running jobs. If the callback throws,
    * the lease MUST be preserved (not deleted) to prevent a job from being left
    * in a non-claimable state without an active lease protecting the repo.
+   * This callback MUST be idempotent — it may be invoked multiple times for the
+   * same lease in the event of a transient failure on a previous reclaim attempt
+   * (e.g. the DELETE step threw after this callback succeeded).
    */
   onReclaimed(info: {
     repoId: RepositoryId;

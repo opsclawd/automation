@@ -33,6 +33,7 @@ import {
   ProcessValidationAdapter,
   GhCliAdapter,
   GitWorktreeAdapter,
+  WorkerLeaseRepository,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -263,6 +264,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const prReviewRepository = new PrReviewRepository(db);
   const agentUsageRepository = new AgentUsageRepository(db);
   const loopRepository = new LoopRepository(db);
+  const workerLeaseRepository = new WorkerLeaseRepository(db);
   const validationAdapter = new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
@@ -322,18 +324,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     logger,
     runAbort: abortRegistry,
     git: gitAdapter,
-    // TODO(#388): Wire WorkerLeaseRepository once the lease infrastructure is ready.
-    // `acquire` throws because CancelRun should never need to acquire — leases are
-    // acquired by run-start/resume flows. `release` is a noop (tracked in #388).
-    leases: {
-      acquire: () => {
-        throw new Error('leases not wired in compose');
-      },
-      heartbeat: () => {},
-      release: () => {},
-      current: () => undefined,
-      reclaimExpired: () => [],
-    },
+    leases: workerLeaseRepository,
     findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
