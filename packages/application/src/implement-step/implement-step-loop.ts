@@ -106,6 +106,9 @@ export class ImplementStepLoop {
               output: tcResult.output.slice(0, 2000),
             },
           );
+          this.emit(input, 'loop.iteration.started', 'info', `iteration ${iterationIndex} started`, {
+            index: iterationIndex,
+          });
           loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
           loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
           deps.loops.update(loop);
