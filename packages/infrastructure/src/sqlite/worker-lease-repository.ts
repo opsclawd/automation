@@ -110,6 +110,7 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
         const lease = toWorkerLease(row);
         if (input.isWorkerAlive(lease.workerId)) continue;
         if (!input.recoverableRunIds.has(lease.runId)) continue;
+        input.resetWorktree(lease.repoId);
         input.onReclaimed({
           repoId: lease.repoId,
           previousWorkerId: lease.workerId,
@@ -117,7 +118,6 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
           reclaimedByWorkerId: input.reclaimedByWorkerId,
           reason: 'expired + worker stale + run recoverable',
         });
-        input.resetWorktree(lease.repoId);
         this.db
           .prepare(`DELETE FROM worker_leases WHERE repo_id = @repo_id AND worker_id = @worker_id`)
           .run({ repo_id: lease.repoId, worker_id: lease.workerId });
