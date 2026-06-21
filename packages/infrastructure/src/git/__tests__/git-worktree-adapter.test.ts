@@ -299,3 +299,31 @@ describe('reproduces parity #351 (untracked detection + clean gate)', () => {
     await expect(adapter.resetWorktreeIfClean(repo, 'HEAD')).resolves.toBeUndefined();
   });
 });
+
+describe('diff()', () => {
+  it('returns empty string when working tree is clean', async () => {
+    const repo = await makeTempRepo();
+    const patch = await adapter.diff(repo, 'HEAD');
+    expect(patch).toBe('');
+  });
+
+  it('returns patch text for an unstaged working-tree change', async () => {
+    const repo = await makeTempRepo();
+    await writeFile(join(repo, 'README.md'), 'modified\n');
+    const patch = await adapter.diff(repo, 'HEAD');
+    expect(patch).toContain('-initial');
+    expect(patch).toContain('+modified');
+  });
+
+  it('returns diff between two commits when head sha is supplied', async () => {
+    const repo = await makeTempRepo();
+    const base = await git(repo, ['rev-parse', 'HEAD']);
+    await writeFile(join(repo, 'README.md'), 'v2\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'v2']);
+    const head = await git(repo, ['rev-parse', 'HEAD']);
+    const patch = await adapter.diff(repo, base, head);
+    expect(patch).toContain('-initial');
+    expect(patch).toContain('+v2');
+  });
+});
