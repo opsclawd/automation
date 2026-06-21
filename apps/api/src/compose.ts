@@ -346,6 +346,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         return Promise.resolve();
       },
       headCommitShaOf: async () => undefined,
+      verifyClean: async () => {},
     },
     // TODO(#388): Wire WorkerLeaseRepository once the lease infrastructure is ready.
     // `acquire` throws because CancelRun should never need to acquire — leases are
@@ -1457,6 +1458,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         // a cancelled/reset run can't leak stale results into the next run on the
         // reused worktree. node_modules is excluded to avoid an expensive reinstall.
         execFileSync('git', ['clean', '-fdx', '-e', 'node_modules'], { cwd });
+      },
+      async verifyClean(_cwd: string, _baseBranch: string): Promise<void> {
+        throw new Error(
+          'GitPort.verifyClean is not wired in compose poller (PR review flow does not verify clean state)',
+        );
       },
     };
     const processor = new ProcessPrReviewComments({
