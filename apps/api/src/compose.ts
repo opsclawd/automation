@@ -32,6 +32,7 @@ import {
   EventTailer,
   ProcessValidationAdapter,
   GhCliAdapter,
+  GitWorktreeAdapter,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -59,9 +60,6 @@ import {
   type EventBusPort,
   type RunRepositoryPort,
   type TmpDirectoryFactory,
-  type GitPort,
-  type CreateWorktreeInput,
-  type PushInput,
   type StepContext,
   type ReviewStepResult,
   type FixStepResult,
@@ -317,39 +315,13 @@ export function composeRoot(opts: ComposeOptions): Container {
   };
 
   const abortRegistry = new AbortRegistry();
+  const gitAdapter = new GitWorktreeAdapter();
 
   const cancelRun = new CancelRun({
     runRepository,
     logger,
     runAbort: abortRegistry,
-    git: {
-      createWorktree: async () => {},
-      removeWorktree: async () => {},
-      currentBranch: async () => '',
-      headCommitSha: async () => '',
-      resetHard: (cwd: string, commitSha: string) => {
-        execFileSync('git', ['reset', '--hard', commitSha], { cwd });
-        return Promise.resolve();
-      },
-      diff: async () => '',
-      commit: async () => '',
-      push: async () => {},
-      remoteRef: async () => undefined,
-      isAncestor: async () => false,
-      logBetween: async () => [],
-      cleanUntracked: (cwd: string) => {
-        // -x also removes worktree-ignored orchestrator artifacts (result.json,
-        // *.md, *.result, logs) that the script seeds into .git/info/exclude, so
-        // a cancelled/reset run can't leak stale results into the next run on the
-        // reused worktree. node_modules is excluded to avoid an expensive reinstall.
-        execFileSync('git', ['clean', '-fdx', '-e', 'node_modules'], { cwd });
-        return Promise.resolve();
-      },
-      headCommitShaOf: async () => undefined,
-      resetWorktreeIfClean: async () => {
-        // Not needed: poller always starts from a fresh worktree.
-      },
-    },
+    git: gitAdapter,
     // TODO(#388): Wire WorkerLeaseRepository once the lease infrastructure is ready.
     // `acquire` throws because CancelRun should never need to acquire — leases are
     // acquired by run-start/resume flows. `release` is a noop (tracked in #388).
@@ -1305,13 +1277,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 );
               },
             } as never,
-            git: {
-              resetHard: () => {
-                throw new Error(
-                  'PhaseHandlerContext.git is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
-                );
-              },
-            } as never,
+            git: gitAdapter,
             agent: {
               run: () => {
                 throw new Error(
@@ -1347,126 +1313,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       );
     }
     const ghAdapter = new GhCliAdapter({});
-    // GitPort audit: ProcessPrReviewComments uses git.diff, git.headCommitSha,
-    // git.headCommitShaOf, git.remoteRef, git.isAncestor, git.logBetween,
-    // git.resetHard, and git.cleanUntracked. The remaining methods
-    // (createWorktree, removeWorktree, currentBranch, commit, push) are stubs that throw with a clear message
-    // — they must not be called from the PR review poller flow.
-    const gitAdapter: GitPort = {
-      async createWorktree(_input: CreateWorktreeInput): Promise<void> {
-        throw new Error(
-          'GitPort.createWorktree is not wired in compose poller (PR review flow does not create worktrees)',
-        );
-      },
-      async removeWorktree(_worktreePath: string): Promise<void> {
-        throw new Error(
-          'GitPort.removeWorktree is not wired in compose poller (PR review flow does not remove worktrees)',
-        );
-      },
-      async currentBranch(_cwd: string): Promise<string> {
-        throw new Error(
-          'GitPort.currentBranch is not wired in compose poller (PR review flow does not query branch)',
-        );
-      },
-      async headCommitSha(cwd: string): Promise<string> {
-        const { execFileSync } = await import('node:child_process');
-        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
-      },
-      // Best-effort variant of headCommitSha: returns undefined instead of
-      // throwing so the main-checkout drift guard can silently skip when the
-      // repo root is missing or not a git dir, rather than failing the poll.
-      async headCommitShaOf(cwd: string): Promise<string | undefined> {
-        try {
-          const { execFileSync } = await import('node:child_process');
-          return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
-        } catch {
-          return undefined;
-        }
-      },
-      async resetHard(cwd: string, commitSha: string): Promise<void> {
-        const { execFileSync } = await import('node:child_process');
-        execFileSync('git', ['reset', '--hard', commitSha], { cwd });
-      },
-      async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
-        const { execFileSync } = await import('node:child_process');
-        const args = _head ? [`${_base}...${_head}`] : [_base];
-        try {
-          return execFileSync('git', ['diff', ...args], { cwd: _cwd }).toString();
-        } catch (err) {
-          process.stderr.write(
-            `[compose] git diff ${args.join(' ')} failed in ${_cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
-          return '';
-        }
-      },
-      async commit(_cwd: string, _message: string): Promise<string> {
-        throw new Error(
-          'GitPort.commit is not wired in compose poller (PR review flow does not commit via this adapter)',
-        );
-      },
-      async push(_input: PushInput): Promise<void> {
-        throw new Error(
-          'GitPort.push is not wired in compose poller (PR review flow does not push via this adapter)',
-        );
-      },
-      async remoteRef(input: {
-        cwd: string;
-        remote: string;
-        ref: string;
-      }): Promise<string | undefined> {
-        try {
-          const { execFileSync } = await import('node:child_process');
-          const output = execFileSync('git', ['ls-remote', input.remote, input.ref], {
-            cwd: input.cwd,
-          })
-            .toString()
-            .trim();
-          return output.split(/\s+/)[0] || undefined;
-        } catch {
-          return undefined;
-        }
-      },
-      async isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
-        try {
-          const { execFileSync } = await import('node:child_process');
-          execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
-            cwd,
-          });
-          return true;
-        } catch (err) {
-          process.stderr.write(
-            `[compose] git merge-base --is-ancestor ${ancestor} ${descendant} failed in ${cwd}: ${err instanceof Error ? err.message : String(err)}\n`,
-          );
-          return false;
-        }
-      },
-      async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
-        try {
-          const { execFileSync } = await import('node:child_process');
-          const output = execFileSync('git', ['log', '--format=%H', `${base}..${head}`], {
-            cwd,
-          })
-            .toString()
-            .trim();
-          return output ? output.split('\n') : [];
-        } catch {
-          return [];
-        }
-      },
-      async cleanUntracked(cwd: string): Promise<void> {
-        const { execFileSync } = await import('node:child_process');
-        // -x also removes worktree-ignored orchestrator artifacts (result.json,
-        // *.md, *.result, logs) that the script seeds into .git/info/exclude, so
-        // a cancelled/reset run can't leak stale results into the next run on the
-        // reused worktree. node_modules is excluded to avoid an expensive reinstall.
-        execFileSync('git', ['clean', '-fdx', '-e', 'node_modules'], { cwd });
-      },
-      async resetWorktreeIfClean(_cwd: string, _baseBranch: string): Promise<void> {
-        throw new Error(
-          'GitPort.resetWorktreeIfClean is not wired in compose poller (PR review flow does not verify clean state)',
-        );
-      },
-    };
+
     const processor = new ProcessPrReviewComments({
       github: ghAdapter,
       git: gitAdapter,

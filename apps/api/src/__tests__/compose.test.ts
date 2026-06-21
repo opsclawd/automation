@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
-import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
+import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import { ReviewFixLoop, RunExecutor } from '@ai-sdlc/application';
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
@@ -633,6 +633,14 @@ exit 1
     const c = composeRoot({ repoRoot: root, scriptPath });
     expect(c.cancelRun).toBeDefined();
     expect(typeof c.cancelRun.execute).toBe('function');
+  });
+
+  it('cancelRun git dep is a GitWorktreeAdapter instance', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((c.cancelRun as any).deps.git).toBeInstanceOf(GitWorktreeAdapter);
   });
 
   it('cancelRun cancels a running run in the DB', async () => {
