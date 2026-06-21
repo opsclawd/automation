@@ -11,6 +11,8 @@ export class FakeGitPort implements GitPort {
   logBetweenResults = new Map<string, string[]>();
   cleanUntrackedCalls: string[] = [];
   headCommitShaOfResults = new Map<string, string | undefined>();
+  verifyCleanCalls: Array<{ cwd: string; baseBranch: string }> = [];
+  verifyCleanShouldThrow = new Set<string>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -77,5 +79,12 @@ export class FakeGitPort implements GitPort {
 
   async headCommitShaOf(cwd: string): Promise<string | undefined> {
     return this.headCommitShaOfResults.get(cwd);
+  }
+
+  async verifyClean(cwd: string, baseBranch: string): Promise<void> {
+    this.verifyCleanCalls.push({ cwd, baseBranch });
+    if (this.verifyCleanShouldThrow.has(cwd)) {
+      throw new Error(`TrackedSourceDriftError: fake tracked drift in ${cwd}`);
+    }
   }
 }

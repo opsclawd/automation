@@ -25,4 +25,5 @@ export interface GitPort {
   logBetween(cwd: string, base: string, head: string): Promise<string[]>;
   cleanUntracked(cwd: string): Promise<void>;
   headCommitShaOf(cwd: string): Promise<string | undefined>;
+  verifyClean(cwd: string, baseBranch: string): Promise<void>;
 }
