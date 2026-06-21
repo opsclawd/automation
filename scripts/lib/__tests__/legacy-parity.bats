@@ -2428,3 +2428,22 @@ PLAN
 
   rm -rf "$repo"
 }
+
+# Invariant: the create-pr phase must contain an orchestrator_fail guard that
+# fires when validation.result is absent/unknown but validation.md shows PASSED.
+# Without this guard, a future regression that deletes validation.result would
+# silently mislabel green PRs as ai:needs-human-review rather than failing loudly.
+# Source: issue #434 design decision 3 — fail loudly instead of silent fallback.
+# TS-port contract: the TS create-pr handler must implement this sentinel check
+# before applying GitHub labels.
+@test "parity[#434]: create-pr phase contains orchestrator_fail guard for absent sentinel when validation.md shows PASSED" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # The guard message is unique — if it's present, the guard is wired up.
+  run grep -c 'validation.result is absent/unknown but validation.md shows PASSED' "$script"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # The guard must call orchestrator_fail (not warn) — hard failure, not warning.
+  run grep -A3 'validation.result is absent/unknown but validation.md shows PASSED' "$script"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"orchestrator_fail"* ]]
+}

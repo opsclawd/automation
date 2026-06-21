@@ -4776,6 +4776,14 @@ EOF
   # Update issue labels — gate ai:pr-ready on validation passing
   gh issue edit "$ISSUE_NUM" --remove-label "ai:in-progress" 2>/dev/null || true
   VALIDATION_STATUS=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || echo "unknown")
+  # Guard: if the sentinel is missing/unknown but the prose log says PASSED,
+  # the sentinel was lost in a prior phase (e.g. guard_artifact_clean). Fail
+  # loudly so the regression is visible rather than silently mislabeling (#434).
+  if [[ "$VALIDATION_STATUS" == "unknown" || -z "$VALIDATION_STATUS" ]]; then
+    if grep -qx 'validation: PASSED' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
+      orchestrator_fail "validation.result is absent/unknown but validation.md shows PASSED — sentinel was lost (check compound phase guard_artifact_clean)"
+    fi
+  fi
   if [[ "$VALIDATION_STATUS" == "passed" ]]; then
     gh issue edit "$ISSUE_NUM" --add-label "ai:pr-ready" 2>/dev/null || true
   else
