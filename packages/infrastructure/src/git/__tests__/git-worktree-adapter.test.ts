@@ -82,3 +82,21 @@ describe('createWorktree()', () => {
     expect(branch).toBe('ai/existing-branch');
   });
 });
+
+describe('removeWorktree()', () => {
+  it('removes the worktree directory and deregisters it from git', async () => {
+    const repoLocalBasePath = await makeTempRepo();
+    const worktreePath = makeWorktreePath();
+    await adapter.createWorktree({
+      repoLocalBasePath,
+      worktreePath,
+      branch: 'ai/remove-test',
+      baseBranch: 'main',
+    });
+
+    await adapter.removeWorktree(worktreePath);
+
+    const list = await git(repoLocalBasePath, ['worktree', 'list', '--porcelain']);
+    expect(list).not.toContain(worktreePath);
+  });
+});

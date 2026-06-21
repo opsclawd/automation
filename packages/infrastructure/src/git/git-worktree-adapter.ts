@@ -1,4 +1,5 @@
-import { access } from 'node:fs/promises';
+import { access, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import type { CreateWorktreeInput, GitPort, PushInput } from '@ai-sdlc/application/ports';
 import { git } from './git-runner.js';
 
@@ -28,8 +29,22 @@ export class GitWorktreeAdapter implements GitPort {
     }
   }
 
-  async removeWorktree(_worktreePath: string): Promise<void> {
-    throw new Error('not implemented');
+  async removeWorktree(worktreePath: string): Promise<void> {
+    let baseRepoPath: string;
+    try {
+      const gitCommonDir = await git(worktreePath, ['rev-parse', '--git-common-dir']);
+      baseRepoPath = dirname(gitCommonDir);
+    } catch {
+      await rm(worktreePath, { recursive: true, force: true });
+      return;
+    }
+
+    try {
+      await git(baseRepoPath, ['worktree', 'remove', '--force', worktreePath]);
+    } catch {
+      await rm(worktreePath, { recursive: true, force: true });
+      await git(baseRepoPath, ['worktree', 'prune']);
+    }
   }
 
   async currentBranch(_cwd: string): Promise<string> {
