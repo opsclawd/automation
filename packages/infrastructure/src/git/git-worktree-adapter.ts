@@ -9,9 +9,13 @@ export class GitWorktreeAdapter implements GitPort {
 
     try {
       await access(worktreePath);
-      return;
+      // Path exists — verify it's a valid independent worktree, not a stale directory
+      const topLevel = await git(worktreePath, ['rev-parse', '--show-toplevel']);
+      if (topLevel === worktreePath) return;
+      // Resolved to a parent directory — treat as stale
+      await rm(worktreePath, { recursive: true, force: true });
     } catch {
-      // path absent, proceed with creation
+      await rm(worktreePath, { recursive: true, force: true });
     }
 
     let branchExists = false;

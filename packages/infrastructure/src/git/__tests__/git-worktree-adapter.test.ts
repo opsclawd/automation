@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -64,6 +64,22 @@ describe('createWorktree()', () => {
 
     const branch = await git(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD']);
     expect(branch).toBe('ai/idempotent');
+  });
+
+  it('recovers from a stale empty directory (crash after mkdir, before git worktree add)', async () => {
+    const repoLocalBasePath = await makeTempRepo();
+    const worktreePath = makeWorktreePath();
+    await mkdir(worktreePath, { recursive: true });
+
+    await adapter.createWorktree({
+      repoLocalBasePath,
+      worktreePath,
+      branch: 'ai/stale-recovery',
+      baseBranch: 'main',
+    });
+
+    const branch = await git(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    expect(branch).toBe('ai/stale-recovery');
   });
 
   it('attaches an existing branch when the branch already exists in the repo', async () => {
