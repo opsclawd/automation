@@ -272,19 +272,18 @@ export class ImplementStepLoop {
             return { outcome: 'needs_human_review', loop };
           }
 
-          this.emit(
-            input,
-            'review.contradiction.resolved',
-            'info',
-            `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-            {
-              ruling: arbiterResult.outcome,
-              evidence: arbiterResult.evidence,
-              iterationIndex,
-            },
-          );
-
           if (arbiterResult.outcome === 'finding_invalid') {
+            this.emit(
+              input,
+              'review.contradiction.resolved',
+              'info',
+              `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+              {
+                ruling: arbiterResult.outcome,
+                evidence: arbiterResult.evidence,
+                iterationIndex,
+              },
+            );
             // Reviewer was wrong — the step is complete
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
@@ -293,6 +292,17 @@ export class ImplementStepLoop {
           }
 
           if (arbiterResult.outcome === 'finding_valid') {
+            this.emit(
+              input,
+              'review.contradiction.resolved',
+              'info',
+              `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+              {
+                ruling: arbiterResult.outcome,
+                evidence: arbiterResult.evidence,
+                iterationIndex,
+              },
+            );
             // Fixer was wrong — carry arbiter rationale into next fix call
             pendingReconciliationContext = arbiterResult.rationale;
             loop = completeIteration(loop, {
