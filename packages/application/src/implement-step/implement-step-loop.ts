@@ -75,9 +75,14 @@ export class ImplementStepLoop {
           output: tcResult.output.slice(0, 2000),
         },
       );
+      this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', { index: 1 });
       loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
       loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
       deps.loops.update(loop);
+      this.emit(input, 'loop.iteration.completed', 'info', 'step failed typecheck gate', {
+        index: 1,
+        outcome: 'failed',
+      });
       return { outcome: 'failed', loop };
     }
 
