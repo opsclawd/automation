@@ -32,7 +32,7 @@ function makeRun(overrides?: Partial<Run>): Run {
 
 function makeStubHandler(
   phase: string,
-  outcome: 'passed' | 'failed' | 'blocked' | 'resting' | 'skipped' = 'passed',
+  outcome: 'passed' | 'failed' | 'blocked' | 'needs_human_review' | 'resting' | 'skipped' = 'passed',
 ): PhaseHandler {
   return {
     phase: makePhaseName(phase),
@@ -47,6 +47,12 @@ function makeStubHandler(
         return {
           outcome: 'blocked',
           failure: makeFailure(phase, 'agent_blocked'),
+        };
+      }
+      if (outcome === 'needs_human_review') {
+        return {
+          outcome: 'needs_human_review',
+          failure: makeFailure(phase, 'agent_incomplete'),
         };
       }
       return { outcome };
@@ -396,6 +402,29 @@ describe('RunExecutor', () => {
     expect(deps.runRepository.update).toHaveBeenCalledWith(
       'test-uuid',
       expect.objectContaining({ status: 'blocked' }),
+    );
+  });
+
+  it('handles needs_human_review outcome — marks run needs_human_review with failure', async () => {
+    const registry = new PhaseHandlerRegistry();
+    registry.register(makeStubHandler('read_issue', 'needs_human_review'));
+
+    const deps = makeDeps({ registry });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+    const result = await executor.execute(input);
+
+    expect(result.run.status).toBe('needs_human_review');
+    expect(result.phases).toHaveLength(1);
+    expect(result.phases[0]!.status).toBe('needs_human_review');
+    expect(result.phases[0]!.failure).toBeDefined();
+    expect(result.phases[0]!.failure!.kind).toBe('agent_incomplete');
+    expect(deps.failureRepository.insert).toHaveBeenCalledTimes(1);
+    expect(deps.runRepository.update).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ status: 'needs_human_review' }),
     );
   });
 

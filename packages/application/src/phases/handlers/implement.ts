@@ -94,7 +94,7 @@ export class ImplementHandler implements PhaseHandler {
         emit('step.needs_human_review', 'warn', `step ${d.index} needs human review`, {
           index: d.index,
         });
-        return this.fail(
+        return this.needsHumanReview(
           ctx,
           emit,
           'agent_incomplete',
@@ -150,6 +150,28 @@ export class ImplementHandler implements PhaseHandler {
           kind === 'invalid_result'
             ? 'Ensure plan.md contains "## Task" headings.'
             : 'Inspect the failing step artifacts and resume.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      },
+    };
+  }
+
+  private needsHumanReview(
+    ctx: PhaseHandlerContext,
+    emit: EventEmitter,
+    kind: FailureKind,
+    message: string,
+  ): PhaseResult {
+    emit('implement.needs_human_review', 'warn', message);
+    return {
+      outcome: 'needs_human_review',
+      failure: {
+        runUuid: ctx.runUuid,
+        phase: 'implement',
+        kind,
+        message,
+        canRetry: true,
+        suggestedAction: 'Review the step that needs attention and resume.',
         artifacts: [],
         detectedAt: ctx.now(),
       },
