@@ -22,10 +22,10 @@ describe('detectStall', () => {
     );
   });
 
-  it('returns oscillation when one finding oscillates among others', () => {
+  it('returns no_progress over oscillation when both patterns coexist', () => {
     expect(
       detectStall(sets(['type error', 'lint nit'], ['lint nit'], ['type error', 'lint nit'])),
-    ).toBe('oscillation');
+    ).toBe('no_progress');
   });
 
   it('returns no_progress when a finding persists across all 3 iterations', () => {

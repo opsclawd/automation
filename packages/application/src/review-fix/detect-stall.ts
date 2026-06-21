@@ -7,10 +7,12 @@ export function detectStall(findingHistory: Array<Set<string>>): StallType {
   const prev = findingHistory[findingHistory.length - 2]!;
   const prevPrev = findingHistory[findingHistory.length - 3]!;
 
+  let hasOscillation = false;
+
   for (const finding of current) {
     if (prev.has(finding) && prevPrev.has(finding)) return 'no_progress';
-    if (!prev.has(finding) && prevPrev.has(finding)) return 'oscillation';
+    if (!prev.has(finding) && prevPrev.has(finding)) hasOscillation = true;
   }
 
-  return 'none';
+  return hasOscillation ? 'oscillation' : 'none';
 }
