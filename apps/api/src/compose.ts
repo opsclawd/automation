@@ -1011,28 +1011,25 @@ export function composeRoot(opts: ComposeOptions): Container {
       // truth (a reviewer demanding a non-compiling change is overruled).
       const runTypecheck = async (ctx: StepLoopContext): Promise<TypecheckResult> => {
         try {
-          execFileSync('pnpm', ['-r', 'typecheck'], { cwd: ctx.cwd, stdio: 'pipe' });
+          execFileSync('pnpm', ['-r', 'typecheck'], {
+            cwd: ctx.cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+          });
           return { outcome: 'pass', output: '' };
         } catch (err) {
-          const e = err as { stdout?: Buffer | string; stderr?: Buffer | string };
-          const output = `${e.stdout?.toString() ?? ''}${e.stderr?.toString() ?? ''}`.trim();
-          return { outcome: 'fail', output };
+          const raw =
+            err instanceof Error && 'stdout' in err && 'stderr' in err
+              ? `${String((err as NodeJS.ErrnoException & { stdout?: string }).stdout ?? '')}${String((err as NodeJS.ErrnoException & { stderr?: string }).stderr ?? '')}`
+              : String(err);
+          const lines = raw.split('\n');
+          const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : raw;
+          return {
+            outcome: 'fail',
+            output: truncated.slice(0, 3000),
+          };
         }
       };
-
-      // Render the typecheck signal for injection into a reviewer prompt.
-      const typecheckBlock = (tc: TypecheckResult): string[] =>
-        tc.outcome === 'pass'
-          ? ['## TYPECHECK SIGNAL', '`pnpm -r typecheck` is GREEN for this step.', '']
-          : [
-              '## TYPECHECK SIGNAL',
-              '`pnpm -r typecheck` is RED. Do NOT request changes that would not compile;',
-              'the build is ground truth. Typecheck output:',
-              '```',
-              tc.output.slice(0, 2000),
-              '```',
-              '',
-            ];
 
       const runSpecReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
@@ -1041,13 +1038,19 @@ export function composeRoot(opts: ComposeOptions): Container {
           promptDir,
           `spec-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
         );
+        const typecheckSection =
+          tcResult.outcome === 'pass'
+            ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return SPEC_FAIL for it."
+            : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to plan-letter checks until the type error is resolved.`;
+
         const reviewPrompt = [
           '# TASK',
           `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
           '',
           'Check that the implementation matches plan.md task requirements exactly.',
           '',
-          ...typecheckBlock(tcResult),
+          typecheckSection,
+          '',
           '## OUTPUT',
           'Write result.json: { "result": "pass" | "fail" }',
         ].join('\n');
@@ -1101,13 +1104,19 @@ export function composeRoot(opts: ComposeOptions): Container {
           promptDir,
           `quality-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
         );
+        const typecheckSection =
+          tcResult.outcome === 'pass'
+            ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
+            : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
+
         const reviewPrompt = [
           '# TASK',
           `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
           '',
           'Check for code quality: maintainability, performance, security, test coverage.',
           '',
-          ...typecheckBlock(tcResult),
+          typecheckSection,
+          '',
           '## OUTPUT',
           'Write result.json: { "result": "pass" | "fail" }',
         ].join('\n');
