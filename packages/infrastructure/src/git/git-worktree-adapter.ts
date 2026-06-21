@@ -47,51 +47,68 @@ export class GitWorktreeAdapter implements GitPort {
     }
   }
 
-  async currentBranch(_cwd: string): Promise<string> {
-    throw new Error('not implemented');
+  async currentBranch(cwd: string): Promise<string> {
+    return git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
   }
 
-  async headCommitSha(_cwd: string): Promise<string> {
-    throw new Error('not implemented');
+  async headCommitSha(cwd: string): Promise<string> {
+    return git(cwd, ['rev-parse', 'HEAD']);
   }
 
-  async headCommitShaOf(_cwd: string): Promise<string | undefined> {
-    throw new Error('not implemented');
+  async headCommitShaOf(cwd: string): Promise<string | undefined> {
+    try {
+      return await git(cwd, ['rev-parse', 'HEAD']);
+    } catch {
+      return undefined;
+    }
   }
 
-  async resetHard(_cwd: string, _commitSha: string): Promise<void> {
-    throw new Error('not implemented');
+  async resetHard(cwd: string, commitSha: string): Promise<void> {
+    await git(cwd, ['reset', '--hard', commitSha]);
   }
 
-  async diff(_cwd: string, _base: string, _head?: string): Promise<string> {
-    throw new Error('not implemented');
+  async diff(cwd: string, base: string, head?: string): Promise<string> {
+    return head ? git(cwd, ['diff', base, head]) : git(cwd, ['diff', base]);
   }
 
-  async commit(_cwd: string, _message: string): Promise<string> {
-    throw new Error('not implemented');
+  async commit(cwd: string, message: string): Promise<string> {
+    await git(cwd, ['commit', '-m', message]);
+    return git(cwd, ['rev-parse', 'HEAD']);
   }
 
-  async push(_input: PushInput): Promise<void> {
-    throw new Error('not implemented');
+  async push(input: PushInput): Promise<void> {
+    const { cwd, branch, remote = 'origin' } = input;
+    await git(cwd, ['push', remote, branch]);
   }
 
-  async remoteRef(_input: {
+  async remoteRef(input: {
     cwd: string;
     remote: string;
     ref: string;
   }): Promise<string | undefined> {
-    throw new Error('not implemented');
+    try {
+      const out = await git(input.cwd, ['ls-remote', '--exit-code', input.remote, input.ref]);
+      return out.split('\t')[0];
+    } catch {
+      return undefined;
+    }
   }
 
-  async isAncestor(_cwd: string, _ancestor: string, _descendant: string): Promise<boolean> {
-    throw new Error('not implemented');
+  async isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+    try {
+      await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  async logBetween(_cwd: string, _base: string, _head: string): Promise<string[]> {
-    throw new Error('not implemented');
+  async logBetween(cwd: string, base: string, head: string): Promise<string[]> {
+    const out = await git(cwd, ['log', '--format=%s', `${base}..${head}`]);
+    return out ? out.split('\n').filter(Boolean) : [];
   }
 
-  async cleanUntracked(_cwd: string): Promise<void> {
-    throw new Error('not implemented');
+  async cleanUntracked(cwd: string): Promise<void> {
+    await git(cwd, ['clean', '-fd']);
   }
 }

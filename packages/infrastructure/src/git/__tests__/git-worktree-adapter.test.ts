@@ -100,3 +100,76 @@ describe('removeWorktree()', () => {
     expect(list).not.toContain(worktreePath);
   });
 });
+
+describe('reproduces parity #295 (runs never mutate the main checkout)', () => {
+  it('main checkout HEAD is unchanged after worktree commit and resetHard', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const repoLocalBasePath = await makeTempRepo();
+    const worktreePath = makeWorktreePath();
+    await adapter.createWorktree({
+      repoLocalBasePath,
+      worktreePath,
+      branch: 'ai/parity-295',
+      baseBranch: 'main',
+    });
+
+    const mainHeadBefore = await git(repoLocalBasePath, ['rev-parse', 'HEAD']);
+
+    // Commit a new file inside the worktree
+    await writeFile(join(worktreePath, 'parity-295.txt'), 'content\n');
+    await git(worktreePath, ['add', '.']);
+    await adapter.commit(worktreePath, 'feat: worktree-only commit');
+
+    // Reset the worktree back to the base commit
+    await adapter.resetHard(worktreePath, mainHeadBefore);
+
+    // Main checkout HEAD must not have moved
+    const mainHeadAfter = await git(repoLocalBasePath, ['rev-parse', 'HEAD']);
+    expect(mainHeadAfter).toBe(mainHeadBefore);
+
+    // Working directory of main checkout is clean
+    const status = await git(repoLocalBasePath, ['status', '--porcelain']);
+    expect(status).toBe('');
+  });
+});
+
+describe('currentBranch()', () => {
+  it('returns the active branch name inside the worktree', async () => {
+    const repoLocalBasePath = await makeTempRepo();
+    const worktreePath = makeWorktreePath();
+    await adapter.createWorktree({
+      repoLocalBasePath,
+      worktreePath,
+      branch: 'ai/branch-check',
+      baseBranch: 'main',
+    });
+
+    const branch = await adapter.currentBranch(worktreePath);
+    expect(branch).toBe('ai/branch-check');
+  });
+});
+
+describe('headCommitSha()', () => {
+  it('returns a 40-character hex SHA for the HEAD commit', async () => {
+    const repoLocalBasePath = await makeTempRepo();
+    const worktreePath = makeWorktreePath();
+    await adapter.createWorktree({
+      repoLocalBasePath,
+      worktreePath,
+      branch: 'ai/sha-check',
+      baseBranch: 'main',
+    });
+
+    const sha = await adapter.headCommitSha(worktreePath);
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
+
+describe('headCommitShaOf()', () => {
+  it('returns the HEAD SHA of a valid repository', async () => {
+    const repoLocalBasePath = await makeTempRepo();
+
+    const sha = await adapter.headCommitShaOf(repoLocalBasePath);
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+});
