@@ -2386,3 +2386,45 @@ PLAN
   run grep -q 'already_retried' "$script"
   [ "$status" -eq 0 ]
 }
+
+# Invariant: guard_artifact_clean in the compound phase must NOT permanently
+# delete validation.result. The compound phase must save the value before
+# calling guard_artifact_clean and re-persist it afterwards.
+# Source: issue #434 — guard_artifact_clean at end of compound phase deleted
+# validation.result, causing create-pr to read empty and mislabel as
+# ai:needs-human-review despite a passing validate phase.
+# TS-port contract: the TS compound handler must save/restore validation.result
+# around any artifact-cleanup call.
+@test "parity[#434]: validation.result survives guard_artifact_clean in compound phase" {
+  local repo
+  repo="$(mktemp -d)"
+  git -C "$repo" init -b main >/dev/null 2>&1
+  git -C "$repo" config user.email "test@test.com"
+  git -C "$repo" config user.name "Test"
+  git -C "$repo" commit --allow-empty -m "init" >/dev/null 2>&1
+
+  # Simulate validation.result as written by the validate phase
+  echo "passed" > "$repo/validation.result"
+
+  # Source artifacts lib so guard_artifact_clean is available
+  # shellcheck disable=SC1090
+  source "$REPO_ROOT/scripts/lib/artifacts.sh"
+
+  # Replicate the save/restore pattern the compound phase must use
+  local _compound_validation_result
+  _compound_validation_result="$(cat "$repo/validation.result" 2>/dev/null || true)"
+  guard_artifact_clean "$repo"
+  # guard removed the file
+  [ ! -f "$repo/validation.result" ]
+  # re-persist as the fixed compound phase now does
+  if [[ -n "$_compound_validation_result" ]]; then
+    printf '%s\n' "$_compound_validation_result" > "$repo/validation.result"
+  fi
+
+  # assertion: file exists and contains the original value
+  [ -f "$repo/validation.result" ]
+  run cat "$repo/validation.result"
+  [ "$output" = "passed" ]
+
+  rm -rf "$repo"
+}

@@ -4555,9 +4555,19 @@ Start now."
     fi
   fi
 
+  # Capture validation.result before guard_artifact_clean removes it — it is
+  # an orchestrator artifact (#434). Re-persist after cleanup so create-pr
+  # reads the correct status (same pattern as fix-validate lines ~3820–3839).
+  _compound_validation_result="$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || true)"
+
   # Safety net: remove any non-compound-draft artifacts the compound agent
   # may have staged or committed (compound-draft.md is handled above).
   guard_artifact_clean "${WORKTREE_DIR}" "origin/${BASE_BRANCH}"
+
+  # Re-persist validation.result so create-pr reads the correct status.
+  if [[ -n "$_compound_validation_result" ]]; then
+    printf '%s\n' "$_compound_validation_result" > "${ISSUES_DIR}/validation.result"
+  fi
 
   _emit_phase_done "compound"
   PHASE="create-pr"
