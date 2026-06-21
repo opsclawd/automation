@@ -46,8 +46,11 @@ describe('detectStall', () => {
     expect(detectStall(sets(['a'], ['b'], ['a'], ['c'], ['c'], ['c']))).toBe('no_progress');
   });
 
-  it('applies normalization: matching is case-insensitive and trim-insensitive', () => {
+  it('returns oscillation when a finding reappears after being absent', () => {
     const h = [new Set(['type error']), new Set(['other']), new Set(['type error'])];
     expect(detectStall(h)).toBe('oscillation');
   });
+
+  // Normalization (case/trim) is the caller's responsibility, handled in review-fix-loop.ts.
+  // See review-fix-loop.ts lines 111-112 for the normalization call site.
 });

@@ -601,5 +601,28 @@ describe('ReviewFixLoop', () => {
       );
       expect(esc).toHaveLength(0);
     });
+
+    it('does not emit any escalation event on consecutive fix failures when fixFallbackProfile is undefined', async () => {
+      const { events, bus } = collectEvents();
+      const fixCalls: FixStepOptions[] = [];
+      const deps = makeDeps({
+        events: bus,
+        runReview: async () => ({
+          invocationId: 'r',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async (_ctx: StepContext, opts: FixStepOptions) => {
+          fixCalls.push(opts);
+          return { invocationId: `fix-${fixCalls.length}`, agentOutcome: 'failed' as const };
+        },
+      });
+
+      const inputWithoutFallback = { ...baseInput(), fixFallbackProfile: undefined };
+      await new ReviewFixLoop(deps).execute({ ...inputWithoutFallback, maxIterations: 4 });
+
+      const esc = events.filter((e) => e.type === 'phase.fallback.escalated');
+      expect(esc).toHaveLength(0);
+    });
   });
 });

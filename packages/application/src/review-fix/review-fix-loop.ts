@@ -109,13 +109,17 @@ export class ReviewFixLoop {
 
       // --- OSCILLATION / STALL DETECTION ---
       const normalizedFindings = new Set(
-        (review.offendingFindings ?? []).map((f) => f.summary.trim().toLowerCase()),
+        (review.offendingFindings ?? []).map((f) => (f.summary ?? '').trim().toLowerCase()),
       );
       findingHistory.push(normalizedFindings);
+      if (findingHistory.length > 3) {
+        findingHistory.splice(0, findingHistory.length - 3);
+      }
       const stall = detectStall(findingHistory);
 
       // --- decide fallback (use-case-owned triggers) ---
-      const escalateForFixFailures = consecutiveFixFailures >= 2;
+      const escalateForFixFailures =
+        consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
       const escalateForStall = stall !== 'none' && input.fixFallbackProfile !== undefined;
       const useFallback =
         (escalateForFixFailures || escalateForStall) && input.fixFallbackProfile !== undefined;
