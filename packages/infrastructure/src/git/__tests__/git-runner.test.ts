@@ -13,15 +13,17 @@ describe('git()', () => {
   it('returns trimmed stdout for a successful command', async () => {
     const repoPath = await makeTempRepo();
 
-    const result = await git(repoPath, ['log', '--oneline', '-1']);
-    expect(result).toBeTruthy();
-    expect(result).not.toMatch(/\n$/);
+    const result = await git(repoPath, ['log', '--format=%s', '-1']);
+    expect(result).toBe('initial commit');
   });
 
   it('rejects with GitFailedError on non-zero exit', async () => {
     const repoPath = await makeTempRepo();
 
     await expect(git(repoPath, ['show', 'nonexistent-ref'])).rejects.toThrow(GitFailedError);
+    await expect(git(repoPath, ['show', 'nonexistent-ref'])).rejects.toMatchObject({
+      stderr: expect.stringContaining('fatal'),
+    });
   });
 
   it('trims leading and trailing whitespace from stdout', async () => {
@@ -31,12 +33,10 @@ describe('git()', () => {
     expect(result).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  it('rejects when command exceeds timeout', async () => {
+  it('rejects when command exceeds timeout', { timeout: 15_000 }, async () => {
     const repoPath = await makeTempRepo();
 
-    await expect(
-      git(repoPath, ['fetch', '--depth=1', 'git://10.255.255.1/repo.git'], 1),
-    ).rejects.toThrow();
+    await expect(git(repoPath, ['-c', 'alias.sleep=!sleep 10', 'sleep'], 1)).rejects.toThrow();
   });
 });
 
