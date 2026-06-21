@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { git, GitFailedError } from '../git-runner.js';
 import { getTempDirs, clearTempDirs, makeTempRepo } from './helpers.js';
@@ -36,7 +37,7 @@ describe('git()', () => {
   it('rejects when command exceeds timeout', { timeout: 15_000 }, async () => {
     const repoPath = await makeTempRepo();
 
-    await expect(git(repoPath, ['-c', 'alias.sleep=!sleep 10', 'sleep'], 1)).rejects.toThrow();
+    await expect(git(repoPath, ['-c', 'alias.sleep=!sleep 10', 'sleep'], 50)).rejects.toThrow();
   });
 });
 
@@ -63,6 +64,21 @@ describe('makeTempRepo()', () => {
     const repoPath = await makeTempRepo();
 
     expect(repoPath).not.toBe(process.cwd());
-    expect(repoPath).toMatch(/tmp/);
+    expect(repoPath.startsWith(tmpdir())).toBe(true);
+  });
+});
+
+describe('helper functions', () => {
+  it('getTempDirs returns snapshot of tracked directories', async () => {
+    expect(getTempDirs()).toEqual([]);
+    const repoPath = await makeTempRepo();
+    expect(getTempDirs()).toContain(repoPath);
+  });
+
+  it('clearTempDirs empties the set', async () => {
+    const repoPath = await makeTempRepo();
+    expect(getTempDirs()).toContain(repoPath);
+    clearTempDirs();
+    expect(getTempDirs()).toEqual([]);
   });
 });

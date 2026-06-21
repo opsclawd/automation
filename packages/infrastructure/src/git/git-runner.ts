@@ -4,13 +4,20 @@ export class GitFailedError extends Error {
   readonly cwd: string;
   readonly command: string;
   readonly stderr: string;
+  readonly timedOut: boolean;
 
-  constructor(cwd: string, command: string, stderr: string) {
-    super(`git failed: git ${command} (cwd: ${cwd})\n${stderr}`);
+  constructor(
+    cwd: string,
+    command: string,
+    stderr: string,
+    options?: { cause?: unknown; timedOut?: boolean },
+  ) {
+    super(`git failed: git ${command} (cwd: ${cwd})\n${stderr}`, { cause: options?.cause });
     this.name = 'GitFailedError';
     this.cwd = cwd;
     this.command = command;
     this.stderr = stderr;
+    this.timedOut = options?.timedOut ?? false;
     Error.captureStackTrace(this, this.constructor);
   }
 }
@@ -33,7 +40,14 @@ export async function git(cwd: string, args: string[], timeoutMs?: number): Prom
     });
     return stdout.trim();
   } catch (err) {
-    const stderr = (err as { stderr?: string })?.stderr ?? (err as Error)?.message ?? 'unknown';
-    throw new GitFailedError(cwd, args.join(' '), stderr);
+    const execaErr = err as { stderr?: string; timedOut?: boolean; code?: string };
+    if (execaErr.code === 'ENOENT') {
+      throw new Error(`git command not found: is git installed and on PATH?`);
+    }
+    const stderr = execaErr.stderr ?? (err as Error)?.message ?? 'unknown';
+    throw new GitFailedError(cwd, args.join(' '), stderr, {
+      cause: err,
+      timedOut: execaErr.timedOut ?? false,
+    });
   }
 }
