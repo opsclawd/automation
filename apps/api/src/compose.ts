@@ -54,6 +54,7 @@ import {
   RunExecutor,
   HandlerNotWiredError,
   CANONICAL_PHASE_ORDER,
+  type Artifact,
   type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -897,7 +898,23 @@ export function composeRoot(opts: ComposeOptions): Container {
         write: async () => {
           throw new Error('not implemented');
         },
-        list: async () => [],
+        list: async (runId: string): Promise<Artifact[]> => {
+          const entries = readdirSync(cwd, { withFileTypes: true });
+          const results: Artifact[] = [];
+          for (const entry of entries) {
+            if (entry.isFile()) {
+              const stats = statSync(join(cwd, entry.name));
+              results.push({
+                runId,
+                relativePath: entry.name,
+                absolutePath: join(cwd, entry.name),
+                bytes: stats.size,
+                createdAt: stats.mtime,
+              });
+            }
+          }
+          return results;
+        },
       });
 
       const buildContext = (run: Run): PhaseHandlerContext => {
