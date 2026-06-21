@@ -32,8 +32,8 @@ export class ImplementStepLoop {
     let consecutiveFixFailures = 0;
     let lastFixInvocationId: string | undefined;
     let contradictionRetriedThisStep = false;
-    let _arbiterInvokedThisStep = false; // used by Task 3 (arbiter escalation)
-    let _pendingReconciliationContext: string | undefined; // used by Task 3 (arbiter escalation)
+    let arbiterInvokedThisStep = false;
+    let pendingReconciliationContext: string | undefined;
 
     const baseCtx: StepLoopContext = {
       loopId: loop.id,
@@ -174,10 +174,14 @@ export class ImplementStepLoop {
       // --- FIX ---
       const fix = await deps.runFix(ctx, {
         useFallback,
+        ...(pendingReconciliationContext !== undefined
+          ? { reconciliationContext: pendingReconciliationContext }
+          : {}),
         ...(useFallback && lastFixInvocationId !== undefined
           ? { previousInvocationId: lastFixInvocationId }
           : {}),
       });
+      pendingReconciliationContext = undefined; // consumed
       lastFixInvocationId = fix.invocationId;
 
       if (
@@ -237,14 +241,92 @@ export class ImplementStepLoop {
           // Re-run still failing — fall through to arbiter (Task 3 adds this path)
         }
 
-        // --- NO ARBITER / ARBITER ALREADY USED (placeholder until Task 3) ---
-        // Emit needs_human_review and exit; Task 3 replaces this with arbiter call.
+        // --- ARBITER ESCALATION ---
+        if (!arbiterInvokedThisStep && deps.runArbiter !== undefined) {
+          arbiterInvokedThisStep = true;
+          this.emit(
+            input,
+            'review.contradiction.escalated',
+            'warn',
+            `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
+            {
+              toProfile: deps.fixFallbackProfile as unknown as string,
+              reason: 'contradiction_not_resolved_by_rerun',
+              iterationIndex,
+            },
+          );
+
+          const arbiterResult = await deps.runArbiter(ctx, tcResult, fix);
+
+          // G1 guardrail: empty evidence → human review, never auto-proceed
+          if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
+            this.emit(
+              input,
+              'needs_human_review',
+              'warn',
+              `arbiter returned empty evidence at iteration ${iterationIndex} — escalating to human`,
+              { iterationIndex, outcome: arbiterResult.outcome },
+            );
+            loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop };
+          }
+
+          this.emit(
+            input,
+            'review.contradiction.resolved',
+            'info',
+            `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+            {
+              ruling: arbiterResult.outcome,
+              evidence: arbiterResult.evidence,
+              iterationIndex,
+            },
+          );
+
+          if (arbiterResult.outcome === 'finding_invalid') {
+            // Reviewer was wrong — the step is complete
+            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(loop);
+            this.emitIterationCompleted(input, iterationIndex, 'resolved');
+            return { outcome: 'success', loop };
+          }
+
+          if (arbiterResult.outcome === 'finding_valid') {
+            // Fixer was wrong — carry arbiter rationale into next fix call
+            pendingReconciliationContext = arbiterResult.rationale;
+            loop = completeIteration(loop, {
+              outcome: 'unresolved',
+              fixInvocationId: fix.invocationId,
+              now: deps.now(),
+            });
+            deps.loops.update(loop);
+            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+            continue; // next iteration: reviews run, then fix with reconciliationContext
+          }
+
+          // ambiguous or insufficient_evidence
+          this.emit(
+            input,
+            'needs_human_review',
+            'warn',
+            `arbiter could not resolve contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+            { ruling: arbiterResult.outcome, evidence: arbiterResult.evidence, iterationIndex },
+          );
+          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(loop);
+          return { outcome: 'needs_human_review', loop };
+        }
+
+        // Arbiter already invoked this step, or not configured — human escalation
         this.emit(
           input,
           'needs_human_review',
           'warn',
-          `contradiction unresolved after 1-shot re-run at iteration ${iterationIndex}`,
-          { iterationIndex, arbiterAvailable: Boolean(deps.runArbiter) },
+          arbiterInvokedThisStep
+            ? `second contradiction after arbiter at iteration ${iterationIndex} — escalating to human`
+            : `contradiction after 1-shot re-run with no arbiter configured at iteration ${iterationIndex}`,
+          { iterationIndex, arbiterInvokedThisStep },
         );
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
