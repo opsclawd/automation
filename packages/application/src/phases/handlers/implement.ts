@@ -15,7 +15,7 @@ export interface StepRunContext {
 }
 
 export interface StepRunResult {
-  outcome: 'success' | 'failed';
+  outcome: 'success' | 'failed' | 'needs_human_review';
 }
 
 export interface ImplementHandlerOpts {
