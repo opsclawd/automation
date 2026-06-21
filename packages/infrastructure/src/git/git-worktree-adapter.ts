@@ -1,7 +1,7 @@
 import { access, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { CreateWorktreeInput, GitPort, PushInput } from '@ai-sdlc/application/ports';
-import { git } from './git-runner.js';
+import { git, GitFailedError } from './git-runner.js';
 
 export class GitWorktreeAdapter implements GitPort {
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
@@ -102,8 +102,11 @@ export class GitWorktreeAdapter implements GitPort {
     try {
       await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]);
       return true;
-    } catch {
-      return false;
+    } catch (err) {
+      if (err instanceof GitFailedError && err.stderr.trim() === '') {
+        return false;
+      }
+      throw err;
     }
   }
 
