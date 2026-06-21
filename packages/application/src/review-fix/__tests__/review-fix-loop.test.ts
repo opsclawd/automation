@@ -471,4 +471,158 @@ describe('ReviewFixLoop', () => {
     expect(overrideEvents[0]?.metadata.direction).toBe('downgrade');
     expect(overrideEvents[0]?.metadata.threshold).toBe('high');
   });
+
+  describe('oscillation detection', () => {
+    it('escalates when a finding oscillates across 3 iterations (present → absent → present)', async () => {
+      const { events, bus } = collectEvents();
+      let reviewCall = 0;
+      const findings = [
+        [{ severity: 'high', summary: 'type error' }],
+        [{ severity: 'high', summary: 'unused import' }],
+        [{ severity: 'high', summary: 'type error' }],
+      ];
+      const fixCalls: FixStepOptions[] = [];
+      const deps = makeDeps({
+        events: bus,
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findings[i] ?? [],
+          };
+        },
+        runFix: async (_ctx: StepContext, opts: FixStepOptions) => {
+          fixCalls.push(opts);
+          return {
+            invocationId: `fix-${fixCalls.length}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+
+      await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+
+      expect(fixCalls[2]?.useFallback).toBe(true);
+
+      const esc = events.filter((e) => e.type === 'phase.fallback.escalated');
+      expect(esc.length).toBeGreaterThanOrEqual(1);
+      expect(esc.some((e) => e.metadata.triggerReason === 'oscillation_detected')).toBe(true);
+    });
+
+    it('escalates when the same finding persists across 3 iterations (no_progress)', async () => {
+      const { events, bus } = collectEvents();
+      let reviewCall = 0;
+      const fixCalls: FixStepOptions[] = [];
+      const deps = makeDeps({
+        events: bus,
+        runReview: async () => {
+          reviewCall++;
+          return {
+            invocationId: `rev-${reviewCall}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: [{ severity: 'high', summary: 'type error' }],
+          };
+        },
+        runFix: async (_ctx: StepContext, opts: FixStepOptions) => {
+          fixCalls.push(opts);
+          return {
+            invocationId: `fix-${fixCalls.length}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+
+      await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+
+      expect(fixCalls[2]?.useFallback).toBe(true);
+
+      const esc = events.filter((e) => e.type === 'phase.fallback.escalated');
+      expect(esc.length).toBeGreaterThanOrEqual(1);
+      expect(esc.some((e) => e.metadata.triggerReason === 'no_progress_detected')).toBe(true);
+    });
+
+    it('does not escalate for stall when history has fewer than 3 failing iterations', async () => {
+      const { events, bus } = collectEvents();
+      let reviewCall = 0;
+      const deps = makeDeps({
+        events: bus,
+        runReview: async () => {
+          reviewCall++;
+          return {
+            invocationId: `rev-${reviewCall}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCall <= 2 ? ('fail' as const) : ('pass' as const),
+            offendingFindings: reviewCall <= 2 ? [{ severity: 'high', summary: 'type error' }] : [],
+          };
+        },
+      });
+
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+
+      expect(out.phaseOutcome).toBe('passed');
+      const esc = events.filter(
+        (e) =>
+          e.type === 'phase.fallback.escalated' &&
+          (e.metadata.triggerReason === 'oscillation_detected' ||
+            e.metadata.triggerReason === 'no_progress_detected'),
+      );
+      expect(esc).toHaveLength(0);
+    });
+
+    it('does not escalate when fixFallbackProfile is not configured', async () => {
+      const { events, bus } = collectEvents();
+      let reviewCall = 0;
+      const deps = makeDeps({
+        events: bus,
+        runReview: async () => {
+          reviewCall++;
+          return {
+            invocationId: `rev-${reviewCall}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: [{ severity: 'high', summary: 'type error' }],
+          };
+        },
+      });
+
+      const inputWithoutFallback = { ...baseInput(), fixFallbackProfile: undefined };
+      await new ReviewFixLoop(deps).execute({ ...inputWithoutFallback, maxIterations: 4 });
+
+      const esc = events.filter(
+        (e) =>
+          e.type === 'phase.fallback.escalated' &&
+          (e.metadata.triggerReason === 'oscillation_detected' ||
+            e.metadata.triggerReason === 'no_progress_detected'),
+      );
+      expect(esc).toHaveLength(0);
+    });
+
+    it('does not emit any escalation event on consecutive fix failures when fixFallbackProfile is undefined', async () => {
+      const { events, bus } = collectEvents();
+      const fixCalls: FixStepOptions[] = [];
+      const deps = makeDeps({
+        events: bus,
+        runReview: async () => ({
+          invocationId: 'r',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async (_ctx: StepContext, opts: FixStepOptions) => {
+          fixCalls.push(opts);
+          return { invocationId: `fix-${fixCalls.length}`, agentOutcome: 'failed' as const };
+        },
+      });
+
+      const inputWithoutFallback = { ...baseInput(), fixFallbackProfile: undefined };
+      await new ReviewFixLoop(deps).execute({ ...inputWithoutFallback, maxIterations: 4 });
+
+      const esc = events.filter((e) => e.type === 'phase.fallback.escalated');
+      expect(esc).toHaveLength(0);
+    });
+  });
 });
