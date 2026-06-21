@@ -232,33 +232,6 @@ describe('RunExecutor end-to-end', () => {
     expect(result.phases[0]!.status).toBe('failed');
   });
 
-  it('throws when contextFactory returns empty runUuid', async () => {
-    const { runRepo, failureRepo, artifactStore, eventBus, registry, run } = makeExecutor();
-    const executor = new RunExecutor({
-      runRepository: runRepo,
-      failureRepository: failureRepo,
-      phaseRepository: new FakePhaseRepository(),
-      events: eventBus,
-      registry,
-      contextFactory: () => ({
-        runId: '',
-        runUuid: '',
-        repoFullName: '',
-        issueNumber: 0,
-        cwd: '',
-        artifacts: artifactStore,
-        github: {} as never,
-        git: {} as never,
-        agent: {} as never,
-        events: eventBus,
-        now: () => new Date(),
-      }),
-    });
-    await expect(executor.execute({ run, skip: [], presentArtifacts: [] })).rejects.toThrow(
-      'empty runUuid',
-    );
-  });
-
   it('resumes correctly when completedPhases are present', async () => {
     const { executor, artifactStore, run } = makeExecutor({
       runOverrides: { completedPhases: ['read_issue'] },

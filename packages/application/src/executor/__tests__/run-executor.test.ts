@@ -32,7 +32,13 @@ function makeRun(overrides?: Partial<Run>): Run {
 
 function makeStubHandler(
   phase: string,
-  outcome: 'passed' | 'failed' | 'blocked' | 'needs_human_review' | 'resting' | 'skipped' = 'passed',
+  outcome:
+    | 'passed'
+    | 'failed'
+    | 'blocked'
+    | 'needs_human_review'
+    | 'resting'
+    | 'skipped' = 'passed',
 ): PhaseHandler {
   return {
     phase: makePhaseName(phase),
@@ -81,7 +87,7 @@ function registerAllPassed(registry: PhaseHandlerRegistry): void {
 
 const fixedNow = new Date('2026-01-01T00:00:00Z');
 
-function contextFactoryWithStoredArtifacts(paths: string[]): () => PhaseHandlerContext {
+function contextFactoryWithStoredArtifacts(paths: string[]): (run: Run) => PhaseHandlerContext {
   const stored = paths.map((p) => ({
     runId: 'test-uuid',
     relativePath: p,
@@ -89,7 +95,7 @@ function contextFactoryWithStoredArtifacts(paths: string[]): () => PhaseHandlerC
     bytes: p.length,
     createdAt: fixedNow,
   }));
-  return () => ({
+  return (_run: Run) => ({
     runId: 'test-uuid',
     runUuid: 'test-uuid',
     repoFullName: 'acme/widgets',
@@ -123,7 +129,7 @@ function makeDeps(overrides?: {
   phaseRepository?: PhaseRepositoryPort;
   events?: Partial<EventBusPort>;
   registry?: PhaseHandlerRegistry;
-  contextFactory?: () => PhaseHandlerContext;
+  contextFactory?: (run: Run) => PhaseHandlerContext;
 }) {
   return {
     runRepository: {
@@ -151,7 +157,7 @@ function makeDeps(overrides?: {
     registry: overrides?.registry ?? new PhaseHandlerRegistry(),
     contextFactory:
       overrides?.contextFactory ??
-      (() => ({
+      ((_run: Run) => ({
         runId: 'run-1',
         runUuid: 'test-uuid',
         repoFullName: 'acme/widgets',
