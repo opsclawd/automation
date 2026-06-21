@@ -306,7 +306,7 @@ describe('WorkerLeaseRepository', () => {
           throw new Error('requeue failed');
         },
       }),
-    ).toThrow('requeue failed');
+    ).toThrow(AggregateError);
     expect(repo.current(RepositoryId('repo-a'))?.workerId).toBe('w1');
     db.close();
   });

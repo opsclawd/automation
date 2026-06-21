@@ -12,6 +12,7 @@ import type {
   AcquireLeaseInput,
   ReclaimExpiredInput,
 } from '@ai-sdlc/application/ports';
+import Database from 'better-sqlite3';
 import type { Db } from './database.js';
 
 interface WorkerLeaseRow {
@@ -54,11 +55,7 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
           expires_at: expiresAt.toISOString(),
         });
     } catch (err: unknown) {
-      if (
-        err instanceof Error &&
-        'code' in err &&
-        (err as { code: string }).code === 'SQLITE_CONSTRAINT_PRIMARYKEY'
-      ) {
+      if (err instanceof Database.SqliteError && err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
         const existing = this.current(input.repoId);
         throw new WorkerLeaseConflictError(input.repoId, existing?.workerId ?? input.workerId);
       }
@@ -96,31 +93,41 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
   }
 
   current(repoId: RepositoryId): WorkerLease | undefined {
-    const row = this.db.prepare(`SELECT * FROM worker_leases WHERE repo_id = ?`).get(repoId) as
-      | WorkerLeaseRow
-      | undefined;
+    const row = this.db
+      .prepare(`SELECT * FROM worker_leases WHERE repo_id = @repo_id`)
+      .get({ repo_id: repoId }) as WorkerLeaseRow | undefined;
     return row ? toWorkerLease(row) : undefined;
   }
 
   reclaimExpired(input: ReclaimExpiredInput): WorkerLease[] {
     const expiredRows = this.db
-      .prepare(`SELECT * FROM worker_leases WHERE expires_at < ?`)
-      .all(input.now.toISOString()) as WorkerLeaseRow[];
+      .prepare(`SELECT * FROM worker_leases WHERE expires_at < @now`)
+      .all({ now: input.now.toISOString() }) as WorkerLeaseRow[];
     const reclaimed: WorkerLease[] = [];
+    const errors: unknown[] = [];
     for (const row of expiredRows) {
-      const lease = toWorkerLease(row);
-      if (input.isWorkerAlive(lease.workerId)) continue;
-      if (!input.recoverableRunIds.has(lease.runId)) continue;
-      input.resetWorktree(lease.repoId);
-      input.onReclaimed({
-        repoId: lease.repoId,
-        previousWorkerId: lease.workerId,
-        previousRunId: lease.runId,
-        reclaimedByWorkerId: input.reclaimedByWorkerId,
-        reason: 'expired + worker stale + run recoverable',
-      });
-      this.db.prepare(`DELETE FROM worker_leases WHERE repo_id = ?`).run(lease.repoId);
-      reclaimed.push(lease);
+      try {
+        const lease = toWorkerLease(row);
+        if (input.isWorkerAlive(lease.workerId)) continue;
+        if (!input.recoverableRunIds.has(lease.runId)) continue;
+        input.resetWorktree(lease.repoId);
+        input.onReclaimed({
+          repoId: lease.repoId,
+          previousWorkerId: lease.workerId,
+          previousRunId: lease.runId,
+          reclaimedByWorkerId: input.reclaimedByWorkerId,
+          reason: 'expired + worker stale + run recoverable',
+        });
+        this.db
+          .prepare(`DELETE FROM worker_leases WHERE repo_id = @repo_id AND worker_id = @worker_id`)
+          .run({ repo_id: lease.repoId, worker_id: lease.workerId });
+        reclaimed.push(lease);
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'reclaimExpired: one or more errors during reclaim');
     }
     return reclaimed;
   }
