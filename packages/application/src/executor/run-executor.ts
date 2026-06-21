@@ -188,7 +188,7 @@ export class RunExecutor {
       // start bookkeeping or a previous handler. If so, bail immediately instead
       // of writing a terminal status that could resurrect the run.
       const cancelled = this.deps.runRepository.findByUuid(run.uuid);
-      if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
+    if (cancelled && ['cancelled', 'failed', 'blocked', 'needs_human_review', 'passed'].includes(cancelled.status)) {
         return { run: cancelled, phases };
       }
 
