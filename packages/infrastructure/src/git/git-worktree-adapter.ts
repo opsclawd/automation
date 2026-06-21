@@ -1,6 +1,7 @@
 import { access, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { CreateWorktreeInput, GitPort, PushInput } from '@ai-sdlc/application/ports';
+import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git, GitFailedError } from './git-runner.js';
 
 export class GitWorktreeAdapter implements GitPort {
@@ -126,5 +127,20 @@ export class GitWorktreeAdapter implements GitPort {
 
   async cleanUntracked(cwd: string): Promise<void> {
     await git(cwd, ['clean', '-fd']);
+  }
+
+  async resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void> {
+    const status = await git(cwd, ['status', '--porcelain']);
+    const driftedFiles = status
+      .split('\n')
+      .filter(Boolean)
+      .filter((line) => !line.startsWith('??') && !line.startsWith('!!'))
+      .map((line) => line.slice(3).trim());
+
+    if (driftedFiles.length > 0) {
+      throw new TrackedSourceDriftError(cwd, driftedFiles);
+    }
+
+    await git(cwd, ['reset', '--hard', baseBranch]);
   }
 }

@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git } from '../git-runner.js';
 import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
 import { clearTempDirs, getTempDirs, makeTempRepo } from './helpers.js';
@@ -119,7 +120,6 @@ describe('removeWorktree()', () => {
 
 describe('reproduces parity #295 (runs never mutate the main checkout)', () => {
   it('main checkout HEAD is unchanged after worktree commit and resetHard', async () => {
-    const { writeFile } = await import('node:fs/promises');
     const repoLocalBasePath = await makeTempRepo();
     const worktreePath = makeWorktreePath();
     await adapter.createWorktree({
@@ -228,8 +228,6 @@ describe('remoteRef()', () => {
     const branchSha = await git(repo, ['rev-parse', 'HEAD']);
 
     // Create a tag called 'main' pointing to a different (parent) commit
-    const { writeFile } = await import('node:fs/promises');
-    const { join } = await import('node:path');
     await writeFile(join(repo, 'second.txt'), 'second\n');
     await git(repo, ['add', '.']);
     await git(repo, ['commit', '-m', 'second commit']);
@@ -266,5 +264,52 @@ describe('remoteRef()', () => {
       ref: 'refs/tags/v1',
     });
     expect(sha).toBe(branchSha);
+  });
+});
+
+describe('reproduces parity #318 (branch-switch hard-fail / dirty warn)', () => {
+  it('throws TrackedSourceDriftError when a tracked file has been modified', async () => {
+    const repo = await makeTempRepo();
+
+    // README.md is a tracked file; modifying it constitutes tracked-source drift
+    await writeFile(join(repo, 'README.md'), 'drifted content\n');
+
+    await expect(adapter.resetWorktreeIfClean(repo, 'HEAD')).rejects.toThrow(
+      TrackedSourceDriftError,
+    );
+  });
+});
+
+describe('reproduces parity #348 (exclude pre-existing dirty from violations)', () => {
+  it('does not throw for untracked files (reviewer artifacts)', async () => {
+    const repo = await makeTempRepo();
+
+    // new-artifact.txt is untracked — must be tolerated
+    await writeFile(join(repo, 'new-artifact.txt'), 'reviewer artifact\n');
+
+    await expect(adapter.resetWorktreeIfClean(repo, 'HEAD')).resolves.toBeUndefined();
+  });
+});
+
+describe('reproduces parity #351 (untracked detection + clean gate)', () => {
+  it('resets worktree HEAD to baseBranch when clean of tracked changes', async () => {
+    const repo = await makeTempRepo();
+    const baseSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    // Advance the repo past the base commit
+    await writeFile(join(repo, 'extra.txt'), 'extra\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'extra commit']);
+
+    await adapter.resetWorktreeIfClean(repo, baseSha);
+
+    const headAfter = await git(repo, ['rev-parse', 'HEAD']);
+    expect(headAfter).toBe(baseSha);
+  });
+
+  it('resolves without error when worktree is fully clean', async () => {
+    const repo = await makeTempRepo();
+
+    await expect(adapter.resetWorktreeIfClean(repo, 'HEAD')).resolves.toBeUndefined();
   });
 });

@@ -1,4 +1,5 @@
 import type { GitPort, CreateWorktreeInput, PushInput } from '../ports/git-port.js';
+import { TrackedSourceDriftError } from '../ports/git-port.js';
 
 export class FakeGitPort implements GitPort {
   currentBranchByCwd = new Map<string, string>();
@@ -11,6 +12,8 @@ export class FakeGitPort implements GitPort {
   logBetweenResults = new Map<string, string[]>();
   cleanUntrackedCalls: string[] = [];
   headCommitShaOfResults = new Map<string, string | undefined>();
+  resetWorktreeIfCleanCalls: Array<{ cwd: string; baseBranch: string }> = [];
+  resetWorktreeIfCleanShouldThrow = new Set<string>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);
@@ -77,5 +80,15 @@ export class FakeGitPort implements GitPort {
 
   async headCommitShaOf(cwd: string): Promise<string | undefined> {
     return this.headCommitShaOfResults.get(cwd);
+  }
+
+  async resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void> {
+    this.resetWorktreeIfCleanCalls.push({ cwd, baseBranch });
+    if (this.resetWorktreeIfCleanShouldThrow.has(cwd)) {
+      throw new TrackedSourceDriftError(cwd, [`fake tracked drift in ${cwd}`]);
+    }
+    if (baseBranch !== 'HEAD') {
+      this.headByCwd.set(cwd, baseBranch);
+    }
   }
 }
