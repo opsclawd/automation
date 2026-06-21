@@ -1,5 +1,13 @@
 import type { Run, Phase, PhaseName, PhaseStatus, Failure } from '@ai-sdlc/domain';
-import { startPhase, completePhase, skipPhase, failRun, passRun, blockRun, markRunNeedsHumanReview } from '@ai-sdlc/domain';
+import {
+  startPhase,
+  completePhase,
+  skipPhase,
+  failRun,
+  passRun,
+  blockRun,
+  markRunNeedsHumanReview,
+} from '@ai-sdlc/domain';
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
@@ -20,7 +28,7 @@ export interface RunExecutorDeps {
   phaseRepository: PhaseRepositoryPort;
   events: EventBusPort;
   registry: PhaseHandlerRegistryPort;
-  contextFactory: () => PhaseHandlerContext;
+  contextFactory: (run: Run) => PhaseHandlerContext;
   now?: () => Date;
 }
 
@@ -77,7 +85,7 @@ export class RunExecutor {
     let storedArtifacts: Set<string> | undefined;
     if (completedSet.size > 0) {
       try {
-        const ctx = this.deps.contextFactory();
+        const ctx = this.deps.contextFactory(run);
         const stored = await ctx.artifacts.list(run.uuid);
         storedArtifacts = new Set(stored.map((a) => a.relativePath));
       } catch {
@@ -188,24 +196,27 @@ export class RunExecutor {
       // start bookkeeping or a previous handler. If so, bail immediately instead
       // of writing a terminal status that could resurrect the run.
       const cancelled = this.deps.runRepository.findByUuid(run.uuid);
-    if (cancelled && ['cancelled', 'failed', 'blocked', 'needs_human_review', 'passed'].includes(cancelled.status)) {
+      if (
+        cancelled &&
+        ['cancelled', 'failed', 'blocked', 'needs_human_review', 'passed'].includes(
+          cancelled.status,
+        )
+      ) {
         return { run: cancelled, phases };
       }
 
       // Run handler
-      const ctx = this.deps.contextFactory();
-      if (!ctx.runUuid) {
-        throw new Error(
-          'RunExecutor contextFactory returned empty runUuid — wire a real contextFactory before invoking RunExecutor',
-        );
-      }
+      const ctx = this.deps.contextFactory(run);
       let result: PhaseResult;
       try {
         result = await handler.run(ctx);
       } catch (err) {
         // Re-read again — cancellation may have occurred during handler execution
         const cancelledNow = this.deps.runRepository.findByUuid(run.uuid);
-        if (cancelledNow && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledNow.status)) {
+        if (
+          cancelledNow &&
+          ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledNow.status)
+        ) {
           return { run: cancelledNow, phases };
         }
         if (err instanceof HandlerNotWiredError) {
@@ -240,7 +251,11 @@ export class RunExecutor {
       // status and then return resting, and the resting branch must still run its
       // phase bookkeeping (update phase status, clear currentPhase).
       const cancelledAfterHandler = this.deps.runRepository.findByUuid(run.uuid);
-      if (cancelledAfterHandler && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledAfterHandler.status) && result.outcome !== 'resting') {
+      if (
+        cancelledAfterHandler &&
+        ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledAfterHandler.status) &&
+        result.outcome !== 'resting'
+      ) {
         return { run: cancelledAfterHandler, phases };
       }
 
@@ -346,14 +361,24 @@ export class RunExecutor {
           return this.blockRun(currentRun, phaseDef, phase, result.failure, now(), phases);
         }
         case 'needs_human_review': {
-          return this.needsHumanReviewRun(currentRun, phaseDef, phase, result.failure, now(), phases);
+          return this.needsHumanReviewRun(
+            currentRun,
+            phaseDef,
+            phase,
+            result.failure,
+            now(),
+            phases,
+          );
         }
       }
     }
 
     // Re-read persisted state — run may have been cancelled during the last handler
     const cancelledFinal = this.deps.runRepository.findByUuid(run.uuid);
-    if (cancelledFinal && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledFinal.status)) {
+    if (
+      cancelledFinal &&
+      ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelledFinal.status)
+    ) {
       return { run: cancelledFinal, phases };
     }
 
