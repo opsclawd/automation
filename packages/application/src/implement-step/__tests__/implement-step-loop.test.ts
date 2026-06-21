@@ -857,7 +857,7 @@ describe('ImplementStepLoop', () => {
     });
 
     it('G1 guardrail: empty arbiter evidence → needs_human_review (never auto-proceed)', async () => {
-      const { deps } = makeArbiterDeps('finding_invalid', '');
+      const { deps, events } = makeArbiterDeps('finding_invalid', '');
       const out = await new ImplementStepLoop(deps).execute(baseInput());
       expect(out.outcome).toBe('needs_human_review');
       const nhr = events.filter((e) => e.type === 'needs_human_review');
