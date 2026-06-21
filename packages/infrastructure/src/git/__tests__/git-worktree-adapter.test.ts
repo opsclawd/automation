@@ -189,3 +189,82 @@ describe('headCommitShaOf()', () => {
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
   });
 });
+
+describe('remoteRef()', () => {
+  async function makeRepoWithRemote(): Promise<{
+    repo: string;
+    bareRemote: string;
+    branchSha: string;
+  }> {
+    const repo = await makeTempRepo();
+    const branchSha = await git(repo, ['rev-parse', 'HEAD']);
+    const bareRemote = makeWorktreePath();
+    await git(repo, ['init', '--bare', bareRemote]);
+    await git(repo, ['remote', 'add', 'origin', bareRemote]);
+    await git(repo, ['push', 'origin', 'main']);
+    return { repo, bareRemote, branchSha };
+  }
+
+  it('returns the SHA of an existing ref', async () => {
+    const { repo, branchSha } = await makeRepoWithRemote();
+    const sha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
+    expect(sha).toBe(branchSha);
+  });
+
+  it('returns undefined for a non-existent ref', async () => {
+    const { repo } = await makeRepoWithRemote();
+    const sha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'nonexistent' });
+    expect(sha).toBeUndefined();
+  });
+
+  it('returns undefined for a non-existent remote', async () => {
+    const repo = await makeTempRepo();
+    const sha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
+    expect(sha).toBeUndefined();
+  });
+
+  it('prefers refs/heads/ when an unqualified ref matches both branch and tag', async () => {
+    const { repo } = await makeRepoWithRemote();
+    const branchSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    // Create a tag called 'main' pointing to a different (parent) commit
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    await writeFile(join(repo, 'second.txt'), 'second\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'second commit']);
+    await git(repo, ['push', 'origin', 'main']);
+    const newBranchSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    // Tag 'main' pointing to the original SHA
+    await git(repo, ['tag', 'main', branchSha]);
+    await git(repo, ['push', 'origin', 'refs/tags/main']);
+
+    const sha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
+    expect(sha).toBe(newBranchSha);
+  });
+
+  it('matches exact refs/heads/ line when ref is fully qualified', async () => {
+    const { repo, branchSha } = await makeRepoWithRemote();
+    const sha = await adapter.remoteRef({
+      cwd: repo,
+      remote: 'origin',
+      ref: 'refs/heads/main',
+    });
+    expect(sha).toBe(branchSha);
+  });
+
+  it('resolves a fully qualified refs/tags/ ref', async () => {
+    const { repo } = await makeRepoWithRemote();
+    const branchSha = await git(repo, ['rev-parse', 'HEAD']);
+    await git(repo, ['tag', 'v1', branchSha]);
+    await git(repo, ['push', 'origin', 'refs/tags/v1']);
+
+    const sha = await adapter.remoteRef({
+      cwd: repo,
+      remote: 'origin',
+      ref: 'refs/tags/v1',
+    });
+    expect(sha).toBe(branchSha);
+  });
+});

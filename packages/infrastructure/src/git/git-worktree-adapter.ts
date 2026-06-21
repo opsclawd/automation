@@ -92,7 +92,16 @@ export class GitWorktreeAdapter implements GitPort {
   }): Promise<string | undefined> {
     try {
       const out = await git(input.cwd, ['ls-remote', '--exit-code', input.remote, input.ref]);
-      return out.split('\t')[0];
+      const lines = out.split('\n').filter(Boolean);
+      if (lines.length === 0) return undefined;
+
+      if (input.ref.startsWith('refs/')) {
+        const exact = lines.find((l) => l.endsWith(`\t${input.ref}`));
+        return exact?.split('\t')[0] ?? undefined;
+      }
+
+      const branchLine = lines.find((l) => l.includes(`refs/heads/${input.ref}`));
+      return (branchLine ?? lines[0]!).split('\t')[0];
     } catch {
       return undefined;
     }
