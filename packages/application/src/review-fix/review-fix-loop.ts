@@ -7,6 +7,7 @@ import {
   type AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import { detectStall } from './detect-stall.js';
 import type {
   ReviewFixLoopDeps,
   ReviewFixLoopInput,
@@ -33,6 +34,7 @@ export class ReviewFixLoop {
     let lastFixInvocationId: string | undefined;
     let lastFailingCategory: string | undefined;
     let outstandingFailedRevalidation = false;
+    const findingHistory: Array<Set<string>> = [];
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -105,11 +107,26 @@ export class ReviewFixLoop {
         break;
       }
 
+      // --- OSCILLATION / STALL DETECTION ---
+      const normalizedFindings = new Set(
+        (review.offendingFindings ?? []).map((f) => f.summary.trim().toLowerCase()),
+      );
+      findingHistory.push(normalizedFindings);
+      const stall = detectStall(findingHistory);
+
       // --- decide fallback (use-case-owned triggers) ---
       const escalateForFixFailures = consecutiveFixFailures >= 2;
-      const useFallback = escalateForFixFailures && input.fixFallbackProfile !== undefined;
-      if (useFallback) {
+      const escalateForStall = stall !== 'none' && input.fixFallbackProfile !== undefined;
+      const useFallback =
+        (escalateForFixFailures || escalateForStall) && input.fixFallbackProfile !== undefined;
+      if (escalateForFixFailures) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
+      }
+      if (escalateForStall) {
+        this.emitEscalation(
+          input,
+          stall === 'oscillation' ? 'oscillation_detected' : 'no_progress_detected',
+        );
       }
 
       // --- FIX ---
