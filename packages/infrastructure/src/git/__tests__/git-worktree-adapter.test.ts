@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { git } from '../git-runner.js';
-import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
+import { GitWorktreeAdapter, TrackedSourceDriftError } from '../git-worktree-adapter.js';
 import { clearTempDirs, getTempDirs, makeTempRepo } from './helpers.js';
 
 let _extraDirs: string[] = [];
@@ -266,5 +266,56 @@ describe('remoteRef()', () => {
       ref: 'refs/tags/v1',
     });
     expect(sha).toBe(branchSha);
+  });
+});
+
+describe('reproduces parity #318 (branch-switch hard-fail / dirty warn)', () => {
+  it('throws TrackedSourceDriftError when a tracked file has been modified', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const repo = await makeTempRepo();
+
+    // README.md is a tracked file; modifying it constitutes tracked-source drift
+    await writeFile(join(repo, 'README.md'), 'drifted content\n');
+
+    await expect(adapter.verifyClean(repo, 'HEAD')).rejects.toThrow(TrackedSourceDriftError);
+  });
+});
+
+describe('reproduces parity #348 (exclude pre-existing dirty from violations)', () => {
+  it('does not throw for untracked files (reviewer artifacts)', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const repo = await makeTempRepo();
+
+    // new-artifact.txt is untracked — must be tolerated
+    await writeFile(join(repo, 'new-artifact.txt'), 'reviewer artifact\n');
+
+    await expect(adapter.verifyClean(repo, 'HEAD')).resolves.toBeUndefined();
+  });
+});
+
+describe('reproduces parity #351 (untracked detection + clean gate)', () => {
+  it('resets worktree HEAD to baseBranch when clean of tracked changes', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const repo = await makeTempRepo();
+    const baseSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    // Advance the repo past the base commit
+    await writeFile(join(repo, 'extra.txt'), 'extra\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'extra commit']);
+
+    await adapter.verifyClean(repo, baseSha);
+
+    const headAfter = await git(repo, ['rev-parse', 'HEAD']);
+    expect(headAfter).toBe(baseSha);
+  });
+
+  it('resolves without error when worktree is fully clean', async () => {
+    const repo = await makeTempRepo();
+
+    await expect(adapter.verifyClean(repo, 'HEAD')).resolves.toBeUndefined();
   });
 });

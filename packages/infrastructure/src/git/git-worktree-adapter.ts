@@ -3,6 +3,19 @@ import { dirname } from 'node:path';
 import type { CreateWorktreeInput, GitPort, PushInput } from '@ai-sdlc/application/ports';
 import { git, GitFailedError } from './git-runner.js';
 
+export class TrackedSourceDriftError extends Error {
+  readonly cwd: string;
+  readonly driftedFiles: string[];
+
+  constructor(cwd: string, driftedFiles: string[]) {
+    super(`tracked-source drift detected in ${cwd}: ${driftedFiles.join(', ')}`);
+    this.name = 'TrackedSourceDriftError';
+    this.cwd = cwd;
+    this.driftedFiles = driftedFiles;
+    Error.captureStackTrace(this, this.constructor);
+  }
+}
+
 export class GitWorktreeAdapter implements GitPort {
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     const { repoLocalBasePath, worktreePath, branch, baseBranch } = input;
@@ -126,5 +139,20 @@ export class GitWorktreeAdapter implements GitPort {
 
   async cleanUntracked(cwd: string): Promise<void> {
     await git(cwd, ['clean', '-fd']);
+  }
+
+  async verifyClean(cwd: string, baseBranch: string): Promise<void> {
+    const status = await git(cwd, ['status', '--porcelain']);
+    const driftedFiles = status
+      .split('\n')
+      .filter(Boolean)
+      .filter((line) => !line.startsWith('??') && !line.startsWith('!!'))
+      .map((line) => line.slice(3).trim());
+
+    if (driftedFiles.length > 0) {
+      throw new TrackedSourceDriftError(cwd, driftedFiles);
+    }
+
+    await git(cwd, ['reset', '--hard', baseBranch]);
   }
 }
