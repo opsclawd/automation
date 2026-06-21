@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git } from '../git-runner.js';
 import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
-import { clearTempDirs, getTempDirs, makeTempRepo } from './helpers.js';
+import { clearTempDirs, getTempDirs, makeTempRepo, makeRepoWithRemote } from './helpers.js';
 
 let _extraDirs: string[] = [];
 
@@ -191,20 +191,6 @@ describe('headCommitShaOf()', () => {
 });
 
 describe('remoteRef()', () => {
-  async function makeRepoWithRemote(): Promise<{
-    repo: string;
-    bareRemote: string;
-    branchSha: string;
-  }> {
-    const repo = await makeTempRepo();
-    const branchSha = await git(repo, ['rev-parse', 'HEAD']);
-    const bareRemote = makeWorktreePath();
-    await git(repo, ['init', '--bare', bareRemote]);
-    await git(repo, ['remote', 'add', 'origin', bareRemote]);
-    await git(repo, ['push', 'origin', 'main']);
-    return { repo, bareRemote, branchSha };
-  }
-
   it('returns the SHA of an existing ref', async () => {
     const { repo, branchSha } = await makeRepoWithRemote();
     const sha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
@@ -311,5 +297,118 @@ describe('reproduces parity #351 (untracked detection + clean gate)', () => {
     const repo = await makeTempRepo();
 
     await expect(adapter.resetWorktreeIfClean(repo, 'HEAD')).resolves.toBeUndefined();
+  });
+});
+
+describe('diff()', () => {
+  it('returns empty string when working tree is clean', async () => {
+    const repo = await makeTempRepo();
+    const patch = await adapter.diff(repo, 'HEAD');
+    expect(patch).toBe('');
+  });
+
+  it('returns patch text for an unstaged working-tree change', async () => {
+    const repo = await makeTempRepo();
+    await writeFile(join(repo, 'README.md'), 'modified\n');
+    const patch = await adapter.diff(repo, 'HEAD');
+    expect(patch).toContain('-initial');
+    expect(patch).toContain('+modified');
+  });
+
+  it('returns diff between two commits when head sha is supplied', async () => {
+    const repo = await makeTempRepo();
+    const base = await git(repo, ['rev-parse', 'HEAD']);
+    await writeFile(join(repo, 'README.md'), 'v2\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'v2']);
+    const head = await git(repo, ['rev-parse', 'HEAD']);
+    const patch = await adapter.diff(repo, base, head);
+    expect(patch).toContain('-initial');
+    expect(patch).toContain('+v2');
+  });
+});
+
+describe('push()', () => {
+  it('pushes local HEAD to the bare remote and the remote ref advances', async () => {
+    const { repo } = await makeRepoWithRemote();
+    await writeFile(join(repo, 'pushed.txt'), 'pushed\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'new commit to push']);
+    const expectedSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await adapter.push({ cwd: repo, branch: 'main', remote: 'origin' });
+
+    const remoteSha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
+    expect(remoteSha).toBe(expectedSha);
+  });
+
+  it('defaults remote to "origin" when remote is omitted', async () => {
+    const { repo } = await makeRepoWithRemote();
+    await writeFile(join(repo, 'default-remote.txt'), 'x\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'default-remote commit']);
+    const expectedSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await adapter.push({ cwd: repo, branch: 'main' });
+
+    const remoteSha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
+    expect(remoteSha).toBe(expectedSha);
+  });
+});
+
+describe('isAncestor()', () => {
+  it('returns true when the first commit is a parent of the second', async () => {
+    const repo = await makeTempRepo();
+    const parent = await git(repo, ['rev-parse', 'HEAD']);
+    await writeFile(join(repo, 'child.txt'), 'child\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'child commit']);
+    const child = await git(repo, ['rev-parse', 'HEAD']);
+
+    expect(await adapter.isAncestor(repo, parent, child)).toBe(true);
+  });
+
+  it('returns false when the arguments are reversed (descendant is not ancestor of parent)', async () => {
+    const repo = await makeTempRepo();
+    const parent = await git(repo, ['rev-parse', 'HEAD']);
+    await writeFile(join(repo, 'child2.txt'), 'child\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'child2 commit']);
+    const child = await git(repo, ['rev-parse', 'HEAD']);
+
+    expect(await adapter.isAncestor(repo, child, parent)).toBe(false);
+  });
+
+  it('returns true when ancestor === descendant (a commit is its own ancestor)', async () => {
+    const repo = await makeTempRepo();
+    const sha = await git(repo, ['rev-parse', 'HEAD']);
+
+    expect(await adapter.isAncestor(repo, sha, sha)).toBe(true);
+  });
+});
+
+describe('logBetween()', () => {
+  it('returns an empty array when base and head are the same commit', async () => {
+    const repo = await makeTempRepo();
+    const sha = await git(repo, ['rev-parse', 'HEAD']);
+    expect(await adapter.logBetween(repo, sha, sha)).toEqual([]);
+  });
+
+  it('returns subject lines newest-first for commits between base and head', async () => {
+    const repo = await makeTempRepo();
+    const base = await git(repo, ['rev-parse', 'HEAD']);
+
+    await writeFile(join(repo, 'a.txt'), 'a\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'feat: add a']);
+
+    await writeFile(join(repo, 'b.txt'), 'b\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'feat: add b']);
+
+    const head = await git(repo, ['rev-parse', 'HEAD']);
+    const log = await adapter.logBetween(repo, base, head);
+
+    expect(log).toEqual(['feat: add b', 'feat: add a']);
   });
 });
