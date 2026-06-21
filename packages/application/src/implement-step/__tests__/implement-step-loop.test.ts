@@ -685,6 +685,32 @@ describe('ImplementStepLoop', () => {
       expect(detected).toHaveLength(0);
     });
 
+    it('emits needs_human_review when fix returns done_no_fixes_needed without rebuttal', async () => {
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          // No rebuttal provided — this should escalate directly to human review
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('needs_human_review');
+      // Should NOT emit contradiction.detected — should go straight to needs_human_review
+      const detected = events.filter((e) => e.type === 'review.contradiction.detected');
+      expect(detected).toHaveLength(0);
+      const nhr = events.filter((e) => e.type === 'needs_human_review');
+      expect(nhr).toHaveLength(1);
+      expect(nhr[0]?.level).toBe('warn');
+    });
+
     it('emits needs_human_review when 1-shot re-run persists and no arbiter is configured', async () => {
       const { events, bus } = collectEvents();
       const deps = makeDeps({
