@@ -204,7 +204,7 @@ export class ImplementStepLoop {
       const reviewFailed = specReview.verdict === 'fail' || qualityReview.verdict === 'fail';
       if (fix.verdict === 'done_no_fixes_needed' && reviewFailed) {
         // Guard: fixer must provide rebuttal when claiming no fixes needed against a failing review
-        if (!fix.rebuttal) {
+        if (!fix.rebuttal || fix.rebuttal.trim().length === 0) {
           this.emit(
             input,
             'needs_human_review',
