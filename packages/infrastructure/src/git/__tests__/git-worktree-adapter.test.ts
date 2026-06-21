@@ -327,3 +327,31 @@ describe('diff()', () => {
     expect(patch).toContain('+v2');
   });
 });
+
+describe('push()', () => {
+  it('pushes local HEAD to the bare remote and the remote ref advances', async () => {
+    const { repo } = await makeRepoWithRemote();
+    await writeFile(join(repo, 'pushed.txt'), 'pushed\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'new commit to push']);
+    const expectedSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await adapter.push({ cwd: repo, branch: 'main', remote: 'origin' });
+
+    const remoteSha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
+    expect(remoteSha).toBe(expectedSha);
+  });
+
+  it('defaults remote to "origin" when remote is omitted', async () => {
+    const { repo } = await makeRepoWithRemote();
+    await writeFile(join(repo, 'default-remote.txt'), 'x\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'default-remote commit']);
+    const expectedSha = await git(repo, ['rev-parse', 'HEAD']);
+
+    await adapter.push({ cwd: repo, branch: 'main' });
+
+    const remoteSha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
+    expect(remoteSha).toBe(expectedSha);
+  });
+});
