@@ -61,8 +61,14 @@ export async function makeRepoWithRemote(): Promise<{
   const branchSha = await git(repo, ['rev-parse', 'HEAD']);
   const bareRemotePath = await mkdtemp(join(tmpdir(), 'ai-sdlc-bare-'));
   _tempDirs.add(bareRemotePath);
-  await git(repo, ['init', '--bare', bareRemotePath]);
-  await git(repo, ['remote', 'add', 'origin', bareRemotePath]);
-  await git(repo, ['push', 'origin', 'main']);
-  return { repo, bareRemote: bareRemotePath, branchSha };
+  try {
+    await git(repo, ['init', '--bare', bareRemotePath]);
+    await git(repo, ['remote', 'add', 'origin', bareRemotePath]);
+    await git(repo, ['push', 'origin', 'main']);
+    return { repo, bareRemote: bareRemotePath, branchSha };
+  } catch (err) {
+    _tempDirs.delete(bareRemotePath);
+    await rm(bareRemotePath, { recursive: true, force: true });
+    throw err;
+  }
 }
