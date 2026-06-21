@@ -50,6 +50,7 @@ export interface FixStepOptions {
   useFallback: boolean;
   previousInvocationId?: string;
   architectPlan?: ArchitectPlan;
+  reconciliationContext?: string;
 }
 
 export interface ReviewFixLoopDeps {

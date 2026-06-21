@@ -41,6 +41,14 @@ export interface FixResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
+  rebuttal?: string;
+}
+
+export interface ArbiterResult {
+  outcome: 'finding_valid' | 'finding_invalid' | 'ambiguous' | 'insufficient_evidence';
+  defect_classification?: string;
+  evidence: string;
+  rationale: string;
 }
 
 export interface ImplementStepLoopDeps {
@@ -52,6 +60,11 @@ export interface ImplementStepLoopDeps {
     tcResult: TypecheckResult,
   ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: FixStepOptions) => Promise<FixResult>;
+  runArbiter?: (
+    ctx: StepLoopContext,
+    tcResult: TypecheckResult,
+    fixResult: FixResult,
+  ) => Promise<ArbiterResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;
   fixProfile: AgentProfileName;
@@ -72,5 +85,5 @@ export interface ImplementStepLoopInput {
 
 export interface ImplementStepLoopResult {
   loop: Loop;
-  outcome: 'success' | 'failed';
+  outcome: 'success' | 'failed' | 'needs_human_review';
 }
