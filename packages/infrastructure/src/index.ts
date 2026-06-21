@@ -19,4 +19,3 @@ export * from './agent/index.js';
 export * from './validation/validation-adapter.js';
 export * from './github/gh-cli-adapter.js';
 export * from './github/errors.js';
-export * from './git/git-runner.js';
