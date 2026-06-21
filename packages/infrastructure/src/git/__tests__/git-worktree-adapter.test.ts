@@ -355,3 +355,34 @@ describe('push()', () => {
     expect(remoteSha).toBe(expectedSha);
   });
 });
+
+describe('isAncestor()', () => {
+  it('returns true when the first commit is a parent of the second', async () => {
+    const repo = await makeTempRepo();
+    const parent = await git(repo, ['rev-parse', 'HEAD']);
+    await writeFile(join(repo, 'child.txt'), 'child\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'child commit']);
+    const child = await git(repo, ['rev-parse', 'HEAD']);
+
+    expect(await adapter.isAncestor(repo, parent, child)).toBe(true);
+  });
+
+  it('returns false when the arguments are reversed (descendant is not ancestor of parent)', async () => {
+    const repo = await makeTempRepo();
+    const parent = await git(repo, ['rev-parse', 'HEAD']);
+    await writeFile(join(repo, 'child2.txt'), 'child\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'child2 commit']);
+    const child = await git(repo, ['rev-parse', 'HEAD']);
+
+    expect(await adapter.isAncestor(repo, child, parent)).toBe(false);
+  });
+
+  it('returns true when ancestor === descendant (a commit is its own ancestor)', async () => {
+    const repo = await makeTempRepo();
+    const sha = await git(repo, ['rev-parse', 'HEAD']);
+
+    expect(await adapter.isAncestor(repo, sha, sha)).toBe(true);
+  });
+});
