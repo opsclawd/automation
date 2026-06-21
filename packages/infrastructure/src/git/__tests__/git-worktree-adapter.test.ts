@@ -412,3 +412,33 @@ describe('logBetween()', () => {
     expect(log).toEqual(['feat: add b', 'feat: add a']);
   });
 });
+
+describe('cleanUntracked()', () => {
+  it('removes gitignored files (requires -x flag)', async () => {
+    const repo = await makeTempRepo();
+    // Simulate a .gitignore entry — create it first
+    await writeFile(join(repo, '.gitignore'), 'ignored-artifact.json\n');
+    await git(repo, ['add', '.gitignore']);
+    await git(repo, ['commit', '-m', 'add gitignore']);
+    // Write a gitignored file
+    await writeFile(join(repo, 'ignored-artifact.json'), '{"status":"stale"}\n');
+    // Without -x, git clean -fd would leave this file; with -x it must be removed
+    await adapter.cleanUntracked(repo);
+    const { readdir } = await import('node:fs/promises');
+    const files = await readdir(repo);
+    expect(files).not.toContain('ignored-artifact.json');
+  });
+
+  it('does not remove node_modules (requires -e node_modules)', async () => {
+    const repo = await makeTempRepo();
+    await mkdir(join(repo, 'node_modules'), { recursive: true });
+    await writeFile(join(repo, 'node_modules', 'pkg.js'), 'export {};\n');
+    // node_modules is typically gitignored; -x without -e would delete it
+    await writeFile(join(repo, '.gitignore'), 'node_modules/\n');
+    await git(repo, ['add', '.gitignore']);
+    await git(repo, ['commit', '-m', 'add gitignore']);
+    await adapter.cleanUntracked(repo);
+    const { access: fsAccess } = await import('node:fs/promises');
+    await expect(fsAccess(join(repo, 'node_modules', 'pkg.js'))).resolves.toBeUndefined();
+  });
+});

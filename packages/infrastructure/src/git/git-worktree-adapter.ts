@@ -126,7 +126,7 @@ export class GitWorktreeAdapter implements GitPort {
   }
 
   async cleanUntracked(cwd: string): Promise<void> {
-    await git(cwd, ['clean', '-fd']);
+    await git(cwd, ['clean', '-fdx', '-e', 'node_modules']);
   }
 
   async resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void> {
