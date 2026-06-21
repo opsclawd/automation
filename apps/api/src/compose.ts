@@ -71,6 +71,7 @@ import {
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
   type FixStepOptions,
+  type TypecheckResult,
   type ResolveRefShaFn,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
@@ -1004,7 +1005,36 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const runSpecReview = async (ctx: StepLoopContext) => {
+      // Per-step typecheck gate (#403): run the full-repo typecheck in the
+      // worktree. The result both gates the step (a red typecheck fails it
+      // before review) and is injected into the reviewer prompts as ground
+      // truth (a reviewer demanding a non-compiling change is overruled).
+      const runTypecheck = async (ctx: StepLoopContext): Promise<TypecheckResult> => {
+        try {
+          execFileSync('pnpm', ['-r', 'typecheck'], { cwd: ctx.cwd, stdio: 'pipe' });
+          return { outcome: 'pass', output: '' };
+        } catch (err) {
+          const e = err as { stdout?: Buffer | string; stderr?: Buffer | string };
+          const output = `${e.stdout?.toString() ?? ''}${e.stderr?.toString() ?? ''}`.trim();
+          return { outcome: 'fail', output };
+        }
+      };
+
+      // Render the typecheck signal for injection into a reviewer prompt.
+      const typecheckBlock = (tc: TypecheckResult): string[] =>
+        tc.outcome === 'pass'
+          ? ['## TYPECHECK SIGNAL', '`pnpm -r typecheck` is GREEN for this step.', '']
+          : [
+              '## TYPECHECK SIGNAL',
+              '`pnpm -r typecheck` is RED. Do NOT request changes that would not compile;',
+              'the build is ground truth. Typecheck output:',
+              '```',
+              tc.output.slice(0, 2000),
+              '```',
+              '',
+            ];
+
+      const runSpecReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
@@ -1017,6 +1047,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           'Check that the implementation matches plan.md task requirements exactly.',
           '',
+          ...typecheckBlock(tcResult),
           '## OUTPUT',
           'Write result.json: { "result": "pass" | "fail" }',
         ].join('\n');
@@ -1063,7 +1094,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const runQualityReview = async (ctx: StepLoopContext) => {
+      const runQualityReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
@@ -1076,6 +1107,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           'Check for code quality: maintainability, performance, security, test coverage.',
           '',
+          ...typecheckBlock(tcResult),
           '## OUTPUT',
           'Write result.json: { "result": "pass" | "fail" }',
         ].join('\n');
@@ -1192,6 +1224,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       implementStepLoop = new ImplementStepLoop({
         runImplement,
+        runTypecheck,
         runSpecReview,
         runQualityReview,
         runFix: implRunFix,

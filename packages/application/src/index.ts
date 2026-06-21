@@ -29,6 +29,7 @@ export * from './executor/worker-loop.js';
 export type {
   StepLoopContext,
   FixResult,
+  TypecheckResult,
   ImplementStepLoopDeps,
   ImplementStepLoopInput,
   ImplementStepLoopResult,
