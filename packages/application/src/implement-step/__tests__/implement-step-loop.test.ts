@@ -10,6 +10,7 @@ import type {
   QualityReviewResult,
   FixResult,
   StepLoopContext,
+  TypecheckResult,
 } from '../types.js';
 import type { FixStepOptions } from '../../review-fix/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -49,12 +50,22 @@ function makeDeps(over: Partial<ImplementStepLoopDeps>): ImplementStepLoopDeps {
       invocationId: `impl-${++n}`,
       agentOutcome: 'success',
     }),
-    runSpecReview: async (): Promise<SpecReviewResult> => ({
+    runTypecheck: async (): Promise<TypecheckResult> => ({
+      outcome: 'pass',
+      output: '',
+    }),
+    runSpecReview: async (
+      _ctx: StepLoopContext,
+      _tcResult: TypecheckResult,
+    ): Promise<SpecReviewResult> => ({
       invocationId: `sr-${++n}`,
       agentOutcome: 'success',
       verdict: 'pass',
     }),
-    runQualityReview: async (): Promise<QualityReviewResult> => ({
+    runQualityReview: async (
+      _ctx: StepLoopContext,
+      _tcResult: TypecheckResult,
+    ): Promise<QualityReviewResult> => ({
       invocationId: `qr-${++n}`,
       agentOutcome: 'success',
       verdict: 'pass',
@@ -89,7 +100,7 @@ describe('ImplementStepLoop', () => {
   it('converges on iteration 2 when spec-review fails on first iteration', async () => {
     let specReviewCalls = 0;
     const deps = makeDeps({
-      runSpecReview: async () => {
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
         specReviewCalls += 1;
         return {
           invocationId: `sr-${specReviewCalls}`,
@@ -108,7 +119,7 @@ describe('ImplementStepLoop', () => {
   it('converges on iteration 2 when quality-review fails on first iteration', async () => {
     let qualityReviewCalls = 0;
     const deps = makeDeps({
-      runQualityReview: async () => {
+      runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
         qualityReviewCalls += 1;
         return {
           invocationId: `qr-${qualityReviewCalls}`,
@@ -128,7 +139,7 @@ describe('ImplementStepLoop', () => {
     let specReviewCalls = 0;
     let qualityReviewCalls = 0;
     const deps = makeDeps({
-      runSpecReview: async () => {
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
         specReviewCalls += 1;
         return {
           invocationId: `sr-${specReviewCalls}`,
@@ -136,7 +147,7 @@ describe('ImplementStepLoop', () => {
           verdict: specReviewCalls === 1 ? ('fail' as const) : ('pass' as const),
         };
       },
-      runQualityReview: async () => {
+      runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
         qualityReviewCalls += 1;
         return {
           invocationId: `qr-${qualityReviewCalls}`,
@@ -169,12 +180,12 @@ describe('ImplementStepLoop', () => {
     const { events, bus } = collectEvents();
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
       }),
-      runQualityReview: async () => ({
+      runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'qr-1',
         agentOutcome: 'success' as const,
         verdict: 'pass' as const,
@@ -199,12 +210,12 @@ describe('ImplementStepLoop', () => {
     const fixCalls: FixStepOptions[] = [];
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
       }),
-      runQualityReview: async () => ({
+      runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'qr-1',
         agentOutcome: 'success' as const,
         verdict: 'pass' as const,
@@ -234,7 +245,7 @@ describe('ImplementStepLoop', () => {
     const { events, bus } = collectEvents();
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
@@ -263,7 +274,7 @@ describe('ImplementStepLoop', () => {
     const { events, bus } = collectEvents();
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
@@ -290,7 +301,10 @@ describe('ImplementStepLoop', () => {
 
   it('hard fails when spec-review agent outcome is not success', async () => {
     const deps = makeDeps({
-      runSpecReview: async () => ({ invocationId: 'sr-1', agentOutcome: 'timeout' as const }),
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'timeout' as const,
+      }),
     });
     // Note: runImplement succeeds, then first iteration spec-review times out → hard fail
     const out = await new ImplementStepLoop(deps).execute(baseInput());
@@ -302,7 +316,10 @@ describe('ImplementStepLoop', () => {
 
   it('hard fails when spec-review returns undefined verdict (contract violation)', async () => {
     const deps = makeDeps({
-      runSpecReview: async () => ({ invocationId: 'sr-1', agentOutcome: 'success' as const }),
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success' as const,
+      }),
     });
     const out = await new ImplementStepLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('failed');
@@ -313,12 +330,12 @@ describe('ImplementStepLoop', () => {
 
   it('hard fails when quality-review agent outcome is not success', async () => {
     const deps = makeDeps({
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'pass' as const,
       }),
-      runQualityReview: async () => ({
+      runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'qr-1',
         agentOutcome: 'contract_violation' as const,
       }),
@@ -342,7 +359,7 @@ describe('ImplementStepLoop', () => {
     const { events, bus } = collectEvents();
     const deps = makeDeps({
       events: bus,
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
@@ -360,7 +377,7 @@ describe('ImplementStepLoop', () => {
 
   it('persists loop via LoopRepositoryPort on each state change', async () => {
     const deps = makeDeps({
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
@@ -389,7 +406,7 @@ describe('ImplementStepLoop', () => {
         implementCalls += 1;
         return { invocationId: 'impl-1', agentOutcome: 'success' as const };
       },
-      runSpecReview: async () => {
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
         specCalls += 1;
         return {
           invocationId: `sr-${specCalls}`,
@@ -415,7 +432,7 @@ describe('ImplementStepLoop', () => {
     const deps = makeDeps({
       events: bus,
       fixFallbackProfile: undefined,
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
@@ -433,7 +450,7 @@ describe('ImplementStepLoop', () => {
 
   it('does NOT converge when only spec-review passes (quality-review fails)', async () => {
     const deps = makeDeps({
-      runQualityReview: async () => ({
+      runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'qr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
@@ -451,7 +468,7 @@ describe('ImplementStepLoop', () => {
 
   it('does NOT converge when only quality-review passes (spec-review fails)', async () => {
     const deps = makeDeps({
-      runSpecReview: async () => ({
+      runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
         verdict: 'fail' as const,
