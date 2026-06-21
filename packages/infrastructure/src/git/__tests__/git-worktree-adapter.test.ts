@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git } from '../git-runner.js';
 import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
-import { clearTempDirs, getTempDirs, makeTempRepo } from './helpers.js';
+import { clearTempDirs, getTempDirs, makeTempRepo, makeRepoWithRemote } from './helpers.js';
 
 let _extraDirs: string[] = [];
 
@@ -191,20 +191,6 @@ describe('headCommitShaOf()', () => {
 });
 
 describe('remoteRef()', () => {
-  async function makeRepoWithRemote(): Promise<{
-    repo: string;
-    bareRemote: string;
-    branchSha: string;
-  }> {
-    const repo = await makeTempRepo();
-    const branchSha = await git(repo, ['rev-parse', 'HEAD']);
-    const bareRemote = makeWorktreePath();
-    await git(repo, ['init', '--bare', bareRemote]);
-    await git(repo, ['remote', 'add', 'origin', bareRemote]);
-    await git(repo, ['push', 'origin', 'main']);
-    return { repo, bareRemote, branchSha };
-  }
-
   it('returns the SHA of an existing ref', async () => {
     const { repo, branchSha } = await makeRepoWithRemote();
     const sha = await adapter.remoteRef({ cwd: repo, remote: 'origin', ref: 'main' });
