@@ -78,6 +78,7 @@ import {
   AgentProfileName,
   AgentInvocationId,
   PhaseName,
+  Run,
   RunId,
   RepositoryId,
 } from '@ai-sdlc/domain';
@@ -899,6 +900,23 @@ export function composeRoot(opts: ComposeOptions): Container {
         list: async () => [],
       });
 
+      const buildContext = (run: Run): PhaseHandlerContext => {
+        const cwd = join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+        return composeBuildPhaseHandlerContext({
+          runId: run.displayId,
+          runUuid: run.uuid,
+          repoFullName: resolvedRepoFullName ?? '',
+          issueNumber: run.issueNumber,
+          cwd,
+          artifacts: makeArtifactStore(cwd),
+          github: new GhCliAdapter(),
+          git: gitAdapter,
+          agent: agentRuntime!,
+          events: eventBus,
+          now: () => new Date(),
+        });
+      };
+
       const runImplement = async (ctx: StepLoopContext) => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
@@ -1232,53 +1250,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         return { outcome: result.outcome };
       };
 
-      // In-memory artifact store for the context factory — handlers receive
-      // a real store via buildPhaseHandlerContext in the agent phase flow.
-      // Returning [] from list means resume validation will fail if real
-      // handlers are invoked (expected — handlers are not yet wired).
-      const stubArtifactStore: ArtifactStore = {
-        write: async () => {
-          throw new Error('not implemented');
-        },
-        read: async () => {
-          throw new Error('not implemented');
-        },
-        list: async () => {
-          throw new Error('not implemented');
-        },
-      };
       runExecutor = new RunExecutor({
         runRepository,
         failureRepository,
         phaseRepository,
         events: eventBus,
         registry: phaseRegistry,
-        contextFactory: () =>
-          ({
-            runId: '',
-            runUuid: 'stub',
-            repoFullName: '',
-            issueNumber: 0,
-            cwd: '',
-            artifacts: stubArtifactStore,
-            github: {
-              getIssue: () => {
-                throw new Error(
-                  'PhaseHandlerContext.github is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
-                );
-              },
-            } as never,
-            git: gitAdapter,
-            agent: {
-              run: () => {
-                throw new Error(
-                  'PhaseHandlerContext.agent is not available from contextFactory — wire through buildPhaseHandlerContext in agent phase flow',
-                );
-              },
-            } as never,
-            events: eventBus,
-            now: () => new Date(),
-          }) as PhaseHandlerContext,
+        contextFactory: buildContext,
       });
     }
   } catch (err) {
@@ -1544,6 +1522,16 @@ export function composeRoot(opts: ComposeOptions): Container {
     });
   }
 
+  const composeBuildPhaseHandlerContext: PhaseHandlerContextFactory = (base, opts) => {
+    const idFactory = () => randomUUID();
+    return {
+      ...base,
+      ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
+      idFactory,
+      ...opts,
+    };
+  };
+
   return {
     runRepository,
     phaseRepository,
@@ -1569,17 +1557,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
     ...(implementStepLoop !== undefined ? { implementStepLoop } : {}),
     ...(runStep !== undefined ? { runStep } : {}),
-    buildPhaseHandlerContext: (base, opts) => {
-      const idFactory = () => randomUUID();
-      return {
-        ...base,
-        // Always-provided optional fields via compose root wiring:
-        ...(resolveProfileForPhaseBound ? { resolveProfile: resolveProfileForPhaseBound } : {}),
-        idFactory,
-        // Caller-supplied optional fields take precedence:
-        ...opts,
-      };
-    },
+    buildPhaseHandlerContext: composeBuildPhaseHandlerContext,
   };
 }
 
