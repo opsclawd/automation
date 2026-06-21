@@ -582,4 +582,131 @@ describe('ImplementStepLoop', () => {
       expect(tcFailed?.level).toBe('error');
     });
   });
+
+  describe('contradiction detection and 1-shot reconciliation', () => {
+    it('detects contradiction when fix returns done_no_fixes_needed and spec-review fails', async () => {
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'The finding is a false positive — named exports satisfy the constraint.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      // With maxIterations=1 and no arbiter, 1-shot re-run still fails → needs_human_review
+      expect(['failed', 'needs_human_review']).toContain(out.outcome);
+      const detected = events.filter((e) => e.type === 'review.contradiction.detected');
+      expect(detected).toHaveLength(1);
+      expect(detected[0]?.level).toBe('warn');
+    });
+
+    it('1-shot re-run resolves contradiction when reviewer agrees on re-run', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            // Iteration 1 review → fail; re-run (2nd call in iteration 1) → pass
+            verdict: specCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Nothing to fix.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+      // spec-review called twice (initial + re-run)
+      expect(specCalls).toBe(2);
+    });
+
+    it('1-shot re-run only fires once per step (not on every iteration)', async () => {
+      // Spec review always fails; fix always says done_no_fixes_needed.
+      // Re-run should fire only once for this step.
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Nothing to fix.',
+        }),
+      });
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      // Iteration 1: spec(1) + quality + fix + spec-rerun(2) = 2 spec calls, then no arbiter → needs_human_review
+      // The 1-shot re-run is NOT repeated on subsequent iterations
+      expect(specCalls).toBe(2); // 1 initial + 1 re-run (not more)
+    });
+
+    it('does NOT detect contradiction when fix returns done_with_fixes', async () => {
+      const { events, bus } = collectEvents();
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: specCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      const detected = events.filter((e) => e.type === 'review.contradiction.detected');
+      expect(detected).toHaveLength(0);
+    });
+
+    it('emits needs_human_review when 1-shot re-run persists and no arbiter is configured', async () => {
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runArbiter: undefined,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Reviewer is wrong.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.outcome).toBe('needs_human_review');
+      const nhr = events.filter((e) => e.type === 'needs_human_review');
+      expect(nhr).toHaveLength(1);
+      expect(nhr[0]?.level).toBe('warn');
+    });
+  });
 });

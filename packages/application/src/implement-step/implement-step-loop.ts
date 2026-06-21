@@ -31,6 +31,9 @@ export class ImplementStepLoop {
 
     let consecutiveFixFailures = 0;
     let lastFixInvocationId: string | undefined;
+    let contradictionRetriedThisStep = false;
+    let _arbiterInvokedThisStep = false; // used by Task 3 (arbiter escalation)
+    let _pendingReconciliationContext: string | undefined; // used by Task 3 (arbiter escalation)
 
     const baseCtx: StepLoopContext = {
       loopId: loop.id,
@@ -106,9 +109,15 @@ export class ImplementStepLoop {
               output: tcResult.output.slice(0, 2000),
             },
           );
-          this.emit(input, 'loop.iteration.started', 'info', `iteration ${iterationIndex} started`, {
-            index: iterationIndex,
-          });
+          this.emit(
+            input,
+            'loop.iteration.started',
+            'info',
+            `iteration ${iterationIndex} started`,
+            {
+              index: iterationIndex,
+            },
+          );
           loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
           loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
           deps.loops.update(loop);
@@ -185,6 +194,61 @@ export class ImplementStepLoop {
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
         continue;
+      }
+
+      // --- CONTRADICTION DETECTION ---
+      const reviewFailed = specReview.verdict === 'fail' || qualityReview.verdict === 'fail';
+      if (fix.verdict === 'done_no_fixes_needed' && reviewFailed) {
+        this.emit(
+          input,
+          'review.contradiction.detected',
+          'warn',
+          `review/fix contradiction at iteration ${iterationIndex}: fixer disagrees with failing review`,
+          {
+            iterationIndex,
+            specVerdict: specReview.verdict,
+            qualityVerdict: qualityReview.verdict,
+            hasRebuttal: Boolean(fix.rebuttal),
+          },
+        );
+
+        // --- 1-SHOT RECONCILIATION RE-RUN (#45 port) ---
+        if (!contradictionRetriedThisStep) {
+          contradictionRetriedThisStep = true;
+
+          const rerunSpec =
+            specReview.verdict === 'fail' ? await deps.runSpecReview(ctx, tcResult) : specReview;
+          const rerunQuality =
+            qualityReview.verdict === 'fail'
+              ? await deps.runQualityReview(ctx, tcResult)
+              : qualityReview;
+
+          const rerunSpecOk = rerunSpec.agentOutcome === 'success' && rerunSpec.verdict === 'pass';
+          const rerunQualityOk =
+            rerunQuality.agentOutcome === 'success' && rerunQuality.verdict === 'pass';
+
+          if (rerunSpecOk && rerunQualityOk) {
+            // Contradiction resolved by re-run
+            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(loop);
+            this.emitIterationCompleted(input, iterationIndex, 'resolved');
+            return { outcome: 'success', loop };
+          }
+          // Re-run still failing — fall through to arbiter (Task 3 adds this path)
+        }
+
+        // --- NO ARBITER / ARBITER ALREADY USED (placeholder until Task 3) ---
+        // Emit needs_human_review and exit; Task 3 replaces this with arbiter call.
+        this.emit(
+          input,
+          'needs_human_review',
+          'warn',
+          `contradiction unresolved after 1-shot re-run at iteration ${iterationIndex}`,
+          { iterationIndex, arbiterAvailable: Boolean(deps.runArbiter) },
+        );
+        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(loop);
+        return { outcome: 'needs_human_review', loop };
       }
 
       consecutiveFixFailures = 0;
