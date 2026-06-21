@@ -1,5 +1,5 @@
 import type { Run, Phase, PhaseName, PhaseStatus, Failure } from '@ai-sdlc/domain';
-import { startPhase, completePhase, skipPhase, failRun, passRun, blockRun } from '@ai-sdlc/domain';
+import { startPhase, completePhase, skipPhase, failRun, passRun, blockRun, markRunNeedsHumanReview } from '@ai-sdlc/domain';
 import type { PhaseHandlerContext, PhaseResult } from '../phases/handler.js';
 import type { PhaseDefinition } from '../phases/phase-definitions.js';
 import {
@@ -188,7 +188,7 @@ export class RunExecutor {
       // start bookkeeping or a previous handler. If so, bail immediately instead
       // of writing a terminal status that could resurrect the run.
       const cancelled = this.deps.runRepository.findByUuid(run.uuid);
-      if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
+    if (cancelled && ['cancelled', 'failed', 'blocked', 'needs_human_review', 'passed'].includes(cancelled.status)) {
         return { run: cancelled, phases };
       }
 
@@ -345,6 +345,9 @@ export class RunExecutor {
         case 'blocked': {
           return this.blockRun(currentRun, phaseDef, phase, result.failure, now(), phases);
         }
+        case 'needs_human_review': {
+          return this.needsHumanReviewRun(currentRun, phaseDef, phase, result.failure, now(), phases);
+        }
       }
     }
 
@@ -472,6 +475,57 @@ export class RunExecutor {
       'warn',
       'run.blocked',
       `run blocked at phase '${String(phaseDef.name)}'`,
+      at,
+    );
+    return { run, phases };
+  }
+
+  private needsHumanReviewRun(
+    currentRun: Run,
+    phaseDef: PhaseDefinition,
+    phase: Phase,
+    failure: Failure,
+    at: Date,
+    phases: PhaseRecord[],
+  ): ExecuteRunOutput {
+    const cancelled = this.deps.runRepository.findByUuid(currentRun.uuid);
+    if (cancelled && ['cancelled', 'failed', 'blocked', 'passed'].includes(cancelled.status)) {
+      return { run: cancelled, phases };
+    }
+
+    if (failure.runUuid !== currentRun.uuid) {
+      throw new Error(
+        `handler returned failure with mismatched runUuid: expected ${currentRun.uuid}, got ${failure.runUuid}`,
+      );
+    }
+    const run = markRunNeedsHumanReview(currentRun, failure.message, at);
+    phase.status = 'needs_human_review';
+    phase.completedAt = at;
+    this.deps.phaseRepository.update(phase);
+    this.deps.failureRepository.insert(failure);
+    this.deps.runRepository.update(run.uuid, {
+      status: 'needs_human_review',
+      currentPhase: null,
+      completedAt: at,
+      failureReason: failure.message,
+    });
+    phases.push({ phase: phaseDef.name, status: 'needs_human_review', failure });
+    this.emit(
+      run.displayId,
+      run.uuid,
+      phaseDef.name as string,
+      'warn',
+      'phase.needs_human_review',
+      failure.message,
+      at,
+    );
+    this.emit(
+      run.displayId,
+      run.uuid,
+      undefined,
+      'warn',
+      'run.needs_human_review',
+      `run needs human review at phase '${String(phaseDef.name)}'`,
       at,
     );
     return { run, phases };

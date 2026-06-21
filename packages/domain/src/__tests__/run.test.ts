@@ -8,6 +8,7 @@ import {
   failRun,
   blockRun,
   cancelRun,
+  markRunNeedsHumanReview,
   canResume,
   resumeRun,
   RunStateError,
@@ -95,6 +96,25 @@ describe('Run state machine', () => {
     const r = failRun(createRun(base), 'boom');
     expect(r.status).toBe('failed');
     expect(r.failureReason).toBe('boom');
+  });
+
+  it('marks run needs_human_review with reason, clears currentPhase', () => {
+    let r = createRun(base);
+    r = startPhase(r, 'implement');
+    r = markRunNeedsHumanReview(r, 'step 2 needs human review');
+    expect(r.status).toBe('needs_human_review');
+    expect(r.failureReason).toBe('step 2 needs human review');
+    expect(r.completedAt).toBeDefined();
+    expect(r.currentPhase).toBeUndefined();
+  });
+
+  it('markRunNeedsHumanReview rejects terminal runs', () => {
+    const passed = passRun(createRun(base), new Date());
+    expect(() => markRunNeedsHumanReview(passed, 'nope')).toThrow(RunStateError);
+    const failed = failRun(createRun(base), 'nope');
+    expect(() => markRunNeedsHumanReview(failed, 'nope')).toThrow(RunStateError);
+    const cancelled = cancelRun(createRun(base));
+    expect(() => markRunNeedsHumanReview(cancelled, 'nope')).toThrow(RunStateError);
   });
 
   it('passRun and failRun reject already-terminal runs', () => {

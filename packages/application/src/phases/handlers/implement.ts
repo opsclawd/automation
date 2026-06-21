@@ -15,7 +15,7 @@ export interface StepRunContext {
 }
 
 export interface StepRunResult {
-  outcome: 'success' | 'failed';
+  outcome: 'success' | 'failed' | 'needs_human_review';
 }
 
 export interface ImplementHandlerOpts {
@@ -89,6 +89,17 @@ export class ImplementHandler implements PhaseHandler {
       if (result.outcome === 'success') {
         this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
         emit('step.completed', 'info', `step ${d.index} done`, { index: d.index });
+      } else if (result.outcome === 'needs_human_review') {
+        this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
+        emit('step.needs_human_review', 'warn', `step ${d.index} needs human review`, {
+          index: d.index,
+        });
+        return this.needsHumanReview(
+          ctx,
+          emit,
+          'agent_incomplete',
+          `step ${d.index} (${d.title}) needs human review`,
+        );
       } else {
         this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
         emit('step.failed', 'error', `step ${d.index} failed`, { index: d.index });
@@ -139,6 +150,28 @@ export class ImplementHandler implements PhaseHandler {
           kind === 'invalid_result'
             ? 'Ensure plan.md contains "## Task" headings.'
             : 'Inspect the failing step artifacts and resume.',
+        artifacts: [],
+        detectedAt: ctx.now(),
+      },
+    };
+  }
+
+  private needsHumanReview(
+    ctx: PhaseHandlerContext,
+    emit: EventEmitter,
+    kind: FailureKind,
+    message: string,
+  ): PhaseResult {
+    emit('implement.needs_human_review', 'warn', message);
+    return {
+      outcome: 'needs_human_review',
+      failure: {
+        runUuid: ctx.runUuid,
+        phase: 'implement',
+        kind,
+        message,
+        canRetry: true,
+        suggestedAction: 'Review the step that needs attention and resume.',
         artifacts: [],
         detectedAt: ctx.now(),
       },

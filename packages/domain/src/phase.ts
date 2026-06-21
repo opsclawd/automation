@@ -5,7 +5,8 @@ export type PhaseStatus =
   | 'failed'
   | 'skipped'
   | 'blocked'
-  | 'resting';
+  | 'resting'
+  | 'needs_human_review';
 
 export interface Phase {
   id: string;

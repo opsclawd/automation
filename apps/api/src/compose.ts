@@ -177,7 +177,7 @@ export interface Container {
     stepTitle: string;
     cwd: string;
     ctx: import('@ai-sdlc/application').PhaseHandlerContext;
-  }) => Promise<{ outcome: 'success' | 'failed' }>;
+  }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
     pollIntervalMs: number;
@@ -1252,7 +1252,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         stepTitle: string;
         cwd: string;
         ctx: import('@ai-sdlc/application').PhaseHandlerContext;
-      }): Promise<{ outcome: 'success' | 'failed' }> => {
+      }): Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }> => {
         if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
         const result = await implementStepLoop.execute({
           runId: RunId(sctx.ctx.runUuid),

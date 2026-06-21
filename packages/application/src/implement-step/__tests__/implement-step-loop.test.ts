@@ -11,6 +11,7 @@ import type {
   FixResult,
   StepLoopContext,
   TypecheckResult,
+  ArbiterResult,
 } from '../types.js';
 import type { FixStepOptions } from '../../review-fix/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -580,6 +581,350 @@ describe('ImplementStepLoop', () => {
       const tcFailed = events.find((e) => e.type === 'step.typecheck.failed');
       expect(tcFailed).toBeDefined();
       expect(tcFailed?.level).toBe('error');
+    });
+  });
+
+  describe('contradiction detection and 1-shot reconciliation', () => {
+    it('detects contradiction when fix returns done_no_fixes_needed and spec-review fails', async () => {
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'The finding is a false positive — named exports satisfy the constraint.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('needs_human_review');
+      const detected = events.filter((e) => e.type === 'review.contradiction.detected');
+      expect(detected).toHaveLength(1);
+      expect(detected[0]?.level).toBe('warn');
+    });
+
+    it('1-shot re-run resolves contradiction when reviewer agrees on re-run', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            // Iteration 1 review → fail; re-run (2nd call in iteration 1) → pass
+            verdict: specCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Nothing to fix.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+      // spec-review called twice (initial + re-run)
+      expect(specCalls).toBe(2);
+    });
+
+    it('1-shot re-run only fires once per step (not on every iteration)', async () => {
+      // Spec review always fails; fix always says done_no_fixes_needed.
+      // Re-run should fire only once for this step.
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Nothing to fix.',
+        }),
+      });
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      // Iteration 1: spec(1) + quality + fix + spec-rerun(2) = 2 spec calls, then no arbiter → needs_human_review
+      // The 1-shot re-run is NOT repeated on subsequent iterations
+      expect(specCalls).toBe(2); // 1 initial + 1 re-run (not more)
+    });
+
+    it('does NOT detect contradiction when fix returns done_with_fixes', async () => {
+      const { events, bus } = collectEvents();
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: specCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      const detected = events.filter((e) => e.type === 'review.contradiction.detected');
+      expect(detected).toHaveLength(0);
+    });
+
+    it('emits needs_human_review when fix returns done_no_fixes_needed without rebuttal', async () => {
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          // No rebuttal provided — this should escalate directly to human review
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('needs_human_review');
+      // Should NOT emit contradiction.detected — should go straight to needs_human_review
+      const detected = events.filter((e) => e.type === 'review.contradiction.detected');
+      expect(detected).toHaveLength(0);
+      const nhr = events.filter((e) => e.type === 'needs_human_review');
+      expect(nhr).toHaveLength(1);
+      expect(nhr[0]?.level).toBe('warn');
+    });
+
+    it('emits needs_human_review when 1-shot re-run persists and no arbiter is configured', async () => {
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runArbiter: undefined,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Reviewer is wrong.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.outcome).toBe('needs_human_review');
+      const nhr = events.filter((e) => e.type === 'needs_human_review');
+      expect(nhr).toHaveLength(1);
+      expect(nhr[0]?.level).toBe('warn');
+    });
+  });
+
+  describe('arbiter escalation', () => {
+    function makeArbiterDeps(
+      arbiterOutcome: ArbiterResult['outcome'],
+      evidence = 'export * fails pnpm typecheck — named exports are objectively correct.',
+    ) {
+      const { bus, events } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Named exports satisfy the interface; export * causes name collisions.',
+        }),
+        runArbiter: async (
+          _ctx: StepLoopContext,
+          _tcResult: TypecheckResult,
+          _fixResult: FixResult,
+        ): Promise<ArbiterResult> => ({
+          outcome: arbiterOutcome,
+          evidence,
+          rationale: `Arbiter ruled ${arbiterOutcome} based on deterministic signal.`,
+        }),
+      });
+      return { deps, events };
+    }
+
+    it('emits review.contradiction.escalated before calling arbiter', async () => {
+      const { deps, events } = makeArbiterDeps('finding_invalid');
+      await new ImplementStepLoop(deps).execute(baseInput());
+      const esc = events.filter((e) => e.type === 'review.contradiction.escalated');
+      expect(esc).toHaveLength(1);
+      expect(esc[0]?.level).toBe('warn');
+      expect(esc[0]?.metadata.reason).toBeDefined();
+    });
+
+    it('finding_invalid: returns success and emits contradiction.resolved', async () => {
+      const { deps, events } = makeArbiterDeps('finding_invalid');
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+      const resolved = events.filter((e) => e.type === 'review.contradiction.resolved');
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0]?.metadata.ruling).toBe('finding_invalid');
+    });
+
+    it('finding_valid: runs one more bounded fix then re-reviews (success path)', async () => {
+      const { bus, events } = collectEvents();
+      let fixCalls = 0;
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: specCalls >= 3 ? ('pass' as const) : ('fail' as const),
+          };
+        },
+        runFix: async (_ctx: StepLoopContext, _opts: FixStepOptions) => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict:
+              fixCalls === 1 ? ('done_no_fixes_needed' as const) : ('done_with_fixes' as const),
+            rebuttal: fixCalls === 1 ? 'Reviewer is wrong.' : undefined,
+          };
+        },
+        runArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'The reviewer is correct — the fix was not applied.',
+          rationale: 'Fixer failed to apply the required change.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 5,
+      });
+      expect(out.outcome).toBe('success');
+      const resolved = events.filter((e) => e.type === 'review.contradiction.resolved');
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0]?.metadata.ruling).toBe('finding_valid');
+    });
+
+    it('finding_valid: bounded fix receives reconciliationContext', async () => {
+      const { bus } = collectEvents();
+      const capturedOpts: FixStepOptions[] = [];
+      let fixCalls = 0;
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            // Need specCalls >= 4: iteration-1 review(1)=fail, rerun(2)=fail,
+            // iteration-2 review(3)=fail → fix called, iteration-3 review(4)=pass
+            verdict: specCalls >= 4 ? ('pass' as const) : ('fail' as const),
+          };
+        },
+        runFix: async (_ctx: StepLoopContext, opts: FixStepOptions) => {
+          fixCalls += 1;
+          capturedOpts.push(opts);
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict:
+              fixCalls === 1 ? ('done_no_fixes_needed' as const) : ('done_with_fixes' as const),
+            rebuttal: fixCalls === 1 ? 'No fix needed.' : undefined,
+          };
+        },
+        runArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'Build fails with export *.',
+          rationale: 'The reviewer is correct.',
+        }),
+      });
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+      // The second fix call (bounded fix) must carry reconciliationContext
+      expect(capturedOpts[1]?.reconciliationContext).toBeDefined();
+      expect(capturedOpts[1]?.reconciliationContext).toContain('The reviewer is correct.');
+    });
+
+    it('ambiguous: returns needs_human_review', async () => {
+      const { deps, events } = makeArbiterDeps('ambiguous');
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('needs_human_review');
+      const nhr = events.filter((e) => e.type === 'needs_human_review');
+      expect(nhr).toHaveLength(1);
+    });
+
+    it('insufficient_evidence: returns needs_human_review', async () => {
+      const { deps } = makeArbiterDeps('insufficient_evidence');
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('needs_human_review');
+    });
+
+    it('G1 guardrail: empty arbiter evidence → needs_human_review (never auto-proceed)', async () => {
+      const { deps, events } = makeArbiterDeps('finding_invalid', '');
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('needs_human_review');
+      const nhr = events.filter((e) => e.type === 'needs_human_review');
+      expect(nhr).toHaveLength(1);
+    });
+
+    it('arbiter is bounded: second contradiction after arbiter → needs_human_review', async () => {
+      const { bus, events } = collectEvents();
+      let fixCalls = 0;
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_no_fixes_needed' as const,
+            rebuttal: 'Still disagree.',
+          };
+        },
+        runArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'Finding is valid.',
+          rationale: 'Fixer must fix.',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 10,
+      });
+      expect(out.outcome).toBe('needs_human_review');
+      const esc = events.filter((e) => e.type === 'review.contradiction.escalated');
+      expect(esc).toHaveLength(1);
     });
   });
 });
