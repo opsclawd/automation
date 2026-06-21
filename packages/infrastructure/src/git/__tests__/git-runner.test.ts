@@ -37,7 +37,7 @@ describe('git()', () => {
   it('rejects when command exceeds timeout', { timeout: 15_000 }, async () => {
     const repoPath = await makeTempRepo();
 
-    await expect(git(repoPath, ['-c', 'alias.sleep=!sleep 10', 'sleep'], 50)).rejects.toThrow();
+    await expect(git(repoPath, ['-c', 'alias.sleep=!sleep 10', 'sleep'], 50)).rejects.toMatchObject({ timedOut: true });
   });
 });
 
