@@ -20,6 +20,11 @@ export interface ImplementResult {
   agentOutcome: StepAgentOutcome;
 }
 
+export interface TypecheckResult {
+  outcome: 'pass' | 'fail';
+  output: string;
+}
+
 export interface SpecReviewResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
@@ -40,8 +45,12 @@ export interface FixResult {
 
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext) => Promise<ImplementResult>;
-  runSpecReview: (ctx: StepLoopContext) => Promise<SpecReviewResult>;
-  runQualityReview: (ctx: StepLoopContext) => Promise<QualityReviewResult>;
+  runTypecheck: (ctx: StepLoopContext) => Promise<TypecheckResult>;
+  runSpecReview: (ctx: StepLoopContext, tcResult: TypecheckResult) => Promise<SpecReviewResult>;
+  runQualityReview: (
+    ctx: StepLoopContext,
+    tcResult: TypecheckResult,
+  ) => Promise<QualityReviewResult>;
   runFix: (ctx: StepLoopContext, opts: FixStepOptions) => Promise<FixResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;

@@ -62,17 +62,67 @@ export class ImplementStepLoop {
       return { outcome: 'failed', loop };
     }
 
+    // --- PRE-LOOP: TYPECHECK GATE ---
+    let tcResult = await deps.runTypecheck(baseCtx);
+    if (tcResult.outcome === 'fail') {
+      this.emit(
+        input,
+        'step.typecheck.failed',
+        'error',
+        `step ${input.stepIndex} failed typecheck gate`,
+        {
+          index: input.stepIndex,
+          output: tcResult.output.slice(0, 2000),
+        },
+      );
+      this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', { index: 1 });
+      loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+      loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+      deps.loops.update(loop);
+      this.emit(input, 'loop.iteration.completed', 'info', 'step failed typecheck gate', {
+        index: 1,
+        outcome: 'failed',
+      });
+      return { outcome: 'failed', loop };
+    }
+
     // Enter review-fix loop
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
+
+      // Re-run typecheck on iterations 2+ (code may have changed after fix)
+      if (iterationIndex > 1) {
+        tcResult = await deps.runTypecheck(baseCtx);
+        if (tcResult.outcome === 'fail') {
+          this.emit(
+            input,
+            'step.typecheck.failed',
+            'error',
+            `step ${input.stepIndex} iteration ${iterationIndex} typecheck failed after fix`,
+            {
+              index: input.stepIndex,
+              iteration: iterationIndex,
+              output: tcResult.output.slice(0, 2000),
+            },
+          );
+          this.emit(input, 'loop.iteration.started', 'info', `iteration ${iterationIndex} started`, {
+            index: iterationIndex,
+          });
+          loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'failed');
+          return { outcome: 'failed', loop };
+        }
+      }
 
       this.emit(input, 'loop.iteration.started', 'info', `iteration ${iterationIndex} started`, {
         index: iterationIndex,
       });
 
       // --- SPEC-REVIEW ---
-      const specReview = await deps.runSpecReview(ctx);
+      const specReview = await deps.runSpecReview(ctx, tcResult);
       loop = startIteration(loop, {
         reviewInvocationId: specReview.invocationId,
         now: deps.now(),
@@ -87,7 +137,7 @@ export class ImplementStepLoop {
       }
 
       // --- QUALITY-REVIEW ---
-      const qualityReview = await deps.runQualityReview(ctx);
+      const qualityReview = await deps.runQualityReview(ctx, tcResult);
       loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
       deps.loops.update(loop);
       if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {

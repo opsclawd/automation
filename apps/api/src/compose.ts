@@ -71,6 +71,7 @@ import {
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
   type FixStepOptions,
+  type TypecheckResult,
   type ResolveRefShaFn,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
@@ -1004,18 +1005,51 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const runSpecReview = async (ctx: StepLoopContext) => {
+      // Per-step typecheck gate (#403): run the full-repo typecheck in the
+      // worktree. The result both gates the step (a red typecheck fails it
+      // before review) and is injected into the reviewer prompts as ground
+      // truth (a reviewer demanding a non-compiling change is overruled).
+      const runTypecheck = async (ctx: StepLoopContext): Promise<TypecheckResult> => {
+        try {
+          execFileSync('pnpm', ['-r', 'typecheck'], {
+            cwd: ctx.cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+          });
+          return { outcome: 'pass', output: '' };
+        } catch (err) {
+          const raw =
+            err instanceof Error && 'stdout' in err && 'stderr' in err
+              ? `${String((err as NodeJS.ErrnoException & { stdout?: string }).stdout ?? '')}${String((err as NodeJS.ErrnoException & { stderr?: string }).stderr ?? '')}`
+              : String(err);
+          const lines = raw.split('\n');
+          const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : raw;
+          return {
+            outcome: 'fail',
+            output: truncated.slice(0, 3000),
+          };
+        }
+      };
+
+      const runSpecReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
           promptDir,
           `spec-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
         );
+        const typecheckSection =
+          tcResult.outcome === 'pass'
+            ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return SPEC_FAIL for it."
+            : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to plan-letter checks until the type error is resolved.`;
+
         const reviewPrompt = [
           '# TASK',
           `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
           '',
           'Check that the implementation matches plan.md task requirements exactly.',
+          '',
+          typecheckSection,
           '',
           '## OUTPUT',
           'Write result.json: { "result": "pass" | "fail" }',
@@ -1063,18 +1097,25 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const runQualityReview = async (ctx: StepLoopContext) => {
+      const runQualityReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
           promptDir,
           `quality-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
         );
+        const typecheckSection =
+          tcResult.outcome === 'pass'
+            ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
+            : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
+
         const reviewPrompt = [
           '# TASK',
           `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
           '',
           'Check for code quality: maintainability, performance, security, test coverage.',
+          '',
+          typecheckSection,
           '',
           '## OUTPUT',
           'Write result.json: { "result": "pass" | "fail" }',
@@ -1192,6 +1233,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       implementStepLoop = new ImplementStepLoop({
         runImplement,
+        runTypecheck,
         runSpecReview,
         runQualityReview,
         runFix: implRunFix,

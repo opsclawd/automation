@@ -2311,3 +2311,35 @@ PLAN
   run grep -q "Do NOT write any other files" "$script"
   [ "$status" -eq 0 ]
 }
+
+# Invariant: after a task's implement step completes, the orchestrator runs
+#   pnpm -r typecheck (full-repo) before spec/quality review. The result is
+#   stored in _TASK_TYPECHECK_SIGNAL and injected into reviewer prompts so
+#   the "BUILD GREEN OVERRIDES THE PLAN'S LETTER" rule keys off a real signal.
+# Source: #403.
+# Failure prevented: the #357/#401 spiral — shared-contract drift (port/impl
+#   arity, branded-type missing, required-field addition) surviving past the
+#   implement step and surfacing late as a whole-PR-review cascade.
+# TS-port contract: the TS ImplementStepLoop must call runTypecheck after
+#   runImplement succeeds, gate on the result, and pass it to runSpecReview
+#   and runQualityReview so their prompt builders can inject it.
+@test "parity[#403]: bash path uses pnpm -r typecheck (not packages-only build) as per-task gate" {
+  # The gate must use full-repo recursive typecheck, not the per-package filter
+  run grep -c 'pnpm -r typecheck' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # The interim stopgap command (pnpm --filter "./packages/*" build) must be gone
+  run grep -c 'pnpm --filter.*packages.*build.*&&.*pnpm typecheck' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -ne 0 ] || [ "$output" -eq 0 ]
+}
+
+@test "parity[#403]: typecheck result is injected into spec and quality reviewer prompts" {
+  # _TASK_TYPECHECK_SIGNAL must appear in SPEC_REVIEWER_PROMPT construction
+  run grep -c '_TASK_TYPECHECK_SIGNAL' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 3 ]
+  # The TYPECHECK RESULT section header must exist in at least the spec reviewer block
+  run grep -c 'TYPECHECK RESULT' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+}
