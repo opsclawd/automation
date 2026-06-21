@@ -602,8 +602,7 @@ describe('ImplementStepLoop', () => {
         }),
       });
       const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
-      // With maxIterations=1 and no arbiter, 1-shot re-run still fails → needs_human_review
-      expect(['failed', 'needs_human_review']).toContain(out.outcome);
+      expect(out.outcome).toBe('needs_human_review');
       const detected = events.filter((e) => e.type === 'review.contradiction.detected');
       expect(detected).toHaveLength(1);
       expect(detected[0]?.level).toBe('warn');

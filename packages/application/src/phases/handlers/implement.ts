@@ -89,6 +89,17 @@ export class ImplementHandler implements PhaseHandler {
       if (result.outcome === 'success') {
         this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
         emit('step.completed', 'info', `step ${d.index} done`, { index: d.index });
+      } else if (result.outcome === 'needs_human_review') {
+        this.opts.steps.upsert({ ...step, status: 'needs_human_review', completedAt: ctx.now() });
+        emit('step.needs_human_review', 'warn', `step ${d.index} needs human review`, {
+          index: d.index,
+        });
+        return this.fail(
+          ctx,
+          emit,
+          'agent_incomplete',
+          `step ${d.index} (${d.title}) needs human review`,
+        );
       } else {
         this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
         emit('step.failed', 'error', `step ${d.index} failed`, { index: d.index });

@@ -250,7 +250,7 @@ export class ImplementStepLoop {
             'warn',
             `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
             {
-              toProfile: deps.fixFallbackProfile as unknown as string,
+              toProfile: deps.fixFallbackProfile ?? 'none',
               reason: 'contradiction_not_resolved_by_rerun',
               iterationIndex,
             },
@@ -302,6 +302,7 @@ export class ImplementStepLoop {
             });
             deps.loops.update(loop);
             this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+            consecutiveFixFailures = 0; // arbiter ruled fixer wrong (not incapable) — reset counter
             continue; // next iteration: reviews run, then fix with reconciliationContext
           }
 

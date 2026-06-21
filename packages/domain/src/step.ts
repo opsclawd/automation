@@ -1,6 +1,6 @@
 import type { RunId, PhaseName } from './ids.js';
 
-export type StepStatus = 'pending' | 'running' | 'success' | 'failed';
+export type StepStatus = 'pending' | 'running' | 'success' | 'failed' | 'needs_human_review';
 
 export interface Step {
   id: string;

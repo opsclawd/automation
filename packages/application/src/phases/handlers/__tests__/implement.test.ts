@@ -162,6 +162,39 @@ describe('ImplementHandler', () => {
     expect(events.filter((e) => e.type === 'step.skipped')).toHaveLength(1); // index 2 skipped
   });
 
+  it('needs_human_review outcome records step status and returns failed with distinct message', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: ambiguous']),
+    });
+    const steps = new FakeStepRepository();
+    const runStep = vi
+      .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+      .mockResolvedValue({ outcome: 'needs_human_review' });
+    const { ctx, events } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('agent_incomplete');
+      expect(result.failure.message).toContain('needs human review');
+    }
+
+    const step = steps.findByIndex(
+      RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+      PhaseName('implement'),
+      1,
+    );
+    expect(step!.status).toBe('needs_human_review');
+
+    expect(events.filter((e) => e.type === 'step.needs_human_review')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'step.failed')).toHaveLength(0);
+    expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
+  });
+
   it('step failure fails the phase', async () => {
     const artifacts = new FakeArtifactStore();
     await artifacts.write({
