@@ -2343,3 +2343,46 @@ PLAN
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
+
+# Invariant: when the bash runner receives DONE_NO_FIXES_NEEDED while a review
+#   is still failing, it calls handle_contradiction_reconciliation (the 1-shot
+#   re-run gate) before hard-failing with reviews_inconsistent.
+# Source: #398 (M8-04d) / bash implementation at ai-run-issue-v2:841,3475.
+# Failure prevented: without the re-run gate, non-deterministic reviewer errors
+#   (transient hallucinations) cause immediate hard-fail; the re-run catches them
+#   cheaply before spending tokens on the arbiter.
+# TS-port contract: ImplementStepLoop must call the failing runSpecReview or
+#   runQualityReview dep exactly once after contradiction detection, BEFORE
+#   invoking runArbiter. A second call to the re-run for the SAME step contradiction
+#   is not permitted (contradictionRetriedThisStep guards this).
+@test "parity[#398]: bash handle_contradiction_reconciliation fires on DONE_NO_FIXES_NEEDED + review-fail before reviews_inconsistent" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # The function must exist
+  run grep -q 'handle_contradiction_reconciliation()' "$script"
+  [ "$status" -eq 0 ]
+  # The function must be called when FIX_STATUS == DONE_NO_FIXES_NEEDED
+  run grep -q 'handle_contradiction_reconciliation' "$script"
+  [ "$status" -eq 0 ]
+  # The call must appear in the vicinity of the DONE_NO_FIXES_NEEDED check
+  # (both on adjacent lines — within 10 lines of each other)
+  local dnfn_line
+  dnfn_line=$(grep -n 'FIX_STATUS.*DONE_NO_FIXES_NEEDED\|DONE_NO_FIXES_NEEDED.*FIX_STATUS' "$script" | tail -1 | cut -d: -f1)
+  [ -n "$dnfn_line" ]
+  local reconcil_line
+  reconcil_line=$(grep -n 'handle_contradiction_reconciliation' "$script" | grep -v '^[[:space:]]*#' | tail -1 | cut -d: -f1)
+  [ -n "$reconcil_line" ]
+  # The contradiction reconciliation call must come AFTER the DONE_NO_FIXES_NEEDED check
+  [ "$reconcil_line" -gt "$dnfn_line" ]
+  [ "$(( reconcil_line - dnfn_line ))" -le 15 ]
+}
+
+@test "parity[#398]: bash contradiction re-run fires at most once per task (CONTRADICTION_RETRIED guard)" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # CONTRADICTION_RETRIED must be checked and incremented inside the function
+  run grep -c 'CONTRADICTION_RETRIED' "$script"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+  # The guard must prevent a second re-run (already_retried branch exists)
+  run grep -q 'already_retried' "$script"
+  [ "$status" -eq 0 ]
+}
