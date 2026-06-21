@@ -386,3 +386,29 @@ describe('isAncestor()', () => {
     expect(await adapter.isAncestor(repo, sha, sha)).toBe(true);
   });
 });
+
+describe('logBetween()', () => {
+  it('returns an empty array when base and head are the same commit', async () => {
+    const repo = await makeTempRepo();
+    const sha = await git(repo, ['rev-parse', 'HEAD']);
+    expect(await adapter.logBetween(repo, sha, sha)).toEqual([]);
+  });
+
+  it('returns subject lines newest-first for commits between base and head', async () => {
+    const repo = await makeTempRepo();
+    const base = await git(repo, ['rev-parse', 'HEAD']);
+
+    await writeFile(join(repo, 'a.txt'), 'a\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'feat: add a']);
+
+    await writeFile(join(repo, 'b.txt'), 'b\n');
+    await git(repo, ['add', '.']);
+    await git(repo, ['commit', '-m', 'feat: add b']);
+
+    const head = await git(repo, ['rev-parse', 'HEAD']);
+    const log = await adapter.logBetween(repo, base, head);
+
+    expect(log).toEqual(['feat: add b', 'feat: add a']);
+  });
+});
