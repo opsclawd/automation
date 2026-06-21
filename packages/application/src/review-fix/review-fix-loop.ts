@@ -121,8 +121,7 @@ export class ReviewFixLoop {
       const escalateForFixFailures =
         consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
       const escalateForStall = stall !== 'none' && input.fixFallbackProfile !== undefined;
-      const useFallback =
-        (escalateForFixFailures || escalateForStall) && input.fixFallbackProfile !== undefined;
+      const useFallback = escalateForFixFailures || escalateForStall;
       if (escalateForFixFailures) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
       }
