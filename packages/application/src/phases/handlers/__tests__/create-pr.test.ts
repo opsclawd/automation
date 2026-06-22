@@ -80,7 +80,7 @@ describe('CreatePrHandler', () => {
 
     const res = await new CreatePrHandler({
       baseBranch: 'main',
-      headBranch: 'feat/issue-7',
+      headBranch: () => 'feat/issue-7',
       template: TEMPLATE,
     }).run(ctx);
 
@@ -134,7 +134,7 @@ describe('CreatePrHandler', () => {
 
     const res = await new CreatePrHandler({
       baseBranch: 'main',
-      headBranch: 'feat/issue-7',
+      headBranch: () => 'feat/issue-7',
       template: TEMPLATE,
     }).run(ctx);
 
@@ -208,7 +208,7 @@ describe('CreatePrHandler', () => {
 
     const res = await new CreatePrHandler({
       baseBranch: 'main',
-      headBranch: 'feat/issue-7',
+      headBranch: () => 'feat/issue-7',
       template: TEMPLATE,
     }).run(ctx);
 
@@ -278,7 +278,7 @@ describe('CreatePrHandler', () => {
 
     const res = await new CreatePrHandler({
       baseBranch: 'main',
-      headBranch: 'feat/issue-7',
+      headBranch: () => 'feat/issue-7',
       template: TEMPLATE,
     }).run(ctx);
 
