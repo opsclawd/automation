@@ -14,7 +14,10 @@ interface VerifyCommentDeps {
     startCommitSha: string;
     commitSha?: string;
   }) => Promise<boolean>;
-  verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+  verifyBuildPasses: (input: {
+    cwd: string;
+    runId: string;
+  }) => Promise<{ passed: boolean; error?: string }>;
 }
 
 const runId = RunId('44444444-4444-4444-4444-444444444444');
@@ -54,7 +57,7 @@ function makeDeps(
     git,
     github,
     verifyCommitPushed: async () => true,
-    verifyBuildPasses: async () => true,
+    verifyBuildPasses: async () => ({ passed: true }),
     ...overrides,
   };
   return { deps, github, git };
@@ -312,7 +315,7 @@ describe('verifyComment — fixed outcome', () => {
 
   it('returns ok=false when verifyBuildPasses returns false', async () => {
     const { deps, github, git } = makeDeps({
-      verifyBuildPasses: async () => false,
+      verifyBuildPasses: async () => ({ passed: false }),
     });
     const ctx = makeContext({ startCommitSha: 'startSha' });
     const comment = {

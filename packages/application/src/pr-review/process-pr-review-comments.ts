@@ -176,6 +176,7 @@ export class ProcessPrReviewComments {
       runningStartSha = await d.git.headCommitSha(input.cwd);
 
       let lastOutput: PollTaskOutput | undefined;
+      let previousBuildError: string | undefined;
       for (let attempt = 1; attempt <= ESCALATION_BUDGET; attempt++) {
         try {
           lastOutput = await taskRunner.execute({
@@ -185,6 +186,7 @@ export class ProcessPrReviewComments {
             branch: pr.headRefName,
             startCommitSha: runningStartSha,
             unresolvedCommentCount: unresolved.length,
+            ...(previousBuildError !== undefined ? { previousBuildError } : {}),
           });
           if (lastOutput.action !== 'failed') break;
         } catch {
@@ -195,6 +197,7 @@ export class ProcessPrReviewComments {
             blocked: false,
           };
         }
+        previousBuildError = lastOutput?.buildError;
         if (
           attempt === ESCALATION_BUDGET &&
           lastOutput &&

@@ -77,12 +77,16 @@ export class PollTaskRunner {
     await d.git.cleanUntracked(input.cwd);
 
     // 1. Render single-comment prompt
-    const promptPath = await d.renderTaskPrompt({
+    const promptInput: Parameters<PollTaskRunnerDeps['renderTaskPrompt']>[0] = {
       cwd: input.cwd,
       comment: input.comment,
       diff: input.diff,
       branch: input.branch,
-    });
+    };
+    if (input.previousBuildError !== undefined) {
+      promptInput.previousBuildError = input.previousBuildError;
+    }
+    const promptPath = await d.renderTaskPrompt(promptInput);
 
     // 2. Invoke agent
     const profile = d.resolveProfileForPhase('post-pr-review');
@@ -225,11 +229,15 @@ export class PollTaskRunner {
     }
 
     // Verification failed — return as not processed (retry loop in caller handles this)
-    return {
+    const failed: PollTaskOutput = {
       commentId: comment.commentId,
-      action: result.action,
+      action: verification.buildError !== undefined ? 'failed' : result.action,
       processed: false,
       blocked: false,
     };
+    if (verification.buildError !== undefined) {
+      failed.buildError = verification.buildError;
+    }
+    return failed;
   }
 }

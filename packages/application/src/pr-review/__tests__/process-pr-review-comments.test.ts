@@ -133,7 +133,7 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
       result: { commentId: currentCommentId, action: 'fixed', replyBody: 'Renamed foo to bar.' },
     }),
     verifyCommitPushed: async () => true,
-    verifyBuildPasses: async () => true,
+    verifyBuildPasses: async () => ({ passed: true }),
     resolveProfileForPhase: () => 'post-pr-review-profile' as never,
     idFactory: () => `id-${++replyCounter}`,
     now: () => new Date('2026-06-04T00:10:00Z'),
@@ -285,7 +285,7 @@ describe('ProcessPrReviewComments — blocking', () => {
     });
     const { deps, repo, github } = makeDeps({
       agent,
-      verifyBuildPasses: async () => false,
+      verifyBuildPasses: async () => ({ passed: false }),
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
@@ -791,7 +791,7 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
     });
     const { deps, github, repo } = makeDeps({
       agent,
-      verifyBuildPasses: async () => false,
+      verifyBuildPasses: async () => ({ passed: false }),
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
@@ -1029,7 +1029,7 @@ describe('ProcessPrReviewComments — reset to pending on failed verification', 
     });
     const { deps, github, repo } = makeDeps({
       agent,
-      verifyBuildPasses: async () => false,
+      verifyBuildPasses: async () => ({ passed: false }),
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
@@ -1082,6 +1082,57 @@ describe('ProcessPrReviewComments — reset to pending on failed verification', 
     const after2 = repo.getComment(runId, 9001);
     expect(after2?.state).toBe('blocked');
     expect(after2?.replyVerified).toBe(false);
+  });
+});
+
+describe('ProcessPrReviewComments — build failure feedback', () => {
+  it('passes the previous build error into the next retry attempt', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const capturedErrors: Array<string | undefined> = [];
+    let buildChecks = 0;
+    const { deps, github, repo } = makeDeps({
+      agent,
+      renderTaskPrompt: async (input) => {
+        capturedErrors.push(input.previousBuildError);
+        return '/tmp/prompt.md';
+      },
+      verifyBuildPasses: async () =>
+        buildChecks++ === 0
+          ? { passed: false, error: 'TS2722: Cannot invoke object' }
+          : { passed: true },
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
+      }),
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'rename foo',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.outcome).toBe('ALL_RESOLVED');
+    expect(capturedErrors).toEqual([undefined, 'TS2722: Cannot invoke object']);
+    expect(repo.getComment(runId, 9001)?.state).toBe('processed');
   });
 });
 
@@ -1601,7 +1652,7 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
         if (!input.commitSha) verifyCalledWithoutCommitSha = true;
         return false;
       },
-      verifyBuildPasses: async () => true,
+      verifyBuildPasses: async () => ({ passed: true }),
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),
@@ -1677,7 +1728,7 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
         result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
       }),
       verifyCommitPushed: async () => true,
-      verifyBuildPasses: async () => true,
+      verifyBuildPasses: async () => ({ passed: true }),
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),
@@ -1752,7 +1803,7 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
         result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
       }),
       verifyCommitPushed: async () => true,
-      verifyBuildPasses: async () => true,
+      verifyBuildPasses: async () => ({ passed: true }),
       resolveProfileForPhase: () => 'post-pr-review-profile' as never,
       idFactory: () => 'id-1',
       now: () => new Date('2026-06-04T00:10:00Z'),

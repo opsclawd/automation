@@ -97,7 +97,7 @@ function makeDeps(overrides: Partial<PollTaskRunnerDeps> = {}): {
       result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
     }),
     verifyCommitPushed: async () => true,
-    verifyBuildPasses: async () => true,
+    verifyBuildPasses: async () => ({ passed: true }),
     resolveProfileForPhase: () => 'post-pr-review-profile' as never,
     idFactory: () => `id-${++replyCounter}`,
     now: () => new Date('2026-06-04T00:10:00Z'),
