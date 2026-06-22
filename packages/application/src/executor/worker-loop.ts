@@ -18,12 +18,17 @@ export interface WorkerLoopDeps {
     cwd: string;
     signal: AbortSignal;
   }) => Promise<{ ok: boolean }>;
-  prepareWorktree: (input: { repoId: RepositoryId; runId: RunId }) => Promise<{ cwd: string }>;
+  prepareWorktree: (input: {
+    repoId: RepositoryId;
+    runId: RunId;
+    signal: AbortSignal;
+  }) => Promise<{ cwd: string }>;
   resetWorktree: (repoId: RepositoryId) => void;
   isWorkerAlive: (workerId: WorkerId) => boolean;
   recoverableRunIds: ReadonlySet<RunId>;
   now: () => Date;
   ttlMs: number;
+  executeRunGraceMs?: number;
   findRun: (runId: RunId) => Run | undefined;
   onLeaseReclaimed?: (info: {
     repoId: RepositoryId;
@@ -104,32 +109,81 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         queue.markRunning(job.id, deps.now());
         started = true;
 
-        const worktree = await deps.prepareWorktree({
-          repoId: job.repoId,
-          runId: job.runId,
-        });
+        const worktree = await Promise.race([
+          deps.prepareWorktree({
+            repoId: job.repoId,
+            runId: job.runId,
+            signal: abortController.signal,
+          }),
+          new Promise<never>((_, reject) => {
+            if (abortController.signal.aborted) {
+              reject(new Error('heartbeat failed during worktree preparation'));
+              return;
+            }
+            abortController.signal.addEventListener(
+              'abort',
+              () => reject(new Error('heartbeat failed during worktree preparation')),
+              { once: true },
+            );
+          }),
+        ]);
 
         const run = deps.findRun(job.runId);
         if (!run) {
           throw new Error(`run ${job.runId} not found for job ${job.id}`);
         }
 
-        const result = await Promise.race([
-          deps.executeRun({ run, workerId, cwd: worktree.cwd, signal: abortController.signal }),
-          new Promise<never>((_, reject) => {
-            if (abortController.signal.aborted) {
-              reject(new Error('heartbeat failed during job execution'));
-              return;
-            }
-            abortController.signal.addEventListener(
-              'abort',
+        const executeRunPromise = deps.executeRun({
+          run,
+          workerId,
+          cwd: worktree.cwd,
+          signal: abortController.signal,
+        });
+
+        const result = await new Promise<{ ok: boolean }>((resolve, reject) => {
+          let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+          const onAbort = () => {
+            graceTimer = setTimeout(
+              () => reject(new Error('heartbeat failed during job execution')),
+              deps.executeRunGraceMs ?? 10_000,
+            );
+            void executeRunPromise.then(
               () => {
+                clearTimeout(graceTimer);
                 reject(new Error('heartbeat failed during job execution'));
               },
-              { once: true },
+              (err) => {
+                clearTimeout(graceTimer);
+                reject(
+                  new Error(`heartbeat failed during job execution: ${(err as Error).message}`),
+                );
+              },
             );
-          }),
-        ]);
+          };
+
+          if (abortController.signal.aborted) {
+            onAbort();
+            return;
+          }
+
+          abortController.signal.addEventListener('abort', onAbort, { once: true });
+
+          void executeRunPromise.then(
+            (r) => {
+              if (!abortController.signal.aborted) {
+                abortController.signal.removeEventListener('abort', onAbort);
+                resolve(r);
+              }
+            },
+            (err) => {
+              if (!abortController.signal.aborted) {
+                abortController.signal.removeEventListener('abort', onAbort);
+                reject(err as Error);
+              }
+            },
+          );
+        });
 
         if (result.ok) {
           queue.markSucceeded(job.id, deps.now());
