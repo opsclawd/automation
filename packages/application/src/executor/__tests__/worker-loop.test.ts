@@ -537,4 +537,52 @@ describe('workerLoop', () => {
 
     expect(s.registry.findById(WorkerId('w1'))!.status).toBe('busy');
   });
+
+  it('heartbeat failure during prepareWorktree: aborts prep, job marked failed, lease released (gap A)', async () => {
+    const s = setup();
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    vi.spyOn(s.leases, 'heartbeat').mockImplementation(() => {
+      throw new Error('heartbeat failed');
+    });
+
+    let capturedSignal: AbortSignal | undefined;
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: executeOk,
+      prepareWorktree: async ({ signal }) => {
+        capturedSignal = signal;
+        await new Promise<never>((_, reject) => {
+          if (signal?.aborted) {
+            reject(new Error('aborted'));
+            return;
+          }
+          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        });
+        return { cwd: '/tmp/worktree' };
+      },
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 10,
+      findRun: (runId) => makeRun(runId as string),
+    });
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+  }, 10_000);
 });

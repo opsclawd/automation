@@ -18,7 +18,11 @@ export interface WorkerLoopDeps {
     cwd: string;
     signal: AbortSignal;
   }) => Promise<{ ok: boolean }>;
-  prepareWorktree: (input: { repoId: RepositoryId; runId: RunId }) => Promise<{ cwd: string }>;
+  prepareWorktree: (input: {
+    repoId: RepositoryId;
+    runId: RunId;
+    signal?: AbortSignal;
+  }) => Promise<{ cwd: string }>;
   resetWorktree: (repoId: RepositoryId) => void;
   isWorkerAlive: (workerId: WorkerId) => boolean;
   recoverableRunIds: ReadonlySet<RunId>;
@@ -104,10 +108,24 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         queue.markRunning(job.id, deps.now());
         started = true;
 
-        const worktree = await deps.prepareWorktree({
-          repoId: job.repoId,
-          runId: job.runId,
-        });
+        const worktree = await Promise.race([
+          deps.prepareWorktree({
+            repoId: job.repoId,
+            runId: job.runId,
+            signal: abortController.signal,
+          }),
+          new Promise<never>((_, reject) => {
+            if (abortController.signal.aborted) {
+              reject(new Error('heartbeat failed during worktree preparation'));
+              return;
+            }
+            abortController.signal.addEventListener(
+              'abort',
+              () => reject(new Error('heartbeat failed during worktree preparation')),
+              { once: true },
+            );
+          }),
+        ]);
 
         const run = deps.findRun(job.runId);
         if (!run) {
