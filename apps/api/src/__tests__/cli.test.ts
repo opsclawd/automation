@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunExecutor } from '@ai-sdlc/application';
-import { WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
+import { RunRepository, WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
 import { WorkerLeaseConflictError, WorkerId, RepositoryId } from '@ai-sdlc/domain';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -477,7 +477,7 @@ describe('CLI runs execute command', () => {
         stdoutChunks.push(String(chunk));
         return true;
       });
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
@@ -559,7 +559,7 @@ describe('CLI runs execute command', () => {
         stdoutChunks.push(String(chunk));
         return true;
       });
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
@@ -758,16 +758,7 @@ describe('CLI run --executor ts', () => {
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
 
-      // Patch compose to return a synthetic repoFullName so the CLI reaches
-      // the acquire call. We do this by spying on the composeRoot import:
-      const composeModule = await import('../compose.js');
-      const originalComposeRoot = composeModule.composeRoot;
-      const composeRootSpy = vi.spyOn(composeModule, 'composeRoot').mockImplementation((opts) => {
-        const real = originalComposeRoot(opts);
-        return { ...real, repoFullName: 'owner/repo' };
-      });
-
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -783,7 +774,6 @@ describe('CLI run --executor ts', () => {
       acquireSpy.mockRestore();
       errSpy.mockRestore();
       exitSpy.mockRestore();
-      composeRootSpy.mockRestore();
       expect(exitCode).toBe(1);
       expect(consoleErrs.join('')).toMatch(/active lease|in progress/i);
     } finally {
@@ -849,12 +839,7 @@ describe('CLI run --executor ts', () => {
         phases: [{ phase: 'read-issue', status: 'passed' }],
       });
 
-      const composeModule = await import('../compose.js');
-      const originalComposeRoot = composeModule.composeRoot;
-      const composeRootSpy = vi.spyOn(composeModule, 'composeRoot').mockImplementation((opts) => {
-        const real = originalComposeRoot(opts);
-        return { ...real, repoFullName: 'owner/repo' };
-      });
+      const insertSpy = vi.spyOn(RunRepository.prototype, 'insertIfNoActive');
 
       const stdoutChunks: string[] = [];
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
@@ -869,7 +854,7 @@ describe('CLI run --executor ts', () => {
       }) as never);
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
 
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -888,12 +873,17 @@ describe('CLI run --executor ts', () => {
       expect(output.run.status).toBe('passed');
       expect(output.phases).toBeInstanceOf(Array);
       expect(releaseSpy).toHaveBeenCalledOnce(); // lease was released
+      expect(insertSpy).toHaveBeenCalledOnce();
+      expect(insertSpy.mock.calls[0][0]).toMatchObject({
+        issueNumber: 57,
+        displayId: expect.any(String),
+      });
 
       acquireSpy.mockRestore();
       heartbeatSpy.mockRestore();
       releaseSpy.mockRestore();
       executeSpy.mockRestore();
-      composeRootSpy.mockRestore();
+      insertSpy.mockRestore();
       writeSpy.mockRestore();
       exitSpy.mockRestore();
     } finally {

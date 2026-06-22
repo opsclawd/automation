@@ -12,6 +12,13 @@ import {
 import { newRunId } from '@ai-sdlc/shared';
 import { composeRoot, type ComposeOptions } from './compose.js';
 
+const LEASE_TTL_MS = 120_000;
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
+export interface BuildProgramOptions {
+  composeOverrides?: Partial<ComposeOptions>;
+}
+
 export function findRepoRoot(
   startDir: string,
   exists: (p: string) => boolean = existsSync,
@@ -38,7 +45,7 @@ export interface RunCliOptions {
   executor?: string;
 }
 
-export function buildProgram(): Command {
+export function buildProgram(buildOpts?: BuildProgramOptions): Command {
   const program = new Command();
 
   program.name('orchestrator').description('AI SDLC Orchestrator CLI').version('0.0.0');
@@ -76,6 +83,7 @@ export function buildProgram(): Command {
           repoRoot,
           scriptPath,
           tee,
+          ...buildOpts?.composeOverrides,
         };
         if (opts.baseBranch !== undefined) options.baseBranch = opts.baseBranch;
         if (opts.model !== undefined) options.model = opts.model;
@@ -97,9 +105,6 @@ export function buildProgram(): Command {
             process.exit(1);
           }
 
-          const LEASE_TTL_MS = 120_000;
-          const HEARTBEAT_INTERVAL_MS = 30_000;
-
           const workerId = WorkerId(`cli-pid-${process.pid}`);
           const repoId = RepositoryId(c.repoFullName);
           const startedAt = new Date();
@@ -110,7 +115,6 @@ export function buildProgram(): Command {
             issueNumber: opts.issue,
             startedAt,
           });
-          c.runRepository.insertIfNoActive(run);
 
           try {
             c.workerLeaseRepository.acquire({
@@ -130,7 +134,9 @@ export function buildProgram(): Command {
             throw err;
           }
 
-          const heartbeatTimer = setInterval(() => {
+          c.runRepository.insertIfNoActive(run);
+
+          const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
             const hbNow = new Date();
             try {
               c.workerLeaseRepository.heartbeat(
@@ -157,65 +163,71 @@ export function buildProgram(): Command {
               ),
             );
             process.exit(result.run.status === 'passed' ? 0 : 1);
+          } catch (err) {
+            console.error(
+              `Run ${run.uuid} (issue #${run.issueNumber}) failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            process.exit(2);
           } finally {
             clearInterval(heartbeatTimer);
             c.workerLeaseRepository.release(repoId, workerId);
           }
-        }
-        // --- end TS executor path ---
+        } else {
+          // --- Bash executor path ---
 
-        const cleanup = async (signal: string) => {
-          const existing = c.runRepository.findByIssueNumber(opts.issue);
-          if (existing && existing.pid === process.pid) {
-            c.runRepository.updateStatusByIssueNumber(opts.issue, {
-              status: 'cancelled',
-              completedAt: new Date(),
-              failureReason: `interrupted by ${signal}`,
+          const cleanup = async (signal: string) => {
+            const existing = c.runRepository.findByIssueNumber(opts.issue);
+            if (existing && existing.pid === process.pid) {
+              c.runRepository.updateStatusByIssueNumber(opts.issue, {
+                status: 'cancelled',
+                completedAt: new Date(),
+                failureReason: `interrupted by ${signal}`,
+              });
+            }
+          };
+
+          const sigintHandler = () => {
+            cleanup('SIGINT').finally(() => process.exit(130));
+          };
+          const sigtermHandler = () => {
+            cleanup('SIGTERM').finally(() => process.exit(143));
+          };
+          const uncaughtHandler = (err: Error) => {
+            cleanup('uncaughtException').finally(() => {
+              console.error(err instanceof Error ? err.message : String(err));
+              process.exit(1);
             });
+          };
+          const unhandledHandler = (reason: unknown) => {
+            cleanup('unhandledRejection').finally(() => {
+              console.error(reason instanceof Error ? reason.message : String(reason));
+              process.exit(1);
+            });
+          };
+
+          process.on('SIGINT', sigintHandler);
+          process.on('SIGTERM', sigtermHandler);
+          process.on('uncaughtException', uncaughtHandler);
+          process.on('unhandledRejection', unhandledHandler);
+
+          try {
+            const out = await c.startIssueRun.execute({
+              issueNumber: opts.issue,
+            });
+            // Use process.stdout.write with a callback (not console.log) because
+            // process.exit() does not wait for stdout to flush.
+            await new Promise<void>((resolve, reject) =>
+              process.stdout.write(JSON.stringify(out) + '\n', (err) =>
+                err ? reject(err) : resolve(),
+              ),
+            );
+            process.exit(out.status === 'passed' ? 0 : 1);
+          } finally {
+            process.off('SIGINT', sigintHandler);
+            process.off('SIGTERM', sigtermHandler);
+            process.off('uncaughtException', uncaughtHandler);
+            process.off('unhandledRejection', unhandledHandler);
           }
-        };
-
-        const sigintHandler = () => {
-          cleanup('SIGINT').finally(() => process.exit(130));
-        };
-        const sigtermHandler = () => {
-          cleanup('SIGTERM').finally(() => process.exit(143));
-        };
-        const uncaughtHandler = (err: Error) => {
-          cleanup('uncaughtException').finally(() => {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(1);
-          });
-        };
-        const unhandledHandler = (reason: unknown) => {
-          cleanup('unhandledRejection').finally(() => {
-            console.error(reason instanceof Error ? reason.message : String(reason));
-            process.exit(1);
-          });
-        };
-
-        process.on('SIGINT', sigintHandler);
-        process.on('SIGTERM', sigtermHandler);
-        process.on('uncaughtException', uncaughtHandler);
-        process.on('unhandledRejection', unhandledHandler);
-
-        try {
-          const out = await c.startIssueRun.execute({
-            issueNumber: opts.issue,
-          });
-          // Use process.stdout.write with a callback (not console.log) because
-          // process.exit() does not wait for stdout to flush.
-          await new Promise<void>((resolve, reject) =>
-            process.stdout.write(JSON.stringify(out) + '\n', (err) =>
-              err ? reject(err) : resolve(),
-            ),
-          );
-          process.exit(out.status === 'passed' ? 0 : 1);
-        } finally {
-          process.off('SIGINT', sigintHandler);
-          process.off('SIGTERM', sigtermHandler);
-          process.off('uncaughtException', uncaughtHandler);
-          process.off('unhandledRejection', unhandledHandler);
         }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
@@ -248,7 +260,11 @@ export function buildProgram(): Command {
             ? opts.script
             : resolve(repoRoot, opts.script)
           : join(repoRoot, 'scripts', 'ai-run-issue-v2');
-        const composeOpts: ComposeOptions = { repoRoot, scriptPath };
+        const composeOpts: ComposeOptions = {
+          repoRoot,
+          scriptPath,
+          ...buildOpts?.composeOverrides,
+        };
         if (opts.dbPath) composeOpts.dbPath = opts.dbPath;
         if (opts.runsDir) composeOpts.runsDir = opts.runsDir;
         const c = composeRoot(composeOpts);
@@ -293,6 +309,7 @@ export function buildProgram(): Command {
             const options: ComposeOptions = {
               repoRoot,
               scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
             let uuid: string;
@@ -345,6 +362,7 @@ export function buildProgram(): Command {
               repoRoot,
               scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
               runStartupSweeps: false,
+              ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
             if (!c.runExecutor) {
@@ -358,17 +376,44 @@ export function buildProgram(): Command {
               console.error(`No run found for uuid ${opts.uuid}`);
               process.exit(1);
             }
-            const result = await c.runExecutor.execute({
-              run,
-              skip: [],
-              presentArtifacts: [],
+            if (run.status !== 'queued' && run.status !== 'running') {
+              console.error(
+                `Run ${opts.uuid} has status ${run.status}, expected queued or running`,
+              );
+              process.exit(1);
+            }
+            if (!c.workerLeaseRepository) {
+              console.error('Error: WorkerLeaseRepository not available.');
+              process.exit(1);
+            }
+            if (!c.repoFullName) {
+              console.error('Error: could not determine repository name.');
+              process.exit(1);
+            }
+            const repoId = RepositoryId(c.repoFullName);
+            const workerId = WorkerId(`cli-execute-${process.pid}`);
+            c.workerLeaseRepository.acquire({
+              repoId,
+              workerId,
+              runId: RunId(opts.uuid),
+              now: new Date(),
+              ttlMs: LEASE_TTL_MS,
             });
-            process.stdout.write(
-              JSON.stringify({
-                run: result.run,
-                phases: result.phases,
-              }) + '\n',
-            );
+            try {
+              const result = await c.runExecutor.execute({
+                run,
+                skip: [],
+                presentArtifacts: [],
+              });
+              process.stdout.write(
+                JSON.stringify({
+                  run: result.run,
+                  phases: result.phases,
+                }) + '\n',
+              );
+            } finally {
+              c.workerLeaseRepository.release(repoId, workerId);
+            }
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
             process.exit(1);

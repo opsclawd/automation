@@ -213,6 +213,8 @@ export interface ComposeOptions {
    *  composing inside a child process that owns a tmp dir the sweep
    *  would delete out from under it (e.g. run-agent.ts). */
   runStartupSweeps?: boolean;
+  /** Inject repo full name (for tests; skips gh CLI resolution) */
+  repoFullName?: string;
 }
 
 class AbortRegistry {
@@ -440,17 +442,21 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   // Resolve repo full name eagerly for findRepoId in cancel flow.
   let resolvedRepoFullName: string | undefined;
-  try {
-    const out = execFileSync(
-      'gh',
-      ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
-      { cwd: opts.repoRoot },
-    )
-      .toString()
-      .trim();
-    if (out) resolvedRepoFullName = out;
-  } catch (err) {
-    console.error(`CancelRun: failed to resolve repo full name for ${opts.repoRoot}`, err);
+  if (opts.repoFullName) {
+    resolvedRepoFullName = opts.repoFullName;
+  } else {
+    try {
+      const out = execFileSync(
+        'gh',
+        ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
+        { cwd: opts.repoRoot },
+      )
+        .toString()
+        .trim();
+      if (out) resolvedRepoFullName = out;
+    } catch (err) {
+      console.error(`CancelRun: failed to resolve repo full name for ${opts.repoRoot}`, err);
+    }
   }
 
   let agentRuntime: AgentRuntimeRouter | undefined;
