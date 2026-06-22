@@ -66,6 +66,24 @@ class IncrementingShaGitPort extends FakeGitPort {
 
 // Two-SHA before/after model, used by tests that specifically assert SHA
 // anchoring of commit verification (C1/C2).
+// Sequence-Git port with explicit SHAs from an array, so tests can assert
+// against named variables instead of hardcoded incrementing counter values.
+class SequenceShaGitPort extends FakeGitPort {
+  private callCount = 0;
+  constructor(private shas: string[]) {
+    super();
+  }
+  override async headCommitSha(_cwd: string): Promise<string> {
+    return this.shas[this.callCount++]!;
+  }
+  override async isAncestor(): Promise<boolean> {
+    return true;
+  }
+  override async logBetween(): Promise<string[]> {
+    return ['dummy'];
+  }
+}
+
 class TwoShaGitPort extends FakeGitPort {
   private callCount = 0;
   constructor(
@@ -1896,8 +1914,20 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
         makeSuccessAgentResult(),
       ],
     });
+
+    const runningStartSha = 'run-start-abc';
+    const git = new SequenceShaGitPort([
+      'start-sha',      // line 155 — startCommitSha
+      runningStartSha,  // line 177 — runningStartSha (pre-attempt)
+      'fix-1',          // attempt 1, PollTaskRunner line 178
+      'fix-2',          // attempt 2, PollTaskRunner line 178
+      'fix-3',          // attempt 3, PollTaskRunner line 178
+    ]);
+    git.remoteRefs.set('origin/feat-x', 'abc123');
+
     const { deps, repo } = makeDeps({
       agent,
+      git,
       verifyBuildPasses: async () => ({ passed: false, error: 'TS2722: Type mismatch' }),
       rollbackFix: async (ctx, sha) => {
         rollbackCalls.push({ ctx, sha });
@@ -1919,7 +1949,7 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
     expect(out.blocked).toBe(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
     expect(rollbackCalls).toHaveLength(1);
-    expect(rollbackCalls[0].sha).toBe('sha-2');
+    expect(rollbackCalls[0].sha).toBe(runningStartSha);
     expect(rollbackCalls[0].ctx).toEqual({ cwd: '/work/tree', branch: 'feat-x' });
   });
 
