@@ -54,6 +54,7 @@ export interface ProcessPrReviewDeps {
   baseBranch?: string;
   repoRoot?: string | undefined;
   onWarning?: (message: string, metadata: Record<string, unknown>, runId: string) => void;
+  rollbackFix?: (ctx: { cwd: string; branch: string }, targetSha: string) => Promise<void>;
 }
 
 export interface ProcessPrReviewInput {
@@ -211,6 +212,7 @@ export class ProcessPrReviewComments {
           !lastOutput.processed &&
           !lastOutput.blocked
         ) {
+          await d.rollbackFix?.({ cwd: input.cwd, branch: pr.headRefName }, runningStartSha);
           d.prReviewRepo.upsertComment(
             blockComment(currentComment, `task failed after ${ESCALATION_BUDGET} attempts`),
           );
