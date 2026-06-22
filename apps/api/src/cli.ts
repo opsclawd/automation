@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   RunId,
+  RunStatus,
   createRun,
   WorkerId,
   RepositoryId,
@@ -19,6 +20,11 @@ export interface LeaseConfig {
 
 const DEFAULT_LEASE_TTL_MS = 120_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+
+const EXIT_USER_ERROR = 1;
+const EXIT_INTERNAL_ERROR = 2;
+const EXIT_SIGINT = 130;
+const EXIT_SIGTERM = 143;
 
 export interface BuildProgramOptions {
   composeOverrides?: Partial<ComposeOptions>;
@@ -48,7 +54,9 @@ function startLeaseHeartbeat(
       heartbeatFailures++;
       if (heartbeatFailures >= maxHeartbeatFailures) {
         console.error(`Fatal: heartbeat failed ${heartbeatFailures}x, aborting run.`);
-        process.exit(2);
+        clearInterval(timer);
+        leaseRepo.release(repoId, workerId);
+        process.exit(EXIT_INTERNAL_ERROR);
       }
       if (heartbeatFailures === 1 || heartbeatFailures % 5 === 0) {
         console.error(
@@ -61,6 +69,61 @@ function startLeaseHeartbeat(
     stop: () => {
       clearInterval(timer);
       leaseRepo.release(repoId, workerId);
+    },
+  };
+}
+
+function installSignalHandlers(
+  runRepository: {
+    findByIssueNumber(n: number): { pid?: number | null } | undefined;
+    updateStatusByIssueNumber(
+      issueNumber: number,
+      patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+    ): boolean;
+  },
+  issueNumber: number,
+): { remove: () => void } {
+  const cleanup = async (signal: string) => {
+    const existing = runRepository.findByIssueNumber(issueNumber);
+    if (existing && existing.pid === process.pid) {
+      runRepository.updateStatusByIssueNumber(issueNumber, {
+        status: 'cancelled',
+        completedAt: new Date(),
+        failureReason: `interrupted by ${signal}`,
+      });
+    }
+  };
+
+  const sigintHandler = () => {
+    cleanup('SIGINT').finally(() => process.exit(EXIT_SIGINT));
+  };
+  const sigtermHandler = () => {
+    cleanup('SIGTERM').finally(() => process.exit(EXIT_SIGTERM));
+  };
+  const uncaughtHandler = (err: Error) => {
+    cleanup('uncaughtException').finally(() => {
+      console.error(err instanceof Error ? err.message : String(err));
+      process.exit(EXIT_USER_ERROR);
+    });
+  };
+  const unhandledHandler = (reason: unknown) => {
+    cleanup('unhandledRejection').finally(() => {
+      console.error(reason instanceof Error ? reason.message : String(reason));
+      process.exit(EXIT_USER_ERROR);
+    });
+  };
+
+  process.on('SIGINT', sigintHandler);
+  process.on('SIGTERM', sigtermHandler);
+  process.on('uncaughtException', uncaughtHandler);
+  process.on('unhandledRejection', unhandledHandler);
+
+  return {
+    remove: () => {
+      process.off('SIGINT', sigintHandler);
+      process.off('SIGTERM', sigtermHandler);
+      process.off('uncaughtException', uncaughtHandler);
+      process.off('unhandledRejection', unhandledHandler);
     },
   };
 }
@@ -136,19 +199,25 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
         const c = composeRoot(options);
 
+        // --- executor validation ---
+        if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
+          console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
+          process.exit(EXIT_USER_ERROR);
+        }
+
         // --- TS executor path ---
         if (opts.executor === 'ts') {
           if (!c.runExecutor) {
             console.error(
               'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
             );
-            process.exit(1);
+            process.exit(EXIT_USER_ERROR);
           }
           if (!c.repoFullName) {
             console.error(
               'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
             );
-            process.exit(1);
+            process.exit(EXIT_USER_ERROR);
           }
 
           const workerId = WorkerId(`cli-${process.pid}`);
@@ -179,45 +248,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error(
                 `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
               );
-              process.exit(1);
+              process.exit(EXIT_USER_ERROR);
             }
-            throw err;
+            throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
           }
 
-          const cleanup = async (signal: string) => {
-            const existing = c.runRepository.findByIssueNumber(opts.issue);
-            if (existing && existing.pid === process.pid) {
-              c.runRepository.updateStatusByIssueNumber(opts.issue, {
-                status: 'cancelled',
-                completedAt: new Date(),
-                failureReason: `interrupted by ${signal}`,
-              });
-            }
-          };
-
-          const sigintHandler = () => {
-            cleanup('SIGINT').finally(() => process.exit(130));
-          };
-          const sigtermHandler = () => {
-            cleanup('SIGTERM').finally(() => process.exit(143));
-          };
-          const uncaughtHandler = (err: Error) => {
-            cleanup('uncaughtException').finally(() => {
-              console.error(err instanceof Error ? err.message : String(err));
-              process.exit(1);
-            });
-          };
-          const unhandledHandler = (reason: unknown) => {
-            cleanup('unhandledRejection').finally(() => {
-              console.error(reason instanceof Error ? reason.message : String(reason));
-              process.exit(1);
-            });
-          };
-
-          process.on('SIGINT', sigintHandler);
-          process.on('SIGTERM', sigtermHandler);
-          process.on('uncaughtException', uncaughtHandler);
-          process.on('unhandledRejection', unhandledHandler);
+          const signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
 
           const lease = startLeaseHeartbeat(
             c.workerLeaseRepository,
@@ -240,56 +276,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 (err) => (err ? reject(err) : resolve()),
               ),
             );
-            process.exit(result.run.status === 'passed' ? 0 : 1);
+            process.exit(result.run.status === 'passed' ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             console.error(
               `Run ${run.uuid} (issue #${run.issueNumber}) failed: ${err instanceof Error ? err.message : String(err)}`,
             );
-            process.exit(2);
+            process.exit(EXIT_INTERNAL_ERROR);
           } finally {
-            process.off('SIGINT', sigintHandler);
-            process.off('SIGTERM', sigtermHandler);
-            process.off('uncaughtException', uncaughtHandler);
-            process.off('unhandledRejection', unhandledHandler);
+            signalHandlers.remove();
             lease.stop();
           }
         } else {
           // --- Bash executor path ---
 
-          const cleanup = async (signal: string) => {
-            const existing = c.runRepository.findByIssueNumber(opts.issue);
-            if (existing && existing.pid === process.pid) {
-              c.runRepository.updateStatusByIssueNumber(opts.issue, {
-                status: 'cancelled',
-                completedAt: new Date(),
-                failureReason: `interrupted by ${signal}`,
-              });
-            }
-          };
-
-          const sigintHandler = () => {
-            cleanup('SIGINT').finally(() => process.exit(130));
-          };
-          const sigtermHandler = () => {
-            cleanup('SIGTERM').finally(() => process.exit(143));
-          };
-          const uncaughtHandler = (err: Error) => {
-            cleanup('uncaughtException').finally(() => {
-              console.error(err instanceof Error ? err.message : String(err));
-              process.exit(1);
-            });
-          };
-          const unhandledHandler = (reason: unknown) => {
-            cleanup('unhandledRejection').finally(() => {
-              console.error(reason instanceof Error ? reason.message : String(reason));
-              process.exit(1);
-            });
-          };
-
-          process.on('SIGINT', sigintHandler);
-          process.on('SIGTERM', sigtermHandler);
-          process.on('uncaughtException', uncaughtHandler);
-          process.on('unhandledRejection', unhandledHandler);
+          const signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
 
           try {
             const out = await c.startIssueRun.execute({
@@ -302,17 +302,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 err ? reject(err) : resolve(),
               ),
             );
-            process.exit(out.status === 'passed' ? 0 : 1);
+            process.exit(out.status === 'passed' ? 0 : EXIT_USER_ERROR);
           } finally {
-            process.off('SIGINT', sigintHandler);
-            process.off('SIGTERM', sigtermHandler);
-            process.off('uncaughtException', uncaughtHandler);
-            process.off('unhandledRejection', unhandledHandler);
+            signalHandlers.remove();
           }
         }
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
-        process.exit(2);
+        process.exit(EXIT_INTERNAL_ERROR);
       }
     });
 
@@ -379,11 +376,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .action(async (opts: { issue?: number; uuid?: string; reason?: string }) => {
           if (!opts.issue && !opts.uuid) {
             console.error('Error: specify --issue or --uuid');
-            process.exit(1);
+            process.exit(EXIT_USER_ERROR);
           }
           if (opts.issue && opts.uuid) {
             console.error('Error: specify --issue or --uuid, not both');
-            process.exit(1);
+            process.exit(EXIT_USER_ERROR);
           }
           try {
             const repoRoot = findRepoRoot(process.cwd());
@@ -400,7 +397,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const run = c.runRepository.findByIssueNumber(opts.issue!);
               if (!run) {
                 console.error(`No run found for issue ${opts.issue}`);
-                process.exit(1);
+                process.exit(EXIT_USER_ERROR);
               }
               uuid = run.uuid;
             }
@@ -428,7 +425,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.stdout.write('Run cancelled successfully\n');
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
-            process.exit(1);
+            process.exit(EXIT_USER_ERROR);
           }
         }),
     )
@@ -450,26 +447,26 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error(
                 'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
               );
-              process.exit(1);
+              process.exit(EXIT_USER_ERROR);
             }
             const run = c.runRepository.findByUuid(opts.uuid);
             if (!run) {
               console.error(`No run found for uuid ${opts.uuid}`);
-              process.exit(1);
+              process.exit(EXIT_USER_ERROR);
             }
             if (run.status !== 'queued' && run.status !== 'running') {
               console.error(
                 `Run ${opts.uuid} has status ${run.status}, expected queued or running`,
               );
-              process.exit(1);
+              process.exit(EXIT_USER_ERROR);
             }
             if (!c.workerLeaseRepository) {
               console.error('Error: WorkerLeaseRepository not available.');
-              process.exit(1);
+              process.exit(EXIT_USER_ERROR);
             }
             if (!c.repoFullName) {
               console.error('Error: could not determine repository name.');
-              process.exit(1);
+              process.exit(EXIT_USER_ERROR);
             }
             const repoId = RepositoryId(c.repoFullName);
             const workerId = WorkerId(`cli-${process.pid}`);
@@ -489,9 +486,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 console.error(
                   `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
                 );
-                process.exit(1);
+                process.exit(EXIT_USER_ERROR);
               }
-              throw err;
+              throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
             }
 
             const lease = startLeaseHeartbeat(
@@ -518,7 +515,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             }
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
-            process.exit(1);
+            process.exit(EXIT_USER_ERROR);
           }
         }),
     );
@@ -532,6 +529,6 @@ if (isMain) {
     .parseAsync(process.argv)
     .catch((err) => {
       console.error(err instanceof Error ? err.message : String(err));
-      process.exit(2);
+      process.exit(EXIT_INTERNAL_ERROR);
     });
 }

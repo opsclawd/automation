@@ -579,6 +579,108 @@ describe('CLI runs execute command', () => {
       process.chdir(savedCwd);
     }
   });
+
+  it('runs execute aborts after consecutive heartbeat failures', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-hbfail-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'test-exec-hb-fail-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-99-20260622-000000',
+      99,
+      'issue_to_pr',
+      'queued',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 100),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockImplementation(() => {
+          throw new Error('db unavailable');
+        });
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
+      const executeSpy = vi
+        .spyOn(RunExecutor.prototype, 'execute')
+        .mockReturnValue(new Promise(() => {}));
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({
+        composeOverrides: { repoFullName: 'owner/repo' },
+        lease: { ttlMs: 100, heartbeatIntervalMs: 20 },
+      });
+
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' }).catch(() => {});
+
+      // maxHeartbeatFailures = ceil(100/20) - 1 = 4. Wait for 5 intervals.
+      await new Promise((r) => setTimeout(r, 500));
+
+      expect(exitSpy).toHaveBeenCalledWith(2);
+
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
+      executeSpy.mockRestore();
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
 });
 
 describe('CLI run command signal handlers', () => {
