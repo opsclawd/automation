@@ -1335,9 +1335,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new ReviewFixHandler({
           runLoop: async (ctx) => {
-            if (!reviewFixLoop) throw new Error('reviewFixLoop not initialized');
-            if (!resolveProfileForPhaseBound)
-              throw new Error('resolveProfileForPhaseBound not initialized');
             const result = await reviewFixLoop.execute({
               runId: RunId(ctx.runUuid),
               phaseId: PhaseName('review-fix'),
