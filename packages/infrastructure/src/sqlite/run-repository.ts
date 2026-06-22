@@ -123,6 +123,10 @@ export class RunRepository {
       fields.push('start_commit_sha = @start_commit_sha');
       params.start_commit_sha = patch.startCommitSha;
     }
+    if (patch.pid !== undefined) {
+      fields.push('pid = @pid');
+      params.pid = patch.pid;
+    }
     if (fields.length === 0) return false;
     const result = this.db
       .prepare(
@@ -196,6 +200,10 @@ export class RunRepository {
     if (patch.startCommitSha !== undefined) {
       fields.push('start_commit_sha = @start_commit_sha');
       params.start_commit_sha = patch.startCommitSha;
+    }
+    if (patch.pid !== undefined) {
+      fields.push('pid = @pid');
+      params.pid = patch.pid;
     }
     if (fields.length === 0) return;
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
