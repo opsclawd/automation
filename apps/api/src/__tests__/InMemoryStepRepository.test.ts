@@ -53,11 +53,11 @@ describe('InMemoryStepRepository', () => {
     expect(steps[0].title).toBe('second');
   });
 
-  it('sorts by phaseId then index', () => {
+  it('sorts by canonical phase order then index', () => {
     const repo = new InMemoryStepRepository();
-    repo.upsert(makeStep({ phaseId: PhaseName('build'), index: 1, id: 'step-2' }));
-    repo.upsert(makeStep({ phaseId: PhaseName('build'), index: 0, id: 'step-1' }));
-    repo.upsert(makeStep({ phaseId: PhaseName('analyze'), index: 0, id: 'step-0' }));
+    repo.upsert(makeStep({ phaseId: PhaseName('implement'), index: 1, id: 'step-2' }));
+    repo.upsert(makeStep({ phaseId: PhaseName('implement'), index: 0, id: 'step-1' }));
+    repo.upsert(makeStep({ phaseId: PhaseName('read_issue'), index: 0, id: 'step-0' }));
 
     const steps = repo.listForRun(RunId('run-1'));
     expect(steps.map((s) => s.id)).toEqual(['step-0', 'step-1', 'step-2']);

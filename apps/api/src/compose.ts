@@ -381,15 +381,12 @@ export function composeRoot(opts: ComposeOptions): Container {
   const phaseRegistry = new PhaseHandlerRegistry();
   const stepRepository: StepRepositoryPort = new InMemoryStepRepository();
 
-  // Register real handlers for all canonical phases
+  // Register the phase handler that does not require agent-mode dependencies
   phaseRegistry.register(new ReadIssueHandler());
-  phaseRegistry.register(new PlanDesignHandler());
-  phaseRegistry.register(new PlanWriteHandler());
-  phaseRegistry.register(new CompoundHandler());
 
-  // ImplementHandler, ValidateHandler, ReviewFixHandler, CreatePrHandler,
-  // and PostPrReviewHandler are registered inside the if (config.agent) block
-  // because they require agent-mode dependencies.
+  // All other phase handlers are registered inside the if (config.agent) block
+  // because they require agent-mode dependencies (resolveProfile, agent
+  // runtime, review-fix loop, etc.).
 
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';
@@ -1284,10 +1281,15 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       // Wire remaining phase handlers that require agent dependencies
+      phaseRegistry.register(new PlanDesignHandler());
+      phaseRegistry.register(new PlanWriteHandler());
+      phaseRegistry.register(new CompoundHandler());
+
+      if (!runStep) throw new Error('runStep not wired');
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
-          runStep: runStep!,
+          runStep,
         }),
       );
 
@@ -1303,15 +1305,18 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new ReviewFixHandler({
           runLoop: async (ctx) => {
-            const result = await reviewFixLoop!.execute({
+            if (!reviewFixLoop) throw new Error('reviewFixLoop not initialized');
+            if (!resolveProfileForPhaseBound)
+              throw new Error('resolveProfileForPhaseBound not initialized');
+            const result = await reviewFixLoop.execute({
               runId: RunId(ctx.runUuid),
               phaseId: PhaseName('review-fix'),
               repoId: ctx.repoFullName,
               cwd: ctx.cwd,
               maxIterations: config.phases.reviewFix.maxIterations,
               blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
-              reviewProfile: AgentProfileName(resolveProfileForPhaseBound!('review-fix')),
-              fixProfile: AgentProfileName(resolveProfileForPhaseBound!('fix-review')),
+              reviewProfile: AgentProfileName(resolveProfileForPhaseBound('review-fix')),
+              fixProfile: AgentProfileName(resolveProfileForPhaseBound('fix-review')),
             });
             return {
               phaseOutcome: result.phaseOutcome,
@@ -1360,9 +1365,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             });
             return { signal: result.terminalState };
           },
-          setRunStatus: (_status) => {
-            // Status updates are handled by the run executor's phase transition logic.
-            // This adapter is a no-op; the executor persists status via runRepository.
+          setRunStatus: (runUuid, status: import('@ai-sdlc/domain').RunStatus) => {
+            runRepository.update(runUuid, {
+              status: status as import('@ai-sdlc/domain').RunStatus,
+            });
           },
         }),
       );

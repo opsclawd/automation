@@ -8,6 +8,18 @@ import type { StepRepositoryPort } from '@ai-sdlc/application';
  * execution where the process exits after one run completes. Do not use in
  * long-lived daemon processes without adding a clear() lifecycle method.
  */
+const PHASE_ORDER: Record<string, number> = {
+  read_issue: 0,
+  'plan-design': 1,
+  'plan-write': 2,
+  implement: 3,
+  validate: 4,
+  'review-fix': 5,
+  compound: 6,
+  'create-pr': 7,
+  'post-pr-review': 8,
+};
+
 export class InMemoryStepRepository implements StepRepositoryPort {
   private readonly store = new Map<string, Step>();
 
@@ -23,10 +35,9 @@ export class InMemoryStepRepository implements StepRepositoryPort {
     return [...this.store.values()]
       .filter((s) => s.runId === runId)
       .sort((a, b) => {
-        const pa = String(a.phaseId);
-        const pb = String(b.phaseId);
-        if (pa < pb) return -1;
-        if (pa > pb) return 1;
+        const orderA = PHASE_ORDER[String(a.phaseId)] ?? 999;
+        const orderB = PHASE_ORDER[String(b.phaseId)] ?? 999;
+        if (orderA !== orderB) return orderA - orderB;
         return a.index - b.index;
       })
       .map((s) => ({ ...s }));

@@ -14,7 +14,7 @@ export type PollSignal =
 
 export interface PostPrReviewHandlerOpts {
   runPoll: (ctx: PhaseHandlerContext) => Promise<{ signal: PollSignal }>;
-  setRunStatus: (status: RunStatus) => void;
+  setRunStatus: (runUuid: string, status: RunStatus) => void;
 }
 
 export class PostPrReviewHandler implements PhaseHandler {
@@ -30,14 +30,14 @@ export class PostPrReviewHandler implements PhaseHandler {
 
     switch (signal) {
       case 'merged':
-        this.opts.setRunStatus('passed');
+        this.opts.setRunStatus(ctx.runUuid, 'passed');
         emit('post_pr_review.completed', 'info', 'PR merged — phase complete', {
           signal: 'merged',
         });
         return { outcome: 'passed' };
 
       case 'all_resolved':
-        this.opts.setRunStatus('waiting');
+        this.opts.setRunStatus(ctx.runUuid, 'waiting');
         this._emitRun(ctx, 'run.ready', 'info', 'all reviews addressed — awaiting merge', {
           signal: 'all_resolved',
         });
@@ -51,7 +51,7 @@ export class PostPrReviewHandler implements PhaseHandler {
         return { outcome: 'resting' };
 
       case 'timed_out':
-        this.opts.setRunStatus('cancelled');
+        this.opts.setRunStatus(ctx.runUuid, 'cancelled');
         this._emitRun(ctx, 'run.cancelled_timeout', 'warn', 'ready timeout exceeded', {
           signal: 'timed_out',
         });
@@ -61,7 +61,7 @@ export class PostPrReviewHandler implements PhaseHandler {
         return { outcome: 'resting' };
 
       case 'cancelled':
-        this.opts.setRunStatus('cancelled');
+        this.opts.setRunStatus(ctx.runUuid, 'cancelled');
         this._emitRun(ctx, 'run.cancelled', 'info', 'PR review cancelled', { signal: 'cancelled' });
         emit('post_pr_review.completed', 'info', 'PR review cancelled — phase resting', {
           signal: 'cancelled',
@@ -69,7 +69,7 @@ export class PostPrReviewHandler implements PhaseHandler {
         return { outcome: 'resting' };
 
       case 'max_polls_reached':
-        this.opts.setRunStatus('waiting');
+        this.opts.setRunStatus(ctx.runUuid, 'waiting');
         this._emitRun(ctx, 'run.ready', 'info', 'max poll attempts reached — run waiting', {
           signal: 'max_polls_reached',
         });
@@ -79,7 +79,7 @@ export class PostPrReviewHandler implements PhaseHandler {
         return { outcome: 'resting' };
 
       case 'blocked':
-        this.opts.setRunStatus('waiting');
+        this.opts.setRunStatus(ctx.runUuid, 'waiting');
         this._emitRun(ctx, 'run.blocked', 'warn', 'PR review blocked', { signal: 'blocked' });
         emit('post_pr_review.completed', 'info', 'PR review blocked — phase resting', {
           signal: 'blocked',
