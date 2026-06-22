@@ -30,6 +30,7 @@ export interface ProcessPrReviewDeps {
     comment: PrReviewComment;
     diff: string;
     branch: string;
+    previousBuildError?: string;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -43,7 +44,10 @@ export interface ProcessPrReviewDeps {
     startCommitSha: string;
     commitSha?: string;
   }) => Promise<boolean>;
-  verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+  verifyBuildPasses: (input: {
+    cwd: string;
+    runId: string;
+  }) => Promise<{ passed: boolean; error?: string }>;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;

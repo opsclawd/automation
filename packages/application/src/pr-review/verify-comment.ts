@@ -8,6 +8,7 @@ export interface VerificationResult {
   commitVerified: boolean;
   buildVerified: boolean;
   reason: string;
+  buildError?: string;
 }
 
 export async function verifyComment(
@@ -21,7 +22,10 @@ export async function verifyComment(
       startCommitSha: string;
       commitSha?: string;
     }) => Promise<boolean>;
-    verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+    verifyBuildPasses: (input: {
+      cwd: string;
+      runId: string;
+    }) => Promise<{ passed: boolean; error?: string }>;
   },
   context: {
     cwd: string;

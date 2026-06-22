@@ -19,6 +19,7 @@ export interface PollTaskRunnerDeps {
     comment: PrReviewComment;
     diff: string;
     branch: string;
+    previousBuildError?: string;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -32,7 +33,10 @@ export interface PollTaskRunnerDeps {
     startCommitSha: string;
     commitSha?: string;
   }) => Promise<boolean>;
-  verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+  verifyBuildPasses: (input: {
+    cwd: string;
+    runId: string;
+  }) => Promise<{ passed: boolean; error?: string }>;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -51,6 +55,7 @@ export interface PollTaskInput {
   branch: string;
   startCommitSha: string;
   unresolvedCommentCount: number;
+  previousBuildError?: string;
 }
 
 export interface PollTaskOutput {
@@ -58,6 +63,7 @@ export interface PollTaskOutput {
   action: 'fixed' | 'no_fix' | 'blocked' | 'failed';
   processed: boolean;
   blocked: boolean;
+  buildError?: string;
 }
 
 export class PollTaskRunner {
