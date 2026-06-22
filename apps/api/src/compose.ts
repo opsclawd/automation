@@ -1533,7 +1533,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 timestamp: new Date(),
               });
             } catch {}
-            return true;
+            return { passed: true };
           }
           const buildCheckRunId = RunId(`pr-review-build-check-${randomUUID()}`);
           const logDir = join(runsDir, buildCheckRunId);
@@ -1545,9 +1545,18 @@ export function composeRoot(opts: ComposeOptions): Container {
             commands: config.validation.commands,
             timeoutSeconds: config.validation.timeout,
           });
-          return result.passed;
-        } catch {
-          return false;
+          if (result.passed) {
+            return { passed: true };
+          }
+          const failed: { passed: false; error?: string } = { passed: false };
+          if (result.failure?.message !== undefined) {
+            failed.error = result.failure.message;
+          }
+          return failed;
+        } catch (err) {
+          const failed: { passed: false; error?: string } = { passed: false };
+          failed.error = String(err);
+          return failed;
         }
       },
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
