@@ -47,4 +47,8 @@ export class InMemoryStepRepository implements StepRepositoryPort {
     const found = this.store.get(this.key(runId, String(phaseId), index));
     return found ? { ...found } : undefined;
   }
+
+  clear(): void {
+    this.store.clear();
+  }
 }

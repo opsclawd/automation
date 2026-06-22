@@ -14,7 +14,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
-import { ReviewFixLoop, RunExecutor } from '@ai-sdlc/application';
+import {
+  ReviewFixLoop,
+  RunExecutor,
+  ReadIssueHandler,
+  PlanDesignHandler,
+  PlanWriteHandler,
+  ImplementHandler,
+  ValidateHandler,
+  ReviewFixHandler,
+  CompoundHandler,
+  CreatePrHandler,
+  PostPrReviewHandler,
+} from '@ai-sdlc/application';
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PrReviewPollerDeps } from '@ai-sdlc/application';
@@ -487,27 +499,25 @@ exit 1
     // Verify handlers are real implementations, not HandlerNotWiredError stubs
     const readIssueHandler = c.phaseRegistry.get(PhaseName('read_issue'));
     expect(readIssueHandler).toBeDefined();
-    // Real handlers have a 'phase' property; stubs only have a 'run' method
-    expect(readIssueHandler!.phase).toBe(PhaseName('read_issue'));
+    expect(readIssueHandler).toBeInstanceOf(ReadIssueHandler);
 
     // Verify all 9 canonical phases have handlers registered and are real
     // implementations (not HandlerNotWiredError stubs)
-    const canonicalPhases = [
-      'read_issue',
-      'plan-design',
-      'plan-write',
-      'implement',
-      'validate',
-      'review-fix',
-      'compound',
-      'create-pr',
-      'post-pr-review',
-    ];
-    for (const phase of canonicalPhases) {
+    const handlerClasses: Record<string, unknown> = {
+      read_issue: ReadIssueHandler,
+      'plan-design': PlanDesignHandler,
+      'plan-write': PlanWriteHandler,
+      implement: ImplementHandler,
+      validate: ValidateHandler,
+      'review-fix': ReviewFixHandler,
+      compound: CompoundHandler,
+      'create-pr': CreatePrHandler,
+      'post-pr-review': PostPrReviewHandler,
+    };
+    for (const [phase, HandlerClass] of Object.entries(handlerClasses)) {
       const handler = c.phaseRegistry.get(PhaseName(phase));
       expect(handler).toBeDefined();
-      // Real handlers have a 'phase' property; stubs only have a 'run' method
-      expect(handler!.phase).toBe(PhaseName(phase));
+      expect(handler).toBeInstanceOf(HandlerClass as new (...args: never[]) => object);
     }
   });
 
@@ -540,8 +550,7 @@ exit 1
     const handler = c.phaseRegistry.get(PhaseName('read_issue'));
     expect(handler).toBeDefined();
     // The handler should NOT be a HandlerNotWiredError stub
-    // Verify by checking it has the expected phase property
-    expect(handler!.phase).toBe(PhaseName('read_issue'));
+    expect(handler).toBeInstanceOf(ReadIssueHandler);
   });
 
   it('reviewFixLoop.execute converges when review immediately passes', async () => {

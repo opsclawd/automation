@@ -384,9 +384,39 @@ export function composeRoot(opts: ComposeOptions): Container {
   // Register the phase handler that does not require agent-mode dependencies
   phaseRegistry.register(new ReadIssueHandler());
 
-  // All other phase handlers are registered inside the if (config.agent) block
-  // because they require agent-mode dependencies (resolveProfile, agent
-  // runtime, review-fix loop, etc.).
+  // Register lightweight unavailable stubs for agent-dependent phases so the
+  // registry always contains all 9 canonical phases. Real handler instances
+  // registered inside the if (config.agent) block below overwrite these.
+  const stubPhases = [
+    'plan-design',
+    'plan-write',
+    'implement',
+    'validate',
+    'review-fix',
+    'compound',
+    'create-pr',
+    'post-pr-review',
+  ];
+  for (const phase of stubPhases) {
+    phaseRegistry.register({
+      phase: PhaseName(phase),
+      run: async (ctx) => {
+        return {
+          outcome: 'blocked' as const,
+          failure: {
+            runUuid: ctx.runUuid,
+            phase,
+            kind: 'handler_not_wired' as const,
+            message: `Phase "${phase}" is not available: agent configuration required`,
+            canRetry: true,
+            suggestedAction: 'Add an agent section to .ai-orchestrator.json',
+            artifacts: [] as string[],
+            detectedAt: ctx.now(),
+          },
+        };
+      },
+    });
+  }
 
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';

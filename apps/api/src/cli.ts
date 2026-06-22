@@ -249,6 +249,7 @@ export function buildProgram(): Command {
             const options: ComposeOptions = {
               repoRoot,
               scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              runStartupSweeps: false,
             };
             const c = composeRoot(options);
             if (!c.runExecutor) {
@@ -273,11 +274,8 @@ export function buildProgram(): Command {
             });
             process.stdout.write(
               JSON.stringify({
-                run: { uuid: result.run.uuid, status: result.run.status },
-                phases: result.phases.map((p) => ({
-                  phase: p.phase,
-                  status: p.status,
-                })),
+                run: result.run,
+                phases: result.phases,
               }) + '\n',
             );
           } catch (err) {
