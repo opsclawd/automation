@@ -41,6 +41,15 @@ import {
   SweepOrphanedRuns,
   checkPid,
   RunValidation,
+  ReadIssueHandler,
+  PlanDesignHandler,
+  PlanWriteHandler,
+  ImplementHandler,
+  ValidateHandler,
+  ReviewFixHandler,
+  CompoundHandler,
+  CreatePrHandler,
+  PostPrReviewHandler,
   PrReviewPoller,
   ProcessPrReviewComments,
   decideReactivation,
@@ -52,8 +61,6 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
-  HandlerNotWiredError,
-  CANONICAL_PHASE_ORDER,
   type Artifact,
   type ArtifactStore,
   type StartIssueRunDeps,
@@ -63,6 +70,7 @@ import {
   type RunRepositoryPort,
   type TmpDirectoryFactory,
   type StepContext,
+  type StepRepositoryPort,
   type ReviewStepResult,
   type FixStepResult,
   type RevalidationResult,
@@ -91,6 +99,7 @@ import {
   ClaudeCodeAgentAdapter,
   CodexAgentAdapter,
 } from '@ai-sdlc/infrastructure';
+import { InMemoryStepRepository } from './adapters/InMemoryStepRepository.js';
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -370,11 +379,41 @@ export function composeRoot(opts: ComposeOptions): Container {
   // const retryFailedPhase = new RetryFailedPhase({ ... });
 
   const phaseRegistry = new PhaseHandlerRegistry();
-  for (const phaseName of CANONICAL_PHASE_ORDER) {
+  const stepRepository: StepRepositoryPort = new InMemoryStepRepository();
+
+  // Register the phase handler that does not require agent-mode dependencies
+  phaseRegistry.register(new ReadIssueHandler());
+
+  // Register lightweight unavailable stubs for agent-dependent phases so the
+  // registry always contains all 9 canonical phases. Real handler instances
+  // registered inside the if (config.agent) block below overwrite these.
+  const stubPhases = [
+    'plan-design',
+    'plan-write',
+    'implement',
+    'validate',
+    'review-fix',
+    'compound',
+    'create-pr',
+    'post-pr-review',
+  ];
+  for (const phase of stubPhases) {
     phaseRegistry.register({
-      phase: phaseName,
-      run: async () => {
-        throw new HandlerNotWiredError(phaseName as string);
+      phase: PhaseName(phase),
+      run: async (ctx) => {
+        return {
+          outcome: 'blocked' as const,
+          failure: {
+            runUuid: ctx.runUuid,
+            phase,
+            kind: 'handler_not_wired' as const,
+            message: `Phase "${phase}" is not available: agent configuration required`,
+            canRetry: true,
+            suggestedAction: 'Add an agent section to .ai-orchestrator.json',
+            artifacts: [] as string[],
+            detectedAt: ctx.now(),
+          },
+        };
       },
     });
   }
@@ -465,7 +504,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus,
       });
       const agent = config.agent;
-      resolveProfileForPhaseBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+      // Non-optional local so the ReviewFixHandler closure below can reference it
+      // without a guard (the outer `let` stays `| undefined` for other consumers).
+      const resolveProfileBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+      resolveProfileForPhaseBound = resolveProfileBound;
 
       const router = agentRuntime;
       const reviewProfileName: string =
@@ -869,7 +911,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
       };
 
-      reviewFixLoop = new ReviewFixLoop({
+      // Non-optional local so the ReviewFixHandler closure below can reference it
+      // without a guard (the outer `let` stays `| undefined` for other consumers).
+      const reviewFixLoopInstance = new ReviewFixLoop({
         runReview,
         runFix,
         runRevalidation,
@@ -879,6 +923,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
+      reviewFixLoop = reviewFixLoopInstance;
 
       const implementProfileName: string =
         config.agent.phaseProfiles['implement']?.profile ?? 'opencode-frontier';
@@ -1270,6 +1315,95 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         return { outcome: result.outcome };
       };
+
+      // Wire remaining phase handlers that require agent dependencies
+      phaseRegistry.register(new PlanDesignHandler());
+      phaseRegistry.register(new PlanWriteHandler());
+      phaseRegistry.register(new CompoundHandler());
+
+      phaseRegistry.register(
+        new ImplementHandler({
+          steps: stepRepository,
+          runStep,
+        }),
+      );
+
+      phaseRegistry.register(
+        new ValidateHandler({
+          runValidation,
+          commands: config.validation.commands,
+          timeoutSeconds: config.validation.timeout,
+          logDir: join(runsDir, 'validate'),
+        }),
+      );
+
+      phaseRegistry.register(
+        new ReviewFixHandler({
+          runLoop: async (ctx) => {
+            const result = await reviewFixLoopInstance.execute({
+              runId: RunId(ctx.runUuid),
+              phaseId: PhaseName('review-fix'),
+              repoId: ctx.repoFullName,
+              cwd: ctx.cwd,
+              maxIterations: config.phases.reviewFix.maxIterations,
+              blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+              reviewProfile: AgentProfileName(resolveProfileBound('review-fix')),
+              fixProfile: AgentProfileName(resolveProfileBound('fix-review')),
+            });
+            return {
+              phaseOutcome: result.phaseOutcome,
+              loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
+            };
+          },
+        }),
+      );
+
+      phaseRegistry.register(
+        new CreatePrHandler({
+          baseBranch: resolvedDefaultBranch,
+          headBranch: (ctx) => `ai/issue-${ctx.issueNumber}`,
+        }),
+      );
+
+      phaseRegistry.register(
+        new PostPrReviewHandler({
+          runPoll: async (ctx) => {
+            let prNumber: number;
+            try {
+              const prUrl = (await ctx.artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+              const match = prUrl.match(/\/pull\/(\d+)/);
+              if (!match) {
+                return { signal: 'blocked' as const };
+              }
+              prNumber = parseInt(match[1]!, 10);
+            } catch {
+              return { signal: 'blocked' as const };
+            }
+
+            const poller = buildPrReviewPoller({
+              maxPolls: config.phases.postPrReview?.maxPolls ?? 10,
+              pollIntervalMs: (config.phases.postPrReview?.pollIntervalSeconds ?? 60) * 1000,
+              readyMaxDays: config.timeouts.readyMaxDays,
+              phaseStartedAt: ctx.now(),
+              baseBranch: resolvedDefaultBranch,
+            });
+            const result = await poller.run({
+              runId: RunId(ctx.runUuid),
+              repoId: ctx.repoFullName as RepositoryId,
+              repoFullName: ctx.repoFullName,
+              prNumber,
+              cwd: ctx.cwd,
+              phaseId: PhaseName('post-pr-review'),
+            });
+            return { signal: result.terminalState };
+          },
+          setRunStatus: (runUuid, status: import('@ai-sdlc/domain').RunStatus) => {
+            runRepository.update(runUuid, {
+              status: status as import('@ai-sdlc/domain').RunStatus,
+            });
+          },
+        }),
+      );
 
       runExecutor = new RunExecutor({
         runRepository,

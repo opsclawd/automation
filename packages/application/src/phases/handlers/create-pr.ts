@@ -7,7 +7,7 @@ import { runSingleShotAgentPhase } from './run-single-shot-agent-phase.js';
 
 export interface CreatePrHandlerOpts {
   baseBranch: string;
-  headBranch: string;
+  headBranch: (ctx: PhaseHandlerContext) => string;
   /** Optional explicit prompt template. Tests inject this to avoid filesystem.
    *  In production (M8-10), loadPromptTemplate loads from disk via compose root. */
   template?: string;
@@ -117,9 +117,9 @@ export class CreatePrHandler implements PhaseHandler {
 
     // Push the branch so gh pr create's --head ref exists on remote.
     try {
-      await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch });
+      await ctx.git.push({ cwd: ctx.cwd, branch: this.opts.headBranch(ctx) });
     } catch (e) {
-      const msg = `failed to push branch ${this.opts.headBranch}: ${(e as Error).message}`;
+      const msg = `failed to push branch ${this.opts.headBranch(ctx)}: ${(e as Error).message}`;
       emit('create_pr.failed', 'error', msg);
       return this._fail(
         ctx,
@@ -135,7 +135,7 @@ export class CreatePrHandler implements PhaseHandler {
       const pr = await ctx.github.createPullRequest({
         repoFullName: ctx.repoFullName,
         baseBranch: this.opts.baseBranch,
-        headBranch: this.opts.headBranch,
+        headBranch: this.opts.headBranch(ctx),
         title,
         body: summary,
       });

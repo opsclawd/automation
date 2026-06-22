@@ -14,7 +14,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
-import { ReviewFixLoop, RunExecutor } from '@ai-sdlc/application';
+import {
+  ReviewFixLoop,
+  RunExecutor,
+  ReadIssueHandler,
+  PlanDesignHandler,
+  PlanWriteHandler,
+  ImplementHandler,
+  ValidateHandler,
+  ReviewFixHandler,
+  CompoundHandler,
+  CreatePrHandler,
+  PostPrReviewHandler,
+} from '@ai-sdlc/application';
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PrReviewPollerDeps } from '@ai-sdlc/application';
@@ -483,6 +495,62 @@ exit 1
     expect(c.runExecutor).toBeInstanceOf(RunExecutor);
     expect(c.phaseRegistry.get(PhaseName('read_issue'))).toBeDefined();
     expect(typeof c.phaseRegistry.get(PhaseName('read_issue'))!.run).toBe('function');
+
+    // Verify handlers are real implementations, not HandlerNotWiredError stubs
+    const readIssueHandler = c.phaseRegistry.get(PhaseName('read_issue'));
+    expect(readIssueHandler).toBeDefined();
+    expect(readIssueHandler).toBeInstanceOf(ReadIssueHandler);
+
+    // Verify all 9 canonical phases have handlers registered and are real
+    // implementations (not HandlerNotWiredError stubs)
+    const handlerClasses: Record<string, unknown> = {
+      read_issue: ReadIssueHandler,
+      'plan-design': PlanDesignHandler,
+      'plan-write': PlanWriteHandler,
+      implement: ImplementHandler,
+      validate: ValidateHandler,
+      'review-fix': ReviewFixHandler,
+      compound: CompoundHandler,
+      'create-pr': CreatePrHandler,
+      'post-pr-review': PostPrReviewHandler,
+    };
+    for (const [phase, HandlerClass] of Object.entries(handlerClasses)) {
+      const handler = c.phaseRegistry.get(PhaseName(phase));
+      expect(handler).toBeDefined();
+      expect(handler).toBeInstanceOf(HandlerClass as new (...args: never[]) => object);
+    }
+  });
+
+  it('read_issue handler does not throw HandlerNotWiredError', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3 },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const c = composeRoot({ repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
+    const handler = c.phaseRegistry.get(PhaseName('read_issue'));
+    expect(handler).toBeDefined();
+    // The handler should NOT be a HandlerNotWiredError stub
+    expect(handler).toBeInstanceOf(ReadIssueHandler);
   });
 
   it('reviewFixLoop.execute converges when review immediately passes', async () => {

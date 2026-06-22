@@ -238,6 +238,51 @@ export function buildProgram(): Command {
             process.exit(1);
           }
         }),
+    )
+    .addCommand(
+      new Command('execute')
+        .description('Execute a queued run through the RunExecutor')
+        .requiredOption('--uuid <uuid>', 'Run UUID to execute')
+        .action(async (opts: { uuid: string }) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              runStartupSweeps: false,
+            };
+            const c = composeRoot(options);
+            if (!c.runExecutor) {
+              console.error(
+                'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
+              );
+              process.exit(1);
+            }
+            const run = c.runRepository.findByUuid(opts.uuid);
+            if (!run) {
+              console.error(`No run found for uuid ${opts.uuid}`);
+              process.exit(1);
+            }
+            if (run.status !== 'queued') {
+              console.error(`Run ${opts.uuid} has status ${run.status}, expected queued`);
+              process.exit(1);
+            }
+            const result = await c.runExecutor.execute({
+              run,
+              skip: [],
+              presentArtifacts: [],
+            });
+            process.stdout.write(
+              JSON.stringify({
+                run: result.run,
+                phases: result.phases,
+              }) + '\n',
+            );
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(1);
+          }
+        }),
     );
 
   return program;

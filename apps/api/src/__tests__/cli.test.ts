@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
+import { RunExecutor } from '@ai-sdlc/application';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(__dirname, '..', '..');
@@ -335,6 +336,228 @@ describe('CLI runs cancel command', () => {
       spy.mockRestore();
       exitSpy.mockRestore();
       expect(consoleErrs.join('')).toMatch(/no run found/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+});
+
+describe('CLI runs execute command', () => {
+  it('runs execute exits 1 when --uuid is missing', async () => {
+    const program = buildProgram();
+    const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+    const executeCmd = runsCmd.commands.find((c) => c.name() === 'execute')!;
+    executeCmd.exitOverride();
+    const errs: string[] = [];
+    executeCmd.configureOutput({ writeErr: (s) => void errs.push(s), writeOut: () => {} });
+    await expect(runsCmd.parseAsync(['execute'], { from: 'user' })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+    expect(errs.join('')).toMatch(/--uuid/i);
+  });
+
+  it('runs execute exits 1 when run not found', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-nf-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['execute', '--uuid', 'nonexistent-uuid'], { from: 'user' });
+      const capturedConsole = consoleErrs.join('');
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(exitCode).toBe(1);
+      expect(capturedConsole).toMatch(/no run found/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('runs execute exits 1 when run status is not queued', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-nq-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'test-exec-nq-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-99-20260520-000000',
+      99,
+      'issue_to_pr',
+      'passed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
+      const capturedConsole = consoleErrs.join('');
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(exitCode).toBe(1);
+      expect(capturedConsole).toMatch(/expected queued/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('runs execute succeeds and outputs JSON for a valid UUID', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-ok-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'test-exec-ok-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-99-20260520-000000',
+      99,
+      'issue_to_pr',
+      'queued',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: runUuid,
+          status: 'passed' as const,
+          displayId: '',
+          issueNumber: 0,
+          type: 'issue_to_pr',
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [
+          { phase: 'read_issue', status: 'passed' },
+          { phase: 'plan-design', status: 'passed' },
+        ],
+      });
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
+
+      executeSpy.mockRestore();
+      writeSpy.mockRestore();
+      const output = JSON.parse(stdoutChunks.join(''));
+      expect(output).toHaveProperty('run');
+      expect(output.run.uuid).toBe(runUuid);
+      expect(output.run.status).toBe('passed');
+      expect(output.phases).toBeInstanceOf(Array);
+      expect(output.phases).toHaveLength(2);
     } finally {
       process.chdir(savedCwd);
     }
