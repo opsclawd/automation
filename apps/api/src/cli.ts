@@ -461,10 +461,6 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               );
               process.exit(EXIT_USER_ERROR);
             }
-            if (!c.workerLeaseRepository) {
-              console.error('Error: WorkerLeaseRepository not available.');
-              process.exit(EXIT_USER_ERROR);
-            }
             if (!c.repoFullName) {
               console.error('Error: could not determine repository name.');
               process.exit(EXIT_USER_ERROR);
