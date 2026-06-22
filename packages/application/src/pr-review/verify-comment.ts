@@ -82,6 +82,7 @@ export async function verifyComment(
 
   const buildResult = await deps.verifyBuildPasses({ cwd: context.cwd, runId: comment.runId });
   buildVerified = buildResult.passed;
+  const buildError = buildResult.error;
 
   let fixCommitOnRemote = true;
   let isNewerThanStart = true;
@@ -123,5 +124,6 @@ export async function verifyComment(
     commitVerified,
     buildVerified,
     reason: ok ? '' : failReason,
+    ...(buildError !== undefined ? { buildError } : {}),
   };
 }
