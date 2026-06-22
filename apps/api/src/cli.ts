@@ -44,7 +44,7 @@ function startLeaseHeartbeat(
   intervalMs: number,
 ): { stop: () => void } {
   let heartbeatFailures = 0;
-  const maxHeartbeatFailures = Math.ceil(ttlMs / intervalMs) - 1;
+  const maxHeartbeatFailures = Math.max(1, Math.ceil(ttlMs / intervalMs) - 1);
   const timer = setInterval(() => {
     const hbNow = new Date();
     try {
@@ -58,11 +58,9 @@ function startLeaseHeartbeat(
         leaseRepo.release(repoId, workerId);
         process.exit(EXIT_INTERNAL_ERROR);
       }
-      if (heartbeatFailures === 1 || heartbeatFailures % 5 === 0) {
-        console.error(
-          `Warning: heartbeat failed (${heartbeatFailures}x): ${(err as Error)?.message ?? String(err)}`,
-        );
-      }
+      console.error(
+        `Warning: heartbeat failed (${heartbeatFailures}x): ${(err as Error)?.message ?? String(err)}`,
+      );
     }
   }, intervalMs);
   return {
@@ -253,17 +251,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
           }
 
-          const signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
-
-          const lease = startLeaseHeartbeat(
-            c.workerLeaseRepository,
-            repoId,
-            workerId,
-            leaseTtlMs,
-            heartbeatIntervalMs,
-          );
-
+          let signalHandlers: { remove: () => void } | undefined;
+          let lease: { stop: () => void } | undefined;
           try {
+            signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
+            lease = startLeaseHeartbeat(
+              c.workerLeaseRepository,
+              repoId,
+              workerId,
+              leaseTtlMs,
+              heartbeatIntervalMs,
+            );
+
             c.runRepository.insertIfNoActive(run);
             const result = await c.runExecutor.execute({
               run,
@@ -278,13 +277,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             );
             process.exit(result.run.status === 'passed' ? 0 : EXIT_USER_ERROR);
           } catch (err) {
+            signalHandlers?.remove();
+            lease?.stop();
             console.error(
               `Run ${run.uuid} (issue #${run.issueNumber}) failed: ${err instanceof Error ? err.message : String(err)}`,
             );
             process.exit(EXIT_INTERNAL_ERROR);
           } finally {
-            signalHandlers.remove();
-            lease.stop();
+            signalHandlers?.remove();
+            lease?.stop();
           }
         } else {
           // --- Bash executor path ---
@@ -491,14 +492,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
             }
 
-            const lease = startLeaseHeartbeat(
-              c.workerLeaseRepository,
-              repoId,
-              workerId,
-              leaseTtlMs,
-              heartbeatIntervalMs,
-            );
+            let signalHandlers: { remove: () => void } | undefined;
+            let lease: { stop: () => void } | undefined;
             try {
+              signalHandlers = installSignalHandlers(c.runRepository, run.issueNumber);
+              lease = startLeaseHeartbeat(
+                c.workerLeaseRepository,
+                repoId,
+                workerId,
+                leaseTtlMs,
+                heartbeatIntervalMs,
+              );
               const result = await c.runExecutor.execute({
                 run,
                 skip: [],
@@ -511,7 +515,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }) + '\n',
               );
             } finally {
-              lease.stop();
+              signalHandlers?.remove();
+              lease?.stop();
             }
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));

@@ -472,6 +472,20 @@ describe('CLI runs execute command', () => {
         },
         phases: [],
       });
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockReturnValue(undefined);
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
       const stdoutChunks: string[] = [];
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
         stdoutChunks.push(String(chunk));
@@ -483,6 +497,9 @@ describe('CLI runs execute command', () => {
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
       expect(exitSpy).not.toHaveBeenCalled();
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
       executeSpy.mockRestore();
       writeSpy.mockRestore();
       exitSpy.mockRestore();
@@ -557,6 +574,20 @@ describe('CLI runs execute command', () => {
           { phase: 'plan-design', status: 'passed' },
         ],
       });
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockReturnValue(undefined);
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
       const stdoutChunks: string[] = [];
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
         stdoutChunks.push(String(chunk));
@@ -567,6 +598,9 @@ describe('CLI runs execute command', () => {
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
 
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
       executeSpy.mockRestore();
       writeSpy.mockRestore();
       const output = JSON.parse(stdoutChunks.join(''));
@@ -575,6 +609,81 @@ describe('CLI runs execute command', () => {
       expect(output.run.status).toBe('passed');
       expect(output.phases).toBeInstanceOf(Array);
       expect(output.phases).toHaveLength(2);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('runs execute exits 1 with friendly message when lease acquisition fails', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-leaseconflict-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'test-exec-conflict-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-100-20260622-000000',
+      100,
+      'issue_to_pr',
+      'queued',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const acquireSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'acquire')
+        .mockImplementation(() => {
+          throw new WorkerLeaseConflictError(
+            RepositoryId('owner/repo'),
+            WorkerId('existing-worker'),
+          );
+        });
+      const consoleErrs: string[] = [];
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      acquireSpy.mockRestore();
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+      expect(exitCode).toBe(1);
+      expect(consoleErrs.join('')).toMatch(/active lease|in progress/i);
     } finally {
       process.chdir(savedCwd);
     }
@@ -1067,7 +1176,7 @@ describe('CLI run --executor ts', () => {
         '/dev/null',
       ]);
 
-      expect(releaseSpy).toHaveBeenCalledOnce();
+      expect(releaseSpy).toHaveBeenCalled();
       expect(exitSpy).toHaveBeenCalledWith(2);
 
       acquireSpy.mockRestore();
@@ -1243,7 +1352,7 @@ describe('CLI run --executor ts', () => {
         '/dev/null',
       ]);
 
-      expect(releaseSpy).toHaveBeenCalledOnce();
+      expect(releaseSpy).toHaveBeenCalled();
       expect(exitSpy).toHaveBeenCalledWith(2);
 
       acquireSpy.mockRestore();
