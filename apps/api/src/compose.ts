@@ -1443,11 +1443,11 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderTaskPrompt: async ({ cwd, comment, diff, branch }) => {
+      renderTaskPrompt: async ({ cwd, comment, diff, branch, previousBuildError }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
-        const content = [
+        const sections = [
           '# PR Review Comment Task',
           '',
           'Address the following PR review comment:',
@@ -1458,6 +1458,24 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           diff,
           '',
+        ];
+
+        if (previousBuildError !== undefined) {
+          sections.push(
+            '## Previous Attempt Failed',
+            '',
+            'The previous fix attempt failed the build with the following error:',
+            '',
+            '```',
+            previousBuildError,
+            '```',
+            '',
+            'Please adjust your fix to resolve this error.',
+            '',
+          );
+        }
+
+        sections.push(
           '## Instructions',
           '',
           'Make a judgement call: is this comment technically valid?',
@@ -1483,7 +1501,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           '  "blockedReason": "<string — only when action is blocked>"',
           '}',
           '```',
-        ].join('\n');
+        );
+        const content = sections.join('\n');
         writeFileSync(promptPath, content, 'utf-8');
         return promptPath;
       },
@@ -1548,15 +1567,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           if (result.passed) {
             return { passed: true };
           }
-          const failed: { passed: false; error?: string } = { passed: false };
-          if (result.failure?.message !== undefined) {
-            failed.error = result.failure.message;
-          }
-          return failed;
-        } catch (err) {
-          const failed: { passed: false; error?: string } = { passed: false };
-          failed.error = String(err);
-          return failed;
+          const error = result.failure?.message ?? 'build failed';
+          return { passed: false, error };
+        } catch {
+          return { passed: false, error: 'build verification threw an exception' };
         }
       },
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
