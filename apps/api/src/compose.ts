@@ -1321,7 +1321,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(new PlanWriteHandler());
       phaseRegistry.register(new CompoundHandler());
 
-      if (!runStep) throw new Error('runStep not wired');
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
