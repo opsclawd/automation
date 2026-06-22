@@ -344,10 +344,15 @@ describe('CLI runs cancel command', () => {
 describe('CLI runs execute command', () => {
   it('runs execute exits 1 when --uuid is missing', async () => {
     const program = buildProgram();
-    program.exitOverride();
-    await expect(
-      program.parseAsync(['node', 'orchestrator', 'runs', 'execute'], { from: 'user' }),
-    ).rejects.toMatchObject({ exitCode: 1 });
+    const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+    const executeCmd = runsCmd.commands.find((c) => c.name() === 'execute')!;
+    executeCmd.exitOverride();
+    const errs: string[] = [];
+    executeCmd.configureOutput({ writeErr: (s) => void errs.push(s), writeOut: () => {} });
+    await expect(runsCmd.parseAsync(['execute'], { from: 'user' })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+    expect(errs.join('')).toMatch(/--uuid/i);
   });
 
   it('runs execute exits 1 when run not found', async () => {
@@ -393,10 +398,12 @@ describe('CLI runs execute command', () => {
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', 'nonexistent-uuid'], { from: 'user' });
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      const capturedConsole = consoleErrs.join('');
+      const exitCode = exitSpy.mock.calls[0]?.[0];
       spy.mockRestore();
       exitSpy.mockRestore();
-      expect(consoleErrs.join('')).toMatch(/no run found/i);
+      expect(exitCode).toBe(1);
+      expect(capturedConsole).toMatch(/no run found/i);
     } finally {
       process.chdir(savedCwd);
     }
