@@ -41,6 +41,15 @@ import {
   SweepOrphanedRuns,
   checkPid,
   RunValidation,
+  ReadIssueHandler,
+  PlanDesignHandler,
+  PlanWriteHandler,
+  ImplementHandler,
+  ValidateHandler,
+  ReviewFixHandler,
+  CompoundHandler,
+  CreatePrHandler,
+  PostPrReviewHandler,
   PrReviewPoller,
   ProcessPrReviewComments,
   decideReactivation,
@@ -52,8 +61,6 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
-  HandlerNotWiredError,
-  CANONICAL_PHASE_ORDER,
   type Artifact,
   type ArtifactStore,
   type StartIssueRunDeps,
@@ -63,6 +70,7 @@ import {
   type RunRepositoryPort,
   type TmpDirectoryFactory,
   type StepContext,
+  type StepRepositoryPort,
   type ReviewStepResult,
   type FixStepResult,
   type RevalidationResult,
@@ -82,6 +90,7 @@ import {
   Run,
   RunId,
   RepositoryId,
+  type Step,
 } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
@@ -231,6 +240,36 @@ class AbortRegistry {
   }
 }
 
+class InMemoryStepRepository implements StepRepositoryPort {
+  private readonly store = new Map<string, Step>();
+
+  private key(runId: string, phaseId: string, index: number): string {
+    return `${runId}:${phaseId}:${index}`;
+  }
+
+  upsert(step: Step): void {
+    this.store.set(this.key(step.runId, step.phaseId, step.index), { ...step });
+  }
+
+  listForRun(runId: RunId): Step[] {
+    return [...this.store.values()]
+      .filter((s) => s.runId === runId)
+      .sort((a, b) => {
+        const pa = String(a.phaseId);
+        const pb = String(b.phaseId);
+        if (pa < pb) return -1;
+        if (pa > pb) return 1;
+        return a.index - b.index;
+      })
+      .map((s) => ({ ...s }));
+  }
+
+  findByIndex(runId: RunId, phaseId: PhaseName, index: number): Step | undefined {
+    const found = this.store.get(this.key(runId, String(phaseId), index));
+    return found ? { ...found } : undefined;
+  }
+}
+
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
@@ -370,14 +409,17 @@ export function composeRoot(opts: ComposeOptions): Container {
   // const retryFailedPhase = new RetryFailedPhase({ ... });
 
   const phaseRegistry = new PhaseHandlerRegistry();
-  for (const phaseName of CANONICAL_PHASE_ORDER) {
-    phaseRegistry.register({
-      phase: phaseName,
-      run: async () => {
-        throw new HandlerNotWiredError(phaseName as string);
-      },
-    });
-  }
+  const stepRepository: StepRepositoryPort = new InMemoryStepRepository();
+
+  // Register real handlers for all canonical phases
+  phaseRegistry.register(new ReadIssueHandler());
+  phaseRegistry.register(new PlanDesignHandler());
+  phaseRegistry.register(new PlanWriteHandler());
+  phaseRegistry.register(new CompoundHandler());
+
+  // ImplementHandler, ValidateHandler, ReviewFixHandler, CreatePrHandler,
+  // and PostPrReviewHandler are registered inside the if (config.agent) block
+  // because they require agent-mode dependencies.
 
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';
@@ -1270,6 +1312,90 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         return { outcome: result.outcome };
       };
+
+      // Wire remaining phase handlers that require agent dependencies
+      phaseRegistry.register(
+        new ImplementHandler({
+          steps: stepRepository,
+          runStep: runStep!,
+        }),
+      );
+
+      phaseRegistry.register(
+        new ValidateHandler({
+          runValidation,
+          commands: config.validation.commands,
+          timeoutSeconds: config.validation.timeout,
+          logDir: join(runsDir, 'validate'),
+        }),
+      );
+
+      phaseRegistry.register(
+        new ReviewFixHandler({
+          runLoop: async (ctx) => {
+            const result = await reviewFixLoop!.execute({
+              runId: RunId(ctx.runUuid),
+              phaseId: PhaseName('review-fix'),
+              repoId: ctx.repoFullName,
+              cwd: ctx.cwd,
+              maxIterations: config.phases.reviewFix.maxIterations,
+              blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
+              reviewProfile: AgentProfileName(resolveProfileForPhaseBound!('review-fix')),
+              fixProfile: AgentProfileName(resolveProfileForPhaseBound!('fix-review')),
+            });
+            return {
+              phaseOutcome: result.phaseOutcome,
+              loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
+            };
+          },
+        }),
+      );
+
+      phaseRegistry.register(
+        new CreatePrHandler({
+          baseBranch: resolvedDefaultBranch,
+          headBranch: (ctx) => `ai/issue-${ctx.issueNumber}`,
+        }),
+      );
+
+      phaseRegistry.register(
+        new PostPrReviewHandler({
+          runPoll: async (ctx) => {
+            let prNumber: number;
+            try {
+              const prUrl = (await ctx.artifacts.read(ctx.runUuid, 'pr-url.txt')).trim();
+              const match = prUrl.match(/\/pull\/(\d+)/);
+              if (!match) {
+                return { signal: 'blocked' as const };
+              }
+              prNumber = parseInt(match[1]!, 10);
+            } catch {
+              return { signal: 'blocked' as const };
+            }
+
+            const poller = buildPrReviewPoller({
+              maxPolls: config.phases.postPrReview?.maxPolls ?? 10,
+              pollIntervalMs: (config.phases.postPrReview?.pollIntervalSeconds ?? 60) * 1000,
+              readyMaxDays: config.timeouts.readyMaxDays,
+              phaseStartedAt: ctx.now(),
+              baseBranch: resolvedDefaultBranch,
+            });
+            const result = await poller.run({
+              runId: RunId(ctx.runUuid),
+              repoId: ctx.repoFullName as RepositoryId,
+              repoFullName: ctx.repoFullName,
+              prNumber,
+              cwd: ctx.cwd,
+              phaseId: PhaseName('post-pr-review'),
+            });
+            return { signal: result.terminalState };
+          },
+          setRunStatus: (_status) => {
+            // Status updates are handled by the run executor's phase transition logic.
+            // This adapter is a no-op; the executor persists status via runRepository.
+          },
+        }),
+      );
 
       runExecutor = new RunExecutor({
         runRepository,
