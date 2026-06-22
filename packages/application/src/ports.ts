@@ -28,6 +28,7 @@ export interface RunRepositoryUpdatePatch {
   failureReason?: string | null;
   exitCode?: number;
   durationMs?: number;
+  pid?: number;
   startCommitSha?: string;
 }
 

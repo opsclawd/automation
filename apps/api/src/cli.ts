@@ -492,6 +492,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
             }
 
+            c.runRepository.update(run.uuid, { pid: process.pid });
+
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
             try {
