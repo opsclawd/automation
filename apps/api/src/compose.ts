@@ -1597,6 +1597,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           });
         } catch {}
       },
+      rollbackFix: async ({ cwd, branch }, targetSha) => {
+        try {
+          execFileSync('git', ['reset', '--hard', targetSha], { cwd });
+        } catch {
+          return;
+        }
+        try {
+          execFileSync('git', ['push', '--force-with-lease', 'origin', branch], { cwd });
+        } catch {}
+      },
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without
