@@ -83,9 +83,6 @@ export class PollTaskRunner {
       diff: input.diff,
       branch: input.branch,
     };
-    if (input.previousBuildError !== undefined) {
-      promptInput.previousBuildError = input.previousBuildError;
-    }
     const promptPath = await d.renderTaskPrompt(promptInput);
 
     // 2. Invoke agent
@@ -229,15 +226,11 @@ export class PollTaskRunner {
     }
 
     // Verification failed — return as not processed (retry loop in caller handles this)
-    const failed: PollTaskOutput = {
+    return {
       commentId: comment.commentId,
-      action: verification.buildError !== undefined ? 'failed' : result.action,
+      action: result.action,
       processed: false,
       blocked: false,
     };
-    if (verification.buildError !== undefined) {
-      failed.buildError = verification.buildError;
-    }
-    return failed;
   }
 }

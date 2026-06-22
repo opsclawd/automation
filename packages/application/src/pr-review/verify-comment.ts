@@ -53,7 +53,6 @@ export async function verifyComment(
 
   let commitVerified = true;
   let buildVerified = true;
-  let buildError: string | undefined;
   let failReason = '';
 
   const commitShaChanged =
@@ -83,7 +82,6 @@ export async function verifyComment(
 
   const buildResult = await deps.verifyBuildPasses({ cwd: context.cwd, runId: comment.runId });
   buildVerified = buildResult.passed;
-  buildError = buildResult.error;
 
   let fixCommitOnRemote = true;
   let isNewerThanStart = true;
@@ -114,20 +112,16 @@ export async function verifyComment(
   else if (!isNewerThanStart && !failReason)
     failReason = 'fix commit is not newer than start (logBetween empty)';
   else if (!commitVerified && !failReason) failReason = 'commit not pushed to remote';
-  else if (!buildVerified && !failReason) failReason = buildError ?? 'build did not pass';
+  else if (!buildVerified && !failReason) failReason = 'build did not pass';
 
   const ok =
     fixCommitOnRemote && isNewerThanStart && commitVerified && replyVerified && buildVerified;
 
-  const result: VerificationResult = {
+  return {
     ok,
     replyVerified,
     commitVerified,
     buildVerified,
     reason: ok ? '' : failReason,
   };
-  if (!buildVerified && buildError !== undefined) {
-    result.buildError = buildError;
-  }
-  return result;
 }
