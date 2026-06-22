@@ -77,13 +77,15 @@ export class PollTaskRunner {
     await d.git.cleanUntracked(input.cwd);
 
     // 1. Render single-comment prompt
-    const promptInput: Parameters<PollTaskRunnerDeps['renderTaskPrompt']>[0] = {
+    const promptPath = await d.renderTaskPrompt({
       cwd: input.cwd,
       comment: input.comment,
       diff: input.diff,
       branch: input.branch,
-    };
-    const promptPath = await d.renderTaskPrompt(promptInput);
+      ...(input.previousBuildError !== undefined
+        ? { previousBuildError: input.previousBuildError }
+        : {}),
+    });
 
     // 2. Invoke agent
     const profile = d.resolveProfileForPhase('post-pr-review');
@@ -231,6 +233,7 @@ export class PollTaskRunner {
       action: result.action,
       processed: false,
       blocked: false,
+      ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
     };
   }
 }
