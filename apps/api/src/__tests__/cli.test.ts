@@ -670,6 +670,7 @@ describe('CLI runs execute command', () => {
       await new Promise((r) => setTimeout(r, 500));
 
       expect(exitSpy).toHaveBeenCalledWith(2);
+      expect(releaseSpy).toHaveBeenCalledOnce();
 
       acquireSpy.mockRestore();
       heartbeatSpy.mockRestore();
@@ -1162,6 +1163,7 @@ describe('CLI run --executor ts', () => {
       await new Promise((r) => setTimeout(r, 500));
 
       expect(exitSpy).toHaveBeenCalledWith(2);
+      expect(releaseSpy).toHaveBeenCalledOnce();
 
       acquireSpy.mockRestore();
       heartbeatSpy.mockRestore();
