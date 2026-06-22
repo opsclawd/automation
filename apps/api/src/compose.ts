@@ -169,6 +169,8 @@ export interface Container {
   validationRunRepository: ValidationRunRepository;
   prReviewRepository: PrReviewRepository;
   loopRepository: LoopRepository;
+  workerLeaseRepository: WorkerLeaseRepository;
+  repoFullName?: string;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
@@ -1746,6 +1748,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     validationRunRepository,
     prReviewRepository,
     loopRepository,
+    workerLeaseRepository,
+    ...(resolvedRepoFullName !== undefined ? { repoFullName: resolvedRepoFullName } : {}),
     runValidation,
     startIssueRun,
     cancelRun,
