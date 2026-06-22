@@ -4555,9 +4555,22 @@ Start now."
     fi
   fi
 
+  # Capture validation artifacts before guard_artifact_clean removes them — they
+  # are orchestrator artifacts (#434). Re-persist after cleanup so detect_phase
+  # and create-pr read the correct values (same pattern as fix-validate lines
+  # ~3820–3840).
+  _compound_validation_result="$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || true)"
+
   # Safety net: remove any non-compound-draft artifacts the compound agent
   # may have staged or committed (compound-draft.md is handled above).
   guard_artifact_clean "${WORKTREE_DIR}" "origin/${BASE_BRANCH}"
+
+  # Re-persist validation.result so create-pr reads the correct status.
+  if [[ -n "$_compound_validation_result" ]]; then
+    printf '%s\n' "$_compound_validation_result" > "${ISSUES_DIR}/validation.result"
+  fi
+  # Re-persist validation.headsha so detect_phase SHA guard works on resume.
+  git -C "${WORKTREE_DIR}" rev-parse HEAD > "${ISSUES_DIR}/validation.headsha" 2>/dev/null || true
 
   _emit_phase_done "compound"
   PHASE="create-pr"
@@ -4766,6 +4779,14 @@ EOF
   # Update issue labels — gate ai:pr-ready on validation passing
   gh issue edit "$ISSUE_NUM" --remove-label "ai:in-progress" 2>/dev/null || true
   VALIDATION_STATUS=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || echo "unknown")
+  # Guard: if the sentinel is missing/unknown but the prose log says PASSED,
+  # the sentinel was lost in a prior phase (e.g. guard_artifact_clean). Fail
+  # loudly so the regression is visible rather than silently mislabeling (#434).
+  if [[ "$VALIDATION_STATUS" == "unknown" || -z "$VALIDATION_STATUS" ]]; then
+    if grep -qx 'validation: PASSED' "${ISSUES_DIR}/validation.md" 2>/dev/null; then
+      orchestrator_fail "validation.result is absent/unknown but validation.md shows PASSED — sentinel was lost (check compound phase guard_artifact_clean)"
+    fi
+  fi
   if [[ "$VALIDATION_STATUS" == "passed" ]]; then
     gh issue edit "$ISSUE_NUM" --add-label "ai:pr-ready" 2>/dev/null || true
   else
