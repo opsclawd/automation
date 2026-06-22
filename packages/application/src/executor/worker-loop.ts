@@ -7,6 +7,8 @@ import type {
 } from '../ports.js';
 import { WorkerLeaseConflictError } from '@ai-sdlc/domain';
 
+const EXECUTE_RUN_GRACE_MS = 10_000;
+
 export interface WorkerLoopDeps {
   registry: WorkerRegistryPort;
   queue: JobQueuePort;
@@ -132,22 +134,55 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
           throw new Error(`run ${job.runId} not found for job ${job.id}`);
         }
 
-        const result = await Promise.race([
-          deps.executeRun({ run, workerId, cwd: worktree.cwd, signal: abortController.signal }),
-          new Promise<never>((_, reject) => {
-            if (abortController.signal.aborted) {
-              reject(new Error('heartbeat failed during job execution'));
-              return;
-            }
-            abortController.signal.addEventListener(
-              'abort',
+        const executeRunPromise = deps.executeRun({
+          run,
+          workerId,
+          cwd: worktree.cwd,
+          signal: abortController.signal,
+        });
+
+        const result = await new Promise<{ ok: boolean }>((resolve, reject) => {
+          let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+          const onAbort = () => {
+            graceTimer = setTimeout(
+              () => reject(new Error('heartbeat failed during job execution')),
+              EXECUTE_RUN_GRACE_MS,
+            );
+            void executeRunPromise.then(
               () => {
+                clearTimeout(graceTimer);
                 reject(new Error('heartbeat failed during job execution'));
               },
-              { once: true },
+              () => {
+                clearTimeout(graceTimer);
+                reject(new Error('heartbeat failed during job execution'));
+              },
             );
-          }),
-        ]);
+          };
+
+          if (abortController.signal.aborted) {
+            onAbort();
+            return;
+          }
+
+          abortController.signal.addEventListener('abort', onAbort, { once: true });
+
+          void executeRunPromise.then(
+            (r) => {
+              if (!abortController.signal.aborted) {
+                abortController.signal.removeEventListener('abort', onAbort);
+                resolve(r);
+              }
+            },
+            (err) => {
+              if (!abortController.signal.aborted) {
+                abortController.signal.removeEventListener('abort', onAbort);
+                reject(err as Error);
+              }
+            },
+          );
+        });
 
         if (result.ok) {
           queue.markSucceeded(job.id, deps.now());

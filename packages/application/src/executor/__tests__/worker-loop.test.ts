@@ -585,4 +585,56 @@ describe('workerLoop', () => {
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   }, 10_000);
+
+  it('heartbeat failure during executeRun: lease held until executeRun settles (gap B)', async () => {
+    const s = setup();
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    vi.spyOn(s.leases, 'heartbeat').mockImplementation(() => {
+      throw new Error('heartbeat failed');
+    });
+
+    let leaseHeldDuringCleanup: boolean | undefined;
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: async ({ signal }) => {
+        // Simulate an adapter that needs ~20 ms to kill its child process
+        await new Promise<void>((resolve) => {
+          const finish = () => {
+            leaseHeldDuringCleanup = s.leases.current(RepositoryId('r1')) !== undefined;
+            resolve();
+          };
+          if (signal.aborted) {
+            setTimeout(finish, 20);
+            return;
+          }
+          signal.addEventListener('abort', () => setTimeout(finish, 20), { once: true });
+        });
+        throw new Error('run aborted during cleanup');
+      },
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 10,
+      findRun: (runId) => makeRun(runId as string),
+    });
+
+    expect(leaseHeldDuringCleanup).toBe(true);
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
+    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+  }, 10_000);
 });
