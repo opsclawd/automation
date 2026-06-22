@@ -2,7 +2,14 @@ import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { RunId } from '@ai-sdlc/domain';
+import {
+  RunId,
+  createRun,
+  WorkerId,
+  RepositoryId,
+  WorkerLeaseConflictError,
+} from '@ai-sdlc/domain';
+import { newRunId } from '@ai-sdlc/shared';
 import { composeRoot, type ComposeOptions } from './compose.js';
 
 export function findRepoRoot(
@@ -28,6 +35,7 @@ export interface RunCliOptions {
   baseBranch?: string;
   model?: string;
   agentCli?: string;
+  executor?: string;
 }
 
 export function buildProgram(): Command {
@@ -50,6 +58,11 @@ export function buildProgram(): Command {
     .option('--script <path>', 'Path to Bash script to wrap')
     .option('--verbose', 'Stream script stdout/stderr to terminal (default: auto when TTY)')
     .option('--no-verbose', 'Suppress streaming script output to terminal')
+    .option(
+      '--executor <executor>',
+      'Execution engine: bash (default) or ts (TypeScript RunExecutor)',
+      'bash',
+    )
     .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
       try {
         const repoRoot = findRepoRoot(process.cwd());
@@ -68,6 +81,88 @@ export function buildProgram(): Command {
         if (opts.model !== undefined) options.model = opts.model;
         if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
         const c = composeRoot(options);
+
+        // --- TS executor path ---
+        if (opts.executor === 'ts') {
+          if (!c.runExecutor) {
+            console.error(
+              'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
+            );
+            process.exit(1);
+          }
+          if (!c.repoFullName) {
+            console.error(
+              'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
+            );
+            process.exit(1);
+          }
+
+          const LEASE_TTL_MS = 120_000;
+          const HEARTBEAT_INTERVAL_MS = 30_000;
+
+          const workerId = WorkerId(`cli-pid-${process.pid}`);
+          const repoId = RepositoryId(c.repoFullName);
+          const startedAt = new Date();
+          const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
+          const run = createRun({
+            uuid: ids.uuid,
+            displayId: ids.displayId,
+            issueNumber: opts.issue,
+            startedAt,
+          });
+          c.runRepository.insertIfNoActive(run);
+
+          try {
+            c.workerLeaseRepository.acquire({
+              repoId,
+              workerId,
+              runId: RunId(run.uuid),
+              now: startedAt,
+              ttlMs: LEASE_TTL_MS,
+            });
+          } catch (err) {
+            if (err instanceof WorkerLeaseConflictError) {
+              console.error(
+                `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
+              );
+              process.exit(1);
+            }
+            throw err;
+          }
+
+          const heartbeatTimer = setInterval(() => {
+            const hbNow = new Date();
+            try {
+              c.workerLeaseRepository.heartbeat(
+                repoId,
+                workerId,
+                hbNow,
+                new Date(hbNow.getTime() + LEASE_TTL_MS),
+              );
+            } catch {
+              // Best-effort: heartbeat failure should not crash the executor
+            }
+          }, HEARTBEAT_INTERVAL_MS);
+
+          try {
+            const result = await c.runExecutor.execute({
+              run,
+              skip: [],
+              presentArtifacts: [],
+            });
+            await new Promise<void>((resolve, reject) =>
+              process.stdout.write(
+                JSON.stringify({ run: result.run, phases: result.phases }) + '\n',
+                (err) => (err ? reject(err) : resolve()),
+              ),
+            );
+            process.exit(result.run.status === 'passed' ? 0 : 1);
+          } finally {
+            clearInterval(heartbeatTimer);
+            c.workerLeaseRepository.release(repoId, workerId);
+          }
+        }
+        // --- end TS executor path ---
 
         const cleanup = async (signal: string) => {
           const existing = c.runRepository.findByIssueNumber(opts.issue);
