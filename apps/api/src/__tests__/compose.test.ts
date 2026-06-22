@@ -490,7 +490,8 @@ exit 1
     // Real handlers have a 'phase' property; stubs only have a 'run' method
     expect(readIssueHandler!.phase).toBe(PhaseName('read_issue'));
 
-    // Verify all 9 canonical phases have handlers registered
+    // Verify all 9 canonical phases have handlers registered and are real
+    // implementations (not HandlerNotWiredError stubs)
     const canonicalPhases = [
       'read_issue',
       'plan-design',
@@ -503,7 +504,10 @@ exit 1
       'post-pr-review',
     ];
     for (const phase of canonicalPhases) {
-      expect(c.phaseRegistry.get(PhaseName(phase))).toBeDefined();
+      const handler = c.phaseRegistry.get(PhaseName(phase));
+      expect(handler).toBeDefined();
+      // Real handlers have a 'phase' property; stubs only have a 'run' method
+      expect(handler!.phase).toBe(PhaseName(phase));
     }
   });
 

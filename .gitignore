@@ -42,6 +42,7 @@ test-results/
 cache/
 .ai-orchestrator.local.json
 /result.json
+task-*-complete.md
 
 # Stray agent/orchestrator scratch that has leaked into commits before
 # (full_diff.patch #161, review-plan-task-5.md #334). See #280/#314/#405.
