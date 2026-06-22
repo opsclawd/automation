@@ -1573,7 +1573,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           if (result.passed) {
             return { passed: true };
           }
-          const error = result.failure?.message ?? 'build failed';
+          const error = result.failure?.message || 'build failed';
           return { passed: false, error };
         } catch {
           return { passed: false, error: 'build verification threw an exception' };
