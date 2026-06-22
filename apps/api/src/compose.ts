@@ -1443,11 +1443,11 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderTaskPrompt: async ({ cwd, comment, diff, branch }) => {
+      renderTaskPrompt: async ({ cwd, comment, diff, branch, previousBuildError }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
-        const content = [
+        const sections = [
           '# PR Review Comment Task',
           '',
           'Address the following PR review comment:',
@@ -1458,6 +1458,30 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           diff,
           '',
+        ];
+
+        if (previousBuildError !== undefined) {
+          const truncatedError =
+            previousBuildError.length > 4000
+              ? previousBuildError.slice(0, 2000) +
+                '\n... (truncated) ...\n' +
+                previousBuildError.slice(-2000)
+              : previousBuildError;
+          sections.push(
+            '## Previous Attempt Failed',
+            '',
+            'The previous fix attempt failed the build with the following error:',
+            '',
+            '```',
+            truncatedError,
+            '```',
+            '',
+            'Please adjust your fix to resolve this error.',
+            '',
+          );
+        }
+
+        sections.push(
           '## Instructions',
           '',
           'Make a judgement call: is this comment technically valid?',
@@ -1483,7 +1507,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           '  "blockedReason": "<string — only when action is blocked>"',
           '}',
           '```',
-        ].join('\n');
+        );
+        const content = sections.join('\n');
         writeFileSync(promptPath, content, 'utf-8');
         return promptPath;
       },
@@ -1533,7 +1558,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 timestamp: new Date(),
               });
             } catch {}
-            return true;
+            return { passed: true };
           }
           const buildCheckRunId = RunId(`pr-review-build-check-${randomUUID()}`);
           const logDir = join(runsDir, buildCheckRunId);
@@ -1545,9 +1570,13 @@ export function composeRoot(opts: ComposeOptions): Container {
             commands: config.validation.commands,
             timeoutSeconds: config.validation.timeout,
           });
-          return result.passed;
+          if (result.passed) {
+            return { passed: true };
+          }
+          const error = result.failure?.message || 'build failed';
+          return { passed: false, error };
         } catch {
-          return false;
+          return { passed: false, error: 'build verification threw an exception' };
         }
       },
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,

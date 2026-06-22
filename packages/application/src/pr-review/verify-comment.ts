@@ -8,6 +8,7 @@ export interface VerificationResult {
   commitVerified: boolean;
   buildVerified: boolean;
   reason: string;
+  buildError?: string;
 }
 
 export async function verifyComment(
@@ -21,7 +22,10 @@ export async function verifyComment(
       startCommitSha: string;
       commitSha?: string;
     }) => Promise<boolean>;
-    verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+    verifyBuildPasses: (input: {
+      cwd: string;
+      runId: string;
+    }) => Promise<{ passed: boolean; error?: string }>;
   },
   context: {
     cwd: string;
@@ -76,7 +80,9 @@ export async function verifyComment(
     commitVerified = false;
   }
 
-  buildVerified = await deps.verifyBuildPasses({ cwd: context.cwd, runId: comment.runId });
+  const buildResult = await deps.verifyBuildPasses({ cwd: context.cwd, runId: comment.runId });
+  buildVerified = buildResult.passed;
+  const buildError = buildResult.error;
 
   let fixCommitOnRemote = true;
   let isNewerThanStart = true;
@@ -112,5 +118,12 @@ export async function verifyComment(
   const ok =
     fixCommitOnRemote && isNewerThanStart && commitVerified && replyVerified && buildVerified;
 
-  return { ok, replyVerified, commitVerified, buildVerified, reason: ok ? '' : failReason };
+  return {
+    ok,
+    replyVerified,
+    commitVerified,
+    buildVerified,
+    reason: ok ? '' : failReason,
+    ...(buildError !== undefined ? { buildError } : {}),
+  };
 }

@@ -30,6 +30,7 @@ export interface ProcessPrReviewDeps {
     comment: PrReviewComment;
     diff: string;
     branch: string;
+    previousBuildError?: string;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -43,7 +44,10 @@ export interface ProcessPrReviewDeps {
     startCommitSha: string;
     commitSha?: string;
   }) => Promise<boolean>;
-  verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+  verifyBuildPasses: (input: {
+    cwd: string;
+    runId: string;
+  }) => Promise<{ passed: boolean; error?: string }>;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -69,7 +73,7 @@ export interface ProcessPrReviewOutput {
   allResolved: boolean;
 }
 
-export const ESCALATION_BUDGET = 3;
+const ESCALATION_BUDGET = 3;
 
 export class ProcessPrReviewComments {
   constructor(private readonly deps: ProcessPrReviewDeps) {}
@@ -172,17 +176,24 @@ export class ProcessPrReviewComments {
       runningStartSha = await d.git.headCommitSha(input.cwd);
 
       let lastOutput: PollTaskOutput | undefined;
+      let previousBuildError: string | undefined;
       for (let attempt = 1; attempt <= ESCALATION_BUDGET; attempt++) {
+        const currentComment = d.prReviewRepo.getComment(input.runId, task.commentId);
+        if (!currentComment) break;
+        if (currentComment.state !== 'pending' && currentComment.state !== 'replied') break;
+
+        const currentDiff = attempt === 1 ? diff : await d.git.diff(input.cwd, 'origin/HEAD');
         try {
           lastOutput = await taskRunner.execute({
             ...input,
-            comment,
-            diff,
+            comment: currentComment,
+            diff: currentDiff,
             branch: pr.headRefName,
             startCommitSha: runningStartSha,
             unresolvedCommentCount: unresolved.length,
+            ...(previousBuildError !== undefined ? { previousBuildError } : {}),
           });
-          if (lastOutput.action !== 'failed') break;
+          if (lastOutput.processed || lastOutput.blocked || lastOutput.action === 'no_fix') break;
         } catch {
           lastOutput = {
             commentId: task.commentId,
@@ -191,6 +202,9 @@ export class ProcessPrReviewComments {
             blocked: false,
           };
         }
+        if (lastOutput.buildError !== undefined) {
+          previousBuildError = lastOutput.buildError;
+        }
         if (
           attempt === ESCALATION_BUDGET &&
           lastOutput &&
@@ -198,7 +212,7 @@ export class ProcessPrReviewComments {
           !lastOutput.blocked
         ) {
           d.prReviewRepo.upsertComment(
-            blockComment(comment, `task failed after ${ESCALATION_BUDGET} attempts`),
+            blockComment(currentComment, `task failed after ${ESCALATION_BUDGET} attempts`),
           );
           lastOutput = {
             commentId: task.commentId,

@@ -19,6 +19,7 @@ export interface PollTaskRunnerDeps {
     comment: PrReviewComment;
     diff: string;
     branch: string;
+    previousBuildError?: string;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -32,7 +33,10 @@ export interface PollTaskRunnerDeps {
     startCommitSha: string;
     commitSha?: string;
   }) => Promise<boolean>;
-  verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+  verifyBuildPasses: (input: {
+    cwd: string;
+    runId: string;
+  }) => Promise<{ passed: boolean; error?: string }>;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -51,6 +55,7 @@ export interface PollTaskInput {
   branch: string;
   startCommitSha: string;
   unresolvedCommentCount: number;
+  previousBuildError?: string;
 }
 
 export interface PollTaskOutput {
@@ -58,6 +63,7 @@ export interface PollTaskOutput {
   action: 'fixed' | 'no_fix' | 'blocked' | 'failed';
   processed: boolean;
   blocked: boolean;
+  buildError?: string;
 }
 
 export class PollTaskRunner {
@@ -76,6 +82,9 @@ export class PollTaskRunner {
       comment: input.comment,
       diff: input.diff,
       branch: input.branch,
+      ...(input.previousBuildError !== undefined
+        ? { previousBuildError: input.previousBuildError }
+        : {}),
     });
 
     // 2. Invoke agent
@@ -224,6 +233,7 @@ export class PollTaskRunner {
       action: result.action,
       processed: false,
       blocked: false,
+      ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
     };
   }
 }

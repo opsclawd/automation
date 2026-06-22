@@ -14,7 +14,10 @@ interface VerifyCommentDeps {
     startCommitSha: string;
     commitSha?: string;
   }) => Promise<boolean>;
-  verifyBuildPasses: (input: { cwd: string; runId: string }) => Promise<boolean>;
+  verifyBuildPasses: (input: {
+    cwd: string;
+    runId: string;
+  }) => Promise<{ passed: boolean; error?: string }>;
 }
 
 const runId = RunId('44444444-4444-4444-4444-444444444444');
@@ -54,7 +57,7 @@ function makeDeps(
     git,
     github,
     verifyCommitPushed: async () => true,
-    verifyBuildPasses: async () => true,
+    verifyBuildPasses: async () => ({ passed: true }),
     ...overrides,
   };
   return { deps, github, git };
@@ -312,7 +315,7 @@ describe('verifyComment — fixed outcome', () => {
 
   it('returns ok=false when verifyBuildPasses returns false', async () => {
     const { deps, github, git } = makeDeps({
-      verifyBuildPasses: async () => false,
+      verifyBuildPasses: async () => ({ passed: false }),
     });
     const ctx = makeContext({ startCommitSha: 'startSha' });
     const comment = {
@@ -461,6 +464,60 @@ describe('verifyComment — fixed outcome', () => {
     const result = await verifyComment(comment, deps, ctx);
     expect(result.ok).toBe(false);
     expect(result.reason).toContain('remote');
+  });
+
+  it('returns buildError when verifyBuildPasses returns an error', async () => {
+    const { deps, github, git } = makeDeps({
+      verifyBuildPasses: async () => ({ passed: false, error: 'typecheck failed: TS2322' }),
+    });
+    git.headByCwd.set('/work/tree', 'startSha');
+    git.remoteRefs.set('origin/feat-x', 'fixSha');
+    git.ancestorResults.set('fixSha|fixSha', true);
+    git.logBetweenResults.set('startSha|fixSha', ['fixSha']);
+    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const comment = {
+      ...createPrReviewComment({
+        runId,
+        prNumber: 5,
+        commentId: 9001,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        now: new Date(),
+      }),
+      state: 'replied' as const,
+      outcome: 'fixed' as const,
+      commitSha: 'fixSha',
+      replyId: 9002,
+      attempts: 1,
+    };
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'fixed',
+        createdAt: new Date(),
+      },
+    ]);
+
+    const result = await verifyComment(comment, deps, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.buildVerified).toBe(false);
+    expect(result.buildError).toBe('typecheck failed: TS2322');
   });
 });
 
