@@ -1885,3 +1885,98 @@ describe('ProcessPrReviewComments — timeout scaling', () => {
     }
   });
 });
+
+describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
+  it('calls rollbackFix once with the pre-attempt SHA when all attempts fail the build', async () => {
+    const rollbackCalls: Array<{ ctx: { cwd: string; branch: string }; sha: string }> = [];
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
+    const { deps, repo } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => ({ passed: false, error: 'TS2722: Type mismatch' }),
+      rollbackFix: async (ctx, sha) => {
+        rollbackCalls.push({ ctx, sha });
+        return true;
+      },
+    });
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.blocked).toBe(1);
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
+    expect(rollbackCalls).toHaveLength(1);
+    expect(rollbackCalls[0].sha).toBe('sha-2');
+    expect(rollbackCalls[0].ctx).toEqual({ cwd: '/work/tree', branch: 'feat-x' });
+  });
+
+  it('does not call rollbackFix when the comment is processed on the first attempt', async () => {
+    const rollbackCalls: Array<unknown> = [];
+    const { deps } = makeDeps({
+      rollbackFix: async (ctx, sha) => {
+        rollbackCalls.push({ ctx, sha });
+        return true;
+      },
+    });
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.processed).toBe(1);
+    expect(rollbackCalls).toHaveLength(0);
+  });
+
+  it('does not call rollbackFix when the agent explicitly blocks the comment', async () => {
+    const rollbackCalls: Array<unknown> = [];
+    const { deps } = makeDeps({
+      extractTaskResult: async () => ({
+        ok: true,
+        result: {
+          commentId: 9001,
+          action: 'blocked' as const,
+          replyBody: 'This change breaks type safety.',
+          blockedReason: 'Type unsafe',
+        },
+      }),
+      rollbackFix: async (ctx, sha) => {
+        rollbackCalls.push({ ctx, sha });
+        return true;
+      },
+    });
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(out.blocked).toBe(1);
+    expect(rollbackCalls).toHaveLength(0);
+  });
+});

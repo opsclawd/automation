@@ -907,8 +907,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       };
 
-      const rollbackFix = async (ctx: StepContext, targetSha: string): Promise<void> => {
-        execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
+      const rollbackFix = async (ctx: StepContext, targetSha: string): Promise<boolean> => {
+        try {
+          execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
+          return true;
+        } catch {
+          return false;
+        }
       };
 
       // Non-optional local so the ReviewFixHandler closure below can reference it
@@ -1596,6 +1601,19 @@ export function composeRoot(opts: ComposeOptions): Container {
             timestamp: new Date(),
           });
         } catch {}
+      },
+      rollbackFix: async ({ cwd, branch }, targetSha) => {
+        try {
+          execFileSync('git', ['reset', '--hard', targetSha], { cwd });
+        } catch {
+          return false;
+        }
+        try {
+          execFileSync('git', ['push', '--force-with-lease', 'origin', branch], { cwd });
+          return true;
+        } catch {
+          return false;
+        }
       },
     });
     // Wrap the in-memory bus so poll events are persisted to the database.

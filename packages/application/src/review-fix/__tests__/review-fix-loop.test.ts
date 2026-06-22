@@ -232,6 +232,7 @@ describe('ReviewFixLoop', () => {
       }),
       rollbackFix: async (_ctx: StepContext, targetSha: string) => {
         rollbackCalls.push({ targetSha });
+        return true;
       },
     });
     const out = await new ReviewFixLoop(deps).execute(baseInput());
@@ -259,6 +260,7 @@ describe('ReviewFixLoop', () => {
       }),
       rollbackFix: async () => {
         rollbackCalls.push('called');
+        return true;
       },
     });
     await new ReviewFixLoop(deps).execute(baseInput());
@@ -277,6 +279,7 @@ describe('ReviewFixLoop', () => {
       }),
       rollbackFix: async () => {
         rollbackCalls.push('called');
+        return true;
       },
     });
     await new ReviewFixLoop(deps).execute(baseInput());

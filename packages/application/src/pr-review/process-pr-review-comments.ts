@@ -54,6 +54,7 @@ export interface ProcessPrReviewDeps {
   baseBranch?: string;
   repoRoot?: string | undefined;
   onWarning?: (message: string, metadata: Record<string, unknown>, runId: string) => void;
+  rollbackFix?: (ctx: { cwd: string; branch: string }, targetSha: string) => Promise<boolean>;
 }
 
 export interface ProcessPrReviewInput {
@@ -211,6 +212,18 @@ export class ProcessPrReviewComments {
           !lastOutput.processed &&
           !lastOutput.blocked
         ) {
+          const rollbackOk = await d.rollbackFix?.({ cwd: input.cwd, branch: pr.headRefName }, runningStartSha);
+          if (rollbackOk === false) {
+            d.onWarning?.(
+              'rollbackFix failed: broken commits may remain on remote branch',
+              {
+                branch: pr.headRefName,
+                cwd: input.cwd,
+                targetSha: runningStartSha,
+              },
+              String(input.runId),
+            );
+          }
           d.prReviewRepo.upsertComment(
             blockComment(currentComment, `task failed after ${ESCALATION_BUDGET} attempts`),
           );
