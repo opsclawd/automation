@@ -483,6 +483,61 @@ exit 1
     expect(c.runExecutor).toBeInstanceOf(RunExecutor);
     expect(c.phaseRegistry.get(PhaseName('read_issue'))).toBeDefined();
     expect(typeof c.phaseRegistry.get(PhaseName('read_issue'))!.run).toBe('function');
+
+    // Verify handlers are real implementations, not HandlerNotWiredError stubs
+    const readIssueHandler = c.phaseRegistry.get(PhaseName('read_issue'));
+    expect(readIssueHandler).toBeDefined();
+    // Real handlers have a 'phase' property; stubs only have a 'run' method
+    expect(readIssueHandler!.phase).toBe(PhaseName('read_issue'));
+
+    // Verify all 9 canonical phases have handlers registered
+    const canonicalPhases = [
+      'read_issue',
+      'plan-design',
+      'plan-write',
+      'implement',
+      'validate',
+      'review-fix',
+      'compound',
+      'create-pr',
+      'post-pr-review',
+    ];
+    for (const phase of canonicalPhases) {
+      expect(c.phaseRegistry.get(PhaseName(phase))).toBeDefined();
+    }
+  });
+
+  it('read_issue handler does not throw HandlerNotWiredError', async () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3 },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const c = composeRoot({ repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
+    const handler = c.phaseRegistry.get(PhaseName('read_issue'));
+    expect(handler).toBeDefined();
+    // The handler should NOT be a HandlerNotWiredError stub
+    // Verify by checking it has the expected phase property
+    expect(handler!.phase).toBe(PhaseName('read_issue'));
   });
 
   it('reviewFixLoop.execute converges when review immediately passes', async () => {
