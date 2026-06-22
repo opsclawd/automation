@@ -7,8 +7,6 @@ import type {
 } from '../ports.js';
 import { WorkerLeaseConflictError } from '@ai-sdlc/domain';
 
-const EXECUTE_RUN_GRACE_MS = 10_000;
-
 export interface WorkerLoopDeps {
   registry: WorkerRegistryPort;
   queue: JobQueuePort;
@@ -23,13 +21,14 @@ export interface WorkerLoopDeps {
   prepareWorktree: (input: {
     repoId: RepositoryId;
     runId: RunId;
-    signal?: AbortSignal;
+    signal: AbortSignal;
   }) => Promise<{ cwd: string }>;
   resetWorktree: (repoId: RepositoryId) => void;
   isWorkerAlive: (workerId: WorkerId) => boolean;
   recoverableRunIds: ReadonlySet<RunId>;
   now: () => Date;
   ttlMs: number;
+  executeRunGraceMs?: number;
   findRun: (runId: RunId) => Run | undefined;
   onLeaseReclaimed?: (info: {
     repoId: RepositoryId;
@@ -147,16 +146,18 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
           const onAbort = () => {
             graceTimer = setTimeout(
               () => reject(new Error('heartbeat failed during job execution')),
-              EXECUTE_RUN_GRACE_MS,
+              deps.executeRunGraceMs ?? 10_000,
             );
             void executeRunPromise.then(
               () => {
                 clearTimeout(graceTimer);
                 reject(new Error('heartbeat failed during job execution'));
               },
-              () => {
+              (err) => {
                 clearTimeout(graceTimer);
-                reject(new Error('heartbeat failed during job execution'));
+                reject(
+                  new Error(`heartbeat failed during job execution: ${(err as Error).message}`),
+                );
               },
             );
           };
