@@ -504,7 +504,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus,
       });
       const agent = config.agent;
-      resolveProfileForPhaseBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+      // Non-optional local so the ReviewFixHandler closure below can reference it
+      // without a guard (the outer `let` stays `| undefined` for other consumers).
+      const resolveProfileBound = (phaseName: string) => resolveProfileForPhase(agent, phaseName);
+      resolveProfileForPhaseBound = resolveProfileBound;
 
       const router = agentRuntime;
       const reviewProfileName: string =
@@ -908,7 +911,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
       };
 
-      reviewFixLoop = new ReviewFixLoop({
+      // Non-optional local so the ReviewFixHandler closure below can reference it
+      // without a guard (the outer `let` stays `| undefined` for other consumers).
+      const reviewFixLoopInstance = new ReviewFixLoop({
         runReview,
         runFix,
         runRevalidation,
@@ -918,6 +923,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
+      reviewFixLoop = reviewFixLoopInstance;
 
       const implementProfileName: string =
         config.agent.phaseProfiles['implement']?.profile ?? 'opencode-frontier';
@@ -1335,17 +1341,15 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(
         new ReviewFixHandler({
           runLoop: async (ctx) => {
-            if (!reviewFixLoop) throw new Error('reviewFixLoop not initialized');
-            if (!resolveProfileForPhaseBound) throw new Error('resolveProfileForPhaseBound not initialized');
-            const result = await reviewFixLoop.execute({
+            const result = await reviewFixLoopInstance.execute({
               runId: RunId(ctx.runUuid),
               phaseId: PhaseName('review-fix'),
               repoId: ctx.repoFullName,
               cwd: ctx.cwd,
               maxIterations: config.phases.reviewFix.maxIterations,
               blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
-              reviewProfile: AgentProfileName(resolveProfileForPhaseBound('review-fix')),
-              fixProfile: AgentProfileName(resolveProfileForPhaseBound('fix-review')),
+              reviewProfile: AgentProfileName(resolveProfileBound('review-fix')),
+              fixProfile: AgentProfileName(resolveProfileBound('fix-review')),
             });
             return {
               phaseOutcome: result.phaseOutcome,
