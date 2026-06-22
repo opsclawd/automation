@@ -393,6 +393,7 @@ describe('CLI runs execute command', () => {
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', 'nonexistent-uuid'], { from: 'user' });
+      expect(exitSpy).toHaveBeenCalledWith(1);
       spy.mockRestore();
       exitSpy.mockRestore();
       expect(consoleErrs.join('')).toMatch(/no run found/i);
