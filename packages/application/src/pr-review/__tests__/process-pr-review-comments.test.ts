@@ -9,7 +9,6 @@ import {
 import type { AgentInvocationResult } from '../../ports/agent-invocation-types.js';
 import {
   ProcessPrReviewComments,
-  ESCALATION_BUDGET,
   type ProcessPrReviewDeps,
 } from '../process-pr-review-comments.js';
 
@@ -281,7 +280,11 @@ describe('ProcessPrReviewComments — dedup', () => {
 describe('ProcessPrReviewComments — blocking', () => {
   it('blocks a comment when verification fails (build failed)', async () => {
     const agent = new FakeAgentPort({
-      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
     });
     const { deps, repo, github } = makeDeps({
       agent,
@@ -292,7 +295,7 @@ describe('ProcessPrReviewComments — blocking', () => {
       }),
     });
     const uc = new ProcessPrReviewComments(deps);
-    await uc.execute({
+    const out = await uc.execute({
       runId,
       repoId,
       repoFullName: 'o/r',
@@ -301,25 +304,8 @@ describe('ProcessPrReviewComments — blocking', () => {
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
-
-    const c = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
-
-    const out = await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 2,
-    });
-    const after2 = repo.getComment(runId, 9001);
-    expect(after2?.state).toBe('blocked');
+    expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
     expect(out.blocked).toBe(1);
-    // Comment was reset to pending for retry, so the blocking path runs via
-    // verifyOrphaned when state is manually set back to replied with exhausted budget.
     expect(github.repliesPosted).toHaveLength(1);
   });
 });
@@ -686,6 +672,54 @@ describe('ProcessPrReviewComments — per-task retry budget', () => {
     expect(out.blocked).toBe(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
   });
+
+  it('retries with build error feedback when verification fails', async () => {
+    let promptCallCount = 0;
+    const capturedPrompts: unknown[] = [];
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
+    const { deps, github } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => ({ passed: false, error: 'TS2322: Type mismatch' }),
+      renderTaskPrompt: async (input) => {
+        promptCallCount++;
+        capturedPrompts.push(input);
+        return '/tmp/prompt.md';
+      },
+    });
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix this',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+      },
+    ]);
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+    expect(promptCallCount).toBe(3);
+    expect((capturedPrompts[0] as Record<string, unknown>).previousBuildError).toBeUndefined();
+    expect((capturedPrompts[1] as Record<string, unknown>).previousBuildError).toBe(
+      'TS2322: Type mismatch',
+    );
+    expect(out.blocked).toBe(1);
+  });
 });
 
 describe('ProcessPrReviewComments — commit SHA change required for fixed', () => {
@@ -694,7 +728,11 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
     git.headByCwd.set('/work/tree', 'abc123');
     git.remoteRefs.set('origin/feat-x', 'xyz789');
     const agent = new FakeAgentPort({
-      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
     });
     const { deps, github, repo } = makeDeps({ git, agent });
     github.comments.set('o/r/5', [
@@ -709,20 +747,6 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
       },
     ]);
     const uc = new ProcessPrReviewComments(deps);
-    await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 1,
-    });
-    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
-
-    const c2 = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c2, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
-
     const out = await uc.execute({
       runId,
       repoId,
@@ -730,7 +754,7 @@ describe('ProcessPrReviewComments — commit SHA change required for fixed', () 
       prNumber: 5,
       cwd: '/work/tree',
       phaseId: PhaseName('post-pr-review'),
-      pollNumber: 2,
+      pollNumber: 1,
     });
     expect(out.processed).toBe(0);
     expect(out.blocked).toBe(1);
@@ -787,7 +811,11 @@ describe('ProcessPrReviewComments — agent blocks a comment', () => {
 describe('ProcessPrReviewComments — replied with failed verification prevents allResolved', () => {
   it('does not report allResolved when a replied comment has unverified reply', async () => {
     const agent = new FakeAgentPort({
-      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
     });
     const { deps, github, repo } = makeDeps({
       agent,
@@ -810,7 +838,7 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
     ]);
     const uc = new ProcessPrReviewComments(deps);
 
-    await uc.execute({
+    const out1 = await uc.execute({
       runId,
       repoId,
       repoFullName: 'o/r',
@@ -819,21 +847,8 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
       phaseId: PhaseName('post-pr-review'),
       pollNumber: 1,
     });
-    expect(repo.getComment(runId, 9001)?.state).toBe('pending');
 
-    const c = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
-
-    const out1 = await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 2,
-    });
-
+    // Retry loop exhausts budget and blocks the comment immediately
     expect(out1.allResolved).toBe(false);
     expect(out1.processed).toBe(0);
     expect(out1.blocked).toBe(1);
@@ -1025,7 +1040,11 @@ describe('ProcessPrReviewComments — per-task failure isolation', () => {
 describe('ProcessPrReviewComments — reset to pending on failed verification', () => {
   it('resets comment to pending after failed verification, then blocks when budget exhausted', async () => {
     const agent = new FakeAgentPort({
-      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
     });
     const { deps, github, repo } = makeDeps({
       agent,
@@ -1048,7 +1067,7 @@ describe('ProcessPrReviewComments — reset to pending on failed verification', 
     ]);
     const uc = new ProcessPrReviewComments(deps);
 
-    await uc.execute({
+    const out = await uc.execute({
       runId,
       repoId,
       repoFullName: 'o/r',
@@ -1058,30 +1077,12 @@ describe('ProcessPrReviewComments — reset to pending on failed verification', 
       pollNumber: 1,
     });
 
+    // Retry loop exhausts budget and blocks the comment immediately.
     const after1 = repo.getComment(runId, 9001);
-    expect(after1?.state).toBe('pending');
+    expect(after1?.state).toBe('blocked');
     expect(after1?.replyVerified).toBe(false);
-    // Comment was reset to pending for agent retry (resetForRetry).
     expect(github.repliesPosted).toHaveLength(1);
-
-    const c = repo.getComment(runId, 9001)!;
-    repo.upsertComment({ ...c, state: 'replied', outcome: 'fixed', attempts: ESCALATION_BUDGET });
-
-    await uc.execute({
-      runId,
-      repoId,
-      repoFullName: 'o/r',
-      prNumber: 5,
-      cwd: '/work/tree',
-      phaseId: PhaseName('post-pr-review'),
-      pollNumber: 2,
-    });
-
-    // verifyOrphaned blocks the comment when budget is exhausted.
-    expect(github.repliesPosted).toHaveLength(1);
-    const after2 = repo.getComment(runId, 9001);
-    expect(after2?.state).toBe('blocked');
-    expect(after2?.replyVerified).toBe(false);
+    expect(out.blocked).toBe(1);
   });
 });
 
@@ -1457,10 +1458,9 @@ describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha
       pollNumber: 1,
     });
 
-    expect(verifyCalls.length).toBe(2);
+    expect(verifyCalls.length).toBe(1);
     expect(verifyCalls[0]!.commitSha).toBe(agentACommit);
     expect(verifyCalls[0]!.startCommitSha).toBe(sharedStart);
-    expect(verifyCalls[1]!.commitSha).toBe(agentACommit);
 
     expect(out.processed).toBe(0);
     const comment = repo.getComment(runId, 9001);

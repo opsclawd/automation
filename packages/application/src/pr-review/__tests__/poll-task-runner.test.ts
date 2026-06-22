@@ -209,6 +209,62 @@ describe('PollTaskRunner — happy path', () => {
     expect(capturedResultJsonPath).toBe('/tmp/result.json');
     expect(capturedCwd).toBe('/work/tree');
   });
+
+  it('returns buildError when verification fails due to build', async () => {
+    const { deps, git } = makeDeps({
+      verifyBuildPasses: async () => ({ passed: false, error: 'tsc failed: TS2322' }),
+    });
+    git.headByCwd.set('/work/tree', 'newSha');
+    const runner = new PollTaskRunner(deps);
+    const output = await runner.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId,
+      pollNumber: 1,
+      comment: makeComment({ commitSha: 'newSha' }),
+      diff: '',
+      branch: 'feat-x',
+      startCommitSha: 'abc123',
+      unresolvedCommentCount: 1,
+    });
+    expect(output.processed).toBe(false);
+    expect(output.buildError).toBe('tsc failed: TS2322');
+    expect(output.action).toBe('fixed');
+  });
+
+  it('passes previousBuildError to renderTaskPrompt', async () => {
+    let capturedInput: Record<string, unknown> | undefined;
+    const { deps } = makeDeps({
+      renderTaskPrompt: async (input) => {
+        capturedInput = input;
+        return '/tmp/prompt.md';
+      },
+      verifyBuildPasses: async () => ({ passed: false, error: 'build broke' }),
+    });
+    const runner = new PollTaskRunner(deps);
+    await runner.execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work/tree',
+      phaseId,
+      pollNumber: 1,
+      comment: makeComment({ commitSha: 'newSha' }),
+      diff: '',
+      branch: 'feat-x',
+      startCommitSha: 'abc123',
+      unresolvedCommentCount: 1,
+      previousBuildError: 'previous error from attempt 1',
+    });
+    expect(capturedInput).toBeDefined();
+    expect((capturedInput as Record<string, unknown>).previousBuildError).toBe(
+      'previous error from attempt 1',
+    );
+  });
 });
 
 describe('PollTaskRunner — failure isolation', () => {
