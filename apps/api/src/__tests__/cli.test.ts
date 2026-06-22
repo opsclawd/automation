@@ -410,8 +410,8 @@ describe('CLI runs execute command', () => {
     }
   });
 
-  it('runs execute exits 1 when run status is not queued', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-nq-')));
+  it('runs execute succeeds when run status is running (not queued)', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-running-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     writeFileSync(
       join(root, '.ai-orchestrator.json'),
@@ -439,16 +439,16 @@ describe('CLI runs execute command', () => {
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
     const db = openDatabase(dbPath);
     applyMigrations(db);
-    const runUuid = 'test-exec-nq-uuid';
+    const runUuid = 'test-exec-running-uuid';
     db.prepare(
       `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
-      'issue-99-20260520-000000',
+      'issue-99-20260622-000000',
       99,
       'issue_to_pr',
-      'passed',
+      'running',
       '[]',
       new Date().toISOString(),
     );
@@ -457,21 +457,33 @@ describe('CLI runs execute command', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
-      const consoleErrs: string[] = [];
-      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
-        consoleErrs.push(String(msg));
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: runUuid,
+          status: 'passed' as const,
+          displayId: 'issue-99-20260622-000000',
+          issueNumber: 99,
+          type: 'issue_to_pr',
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
       });
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
       const program = buildProgram();
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
-      const capturedConsole = consoleErrs.join('');
-      const exitCode = exitSpy.mock.calls[0]?.[0];
-      spy.mockRestore();
-      exitSpy.mockRestore();
-      expect(exitCode).toBe(1);
-      expect(capturedConsole).toMatch(/expected queued/i);
+      executeSpy.mockRestore();
+      writeSpy.mockRestore();
+      const output = JSON.parse(stdoutChunks.join(''));
+      expect(output.run.uuid).toBe(runUuid);
+      expect(output.run.status).toBe('passed');
     } finally {
       process.chdir(savedCwd);
     }

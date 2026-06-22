@@ -263,10 +263,6 @@ export function buildProgram(): Command {
               console.error(`No run found for uuid ${opts.uuid}`);
               process.exit(1);
             }
-            if (run.status !== 'queued') {
-              console.error(`Run ${opts.uuid} has status ${run.status}, expected queued`);
-              process.exit(1);
-            }
             const result = await c.runExecutor.execute({
               run,
               skip: [],
