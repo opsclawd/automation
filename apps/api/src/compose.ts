@@ -1461,13 +1461,19 @@ export function composeRoot(opts: ComposeOptions): Container {
         ];
 
         if (previousBuildError !== undefined) {
+          const truncatedError =
+            previousBuildError.length > 4000
+              ? previousBuildError.slice(0, 2000) +
+                '\n... (truncated) ...\n' +
+                previousBuildError.slice(-2000)
+              : previousBuildError;
           sections.push(
             '## Previous Attempt Failed',
             '',
             'The previous fix attempt failed the build with the following error:',
             '',
             '```',
-            previousBuildError,
+            truncatedError,
             '```',
             '',
             'Please adjust your fix to resolve this error.',

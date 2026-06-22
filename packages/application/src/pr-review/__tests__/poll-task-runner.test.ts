@@ -237,13 +237,14 @@ describe('PollTaskRunner — happy path', () => {
 
   it('passes previousBuildError to renderTaskPrompt', async () => {
     let capturedInput: Record<string, unknown> | undefined;
-    const { deps } = makeDeps({
+    const { deps, git } = makeDeps({
       renderTaskPrompt: async (input) => {
         capturedInput = input;
         return '/tmp/prompt.md';
       },
       verifyBuildPasses: async () => ({ passed: false, error: 'build broke' }),
     });
+    git.headByCwd.set('/work/tree', 'abc123');
     const runner = new PollTaskRunner(deps);
     await runner.execute({
       runId,
