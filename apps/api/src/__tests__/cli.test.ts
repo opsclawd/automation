@@ -341,6 +341,67 @@ describe('CLI runs cancel command', () => {
   });
 });
 
+describe('CLI runs execute command', () => {
+  it('runs execute exits 1 when --uuid is missing', async () => {
+    const program = buildProgram();
+    program.exitOverride();
+    await expect(
+      program.parseAsync(['node', 'orchestrator', 'runs', 'execute'], { from: 'user' }),
+    ).rejects.toMatchObject({ exitCode: 1 });
+  });
+
+  it('runs execute exits 1 when run not found', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-nf-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['execute', '--uuid', 'nonexistent-uuid'], { from: 'user' });
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(consoleErrs.join('')).toMatch(/no run found/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+});
+
 describe('CLI run command signal handlers', () => {
   it('marks run as cancelled when process receives SIGTERM', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigterm-')));
