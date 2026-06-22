@@ -12,11 +12,57 @@ import {
 import { newRunId } from '@ai-sdlc/shared';
 import { composeRoot, type ComposeOptions } from './compose.js';
 
-const LEASE_TTL_MS = 120_000;
-const HEARTBEAT_INTERVAL_MS = 30_000;
+export interface LeaseConfig {
+  ttlMs: number;
+  heartbeatIntervalMs: number;
+}
+
+const DEFAULT_LEASE_TTL_MS = 120_000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
 export interface BuildProgramOptions {
   composeOverrides?: Partial<ComposeOptions>;
+  lease?: Partial<LeaseConfig>;
+}
+
+interface LeaseRepo {
+  heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, expiresAt: Date): void;
+  release(repoId: RepositoryId, workerId: WorkerId): void;
+}
+
+function startLeaseHeartbeat(
+  leaseRepo: LeaseRepo,
+  repoId: RepositoryId,
+  workerId: WorkerId,
+  ttlMs: number,
+  intervalMs: number,
+): { stop: () => void } {
+  let heartbeatFailures = 0;
+  const maxHeartbeatFailures = Math.ceil(ttlMs / intervalMs) - 1;
+  const timer = setInterval(() => {
+    const hbNow = new Date();
+    try {
+      leaseRepo.heartbeat(repoId, workerId, hbNow, new Date(hbNow.getTime() + ttlMs));
+      heartbeatFailures = 0;
+    } catch (err) {
+      heartbeatFailures++;
+      if (heartbeatFailures >= maxHeartbeatFailures) {
+        console.error(`Fatal: heartbeat failed ${heartbeatFailures}x, aborting run.`);
+        process.exit(2);
+      }
+      if (heartbeatFailures === 1 || heartbeatFailures % 5 === 0) {
+        console.error(
+          `Warning: heartbeat failed (${heartbeatFailures}x): ${(err as Error)?.message ?? String(err)}`,
+        );
+      }
+    }
+  }, intervalMs);
+  return {
+    stop: () => {
+      clearInterval(timer);
+      leaseRepo.release(repoId, workerId);
+    },
+  };
 }
 
 export function findRepoRoot(
@@ -105,7 +151,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.exit(1);
           }
 
-          const workerId = WorkerId(`cli-pid-${process.pid}`);
+          const workerId = WorkerId(`cli-${process.pid}`);
           const repoId = RepositoryId(c.repoFullName);
           const startedAt = new Date();
           const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
@@ -116,13 +162,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             startedAt,
           });
 
+          const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
+          const heartbeatIntervalMs =
+            buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+
           try {
             c.workerLeaseRepository.acquire({
               repoId,
               workerId,
               runId: RunId(run.uuid),
               now: startedAt,
-              ttlMs: LEASE_TTL_MS,
+              ttlMs: leaseTtlMs,
             });
           } catch (err) {
             if (err instanceof WorkerLeaseConflictError) {
@@ -134,14 +184,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             throw err;
           }
 
-          c.runRepository.insertIfNoActive(run);
-
           const cleanup = async (signal: string) => {
-            c.runRepository.updateStatusByIssueNumber(opts.issue, {
-              status: 'cancelled',
-              completedAt: new Date(),
-              failureReason: `interrupted by ${signal}`,
-            });
+            const existing = c.runRepository.findByIssueNumber(opts.issue);
+            if (existing && existing.pid === process.pid) {
+              c.runRepository.updateStatusByIssueNumber(opts.issue, {
+                status: 'cancelled',
+                completedAt: new Date(),
+                failureReason: `interrupted by ${signal}`,
+              });
+            }
           };
 
           const sigintHandler = () => {
@@ -168,28 +219,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           process.on('uncaughtException', uncaughtHandler);
           process.on('unhandledRejection', unhandledHandler);
 
-          let heartbeatFailures = 0;
-          const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
-            const hbNow = new Date();
-            try {
-              c.workerLeaseRepository.heartbeat(
-                repoId,
-                workerId,
-                hbNow,
-                new Date(hbNow.getTime() + LEASE_TTL_MS),
-              );
-              heartbeatFailures = 0;
-            } catch (err) {
-              heartbeatFailures++;
-              if (heartbeatFailures === 1 || heartbeatFailures % 5 === 0) {
-                console.error(
-                  `Warning: heartbeat failed (${heartbeatFailures}x): ${(err as Error)?.message ?? String(err)}`,
-                );
-              }
-            }
-          }, HEARTBEAT_INTERVAL_MS);
+          const lease = startLeaseHeartbeat(
+            c.workerLeaseRepository,
+            repoId,
+            workerId,
+            leaseTtlMs,
+            heartbeatIntervalMs,
+          );
 
           try {
+            c.runRepository.insertIfNoActive(run);
             const result = await c.runExecutor.execute({
               run,
               skip: [],
@@ -212,8 +251,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.off('SIGTERM', sigtermHandler);
             process.off('uncaughtException', uncaughtHandler);
             process.off('unhandledRejection', unhandledHandler);
-            clearInterval(heartbeatTimer);
-            c.workerLeaseRepository.release(repoId, workerId);
+            lease.stop();
           }
         } else {
           // --- Bash executor path ---
@@ -434,14 +472,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               process.exit(1);
             }
             const repoId = RepositoryId(c.repoFullName);
-            const workerId = WorkerId(`cli-execute-${process.pid}`);
+            const workerId = WorkerId(`cli-${process.pid}`);
+            const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
+            const heartbeatIntervalMs =
+              buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
             try {
               c.workerLeaseRepository.acquire({
                 repoId,
                 workerId,
                 runId: RunId(opts.uuid),
                 now: new Date(),
-                ttlMs: LEASE_TTL_MS,
+                ttlMs: leaseTtlMs,
               });
             } catch (err) {
               if (err instanceof WorkerLeaseConflictError) {
@@ -453,26 +494,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               throw err;
             }
 
-            let heartbeatFailures = 0;
-            const heartbeatTimer = setInterval(() => {
-              const hbNow = new Date();
-              try {
-                c.workerLeaseRepository.heartbeat(
-                  repoId,
-                  workerId,
-                  hbNow,
-                  new Date(hbNow.getTime() + LEASE_TTL_MS),
-                );
-                heartbeatFailures = 0;
-              } catch (err) {
-                heartbeatFailures++;
-                if (heartbeatFailures === 1 || heartbeatFailures % 5 === 0) {
-                  console.error(
-                    `Warning: heartbeat failed (${heartbeatFailures}x): ${(err as Error)?.message ?? String(err)}`,
-                  );
-                }
-              }
-            }, HEARTBEAT_INTERVAL_MS);
+            const lease = startLeaseHeartbeat(
+              c.workerLeaseRepository,
+              repoId,
+              workerId,
+              leaseTtlMs,
+              heartbeatIntervalMs,
+            );
             try {
               const result = await c.runExecutor.execute({
                 run,
@@ -486,8 +514,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }) + '\n',
               );
             } finally {
-              clearInterval(heartbeatTimer);
-              c.workerLeaseRepository.release(repoId, workerId);
+              lease.stop();
             }
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
