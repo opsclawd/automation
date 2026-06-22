@@ -477,12 +477,15 @@ describe('CLI runs execute command', () => {
         stdoutChunks.push(String(chunk));
         return true;
       });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
       const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['execute', '--uuid', runUuid], { from: 'user' });
+      expect(exitSpy).not.toHaveBeenCalled();
       executeSpy.mockRestore();
       writeSpy.mockRestore();
+      exitSpy.mockRestore();
       const output = JSON.parse(stdoutChunks.join(''));
       expect(output.run.uuid).toBe(runUuid);
       expect(output.run.status).toBe('passed');

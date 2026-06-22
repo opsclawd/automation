@@ -136,6 +136,39 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           c.runRepository.insertIfNoActive(run);
 
+          const cleanup = async (signal: string) => {
+            c.runRepository.updateStatusByIssueNumber(opts.issue, {
+              status: 'cancelled',
+              completedAt: new Date(),
+              failureReason: `interrupted by ${signal}`,
+            });
+          };
+
+          const sigintHandler = () => {
+            cleanup('SIGINT').finally(() => process.exit(130));
+          };
+          const sigtermHandler = () => {
+            cleanup('SIGTERM').finally(() => process.exit(143));
+          };
+          const uncaughtHandler = (err: Error) => {
+            cleanup('uncaughtException').finally(() => {
+              console.error(err instanceof Error ? err.message : String(err));
+              process.exit(1);
+            });
+          };
+          const unhandledHandler = (reason: unknown) => {
+            cleanup('unhandledRejection').finally(() => {
+              console.error(reason instanceof Error ? reason.message : String(reason));
+              process.exit(1);
+            });
+          };
+
+          process.on('SIGINT', sigintHandler);
+          process.on('SIGTERM', sigtermHandler);
+          process.on('uncaughtException', uncaughtHandler);
+          process.on('unhandledRejection', unhandledHandler);
+
+          let heartbeatFailures = 0;
           const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
             const hbNow = new Date();
             try {
@@ -145,8 +178,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 hbNow,
                 new Date(hbNow.getTime() + LEASE_TTL_MS),
               );
-            } catch {
-              // Best-effort: heartbeat failure should not crash the executor
+              heartbeatFailures = 0;
+            } catch (err) {
+              heartbeatFailures++;
+              if (heartbeatFailures === 1 || heartbeatFailures % 5 === 0) {
+                console.error(
+                  `Warning: heartbeat failed (${heartbeatFailures}x): ${(err as Error)?.message ?? String(err)}`,
+                );
+              }
             }
           }, HEARTBEAT_INTERVAL_MS);
 
@@ -169,6 +208,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             );
             process.exit(2);
           } finally {
+            process.off('SIGINT', sigintHandler);
+            process.off('SIGTERM', sigtermHandler);
+            process.off('uncaughtException', uncaughtHandler);
+            process.off('unhandledRejection', unhandledHandler);
             clearInterval(heartbeatTimer);
             c.workerLeaseRepository.release(repoId, workerId);
           }
@@ -392,13 +435,44 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             }
             const repoId = RepositoryId(c.repoFullName);
             const workerId = WorkerId(`cli-execute-${process.pid}`);
-            c.workerLeaseRepository.acquire({
-              repoId,
-              workerId,
-              runId: RunId(opts.uuid),
-              now: new Date(),
-              ttlMs: LEASE_TTL_MS,
-            });
+            try {
+              c.workerLeaseRepository.acquire({
+                repoId,
+                workerId,
+                runId: RunId(opts.uuid),
+                now: new Date(),
+                ttlMs: LEASE_TTL_MS,
+              });
+            } catch (err) {
+              if (err instanceof WorkerLeaseConflictError) {
+                console.error(
+                  `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
+                );
+                process.exit(1);
+              }
+              throw err;
+            }
+
+            let heartbeatFailures = 0;
+            const heartbeatTimer = setInterval(() => {
+              const hbNow = new Date();
+              try {
+                c.workerLeaseRepository.heartbeat(
+                  repoId,
+                  workerId,
+                  hbNow,
+                  new Date(hbNow.getTime() + LEASE_TTL_MS),
+                );
+                heartbeatFailures = 0;
+              } catch (err) {
+                heartbeatFailures++;
+                if (heartbeatFailures === 1 || heartbeatFailures % 5 === 0) {
+                  console.error(
+                    `Warning: heartbeat failed (${heartbeatFailures}x): ${(err as Error)?.message ?? String(err)}`,
+                  );
+                }
+              }
+            }, HEARTBEAT_INTERVAL_MS);
             try {
               const result = await c.runExecutor.execute({
                 run,
@@ -412,6 +486,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }) + '\n',
               );
             } finally {
+              clearInterval(heartbeatTimer);
               c.workerLeaseRepository.release(repoId, workerId);
             }
           } catch (err) {
