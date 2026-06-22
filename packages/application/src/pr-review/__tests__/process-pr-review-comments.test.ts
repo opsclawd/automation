@@ -1919,6 +1919,7 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
     expect(out.blocked).toBe(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
     expect(rollbackCalls).toHaveLength(1);
+    expect(rollbackCalls[0].sha).toBe('sha-2');
     expect(rollbackCalls[0].ctx).toEqual({ cwd: '/work/tree', branch: 'feat-x' });
   });
 
