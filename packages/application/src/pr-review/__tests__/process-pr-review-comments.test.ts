@@ -1901,6 +1901,7 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
       verifyBuildPasses: async () => ({ passed: false, error: 'TS2722: Type mismatch' }),
       rollbackFix: async (ctx, sha) => {
         rollbackCalls.push({ ctx, sha });
+        return true;
       },
     });
 
@@ -1926,6 +1927,7 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
     const { deps } = makeDeps({
       rollbackFix: async (ctx, sha) => {
         rollbackCalls.push({ ctx, sha });
+        return true;
       },
     });
 
@@ -1958,6 +1960,7 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
       }),
       rollbackFix: async (ctx, sha) => {
         rollbackCalls.push({ ctx, sha });
+        return true;
       },
     });
 

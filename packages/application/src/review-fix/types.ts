@@ -61,7 +61,7 @@ export interface ReviewFixLoopDeps {
   events: EventBusPort;
   now: () => Date;
   idFactory: () => string;
-  rollbackFix?: (ctx: StepContext, targetSha: string) => Promise<void>;
+  rollbackFix?: (ctx: StepContext, targetSha: string) => Promise<boolean>;
 }
 
 export interface ReviewFixLoopInput {
