@@ -1088,6 +1088,12 @@ describe('CLI run --executor ts', () => {
       expect(output.run.status).toBe('passed');
       expect(output.phases).toBeInstanceOf(Array);
       expect(releaseSpy).toHaveBeenCalledOnce(); // lease was released
+      // Released BEFORE process.exit — not via a finally block, which the real
+      // process.exit() bypasses (regression guard: relying on finally leaks the
+      // lease in production, locking the repo after one run).
+      expect(releaseSpy.mock.invocationCallOrder[0]!).toBeLessThan(
+        exitSpy.mock.invocationCallOrder[0]!,
+      );
       expect(insertSpy).toHaveBeenCalledOnce();
       expect(insertSpy.mock.calls[0][0]).toMatchObject({
         issueNumber: 57,

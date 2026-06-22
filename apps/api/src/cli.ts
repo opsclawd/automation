@@ -275,6 +275,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 (err) => (err ? reject(err) : resolve()),
               ),
             );
+            // Release the lease BEFORE process.exit — process.exit() does not run
+            // the finally block, so relying on it leaks the lease on every
+            // completed run. With no worker-loop to reclaim expired leases on the
+            // Option-A direct path, a leaked lease locks the repo after one run.
+            signalHandlers?.remove();
+            lease?.stop();
             process.exit(result.run.status === 'passed' ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             signalHandlers?.remove();
@@ -283,10 +289,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               `Run ${run.uuid} (issue #${run.issueNumber}) failed: ${err instanceof Error ? err.message : String(err)}`,
             );
             process.exit(EXIT_INTERNAL_ERROR);
-          } finally {
-            signalHandlers?.remove();
-            lease?.stop();
           }
+          // No finally: process.exit() bypasses it. Both the success and catch
+          // paths above release the lease (signalHandlers.remove + lease.stop)
+          // immediately before exiting, so the lease is released exactly once.
         } else {
           // --- Bash executor path ---
 
