@@ -292,7 +292,12 @@ async function _assemblePrSummary(ctx: PhaseHandlerContext): Promise<string> {
   parts.push('## Review Findings', prReview, '');
   if (prAutonomousActions) parts.push(prAutonomousActions, '');
   parts.push('## Artifacts', `Run logs and artifacts: \`ai/issues/${ctx.issueNumber}/\``);
-  return parts.join('\n');
+
+  let body = parts.join('\n');
+  if (Buffer.byteLength(body, 'utf-8') > MAX_PR_BODY_BYTES) {
+    body = _truncateBody(body);
+  }
+  return body;
 }
 
 /** Extract the first non-empty paragraph starting from line 2 of the impl log.
@@ -368,6 +373,70 @@ function _parseReviewFindings(reviewText: string): string {
   const critHigh = (reviewText.match(/- severity:\s*(critical|high)\b/gim) ?? []).length;
   const mediLow = (reviewText.match(/- severity:\s*(medium|low)\b/gim) ?? []).length;
   return `- Critical/High: ${critHigh}\n- Medium/Low: ${mediLow}`;
+}
+
+// GitHub PR body limit is 256 KB; stay well under to leave room for GitHub's response envelope.
+const MAX_PR_BODY_BYTES = 240_000;
+
+function _truncateBody(body: string): string {
+  const footer =
+    '\n\n---\n> PR body truncated to fit within GitHub size limits. Some artifact content omitted.';
+
+  const maxBytes = MAX_PR_BODY_BYTES - Buffer.byteLength(footer, 'utf-8');
+
+  // Try stripping autonomous actions section first (most variable)
+  let candidate = _removeSection(body, '## Autonomous Actions');
+  if (Buffer.byteLength(candidate, 'utf-8') <= maxBytes) {
+    return candidate + footer;
+  }
+
+  // Then try stripping the review findings section
+  candidate = _removeSection(candidate, '## Review Findings');
+  if (Buffer.byteLength(candidate, 'utf-8') <= maxBytes) {
+    return candidate + footer;
+  }
+
+  // Then try stripping validation steps
+  candidate = _removeValidationSteps(candidate);
+  if (Buffer.byteLength(candidate, 'utf-8') <= maxBytes) {
+    return candidate + footer;
+  }
+
+  // Last resort: character-level truncation at a line boundary
+  let result = body;
+  while (Buffer.byteLength(result, 'utf-8') > maxBytes) {
+    result = result.slice(0, Math.floor(result.length * 0.9));
+    const nl = result.lastIndexOf('\n');
+    if (nl > 0) result = result.slice(0, nl);
+  }
+  return result + footer;
+}
+
+/** Remove a section header and all content until the next section header or EOF. */
+function _removeSection(body: string, header: string): string {
+  const idx = body.indexOf(`\n${header}\n`);
+  if (idx === -1) return body;
+  const afterHeader = body.indexOf('\n', idx + header.length + 2);
+  if (afterHeader === -1) return body.slice(0, Math.max(0, idx)).trimEnd();
+
+  const remaining = body.slice(afterHeader + 1);
+  const nextHeader = remaining.search(/\n## /);
+  const end = nextHeader === -1 ? remaining.length : nextHeader + 1;
+  return body.slice(0, Math.max(0, idx)).trimEnd() + remaining.slice(end);
+}
+
+/** Remove all ## Validation: content between the header and the next ## header or EOF. */
+function _removeValidationSteps(body: string): string {
+  const idx = body.indexOf('\n## Validation:');
+  if (idx === -1) return body;
+  const afterHeader = body.indexOf('\n', idx + 1);
+  if (afterHeader === -1) return body.slice(0, Math.max(0, idx)).trimEnd();
+
+  // After the validation status line, look for either '## Review Findings' or EOF
+  const remaining = body.slice(afterHeader + 1);
+  const nextSection = remaining.search(/\n## /);
+  const end = nextSection === -1 ? remaining.length : nextSection + 1;
+  return body.slice(0, Math.max(0, idx)).trimEnd() + remaining.slice(end);
 }
 
 function _firstHeadingOrLine(summary: string, issueNumber: number): string {
