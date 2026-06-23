@@ -73,6 +73,7 @@ import {
   type StepRepositoryPort,
   type ReviewStepResult,
   type FixStepResult,
+  type GitPort,
   type RevalidationResult,
   type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
@@ -170,6 +171,10 @@ export interface Container {
   prReviewRepository: PrReviewRepository;
   loopRepository: LoopRepository;
   workerLeaseRepository: WorkerLeaseRepository;
+  /** Exposed for worktree lifecycle management in CLI and tests. */
+  git: GitPort;
+  /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
+  buildRunContext?: (run: Run) => PhaseHandlerContext;
   repoFullName?: string;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
@@ -465,6 +470,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let implementStepLoop: ImplementStepLoopType | undefined;
   let runStep: Container['runStep'] | undefined;
   let runExecutor: RunExecutor | undefined;
+  let buildRunContext: ((run: Run) => PhaseHandlerContext) | undefined;
   try {
     const config = loadConfig(opts.repoRoot);
     if (config.agent) {
@@ -1003,9 +1009,14 @@ export function composeRoot(opts: ComposeOptions): Container {
             events: eventBus,
             now: () => new Date(),
           },
-          startCommitSha ? { startCommitSha } : {},
+          {
+            promptsRoot: join(opts.repoRoot, 'prompts'),
+            expectedBranch: `ai/issue-${run.issueNumber}`,
+            ...(startCommitSha ? { startCommitSha } : {}),
+          },
         );
       };
+      buildRunContext = buildContext;
 
       const runImplement = async (ctx: StepLoopContext) => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -1766,6 +1777,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     prReviewRepository,
     loopRepository,
     workerLeaseRepository,
+    git: gitAdapter,
     ...(resolvedRepoFullName !== undefined ? { repoFullName: resolvedRepoFullName } : {}),
     runValidation,
     startIssueRun,
@@ -1775,6 +1787,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     defaultBranch: resolvedDefaultBranch,
     eventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
+    ...(buildRunContext !== undefined ? { buildRunContext } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
     buildPrReviewPoller,
     ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),

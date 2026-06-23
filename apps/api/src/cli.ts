@@ -253,6 +253,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           let signalHandlers: { remove: () => void } | undefined;
           let lease: { stop: () => void } | undefined;
+          const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
           try {
             signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
             lease = startLeaseHeartbeat(
@@ -264,11 +265,26 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             );
 
             c.runRepository.insertIfNoActive(run);
+            await c.git.createWorktree({
+              repoLocalBasePath: repoRoot,
+              worktreePath,
+              branch: `ai/issue-${opts.issue}`,
+              baseBranch: c.defaultBranch,
+            });
+            const sha = await c.git.headCommitSha(worktreePath);
+            c.runRepository.update(run.uuid, { startCommitSha: sha });
             const result = await c.runExecutor.execute({
               run,
               skip: [],
               presentArtifacts: [],
             });
+            if (result.run.status === 'passed') {
+              try {
+                await c.git.removeWorktree(worktreePath);
+              } catch {
+                // best-effort: leave worktree intact on cleanup failure
+              }
+            }
             await new Promise<void>((resolve, reject) =>
               process.stdout.write(
                 JSON.stringify({ run: result.run, phases: result.phases }) + '\n',
@@ -285,6 +301,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           } catch (err) {
             signalHandlers?.remove();
             lease?.stop();
+            try {
+              // Only mark failed if the run is still 'running'. runExecutor.execute()
+              // persists its own terminal status (passed / blocked / cancelled /
+              // needs_human_review / failed) before returning, so a throw AFTER it
+              // returns — e.g. process.stdout.write rejecting (EPIPE) or lease.stop
+              // throwing — must NOT overwrite that status with 'failed'. The
+              // conditional update is a no-op unless the run is still 'running'
+              // (i.e. execute() itself threw before finalizing a status).
+              c.runRepository.atomicUpdateByUuid(
+                run.uuid,
+                {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  // Clear currentPhase on failure, matching the domain failRun()
+                  // transition (run.ts) and CancelRun's terminal update.
+                  currentPhase: null,
+                  failureReason: err instanceof Error ? err.message : String(err),
+                },
+                'running',
+              );
+            } catch {
+              // best-effort: DB write may fail
+            }
+            try {
+              await c.git.removeWorktree(worktreePath);
+            } catch {
+              // best-effort: may not exist or already removed
+            }
             console.error(
               `Run ${run.uuid} (issue #${run.issueNumber}) failed: ${err instanceof Error ? err.message : String(err)}`,
             );

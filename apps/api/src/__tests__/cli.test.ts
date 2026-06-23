@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunExecutor } from '@ai-sdlc/application';
-import { RunRepository, WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
+import { GitWorktreeAdapter, RunRepository, WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
 import { WorkerLeaseConflictError, WorkerId, RepositoryId } from '@ai-sdlc/domain';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1055,6 +1055,15 @@ describe('CLI run --executor ts', () => {
       });
 
       const insertSpy = vi.spyOn(RunRepository.prototype, 'insertIfNoActive');
+      const createWorktreeSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
+        .mockResolvedValue(undefined);
+      const headCommitShaSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
+        .mockResolvedValue('abc123def456abc123def456abc123def456abc123');
+      const removeWorktreeSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'removeWorktree')
+        .mockResolvedValue(undefined);
 
       const stdoutChunks: string[] = [];
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
@@ -1099,14 +1108,138 @@ describe('CLI run --executor ts', () => {
         issueNumber: 57,
         displayId: expect.any(String),
       });
+      // Worktree was created before execute
+      expect(createWorktreeSpy).toHaveBeenCalledOnce();
+      expect(createWorktreeSpy.mock.calls[0][0]).toMatchObject({
+        branch: 'ai/issue-57',
+      });
+      // removeWorktree called once because run passed
+      expect(removeWorktreeSpy).toHaveBeenCalledOnce();
 
       acquireSpy.mockRestore();
       heartbeatSpy.mockRestore();
       releaseSpy.mockRestore();
       executeSpy.mockRestore();
       insertSpy.mockRestore();
+      createWorktreeSpy.mockRestore();
+      headCommitShaSpy.mockRestore();
+      removeWorktreeSpy.mockRestore();
       writeSpy.mockRestore();
       exitSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('does not overwrite a non-passed terminal status with failed when stdout write rejects', async () => {
+    // Regression for PR #458 threads r3456905472 / r3456964886: execute() persists
+    // its terminal status (here 'blocked'); if process.stdout.write then rejects
+    // (EPIPE), the catch must NOT clobber it with 'failed'. The fix uses a
+    // conditional atomicUpdateByUuid(..., 'running') instead of unconditional update().
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-term-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-pid-${process.pid}`),
+        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
+        'abc123def456abc123def456abc123def456abc123',
+      );
+      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
+      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
+
+      // execute() returns a terminal 'blocked' status (already persisted by execute)
+      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: 'mock-run-uuid',
+          status: 'blocked' as const,
+          displayId: 'issue-58-20260622-000000',
+          issueNumber: 58,
+          type: 'issue_to_pr',
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+
+      const atomicSpy = vi
+        .spyOn(RunRepository.prototype, 'atomicUpdateByUuid')
+        .mockReturnValue(false); // no-op: run is 'blocked', not 'running'
+      const updateSpy = vi.spyOn(RunRepository.prototype, 'update').mockReturnValue(undefined);
+
+      // stdout.write REJECTS (EPIPE) → drives the catch block
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        _chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(new Error('EPIPE'));
+        return false;
+      }) as never);
+      vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '58',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
+      ]);
+
+      // The catch must use the guarded conditional update (expectedStatus 'running'),
+      // which is a no-op on the 'blocked' run — never the unconditional update().
+      expect(atomicSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: 'failed' }),
+        'running',
+      );
+      expect(updateSpy).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 'failed' }),
+      );
+
+      vi.restoreAllMocks();
     } finally {
       process.chdir(savedCwd);
     }
@@ -1363,6 +1496,246 @@ describe('CLI run --executor ts', () => {
 
       acquireSpy.mockRestore();
       releaseSpy.mockRestore();
+      executeSpy.mockRestore();
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('creates worktree before execute and captures startCommitSha on the run record', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-worktree-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const callOrder: string[] = [];
+
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-pid-${process.pid}`),
+        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockReturnValue(undefined);
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
+      const createWorktreeSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
+        .mockImplementation(async () => {
+          callOrder.push('createWorktree');
+        });
+      const headCommitShaSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
+        .mockResolvedValue('deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+      const removeWorktreeSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'removeWorktree')
+        .mockResolvedValue(undefined);
+      const updateSpy = vi.spyOn(RunRepository.prototype, 'update');
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockImplementation(async () => {
+        callOrder.push('execute');
+        return {
+          run: {
+            uuid: 'mock-run-uuid',
+            status: 'passed' as const,
+            displayId: 'issue-61-20260622-000000',
+            issueNumber: 61,
+            type: 'issue_to_pr' as const,
+            completedPhases: ['read-issue'],
+            skippedPhases: [],
+            startedAt: new Date(),
+          },
+          phases: [{ phase: 'read-issue', status: 'passed' }],
+        };
+      });
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '61',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
+      ]);
+
+      // createWorktree must happen before execute
+      expect(callOrder).toEqual(['createWorktree', 'execute']);
+      // branch name must be ai/issue-<N>
+      expect(createWorktreeSpy.mock.calls[0][0]).toMatchObject({ branch: 'ai/issue-61' });
+      // startCommitSha must be set on the run record via update()
+      const updateCalls = updateSpy.mock.calls;
+      const shaUpdate = updateCalls.find(
+        (c) => c[1] && (c[1] as Record<string, unknown>).startCommitSha,
+      );
+      expect(shaUpdate).toBeDefined();
+      expect((shaUpdate![1] as Record<string, unknown>).startCommitSha).toBe(
+        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      );
+      // worktree removed because run passed
+      expect(removeWorktreeSpy).toHaveBeenCalledOnce();
+      expect(exitSpy).toHaveBeenCalledWith(0);
+
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
+      createWorktreeSpy.mockRestore();
+      headCommitShaSpy.mockRestore();
+      removeWorktreeSpy.mockRestore();
+      updateSpy.mockRestore();
+      executeSpy.mockRestore();
+      exitSpy.mockRestore();
+      writeSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('does not remove the worktree when the run fails', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-noremove-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-pid-${process.pid}`),
+        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockReturnValue(undefined);
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
+      const createWorktreeSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
+        .mockResolvedValue(undefined);
+      const headCommitShaSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
+        .mockResolvedValue('deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+      const removeWorktreeSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'removeWorktree')
+        .mockResolvedValue(undefined);
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: 'mock-run-uuid',
+          status: 'failed' as const,
+          displayId: 'issue-62-20260622-000000',
+          issueNumber: 62,
+          type: 'issue_to_pr' as const,
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '62',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
+      ]);
+
+      expect(createWorktreeSpy).toHaveBeenCalledOnce();
+      // worktree must NOT be removed when run fails
+      expect(removeWorktreeSpy).not.toHaveBeenCalled();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
+      createWorktreeSpy.mockRestore();
+      headCommitShaSpy.mockRestore();
+      removeWorktreeSpy.mockRestore();
       executeSpy.mockRestore();
       exitSpy.mockRestore();
       writeSpy.mockRestore();
