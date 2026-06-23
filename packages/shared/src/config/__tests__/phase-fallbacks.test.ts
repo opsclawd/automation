@@ -10,7 +10,11 @@ describe('PHASE_FALLBACKS', () => {
     expect(Object.isFrozen(PHASE_FALLBACKS)).toBe(true);
   });
 
-  it('has exactly one entry', () => {
-    expect(Object.keys(PHASE_FALLBACKS)).toHaveLength(1);
+  it('maps verify-pr-review to post-pr-review', () => {
+    expect(PHASE_FALLBACKS['verify-pr-review']).toBe('post-pr-review');
+  });
+
+  it('has exactly 2 entries', () => {
+    expect(Object.keys(PHASE_FALLBACKS)).toHaveLength(2);
   });
 });
