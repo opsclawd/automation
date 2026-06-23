@@ -403,7 +403,7 @@ function _truncateBody(body: string): string {
   }
 
   // Last resort: character-level truncation at a line boundary
-  let result = body;
+  let result = candidate;
   while (Buffer.byteLength(result, 'utf-8') > maxBytes) {
     result = result.slice(0, Math.floor(result.length * 0.9));
     const nl = result.lastIndexOf('\n');
