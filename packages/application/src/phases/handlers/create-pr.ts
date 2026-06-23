@@ -1,7 +1,7 @@
 import type { PhaseName, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
-import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store.js';
 
 export interface CreatePrHandlerOpts {
   baseBranch: string;
@@ -245,7 +245,12 @@ async function _assemblePrSummary(ctx: PhaseHandlerContext): Promise<string> {
   }
 
   // Arbiter rationale and deviation records
-  const allArtifacts = await ctx.artifacts.list(ctx.runUuid);
+  let allArtifacts: Artifact[] = [];
+  try {
+    allArtifacts = await ctx.artifacts.list(ctx.runUuid);
+  } catch {
+    // non-fatal — autonomous actions section is optional
+  }
   const arbiterFiles = allArtifacts
     .filter((a) => /^arbiter-rationale-.+\.md$/.test(a.relativePath))
     .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
@@ -277,29 +282,17 @@ async function _assemblePrSummary(ctx: PhaseHandlerContext): Promise<string> {
   }
 
   // Assemble — match legacy heredoc exactly (lines 4719–4741 of ai-run-issue-v2)
-  return [
-    `# ${issueTitle}`,
-    '',
-    `Closes #${ctx.issueNumber}`,
-    '',
-    prSummary,
-    '',
-    '## Tasks',
-    prTasks,
-    '',
-    '## Changes',
-    prChanges,
-    '',
-    `## Validation: ${prValidation}`,
-    prValidationSteps,
-    '',
-    '## Review Findings',
-    prReview,
-    '',
-    prAutonomousActions,
-    '## Artifacts',
-    `Run logs and artifacts: \`ai/issues/${ctx.issueNumber}/\``,
-  ].join('\n');
+  const parts: string[] = [`# ${issueTitle}`, '', `Closes #${ctx.issueNumber}`, ''];
+  if (prSummary) parts.push(prSummary, '');
+  if (prTasks) parts.push('## Tasks', prTasks, '');
+  if (prChanges) parts.push('## Changes', prChanges, '');
+  parts.push(`## Validation: ${prValidation}`);
+  if (prValidationSteps) parts.push(prValidationSteps);
+  parts.push('');
+  parts.push('## Review Findings', prReview, '');
+  if (prAutonomousActions) parts.push(prAutonomousActions, '');
+  parts.push('## Artifacts', `Run logs and artifacts: \`ai/issues/${ctx.issueNumber}/\``);
+  return parts.join('\n');
 }
 
 /** Extract the first non-empty paragraph starting from line 2 of the impl log.
@@ -357,10 +350,10 @@ function _parseValidationSteps(validateLog: string): string {
     if (stepMatch) {
       if (phaseName) results.push(`- ${phaseName}: passed`);
       phaseName = stepMatch[1]!;
-    } else if (
-      phaseName &&
-      (failPattern.test(line) || line === '[install completed with warnings]')
-    ) {
+    } else if (phaseName && line === '[install completed with warnings]') {
+      results.push(`- ${phaseName}: warning`);
+      phaseName = '';
+    } else if (phaseName && failPattern.test(line)) {
       results.push(`- ${phaseName}: failed`);
       phaseName = '';
     }
@@ -372,8 +365,8 @@ function _parseValidationSteps(validateLog: string): string {
 
 /** Count Critical/High and Medium/Low severity findings in a review file. */
 function _parseReviewFindings(reviewText: string): string {
-  const critHigh = (reviewText.match(/severity.*(critical|high)/gi) ?? []).length;
-  const mediLow = (reviewText.match(/severity.*(medium|low)/gi) ?? []).length;
+  const critHigh = (reviewText.match(/- severity:\s*(critical|high)\b/gim) ?? []).length;
+  const mediLow = (reviewText.match(/- severity:\s*(medium|low)\b/gim) ?? []).length;
   return `- Critical/High: ${critHigh}\n- Medium/Low: ${mediLow}`;
 }
 

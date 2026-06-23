@@ -4,6 +4,7 @@ import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../../../test-do
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
+/** IMPORTANT: must NOT seed artifacts — absence/fallback tests rely on empty store. */
 function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
   const artifacts = new FakeArtifactStore();
   const github = new FakeGitHubPort();
@@ -73,7 +74,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'code-review.md',
-      contents: 'Severity: Critical finding\nSeverity: Medium finding',
+      contents: '- severity: critical\n- severity: medium',
     });
 
     const res = await HANDLER.run(ctx);
@@ -202,7 +203,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'review.md',
-      contents: 'Severity: High issue\nSeverity: Low note',
+      contents: '- severity: high\n- severity: low',
     });
     const res = await HANDLER.run(ctx);
     expect(res.outcome).toBe('passed');
