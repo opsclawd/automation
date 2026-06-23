@@ -1,35 +1,24 @@
-# Design for Issue #{{var:issue_number}}
+You are analyzing a GitHub issue to produce a design document.
 
 ## CONTEXT
-Issue: {{artifact:issue.md}}
+You are working in the repository worktree.
+Issue file: issue.md (contains the GitHub issue description)
+Comments file: issue-comments.md (contains issue comments, may not exist)
 
 ## TASK
-You are designing the implementation approach for GitHub issue #{{var:issue_number}}.
-
-Produce a **design document** (`design.md`) that covers:
-- Problem statement: what is broken or missing and what the symptom is
-- Root cause (if diagnosable from the issue text)
-- Proposed approach: the specific change that resolves the issue
-- Key design decisions and trade-offs
-- Affected files and components (with full paths from repo root)
-- Risks and concerns
-- Assumptions (things you are treating as given)
-
-Then write `result.json` with this exact shape:
-```json
-{
-  "result": "ready",
-  "summary": "<one-sentence summary of your design>"
-}
-```
-Use `"result": "blocked"` if the issue is fundamentally unclear or you cannot produce a useful design.
-
-Output format:
-- `design.md`: a Markdown document following the structure above
-- `result.json`: JSON matching the shape above
+1. Load the brainstorming skill: say exactly `/skill brainstorming` to activate it.
+2. Read `issue.md` and `issue-comments.md` (if it exists) thoroughly.
+3. Analyze the codebase to understand the existing patterns, types, and architecture relevant to this issue.
+4. Using the brainstorming skill guidance, produce a design document at `./design.md` covering:
+   - The problem being solved and why it matters
+   - Key design decisions and trade-offs considered
+   - Proposed approach with rationale
+   - Assumptions made (do not ask questions — state assumptions explicitly)
+   - What is in scope and what is explicitly out of scope
+   - Any risks or concerns identified from code analysis
 
 ## CRITICAL RULES
-- Do NOT ask questions.
-- Do NOT switch branches.
-- Write `design.md` first, then `result.json`.
-- Do NOT use or reference `issue-comments.md` — it may not exist.
+- Do NOT ask questions. Make reasonable assumptions and document them explicitly.
+- Do NOT rely on agent memory. Write everything to `design.md`.
+- Do NOT switch branches (no `git checkout`, `git switch`, `git stash branch`).
+- Stop after writing `design.md`. Do not implement anything.

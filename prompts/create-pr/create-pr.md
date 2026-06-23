@@ -1,24 +1,45 @@
-# Pull Request Summary for Issue #{{var:issue_number}}
+You are writing the pull request description.
 
 ## CONTEXT
-Plan: {{artifact:plan.md}}
+You are working in the repository worktree.
+Plan: `plan.md`
+Design: `design.md`
 
 ## TASK
-You are drafting the pull request description for GitHub issue #{{var:issue_number}}.
+Produce a PR summary document at `./pr-summary.md`.
 
-Produce a **PR summary** (`pr-summary.md`) that includes:
-- A short, descriptive title as an H1 heading (this becomes the PR title)
-- A summary section explaining what the PR does and why
-- A list of key changes made (files touched, behaviour changed)
-- A test plan: how to verify the changes work correctly
+The document MUST follow this exact structure (the legacy orchestrator template):
 
-The first `#` heading line in `pr-summary.md` is used as the PR title, so make it concise and descriptive.
+```
+# <issue title>
 
-Output format:
-- `pr-summary.md`: a Markdown document starting with an H1 title heading
+Closes #<issue number>
+
+<one-paragraph summary of what the PR does and why>
+
+## Tasks
+- <task 1 title>
+- <task 2 title>
+...
+
+## Changes
+<git diff --stat summary of files changed>
+
+## Validation: passed
+- <validation step>: passed
+...
+
+## Review Findings
+No code review performed
+
+## Artifacts
+Run logs and artifacts: `ai/issues/<issue number>/`
+```
+
+Read `plan.md` to extract the task list. The first `#` heading becomes the PR title — use the issue title if you know it, otherwise derive it from the plan goal.
 
 ## CRITICAL RULES
 - Do NOT ask questions.
 - Do NOT switch branches.
 - Write only `pr-summary.md` — do NOT write `result.json`.
-- Do NOT reference or use `compound.md` — it may not exist.
+- The first line must be a `#` H1 heading (this becomes the PR title).
