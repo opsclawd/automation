@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RunId, createPrReviewComment } from '@ai-sdlc/domain';
 import { FakeGitHubPort, FakeGitPort } from '../../test-doubles/index.js';
 import type { GitPort } from '../../ports/git-port.js';
 import type { GitHubPort } from '../../ports/github-port.js';
 import { verifyComment } from '../verify-comment.js';
+import type { VerifyCodeChangeFn } from '../verify-code-change.js';
 
 interface VerifyCommentDeps {
   git: GitPort;
@@ -603,5 +604,221 @@ describe('verifyComment — no_fix outcome', () => {
     const result = await verifyComment(comment, deps, ctx);
     expect(result.ok).toBe(false);
     expect(result.replyVerified).toBe(false);
+  });
+});
+
+// (Add these tests at the end of the file, after existing describe blocks)
+
+describe('verifyComment — codeVerified check', () => {
+  it('sets codeVerified:true when verifyCodeChange returns pass:true', async () => {
+    const { deps, github, git } = makeDeps();
+    const verifyCodeChange: VerifyCodeChangeFn = async () => ({ pass: true, reason: 'ok' });
+    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const comment = {
+      ...createPrReviewComment({
+        runId,
+        prNumber: 5,
+        commentId: 9001,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        now: new Date(),
+      }),
+      state: 'replied' as const,
+      outcome: 'fixed' as const,
+      commitSha: 'fixSha',
+      replyId: 9002,
+      attempts: 1,
+    };
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Fixed.',
+        createdAt: new Date(),
+        inReplyToId: 9001,
+      },
+    ]);
+    git.remoteRefs.set('origin/feat-x', 'tipSha');
+    git.ancestorResults.set('fixSha|tipSha', true);
+    git.logBetweenResults.set('startSha|fixSha', ['fixSha']);
+
+    const result = await verifyComment(comment, { ...deps, verifyCodeChange }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.codeVerified).toBe(true);
+  });
+
+  it('sets ok:false and codeVerified:false when verifyCodeChange returns pass:false', async () => {
+    const { deps, github, git } = makeDeps();
+    const verifyCodeChange: VerifyCodeChangeFn = async () => ({
+      pass: false,
+      reason: 'variable still mutable',
+    });
+    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const comment = {
+      ...createPrReviewComment({
+        runId,
+        prNumber: 5,
+        commentId: 9001,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        now: new Date(),
+      }),
+      state: 'replied' as const,
+      outcome: 'fixed' as const,
+      commitSha: 'fixSha',
+      replyId: 9002,
+      attempts: 1,
+    };
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Fixed.',
+        createdAt: new Date(),
+        inReplyToId: 9001,
+      },
+    ]);
+    git.remoteRefs.set('origin/feat-x', 'tipSha');
+    git.ancestorResults.set('fixSha|tipSha', true);
+    git.logBetweenResults.set('startSha|fixSha', ['fixSha']);
+
+    const result = await verifyComment(comment, { ...deps, verifyCodeChange }, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.codeVerified).toBe(false);
+    expect(result.codeVerifyReason).toBe('variable still mutable');
+    expect(result.reason).toContain('code verification failed');
+  });
+
+  it('skips codeVerified check for no_fix outcome', async () => {
+    const { deps, github } = makeDeps();
+    const verifyCodeChange: VerifyCodeChangeFn = vi.fn(async () => ({
+      pass: false,
+      reason: 'nope',
+    }));
+    const ctx = makeContext();
+    const comment = {
+      ...createPrReviewComment({
+        runId,
+        prNumber: 5,
+        commentId: 9001,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        now: new Date(),
+      }),
+      state: 'replied' as const,
+      outcome: 'no_fix' as const,
+      replyId: 9002,
+      attempts: 1,
+    };
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Not a bug.',
+        createdAt: new Date(),
+        inReplyToId: 9001,
+      },
+    ]);
+
+    const result = await verifyComment(comment, { ...deps, verifyCodeChange }, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.codeVerified).toBe(true);
+    expect(verifyCodeChange).not.toHaveBeenCalled();
+  });
+
+  it('defaults codeVerified:true when verifyCodeChange dep is absent', async () => {
+    const { deps, github, git } = makeDeps(); // no verifyCodeChange
+    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const comment = {
+      ...createPrReviewComment({
+        runId,
+        prNumber: 5,
+        commentId: 9001,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        now: new Date(),
+      }),
+      state: 'replied' as const,
+      outcome: 'fixed' as const,
+      commitSha: 'fixSha',
+      replyId: 9002,
+      attempts: 1,
+    };
+
+    github.comments.set('o/r/5', [
+      {
+        id: 9001,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'fix please',
+        createdAt: new Date(),
+      },
+      {
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'agent',
+        body: 'Fixed.',
+        createdAt: new Date(),
+        inReplyToId: 9001,
+      },
+    ]);
+    git.remoteRefs.set('origin/feat-x', 'tipSha');
+    git.ancestorResults.set('fixSha|tipSha', true);
+    git.logBetweenResults.set('startSha|fixSha', ['fixSha']);
+
+    const result = await verifyComment(comment, deps, ctx);
+    expect(result.ok).toBe(true);
+    expect(result.codeVerified).toBe(true);
   });
 });

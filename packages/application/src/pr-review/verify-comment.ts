@@ -1,14 +1,17 @@
 import type { PrReviewComment } from '@ai-sdlc/domain';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
+import type { VerifyCodeChangeFn } from './verify-code-change.js';
 
 export interface VerificationResult {
   ok: boolean;
   replyVerified: boolean;
   commitVerified: boolean;
   buildVerified: boolean;
+  codeVerified: boolean;
   reason: string;
   buildError?: string;
+  codeVerifyReason?: string;
 }
 
 export async function verifyComment(
@@ -26,6 +29,7 @@ export async function verifyComment(
       cwd: string;
       runId: string;
     }) => Promise<{ passed: boolean; error?: string }>;
+    verifyCodeChange?: VerifyCodeChangeFn;
   },
   context: {
     cwd: string;
@@ -33,6 +37,7 @@ export async function verifyComment(
     prNumber: number;
     repoFullName: string;
     startCommitSha: string | undefined;
+    repoId?: string;
   },
 ): Promise<VerificationResult> {
   const afterComments = await deps.github.listReviewComments(
@@ -47,6 +52,7 @@ export async function verifyComment(
       replyVerified,
       commitVerified: true,
       buildVerified: true,
+      codeVerified: true,
       reason: replyVerified ? '' : 'reply not found on GitHub',
     };
   }
@@ -63,6 +69,7 @@ export async function verifyComment(
       replyVerified,
       commitVerified: false,
       buildVerified: false,
+      codeVerified: true,
       reason: 'agent did not produce a new commit (commitSha unchanged)',
     };
   }
@@ -80,7 +87,10 @@ export async function verifyComment(
     commitVerified = false;
   }
 
-  const buildResult = await deps.verifyBuildPasses({ cwd: context.cwd, runId: comment.runId });
+  const buildResult = await deps.verifyBuildPasses({
+    cwd: context.cwd,
+    runId: String(comment.runId),
+  });
   buildVerified = buildResult.passed;
   const buildError = buildResult.error;
 
@@ -115,15 +125,41 @@ export async function verifyComment(
   else if (!commitVerified && !failReason) failReason = 'commit not pushed to remote';
   else if (!buildVerified && !failReason) failReason = 'build did not pass';
 
-  const ok =
+  // Semantic code verification — only when all mechanical checks pass
+  let codeVerified = true;
+  let codeVerifyReason: string | undefined;
+
+  const mechanicalOk =
     fixCommitOnRemote && isNewerThanStart && commitVerified && replyVerified && buildVerified;
+
+  if (mechanicalOk && deps.verifyCodeChange && comment.commitSha) {
+    const codeResult = await deps.verifyCodeChange({
+      commentBody: comment.body,
+      path: comment.path,
+      line: comment.line,
+      cwd: context.cwd,
+      startCommitSha: context.startCommitSha ?? '',
+      fixCommitSha: comment.commitSha,
+      runId: String(comment.runId),
+      repoId: context.repoId ?? String(comment.runId),
+    });
+    codeVerified = codeResult.pass;
+    if (!codeResult.pass) {
+      codeVerifyReason = codeResult.reason;
+      failReason = `code verification failed: ${codeResult.reason}`;
+    }
+  }
+
+  const ok = mechanicalOk && codeVerified;
 
   return {
     ok,
     replyVerified,
     commitVerified,
     buildVerified,
+    codeVerified,
     reason: ok ? '' : failReason,
     ...(buildError !== undefined ? { buildError } : {}),
+    ...(codeVerifyReason !== undefined ? { codeVerifyReason } : {}),
   };
 }
