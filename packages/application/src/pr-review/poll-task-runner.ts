@@ -7,6 +7,7 @@ import type { AgentPort } from '../ports/agent-port.js';
 import type { AgentProfileName } from '../ports/agent-invocation-types.js';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
+import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import { verifyComment } from './verify-comment.js';
 
 export interface PollTaskRunnerDeps {
@@ -20,6 +21,7 @@ export interface PollTaskRunnerDeps {
     diff: string;
     branch: string;
     previousBuildError?: string;
+    previousCodeVerifyReason?: string;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -37,6 +39,7 @@ export interface PollTaskRunnerDeps {
     cwd: string;
     runId: string;
   }) => Promise<{ passed: boolean; error?: string }>;
+  verifyCodeChange?: VerifyCodeChangeFn;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -56,6 +59,7 @@ export interface PollTaskInput {
   startCommitSha: string;
   unresolvedCommentCount: number;
   previousBuildError?: string;
+  previousCodeVerifyReason?: string;
 }
 
 export interface PollTaskOutput {
@@ -64,6 +68,7 @@ export interface PollTaskOutput {
   processed: boolean;
   blocked: boolean;
   buildError?: string;
+  codeVerifyReason?: string;
 }
 
 export class PollTaskRunner {
@@ -84,6 +89,9 @@ export class PollTaskRunner {
       branch: input.branch,
       ...(input.previousBuildError !== undefined
         ? { previousBuildError: input.previousBuildError }
+        : {}),
+      ...(input.previousCodeVerifyReason !== undefined
+        ? { previousCodeVerifyReason: input.previousCodeVerifyReason }
         : {}),
     });
 
@@ -199,6 +207,7 @@ export class PollTaskRunner {
       prNumber: input.prNumber,
       repoFullName: input.repoFullName,
       startCommitSha: input.startCommitSha,
+      repoId: String(input.repoId),
     });
 
     if (verification.ok) {
@@ -234,6 +243,9 @@ export class PollTaskRunner {
       processed: false,
       blocked: false,
       ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
+      ...(verification.codeVerifyReason !== undefined
+        ? { codeVerifyReason: verification.codeVerifyReason }
+        : {}),
     };
   }
 }

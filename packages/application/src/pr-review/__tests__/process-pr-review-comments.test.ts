@@ -1980,3 +1980,97 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
     expect(rollbackCalls).toHaveLength(0);
   });
 });
+
+describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
+  it('passes codeVerifyReason into next attempt prompt when code verify fails', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
+    });
+    const capturedPromptInputs: Array<{ previousCodeVerifyReason?: string }> = [];
+    let verifyCallCount = 0;
+
+    const { deps, github } = makeDeps({
+      agent,
+      verifyCodeChange: async () => {
+        verifyCallCount++;
+        if (verifyCallCount === 1) return { pass: false, reason: 'still uses let' };
+        return { pass: true, reason: 'ok' };
+      },
+      renderTaskPrompt: async (input) => {
+        capturedPromptInputs.push({ previousCodeVerifyReason: input.previousCodeVerifyReason });
+        return `/tmp/prompt-${capturedPromptInputs.length}.md`;
+      },
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9001, action: 'fixed', replyBody: 'Fixed.' },
+      }),
+    });
+
+    const rc = {
+      id: 9001,
+      prNumber: 5,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'fix please',
+      createdAt: new Date(),
+    };
+    github.comments.set('o/r/5', [rc]);
+
+    const result = await new ProcessPrReviewComments(deps).execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(result.processed).toBe(1);
+    expect(capturedPromptInputs[1]?.previousCodeVerifyReason).toBe('still uses let');
+  });
+
+  it('reports not processed when all attempts exhaust with code verify failures', async () => {
+    const agent = new FakeAgentPort({
+      'post-pr-review-profile': [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
+
+    const { deps, github } = makeDeps({
+      agent,
+      verifyCodeChange: async () => ({ pass: false, reason: 'never satisfied' }),
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9001, action: 'fixed', replyBody: 'Fixed.' },
+      }),
+    });
+
+    const rc = {
+      id: 9001,
+      prNumber: 5,
+      path: 'a.ts',
+      line: 3,
+      reviewer: 'octocat',
+      body: 'fix please',
+      createdAt: new Date(),
+    };
+    github.comments.set('o/r/5', [rc]);
+
+    const result = await new ProcessPrReviewComments(deps).execute({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/work',
+      phaseId: PhaseName('post-pr-review'),
+      pollNumber: 1,
+    });
+
+    expect(result.processed).toBe(0);
+    expect(result.blocked).toBe(1);
+  });
+});
