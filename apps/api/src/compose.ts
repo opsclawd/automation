@@ -54,6 +54,7 @@ import {
   ProcessPrReviewComments,
   decideReactivation,
   applyReactivation,
+  createVerifyCodeChange,
   pollTaskResultSchema,
   ReviewFixLoop,
   ImplementStepLoop,
@@ -1478,7 +1479,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderTaskPrompt: async ({ cwd, comment, diff, branch, previousBuildError }) => {
+      renderTaskPrompt: async ({
+        cwd,
+        comment,
+        diff,
+        branch,
+        previousBuildError,
+        previousCodeVerifyReason,
+      }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
@@ -1512,6 +1520,19 @@ export function composeRoot(opts: ComposeOptions): Container {
             '```',
             '',
             'Please adjust your fix to resolve this error.',
+            '',
+          );
+        }
+
+        if (previousCodeVerifyReason !== undefined) {
+          sections.push(
+            '## Previous Fix Rejected by Code Verifier',
+            '',
+            'An independent verifier reviewed your previous fix and rejected it with this reason:',
+            '',
+            `> ${previousCodeVerifyReason}`,
+            '',
+            'Please revisit your fix with this feedback in mind before trying again.',
             '',
           );
         }
@@ -1645,6 +1666,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           return false;
         }
       },
+      verifyCodeChange: createVerifyCodeChange({
+        agent: agentRuntime,
+        baseTmpDir,
+        resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+        idFactory: () => randomUUID(),
+      }),
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without
