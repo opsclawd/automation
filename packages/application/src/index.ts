@@ -19,6 +19,7 @@ export * from './pr-review/process-pr-review-comments.js';
 export * from './pr-review/pr-review-poller.js';
 export * from './pr-review/reactivate-on-review.js';
 export * from './pr-review/apply-reactivation.js';
+export * from './pr-review/verify-code-change.js';
 export * from './review-fix/types.js';
 export * from './review-fix/review-fix-loop.js';
 export * from './review-fix/read-verdicts.js';
