@@ -76,6 +76,12 @@ export class GitWorktreeAdapter implements GitPort {
     return head ? git(cwd, ['diff', base, head]) : git(cwd, ['diff', base]);
   }
 
+  async diffStat(cwd: string, base: string, head?: string): Promise<string> {
+    return head
+      ? git(cwd, ['diff', '--stat', `${base}..${head}`])
+      : git(cwd, ['diff', '--stat', base]);
+  }
+
   async commit(cwd: string, message: string): Promise<string> {
     await git(cwd, ['commit', '-m', message]);
     return git(cwd, ['rev-parse', 'HEAD']);
