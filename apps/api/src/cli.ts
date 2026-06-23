@@ -253,6 +253,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           let signalHandlers: { remove: () => void } | undefined;
           let lease: { stop: () => void } | undefined;
+          const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
           try {
             signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
             lease = startLeaseHeartbeat(
@@ -264,7 +265,6 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             );
 
             c.runRepository.insertIfNoActive(run);
-            const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
             await c.git.createWorktree({
               repoLocalBasePath: repoRoot,
               worktreePath,
@@ -311,7 +311,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               // best-effort: DB write may fail
             }
             try {
-              await c.git.removeWorktree(join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`));
+              await c.git.removeWorktree(worktreePath);
             } catch {
               // best-effort: may not exist or already removed
             }
