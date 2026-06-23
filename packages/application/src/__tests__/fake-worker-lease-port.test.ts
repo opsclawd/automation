@@ -223,4 +223,47 @@ describe('FakeWorkerLeasePort', () => {
     });
     expect(reclaimed).toHaveLength(1);
   });
+
+  it('acquire reclaims an expired lease (expires_at <= now)', () => {
+    const { leases } = makePorts();
+    leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    const atExpiry = new Date(now0.getTime() + 60_000);
+    const lease2 = leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: atExpiry,
+      ttlMs: 60_000,
+    });
+    expect(lease2.workerId).toBe('w2');
+    expect(lease2.repoId).toBe('r');
+    expect(leases.current(RepositoryId('r'))?.workerId).toBe('w2');
+  });
+
+  it('acquire still throws WorkerLeaseConflictError when existing lease is unexpired', () => {
+    const { leases } = makePorts();
+    leases.acquire({
+      repoId: RepositoryId('r'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    const beforeExpiry = new Date(now0.getTime() + 59_999);
+    expect(() =>
+      leases.acquire({
+        repoId: RepositoryId('r'),
+        workerId: WorkerId('w2'),
+        runId: RunId('run-2'),
+        now: beforeExpiry,
+        ttlMs: 60_000,
+      }),
+    ).toThrow(WorkerLeaseConflictError);
+  });
 });
