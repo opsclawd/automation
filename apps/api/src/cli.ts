@@ -264,11 +264,27 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             );
 
             c.runRepository.insertIfNoActive(run);
+            const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
+            await c.git.createWorktree({
+              repoLocalBasePath: repoRoot,
+              worktreePath,
+              branch: `ai/issue-${opts.issue}`,
+              baseBranch: c.defaultBranch,
+            });
+            const sha = await c.git.headCommitSha(worktreePath);
+            c.runRepository.update(run.uuid, { startCommitSha: sha });
             const result = await c.runExecutor.execute({
               run,
               skip: [],
               presentArtifacts: [],
             });
+            if (result.run.status === 'passed') {
+              try {
+                await c.git.removeWorktree(worktreePath);
+              } catch {
+                // best-effort: leave worktree intact on cleanup failure
+              }
+            }
             await new Promise<void>((resolve, reject) =>
               process.stdout.write(
                 JSON.stringify({ run: result.run, phases: result.phases }) + '\n',
