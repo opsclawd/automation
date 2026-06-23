@@ -358,7 +358,7 @@ function _parseValidationSteps(validateLog: string): string {
     } else if (phaseName && line === '[install completed with warnings]') {
       results.push(`- ${phaseName}: warning`);
       phaseName = '';
-    } else if (phaseName && failPattern.test(line)) {
+    } else if (phaseName && failPattern.test(line) && line.startsWith(`[${phaseName}`)) {
       results.push(`- ${phaseName}: failed`);
       phaseName = '';
     }

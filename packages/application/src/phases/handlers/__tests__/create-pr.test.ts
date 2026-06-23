@@ -234,6 +234,20 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(summary).toContain('- test: passed');
   });
 
+  it('does not misattribute a sentinel to the wrong validation step', async () => {
+    const { artifacts, ctx } = build();
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validate.log',
+      contents: '=== typecheck ===\n[build failed]\n',
+    });
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('passed');
+    const summary = await artifacts.read(ctx.runUuid, 'pr-summary.md');
+    expect(summary).toContain('- typecheck: passed');
+    expect(summary).not.toContain('- typecheck: failed');
+  });
+
   it('does not create a second PR when pr-url.txt already exists (idempotency)', async () => {
     const { artifacts, github, ctx, events } = build();
     const existingUrl = 'https://example/pr/existing';
