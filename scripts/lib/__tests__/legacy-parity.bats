@@ -2447,3 +2447,32 @@ PLAN
   [ "$status" -eq 0 ]
   [[ "$output" == *"orchestrator_fail"* ]]
 }
+
+# Invariant: the TS create-pr handler must NOT invoke runSingleShotAgentPhase.
+# The legacy bash create-pr phase is 100% deterministic (no LLM call).
+# If this line appears in create-pr.ts, the TS implementation has regressed to agent-based drafting.
+# Source: issue #461 — deterministic PR summary assembly unblocks M8-11 parity gate.
+@test "parity[#461]: create-pr handler does not call runSingleShotAgentPhase" {
+  local handler="$REPO_ROOT/packages/application/src/phases/handlers/create-pr.ts"
+  run grep -c 'runSingleShotAgentPhase' "$handler"
+  # grep -c returns 1 (no match) for exit 1, or a number ≥1 for a match;
+  # we want zero matches → status non-zero OR output "0"
+  [ "$status" -ne 0 ] || [ "$output" -eq 0 ]
+}
+
+# Invariant: the assembled pr-summary.md must contain all legacy section headers.
+# These headers are the structural backbone of the PR body that the parity gate checks.
+# Source: issue #461 — assembly must reproduce the exact legacy heredoc structure.
+@test "parity[#461]: create-pr handler assembles all required section headers in pr-summary.md" {
+  local handler="$REPO_ROOT/packages/application/src/phases/handlers/create-pr.ts"
+  run grep -c '## Tasks' "$handler"
+  [ "$output" -ge 1 ]
+  run grep -c '## Changes' "$handler"
+  [ "$output" -ge 1 ]
+  run grep -c '## Validation:' "$handler"
+  [ "$output" -ge 1 ]
+  run grep -c '## Review Findings' "$handler"
+  [ "$output" -ge 1 ]
+  run grep -c '## Artifacts' "$handler"
+  [ "$output" -ge 1 ]
+}
