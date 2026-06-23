@@ -953,8 +953,19 @@ export function composeRoot(opts: ComposeOptions): Container {
         async read(_runId: string, relativePath: string): Promise<string> {
           return await readFile(join(cwd, relativePath), 'utf-8');
         },
-        write: async () => {
-          throw new Error('not implemented');
+        write: async (input): Promise<Artifact> => {
+          const absolutePath = join(cwd, input.relativePath);
+          mkdirSync(dirname(absolutePath), { recursive: true });
+          writeFileSync(absolutePath, input.contents, 'utf-8');
+          const stats = statSync(absolutePath);
+          return {
+            runId: input.runId,
+            ...(input.phaseId !== undefined ? { phaseId: input.phaseId } : {}),
+            relativePath: input.relativePath,
+            absolutePath,
+            bytes: stats.size,
+            createdAt: stats.mtime,
+          };
         },
         list: async (runId: string): Promise<Artifact[]> => {
           const entries = readdirSync(cwd, { withFileTypes: true });
