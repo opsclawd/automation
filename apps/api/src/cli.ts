@@ -301,6 +301,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           } catch (err) {
             signalHandlers?.remove();
             lease?.stop();
+            try {
+              c.runRepository.update(run.uuid, {
+                status: 'failed',
+                completedAt: new Date(),
+                failureReason: err instanceof Error ? err.message : String(err),
+              });
+            } catch {
+              // best-effort: DB write may fail
+            }
+            try {
+              await c.git.removeWorktree(join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`));
+            } catch {
+              // best-effort: may not exist or already removed
+            }
             console.error(
               `Run ${run.uuid} (issue #${run.issueNumber}) failed: ${err instanceof Error ? err.message : String(err)}`,
             );

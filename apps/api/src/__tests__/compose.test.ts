@@ -845,4 +845,12 @@ exit 1
     expect(ctx.expectedBranch).toBe('ai/issue-42');
     expect(ctx.cwd).toBe(path.join(root, '.ai-worktrees', 'issue-42'));
   });
+
+  it('buildRunContext is undefined when agent config is absent', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-noagent-')));
+    writeFileSync(path.join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    expect(c.buildRunContext).toBeUndefined();
+  });
 });
