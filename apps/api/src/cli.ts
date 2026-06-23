@@ -314,6 +314,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 {
                   status: 'failed',
                   completedAt: new Date(),
+                  // Clear currentPhase on failure, matching the domain failRun()
+                  // transition (run.ts) and CancelRun's terminal update.
+                  currentPhase: null,
                   failureReason: err instanceof Error ? err.message : String(err),
                 },
                 'running',
