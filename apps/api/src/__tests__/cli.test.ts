@@ -1131,6 +1131,120 @@ describe('CLI run --executor ts', () => {
     }
   });
 
+  it('does not overwrite a non-passed terminal status with failed when stdout write rejects', async () => {
+    // Regression for PR #458 threads r3456905472 / r3456964886: execute() persists
+    // its terminal status (here 'blocked'); if process.stdout.write then rejects
+    // (EPIPE), the catch must NOT clobber it with 'failed'. The fix uses a
+    // conditional atomicUpdateByUuid(..., 'running') instead of unconditional update().
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-term-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-pid-${process.pid}`),
+        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
+        'abc123def456abc123def456abc123def456abc123',
+      );
+      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
+      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
+
+      // execute() returns a terminal 'blocked' status (already persisted by execute)
+      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: 'mock-run-uuid',
+          status: 'blocked' as const,
+          displayId: 'issue-58-20260622-000000',
+          issueNumber: 58,
+          type: 'issue_to_pr',
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+
+      const atomicSpy = vi
+        .spyOn(RunRepository.prototype, 'atomicUpdateByUuid')
+        .mockReturnValue(false); // no-op: run is 'blocked', not 'running'
+      const updateSpy = vi.spyOn(RunRepository.prototype, 'update').mockReturnValue(undefined);
+
+      // stdout.write REJECTS (EPIPE) → drives the catch block
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        _chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(new Error('EPIPE'));
+        return false;
+      }) as never);
+      vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '58',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
+      ]);
+
+      // The catch must use the guarded conditional update (expectedStatus 'running'),
+      // which is a no-op on the 'blocked' run — never the unconditional update().
+      expect(atomicSpy).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: 'failed' }),
+        'running',
+      );
+      expect(updateSpy).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ status: 'failed' }),
+      );
+
+      vi.restoreAllMocks();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
   it('releases lease when insertIfNoActive throws', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-insertfail-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');

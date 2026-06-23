@@ -302,11 +302,22 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             signalHandlers?.remove();
             lease?.stop();
             try {
-              c.runRepository.update(run.uuid, {
-                status: 'failed',
-                completedAt: new Date(),
-                failureReason: err instanceof Error ? err.message : String(err),
-              });
+              // Only mark failed if the run is still 'running'. runExecutor.execute()
+              // persists its own terminal status (passed / blocked / cancelled /
+              // needs_human_review / failed) before returning, so a throw AFTER it
+              // returns — e.g. process.stdout.write rejecting (EPIPE) or lease.stop
+              // throwing — must NOT overwrite that status with 'failed'. The
+              // conditional update is a no-op unless the run is still 'running'
+              // (i.e. execute() itself threw before finalizing a status).
+              c.runRepository.atomicUpdateByUuid(
+                run.uuid,
+                {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  failureReason: err instanceof Error ? err.message : String(err),
+                },
+                'running',
+              );
             } catch {
               // best-effort: DB write may fail
             }
