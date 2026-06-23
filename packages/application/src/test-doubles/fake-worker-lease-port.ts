@@ -29,7 +29,9 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   acquire(input: AcquireLeaseInput): WorkerLease {
     const existing = this.leases.get(input.repoId);
-    if (existing) throw new WorkerLeaseConflictError(input.repoId, existing.workerId);
+    if (existing && existing.expiresAt > input.now) {
+      throw new WorkerLeaseConflictError(input.repoId, existing.workerId);
+    }
     const lease: WorkerLease = {
       repoId: input.repoId,
       workerId: input.workerId,

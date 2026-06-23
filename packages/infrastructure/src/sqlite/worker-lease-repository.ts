@@ -12,7 +12,6 @@ import type {
   AcquireLeaseInput,
   ReclaimExpiredInput,
 } from '@ai-sdlc/application/ports';
-import Database from 'better-sqlite3';
 import type { Db } from './database.js';
 
 interface WorkerLeaseRow {
@@ -40,26 +39,30 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
 
   acquire(input: AcquireLeaseInput): WorkerLease {
     const expiresAt = new Date(input.now.getTime() + input.ttlMs);
-    try {
-      this.db
-        .prepare(
-          `INSERT INTO worker_leases (repo_id, worker_id, run_id, acquired_at, heartbeat_at, expires_at)
-           VALUES (@repo_id, @worker_id, @run_id, @acquired_at, @heartbeat_at, @expires_at)`,
-        )
-        .run({
-          repo_id: input.repoId,
-          worker_id: input.workerId,
-          run_id: input.runId,
-          acquired_at: input.now.toISOString(),
-          heartbeat_at: input.now.toISOString(),
-          expires_at: expiresAt.toISOString(),
-        });
-    } catch (err: unknown) {
-      if (err instanceof Database.SqliteError && err.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
-        const existing = this.current(input.repoId);
-        throw new WorkerLeaseConflictError(input.repoId, existing?.workerId ?? input.workerId);
-      }
-      throw err;
+    const nowIso = input.now.toISOString();
+    const result = this.db
+      .prepare(
+        `INSERT INTO worker_leases (repo_id, worker_id, run_id, acquired_at, heartbeat_at, expires_at)
+         VALUES (@repo_id, @worker_id, @run_id, @acquired_at, @heartbeat_at, @expires_at)
+         ON CONFLICT(repo_id) DO UPDATE SET
+           worker_id = excluded.worker_id,
+           run_id = excluded.run_id,
+           acquired_at = excluded.acquired_at,
+           heartbeat_at = excluded.heartbeat_at,
+           expires_at = excluded.expires_at
+         WHERE worker_leases.expires_at <= @acquired_at`,
+      )
+      .run({
+        repo_id: input.repoId,
+        worker_id: input.workerId,
+        run_id: input.runId,
+        acquired_at: nowIso,
+        heartbeat_at: nowIso,
+        expires_at: expiresAt.toISOString(),
+      });
+    if (result.changes === 0) {
+      const existing = this.current(input.repoId);
+      throw new WorkerLeaseConflictError(input.repoId, existing?.workerId ?? input.workerId);
     }
     return {
       repoId: input.repoId,
