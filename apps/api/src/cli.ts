@@ -309,6 +309,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 err ? reject(err) : resolve(),
               ),
             );
+            // Remove handlers before process.exit (which bypasses finally). No
+            // persistent state leaks on this path (the bash run holds no
+            // WorkerLease), so this is consistency/defensive only — but it keeps
+            // the same discipline as the TS path. The finally still covers the
+            // throw case, where it does run before the error propagates.
+            signalHandlers.remove();
             process.exit(out.status === 'passed' ? 0 : EXIT_USER_ERROR);
           } finally {
             signalHandlers.remove();
