@@ -106,7 +106,6 @@ const _phaseDefinitions = {
     name: makePhaseName('create-pr'),
     inputs: { required: ['plan.md'], optional: ['compound.md'] },
     outputs: ['pr-summary.md', 'pr-url.txt'],
-    agentContract: { requiredArtifacts: ['pr-summary.md'], mustNotChangeBranch: true },
     retrySafety: 'unsafe',
     skippable: false,
   },
