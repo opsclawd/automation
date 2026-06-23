@@ -332,4 +332,51 @@ describe('WorkerLeaseRepository', () => {
     expect(lease2.workerId).toBe('w2');
     db.close();
   });
+
+  it('acquire: reclaims an expired lease (expires_at <= now)', () => {
+    const db = freshDb();
+    const repo = new WorkerLeaseRepository(db);
+    repo.acquire({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    const atExpiry = new Date(now0.getTime() + 60_000);
+    const lease2 = repo.acquire({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w2'),
+      runId: RunId('run-2'),
+      now: atExpiry,
+      ttlMs: 60_000,
+    });
+    expect(lease2.workerId).toBe('w2');
+    expect(lease2.repoId).toBe('repo-a');
+    expect(repo.current(RepositoryId('repo-a'))?.workerId).toBe('w2');
+    db.close();
+  });
+
+  it('acquire: still throws WorkerLeaseConflictError when existing lease is unexpired', () => {
+    const db = freshDb();
+    const repo = new WorkerLeaseRepository(db);
+    repo.acquire({
+      repoId: RepositoryId('repo-a'),
+      workerId: WorkerId('w1'),
+      runId: RunId('run-1'),
+      now: now0,
+      ttlMs: 60_000,
+    });
+    const beforeExpiry = new Date(now0.getTime() + 59_999);
+    expect(() =>
+      repo.acquire({
+        repoId: RepositoryId('repo-a'),
+        workerId: WorkerId('w2'),
+        runId: RunId('run-2'),
+        now: beforeExpiry,
+        ttlMs: 60_000,
+      }),
+    ).toThrow(WorkerLeaseConflictError);
+    db.close();
+  });
 });
