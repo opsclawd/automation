@@ -793,4 +793,56 @@ exit 1
     const run = c.runRepository.findByUuid('startsha-test-uuid');
     expect(run?.startCommitSha).toBe('abc123def456');
   });
+
+  it('exposes git adapter on the container', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    expect(c.git).toBeInstanceOf(GitWorktreeAdapter);
+  });
+
+  it('buildRunContext populates promptsRoot and expectedBranch from repoRoot and issueNumber', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    // buildRunContext is only present when agent config loaded
+    expect(c.buildRunContext).toBeDefined();
+    const fakeRun = {
+      uuid: '550e8400-e29b-41d4-a716-446655440042',
+      displayId: 'issue-42-20260622-120000',
+      issueNumber: 42,
+      type: 'issue_to_pr' as const,
+      status: 'running' as const,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date(),
+    };
+    const ctx = c.buildRunContext!(fakeRun);
+    expect(ctx.promptsRoot).toBe(path.join(root, 'prompts'));
+    expect(ctx.expectedBranch).toBe('ai/issue-42');
+    expect(ctx.cwd).toBe(path.join(root, '.ai-worktrees', 'issue-42'));
+  });
 });
