@@ -284,8 +284,8 @@ async function _assemblePrSummary(ctx: PhaseHandlerContext): Promise<string> {
   // Assemble — match legacy heredoc exactly (lines 4719–4741 of ai-run-issue-v2)
   const parts: string[] = [`# ${issueTitle}`, '', `Closes #${ctx.issueNumber}`, ''];
   if (prSummary) parts.push(prSummary, '');
-  if (prTasks) parts.push('## Tasks', prTasks, '');
-  if (prChanges) parts.push('## Changes', prChanges, '');
+  parts.push('## Tasks', prTasks || '- None', '');
+  parts.push('## Changes', prChanges || '- None', '');
   parts.push(`## Validation: ${prValidation}`);
   if (prValidationSteps) parts.push(prValidationSteps);
   parts.push('');
