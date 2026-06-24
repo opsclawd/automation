@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createVerifyCodeChange } from '../verify-code-change.js';
@@ -38,9 +38,34 @@ function makeDeps(resultJson: object | null, outcome: 'success' | 'failed' = 'su
 
   const fn = createVerifyCodeChange({
     agent,
-    baseTmpDir,
     resolveProfileForPhase: () => AgentProfileName('test-profile'),
     idFactory: () => 'test-id',
+    renderVerifyPrompt: async (input) => {
+      const promptPath = join(baseTmpDir, 'prompt.md');
+      const lines = [
+        `Comment: ${input.commentBody}`,
+        `Path: ${input.path}`,
+        `Line: ${input.line}`,
+        `Cwd: ${input.cwd}`,
+        `Start: ${input.startCommitSha}`,
+        `Fix: ${input.fixCommitSha}`,
+      ];
+      writeFileSync(promptPath, lines.join('\n'), 'utf-8');
+      return { promptPath, resultDir: baseTmpDir };
+    },
+    extractVerifyResult: async ({ resultJsonPath, resultDir }) => {
+      try {
+        const absPath = resultJsonPath ?? join(resultDir, 'result.json');
+        const raw = readFileSync(absPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.pass === 'boolean' && typeof parsed.reason === 'string') {
+          return { pass: parsed.pass, reason: parsed.reason };
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
   });
 
   return { fn, agent, baseTmpDir };
@@ -108,7 +133,7 @@ describe('createVerifyCodeChange', () => {
       repoId: 'o/r',
     });
     expect(result.pass).toBe(false);
-    expect(result.reason).toMatch(/invalid/);
+    expect(result.reason).toMatch(/could not be parsed/);
   });
 
   it('returns pass:true (skip) when resolveProfileForPhase throws', async () => {
@@ -116,11 +141,12 @@ describe('createVerifyCodeChange', () => {
     mkdirSync(baseTmpDir, { recursive: true });
     const fn = createVerifyCodeChange({
       agent: { invoke: vi.fn() },
-      baseTmpDir,
       resolveProfileForPhase: () => {
         throw new Error('phase not configured');
       },
       idFactory: () => 'id',
+      renderVerifyPrompt: async () => ({ promptPath: '/dev/null', resultDir: baseTmpDir }),
+      extractVerifyResult: async () => null,
     });
     const result = await fn({
       commentBody: 'fix it',
