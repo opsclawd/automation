@@ -29,7 +29,7 @@ import {
 } from '@ai-sdlc/application';
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
-import type { PrReviewPollerDeps } from '@ai-sdlc/application';
+import type { PrReviewPollerDeps, PostFixGateResult } from '@ai-sdlc/application';
 
 const tempDirs: string[] = [];
 
@@ -559,6 +559,10 @@ exit 1
       subscribe: () => () => {},
     };
     const fixLoop = new ReviewFixLoop({
+      runPostFixGate: async (): Promise<PostFixGateResult> => ({
+        outcome: 'pass',
+        output: '',
+      }),
       runReview: async () => ({
         invocationId: 'review-1',
         agentOutcome: 'success' as const,
