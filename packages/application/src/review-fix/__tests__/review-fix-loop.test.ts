@@ -633,4 +633,100 @@ describe('ReviewFixLoop', () => {
       expect(esc).toHaveLength(0);
     });
   });
+
+  describe('post-fix gate', () => {
+    it('does not call runPostFixGate on iteration 1', async () => {
+      const gateCalls: number[] = [];
+      const deps = makeDeps({
+        runPostFixGate: async (ctx) => {
+          gateCalls.push(ctx.iterationIndex);
+          return { outcome: 'pass' as const, output: '' };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      // Review passes immediately on iteration 1 — gate must NOT run
+      expect(out.phaseOutcome).toBe('passed');
+      expect(gateCalls).toHaveLength(0);
+    });
+
+    it('calls runPostFixGate on iteration 2 (after a fixer commit)', async () => {
+      const gateCalls: number[] = [];
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        runPostFixGate: async (ctx) => {
+          gateCalls.push(ctx.iterationIndex);
+          return { outcome: 'pass' as const, output: '' };
+        },
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      // Iteration 1: review fail → fix → reval pass
+      // Iteration 2: gate runs, review pass → resolved
+      expect(out.phaseOutcome).toBe('passed');
+      expect(gateCalls).toEqual([2]);
+    });
+
+    it('passes gate failure result to runReview on iteration 2', async () => {
+      let reviewCalls = 0;
+      const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+      const deps = makeDeps({
+        runPostFixGate: async (): Promise<PostFixGateResult> => ({
+          outcome: 'fail',
+          output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
+        }),
+        runReview: async (_ctx, gateResult) => {
+          reviewCalls += 1;
+          receivedGateResults.push(gateResult);
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            // Simulate reviewer receiving the gate failure and returning fail,
+            // then pass on third call (iteration 3, second gate check)
+            verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+      });
+      await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 4 });
+      // Iteration 1: gate undefined (not called), reviewer called with undefined
+      expect(receivedGateResults[0]).toBeUndefined();
+      // Iteration 2: gate called and returns fail, reviewer receives failure
+      expect(receivedGateResults[1]).toEqual({
+        outcome: 'fail',
+        output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
+      });
+    });
+
+    it('passes gate pass result to runReview when gate succeeds on iteration 2', async () => {
+      let reviewCalls = 0;
+      const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+      const deps = makeDeps({
+        runPostFixGate: async (): Promise<PostFixGateResult> => ({
+          outcome: 'pass',
+          output: '',
+        }),
+        runReview: async (_ctx, gateResult) => {
+          reviewCalls += 1;
+          receivedGateResults.push(gateResult);
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      expect(out.phaseOutcome).toBe('passed');
+      // Iteration 1: gate not called, runReview receives undefined
+      expect(receivedGateResults[0]).toBeUndefined();
+      // Iteration 2: gate called (pass), runReview receives pass result
+      expect(receivedGateResults[1]).toEqual({ outcome: 'pass', output: '' });
+    });
+  });
 });
