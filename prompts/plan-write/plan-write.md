@@ -69,13 +69,25 @@ If ANY of these patterns exist, add this HTML comment to the VERY FIRST LINE of 
 ```
 If none exist, do NOT add the comment. Simple/mechanical plans (adapters, CRUD, schema changes) should skip review.
 
+## REQUIRED OUTPUT
+After writing `plan.md` and `task-manifest.json`, write `result.json` in the current directory:
+```json
+{
+  "result": "ready",
+  "tasks": [
+    { "title": "Task 1 title", "description": "optional one-liner" }
+  ]
+}
+```
+The `tasks` array must mirror the numbered tasks in `plan.md` (one entry per task, same order). Use `"result": "blocked"` only if the design is fundamentally ambiguous, and add `"blockedReason"` explaining what is unclear.
+
 ## CRITICAL RULES
 - Do NOT ask questions. Make reasonable assumptions and document them.
 - Do NOT rely on agent memory. Write everything to `plan.md`.
 - Do NOT switch branches (no `git checkout`, `git switch`, `git stash branch`).
-- Stop after writing `plan.md` AND `task-manifest.json`. Do not implement anything.
+- Stop after writing `plan.md`, `task-manifest.json`, and `result.json`. Do not implement anything.
 - All shell commands in the plan MUST be relative — no absolute paths, no `cd` to directories outside the worktree.
-- Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `plan.md` and `task-manifest.json`.
+- Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY outputs are `plan.md`, `task-manifest.json`, and `result.json`.
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code. Real task headings start at column 0; anything indented is treated as an example. Violating this rule causes task extraction to misread the plan.
 - Do NOT create standalone "run validation suite" or "make CI green" tasks.
-- Write `plan.md` first, then `task-manifest.json`.
+- Write `plan.md` first, then `task-manifest.json`, then `result.json`.

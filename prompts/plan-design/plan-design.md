@@ -17,8 +17,15 @@ Comments file: issue-comments.md (contains issue comments, may not exist)
    - What is in scope and what is explicitly out of scope
    - Any risks or concerns identified from code analysis
 
+## REQUIRED OUTPUT
+After writing `design.md`, write `result.json` in the current directory:
+```json
+{ "result": "ready", "summary": "<one sentence describing the proposed approach>" }
+```
+Use `"result": "blocked"` only if a blocking ambiguity in the issue makes it impossible to propose an approach, and add a `"blockedReason"` field explaining what is unclear.
+
 ## CRITICAL RULES
 - Do NOT ask questions. Make reasonable assumptions and document them explicitly.
 - Do NOT rely on agent memory. Write everything to `design.md`.
 - Do NOT switch branches (no `git checkout`, `git switch`, `git stash branch`).
-- Stop after writing `design.md`. Do not implement anything.
+- Stop after writing `design.md` and `result.json`. Do not implement anything.
