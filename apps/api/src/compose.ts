@@ -1505,10 +1505,40 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(new PlanWriteHandler());
       phaseRegistry.register(new CompoundHandler());
 
+      const worktreeSetup = async (cwd: string): Promise<void> => {
+        try {
+          execFileSync('pnpm', ['install', '--frozen-lockfile'], {
+            cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 120_000,
+          });
+        } catch (err) {
+          console.error(
+            '[implement setup] pnpm install failed (continuing):',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        try {
+          execFileSync('pnpm', ['-r', 'build'], {
+            cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 180_000,
+          });
+        } catch (err) {
+          console.error(
+            '[implement setup] pnpm -r build failed (continuing):',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      };
+
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
           runStep,
+          setup: worktreeSetup,
         }),
       );
 
