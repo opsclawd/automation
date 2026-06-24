@@ -15,7 +15,7 @@ export type VerifyCodeChangeFn = (input: {
 export interface VerifyCodeChangeDeps {
   agent: AgentPort;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
-  idFactory: () => string;
+  idFactory?: () => string;
   /** Builds the prompt file and returns its path + the dir to write result.json into.
    *  All filesystem IO (mkdirSync, writeFileSync) is the caller's responsibility. */
   renderVerifyPrompt: (input: {
