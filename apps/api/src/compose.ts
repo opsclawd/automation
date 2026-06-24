@@ -54,6 +54,7 @@ import {
   ProcessPrReviewComments,
   decideReactivation,
   applyReactivation,
+  createVerifyCodeChange,
   pollTaskResultSchema,
   ReviewFixLoop,
   ImplementStepLoop,
@@ -1478,7 +1479,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderTaskPrompt: async ({ cwd, comment, diff, branch, previousBuildError }) => {
+      renderTaskPrompt: async ({
+        cwd,
+        comment,
+        diff,
+        branch,
+        previousBuildError,
+        previousCodeVerifyReason,
+      }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
@@ -1512,6 +1520,19 @@ export function composeRoot(opts: ComposeOptions): Container {
             '```',
             '',
             'Please adjust your fix to resolve this error.',
+            '',
+          );
+        }
+
+        if (previousCodeVerifyReason !== undefined) {
+          sections.push(
+            '## Previous Fix Rejected by Code Verifier',
+            '',
+            'An independent verifier reviewed your previous fix and rejected it with this reason:',
+            '',
+            `> ${previousCodeVerifyReason}`,
+            '',
+            'Please revisit your fix with this feedback in mind before trying again.',
             '',
           );
         }
@@ -1645,6 +1666,94 @@ export function composeRoot(opts: ComposeOptions): Container {
           return false;
         }
       },
+      verifyCodeChange: createVerifyCodeChange({
+        agent: agentRuntime,
+        resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+        idFactory: () => randomUUID(),
+        renderVerifyPrompt: async ({
+          commentBody,
+          path,
+          line,
+          cwd,
+          startCommitSha,
+          fixCommitSha,
+        }) => {
+          const promptDir = join(baseTmpDir, `verify-${fixCommitSha.slice(0, 8)}`);
+          mkdirSync(promptDir, { recursive: true });
+          const promptPath = join(promptDir, 'verify-prompt.md');
+
+          let diffOutput = '';
+          try {
+            diffOutput = execFileSync('git', ['diff', startCommitSha, fixCommitSha, '--', path], {
+              cwd,
+              encoding: 'utf-8',
+            });
+          } catch {
+            diffOutput = '(could not produce diff)';
+          }
+
+          let codeWindow = '';
+          try {
+            const absPath = join(cwd, path);
+            const lines = readFileSync(absPath, 'utf-8').split('\n');
+            const start = Math.max(0, line - 10);
+            const end = Math.min(lines.length, line + 10);
+            codeWindow = lines
+              .slice(start, end)
+              .map((l, i) => `${start + i + 1}: ${l}`)
+              .join('\n');
+          } catch {
+            codeWindow = '(could not read file)';
+          }
+
+          const content = [
+            '# Code Verification Task',
+            '',
+            'An automated fix was applied to address a PR review comment. Verify that the fix actually addresses the concern.',
+            '',
+            '## Original Review Comment',
+            '',
+            commentBody,
+            '',
+            `## File: ${path} (around line ${line})`,
+            '',
+            '```',
+            codeWindow,
+            '```',
+            '',
+            '## Diff Applied',
+            '',
+            '```diff',
+            diffOutput,
+            '```',
+            '',
+            '## Your Task',
+            '',
+            'Does the diff above actually address the review comment? Answer strictly.',
+            '',
+            'Write `result.json` in the current directory:',
+            '```json',
+            '{ "pass": true | false, "reason": "<one sentence>" }',
+            '```',
+          ].join('\n');
+
+          writeFileSync(promptPath, content, 'utf-8');
+          return { promptPath, resultDir: promptDir };
+        },
+        extractVerifyResult: async ({ resultJsonPath, resultDir }) => {
+          try {
+            const absPath = resultJsonPath ?? join(resultDir, 'result.json');
+            const raw = readFileSync(absPath, 'utf-8');
+            const parsed = JSON.parse(raw);
+            if (typeof parsed.pass === 'boolean' && typeof parsed.reason === 'string') {
+              return { pass: parsed.pass, reason: parsed.reason };
+            }
+            return null;
+          } catch {
+            return null;
+          }
+        },
+      }),
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without
