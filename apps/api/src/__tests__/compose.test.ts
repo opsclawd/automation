@@ -922,7 +922,7 @@ exit 1
       };
       err.stdout = 'stdout output\n';
       err.stderr = 'stderr output\n';
-      expect(captureExecOutput(err)).toBe('stdout output\nstderr output\n');
+      expect(captureExecOutput(err)).toBe('stdout output\n\nstderr output\n');
     });
 
     it('returns stderr when stdout is empty', () => {
@@ -943,6 +943,16 @@ exit 1
       err.stdout = 'stdout only\n';
       err.stderr = '';
       expect(captureExecOutput(err)).toBe('stdout only\n');
+    });
+
+    it('adds newline separator when stdout lacks trailing newline', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = 'error TS2322';
+      err.stderr = 'error TS2345\n';
+      expect(captureExecOutput(err)).toBe('error TS2322\nerror TS2345\n');
     });
 
     it('returns String(err) for non-execFileSync errors', () => {

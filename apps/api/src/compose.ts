@@ -450,7 +450,9 @@ export function buildQualityReviewPrompt(
 export function captureExecOutput(err: unknown): string {
   if (err instanceof Error && 'stdout' in err && 'stderr' in err) {
     const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
-    return `${String(e.stdout ?? '')}${String(e.stderr ?? '')}`;
+    const stdout = String(e.stdout ?? '');
+    const stderr = String(e.stderr ?? '');
+    return stdout && stderr ? `${stdout}\n${stderr}` : stdout || stderr;
   }
   return String(err);
 }
