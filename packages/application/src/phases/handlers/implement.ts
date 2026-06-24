@@ -21,6 +21,7 @@ export interface StepRunResult {
 export interface ImplementHandlerOpts {
   steps: StepRepositoryPort;
   runStep: (sctx: StepRunContext) => Promise<StepRunResult>;
+  setup?: (cwd: string) => Promise<void>;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -38,6 +39,10 @@ export class ImplementHandler implements PhaseHandler {
     const derived = deriveSteps(planMd);
     if (derived.length === 0) {
       return this.fail(ctx, emit, 'invalid_result', 'plan.md has no "## Task" steps');
+    }
+
+    if (this.opts.setup) {
+      await this.opts.setup(ctx.cwd);
     }
 
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);

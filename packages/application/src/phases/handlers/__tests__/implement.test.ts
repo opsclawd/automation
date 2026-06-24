@@ -267,4 +267,61 @@ describe('ImplementHandler', () => {
     expect(runStep).not.toHaveBeenCalled();
     expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
   });
+
+  it('calls setup once before any step runs', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: work']),
+    });
+    const steps = new FakeStepRepository();
+    const order: string[] = [];
+    const setup = vi.fn(async (_cwd: string) => {
+      order.push('setup');
+    });
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      order.push('step');
+      return { outcome: 'success' };
+    });
+    const { ctx } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(setup).toHaveBeenCalledTimes(1);
+    expect(setup).toHaveBeenCalledWith('/tmp/wt');
+    expect(order).toEqual(['setup', 'step']);
+  });
+
+  it('does not call setup when plan.md is missing', async () => {
+    const artifacts = new FakeArtifactStore(); // no plan.md
+    const steps = new FakeStepRepository();
+    const setup = vi.fn(async (_cwd: string) => {});
+    const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+    const { ctx } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    expect(setup).not.toHaveBeenCalled();
+  });
+
+  it('does not call setup when plan.md has no tasks', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: '# Plan\n\nNo task headings here.\n',
+    });
+    const steps = new FakeStepRepository();
+    const setup = vi.fn(async (_cwd: string) => {});
+    const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+    const { ctx } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    expect(setup).not.toHaveBeenCalled();
+  });
 });
