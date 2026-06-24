@@ -735,12 +735,31 @@ export function composeRoot(opts: ComposeOptions): Container {
         return last ? String(last.id) : '';
       };
 
-      const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
+      const runReview = async (
+        ctx: StepContext,
+        gateResult?: PostFixGateResult,
+      ): Promise<ReviewStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
+        const gateFailureSection: string[] =
+          gateResult?.outcome === 'fail'
+            ? [
+                '## BUILD/LINT FAILURE',
+                'The orchestrator detected mechanical errors in the fixer commit before this review.',
+                'Result: FAIL',
+                '',
+                'Errors:',
+                gateResult.output,
+                '',
+                'Surface these errors as HIGH severity findings and do NOT pass this review.',
+                '',
+              ]
+            : [];
+
         const reviewPrompt = [
+          ...gateFailureSection,
           'You are reviewing code changes in a pull request.',
           '',
           '## CONTEXT',
