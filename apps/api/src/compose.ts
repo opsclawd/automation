@@ -1505,10 +1505,47 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(new PlanWriteHandler());
       phaseRegistry.register(new CompoundHandler());
 
+      const worktreeSetup = async (cwd: string): Promise<{ ok: boolean; error?: string }> => {
+        try {
+          execFileSync('pnpm', ['install', '--frozen-lockfile'], {
+            cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 120_000,
+          });
+        } catch (err) {
+          const stderr =
+            (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+              : '';
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[implement setup] pnpm install failed:', msg, stderr);
+          return { ok: false, error: `pnpm install failed: ${msg}${stderr}` };
+        }
+        try {
+          execFileSync('pnpm', ['-r', 'build'], {
+            cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 180_000,
+          });
+        } catch (err) {
+          const stderr =
+            (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+              : '';
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[implement setup] pnpm -r build failed:', msg, stderr);
+          return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
+        }
+        return { ok: true };
+      };
+
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
           runStep,
+          setup: worktreeSetup,
         }),
       );
 
