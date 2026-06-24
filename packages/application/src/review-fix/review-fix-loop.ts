@@ -13,6 +13,7 @@ import type {
   ReviewFixLoopInput,
   ReviewFixLoopResult,
   StepContext,
+  PostFixGateResult,
 } from './types.js';
 
 export class ReviewFixLoop {
@@ -47,6 +48,12 @@ export class ReviewFixLoop {
         iterationIndex,
       };
 
+      // --- POST-FIX GATE (skip iteration 1 — fixer has not yet committed) ---
+      let gateResult: PostFixGateResult | undefined;
+      if (iterationIndex > 1) {
+        gateResult = await deps.runPostFixGate(ctx);
+      }
+
       // --- REVIEW ---
       this.emit(
         input,
@@ -57,7 +64,7 @@ export class ReviewFixLoop {
           index: iterationIndex,
         },
       );
-      const review = await deps.runReview(ctx);
+      const review = await deps.runReview(ctx, gateResult);
       if (review.overridden) {
         const direction: 'upgrade' | 'downgrade' =
           review.verdict === 'fail' ? 'upgrade' : 'downgrade';
