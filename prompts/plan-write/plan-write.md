@@ -16,7 +16,7 @@ The plan MUST include:
 - goal
 - non-goals
 - affected files (full paths from repo root)
-- ordered implementation tasks (numbered, clear description per task)
+- ordered implementation tasks (numbered, clear description per task) — each task MUST be an H2 heading starting at column 0, e.g. `## Task 1: Title` (never H3 `###` or deeper)
 - tests to add or update
 - validation commands (exact commands to verify correctness)
 - risk areas
