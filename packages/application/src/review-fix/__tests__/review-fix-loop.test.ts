@@ -10,6 +10,7 @@ import type {
   RevalidationResult,
   FixStepOptions,
   StepContext,
+  PostFixGateResult,
 } from '../types.js';
 
 function collectEvents() {
@@ -39,6 +40,10 @@ function makeDeps(over: Partial<ReviewFixLoopDeps>): ReviewFixLoopDeps {
   let n = 0;
   const { bus } = collectEvents();
   return {
+    runPostFixGate: async (): Promise<PostFixGateResult> => ({
+      outcome: 'pass',
+      output: '',
+    }),
     runReview: async (): Promise<ReviewStepResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success',
