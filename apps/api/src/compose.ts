@@ -137,6 +137,36 @@ const classifyExitAdapter = (
   };
 };
 
+export function extractTaskText(planPath: string, taskIndex: number): string {
+  let content: string;
+  try {
+    content = readFileSync(planPath, 'utf-8');
+  } catch {
+    return '';
+  }
+  const lines = content.split('\n');
+  const taskHeadingRe = /^##\s+(?:Task|Step)\s+(\d+)\b/i;
+  let capturing = false;
+  const captured: string[] = [];
+  for (const line of lines) {
+    const m = taskHeadingRe.exec(line);
+    if (m) {
+      if (Number(m[1]) === taskIndex) {
+        capturing = true;
+        continue;
+      } else if (capturing) {
+        break;
+      }
+    } else if (capturing && /^##\s/.test(line)) {
+      break;
+    }
+    if (capturing) {
+      captured.push(line);
+    }
+  }
+  return captured.join('\n').trim();
+}
+
 /**
  * Resolve the agent profile name for a given phase.
  * Throws `ConfigError` if the phase is not configured or agent config is absent.
