@@ -1514,9 +1514,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 120_000,
           });
         } catch (err) {
+          const stderr = (err as any).stderr ? `\nstderr: ${(err as any).stderr}` : '';
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('[implement setup] pnpm install failed:', msg);
-          return { ok: false, error: `pnpm install failed: ${msg}` };
+          console.error('[implement setup] pnpm install failed:', msg, stderr);
+          return { ok: false, error: `pnpm install failed: ${msg}${stderr}` };
         }
         try {
           execFileSync('pnpm', ['-r', 'build'], {
@@ -1526,9 +1527,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 180_000,
           });
         } catch (err) {
+          const stderr = (err as any).stderr ? `\nstderr: ${(err as any).stderr}` : '';
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('[implement setup] pnpm -r build failed:', msg);
-          return { ok: false, error: `pnpm -r build failed: ${msg}` };
+          console.error('[implement setup] pnpm -r build failed:', msg, stderr);
+          return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
         }
         return { ok: true };
       };
