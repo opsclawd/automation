@@ -649,6 +649,39 @@ describe('ReviewFixLoop', () => {
       expect(gateCalls).toHaveLength(0);
     });
 
+    it('does not call runPostFixGate on iteration 2 when previous fix returned cannot_fix', async () => {
+      const gateCalls: number[] = [];
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        runPostFixGate: async (ctx) => {
+          gateCalls.push(ctx.iterationIndex);
+          return { outcome: 'pass' as const, output: '' };
+        },
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'cannot_fix' as const,
+        }),
+      });
+      const out = await new ReviewFixLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 4,
+      });
+      // Iteration 1: review fail → fix (cannot_fix) → continue
+      // Iteration 2: gate NOT called (no fix commit), review fail → fix (cannot_fix) → continue
+      // Iteration 3: gate NOT called (no fix commit), review fail → fix (cannot_fix) → exhaust
+      expect(out.phaseOutcome).toBe('failed');
+      expect(gateCalls).toHaveLength(0);
+    });
+
     it('calls runPostFixGate on iteration 2 (after a fixer commit)', async () => {
       const gateCalls: number[] = [];
       let reviewCalls = 0;

@@ -34,6 +34,7 @@ export class ReviewFixLoop {
     let consecutiveFixFailures = 0;
     let lastFixInvocationId: string | undefined;
     let lastFailingCategory: string | undefined;
+    let lastIterationHadFixCommit = false;
     let outstandingFailedRevalidation = false;
     const findingHistory: Array<Set<string>> = [];
 
@@ -50,7 +51,7 @@ export class ReviewFixLoop {
 
       // --- POST-FIX GATE (skip iteration 1 — fixer has not yet committed) ---
       let gateResult: PostFixGateResult | undefined;
-      if (iterationIndex > 1) {
+      if (iterationIndex > 1 && lastIterationHadFixCommit) {
         gateResult = await deps.runPostFixGate(ctx);
       }
 
@@ -155,6 +156,7 @@ export class ReviewFixLoop {
         fix.verdict === 'cannot_fix'
       ) {
         consecutiveFixFailures += 1;
+        lastIterationHadFixCommit = false;
         loop = completeIteration(loop, {
           outcome: 'unresolved',
           fixInvocationId: fix.invocationId,
@@ -165,6 +167,7 @@ export class ReviewFixLoop {
         continue;
       }
       consecutiveFixFailures = 0;
+      lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
 
       // --- REVALIDATE ---
       const reval = await deps.runRevalidation(ctx);

@@ -11,7 +11,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { composeRoot } from '../compose.js';
+import { composeRoot, captureExecOutput } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import {
@@ -912,5 +912,42 @@ exit 1
     const scriptPath = fakeScript(0);
     const c = composeRoot({ repoRoot: root, scriptPath });
     expect(c.buildRunContext).toBeUndefined();
+  });
+
+  describe('captureExecOutput', () => {
+    it('returns stdout+stderr from execFileSync error with both streams', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = 'stdout output\n';
+      err.stderr = 'stderr output\n';
+      expect(captureExecOutput(err)).toBe('stdout output\nstderr output\n');
+    });
+
+    it('returns stderr when stdout is empty', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = '';
+      err.stderr = 'stderr only\n';
+      expect(captureExecOutput(err)).toBe('stderr only\n');
+    });
+
+    it('returns stdout when stderr is empty', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = 'stdout only\n';
+      err.stderr = '';
+      expect(captureExecOutput(err)).toBe('stdout only\n');
+    });
+
+    it('returns String(err) for non-execFileSync errors', () => {
+      const err = new Error('generic error');
+      expect(captureExecOutput(err)).toBe('Error: generic error');
+    });
   });
 });
