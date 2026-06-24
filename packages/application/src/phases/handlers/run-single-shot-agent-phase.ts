@@ -178,13 +178,15 @@ export async function runSingleShotAgentPhase(
 
   // 4. Write rendered prompt to artifact store
   const promptRelativePath = 'prompt.md';
+  let promptAbsolutePath: string;
   try {
-    await ctx.artifacts.write({
+    const promptArtifact = await ctx.artifacts.write({
       runId: ctx.runUuid,
       phaseId: config.phase as string,
       relativePath: promptRelativePath,
       contents: renderedPrompt,
     });
+    promptAbsolutePath = promptArtifact.absolutePath;
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     const failure = buildFailure(
@@ -205,7 +207,7 @@ export async function runSingleShotAgentPhase(
   // 5. Build AgentInvocationRequest
   const request: AgentInvocationRequest = {
     profile: config.profile,
-    promptPath: promptRelativePath,
+    promptPath: promptAbsolutePath,
     expectedArtifacts: config.agentContract.requiredArtifacts ?? [],
     cwd: ctx.cwd,
     runId: ctx.runUuid,
