@@ -167,6 +167,125 @@ export function extractTaskText(planPath: string, taskIndex: number): string {
   return captured.join('\n').trim();
 }
 
+export function buildImplementPrompt(
+  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+  taskText: string,
+  branchName: string,
+): string {
+  const taskN = ctx.stepIndex;
+  const taskTitle = ctx.stepTitle;
+  const description = taskText || `See plan.md Task ${taskN} for details.`;
+
+  return [
+    `You are implementing Task ${taskN}: ${taskTitle}`,
+    '',
+    '## Task Description',
+    description,
+    '',
+    '## Context',
+    `You are working in: ${ctx.cwd}`,
+    'Issue: issue.md',
+    'Design: design.md',
+    'Plan: plan.md',
+    `Branch: ${branchName}`,
+    '',
+    'You are using Subagent-Driven Development. Follow the process below exactly.',
+    '',
+    '## SCOPE RESTRICTION',
+    `You are implementing ONLY Task ${taskN}: ${taskTitle}.`,
+    '',
+    `Tasks numbered higher than ${taskN} in plan.md are EXPLICITLY OUT OF SCOPE`,
+    'for this run. They will be implemented by separate later runs of this',
+    'orchestrator. You must NOT:',
+    '- create files, types, schemas, tests, exports, or migrations that belong',
+    '  to a later task, even if you have all the context to do so;',
+    "- 'finish the plan' because tasks N+1..M look small or related;",
+    "- pre-stage scaffolding for later tasks 'to save time later'.",
+    '',
+    'A commit that includes any later-task work is a scope violation, not',
+    'helpfulness — it breaks per-task review, makes resume undecidable, and',
+    "forces the operator to revert and re-run. The plan's per-task commit",
+    'boundary is load-bearing: respect it.',
+    '',
+    `If you finish Task ${taskN} quickly: STOP, run the self-review, and`,
+    "report DONE. Do not 'continue' into the next task.",
+    '',
+    'You may READ files associated with later tasks for context, but you must',
+    'not write, modify, stage, or commit them in this run.',
+    '',
+    '## PARITY COVERAGE',
+    "If your task's scope includes a *watched legacy path* (the plan will say so —",
+    'scripts/ai-run-issue-v2, scripts/ai-pr-review-poll, anything under scripts/lib/',
+    'except __tests__/, apps/cli/src/run-agent.ts, apps/cli/src/run-pr-poll.ts, or',
+    'anything under packages/infrastructure/src/agent/ — recursive, any file at or',
+    'below those prefixes), your commit MUST also add or extend the parity[#<issue>]',
+    'test in scripts/lib/__tests__/legacy-parity.bats that the plan specifies,',
+    'pinning the invariant your change establishes. Mirror the existing tests in that',
+    'file: document the invariant, its source issue, the failure it prevents, and the',
+    'TS-port contract; prefer runtime-agnostic assertions (git/filesystem state, pure',
+    'decisions). Do NOT report DONE for such a task without it — the CI parity gate',
+    'will reject the PR. If the plan marked the change parity-neutral, skip the test',
+    '(none applies). You do NOT write the PR body, so do not attempt to add a',
+    "'no-parity-impact' note yourself — the parity gate is resolved outside the",
+    'implement phase.',
+    '',
+    '## Your Job',
+    '',
+    `1. Read issue.md, design.md, and plan.md for context. Identify the`,
+    `   boundaries of Task ${taskN} specifically.`,
+    `2. Implement exactly what Task ${taskN} specifies — nothing more.`,
+    `3. Write tests following TDD where applicable, scoped to Task ${taskN}.`,
+    `4. Verify Task ${taskN}'s implementation works.`,
+    '5. Commit your work:',
+    '   a. Record HEAD before: PRE_HEAD=$(git rev-parse HEAD)',
+    "   b. Run: git add <files> && git commit -m '<descriptive commit message>'",
+    '   c. Verify the commit landed:',
+    '      - If git commit exits non-zero, the pre-commit hook failed. Read the',
+    '        hook/lint output, FIX the reported errors, and retry the commit.',
+    '        Never report DONE with a failed or skipped commit.',
+    '      - After a successful commit, confirm HEAD advanced:',
+    '        [ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE"; exit 1; }',
+    '      - Confirm clean worktree:',
+    '        [ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }',
+    '   d. HARD RULE: Never infer commit success from git log. Git log shows',
+    "      OTHER tasks' commits. Only git rev-parse HEAD + git status --porcelain",
+    '      prove YOUR commit landed.',
+    "   e. If you cannot get the commit to land (hook failure you can't fix),",
+    '      report BLOCKED with the hook output — never DONE.',
+    `6. Self-review before reporting back, including the scope check below.`,
+    '',
+    '## Questions?',
+    'If you have clarifications or concerns BEFORE implementing, note them in your report',
+    'and proceed with a reasonable assumption. Do not ask questions — make decisions',
+    'and document them.',
+    '',
+    '## Self-Review Checklist (before reporting back)',
+    `- Scope: Run \`git diff --stat HEAD~1\` mentally — does every changed`,
+    `  file belong to Task ${taskN} alone? If any file is for a later task,`,
+    '  REMOVE it from the commit before reporting DONE.',
+    '- Commit integrity: Did I verify HEAD advanced after my commit? Is',
+    '  git status --porcelain empty? (See step 5c/d.)',
+    `- Completeness: Did I implement everything Task ${taskN} specifies?`,
+    '- Quality: Is the code clean and maintainable?',
+    '- Discipline: Did I avoid overbuilding?',
+    '- Testing: Do tests verify actual behavior?',
+    '',
+    '## Report Format',
+    'Report back with:',
+    '- Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT',
+    '- What you implemented',
+    '- What you tested and results',
+    '- Files changed',
+    '- Self-review findings',
+    '- Any questions or concerns',
+    '',
+    '## Branch Restriction',
+    `CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${branchName}.`,
+    '',
+    'Write a summary to implementation-log.md.',
+  ].join('\n');
+}
+
 /**
  * Resolve the agent profile name for a given phase.
  * Throws `ConfigError` if the phase is not configured or agent config is absent.
@@ -1050,20 +1169,15 @@ export function composeRoot(opts: ComposeOptions): Container {
       buildRunContext = buildContext;
 
       const runImplement = async (ctx: StepLoopContext) => {
-        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+        const run = runRepository.findByUuid(String(ctx.runId));
+        const runDir = run?.displayId ?? String(ctx.runId);
+        const issueNumber = run?.issueNumber ?? 0;
+        const branchName = `ai/issue-${issueNumber}`;
+        const taskText = extractTaskText(join(ctx.cwd, 'plan.md'), ctx.stepIndex);
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);
-        const implementPrompt = [
-          '# TASK',
-          `Step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-          '',
-          '## CONTEXT',
-          `Working directory: ${ctx.cwd}`,
-          `Repository: ${ctx.repoId}`,
-          '',
-          'Read plan.md and implement this step. Write a summary to implementation-log.md.',
-        ].join('\n');
+        const implementPrompt = buildImplementPrompt(ctx, taskText, branchName);
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
