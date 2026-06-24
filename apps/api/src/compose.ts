@@ -141,7 +141,8 @@ export function extractTaskText(planPath: string, taskIndex: number): string {
   let content: string;
   try {
     content = readFileSync(planPath, 'utf-8');
-  } catch {
+  } catch (err) {
+    console.error(`extractTaskText: failed to read plan at ${planPath}`, err);
     return '';
   }
   const lines = content.split('\n');
@@ -168,7 +169,7 @@ export function extractTaskText(planPath: string, taskIndex: number): string {
 }
 
 export function buildImplementPrompt(
-  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+  ctx: { stepIndex: number; stepTitle: string; cwd: string; repoId: string },
   taskText: string,
   branchName: string,
 ): string {
@@ -184,6 +185,7 @@ export function buildImplementPrompt(
     '',
     '## Context',
     `You are working in: ${ctx.cwd}`,
+    `Repository: ${ctx.repoId}`,
     'Issue: issue.md',
     'Design: design.md',
     'Plan: plan.md',
@@ -214,6 +216,9 @@ export function buildImplementPrompt(
     'not write, modify, stage, or commit them in this run.',
     '',
     '## PARITY COVERAGE',
+    // NOTE: The hardcoded paths below must be kept in sync with the actual
+    // infrastructure layout. If paths are renamed, moved, or removed, update this
+    // list to match.
     "If your task's scope includes a *watched legacy path* (the plan will say so —",
     'scripts/ai-run-issue-v2, scripts/ai-pr-review-poll, anything under scripts/lib/',
     'except __tests__/, apps/cli/src/run-agent.ts, apps/cli/src/run-pr-poll.ts, or',
@@ -1185,7 +1190,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           result = await router.invoke({
             profile: AgentProfileName(implementProfileName),
             promptPath,
-            expectedArtifacts: [],
+            expectedArtifacts: ['implementation-log.md'],
             cwd: ctx.cwd,
             runId: String(ctx.runId),
             repoId: ctx.repoId,

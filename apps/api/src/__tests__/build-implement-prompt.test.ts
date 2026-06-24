@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { buildImplementPrompt } from '../compose.js';
 
-const ctx = { stepIndex: 3, stepTitle: 'Add authentication', cwd: '/workspace/issue-42' };
+const ctx = {
+  stepIndex: 3,
+  stepTitle: 'Add authentication',
+  cwd: '/workspace/issue-42',
+  repoId: 'opsclawd/automation',
+};
 const taskText = 'Implement JWT-based auth middleware and write integration tests.';
 const branchName = 'ai/issue-42';
 
@@ -23,10 +28,11 @@ describe('buildImplementPrompt', () => {
     expect(prompt).toContain('See plan.md Task 3 for details.');
   });
 
-  it('includes the working directory, branch, and reference files in Context', () => {
+  it('includes the working directory, repo, branch, and reference files in Context', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
     expect(prompt).toContain('## Context');
     expect(prompt).toContain('/workspace/issue-42');
+    expect(prompt).toContain('opsclawd/automation');
     expect(prompt).toContain('ai/issue-42');
     expect(prompt).toContain('issue.md');
     expect(prompt).toContain('design.md');
