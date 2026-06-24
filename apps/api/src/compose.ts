@@ -404,6 +404,48 @@ class AbortRegistry {
   }
 }
 
+export function buildSpecReviewPrompt(
+  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+  typecheckSection: string,
+): string {
+  return [
+    '# TASK',
+    `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+    '',
+    'Check that the implementation matches plan.md task requirements exactly.',
+    '',
+    '## CONTEXT',
+    `Working directory: ${ctx.cwd}`,
+    '',
+    typecheckSection,
+    '',
+    '## OUTPUT',
+    `Write ${ctx.cwd}/result.json: { "result": "pass" | "fail" }`,
+    'Do NOT write to a relative path — use the full absolute path above.',
+  ].join('\n');
+}
+
+export function buildQualityReviewPrompt(
+  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+  typecheckSection: string,
+): string {
+  return [
+    '# TASK',
+    `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+    '',
+    'Check for code quality: maintainability, performance, security, test coverage.',
+    '',
+    '## CONTEXT',
+    `Working directory: ${ctx.cwd}`,
+    '',
+    typecheckSection,
+    '',
+    '## OUTPUT',
+    `Write ${ctx.cwd}/result.json: { "result": "pass" | "fail" }`,
+    'Do NOT write to a relative path — use the full absolute path above.',
+  ].join('\n');
+}
+
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
@@ -1277,17 +1319,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return SPEC_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to plan-letter checks until the type error is resolved.`;
 
-        const reviewPrompt = [
-          '# TASK',
-          `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-          '',
-          'Check that the implementation matches plan.md task requirements exactly.',
-          '',
-          typecheckSection,
-          '',
-          '## OUTPUT',
-          'Write result.json: { "result": "pass" | "fail" }',
-        ].join('\n');
+        const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -1343,17 +1375,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
 
-        const reviewPrompt = [
-          '# TASK',
-          `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-          '',
-          'Check for code quality: maintainability, performance, security, test coverage.',
-          '',
-          typecheckSection,
-          '',
-          '## OUTPUT',
-          'Write result.json: { "result": "pass" | "fail" }',
-        ].join('\n');
+        const reviewPrompt = buildQualityReviewPrompt(ctx, typecheckSection);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -1514,10 +1536,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 120_000,
           });
         } catch (err) {
-          const stderr =
-            (err as NodeJS.ErrnoException & { stderr?: string }).stderr
-              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
-              : '';
+          const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+            ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+            : '';
           const msg = err instanceof Error ? err.message : String(err);
           console.error('[implement setup] pnpm install failed:', msg, stderr);
           return { ok: false, error: `pnpm install failed: ${msg}${stderr}` };
@@ -1530,10 +1551,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 180_000,
           });
         } catch (err) {
-          const stderr =
-            (err as NodeJS.ErrnoException & { stderr?: string }).stderr
-              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
-              : '';
+          const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+            ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+            : '';
           const msg = err instanceof Error ? err.message : String(err);
           console.error('[implement setup] pnpm -r build failed:', msg, stderr);
           return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
