@@ -1514,7 +1514,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 120_000,
           });
         } catch (err) {
-          const stderr = (err as any).stderr ? `\nstderr: ${(err as any).stderr}` : '';
+          const stderr =
+            (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+              : '';
           const msg = err instanceof Error ? err.message : String(err);
           console.error('[implement setup] pnpm install failed:', msg, stderr);
           return { ok: false, error: `pnpm install failed: ${msg}${stderr}` };
@@ -1527,7 +1530,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 180_000,
           });
         } catch (err) {
-          const stderr = (err as any).stderr ? `\nstderr: ${(err as any).stderr}` : '';
+          const stderr =
+            (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+              : '';
           const msg = err instanceof Error ? err.message : String(err);
           console.error('[implement setup] pnpm -r build failed:', msg, stderr);
           return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
