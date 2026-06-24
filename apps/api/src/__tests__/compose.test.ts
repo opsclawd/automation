@@ -598,6 +598,62 @@ exit 1
     expect(result.loop.iterations).toHaveLength(1);
   });
 
+  it('ReviewFixLoop passes gate failure output to runReview on iteration 2', async () => {
+    const bus = {
+      publish: (_runUuid: string, _event: OrchestratorEvent) => {},
+      subscribe: () => () => {},
+    };
+    const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+    let reviewCalls = 0;
+
+    const fixLoop = new ReviewFixLoop({
+      runPostFixGate: async (): Promise<PostFixGateResult> => ({
+        outcome: 'fail',
+        output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
+      }),
+      runReview: async (_ctx, gateResult) => {
+        reviewCalls += 1;
+        receivedGateResults.push(gateResult);
+        return {
+          invocationId: `review-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+        };
+      },
+      runFix: async () => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runRevalidation: async () => ({
+        validationRunId: 'reval-1',
+        passed: true,
+      }),
+      loops: new FakeLoopRepository(),
+      events: bus,
+      now: () => new Date(),
+      idFactory: () => 'smoke-loop-gate',
+    });
+
+    const result = await fixLoop.execute({
+      runId: RunId('test-run-gate'),
+      phaseId: PhaseName('whole-pr-review'),
+      repoId: 'owner/repo',
+      cwd: '/tmp',
+      maxIterations: 4,
+      reviewProfile: AgentProfileName('test'),
+      fixProfile: AgentProfileName('test'),
+    });
+
+    expect(result.phaseOutcome).toBe('passed');
+    expect(receivedGateResults[0]).toBeUndefined();
+    expect(receivedGateResults[1]).toEqual({
+      outcome: 'fail',
+      output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
+    });
+    expect(reviewCalls).toBe(3);
+  });
+
   it('removes per-run tmp dir after a failed run completes', async () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(1);
