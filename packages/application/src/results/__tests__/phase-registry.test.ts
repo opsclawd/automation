@@ -2,10 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { PHASE_NAME_MIGRATION_MAP, PHASE_RESULT_REGISTRY } from '../phase-registry.js';
 
 describe('PHASE_RESULT_REGISTRY', () => {
-  it('contains all 11 expected phases', () => {
+  it('contains all 9 expected phases', () => {
     const expected = [
-      'plan-design',
-      'plan-write',
       'implement',
       'quality-review',
       'fix-review',
@@ -20,8 +18,6 @@ describe('PHASE_RESULT_REGISTRY', () => {
   });
 
   it.each([
-    ['plan-design', true],
-    ['plan-write', true],
     ['implement', false],
     ['quality-review', true],
     ['fix-review', false],
