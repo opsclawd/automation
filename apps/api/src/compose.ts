@@ -1505,7 +1505,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(new PlanWriteHandler());
       phaseRegistry.register(new CompoundHandler());
 
-      const worktreeSetup = async (cwd: string): Promise<void> => {
+      const worktreeSetup = async (cwd: string): Promise<{ ok: boolean; error?: string }> => {
         try {
           execFileSync('pnpm', ['install', '--frozen-lockfile'], {
             cwd,
@@ -1514,10 +1514,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 120_000,
           });
         } catch (err) {
-          console.error(
-            '[implement setup] pnpm install failed (continuing):',
-            err instanceof Error ? err.message : String(err),
-          );
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[implement setup] pnpm install failed:', msg);
+          return { ok: false, error: `pnpm install failed: ${msg}` };
         }
         try {
           execFileSync('pnpm', ['-r', 'build'], {
@@ -1527,11 +1526,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             timeout: 180_000,
           });
         } catch (err) {
-          console.error(
-            '[implement setup] pnpm -r build failed (continuing):',
-            err instanceof Error ? err.message : String(err),
-          );
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[implement setup] pnpm -r build failed:', msg);
+          return { ok: false, error: `pnpm -r build failed: ${msg}` };
         }
+        return { ok: true };
       };
 
       phaseRegistry.register(

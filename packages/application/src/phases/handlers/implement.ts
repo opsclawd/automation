@@ -21,7 +21,7 @@ export interface StepRunResult {
 export interface ImplementHandlerOpts {
   steps: StepRepositoryPort;
   runStep: (sctx: StepRunContext) => Promise<StepRunResult>;
-  setup?: (cwd: string) => Promise<void>;
+  setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -41,16 +41,24 @@ export class ImplementHandler implements PhaseHandler {
       return this.fail(ctx, emit, 'invalid_result', 'plan.md has no "## Task" steps');
     }
 
-    if (this.opts.setup) {
-      await this.opts.setup(ctx.cwd);
-    }
-
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
     const doneIdx = new Set(
       existing
         .filter((s) => s.phaseId === 'implement' && s.status === 'success')
         .map((s) => s.index),
     );
+
+    if (this.opts.setup && derived.some((d) => !doneIdx.has(d.index))) {
+      try {
+        const result = await this.opts.setup(ctx.cwd);
+        if (!result.ok) {
+          return this.fail(ctx, emit, 'setup_failed', result.error ?? 'setup failed');
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return this.fail(ctx, emit, 'setup_failed', `setup crashed: ${message}`);
+      }
+    }
 
     for (const d of derived) {
       if (doneIdx.has(d.index)) {

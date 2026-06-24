@@ -279,6 +279,7 @@ describe('ImplementHandler', () => {
     const order: string[] = [];
     const setup = vi.fn(async (_cwd: string) => {
       order.push('setup');
+      return { ok: true };
     });
     const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
       order.push('step');
@@ -290,14 +291,14 @@ describe('ImplementHandler', () => {
 
     expect(result.outcome).toBe('passed');
     expect(setup).toHaveBeenCalledTimes(1);
-    expect(setup).toHaveBeenCalledWith('/tmp/wt');
+    expect(setup).toHaveBeenCalledWith(ctx.cwd);
     expect(order).toEqual(['setup', 'step']);
   });
 
   it('does not call setup when plan.md is missing', async () => {
     const artifacts = new FakeArtifactStore(); // no plan.md
     const steps = new FakeStepRepository();
-    const setup = vi.fn(async (_cwd: string) => {});
+    const setup = vi.fn(async (_cwd: string) => ({ ok: true }));
     const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
     const { ctx } = makeCtx(artifacts);
 
@@ -315,7 +316,7 @@ describe('ImplementHandler', () => {
       contents: '# Plan\n\nNo task headings here.\n',
     });
     const steps = new FakeStepRepository();
-    const setup = vi.fn(async (_cwd: string) => {});
+    const setup = vi.fn(async (_cwd: string) => ({ ok: true }));
     const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
     const { ctx } = makeCtx(artifacts);
 
@@ -323,5 +324,136 @@ describe('ImplementHandler', () => {
 
     expect(result.outcome).toBe('failed');
     expect(setup).not.toHaveBeenCalled();
+  });
+
+  it('calls setup once on resume with remaining steps', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: done', 'Task 2: todo']),
+    });
+    const steps = new FakeStepRepository();
+    steps.upsert({
+      id: 'step-seeded-1',
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      phaseId: 'implement',
+      index: 1,
+      title: 'Task 1: done',
+      status: 'success',
+      startedAt: new Date('2026-06-16T00:00:00Z'),
+      completedAt: new Date('2026-06-16T00:00:00Z'),
+    });
+    const order: string[] = [];
+    const setup = vi.fn(async (_cwd: string) => {
+      order.push('setup');
+      return { ok: true };
+    });
+    const runStep = vi.fn(async (_sctx: StepRunContext): Promise<StepRunResult> => {
+      order.push('step');
+      return { outcome: 'success' };
+    });
+    const { ctx, events } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(setup).toHaveBeenCalledTimes(1);
+    expect(runStep).toHaveBeenCalledTimes(1);
+    expect(runStep).toHaveBeenCalledWith(
+      expect.objectContaining({ stepIndex: 2, stepTitle: 'Task 2: todo' }),
+    );
+    expect(order).toEqual(['setup', 'step']);
+
+    const all = steps.listForRun(RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'));
+    expect(all).toHaveLength(2);
+    expect(all[0]!.status).toBe('success');
+    expect(all[1]!.status).toBe('success');
+
+    expect(events.filter((e) => e.type === 'step.skipped')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'step.completed')).toHaveLength(1);
+  });
+
+  it('does not call setup when all steps are already done', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: done']),
+    });
+    const steps = new FakeStepRepository();
+    steps.upsert({
+      id: 'step-seeded-1',
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      phaseId: 'implement',
+      index: 1,
+      title: 'Task 1: done',
+      status: 'success',
+      startedAt: new Date('2026-06-16T00:00:00Z'),
+      completedAt: new Date('2026-06-16T00:00:00Z'),
+    });
+    const setup = vi.fn(async (_cwd: string) => {
+      return { ok: true };
+    });
+    const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+    const { ctx } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(setup).not.toHaveBeenCalled();
+    expect(runStep).not.toHaveBeenCalled();
+  });
+
+  it('fails the phase on setup failure', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: never runs']),
+    });
+    const steps = new FakeStepRepository();
+    const setup = vi.fn(async (_cwd: string) => {
+      return { ok: false, error: 'something went wrong' };
+    });
+    const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+    const { ctx, events } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('setup_failed');
+      expect(result.failure.message).toContain('something went wrong');
+    }
+    expect(setup).toHaveBeenCalledTimes(1);
+    expect(runStep).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
+  });
+
+  it('fails the phase on setup crash', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'plan.md',
+      contents: planMd(['Task 1: never runs']),
+    });
+    const steps = new FakeStepRepository();
+    const setup = vi.fn(async (_cwd: string) => {
+      throw new Error('setup explosion');
+    });
+    const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+    const { ctx, events } = makeCtx(artifacts);
+
+    const result = await new ImplementHandler({ steps, runStep, setup }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('setup_failed');
+      expect(result.failure.message).toContain('setup explosion');
+    }
+    expect(setup).toHaveBeenCalledTimes(1);
+    expect(runStep).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
   });
 });
