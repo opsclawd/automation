@@ -491,7 +491,7 @@ describe.each([
     expect(eventsOf(ctx, `${String(handler.phase)}.blocked`)).toHaveLength(1);
   });
 
-  it('returns failed when extractResult returns ok:false', async () => {
+  it('passes without result.json — plan-design/plan-write skip result extraction (legacy bash never writes it)', async () => {
     setupCtx();
     await ctx.artifacts.write({
       runId: ctx.runUuid,
@@ -514,65 +514,11 @@ describe.each([
 
     const agent = ctx.agent as FakeAgentPort;
     agent.enqueue('opencode-frontier', successResult());
-    agent.enqueue('opencode-frontier', successResult());
 
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ invalid: 'schema' }),
-    });
-
-    const result = await handler.run(ctx);
-    expect(result.outcome).toBe('failed');
-    if (result.outcome === 'failed') {
-      expect(result.failure.kind).toBe('invalid_result');
-    }
-    expect(agent.invocations).toHaveLength(2);
-  });
-
-  it('M4-05 rerun: passes when rerun produces valid result', async () => {
-    setupCtx();
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      phaseId: 'read_issue',
-      relativePath: 'issue.md',
-      contents: '# Test\n',
-    });
-
-    // Write both design.md and plan.md so either handler's contract passes
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'design.md',
-      contents: '# Design',
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'plan.md',
-      contents: '# Plan',
-    });
-
-    const agent = ctx.agent as FakeAgentPort;
-    agent.enqueue('opencode-frontier', successResult({ resultJsonPath: 'result.json' }));
-    agent.enqueue('opencode-frontier', successResult({ resultJsonPath: 'result-rerun.json' }));
-
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result.json',
-      contents: JSON.stringify({ invalid: 'schema' }),
-    });
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'result-rerun.json',
-      contents: JSON.stringify({
-        result: 'ready',
-        summary: 'design done',
-        tasks: [{ title: 'task 1' }],
-      }),
-    });
-
+    // result.json is absent — handler must still pass (skipResultExtraction: true)
     const result = await handler.run(ctx);
     expect(result.outcome).toBe('passed');
-    expect(agent.invocations).toHaveLength(2);
+    expect(agent.invocations).toHaveLength(1);
     expect(eventsOf(ctx, `${String(handler.phase)}.completed`)).toHaveLength(1);
   });
 });
