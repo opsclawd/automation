@@ -76,6 +76,7 @@ import {
   type FixStepResult,
   type GitPort,
   type RevalidationResult,
+  type PostFixGateResult,
   type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
   type ImplementStepLoop as ImplementStepLoopType,
@@ -446,6 +447,16 @@ export function buildQualityReviewPrompt(
   ].join('\n');
 }
 
+export function captureExecOutput(err: unknown): string {
+  if (err instanceof Error && 'stdout' in err && 'stderr' in err) {
+    const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    const stdout = String(e.stdout ?? '');
+    const stderr = String(e.stderr ?? '');
+    return stdout && stderr ? `${stdout}\n${stderr}` : stdout || stderr;
+  }
+  return String(err);
+}
+
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
@@ -734,11 +745,31 @@ export function composeRoot(opts: ComposeOptions): Container {
         return last ? String(last.id) : '';
       };
 
-      const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
+      const runReview = async (
+        ctx: StepContext,
+        gateResult?: PostFixGateResult,
+      ): Promise<ReviewStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
+        const gateFailureSection: string[] =
+          gateResult?.outcome === 'fail'
+            ? [
+                '## BUILD/LINT FAILURE',
+                'The orchestrator detected mechanical errors in the fixer commit before this review.',
+                'Result: FAIL',
+                '',
+                'Errors:',
+                '```',
+                gateResult.output,
+                '```',
+                '',
+                'Surface these errors as HIGH severity findings and do NOT pass this review.',
+                '',
+              ]
+            : [];
+
         const reviewPrompt = [
           'You are reviewing code changes in a pull request.',
           '',
@@ -769,6 +800,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '{ "result": "pass" | "fail", "findings": [{ "severity": "...", "summary": "..." }] }',
           'Use "pass" when there are no significant findings, "fail" when changes are needed.',
           '',
+          ...gateFailureSection,
           '## CRITICAL RULES',
           '- Do NOT ask questions.',
           '- Do NOT switch branches. All work must stay on the current branch.',
@@ -1127,9 +1159,42 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       };
 
+      const runPostFixGate = async (ctx: StepContext): Promise<PostFixGateResult> => {
+        const outputs: string[] = [];
+        const execOrSkip = (command: string, args: string[]): void => {
+          try {
+            execFileSync(command, args, {
+              cwd: ctx.cwd,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              encoding: 'utf-8',
+            });
+          } catch (err) {
+            if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+              return;
+            }
+            outputs.push(captureExecOutput(err));
+          }
+        };
+        execOrSkip('pnpm', ['-r', 'typecheck']);
+        execOrSkip('pnpm', ['lint']);
+        if (outputs.length === 0) {
+          return { outcome: 'pass', output: '' };
+        }
+        const combined = outputs.join('\n---\n');
+        const lines = combined.split('\n');
+        const lineLimited = lines.length > 100 ? lines.slice(0, 100).join('\n') : combined;
+        const trimmed = lineLimited.slice(0, 3000);
+        const lastNewline = trimmed.lastIndexOf('\n');
+        if (trimmed.length < lineLimited.length && lastNewline > 0) {
+          return { outcome: 'fail', output: trimmed.slice(0, lastNewline) };
+        }
+        return { outcome: 'fail', output: trimmed };
+      };
+
       // Non-optional local so the ReviewFixHandler closure below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
       const reviewFixLoopInstance = new ReviewFixLoop({
+        runPostFixGate,
         runReview,
         runFix,
         runRevalidation,
