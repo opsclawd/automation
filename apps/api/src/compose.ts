@@ -1035,14 +1035,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           'Read plan.md and implement this step. Write a summary to implementation-log.md.',
         ].join('\n');
         writeFileSync(promptPath, implementPrompt, 'utf-8');
-        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
           result = await router.invoke({
             profile: AgentProfileName(implementProfileName),
             promptPath,
-            expectedArtifacts: ['result.json'],
+            expectedArtifacts: [],
             cwd: ctx.cwd,
             runId: String(ctx.runId),
             repoId: ctx.repoId,
