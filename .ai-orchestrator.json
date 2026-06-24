@@ -1,6 +1,13 @@
 {
   "validation": {
-    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm test:bash"],
+    "commands": [
+      "pnpm build",
+      "pnpm lint",
+      "pnpm typecheck",
+      "pnpm test",
+      "pnpm test:bash",
+      "pnpm depcruise"
+    ],
     "timeout": 300
   },
   "phases": {
