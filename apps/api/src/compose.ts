@@ -76,6 +76,7 @@ import {
   type FixStepResult,
   type GitPort,
   type RevalidationResult,
+  type PostFixGateResult,
   type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
   type ImplementStepLoop as ImplementStepLoopType,
@@ -1127,9 +1128,47 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       };
 
+      const captureExecOutput = (err: unknown): string => {
+        if (err instanceof Error && 'stdout' in err && 'stderr' in err) {
+          const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+          return `${String(e.stdout ?? '')}${String(e.stderr ?? '')}`;
+        }
+        return String(err);
+      };
+
+      const runPostFixGate = async (ctx: StepContext): Promise<PostFixGateResult> => {
+        const outputs: string[] = [];
+        try {
+          execFileSync('pnpm', ['-r', 'typecheck'], {
+            cwd: ctx.cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+          });
+        } catch (err) {
+          outputs.push(captureExecOutput(err));
+        }
+        try {
+          execFileSync('pnpm', ['lint'], {
+            cwd: ctx.cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+          });
+        } catch (err) {
+          outputs.push(captureExecOutput(err));
+        }
+        if (outputs.length === 0) {
+          return { outcome: 'pass', output: '' };
+        }
+        const combined = outputs.join('\n---\n');
+        const lines = combined.split('\n');
+        const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : combined;
+        return { outcome: 'fail', output: truncated.slice(0, 3000) };
+      };
+
       // Non-optional local so the ReviewFixHandler closure below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
       const reviewFixLoopInstance = new ReviewFixLoop({
+        runPostFixGate,
         runReview,
         runFix,
         runRevalidation,
