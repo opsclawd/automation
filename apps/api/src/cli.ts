@@ -9,6 +9,7 @@ import {
   WorkerId,
   RepositoryId,
   WorkerLeaseConflictError,
+  PhaseName,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import { composeRoot, type ComposeOptions } from './compose.js';
@@ -511,9 +512,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error(`No run found for uuid ${opts.uuid}`);
               process.exit(EXIT_USER_ERROR);
             }
-            if (run.status !== 'queued' && run.status !== 'running') {
+            if (run.status !== 'queued' && run.status !== 'running' && run.status !== 'waiting') {
               console.error(
-                `Run ${opts.uuid} has status ${run.status}, expected queued or running`,
+                `Run ${opts.uuid} has status ${run.status}, expected queued, running, or waiting`,
               );
               process.exit(EXIT_USER_ERROR);
             }
@@ -544,7 +545,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
             }
 
+            // For waiting runs, transition back to running so the executor
+            // re-enters post-pr-review (the poller will find new comments).
+            if (run.status === 'waiting') {
+              c.runRepository.update(run.uuid, { status: 'running' });
+            }
             c.runRepository.update(run.uuid, { pid: process.pid });
+
+            // Skip phases already completed so the executor resumes from where
+            // the run left off (e.g. post-pr-review after a waiting pause).
+            const skipPhases = (run.completedPhases ?? []).map((p) => PhaseName(p));
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
@@ -558,8 +568,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 heartbeatIntervalMs,
               );
               const result = await c.runExecutor.execute({
-                run,
-                skip: [],
+                run: { ...run, status: 'running' },
+                skip: skipPhases,
                 presentArtifacts: [],
               });
               process.stdout.write(
