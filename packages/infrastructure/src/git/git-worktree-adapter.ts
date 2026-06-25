@@ -89,7 +89,8 @@ export class GitWorktreeAdapter implements GitPort {
 
   async push(input: PushInput): Promise<void> {
     const { cwd, branch, remote = 'origin' } = input;
-    await git(cwd, ['push', remote, branch]);
+    // 300s: pre-push hooks that run a full build can take ~2 minutes
+    await git(cwd, ['push', remote, branch], 300_000);
   }
 
   async remoteRef(input: {
