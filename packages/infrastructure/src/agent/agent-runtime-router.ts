@@ -143,6 +143,7 @@ export class AgentRuntimeRouter implements AgentPort {
         ? { promptBudgetTokens: profile.promptBudgetTokens }
         : {}),
       ...(runtimeHints !== undefined ? { runtimeHints } : {}),
+      ...(profile.sandboxMode !== undefined ? { sandboxMode: profile.sandboxMode } : {}),
     };
 
     let result: AgentInvocationResult;
