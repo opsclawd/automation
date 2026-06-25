@@ -1782,6 +1782,7 @@ describe('CLI run --executor ts', () => {
     process.chdir(root);
     try {
       const subscribeSpy = vi.spyOn(InMemoryEventBus.prototype, 'subscribe');
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
         repoId: RepositoryId('owner/repo'),
@@ -1842,7 +1843,23 @@ describe('CLI run --executor ts', () => {
       // subscribe must be called to set up the event bus listener
       expect(subscribeSpy).toHaveBeenCalled();
 
+      // Verify the captured listener actually writes [ts]-prefixed messages to console.error
+      const listener = subscribeSpy.mock.calls[0]?.[1];
+      expect(listener).toBeDefined();
+      listener?.({
+        runId: 'mock-run-uuid',
+        type: 'phase.started',
+        level: 'info' as const,
+        message: 'starting phase read_issue',
+        timestamp: new Date().toISOString(),
+        metadata: {},
+      });
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[ts] starting phase read_issue'),
+      );
+
       subscribeSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
       vi.restoreAllMocks();
     } finally {
       process.chdir(savedCwd);
