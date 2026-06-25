@@ -1511,7 +1511,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           'Read any review findings in the working directory and apply the suggested fixes.',
           '',
           '## OUTPUT',
-          'Write result.json: { "result": "done_with_fixes" | "done_no_fixes_needed" | "cannot_fix" }',
+          'Write result.json: { "result": "done_with_fixes" } | { "result": "done_no_fixes_needed", "rebuttal": "<reason>" } | { "result": "cannot_fix" }',
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
