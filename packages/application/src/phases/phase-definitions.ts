@@ -87,10 +87,8 @@ const _phaseDefinitions = {
   },
   'review-fix': {
     name: makePhaseName('review-fix'),
-    // review.md consumed and produced in a loop — first iteration creates it,
-    // subsequent iterations refine. The loop is optional.
-    inputs: { required: [], optional: ['review.md'] },
-    outputs: ['review.md', 'review-fix-log.md'],
+    inputs: { required: [], optional: [] },
+    outputs: ['code-review.md'],
     retrySafety: 'unsafe',
     skippable: false,
   },
