@@ -81,7 +81,7 @@ const _phaseDefinitions = {
   validate: {
     name: makePhaseName('validate'),
     inputs: { required: [], optional: ['implementation-log.md'] },
-    outputs: ['validation-result.json'],
+    outputs: [],
     retrySafety: 'safe',
     skippable: false,
   },
