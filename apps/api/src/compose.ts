@@ -2100,8 +2100,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           // this in runStatusForTerminalState before the poller starts.
           if (record.status === 'running') {
             const readyAt = new Date();
-            runRepository.update(record.uuid, { status: 'waiting', completedAt: readyAt });
-            record = { ...record, status: 'waiting', completedAt: readyAt };
+            runRepository.update(record.uuid, {
+              status: 'waiting',
+              completedAt: readyAt,
+              currentPhase: null,
+            });
+            const { currentPhase: _cp, ...rest } = record;
+            record = { ...rest, status: 'waiting', completedAt: readyAt };
           }
           if (record.status !== 'waiting') return 'stay_ready';
           const comments = await ghAdapter.listReviewComments(input.repoFullName, input.prNumber);
