@@ -1694,6 +1694,13 @@ export function composeRoot(opts: ComposeOptions): Container {
               return { signal: 'blocked' as const };
             }
 
+            // Fast-path: if the PR is already merged, complete immediately.
+            const ghAdapterForPoll = new GhCliAdapter({});
+            const prDetail = await ghAdapterForPoll.getPr(ctx.repoFullName, prNumber);
+            if (prDetail.state === 'merged') {
+              return { signal: 'merged' as const };
+            }
+
             const poller = buildPrReviewPoller({
               maxPolls: config.phases.postPrReview?.maxPolls ?? 10,
               pollIntervalMs: (config.phases.postPrReview?.pollIntervalSeconds ?? 60) * 1000,
