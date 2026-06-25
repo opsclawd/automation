@@ -277,6 +277,10 @@ export class PrReviewPoller {
         await d.recordTerminalState(lastAttempt, 'max_polls_reached');
         return { terminalState: 'max_polls_reached', pollsRun };
       }
+      // Still all-resolved after reactivation: the run was successfully handed
+      // off to the next executor. Stop looping — calling onAllResolved again
+      // would immediately re-reactivate the same run.
+      break;
     }
     if (wasReactivated) {
       await d.revertRunStatus?.(input.runId);
