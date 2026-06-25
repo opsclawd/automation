@@ -63,6 +63,7 @@ import {
   PhaseHandlerRegistry,
   RunExecutor,
   type Artifact,
+  ArtifactNotFoundError,
   type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -1219,7 +1220,14 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const makeArtifactStore = (cwd: string): ArtifactStore => ({
         async read(_runId: string, relativePath: string): Promise<string> {
-          return await readFile(join(cwd, relativePath), 'utf-8');
+          try {
+            return await readFile(join(cwd, relativePath), 'utf-8');
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+              throw new ArtifactNotFoundError(_runId, relativePath);
+            }
+            throw e;
+          }
         },
         write: async (input): Promise<Artifact> => {
           const absolutePath = join(cwd, input.relativePath);
