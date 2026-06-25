@@ -1653,7 +1653,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               cwd: ctx.cwd,
               maxIterations: config.phases.reviewFix.maxIterations,
               blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
-              reviewProfile: AgentProfileName(resolveProfileBound('review-fix')),
+              reviewProfile: AgentProfileName(reviewProfileName),
               fixProfile: AgentProfileName(resolveProfileBound('fix-review')),
             });
             return {
