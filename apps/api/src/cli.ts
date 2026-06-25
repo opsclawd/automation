@@ -9,7 +9,6 @@ import {
   WorkerId,
   RepositoryId,
   WorkerLeaseConflictError,
-  PhaseName,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import { composeRoot, type ComposeOptions } from './compose.js';
@@ -552,10 +551,6 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             }
             c.runRepository.update(run.uuid, { pid: process.pid });
 
-            // Skip phases already completed so the executor resumes from where
-            // the run left off (e.g. post-pr-review after a waiting pause).
-            const skipPhases = (run.completedPhases ?? []).map((p) => PhaseName(p));
-
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
             try {
@@ -567,9 +562,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 leaseTtlMs,
                 heartbeatIntervalMs,
               );
+              // The executor auto-skips phases in run.completedPhases, so passing
+              // skip:[] is correct — the run resumes at post-pr-review naturally.
               const result = await c.runExecutor.execute({
                 run: { ...run, status: 'running' },
-                skip: skipPhases,
+                skip: [],
                 presentArtifacts: [],
               });
               process.stdout.write(
