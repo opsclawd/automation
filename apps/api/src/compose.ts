@@ -941,7 +941,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           'After fixing, write a result.json file with exactly one of:',
           '{ "result": "done_with_fixes" }',
-          '{ "result": "done_no_fixes_needed" }',
+          '{ "result": "done_no_fixes_needed", "rebuttal": "explain why no fixes are needed" }',
           '{ "result": "cannot_fix" }',
           '',
           ...(opts.architectPlan
