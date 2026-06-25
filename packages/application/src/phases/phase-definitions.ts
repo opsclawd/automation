@@ -88,7 +88,7 @@ const _phaseDefinitions = {
   'review-fix': {
     name: makePhaseName('review-fix'),
     inputs: { required: [], optional: [] },
-    outputs: [],
+    outputs: ['code-review.md'],
     retrySafety: 'unsafe',
     skippable: false,
   },
