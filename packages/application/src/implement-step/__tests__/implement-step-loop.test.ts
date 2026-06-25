@@ -685,7 +685,7 @@ describe('ImplementStepLoop', () => {
       expect(detected).toHaveLength(0);
     });
 
-    it('emits needs_human_review when fix returns done_no_fixes_needed without rebuttal', async () => {
+    it('treats done_no_fixes_needed without rebuttal as extraction failure (schema rejects)', async () => {
       const { events, bus } = collectEvents();
       const deps = makeDeps({
         events: bus,
@@ -696,19 +696,19 @@ describe('ImplementStepLoop', () => {
         }),
         runFix: async () => ({
           invocationId: 'fix-1',
-          agentOutcome: 'success' as const,
+          agentOutcome: 'contract_violation' as const,
+          // Schema rejects done_no_fixes_needed without rebuttal;
+          // readFixVerdict returns { ok: false }, so effectiveVerdict is undefined.
           verdict: 'done_no_fixes_needed' as const,
-          // No rebuttal provided — this should escalate directly to human review
+          // No rebuttal — schema will reject
         }),
       });
       const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
-      expect(out.outcome).toBe('needs_human_review');
-      // Should NOT emit contradiction.detected — should go straight to needs_human_review
-      const detected = events.filter((e) => e.type === 'review.contradiction.detected');
-      expect(detected).toHaveLength(0);
+      // The fix is treated as failed (extraction failure), not needs_human_review
+      expect(out.outcome).toBe('failed');
+      // Should NOT emit needs_human_review for missing rebuttal
       const nhr = events.filter((e) => e.type === 'needs_human_review');
-      expect(nhr).toHaveLength(1);
-      expect(nhr[0]?.level).toBe('warn');
+      expect(nhr).toHaveLength(0);
     });
 
     it('emits needs_human_review when 1-shot re-run persists and no arbiter is configured', async () => {
