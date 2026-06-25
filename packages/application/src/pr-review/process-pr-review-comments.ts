@@ -11,6 +11,7 @@ import {
   type PollAttempt,
 } from '@ai-sdlc/domain';
 import { verifyComment } from './verify-comment.js';
+import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { AgentPort } from '../ports/agent-port.js';
@@ -31,6 +32,7 @@ export interface ProcessPrReviewDeps {
     diff: string;
     branch: string;
     previousBuildError?: string;
+    previousCodeVerifyReason?: string;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -48,6 +50,7 @@ export interface ProcessPrReviewDeps {
     cwd: string;
     runId: string;
   }) => Promise<{ passed: boolean; error?: string }>;
+  verifyCodeChange?: VerifyCodeChangeFn;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -178,6 +181,7 @@ export class ProcessPrReviewComments {
 
       let lastOutput: PollTaskOutput | undefined;
       let previousBuildError: string | undefined;
+      let previousCodeVerifyReason: string | undefined;
       for (let attempt = 1; attempt <= ESCALATION_BUDGET; attempt++) {
         const currentComment = d.prReviewRepo.getComment(input.runId, task.commentId);
         if (!currentComment) break;
@@ -193,6 +197,7 @@ export class ProcessPrReviewComments {
             startCommitSha: runningStartSha,
             unresolvedCommentCount: unresolved.length,
             ...(previousBuildError !== undefined ? { previousBuildError } : {}),
+            ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
           });
           if (lastOutput.processed || lastOutput.blocked || lastOutput.action === 'no_fix') break;
         } catch {
@@ -206,13 +211,19 @@ export class ProcessPrReviewComments {
         if (lastOutput.buildError !== undefined) {
           previousBuildError = lastOutput.buildError;
         }
+        if (lastOutput.codeVerifyReason !== undefined) {
+          previousCodeVerifyReason = lastOutput.codeVerifyReason;
+        }
         if (
           attempt === ESCALATION_BUDGET &&
           lastOutput &&
           !lastOutput.processed &&
           !lastOutput.blocked
         ) {
-          const rollbackOk = await d.rollbackFix?.({ cwd: input.cwd, branch: pr.headRefName }, runningStartSha);
+          const rollbackOk = await d.rollbackFix?.(
+            { cwd: input.cwd, branch: pr.headRefName },
+            runningStartSha,
+          );
           if (rollbackOk === false) {
             d.onWarning?.(
               'rollbackFix failed: broken commits may remain on remote branch',

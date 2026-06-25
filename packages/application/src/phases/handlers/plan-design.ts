@@ -3,6 +3,6 @@ import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
 
 export class PlanDesignHandler extends SingleShotAgentHandler {
   constructor() {
-    super(PhaseName('plan-design'), 'plan-design');
+    super(PhaseName('plan-design'), 'plan-design', { skipResultExtraction: true });
   }
 }

@@ -54,6 +54,7 @@ import {
   ProcessPrReviewComments,
   decideReactivation,
   applyReactivation,
+  createVerifyCodeChange,
   pollTaskResultSchema,
   ReviewFixLoop,
   ImplementStepLoop,
@@ -62,6 +63,7 @@ import {
   PhaseHandlerRegistry,
   RunExecutor,
   type Artifact,
+  ArtifactNotFoundError,
   type ArtifactStore,
   type StartIssueRunDeps,
   type ClassifyExitFn,
@@ -75,6 +77,7 @@ import {
   type FixStepResult,
   type GitPort,
   type RevalidationResult,
+  type PostFixGateResult,
   type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
   type ImplementStepLoop as ImplementStepLoopType,
@@ -135,6 +138,160 @@ const classifyExitAdapter = (
     return classifyExit(enriched);
   };
 };
+
+export function extractTaskText(planPath: string, taskIndex: number): string {
+  let content: string;
+  try {
+    content = readFileSync(planPath, 'utf-8');
+  } catch (err) {
+    console.error(`extractTaskText: failed to read plan at ${planPath}`, err);
+    return '';
+  }
+  const lines = content.split('\n');
+  const taskHeadingRe = /^##\s+(?:Task|Step)\s+(\d+)\b/i;
+  let capturing = false;
+  const captured: string[] = [];
+  for (const line of lines) {
+    const m = taskHeadingRe.exec(line);
+    if (m) {
+      if (Number(m[1]) === taskIndex) {
+        capturing = true;
+        continue;
+      } else if (capturing) {
+        break;
+      }
+    } else if (capturing && /^##\s/.test(line)) {
+      break;
+    }
+    if (capturing) {
+      captured.push(line);
+    }
+  }
+  return captured.join('\n').trim();
+}
+
+export function buildImplementPrompt(
+  ctx: { stepIndex: number; stepTitle: string; cwd: string; repoId: string },
+  taskText: string,
+  branchName: string,
+): string {
+  const taskN = ctx.stepIndex;
+  const taskTitle = ctx.stepTitle;
+  const description = taskText || `See plan.md Task ${taskN} for details.`;
+
+  return [
+    `You are implementing Task ${taskN}: ${taskTitle}`,
+    '',
+    '## Task Description',
+    description,
+    '',
+    '## Context',
+    `You are working in: ${ctx.cwd}`,
+    `Repository: ${ctx.repoId}`,
+    'Issue: issue.md',
+    'Design: design.md',
+    'Plan: plan.md',
+    `Branch: ${branchName}`,
+    '',
+    'You are using Subagent-Driven Development. Follow the process below exactly.',
+    '',
+    '## SCOPE RESTRICTION',
+    `You are implementing ONLY Task ${taskN}: ${taskTitle}.`,
+    '',
+    `Tasks numbered higher than ${taskN} in plan.md are EXPLICITLY OUT OF SCOPE`,
+    'for this run. They will be implemented by separate later runs of this',
+    'orchestrator. You must NOT:',
+    '- create files, types, schemas, tests, exports, or migrations that belong',
+    '  to a later task, even if you have all the context to do so;',
+    "- 'finish the plan' because tasks N+1..M look small or related;",
+    "- pre-stage scaffolding for later tasks 'to save time later'.",
+    '',
+    'A commit that includes any later-task work is a scope violation, not',
+    'helpfulness — it breaks per-task review, makes resume undecidable, and',
+    "forces the operator to revert and re-run. The plan's per-task commit",
+    'boundary is load-bearing: respect it.',
+    '',
+    `If you finish Task ${taskN} quickly: STOP, run the self-review, and`,
+    "report DONE. Do not 'continue' into the next task.",
+    '',
+    'You may READ files associated with later tasks for context, but you must',
+    'not write, modify, stage, or commit them in this run.',
+    '',
+    '## PARITY COVERAGE',
+    // NOTE: The hardcoded paths below must be kept in sync with the actual
+    // infrastructure layout. If paths are renamed, moved, or removed, update this
+    // list to match.
+    "If your task's scope includes a *watched legacy path* (the plan will say so —",
+    'scripts/ai-run-issue-v2, scripts/ai-pr-review-poll, anything under scripts/lib/',
+    'except __tests__/, apps/cli/src/run-agent.ts, apps/cli/src/run-pr-poll.ts, or',
+    'anything under packages/infrastructure/src/agent/ — recursive, any file at or',
+    'below those prefixes), your commit MUST also add or extend the parity[#<issue>]',
+    'test in scripts/lib/__tests__/legacy-parity.bats that the plan specifies,',
+    'pinning the invariant your change establishes. Mirror the existing tests in that',
+    'file: document the invariant, its source issue, the failure it prevents, and the',
+    'TS-port contract; prefer runtime-agnostic assertions (git/filesystem state, pure',
+    'decisions). Do NOT report DONE for such a task without it — the CI parity gate',
+    'will reject the PR. If the plan marked the change parity-neutral, skip the test',
+    '(none applies). You do NOT write the PR body, so do not attempt to add a',
+    "'no-parity-impact' note yourself — the parity gate is resolved outside the",
+    'implement phase.',
+    '',
+    '## Your Job',
+    '',
+    `1. Read issue.md, design.md, and plan.md for context. Identify the`,
+    `   boundaries of Task ${taskN} specifically.`,
+    `2. Implement exactly what Task ${taskN} specifies — nothing more.`,
+    `3. Write tests following TDD where applicable, scoped to Task ${taskN}.`,
+    `4. Verify Task ${taskN}'s implementation works.`,
+    '5. Commit your work:',
+    '   a. Record HEAD before: PRE_HEAD=$(git rev-parse HEAD)',
+    "   b. Run: git add <files> && git commit -m '<descriptive commit message>'",
+    '   c. Verify the commit landed:',
+    '      - If git commit exits non-zero, the pre-commit hook failed. Read the',
+    '        hook/lint output, FIX the reported errors, and retry the commit.',
+    '        Never report DONE with a failed or skipped commit.',
+    '      - After a successful commit, confirm HEAD advanced:',
+    '        [ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE"; exit 1; }',
+    '      - Confirm clean worktree:',
+    '        [ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }',
+    '   d. HARD RULE: Never infer commit success from git log. Git log shows',
+    "      OTHER tasks' commits. Only git rev-parse HEAD + git status --porcelain",
+    '      prove YOUR commit landed.',
+    "   e. If you cannot get the commit to land (hook failure you can't fix),",
+    '      report BLOCKED with the hook output — never DONE.',
+    `6. Self-review before reporting back, including the scope check below.`,
+    '',
+    '## Questions?',
+    'If you have clarifications or concerns BEFORE implementing, note them in your report',
+    'and proceed with a reasonable assumption. Do not ask questions — make decisions',
+    'and document them.',
+    '',
+    '## Self-Review Checklist (before reporting back)',
+    `- Scope: Run \`git diff --stat HEAD~1\` mentally — does every changed`,
+    `  file belong to Task ${taskN} alone? If any file is for a later task,`,
+    '  REMOVE it from the commit before reporting DONE.',
+    '- Commit integrity: Did I verify HEAD advanced after my commit? Is',
+    '  git status --porcelain empty? (See step 5c/d.)',
+    `- Completeness: Did I implement everything Task ${taskN} specifies?`,
+    '- Quality: Is the code clean and maintainable?',
+    '- Discipline: Did I avoid overbuilding?',
+    '- Testing: Do tests verify actual behavior?',
+    '',
+    '## Report Format',
+    'Report back with:',
+    '- Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT',
+    '- What you implemented',
+    '- What you tested and results',
+    '- Files changed',
+    '- Self-review findings',
+    '- Any questions or concerns',
+    '',
+    '## Branch Restriction',
+    `CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${branchName}.`,
+    '',
+    'Write a summary to implementation-log.md.',
+  ].join('\n');
+}
 
 /**
  * Resolve the agent profile name for a given phase.
@@ -247,6 +404,58 @@ class AbortRegistry {
   unregister(runId: string): void {
     this.entries.delete(runId);
   }
+}
+
+export function buildSpecReviewPrompt(
+  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+  typecheckSection: string,
+): string {
+  return [
+    '# TASK',
+    `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+    '',
+    'Check that the implementation matches plan.md task requirements exactly.',
+    '',
+    '## CONTEXT',
+    `Working directory: ${ctx.cwd}`,
+    '',
+    typecheckSection,
+    '',
+    '## OUTPUT',
+    `Write ${ctx.cwd}/result.json: { "result": "pass" | "fail" }`,
+    'Do NOT write to a relative path — use the full absolute path above.',
+  ].join('\n');
+}
+
+export function buildQualityReviewPrompt(
+  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+  typecheckSection: string,
+): string {
+  return [
+    '# TASK',
+    `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+    '',
+    'Check for code quality: maintainability, performance, security, test coverage.',
+    '',
+    '## CONTEXT',
+    `Working directory: ${ctx.cwd}`,
+    '',
+    typecheckSection,
+    '',
+    '## OUTPUT',
+    `Write ${ctx.cwd}/result.json: { "result": "pass" | "fail" }`,
+    'Do NOT write to a relative path — use the full absolute path above.',
+  ].join('\n');
+}
+
+export function captureExecOutput(err: unknown): string {
+  if (err instanceof Error && 'stdout' in err && 'stderr' in err) {
+    const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+    const stdout = String(e.stdout ?? '');
+    const stderr = String(e.stderr ?? '');
+    return stdout && stderr ? `${stdout}\n${stderr}` : stdout || stderr;
+  }
+  return String(err);
 }
 
 export function composeRoot(opts: ComposeOptions): Container {
@@ -537,11 +746,31 @@ export function composeRoot(opts: ComposeOptions): Container {
         return last ? String(last.id) : '';
       };
 
-      const runReview = async (ctx: StepContext): Promise<ReviewStepResult> => {
+      const runReview = async (
+        ctx: StepContext,
+        gateResult?: PostFixGateResult,
+      ): Promise<ReviewStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
+        const gateFailureSection: string[] =
+          gateResult?.outcome === 'fail'
+            ? [
+                '## BUILD/LINT FAILURE',
+                'The orchestrator detected mechanical errors in the fixer commit before this review.',
+                'Result: FAIL',
+                '',
+                'Errors:',
+                '```',
+                gateResult.output,
+                '```',
+                '',
+                'Surface these errors as HIGH severity findings and do NOT pass this review.',
+                '',
+              ]
+            : [];
+
         const reviewPrompt = [
           'You are reviewing code changes in a pull request.',
           '',
@@ -572,6 +801,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '{ "result": "pass" | "fail", "findings": [{ "severity": "...", "summary": "..." }] }',
           'Use "pass" when there are no significant findings, "fail" when changes are needed.',
           '',
+          ...gateFailureSection,
           '## CRITICAL RULES',
           '- Do NOT ask questions.',
           '- Do NOT switch branches. All work must stay on the current branch.',
@@ -930,9 +1160,42 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       };
 
+      const runPostFixGate = async (ctx: StepContext): Promise<PostFixGateResult> => {
+        const outputs: string[] = [];
+        const execOrSkip = (command: string, args: string[]): void => {
+          try {
+            execFileSync(command, args, {
+              cwd: ctx.cwd,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              encoding: 'utf-8',
+            });
+          } catch (err) {
+            if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+              return;
+            }
+            outputs.push(captureExecOutput(err));
+          }
+        };
+        execOrSkip('pnpm', ['-r', 'typecheck']);
+        execOrSkip('pnpm', ['lint']);
+        if (outputs.length === 0) {
+          return { outcome: 'pass', output: '' };
+        }
+        const combined = outputs.join('\n---\n');
+        const lines = combined.split('\n');
+        const lineLimited = lines.length > 100 ? lines.slice(0, 100).join('\n') : combined;
+        const trimmed = lineLimited.slice(0, 3000);
+        const lastNewline = trimmed.lastIndexOf('\n');
+        if (trimmed.length < lineLimited.length && lastNewline > 0) {
+          return { outcome: 'fail', output: trimmed.slice(0, lastNewline) };
+        }
+        return { outcome: 'fail', output: trimmed };
+      };
+
       // Non-optional local so the ReviewFixHandler closure below can reference it
       // without a guard (the outer `let` stays `| undefined` for other consumers).
       const reviewFixLoopInstance = new ReviewFixLoop({
+        runPostFixGate,
         runReview,
         runFix,
         runRevalidation,
@@ -957,7 +1220,14 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const makeArtifactStore = (cwd: string): ArtifactStore => ({
         async read(_runId: string, relativePath: string): Promise<string> {
-          return await readFile(join(cwd, relativePath), 'utf-8');
+          try {
+            return await readFile(join(cwd, relativePath), 'utf-8');
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+              throw new ArtifactNotFoundError(_runId, relativePath);
+            }
+            throw e;
+          }
         },
         write: async (input): Promise<Artifact> => {
           const absolutePath = join(cwd, input.relativePath);
@@ -1019,29 +1289,23 @@ export function composeRoot(opts: ComposeOptions): Container {
       buildRunContext = buildContext;
 
       const runImplement = async (ctx: StepLoopContext) => {
-        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+        const run = runRepository.findByUuid(String(ctx.runId));
+        const runDir = run?.displayId ?? String(ctx.runId);
+        const issueNumber = run?.issueNumber ?? 0;
+        const branchName = `ai/issue-${issueNumber}`;
+        const taskText = extractTaskText(join(ctx.cwd, 'plan.md'), ctx.stepIndex);
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);
-        const implementPrompt = [
-          '# TASK',
-          `Step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-          '',
-          '## CONTEXT',
-          `Working directory: ${ctx.cwd}`,
-          `Repository: ${ctx.repoId}`,
-          '',
-          'Read plan.md and implement this step. Write a summary to implementation-log.md.',
-        ].join('\n');
+        const implementPrompt = buildImplementPrompt(ctx, taskText, branchName);
         writeFileSync(promptPath, implementPrompt, 'utf-8');
-        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
           result = await router.invoke({
             profile: AgentProfileName(implementProfileName),
             promptPath,
-            expectedArtifacts: ['result.json'],
+            expectedArtifacts: ['implementation-log.md'],
             cwd: ctx.cwd,
             runId: String(ctx.runId),
             repoId: ctx.repoId,
@@ -1128,17 +1392,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return SPEC_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to plan-letter checks until the type error is resolved.`;
 
-        const reviewPrompt = [
-          '# TASK',
-          `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-          '',
-          'Check that the implementation matches plan.md task requirements exactly.',
-          '',
-          typecheckSection,
-          '',
-          '## OUTPUT',
-          'Write result.json: { "result": "pass" | "fail" }',
-        ].join('\n');
+        const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -1194,17 +1448,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return QUALITY_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to quality checks until the type error is resolved.`;
 
-        const reviewPrompt = [
-          '# TASK',
-          `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-          '',
-          'Check for code quality: maintainability, performance, security, test coverage.',
-          '',
-          typecheckSection,
-          '',
-          '## OUTPUT',
-          'Write result.json: { "result": "pass" | "fail" }',
-        ].join('\n');
+        const reviewPrompt = buildQualityReviewPrompt(ctx, typecheckSection);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -1356,10 +1600,45 @@ export function composeRoot(opts: ComposeOptions): Container {
       phaseRegistry.register(new PlanWriteHandler());
       phaseRegistry.register(new CompoundHandler());
 
+      const worktreeSetup = async (cwd: string): Promise<{ ok: boolean; error?: string }> => {
+        try {
+          execFileSync('pnpm', ['install', '--frozen-lockfile'], {
+            cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 120_000,
+          });
+        } catch (err) {
+          const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+            ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+            : '';
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[implement setup] pnpm install failed:', msg, stderr);
+          return { ok: false, error: `pnpm install failed: ${msg}${stderr}` };
+        }
+        try {
+          execFileSync('pnpm', ['-r', 'build'], {
+            cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 180_000,
+          });
+        } catch (err) {
+          const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+            ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+            : '';
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error('[implement setup] pnpm -r build failed:', msg, stderr);
+          return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
+        }
+        return { ok: true };
+      };
+
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
           runStep,
+          setup: worktreeSetup,
         }),
       );
 
@@ -1382,7 +1661,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               cwd: ctx.cwd,
               maxIterations: config.phases.reviewFix.maxIterations,
               blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
-              reviewProfile: AgentProfileName(resolveProfileBound('review-fix')),
+              reviewProfile: AgentProfileName(reviewProfileName),
               fixProfile: AgentProfileName(resolveProfileBound('fix-review')),
             });
             return {
@@ -1478,7 +1757,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       git: gitAdapter,
       agent: agentRuntime,
       prReviewRepo: prReviewRepository,
-      renderTaskPrompt: async ({ cwd, comment, diff, branch, previousBuildError }) => {
+      renderTaskPrompt: async ({
+        cwd,
+        comment,
+        diff,
+        branch,
+        previousBuildError,
+        previousCodeVerifyReason,
+      }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
@@ -1512,6 +1798,19 @@ export function composeRoot(opts: ComposeOptions): Container {
             '```',
             '',
             'Please adjust your fix to resolve this error.',
+            '',
+          );
+        }
+
+        if (previousCodeVerifyReason !== undefined) {
+          sections.push(
+            '## Previous Fix Rejected by Code Verifier',
+            '',
+            'An independent verifier reviewed your previous fix and rejected it with this reason:',
+            '',
+            `> ${previousCodeVerifyReason}`,
+            '',
+            'Please revisit your fix with this feedback in mind before trying again.',
             '',
           );
         }
@@ -1645,6 +1944,94 @@ export function composeRoot(opts: ComposeOptions): Container {
           return false;
         }
       },
+      verifyCodeChange: createVerifyCodeChange({
+        agent: agentRuntime,
+        resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+        idFactory: () => randomUUID(),
+        renderVerifyPrompt: async ({
+          commentBody,
+          path,
+          line,
+          cwd,
+          startCommitSha,
+          fixCommitSha,
+        }) => {
+          const promptDir = join(baseTmpDir, `verify-${fixCommitSha.slice(0, 8)}`);
+          mkdirSync(promptDir, { recursive: true });
+          const promptPath = join(promptDir, 'verify-prompt.md');
+
+          let diffOutput = '';
+          try {
+            diffOutput = execFileSync('git', ['diff', startCommitSha, fixCommitSha, '--', path], {
+              cwd,
+              encoding: 'utf-8',
+            });
+          } catch {
+            diffOutput = '(could not produce diff)';
+          }
+
+          let codeWindow = '';
+          try {
+            const absPath = join(cwd, path);
+            const lines = readFileSync(absPath, 'utf-8').split('\n');
+            const start = Math.max(0, line - 10);
+            const end = Math.min(lines.length, line + 10);
+            codeWindow = lines
+              .slice(start, end)
+              .map((l, i) => `${start + i + 1}: ${l}`)
+              .join('\n');
+          } catch {
+            codeWindow = '(could not read file)';
+          }
+
+          const content = [
+            '# Code Verification Task',
+            '',
+            'An automated fix was applied to address a PR review comment. Verify that the fix actually addresses the concern.',
+            '',
+            '## Original Review Comment',
+            '',
+            commentBody,
+            '',
+            `## File: ${path} (around line ${line})`,
+            '',
+            '```',
+            codeWindow,
+            '```',
+            '',
+            '## Diff Applied',
+            '',
+            '```diff',
+            diffOutput,
+            '```',
+            '',
+            '## Your Task',
+            '',
+            'Does the diff above actually address the review comment? Answer strictly.',
+            '',
+            'Write `result.json` in the current directory:',
+            '```json',
+            '{ "pass": true | false, "reason": "<one sentence>" }',
+            '```',
+          ].join('\n');
+
+          writeFileSync(promptPath, content, 'utf-8');
+          return { promptPath, resultDir: promptDir };
+        },
+        extractVerifyResult: async ({ resultJsonPath, resultDir }) => {
+          try {
+            const absPath = resultJsonPath ?? join(resultDir, 'result.json');
+            const raw = readFileSync(absPath, 'utf-8');
+            const parsed = JSON.parse(raw);
+            if (typeof parsed.pass === 'boolean' && typeof parsed.reason === 'string') {
+              return { pass: parsed.pass, reason: parsed.reason };
+            }
+            return null;
+          } catch {
+            return null;
+          }
+        },
+      }),
     });
     // Wrap the in-memory bus so poll events are persisted to the database.
     // In the detached CLI process there are no SSE subscribers, so without

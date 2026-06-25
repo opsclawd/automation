@@ -33,6 +33,7 @@ export interface GitPort {
   headCommitSha(cwd: string): Promise<string>;
   resetHard(cwd: string, commitSha: string): Promise<void>;
   diff(cwd: string, base: string, head?: string): Promise<string>;
+  diffStat(cwd: string, base: string, head?: string): Promise<string>;
   commit(cwd: string, message: string): Promise<string>;
   push(input: PushInput): Promise<void>;
   remoteRef(input: { cwd: string; remote: string; ref: string }): Promise<string | undefined>;

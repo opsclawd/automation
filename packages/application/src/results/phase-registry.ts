@@ -1,6 +1,4 @@
 import type { ZodTypeAny } from 'zod';
-import { planDesignResultSchema } from './schemas/plan-design.js';
-import { planWriteResultSchema } from './schemas/plan-write.js';
 import { implementResultSchema } from './schemas/implement.js';
 import { qualityReviewResultSchema } from './schemas/quality-review.js';
 import { fixReviewResultSchema } from './schemas/fix-review.js';
@@ -20,8 +18,8 @@ export interface PhaseResultMeta {
 // Phases with no result entry (null) do not produce result.json artifacts.
 // TODO: converge PHASE_RESULT_REGISTRY into CANONICAL_PHASE_ORDER so there's one source of truth.
 export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
-  'plan-design': 'plan-design',
-  'plan-write': 'plan-write',
+  'plan-design': null,
+  'plan-write': null,
   implement: 'implement',
   compound: 'compound',
   'create-pr': 'create-pr',
@@ -33,8 +31,6 @@ export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
 };
 
 export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
-  'plan-design': { schema: planDesignResultSchema, retrySafe: true },
-  'plan-write': { schema: planWriteResultSchema, retrySafe: true },
   implement: { schema: implementResultSchema, retrySafe: false },
   'quality-review': { schema: qualityReviewResultSchema, retrySafe: true },
   // Retained as loop-internal routing schemas for agent invocation dispatch

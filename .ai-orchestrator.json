@@ -1,6 +1,13 @@
 {
   "validation": {
-    "commands": ["pnpm build", "pnpm lint", "pnpm typecheck", "pnpm test", "pnpm test:bash"],
+    "commands": [
+      "pnpm build",
+      "pnpm lint",
+      "pnpm typecheck",
+      "pnpm test",
+      "pnpm test:bash",
+      "pnpm depcruise"
+    ],
     "timeout": 300
   },
   "phases": {
@@ -153,7 +160,8 @@
       "plan-fix": { "profile": "architect", "fallbackProfile": "senior" },
       "result-writer": { "profile": "task-reviewer", "fallbackProfile": "junior" },
       "fix-review-architect": { "profile": "architect", "fallbackProfile": "senior" },
-      "commit-completion": { "profile": "junior", "fallbackProfile": "builder" }
+      "commit-completion": { "profile": "junior", "fallbackProfile": "builder" },
+      "verify-pr-review": { "profile": "reviewer", "fallbackProfile": "junior" }
     }
   }
 }

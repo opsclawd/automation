@@ -12,7 +12,7 @@ function makeInvocation(overrides: Partial<AgentInvocation> = {}): AgentInvocati
   return {
     id: AgentInvocationId('inv-1'),
     runId: RunId('r1'),
-    phaseId: PhaseName('plan-design'),
+    phaseId: PhaseName('implement'),
     profile: AgentProfileName('p'),
     runtime: 'opencode',
     provider: 'a',
@@ -37,18 +37,6 @@ const PHASE_TESTS: Array<{
   invalidJson: object;
   retrySafe: boolean;
 }> = [
-  {
-    phase: 'plan-design',
-    validJson: { result: 'ready', summary: 'go' },
-    invalidJson: { bad: 'shape' },
-    retrySafe: true,
-  },
-  {
-    phase: 'plan-write',
-    validJson: { result: 'ready', tasks: [{ title: 'Do work' }] },
-    invalidJson: { bad: 'shape' },
-    retrySafe: true,
-  },
   {
     phase: 'implement',
     validJson: { result: 'success', changedFiles: ['src/foo.ts'] },
@@ -300,7 +288,7 @@ describe('extractResult', () => {
     });
     const agent = new FakeAgentPort();
     const outcome = await extractResult({
-      invocation: makeInvocation(),
+      invocation: makeInvocation({ phaseId: PhaseName('quality-review') }),
       ports: { artifacts, agent },
     });
     expect(outcome).toEqual({

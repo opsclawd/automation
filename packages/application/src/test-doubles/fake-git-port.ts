@@ -46,6 +46,10 @@ export class FakeGitPort implements GitPort {
     return `diff for ${cwd} ${base}..${head ?? 'HEAD'}`;
   }
 
+  async diffStat(cwd: string, base: string, head?: string): Promise<string> {
+    return `1 file changed (stat for ${cwd} ${base}..${head ?? 'HEAD'})`;
+  }
+
   async commit(cwd: string, message: string): Promise<string> {
     const sha = `fake-sha-${this.commits.length + 1}`;
     this.commits.push({ cwd, message, sha });

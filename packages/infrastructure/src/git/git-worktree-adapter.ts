@@ -76,6 +76,12 @@ export class GitWorktreeAdapter implements GitPort {
     return head ? git(cwd, ['diff', base, head]) : git(cwd, ['diff', base]);
   }
 
+  async diffStat(cwd: string, base: string, head?: string): Promise<string> {
+    return head
+      ? git(cwd, ['diff', '--stat', `${base}..${head}`])
+      : git(cwd, ['diff', '--stat', base]);
+  }
+
   async commit(cwd: string, message: string): Promise<string> {
     await git(cwd, ['commit', '-m', message]);
     return git(cwd, ['rev-parse', 'HEAD']);
@@ -83,7 +89,8 @@ export class GitWorktreeAdapter implements GitPort {
 
   async push(input: PushInput): Promise<void> {
     const { cwd, branch, remote = 'origin' } = input;
-    await git(cwd, ['push', remote, branch]);
+    // 300s: pre-push hooks that run a full build can take ~2 minutes
+    await git(cwd, ['push', remote, branch], 300_000);
   }
 
   async remoteRef(input: {

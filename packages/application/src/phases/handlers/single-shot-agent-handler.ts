@@ -10,6 +10,7 @@ export class SingleShotAgentHandler implements PhaseHandler {
   constructor(
     phaseName: PhaseName,
     private readonly step: string,
+    private readonly options: { skipResultExtraction?: boolean } = {},
   ) {
     this.phase = phaseName;
   }
@@ -74,12 +75,17 @@ export class SingleShotAgentHandler implements PhaseHandler {
       };
     }
 
-    return runSingleShotAgentPhase(ctx, {
+    const result = await runSingleShotAgentPhase(ctx, {
       phase: this.phase,
       profile,
       step: this.step,
       vars: { issue_number: String(ctx.issueNumber) },
       agentContract: def.agentContract,
+      ...(this.options.skipResultExtraction ? { skipResultExtraction: true } : {}),
     });
+    if (this.options.skipResultExtraction && result.outcome === 'passed') {
+      emit(`${String(this.phase)}.completed`, 'info', `${String(this.phase)} completed`);
+    }
+    return result;
   }
 }

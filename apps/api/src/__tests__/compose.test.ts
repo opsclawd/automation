@@ -11,7 +11,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { composeRoot } from '../compose.js';
+import { composeRoot, captureExecOutput } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import {
@@ -29,7 +29,7 @@ import {
 } from '@ai-sdlc/application';
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
-import type { PrReviewPollerDeps } from '@ai-sdlc/application';
+import type { PrReviewPollerDeps, PostFixGateResult } from '@ai-sdlc/application';
 
 const tempDirs: string[] = [];
 
@@ -559,6 +559,10 @@ exit 1
       subscribe: () => () => {},
     };
     const fixLoop = new ReviewFixLoop({
+      runPostFixGate: async (): Promise<PostFixGateResult> => ({
+        outcome: 'pass',
+        output: '',
+      }),
       runReview: async () => ({
         invocationId: 'review-1',
         agentOutcome: 'success' as const,
@@ -592,6 +596,62 @@ exit 1
     expect(result.phaseOutcome).toBe('passed');
     expect(result.loop.status).toBe('converged');
     expect(result.loop.iterations).toHaveLength(1);
+  });
+
+  it('ReviewFixLoop passes gate failure output to runReview on iteration 2', async () => {
+    const bus = {
+      publish: (_runUuid: string, _event: OrchestratorEvent) => {},
+      subscribe: () => () => {},
+    };
+    const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+    let reviewCalls = 0;
+
+    const fixLoop = new ReviewFixLoop({
+      runPostFixGate: async (): Promise<PostFixGateResult> => ({
+        outcome: 'fail',
+        output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
+      }),
+      runReview: async (_ctx, gateResult) => {
+        reviewCalls += 1;
+        receivedGateResults.push(gateResult);
+        return {
+          invocationId: `review-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+        };
+      },
+      runFix: async () => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runRevalidation: async () => ({
+        validationRunId: 'reval-1',
+        passed: true,
+      }),
+      loops: new FakeLoopRepository(),
+      events: bus,
+      now: () => new Date(),
+      idFactory: () => 'smoke-loop-gate',
+    });
+
+    const result = await fixLoop.execute({
+      runId: RunId('test-run-gate'),
+      phaseId: PhaseName('whole-pr-review'),
+      repoId: 'owner/repo',
+      cwd: '/tmp',
+      maxIterations: 4,
+      reviewProfile: AgentProfileName('test'),
+      fixProfile: AgentProfileName('test'),
+    });
+
+    expect(result.phaseOutcome).toBe('passed');
+    expect(receivedGateResults[0]).toBeUndefined();
+    expect(receivedGateResults[1]).toEqual({
+      outcome: 'fail',
+      output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
+    });
+    expect(reviewCalls).toBe(3);
   });
 
   it('removes per-run tmp dir after a failed run completes', async () => {
@@ -852,5 +912,52 @@ exit 1
     const scriptPath = fakeScript(0);
     const c = composeRoot({ repoRoot: root, scriptPath });
     expect(c.buildRunContext).toBeUndefined();
+  });
+
+  describe('captureExecOutput', () => {
+    it('returns stdout+stderr from execFileSync error with both streams', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = 'stdout output\n';
+      err.stderr = 'stderr output\n';
+      expect(captureExecOutput(err)).toBe('stdout output\n\nstderr output\n');
+    });
+
+    it('returns stderr when stdout is empty', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = '';
+      err.stderr = 'stderr only\n';
+      expect(captureExecOutput(err)).toBe('stderr only\n');
+    });
+
+    it('returns stdout when stderr is empty', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = 'stdout only\n';
+      err.stderr = '';
+      expect(captureExecOutput(err)).toBe('stdout only\n');
+    });
+
+    it('adds newline separator when stdout lacks trailing newline', () => {
+      const err = new Error('Command failed') as NodeJS.ErrnoException & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = 'error TS2322';
+      err.stderr = 'error TS2345\n';
+      expect(captureExecOutput(err)).toBe('error TS2322\nerror TS2345\n');
+    });
+
+    it('returns String(err) for non-execFileSync errors', () => {
+      const err = new Error('generic error');
+      expect(captureExecOutput(err)).toBe('Error: generic error');
+    });
   });
 });

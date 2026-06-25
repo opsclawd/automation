@@ -53,8 +53,14 @@ export interface FixStepOptions {
   reconciliationContext?: string;
 }
 
+export interface PostFixGateResult {
+  outcome: 'pass' | 'fail';
+  output: string;
+}
+
 export interface ReviewFixLoopDeps {
-  runReview: (ctx: StepContext) => Promise<ReviewStepResult>;
+  runPostFixGate: (ctx: StepContext) => Promise<PostFixGateResult>;
+  runReview: (ctx: StepContext, gateResult?: PostFixGateResult) => Promise<ReviewStepResult>;
   runFix: (ctx: StepContext, opts: FixStepOptions) => Promise<FixStepResult>;
   runRevalidation: (ctx: StepContext) => Promise<RevalidationResult>;
   loops: LoopRepositoryPort;
