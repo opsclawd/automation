@@ -8,7 +8,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunExecutor } from '@ai-sdlc/application';
-import { GitWorktreeAdapter, RunRepository, WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
+import {
+  GitWorktreeAdapter,
+  InMemoryEventBus,
+  RunRepository,
+  WorkerLeaseRepository,
+} from '@ai-sdlc/infrastructure';
 import { WorkerLeaseConflictError, WorkerId, RepositoryId } from '@ai-sdlc/domain';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1741,6 +1746,316 @@ describe('CLI run --executor ts', () => {
       executeSpy.mockRestore();
       exitSpy.mockRestore();
       writeSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('streams progress to stderr when --verbose is passed', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-verbose-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const subscribeSpy = vi.spyOn(InMemoryEventBus.prototype, 'subscribe');
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-pid-${process.pid}`),
+        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
+        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      );
+      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
+      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
+
+      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: 'mock-run-uuid',
+          status: 'passed' as const,
+          displayId: 'issue-70-20260622-000000',
+          issueNumber: 70,
+          type: 'issue_to_pr' as const,
+          completedPhases: ['read-issue'],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [{ phase: 'read-issue', status: 'passed' }],
+      });
+
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+      vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '70',
+        '--executor',
+        'ts',
+        '--verbose',
+        '--script',
+        '/dev/null',
+      ]);
+
+      // subscribe must be called to set up the event bus listener
+      expect(subscribeSpy).toHaveBeenCalled();
+
+      // Verify the captured listener actually writes [ts]-prefixed messages to console.error
+      const listener = subscribeSpy.mock.calls[0]?.[1];
+      expect(listener).toBeDefined();
+      listener?.({
+        runId: 'mock-run-uuid',
+        type: 'phase.started',
+        level: 'info' as const,
+        message: 'starting phase read_issue',
+        timestamp: new Date().toISOString(),
+        metadata: {},
+      });
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[ts] starting phase read_issue'),
+      );
+
+      subscribeSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+      vi.restoreAllMocks();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('does not stream progress when --no-verbose is passed', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-noverbose-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const subscribeSpy = vi.spyOn(InMemoryEventBus.prototype, 'subscribe');
+
+      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-pid-${process.pid}`),
+        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
+        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      );
+      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
+      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
+      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: 'mock-run-uuid',
+          status: 'passed' as const,
+          displayId: 'issue-71-20260622-000000',
+          issueNumber: 71,
+          type: 'issue_to_pr' as const,
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+      vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '71',
+        '--executor',
+        'ts',
+        '--no-verbose',
+        '--script',
+        '/dev/null',
+      ]);
+
+      // subscribe must NOT be called when --no-verbose suppresses output
+      expect(subscribeSpy).not.toHaveBeenCalled();
+
+      subscribeSpy.mockRestore();
+      vi.restoreAllMocks();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('outputs final JSON to stdout when --verbose is active', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-verbose-json-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-pid-${process.pid}`),
+        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
+      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
+        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      );
+      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
+      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
+      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: 'mock-run-uuid',
+          status: 'passed' as const,
+          displayId: 'issue-72-20260622-000000',
+          issueNumber: 72,
+          type: 'issue_to_pr' as const,
+          completedPhases: ['read-issue'],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [{ phase: 'read-issue', status: 'passed' }],
+      });
+
+      const stdoutChunks: string[] = [];
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        stdoutChunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+      vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '72',
+        '--executor',
+        'ts',
+        '--verbose',
+        '--script',
+        '/dev/null',
+      ]);
+
+      const output = JSON.parse(stdoutChunks.join(''));
+      expect(output).toHaveProperty('run');
+      expect(output.run.uuid).toBe('mock-run-uuid');
+      expect(output.run.status).toBe('passed');
+      expect(output).toHaveProperty('phases');
+
+      vi.restoreAllMocks();
     } finally {
       process.chdir(savedCwd);
     }

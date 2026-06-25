@@ -251,9 +251,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
           }
 
+          let unsubscribe: (() => void) | undefined;
           let signalHandlers: { remove: () => void } | undefined;
           let lease: { stop: () => void } | undefined;
           const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
+          if (tee) {
+            unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
+              console.error(`[ts] ${event.message}`);
+            });
+          }
           try {
             signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
             lease = startLeaseHeartbeat(
@@ -295,10 +301,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // the finally block, so relying on it leaks the lease on every
             // completed run. With no worker-loop to reclaim expired leases on the
             // Option-A direct path, a leaked lease locks the repo after one run.
+            unsubscribe?.();
             signalHandlers?.remove();
             lease?.stop();
             process.exit(result.run.status === 'passed' ? 0 : EXIT_USER_ERROR);
           } catch (err) {
+            unsubscribe?.();
             signalHandlers?.remove();
             lease?.stop();
             try {
