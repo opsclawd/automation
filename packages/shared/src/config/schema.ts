@@ -69,6 +69,7 @@ const agentProfileSchema = z
     promptBudgetTokens: z.number().int().positive().optional(),
     outputBudgetTokens: z.number().int().positive().optional(),
     timeoutMinutes: z.number().positive(), // fractional minutes intentionally allowed (e.g. 0.5)
+    sandboxMode: z.enum(['read-only', 'writable']).optional(),
   })
   .superRefine((profile, ctx) => {
     if (profile.runtime === 'pi' && profile.contextLimitTokens === undefined) {
