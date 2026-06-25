@@ -1694,11 +1694,14 @@ export function composeRoot(opts: ComposeOptions): Container {
               return { signal: 'blocked' as const };
             }
 
-            // Fast-path: if the PR is already merged, complete immediately.
-            const ghAdapterForPoll = new GhCliAdapter({});
-            const prDetail = await ghAdapterForPoll.getPr(ctx.repoFullName, prNumber);
-            if (prDetail.state === 'merged') {
-              return { signal: 'merged' as const };
+            // Fast-path: if the PR is already closed/merged, short-circuit.
+            try {
+              const ghAdapterForPoll = new GhCliAdapter({});
+              const prDetail = await ghAdapterForPoll.getPr(ctx.repoFullName, prNumber);
+              if (prDetail.state === 'merged') return { signal: 'merged' as const };
+              if (prDetail.state === 'closed') return { signal: 'cancelled' as const };
+            } catch {
+              // Non-fatal — fall through to the poller which will handle it.
             }
 
             const poller = buildPrReviewPoller({
