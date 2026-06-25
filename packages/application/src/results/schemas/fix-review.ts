@@ -1,7 +1,15 @@
-// No captured result.json available; shape inferred from M4-05 issue spec.
 import { z } from 'zod';
 
-export const fixReviewResultSchema = z.object({
-  result: z.enum(['done_with_fixes', 'done_no_fixes_needed', 'cannot_fix']),
-});
+export const fixReviewResultSchema = z.discriminatedUnion('result', [
+  z.object({
+    result: z.enum(['done_with_fixes', 'cannot_fix']),
+  }),
+  z.object({
+    result: z.literal('done_no_fixes_needed'),
+    rebuttal: z
+      .string()
+      .trim()
+      .min(1, 'A non-empty rebuttal is required when result is done_no_fixes_needed'),
+  }),
+]);
 export type FixReviewResult = z.infer<typeof fixReviewResultSchema>;

@@ -203,20 +203,6 @@ export class ImplementStepLoop {
       // --- CONTRADICTION DETECTION ---
       const reviewFailed = specReview.verdict === 'fail' || qualityReview.verdict === 'fail';
       if (fix.verdict === 'done_no_fixes_needed' && reviewFailed) {
-        // Guard: fixer must provide rebuttal when claiming no fixes needed against a failing review
-        if (!fix.rebuttal || fix.rebuttal.trim().length === 0) {
-          this.emit(
-            input,
-            'needs_human_review',
-            'warn',
-            `fixer returned done_no_fixes_needed without rebuttal at iteration ${iterationIndex} — escalating to human`,
-            { iterationIndex },
-          );
-          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-          deps.loops.update(loop);
-          return { outcome: 'needs_human_review', loop };
-        }
-
         this.emit(
           input,
           'review.contradiction.detected',
