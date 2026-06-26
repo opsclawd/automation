@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
@@ -22,10 +22,10 @@ const require = createRequire(join(apiRoot, 'package.json'));
 const tsxEsmPath = require.resolve('tsx/esm');
 const cliPath = join(apiRoot, 'src', 'cli.ts');
 
-function spawnOrchestrator(args: string[], cwd: string) {
+function spawnOrchestrator(args: string[], cwd: string, envOverrides?: Record<string, string>) {
   return spawn('node', ['--conditions=development', '--import', tsxEsmPath, cliPath, ...args], {
     cwd,
-    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+    env: { ...process.env, NODE_NO_WARNINGS: '1', ...envOverrides },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
@@ -802,11 +802,46 @@ describe('CLI run command signal handlers', () => {
   it('marks run as cancelled when process receives SIGTERM', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigterm-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
     const scriptPath = join(root, 'long-running.sh');
     writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
     chmodSync(scriptPath, 0o755);
 
-    const child = spawnOrchestrator(['run', '--issue', '77', '--script', scriptPath], root);
+    const child = spawnOrchestrator(
+      ['run', '--issue', '77', '--executor', 'ts', '--script', scriptPath],
+      root,
+    );
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
@@ -819,7 +854,14 @@ describe('CLI run command signal handlers', () => {
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 77').get();
+          const row = db
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.issue_number = 77`,
+            )
+            .get();
           db.close();
           if (row) {
             clearTimeout(timeout);
@@ -844,6 +886,8 @@ describe('CLI run command signal handlers', () => {
     const run = db
       .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 77')
       .get() as { status: string; failure_reason: string | null };
+    const lease = db.prepare('SELECT repo_id FROM worker_leases').get();
+    expect(lease).toBeUndefined();
     db.close();
 
     expect(run.status).toBe('cancelled');
@@ -853,11 +897,46 @@ describe('CLI run command signal handlers', () => {
   it('marks run as cancelled when process receives SIGINT', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigint-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
     const scriptPath = join(root, 'long-running.sh');
     writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
     chmodSync(scriptPath, 0o755);
 
-    const child = spawnOrchestrator(['run', '--issue', '78', '--script', scriptPath], root);
+    const child = spawnOrchestrator(
+      ['run', '--issue', '78', '--executor', 'ts', '--script', scriptPath],
+      root,
+    );
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
@@ -866,7 +945,14 @@ describe('CLI run command signal handlers', () => {
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 78').get();
+          const row = db
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.issue_number = 78`,
+            )
+            .get();
           db.close();
           if (row) {
             clearTimeout(timeout);
@@ -891,6 +977,8 @@ describe('CLI run command signal handlers', () => {
     const run = db
       .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 78')
       .get() as { status: string; failure_reason: string | null };
+    const lease = db.prepare('SELECT repo_id FROM worker_leases').get();
+    expect(lease).toBeUndefined();
     db.close();
 
     expect(run.status).toBe('cancelled');
