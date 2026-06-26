@@ -9,6 +9,7 @@ export interface AgentProfile {
   promptBudgetTokens?: number;
   outputBudgetTokens?: number;
   timeoutMinutes: number;
+  sandboxMode?: 'read-only' | 'writable';
 }
 
 export function isOpencodeProfile(profile: AgentProfile): boolean {

@@ -644,6 +644,49 @@ describe('AgentRuntimeRouter', () => {
     expect(events.some((e) => e.type === 'phase.fallback.escalated')).toBe(false);
   });
 
+  it('propagates sandboxMode from profile to adapter request', async () => {
+    let captured: AgentInvocationRequest | undefined;
+    const capturingAdapter = {
+      async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        captured = req;
+        return {
+          runtime: 'codex',
+          provider: 'openai',
+          model: 'default',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    } satisfies AgentPort;
+    const router = new AgentRuntimeRouter({
+      agent: {
+        defaultProfile: 'codex-writer',
+        profiles: {
+          'codex-writer': {
+            runtime: 'codex',
+            provider: 'openai',
+            model: 'default',
+            timeoutMinutes: 30,
+            sandboxMode: 'writable',
+          },
+        },
+        phaseProfiles: {},
+      },
+      adapters: { codex: capturingAdapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-sandbox',
+      readPromptChars: () => 100,
+    });
+    await router.invoke(req({ profile: AgentProfileName('codex-writer') }));
+    expect(captured).toBeDefined();
+    expect(captured!.sandboxMode).toBe('writable');
+  });
+
   it('does not emit agent.usage event when adapter returns no usage', async () => {
     const events: OrchestratorEvent[] = [];
     const eventBus = {
