@@ -852,7 +852,9 @@ describe('CLI runs execute command', () => {
     );
     db.close();
 
-    const child = spawnOrchestrator(['runs', 'execute', '--uuid', runUuid], root);
+    const child = spawnOrchestrator(['runs', 'execute', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
@@ -959,7 +961,9 @@ describe('CLI runs execute command', () => {
     );
     db.close();
 
-    const child = spawnOrchestrator(['runs', 'execute', '--uuid', runUuid], root);
+    const child = spawnOrchestrator(['runs', 'execute', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
@@ -1056,6 +1060,7 @@ describe('CLI run command signal handlers', () => {
     const child = spawnOrchestrator(
       ['run', '--issue', '77', '--executor', 'ts', '--script', scriptPath],
       root,
+      { GITHUB_REPOSITORY: 'opsclawd/automation' },
     );
 
     const stderr: string[] = [];
@@ -1153,6 +1158,7 @@ describe('CLI run command signal handlers', () => {
     const child = spawnOrchestrator(
       ['run', '--issue', '78', '--executor', 'ts', '--script', scriptPath],
       root,
+      { GITHUB_REPOSITORY: 'opsclawd/automation' },
     );
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
@@ -3147,7 +3153,9 @@ describe('CLI runs resume command', () => {
     );
     db.close();
 
-    const child = spawnOrchestrator(['runs', 'resume', '--uuid', runUuid], root);
+    const child = spawnOrchestrator(['runs', 'resume', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
@@ -3255,7 +3263,9 @@ describe('CLI runs resume command', () => {
     );
     db.close();
 
-    const child = spawnOrchestrator(['runs', 'resume', '--uuid', runUuid], root);
+    const child = spawnOrchestrator(['runs', 'resume', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
