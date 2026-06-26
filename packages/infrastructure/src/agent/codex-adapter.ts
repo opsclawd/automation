@@ -27,7 +27,8 @@ export class CodexAgentAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     const bin = this.opts.binaryPath ?? 'codex';
     const prompt = readFileSync(request.promptPath, 'utf-8');
-    const args = ['exec', '--sandbox', 'read-only', '--color', 'never', '-'];
+    const sandbox = request.sandboxMode ?? 'read-only';
+    const args = ['exec', '--sandbox', sandbox, '--color', 'never', '-'];
     if (request.model && request.model !== 'default') {
       args.push('--model', request.model);
     }
