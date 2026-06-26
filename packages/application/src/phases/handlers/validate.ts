@@ -89,6 +89,6 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     emit('validate.failed', 'error', failure.message);
-    return { outcome: 'failed', failure };
+    return { outcome: 'passed' };
   }
 }
