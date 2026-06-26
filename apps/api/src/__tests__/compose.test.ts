@@ -914,7 +914,7 @@ exit 1
     expect(c.buildRunContext).toBeUndefined();
   });
 
-  it('runTypecheck contains pre-build step before typecheck', () => {
+  it('runTypecheck contains non-fatal pre-build step before typecheck', () => {
     const composeSrc = readFileSync(
       path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
       'utf-8',
@@ -927,6 +927,8 @@ exit 1
     expect(buildIdx).toBeGreaterThan(-1);
     expect(typecheckIdx).toBeGreaterThan(-1);
     expect(buildIdx).toBeLessThan(typecheckIdx);
+    expect(fnSrc).toContain('timeout: 180_000');
+    expect(fnSrc).toMatch(/catch\s*\{\s*\/\/ Non-fatal/);
   });
 
   it('runPostFixGate contains pre-build step before typecheck', () => {
