@@ -12,6 +12,7 @@ import * as reviewFixRename from './migrations/0010-review-fix-rename.js';
 import * as addSkippedPhases from './migrations/0011-add-skipped-phases-column.js';
 import * as addStartCommitSha from './migrations/0012-add-start-commit-sha-column.js';
 import * as addWorkerLeases from './migrations/0013-add-worker-leases.js';
+import * as addSteps from './migrations/0014-add-steps.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -27,6 +28,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addSkippedPhases.version, sql: addSkippedPhases.sql },
   { version: addStartCommitSha.version, sql: addStartCommitSha.sql },
   { version: addWorkerLeases.version, sql: addWorkerLeases.sql },
+  { version: addSteps.version, sql: addSteps.sql },
 ];
 
 export function applyMigrations(db: Db): void {
