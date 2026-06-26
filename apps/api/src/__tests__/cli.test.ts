@@ -2854,7 +2854,9 @@ describe('CLI runs resume command', () => {
     db.close();
 
     const savedCwd = process.cwd();
+    const savedGithubRepo = process.env.GITHUB_REPOSITORY;
     process.chdir(root);
+    delete process.env.GITHUB_REPOSITORY;
     try {
       const consoleErrs: string[] = [];
       const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
@@ -2873,6 +2875,7 @@ describe('CLI runs resume command', () => {
       expect(capturedConsole).toMatch(/could not determine repository name/i);
     } finally {
       process.chdir(savedCwd);
+      if (savedGithubRepo !== undefined) process.env.GITHUB_REPOSITORY = savedGithubRepo;
     }
   });
 
