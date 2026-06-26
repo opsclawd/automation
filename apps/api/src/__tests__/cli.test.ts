@@ -804,6 +804,8 @@ describe('CLI runs execute command', () => {
     execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
       cwd: root,
     });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
     writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
@@ -909,6 +911,8 @@ describe('CLI runs execute command', () => {
     execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
       cwd: root,
     });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
     writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
@@ -1015,6 +1019,8 @@ describe('CLI run command signal handlers', () => {
     execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
       cwd: root,
     });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
     writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
@@ -1110,6 +1116,8 @@ describe('CLI run command signal handlers', () => {
     execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
       cwd: root,
     });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
     writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
@@ -3089,6 +3097,8 @@ describe('CLI runs resume command', () => {
     execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
       cwd: root,
     });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
     writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
@@ -3195,6 +3205,8 @@ describe('CLI runs resume command', () => {
     execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
       cwd: root,
     });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
     writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
