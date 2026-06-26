@@ -1218,7 +1218,7 @@ JSON
 # purpose of reviewer-only routing.
 # TS-port contract: the adapter source must contain "read-only" in its arg
 # array and must never reference the three dangerous sandbox modes.
-@test "parity[#147]: codex adapter hardcodes read-only sandbox, never bypasses approvals" {
+@test "parity[#147]: codex adapter never bypasses approvals; workspace-write only via explicit sandboxMode mapping" {
   local adapter="$REPO_ROOT/packages/infrastructure/src/agent/codex-adapter.ts"
 
   run grep -c "read-only" "$adapter"
@@ -1230,9 +1230,10 @@ JSON
   [ "$status" -eq 1 ]
   [ "$output" -eq 0 ]
 
+  # workspace-write is allowed only as the mapped value for sandboxMode:'writable' (PR #496/#503)
   run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'workspace-write'"
-  [ "$status" -eq 1 ]
-  [ "$output" -eq 0 ]
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
 
   run bash -c "grep -vE '^\s*(/\*|\*|//|\*/)' '$adapter' | grep -c 'danger-full-access'"
   [ "$status" -eq 1 ]
