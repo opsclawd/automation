@@ -576,8 +576,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
+            const releaseLeaseOnSignal = () => {
+              try {
+                c.workerLeaseRepository.release(repoId, workerId);
+              } catch (err) {
+                console.error(
+                  `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
+                );
+              }
+            };
             try {
-              signalHandlers = installSignalHandlers(c.runRepository, run.issueNumber);
+              signalHandlers = installSignalHandlers(
+                c.runRepository,
+                run.issueNumber,
+                releaseLeaseOnSignal,
+              );
               lease = startLeaseHeartbeat(
                 c.workerLeaseRepository,
                 repoId,
@@ -687,8 +700,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
+            const releaseLeaseOnSignal = () => {
+              try {
+                c.workerLeaseRepository.release(repoId, workerId);
+              } catch (err) {
+                console.error(
+                  `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
+                );
+              }
+            };
             try {
-              signalHandlers = installSignalHandlers(c.runRepository, updatedRun.issueNumber);
+              signalHandlers = installSignalHandlers(
+                c.runRepository,
+                updatedRun.issueNumber,
+                releaseLeaseOnSignal,
+              );
               lease = startLeaseHeartbeat(
                 c.workerLeaseRepository,
                 repoId,
