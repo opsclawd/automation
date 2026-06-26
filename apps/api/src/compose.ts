@@ -60,6 +60,8 @@ import {
   createVerifyCodeChange,
   pollTaskResultSchema,
   ReviewFixLoop,
+  ValidateFixLoop,
+  FixValidateHandler,
   ImplementStepLoop,
   readReviewVerdict,
   readFixVerdict,
@@ -367,6 +369,7 @@ export interface Container {
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   buildPhaseHandlerContext: PhaseHandlerContextFactory;
   reviewFixLoop?: ReviewFixLoop;
+  validateFixLoop?: ValidateFixLoop;
   implementStepLoop?: ImplementStepLoopType;
   runStep?: (sctx: {
     stepIndex: number;
@@ -721,6 +724,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     'plan-write',
     'implement',
     'validate',
+    'fix-validate',
     'review-fix',
     'compound',
     'create-pr',
@@ -789,6 +793,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   let reviewFixLoop: ReviewFixLoop | undefined;
+  let validateFixLoop: ValidateFixLoop | undefined;
   let implementStepLoop: ImplementStepLoopType | undefined;
   let runStep: Container['runStep'] | undefined;
   let runExecutor: RunExecutor | undefined;
@@ -1337,6 +1342,42 @@ export function composeRoot(opts: ComposeOptions): Container {
       });
       reviewFixLoop = reviewFixLoopInstance;
 
+      const validateFixRunFix = async (
+        ctx: import('@ai-sdlc/application').ValidateFixStepContext,
+        opts: FixStepOptions,
+      ): Promise<import('@ai-sdlc/application').ValidateFixAgentResult> => {
+        const result = await runFix(ctx, opts);
+        const mappedVerdict: 'fixed' | 'cannot_fix' | undefined =
+          result.verdict === 'done_with_fixes' || result.verdict === 'done_no_fixes_needed'
+            ? 'fixed'
+            : result.verdict;
+        return {
+          invocationId: result.invocationId,
+          agentOutcome: result.agentOutcome,
+          ...(mappedVerdict !== undefined ? { verdict: mappedVerdict } : {}),
+          ...(result.headBeforeFix !== undefined ? { headBeforeFix: result.headBeforeFix } : {}),
+        };
+      };
+
+      const fixValidateProfileName: string =
+        config.agent.phaseProfiles['fix-validate']?.profile ??
+        config.agent.phaseProfiles['fix-review']?.profile ??
+        'opencode-frontier';
+      const fixValidateFallbackProfileName: string | undefined =
+        config.agent.phaseProfiles['fix-validate']?.fallbackProfile ??
+        config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+
+      const validateFixLoopInstance = new ValidateFixLoop({
+        runFix: validateFixRunFix,
+        runRevalidation,
+        rollbackFix,
+        loops: loopRepository,
+        events: persistingEventBusForLoop,
+        now: () => new Date(),
+        idFactory: () => randomUUID(),
+      });
+      validateFixLoop = validateFixLoopInstance;
+
       const implementProfileName: string =
         config.agent.phaseProfiles['implement']?.profile ?? 'opencode-frontier';
       const specReviewProfileName: string =
@@ -1799,6 +1840,28 @@ export function composeRoot(opts: ComposeOptions): Container {
           commands: config.validation.commands,
           timeoutSeconds: config.validation.timeout,
           logDir: join(runsDir, 'validate'),
+        }),
+      );
+
+      phaseRegistry.register(
+        new FixValidateHandler({
+          runLoop: async (ctx) => {
+            const result = await validateFixLoopInstance.execute({
+              runId: RunId(ctx.runUuid),
+              phaseId: PhaseName('fix-validate'),
+              repoId: ctx.repoFullName,
+              cwd: ctx.cwd,
+              maxIterations: config.phases.fixValidate?.maxIterations ?? 3,
+              fixProfile: AgentProfileName(fixValidateProfileName),
+              ...(fixValidateFallbackProfileName
+                ? { fixFallbackProfile: AgentProfileName(fixValidateFallbackProfileName) }
+                : {}),
+            });
+            return {
+              phaseOutcome: result.phaseOutcome,
+              loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
+            };
+          },
         }),
       );
 
@@ -2397,6 +2460,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
     buildPrReviewPoller,
     ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
+    ...(validateFixLoop !== undefined ? { validateFixLoop } : {}),
     ...(implementStepLoop !== undefined ? { implementStepLoop } : {}),
     ...(runStep !== undefined ? { runStep } : {}),
     buildPhaseHandlerContext: composeBuildPhaseHandlerContext,

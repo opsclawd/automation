@@ -23,6 +23,8 @@ export * from './pr-review/verify-code-change.js';
 export * from './review-fix/types.js';
 export * from './review-fix/review-fix-loop.js';
 export * from './review-fix/read-verdicts.js';
+export * from './validate-fix/types.js';
+export * from './validate-fix/validate-fix-loop.js';
 export * from './phases/index.js';
 export * from './executor/phase-handler-registry.js';
 export * from './executor/run-executor.js';
