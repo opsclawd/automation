@@ -260,10 +260,9 @@ export class RunExecutor {
       }
 
       switch (result.outcome) {
-        case 'deferred':
-        case 'passed': {
+        case 'deferred': {
           currentRun = completePhase(currentRun, phaseDef.name as string);
-          phase.status = 'passed';
+          phase.status = 'deferred';
           phase.completedAt = now();
           for (const output of phaseDef.outputs) {
             if (!presentArtifacts.includes(output)) {
@@ -273,6 +272,42 @@ export class RunExecutor {
           // Refresh artifact presence from the artifact store BEFORE
           // persisting phase completion. If the store is unavailable we
           // still have the declared outputs — no need to fail the phase.
+          try {
+            const stored = await ctx.artifacts.list(run.uuid);
+            for (const a of stored) {
+              if (!presentArtifacts.includes(a.relativePath)) {
+                presentArtifacts.push(a.relativePath);
+              }
+            }
+          } catch {
+            // non-fatal — declared outputs already accumulated
+          }
+          this.deps.phaseRepository.update(phase);
+          this.deps.runRepository.update(run.uuid, {
+            currentPhase: null,
+            completedPhases: currentRun.completedPhases,
+          });
+          phases.push({ phase: phaseDef.name, status: 'deferred' });
+          this.emit(
+            run.displayId,
+            run.uuid,
+            phaseDef.name as string,
+            'info',
+            'phase.completed',
+            `phase '${String(phaseDef.name)}' deferred — pipeline continues`,
+            now(),
+          );
+          break;
+        }
+        case 'passed': {
+          currentRun = completePhase(currentRun, phaseDef.name as string);
+          phase.status = 'passed';
+          phase.completedAt = now();
+          for (const output of phaseDef.outputs) {
+            if (!presentArtifacts.includes(output)) {
+              presentArtifacts.push(output);
+            }
+          }
           try {
             const stored = await ctx.artifacts.list(run.uuid);
             for (const a of stored) {

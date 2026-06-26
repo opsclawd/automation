@@ -39,7 +39,8 @@ function makeStubHandler(
     | 'blocked'
     | 'needs_human_review'
     | 'resting'
-    | 'skipped' = 'passed',
+    | 'skipped'
+    | 'deferred' = 'passed',
 ): PhaseHandler {
   return {
     phase: makePhaseName(phase),
@@ -343,6 +344,46 @@ describe('RunExecutor', () => {
     expect(deps.events.publish).not.toHaveBeenCalledWith(
       'test-uuid',
       expect.objectContaining({ type: 'run.completed' }),
+    );
+  });
+
+  it('advances past a deferred outcome — phase recorded as deferred, pipeline continues', async () => {
+    const registry = new PhaseHandlerRegistry();
+    registerAllPassed(registry);
+    registry.register(makeStubHandler('plan-design', 'deferred'));
+
+    const phaseRepo = new FakePhaseRepository();
+    const deps = makeDeps({ registry, phaseRepository: phaseRepo });
+    const executor = new RunExecutor(deps);
+    const run = makeRun();
+
+    const input: ExecuteRunInput = {
+      run,
+      skip: [],
+      presentArtifacts: ['issue.md'],
+    };
+
+    const result = await executor.execute(input);
+
+    // plan-design recorded as deferred (not passed) in phase records
+    const planDesign = result.phases.find((p) => p.phase === makePhaseName('plan-design'));
+    expect(planDesign).toBeDefined();
+    expect(planDesign!.status).toBe('deferred');
+
+    // Pipeline continued — all subsequent phases executed
+    expect(result.phases).toHaveLength(10);
+    expect(result.run.status).toBe('passed');
+    expect(result.run.completedPhases).toContain('plan-design');
+
+    // Phase was updated to deferred (not left as running)
+    const deferredUpdates = phaseRepo.updated.filter((p) => p.status === 'deferred');
+    expect(deferredUpdates).toHaveLength(1);
+    expect(deferredUpdates[0]!.name).toBe('plan-design');
+
+    // phase.completed event emitted for the deferred phase
+    expect(deps.events.publish).toHaveBeenCalledWith(
+      'test-uuid',
+      expect.objectContaining({ type: 'phase.completed', phase: 'plan-design' }),
     );
   });
 
