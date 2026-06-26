@@ -178,8 +178,8 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
             }
           }
         }
-      } catch {
-        // git ls-files failed — skip remediation silently
+      } catch (e) {
+        console.warn('artifact remediation failed (rename, rmdir, or git ls-files):', e);
       }
     }
   }
