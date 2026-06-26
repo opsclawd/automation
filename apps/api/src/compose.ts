@@ -1427,8 +1427,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         let implReport = '';
         try {
           implReport = readFileSync(join(ctx.cwd, 'implementation-log.md'), 'utf-8');
-        } catch {
-          // not present for steps that produced no output — leave empty
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
         }
         const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
