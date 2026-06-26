@@ -914,6 +914,38 @@ exit 1
     expect(c.buildRunContext).toBeUndefined();
   });
 
+  it('runTypecheck contains pre-build step before typecheck', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const typecheckFnMatch = composeSrc.match(/const runTypecheck[\s\S]*?(?=const runSpecReview)/);
+    expect(typecheckFnMatch).toBeTruthy();
+    const fnSrc = typecheckFnMatch![0];
+    const buildIdx = fnSrc.indexOf("'-r', 'build'");
+    const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
+    expect(buildIdx).toBeGreaterThan(-1);
+    expect(typecheckIdx).toBeGreaterThan(-1);
+    expect(buildIdx).toBeLessThan(typecheckIdx);
+  });
+
+  it('runPostFixGate contains pre-build step before typecheck', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const gateFnMatch = composeSrc.match(
+      /const runPostFixGate[\s\S]*?(?=const reviewFixLoopInstance)/,
+    );
+    expect(gateFnMatch).toBeTruthy();
+    const fnSrc = gateFnMatch![0];
+    const buildIdx = fnSrc.indexOf("'-r', 'build'");
+    const typecheckIdx = fnSrc.indexOf("'-r', 'typecheck'");
+    expect(buildIdx).toBeGreaterThan(-1);
+    expect(typecheckIdx).toBeGreaterThan(-1);
+    expect(buildIdx).toBeLessThan(typecheckIdx);
+  });
+
   describe('captureExecOutput', () => {
     it('returns stdout+stderr from execFileSync error with both streams', () => {
       const err = new Error('Command failed') as NodeJS.ErrnoException & {
