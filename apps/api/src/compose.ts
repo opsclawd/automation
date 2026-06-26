@@ -1360,6 +1360,16 @@ export function composeRoot(opts: ComposeOptions): Container {
       // truth (a reviewer demanding a non-compiling change is overruled).
       const runTypecheck = async (ctx: StepLoopContext): Promise<TypecheckResult> => {
         try {
+          execFileSync('pnpm', ['-r', 'build'], {
+            cwd: ctx.cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 180_000,
+          });
+        } catch {
+          // Non-fatal: let the typecheck surface precise errors
+        }
+        try {
           execFileSync('pnpm', ['-r', 'typecheck'], {
             cwd: ctx.cwd,
             stdio: ['ignore', 'pipe', 'pipe'],
