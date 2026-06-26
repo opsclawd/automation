@@ -592,6 +592,42 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.exit(EXIT_USER_ERROR);
           }
         }),
+    )
+    .addCommand(
+      new Command('resume')
+        .description('Resume a failed run')
+        .requiredOption('--uuid <uuid>', 'Run UUID')
+        .option('--from-phase <phase>', 'Phase to resume from (default: auto-detect failed phase)')
+        .action(async (opts: { uuid: string; fromPhase?: string }) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              runStartupSweeps: false,
+              ...buildOpts?.composeOverrides,
+            };
+            const c = composeRoot(options);
+            if (!c.runExecutor) {
+              console.error(
+                'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
+              );
+              process.exit(EXIT_USER_ERROR);
+            }
+            const run = c.runRepository.findByUuid(opts.uuid);
+            if (!run) {
+              console.error(`No run found for uuid ${opts.uuid}`);
+              process.exit(EXIT_USER_ERROR);
+            }
+            if (!c.repoFullName) {
+              console.error('Error: could not determine repository name.');
+              process.exit(EXIT_USER_ERROR);
+            }
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
     );
 
   return program;

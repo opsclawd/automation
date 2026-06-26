@@ -2061,3 +2061,164 @@ describe('CLI run --executor ts', () => {
     }
   });
 });
+
+describe('CLI runs resume command', () => {
+  it('exits 1 when --uuid is missing', async () => {
+    const program = buildProgram();
+    const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+    const resumeCmd = runsCmd.commands.find((c) => c.name() === 'resume')!;
+    resumeCmd.exitOverride();
+    const errs: string[] = [];
+    resumeCmd.configureOutput({ writeErr: (s) => void errs.push(s), writeOut: () => {} });
+    await expect(runsCmd.parseAsync(['resume'], { from: 'user' })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+    expect(errs.join('')).toMatch(/--uuid/i);
+  });
+
+  it('exits 1 when RunExecutor is not available', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-noexec-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', 'any-uuid'], { from: 'user' });
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+      expect(exitCode).toBe(1);
+      expect(consoleErrs.join('')).toMatch(/RunExecutor not available/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('exits 1 when run not found', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-nf-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', 'nonexistent-uuid'], { from: 'user' });
+      const capturedConsole = consoleErrs.join('');
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(exitCode).toBe(1);
+      expect(capturedConsole).toMatch(/no run found/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('exits 1 when repoFullName is missing', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-norepo-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'resume-norepo-uuid',
+      'issue-101-20260622-000000',
+      101,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', 'resume-norepo-uuid'], { from: 'user' });
+      const capturedConsole = consoleErrs.join('');
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      spy.mockRestore();
+      exitSpy.mockRestore();
+      expect(exitCode).toBe(1);
+      expect(capturedConsole).toMatch(/could not determine repository name/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+});
