@@ -30,7 +30,7 @@ export interface ResumeRunDeps {
   now?: () => Date;
 }
 
-interface ResumeTransitionState {
+export interface ResumeTransitionState {
   savedCompletedAt: Date | null;
   savedFailureReason: string | null;
   savedCurrentPhase: string | null;

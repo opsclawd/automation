@@ -355,7 +355,7 @@ export interface Container {
       fromPhase?: string;
       workerId: import('@ai-sdlc/domain').WorkerId;
       attempt?: number;
-    }): Promise<unknown>;
+    }): ReturnType<ResumeRun['transition']>;
   };
   retryFailedPhase: RetryFailedPhase;
   runsDir: string;
