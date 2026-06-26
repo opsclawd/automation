@@ -592,6 +592,117 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.exit(EXIT_USER_ERROR);
           }
         }),
+    )
+    .addCommand(
+      new Command('resume')
+        .description('Resume a failed run')
+        .requiredOption('--uuid <uuid>', 'Run UUID')
+        .option('--from-phase <phase>', 'Phase to resume from (default: auto-detect failed phase)')
+        .action(async (opts: { uuid: string; fromPhase?: string }) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              runStartupSweeps: false,
+              ...buildOpts?.composeOverrides,
+            };
+            const c = composeRoot(options);
+            if (!c.runExecutor) {
+              console.error(
+                'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
+              );
+              process.exit(EXIT_USER_ERROR);
+            }
+            const run = c.runRepository.findByUuid(opts.uuid);
+            if (!run) {
+              console.error(`No run found for uuid ${opts.uuid}`);
+              process.exit(EXIT_USER_ERROR);
+            }
+            if (!c.repoFullName) {
+              console.error('Error: could not determine repository name.');
+              process.exit(EXIT_USER_ERROR);
+            }
+
+            const repoId = RepositoryId(c.repoFullName);
+            const workerId = WorkerId(`cli-${process.pid}`);
+
+            const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
+            const heartbeatIntervalMs =
+              buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+
+            try {
+              c.workerLeaseRepository.acquire({
+                repoId,
+                workerId,
+                runId: RunId(opts.uuid),
+                now: new Date(),
+                ttlMs: leaseTtlMs,
+              });
+            } catch (err) {
+              if (err instanceof WorkerLeaseConflictError) {
+                console.error(
+                  `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
+                );
+                process.exit(EXIT_USER_ERROR);
+              }
+              throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
+            }
+
+            if (opts.fromPhase) {
+              await c.resumeRun.transition({
+                runId: RunId(opts.uuid),
+                fromPhase: opts.fromPhase,
+                workerId,
+              });
+            } else {
+              await c.retryFailedPhase.execute({
+                runId: RunId(opts.uuid),
+                workerId,
+              });
+            }
+
+            const updatedRun = c.runRepository.findByUuid(opts.uuid);
+            if (!updatedRun) {
+              console.error(`Error: run ${opts.uuid} not found after transition.`);
+              process.exit(EXIT_USER_ERROR);
+            }
+
+            c.runRepository.update(updatedRun.uuid, { pid: process.pid });
+
+            let signalHandlers: { remove: () => void } | undefined;
+            let lease: { stop: () => void } | undefined;
+            try {
+              signalHandlers = installSignalHandlers(c.runRepository, updatedRun.issueNumber);
+              lease = startLeaseHeartbeat(
+                c.workerLeaseRepository,
+                repoId,
+                workerId,
+                leaseTtlMs,
+                heartbeatIntervalMs,
+              );
+
+              const result = await c.runExecutor.execute({
+                run: { ...updatedRun, status: 'running' },
+                skip: [],
+                presentArtifacts: [],
+              });
+
+              process.stdout.write(
+                JSON.stringify({
+                  run: result.run,
+                  phases: result.phases,
+                }) + '\n',
+              );
+            } finally {
+              signalHandlers?.remove();
+              lease?.stop();
+            }
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
     );
 
   return program;

@@ -1,11 +1,12 @@
 import type { Phase, RunId, WorkerId } from '@ai-sdlc/domain';
 import type { RunRepositoryPort, PhaseRepositoryPort } from './ports.js';
-import type { RetryFailedPhaseUseCase, ResumeRunUseCase } from './use-cases.js';
+import type { RetryFailedPhaseUseCase } from './use-cases.js';
+import type { ResumeRun } from './resume-run.js';
 
 export interface RetryFailedPhaseDeps {
   runRepository: RunRepositoryPort;
   phaseRepo: PhaseRepositoryPort;
-  resumeRun: ResumeRunUseCase;
+  resumeRun: Pick<ResumeRun, 'transition'>;
 }
 
 export class RetryFailedPhase implements RetryFailedPhaseUseCase {
@@ -26,7 +27,7 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
       .filter((p) => p.name === phaseName && p.status === 'failed')
       .map((p) => p.attempt ?? 0);
     const maxAttempt = failedPhaseAttempts.length > 0 ? Math.max(...failedPhaseAttempts) : 0;
-    return this.deps.resumeRun.execute({
+    await this.deps.resumeRun.transition({
       runId: input.runId,
       fromPhase: phaseName,
       workerId: input.workerId,

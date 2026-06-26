@@ -199,7 +199,7 @@ describe('ResumeRun', () => {
     );
   });
 
-  it('with fromPhase resets steps but defers currentPhase to executor', async () => {
+  it('transition with fromPhase resets steps but defers currentPhase to executor', async () => {
     const runRepo = new FakeRunRepository();
     runRepo.addRun(makeRun());
     const registry = new FakeWorkerRegistryPort();
@@ -226,7 +226,11 @@ describe('ResumeRun', () => {
       findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
-    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1'), fromPhase: 'test-phase' });
+    await usecase.transition({
+      runId: rid('run-1'),
+      workerId: wid('w-1'),
+      fromPhase: 'test-phase',
+    });
     const steps = stepRepo.listForRun(rid('run-1'));
     expect(steps).toHaveLength(1);
     expect(steps[0]!.status).toBe('pending');

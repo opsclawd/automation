@@ -11,6 +11,7 @@ export * from './sqlite/validation-run-repository.js';
 export * from './sqlite/pr-review-repository.js';
 export * from './sqlite/agent-usage-repository.js';
 export * from './sqlite/loop-repository.js';
+export * from './sqlite/step-repository.js';
 export * from './sqlite/worker-lease-repository.js';
 export * from './failure/classifier.js';
 export * from './bash/run-bash-script.js';

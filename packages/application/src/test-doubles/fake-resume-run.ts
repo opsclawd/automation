@@ -6,4 +6,13 @@ export class FakeResumeRun implements ResumeRunUseCase {
   async execute(input: { runId: RunId; fromPhase?: string; workerId: WorkerId; attempt?: number }) {
     this.calls.push(input);
   }
+
+  async transition(input: {
+    runId: RunId;
+    fromPhase?: string;
+    workerId: WorkerId;
+    attempt?: number;
+  }) {
+    this.calls.push(input);
+  }
 }

@@ -13,7 +13,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, captureExecOutput } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
-import { RunId, RepositoryId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
+import { RunId, RepositoryId, PhaseName, AgentProfileName, Step } from '@ai-sdlc/domain';
 import {
   ReviewFixLoop,
   RunExecutor,
@@ -761,6 +761,49 @@ exit 1
     const c = composeRoot({ repoRoot: root, scriptPath });
     expect(c.cancelRun).toBeDefined();
     expect(typeof c.cancelRun.execute).toBe('function');
+  });
+
+  it('exposes stepRepository backed by SQLite persistence', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+
+    const step: Step = {
+      id: 'test-step-1',
+      runId: 'test-run-uuid',
+      phaseId: 'implement',
+      index: 0,
+      title: 'Test Step 1',
+      status: 'success',
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      completedAt: new Date('2026-06-01T01:00:00Z'),
+    };
+
+    c.stepRepository.upsert(step);
+
+    const steps = c.stepRepository.listForRun('test-run-uuid');
+    expect(steps).toHaveLength(1);
+    expect(steps[0].id).toBe('test-step-1');
+    expect(steps[0].runId).toBe('test-run-uuid');
+    expect(steps[0].status).toBe('success');
+    expect(steps[0].startedAt).toBeDefined();
+    expect(steps[0].completedAt).toBeDefined();
+
+    // Verify SQLite persistence by creating a second container with the same db
+    const c2 = composeRoot({ repoRoot: root, scriptPath });
+    const steps2 = c2.stepRepository.listForRun('test-run-uuid');
+    expect(steps2).toHaveLength(1);
+    expect(steps2[0].id).toBe('test-step-1');
+  });
+
+  it('exposes resumeRun and retryFailedPhase use cases', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const c = composeRoot({ repoRoot: root, scriptPath });
+    expect(c.resumeRun).toBeDefined();
+    expect(typeof c.resumeRun.execute).toBe('function');
+    expect(c.retryFailedPhase).toBeDefined();
+    expect(typeof c.retryFailedPhase.execute).toBe('function');
   });
 
   it('cancelRun git dep is a GitWorktreeAdapter instance', () => {
