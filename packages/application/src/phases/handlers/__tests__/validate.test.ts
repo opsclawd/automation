@@ -98,7 +98,7 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      expect(result.outcome).toBe('passed');
+      expect(result.outcome).toBe('deferred');
     });
 
     it('failure message lists only failing commands on mixed pass/fail', async () => {
@@ -149,7 +149,7 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      expect(result.outcome).toBe('passed');
+      expect(result.outcome).toBe('deferred');
     });
   });
 
@@ -223,7 +223,7 @@ describe('ValidateHandler', () => {
         logDir: '/tmp/wt/.ai-runs/r1/validate',
       }).run(ctx);
 
-      expect(result.outcome).toBe('passed');
+      expect(result.outcome).toBe('deferred');
       const content = await artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'failure.json');
       const parsed = JSON.parse(content);
       expect(parsed.phase).toBe('validate');

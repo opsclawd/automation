@@ -92,7 +92,7 @@ export class ValidateFixLoop {
         if (!rollbackOk) {
           this.emit(
             input,
-            'loop.iteration.completed',
+            'loop.rollback.failed',
             'error',
             `rollback failed on iteration ${iterationIndex}, breaking loop`,
             { index: iterationIndex },
@@ -106,10 +106,6 @@ export class ValidateFixLoop {
           this.emitIterationCompleted(input, iterationIndex, 'failed');
           break;
         }
-      }
-
-      if (!reval.passed) {
-        consecutiveFixFailures += 1;
       }
 
       const iterOutcome = reval.passed ? 'resolved' : 'revalidation_failed';

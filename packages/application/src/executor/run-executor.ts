@@ -260,6 +260,7 @@ export class RunExecutor {
       }
 
       switch (result.outcome) {
+        case 'deferred':
         case 'passed': {
           currentRun = completePhase(currentRun, phaseDef.name as string);
           phase.status = 'passed';

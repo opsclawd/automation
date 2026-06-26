@@ -29,6 +29,7 @@ ai/
 /fix-validate-done.marker
 /plan-review-passed.marker
 /review.md
+/prompt.md
 /task-manifest.json
 .review-context/
 .ai/

@@ -99,8 +99,8 @@ export class ValidateHandler implements PhaseHandler {
     } catch {
       emit('validate.artifact_write_failed', 'warn', 'failed to write failure.json artifact');
     }
-    // Deferred failure: outcome is 'passed' so the pipeline continues to fix-validate.
+    // Deferred failure: outcome is 'deferred' so the pipeline continues to fix-validate.
     // Failure details are written to failure.json artifact for fix-validate to consume.
-    return { outcome: 'passed' };
+    return { outcome: 'deferred' };
   }
 }
