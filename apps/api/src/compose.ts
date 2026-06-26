@@ -1162,6 +1162,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const runPostFixGate = async (ctx: StepContext): Promise<PostFixGateResult> => {
         const outputs: string[] = [];
+        let buildError = '';
         // Pre-build: refresh .d.ts files before typecheck. Non-fatal — let
         // the typecheck surface precise errors if the build actually broke.
         try {
@@ -1171,7 +1172,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             encoding: 'utf-8',
             timeout: 180_000,
           });
-        } catch {
+        } catch (err) {
+          buildError = captureExecOutput(err);
           // Non-fatal
         }
         const execOrSkip = (command: string, args: string[]): void => {
@@ -1190,6 +1192,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
         execOrSkip('pnpm', ['-r', 'typecheck']);
         execOrSkip('pnpm', ['lint']);
+        if (buildError) {
+          outputs.push(buildError);
+        }
         if (outputs.length === 0) {
           return { outcome: 'pass', output: '' };
         }
@@ -1371,6 +1376,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       // before review) and is injected into the reviewer prompts as ground
       // truth (a reviewer demanding a non-compiling change is overruled).
       const runTypecheck = async (ctx: StepLoopContext): Promise<TypecheckResult> => {
+        let buildError = '';
         try {
           execFileSync('pnpm', ['-r', 'build'], {
             cwd: ctx.cwd,
@@ -1378,7 +1384,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             encoding: 'utf-8',
             timeout: 180_000,
           });
-        } catch {
+        } catch (err) {
+          buildError = captureExecOutput(err);
           // Non-fatal: let the typecheck surface precise errors
         }
         try {
@@ -1387,6 +1394,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf-8',
           });
+          if (buildError) {
+            return { outcome: 'fail', output: buildError };
+          }
           return { outcome: 'pass', output: '' };
         } catch (err) {
           const raw =

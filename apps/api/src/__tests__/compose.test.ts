@@ -928,7 +928,10 @@ exit 1
     expect(typecheckIdx).toBeGreaterThan(-1);
     expect(buildIdx).toBeLessThan(typecheckIdx);
     expect(fnSrc).toContain('timeout: 180_000');
-    expect(fnSrc).toMatch(/catch\s*\{\s*\/\/ Non-fatal/);
+    expect(fnSrc).toContain('let buildError');
+    expect(fnSrc).toContain('buildError = captureExecOutput(err)');
+    expect(fnSrc).toContain('if (buildError)');
+    expect(fnSrc).toMatch(/catch[^{]*\{[^}]*\/\/ Non-fatal/);
   });
 
   it('runPostFixGate contains non-fatal pre-build step before typecheck', () => {
@@ -947,7 +950,9 @@ exit 1
     expect(typecheckIdx).toBeGreaterThan(-1);
     expect(buildIdx).toBeLessThan(typecheckIdx);
     expect(fnSrc).toContain('timeout: 180_000');
-    expect(fnSrc).toMatch(/catch\s*\{\s*\/\/ Non-fatal/);
+    expect(fnSrc).toContain('let buildError');
+    expect(fnSrc).toContain('buildError = captureExecOutput(err)');
+    expect(fnSrc).toMatch(/catch[^{]*\{[^}]*\/\/ Non-fatal/);
   });
 
   describe('captureExecOutput', () => {
