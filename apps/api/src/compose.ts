@@ -25,6 +25,7 @@ import {
   ValidationRunRepository,
   PrReviewRepository,
   AgentUsageRepository,
+  SqliteStepRepository,
   RunDirectory,
   runBashScript,
   classifyExit,
@@ -38,6 +39,8 @@ import {
 import {
   StartIssueRun,
   CancelRun,
+  ResumeRun,
+  RetryFailedPhase,
   SweepOrphanedRuns,
   checkPid,
   RunValidation,
@@ -72,6 +75,8 @@ import {
   type RunRepositoryPort,
   type TmpDirectoryFactory,
   type StepContext,
+  type RepositoryPort,
+  type JobQueuePort,
   type StepRepositoryPort,
   type ReviewStepResult,
   type FixStepResult,
@@ -90,7 +95,9 @@ import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-
 import {
   AgentProfileName,
   AgentInvocationId,
+  Job,
   PhaseName,
+  Repository,
   Run,
   RunId,
   RepositoryId,
@@ -103,7 +110,6 @@ import {
   ClaudeCodeAgentAdapter,
   CodexAgentAdapter,
 } from '@ai-sdlc/infrastructure';
-import { InMemoryStepRepository } from './adapters/InMemoryStepRepository.js';
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -336,6 +342,9 @@ export interface Container {
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
+  stepRepository: StepRepositoryPort;
+  resumeRun: ResumeRun;
+  retryFailedPhase: RetryFailedPhase;
   runsDir: string;
   baseTmpDir: string;
   defaultBranch: string;
@@ -403,6 +412,68 @@ class AbortRegistry {
 
   unregister(runId: string): void {
     this.entries.delete(runId);
+  }
+}
+
+class SingleRepoAdapter implements RepositoryPort {
+  constructor(private readonly repo: Repository) {}
+
+  findById(id: RepositoryId): Repository | undefined {
+    return this.repo.id === id ? this.repo : undefined;
+  }
+
+  findByFullName(fullName: string): Repository | undefined {
+    return this.repo.fullName === fullName ? this.repo : undefined;
+  }
+
+  listEnabled(): Repository[] {
+    return this.repo.enabled ? [this.repo] : [];
+  }
+}
+
+class NoOpJobQueue implements JobQueuePort {
+  enqueue(): void {
+    // No-op: CLI handles execution inline
+  }
+
+  claimNext(): Job | undefined {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  releaseClaim(): void {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  resetToQueued(): void {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  markRunning(): void {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  markSucceeded(): void {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  markFailed(): void {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  markCancelled(): void {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  listForRepo(): Job[] {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  listForRun(): Job[] {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
+  }
+
+  findById(): Job | undefined {
+    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
   }
 }
 
@@ -623,13 +694,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       resolvedRepoFullName ? (resolvedRepoFullName as RepositoryId) : undefined,
   });
 
-  // TODO(#388): Wire ResumeRun and RetryFailedPhase use cases with their
-  // infrastructure dependencies.
-  // const resumeRun = new ResumeRun({ ... });
-  // const retryFailedPhase = new RetryFailedPhase({ ... });
-
   const phaseRegistry = new PhaseHandlerRegistry();
-  const stepRepository: StepRepositoryPort = new InMemoryStepRepository();
+  const stepRepository: StepRepositoryPort = new SqliteStepRepository(db);
 
   // Register the phase handler that does not require agent-mode dependencies
   phaseRegistry.register(new ReadIssueHandler());
@@ -1781,6 +1847,56 @@ export function composeRoot(opts: ComposeOptions): Container {
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
   }
 
+  const singleRepo: RepositoryPort = resolvedRepoFullName
+    ? new SingleRepoAdapter({
+        id: RepositoryId(resolvedRepoFullName),
+        owner: resolvedRepoFullName.split('/')[0]!,
+        name: resolvedRepoFullName.split('/')[1]!,
+        fullName: resolvedRepoFullName,
+        defaultBranch: resolvedDefaultBranch,
+        localBasePath: opts.repoRoot,
+        enabled: true,
+        maxConcurrentRuns: 1 as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    : new SingleRepoAdapter({
+        id: '' as RepositoryId,
+        owner: '',
+        name: '',
+        fullName: '',
+        defaultBranch: '',
+        localBasePath: '',
+        enabled: false,
+        maxConcurrentRuns: 1 as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+  const noOpQueue = new NoOpJobQueue();
+
+  const resumeRun = new ResumeRun({
+    runRepository,
+    repos: singleRepo,
+    leases: workerLeaseRepository,
+    queue: noOpQueue,
+    stepRepo: stepRepository,
+    phaseRepo: phaseRepository,
+    findRepoId: (runId: RunId) => {
+      if (!resolvedRepoFullName) {
+        throw new Error(`No repository configured for run ${runId}`);
+      }
+      return RepositoryId(resolvedRepoFullName);
+    },
+    logger,
+  });
+
+  const retryFailedPhase = new RetryFailedPhase({
+    runRepository,
+    phaseRepo: phaseRepository,
+    resumeRun,
+  });
+
   const defaultResolve: (phaseName: string) => AgentProfileName = (_phaseName: string) => {
     throw new ConfigError('no agent config');
   };
@@ -2222,6 +2338,9 @@ export function composeRoot(opts: ComposeOptions): Container {
     runValidation,
     startIssueRun,
     cancelRun,
+    stepRepository,
+    resumeRun,
+    retryFailedPhase,
     runsDir,
     baseTmpDir,
     defaultBranch: resolvedDefaultBranch,
