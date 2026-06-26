@@ -239,6 +239,21 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'failed', failure };
   }
 
+  // Emit remediation warnings if the runner auto-corrected misplaced artifacts
+  if (agentResult.remediatedArtifacts?.length) {
+    for (const r of agentResult.remediatedArtifacts) {
+      emit(
+        'artifact.remediated',
+        'warn',
+        `remediated misplaced artifact: ${r.src} → ${r.artifact}`,
+        {
+          src: r.src,
+          artifact: r.artifact,
+        },
+      );
+    }
+  }
+
   if (agentResult.outcome !== 'success') {
     const failure = buildFailure(
       ctx,

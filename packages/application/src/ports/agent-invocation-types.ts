@@ -51,4 +51,5 @@ export interface AgentInvocationResult {
     reasoningTokens?: number;
     cachedTokens?: number;
   };
+  remediatedArtifacts?: { src: string; artifact: string }[];
 }

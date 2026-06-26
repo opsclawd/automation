@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -147,6 +147,153 @@ describe('runExternalCli', () => {
         });
         expect(result.outcome).toBe('contract_violation');
         expect(result.contractViolations).toContain('no_output');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('artifact remediation', () => {
+    it('moves misplaced design.md from subdirectory to worktree root', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, 'docs', 'superpowers', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(
+          join(specDir, '2026-04-26-ops-57-fix-score-trace-build-design.md'),
+          '# Design',
+        );
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe('# Design');
+        expect(result.remediatedArtifacts).toEqual([
+          {
+            src: 'docs/superpowers/specs/2026-04-26-ops-57-fix-score-trace-build-design.md',
+            artifact: 'design.md',
+          },
+        ]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not remediate when design.md already exists at root', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        writeFileSync(join(cwd, 'design.md'), '# Existing');
+        const specDir = join(cwd, 'docs', 'superpowers', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, '2026-04-26-design.md'), '# Other');
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+        expect(result.outcome).toBe('success');
+        expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe('# Existing');
+        expect(result.remediatedArtifacts).toBeUndefined();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not remediate when multiple untracked matching files exist', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, 'docs', 'superpowers', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, '2026-04-26-design-a.md'), '# A');
+        writeFileSync(join(specDir, '2026-04-26-design-b.md'), '# B');
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(result.remediatedArtifacts).toBeUndefined();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not remediate when the misplaced file is git-tracked', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, 'docs', 'superpowers', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, '2026-04-26-design.md'), '# Tracked');
+        execSync('git add docs/superpowers/specs/2026-04-26-design.md', { cwd, stdio: 'pipe' });
+        execSync('git commit -m "add tracked design"', { cwd, stdio: 'pipe' });
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(result.remediatedArtifacts).toBeUndefined();
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('cleans up empty ancestor directories after moving misplaced file', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, 'docs', 'superpowers', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, '2026-04-26-design.md'), '# Design');
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+        // The spec directory should be removed since it was created by the agent
+        // and is now empty (the file was moved out)
+        expect(existsSync(specDir)).toBe(false);
       } finally {
         rmSync(cwd, { recursive: true, force: true });
         rmSync(artifactsDir, { recursive: true, force: true });

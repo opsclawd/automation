@@ -2477,3 +2477,52 @@ PLAN
   run grep -c '## Artifacts' "$handler"
   [ "$output" -ge 1 ]
 }
+
+# Invariant: the TS external-cli-runner remediates a misplaced design.md artifact
+# by moving it from a subdirectory to the worktree root when exactly one untracked
+# .md file containing "design" in its path exists and design.md is absent at root.
+# Source: #504.
+# Failure prevented: plan-design runs where the brainstorming skill writes to
+#   docs/superpowers/specs/ instead of ./design.md cause spurious fallback to
+#   secondary agent profile.
+# TS-port contract: the TS external-cli-runner MUST perform the same remediation
+#   as the legacy _remediate_misplaced_artifact before the expectedArtifacts check.
+@test "parity[#504]: TS runner remediates misplaced design.md before artifact check" {
+  local runner="$REPO_ROOT/packages/infrastructure/src/agent/external-cli-runner.ts"
+
+  # Must import renameSync for moving the file
+  run grep -c "renameSync" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must query untracked files via git ls-files
+  run grep -c "ls-files --others" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must check that design.md does not exist before attempting remediation
+  # (targetPath is assigned join(input.cwd, 'design.md') then checked with !existsSync)
+  run grep -c "targetPath.*design.md\|!existsSync(targetPath)" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must filter candidates to .md files containing 'design'
+  run grep -c "\.endsWith.*\.md\|includes.*design" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must require exactly one candidate (ambiguous = skip)
+  run grep -c "candidates.length === 1" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must clean up empty ancestor directories after move
+  run grep -c "rmdirSync" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must attach remediation metadata to the result
+  run grep -c "remediatedArtifacts" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
