@@ -343,7 +343,20 @@ export interface Container {
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
   stepRepository: StepRepositoryPort;
-  resumeRun: ResumeRun;
+  resumeRun: {
+    execute(input: {
+      runId: RunId;
+      fromPhase?: string;
+      workerId: import('@ai-sdlc/domain').WorkerId;
+      attempt?: number;
+    }): Promise<void>;
+    transition(input: {
+      runId: RunId;
+      fromPhase?: string;
+      workerId: import('@ai-sdlc/domain').WorkerId;
+      attempt?: number;
+    }): Promise<unknown>;
+  };
   retryFailedPhase: RetryFailedPhase;
   runsDir: string;
   baseTmpDir: string;
@@ -1889,7 +1902,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       return RepositoryId(resolvedRepoFullName);
     },
     logger,
-  });
+  }) as unknown as Container['resumeRun'];
 
   const retryFailedPhase = new RetryFailedPhase({
     runRepository,

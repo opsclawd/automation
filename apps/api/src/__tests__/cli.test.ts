@@ -2204,7 +2204,14 @@ describe('CLI runs resume command', () => {
     process.chdir(root);
     try {
       const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
-      const resumeSpy = vi.spyOn(ResumeRun.prototype, 'execute').mockResolvedValue(undefined);
+      const transitionSpy = vi.spyOn(ResumeRun.prototype, 'transition').mockResolvedValue({
+        savedCompletedAt: null,
+        savedFailureReason: null,
+        savedCurrentPhase: null,
+        savedCompletedPhases: [],
+        savedSkippedPhases: [],
+        savedSteps: [],
+      });
       const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
         repoId: RepositoryId('owner/repo'),
         workerId: WorkerId(`cli-${process.pid}`),
@@ -2250,10 +2257,10 @@ describe('CLI runs resume command', () => {
       expect(retrySpy).toHaveBeenCalledWith(
         expect.objectContaining({ runId: expect.any(String), workerId: expect.any(String) }),
       );
-      expect(resumeSpy).not.toHaveBeenCalled();
+      expect(transitionSpy).not.toHaveBeenCalled();
 
       retrySpy.mockRestore();
-      resumeSpy.mockRestore();
+      transitionSpy.mockRestore();
       acquireSpy.mockRestore();
       heartbeatSpy.mockRestore();
       releaseSpy.mockRestore();
@@ -2311,8 +2318,14 @@ describe('CLI runs resume command', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
-      const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
-      const resumeSpy = vi.spyOn(ResumeRun.prototype, 'execute').mockResolvedValue(undefined);
+      const transitionSpy = vi.spyOn(ResumeRun.prototype, 'transition').mockResolvedValue({
+        savedCompletedAt: null,
+        savedFailureReason: null,
+        savedCurrentPhase: null,
+        savedCompletedPhases: [],
+        savedSkippedPhases: [],
+        savedSteps: [],
+      });
       const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
         repoId: RepositoryId('owner/repo'),
         workerId: WorkerId(`cli-${process.pid}`),
@@ -2357,17 +2370,15 @@ describe('CLI runs resume command', () => {
         from: 'user',
       });
 
-      expect(resumeSpy).toHaveBeenCalledWith(
+      expect(transitionSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           runId: expect.any(String),
           fromPhase: 'implement',
           workerId: expect.any(String),
         }),
       );
-      expect(retrySpy).not.toHaveBeenCalled();
 
-      retrySpy.mockRestore();
-      resumeSpy.mockRestore();
+      transitionSpy.mockRestore();
       acquireSpy.mockRestore();
       heartbeatSpy.mockRestore();
       releaseSpy.mockRestore();
@@ -2554,6 +2565,96 @@ describe('CLI runs resume command', () => {
     }
   });
 
+  it('does not transition a run when lease acquisition fails', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-lease-conflict-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'resume-lease-conflict-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-131-20260625-000000',
+      131,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const transitionSpy = vi.spyOn(ResumeRun.prototype, 'transition');
+      const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute');
+      const acquireSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'acquire')
+        .mockImplementation(() => {
+          throw new WorkerLeaseConflictError(RepositoryId('owner/repo'), WorkerId('other-worker'));
+        });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
+        throw new Error('process.exit called');
+      }) as never);
+      const consoleErrs: string[] = [];
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await expect(
+        runsCmd.parseAsync(['resume', '--uuid', runUuid], { from: 'user' }),
+      ).rejects.toThrow(/process\.exit called/i);
+
+      expect(acquireSpy).toHaveBeenCalled();
+      expect(transitionSpy).not.toHaveBeenCalled();
+      expect(retrySpy).not.toHaveBeenCalled();
+      expect(consoleErrs.join('')).toMatch(/already has an active lease/i);
+      const db2 = openDatabase(dbPath);
+      const row = db2.prepare('SELECT status FROM runs WHERE uuid = ?').get(runUuid) as {
+        status: string;
+      };
+      db2.close();
+      expect(row.status).toBe('failed');
+
+      transitionSpy.mockRestore();
+      retrySpy.mockRestore();
+      acquireSpy.mockRestore();
+      exitSpy.mockRestore();
+      errSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
   it('transitions run from failed status and writes JSON via real retry use case', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-transition-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
@@ -2607,6 +2708,7 @@ describe('CLI runs resume command', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
+      const transitionSpy = vi.spyOn(ResumeRun.prototype, 'transition');
       // Do NOT mock RetryFailedPhase — the real use case must actually
       // transition the run from 'failed' via the ResumeRun CAS.
       const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
@@ -2667,9 +2769,11 @@ describe('CLI runs resume command', () => {
         status: string;
       };
       db2.close();
+      expect(transitionSpy).toHaveBeenCalled();
       expect(row.status).not.toBe('failed');
       expect(exitSpy).not.toHaveBeenCalled();
 
+      transitionSpy.mockRestore();
       acquireSpy.mockRestore();
       heartbeatSpy.mockRestore();
       releaseSpy.mockRestore();

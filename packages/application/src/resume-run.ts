@@ -30,8 +30,126 @@ export interface ResumeRunDeps {
   now?: () => Date;
 }
 
+interface ResumeTransitionState {
+  savedCompletedAt: Date | null;
+  savedFailureReason: string | null;
+  savedCurrentPhase: string | null;
+  savedCompletedPhases: string[];
+  savedSkippedPhases: string[];
+  savedSteps: Step[];
+  savedPhase?: Phase;
+}
+
 export class ResumeRun implements ResumeRunUseCase {
   constructor(private readonly deps: ResumeRunDeps) {}
+
+  async transition(input: {
+    runId: RunId;
+    fromPhase?: string;
+    workerId: WorkerId;
+    attempt?: number;
+  }): Promise<ResumeTransitionState> {
+    const run = this.deps.runRepository.findByUuid(input.runId);
+    if (!run) throw new Error(`No run found for ${input.runId}`);
+    if (!canResume(run)) {
+      throw new Error(`Cannot resume run ${input.runId}: status is '${run.status}'`);
+    }
+
+    const repoId = this.deps.findRepoId(input.runId);
+    const repo = this.deps.repos.findById(repoId);
+    if (!repo) throw new Error(`No repo found for run ${input.runId}`);
+    if (!repo.enabled) {
+      throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
+    }
+
+    const savedCompletedAt = run.completedAt;
+    const savedFailureReason = run.failureReason;
+    const savedCurrentPhase = run.currentPhase;
+    const savedCompletedPhases = run.completedPhases;
+    const savedSkippedPhases = run.skippedPhases;
+
+    const reactivated = resumeRun(run, input.fromPhase);
+
+    const savedSteps: Step[] = [];
+    let savedPhase: Phase | undefined;
+    if (input.fromPhase) {
+      const originalSteps = this.deps.stepRepo
+        .listForRun(input.runId)
+        .filter((s: Step) => s.phaseId != null && s.phaseId === input.fromPhase);
+      savedSteps.push(...originalSteps);
+      const existingPhases = this.deps.phaseRepo.listByRun(input.runId);
+      savedPhase = existingPhases.find((p) => p.name === input.fromPhase);
+    }
+
+    const updated = this.deps.runRepository.atomicUpdateByUuid(
+      input.runId,
+      {
+        status: reactivated.status,
+        currentPhase: null,
+        completedAt: null,
+        failureReason: null,
+        completedPhases: reactivated.completedPhases,
+        skippedPhases: reactivated.skippedPhases,
+      },
+      'failed' as RunStatus,
+    );
+    if (!updated) {
+      throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
+    }
+
+    try {
+      if (input.fromPhase) {
+        for (const step of savedSteps) {
+          if (step.status === 'success') continue;
+          const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
+          this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
+        }
+        const phase = {
+          id: `${input.runId}-${input.fromPhase}`,
+          runUuid: input.runId,
+          name: input.fromPhase,
+          status: 'pending' as const,
+          attempt: input.attempt ?? 1,
+        };
+        this.deps.phaseRepo.insert(phase);
+      }
+    } catch (err) {
+      const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
+        input.runId,
+        {
+          status: 'failed' as RunStatus,
+          completedAt: savedCompletedAt ?? null,
+          failureReason: savedFailureReason ?? null,
+          currentPhase: savedCurrentPhase ?? null,
+          completedPhases: savedCompletedPhases,
+          skippedPhases: savedSkippedPhases,
+        },
+        'running' as RunStatus,
+      );
+      if (!rollbackOk) {
+        this.deps.logger.error(
+          `ResumeRun: rollback CAS failed for ${input.runId} — status may be orphaned as 'running'`,
+        );
+      }
+      for (const step of savedSteps) {
+        this.deps.stepRepo.upsert({ ...step });
+      }
+      if (savedPhase) {
+        this.deps.phaseRepo.update({ ...savedPhase });
+      }
+      throw err;
+    }
+
+    return {
+      savedCompletedAt: savedCompletedAt ?? null,
+      savedFailureReason: savedFailureReason ?? null,
+      savedCurrentPhase: savedCurrentPhase ?? null,
+      savedCompletedPhases,
+      savedSkippedPhases,
+      savedSteps,
+      ...(savedPhase ? { savedPhase } : {}),
+    };
+  }
 
   async execute(input: {
     runId: RunId;
@@ -62,13 +180,7 @@ export class ResumeRun implements ResumeRunUseCase {
     });
 
     try {
-      const savedCompletedAt = run.completedAt;
-      const savedFailureReason = run.failureReason;
-      const savedCurrentPhase = run.currentPhase;
-      const savedCompletedPhases = run.completedPhases;
-      const savedSkippedPhases = run.skippedPhases;
-
-      const reactivated = resumeRun(run, input.fromPhase);
+      const transitionState = await this.transition(input);
       const job = createJob({
         id: `resume-${input.runId}-${now().getTime()}` as JobId,
         runId: input.runId,
@@ -78,62 +190,18 @@ export class ResumeRun implements ResumeRunUseCase {
         createdAt: now(),
       });
 
-      // Save original step/phase state (for rollback if enqueue fails)
-      const savedSteps: Step[] = [];
-      let savedPhase: Phase | undefined;
-      if (input.fromPhase) {
-        const originalSteps = this.deps.stepRepo
-          .listForRun(input.runId)
-          .filter((s: Step) => s.phaseId != null && s.phaseId === input.fromPhase);
-        savedSteps.push(...originalSteps);
-        const existingPhases = this.deps.phaseRepo.listByRun(input.runId);
-        savedPhase = existingPhases.find((p) => p.name === input.fromPhase);
-      }
-
-      const updated = this.deps.runRepository.atomicUpdateByUuid(
-        input.runId,
-        {
-          status: reactivated.status,
-          currentPhase: null,
-          completedAt: null,
-          failureReason: null,
-          completedPhases: reactivated.completedPhases,
-          skippedPhases: reactivated.skippedPhases,
-        },
-        'failed' as RunStatus,
-      );
-      if (!updated) {
-        throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
-      }
-
       try {
-        if (input.fromPhase) {
-          for (const step of savedSteps) {
-            if (step.status === 'success') continue;
-            const { startedAt: _sa, completedAt: _ca, ...stepFields } = step;
-            this.deps.stepRepo.upsert({ ...stepFields, status: 'pending' });
-          }
-          const phase = {
-            id: `${input.runId}-${input.fromPhase}`,
-            runUuid: input.runId,
-            name: input.fromPhase,
-            status: 'pending' as const,
-            attempt: input.attempt ?? 1,
-          };
-          this.deps.phaseRepo.insert(phase);
-        }
-
         this.deps.queue.enqueue({ job });
       } catch (err) {
         const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
           input.runId,
           {
             status: 'failed' as RunStatus,
-            completedAt: savedCompletedAt ?? null,
-            failureReason: savedFailureReason ?? null,
-            currentPhase: savedCurrentPhase ?? null,
-            completedPhases: savedCompletedPhases,
-            skippedPhases: savedSkippedPhases,
+            completedAt: transitionState.savedCompletedAt ?? null,
+            failureReason: transitionState.savedFailureReason ?? null,
+            currentPhase: transitionState.savedCurrentPhase ?? null,
+            completedPhases: transitionState.savedCompletedPhases,
+            skippedPhases: transitionState.savedSkippedPhases,
           },
           'running' as RunStatus,
         );
@@ -142,13 +210,11 @@ export class ResumeRun implements ResumeRunUseCase {
             `ResumeRun: rollback CAS failed for ${input.runId} — status may be orphaned as 'running'`,
           );
         }
-        // Restore step states
-        for (const step of savedSteps) {
+        for (const step of transitionState.savedSteps) {
           this.deps.stepRepo.upsert({ ...step });
         }
-        // Restore phase state (undo the pending insert that overwrote the original)
-        if (savedPhase) {
-          this.deps.phaseRepo.update({ ...savedPhase });
+        if (transitionState.savedPhase) {
+          this.deps.phaseRepo.update({ ...transitionState.savedPhase });
         }
         throw err;
       }
