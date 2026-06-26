@@ -1,6 +1,6 @@
 import type { RunId, PhaseName } from './ids.js';
 
-export type LoopType = 'review-fix' | 'implement-step';
+export type LoopType = 'review-fix' | 'implement-step' | 'validate-fix';
 
 export type LoopStatus = 'running' | 'converged' | 'exhausted' | 'failed';
 
