@@ -36,4 +36,28 @@ describe('buildSpecReviewPrompt', () => {
     const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
     expect(prompt).toContain('Review implementation of step 2: Add auth middleware');
   });
+
+  it('includes the read-only hard constraint', () => {
+    const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('HARD CONSTRAINT — READ-ONLY REVIEW');
+    expect(prompt).toContain('MUST NOT execute any shell commands');
+  });
+
+  it('includes the stop rule', () => {
+    const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('STOP RULE');
+    expect(prompt).toContain('After writing result.json you are DONE');
+  });
+
+  it('embeds implementer report when provided', () => {
+    const implReport = '## Status: DONE\nAll tests passed.';
+    const prompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
+    expect(prompt).toContain('## What the Implementer Claims');
+    expect(prompt).toContain('All tests passed.');
+  });
+
+  it('omits implementer report section content when report is empty', () => {
+    const prompt = buildSpecReviewPrompt(ctx, typecheckSection, '');
+    expect(prompt).toContain('## What the Implementer Claims');
+  });
 });
