@@ -1,7 +1,7 @@
 import { execa } from 'execa';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, renameSync, rmdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -147,6 +147,43 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     contractViolations = [...contractViolations, CONTRACT_VIOLATION_CODES.MISSING_COMMIT];
   }
 
+  // --- Artifact remediation (parity with _remediate_misplaced_artifact) ---
+  let remediatedArtifacts: { src: string; artifact: string }[] | undefined;
+  if (outcome === 'success' && input.expectedArtifacts?.includes('design.md')) {
+    const targetPath = join(input.cwd, 'design.md');
+    if (!existsSync(targetPath)) {
+      try {
+        const untrackedRaw = execSync('git ls-files --others --exclude-standard', {
+          cwd: input.cwd,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+        }).trim();
+        const untrackedFiles = untrackedRaw ? untrackedRaw.split('\n') : [];
+        const candidates = untrackedFiles.filter((f) => f.endsWith('.md') && f.includes('design'));
+        if (candidates.length === 1) {
+          const srcRelative = candidates[0]!;
+          const srcAbsolute = join(input.cwd, srcRelative);
+          if (existsSync(srcAbsolute)) {
+            renameSync(srcAbsolute, targetPath);
+            remediatedArtifacts = [{ src: srcRelative, artifact: 'design.md' }];
+            // Clean up empty ancestor directories up to (but not including) cwd
+            let dir = dirname(srcAbsolute);
+            while (dir !== input.cwd && dir !== dirname(dir)) {
+              try {
+                rmdirSync(dir);
+                dir = dirname(dir);
+              } catch {
+                break; // directory not empty or other error — stop climbing
+              }
+            }
+          }
+        }
+      } catch {
+        // git ls-files failed — skip remediation silently
+      }
+    }
+  }
+
   if (
     outcome === 'success' &&
     !contractViolations.length &&
@@ -190,5 +227,6 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     outcome,
   };
   if (endCommitSha) ret.endCommitSha = endCommitSha;
+  if (remediatedArtifacts) ret.remediatedArtifacts = remediatedArtifacts;
   return ret;
 }
