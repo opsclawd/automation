@@ -74,12 +74,12 @@ export class ValidateFixLoop {
       if (fix.verdict === undefined || fix.verdict === 'cannot_fix') {
         consecutiveFixFailures += 1;
         loop = completeIteration(loop, {
-          outcome: 'unresolved',
+          outcome: 'fix_failed',
           fixInvocationId: fix.invocationId,
           now: deps.now(),
         });
         deps.loops.update(loop);
-        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        this.emitIterationCompleted(input, iterationIndex, 'fix_failed');
         continue;
       }
       consecutiveFixFailures = 0;
@@ -91,14 +91,15 @@ export class ValidateFixLoop {
         await deps.rollbackFix(ctx, fix.headBeforeFix);
       }
 
+      const iterOutcome = reval.passed ? 'resolved' : 'revalidation_failed';
       loop = completeIteration(loop, {
-        outcome: reval.passed ? 'resolved' : 'unresolved',
+        outcome: iterOutcome,
         fixInvocationId: fix.invocationId,
         revalidationId: reval.validationRunId,
         now: deps.now(),
       });
       deps.loops.update(loop);
-      this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'resolved' : 'unresolved');
+      this.emitIterationCompleted(input, iterationIndex, iterOutcome);
 
       if (reval.passed) break;
     }
@@ -131,9 +132,9 @@ export class ValidateFixLoop {
     message: string,
     metadata: Record<string, unknown>,
   ): void {
-    this.deps.events.publish(input.runId as unknown as string, {
-      runId: input.runId as unknown as string,
-      phase: input.phaseId as unknown as string,
+    this.deps.events.publish(input.runId as string, {
+      runId: input.runId as string,
+      phase: input.phaseId as string,
       level,
       type,
       message,
@@ -159,8 +160,8 @@ export class ValidateFixLoop {
   private emitEscalation(input: ValidateFixLoopInput, triggerReason: string): void {
     const toProfile = input.fixFallbackProfile as AgentProfileName;
     this.emit(input, 'phase.fallback.escalated', 'warn', `escalating fix to ${toProfile}`, {
-      fromProfile: input.fixProfile as unknown as string,
-      toProfile: toProfile as unknown as string,
+      fromProfile: input.fixProfile as string,
+      toProfile: toProfile as string,
       triggerReason,
       triggerOwner: 'use_case',
     });

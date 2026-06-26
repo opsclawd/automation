@@ -89,6 +89,16 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     emit('validate.failed', 'error', failure.message);
+    try {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'validate',
+        relativePath: 'failure.json',
+        contents: JSON.stringify(failure, null, 2),
+      });
+    } catch {
+      // non-critical: failure artifact is informational only
+    }
     return { outcome: 'passed' };
   }
 }

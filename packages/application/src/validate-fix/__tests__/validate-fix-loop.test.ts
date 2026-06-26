@@ -78,7 +78,7 @@ describe('ValidateFixLoop', () => {
     const out = await new ValidateFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('passed');
     expect(out.loop.iterations).toHaveLength(2);
-    expect(out.loop.iterations[0]?.outcome).toBe('unresolved');
+    expect(out.loop.iterations[0]?.outcome).toBe('fix_failed');
     expect(out.loop.iterations[1]?.outcome).toBe('resolved');
   });
 

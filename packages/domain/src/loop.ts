@@ -4,7 +4,13 @@ export type LoopType = 'review-fix' | 'implement-step' | 'validate-fix';
 
 export type LoopStatus = 'running' | 'converged' | 'exhausted' | 'failed';
 
-export type LoopIterationOutcome = 'resolved' | 'fixed' | 'unresolved' | 'failed';
+export type LoopIterationOutcome =
+  | 'resolved'
+  | 'fixed'
+  | 'unresolved'
+  | 'failed'
+  | 'fix_failed'
+  | 'revalidation_failed';
 
 export interface LoopIteration {
   index: number;
