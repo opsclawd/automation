@@ -623,6 +623,81 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error('Error: could not determine repository name.');
               process.exit(EXIT_USER_ERROR);
             }
+
+            const repoId = RepositoryId(c.repoFullName);
+            const workerId = WorkerId(`cli-${process.pid}`);
+
+            if (opts.fromPhase) {
+              await c.resumeRun.execute({
+                runId: RunId(opts.uuid),
+                fromPhase: opts.fromPhase,
+                workerId,
+              });
+            } else {
+              await c.retryFailedPhase.execute({
+                runId: RunId(opts.uuid),
+                workerId,
+              });
+            }
+
+            const updatedRun = c.runRepository.findByUuid(opts.uuid);
+            if (!updatedRun) {
+              console.error(`Error: run ${opts.uuid} not found after transition.`);
+              process.exit(EXIT_USER_ERROR);
+            }
+
+            const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
+            const heartbeatIntervalMs =
+              buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+
+            try {
+              c.workerLeaseRepository.acquire({
+                repoId,
+                workerId,
+                runId: RunId(opts.uuid),
+                now: new Date(),
+                ttlMs: leaseTtlMs,
+              });
+            } catch (err) {
+              if (err instanceof WorkerLeaseConflictError) {
+                console.error(
+                  `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
+                );
+                process.exit(EXIT_USER_ERROR);
+              }
+              throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
+            }
+
+            c.runRepository.update(updatedRun.uuid, { pid: process.pid });
+
+            let signalHandlers: { remove: () => void } | undefined;
+            let lease: { stop: () => void } | undefined;
+            try {
+              signalHandlers = installSignalHandlers(c.runRepository, updatedRun.issueNumber);
+              lease = startLeaseHeartbeat(
+                c.workerLeaseRepository,
+                repoId,
+                workerId,
+                leaseTtlMs,
+                heartbeatIntervalMs,
+              );
+
+              const result = await c.runExecutor.execute({
+                run: { ...updatedRun, status: 'running' },
+                skip: [],
+                presentArtifacts: [],
+              });
+
+              process.stdout.write(
+                JSON.stringify({
+                  run: result.run,
+                  phases: result.phases,
+                }) + '\n',
+              );
+            } finally {
+              signalHandlers?.remove();
+              lease?.stop();
+            }
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
             process.exit(EXIT_USER_ERROR);

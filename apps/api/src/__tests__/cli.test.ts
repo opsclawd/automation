@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
-import { RunExecutor } from '@ai-sdlc/application';
+import { RunExecutor, ResumeRun, RetryFailedPhase } from '@ai-sdlc/application';
 import {
   GitWorktreeAdapter,
   InMemoryEventBus,
@@ -2151,6 +2151,338 @@ describe('CLI runs resume command', () => {
       exitSpy.mockRestore();
       expect(exitCode).toBe(1);
       expect(capturedConsole).toMatch(/no run found/i);
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('calls retryFailedPhase when --from-phase is not provided', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-nofp-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'resume-nofp-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-110-20260622-000000',
+      110,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
+      const resumeSpy = vi.spyOn(ResumeRun.prototype, 'execute').mockResolvedValue(undefined);
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockReturnValue(undefined);
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: runUuid,
+          status: 'passed' as const,
+          displayId: '',
+          issueNumber: 110,
+          type: 'issue_to_pr' as const,
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', runUuid], { from: 'user' });
+
+      expect(retrySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: expect.any(String), workerId: expect.any(String) }),
+      );
+      expect(resumeSpy).not.toHaveBeenCalled();
+
+      retrySpy.mockRestore();
+      resumeSpy.mockRestore();
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
+      executeSpy.mockRestore();
+      writeSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('calls resumeRun when --from-phase is provided', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-fp-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'resume-fp-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-111-20260622-000000',
+      111,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
+      const resumeSpy = vi.spyOn(ResumeRun.prototype, 'execute').mockResolvedValue(undefined);
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockReturnValue(undefined);
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: runUuid,
+          status: 'passed' as const,
+          displayId: '',
+          issueNumber: 111,
+          type: 'issue_to_pr' as const,
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [],
+      });
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', runUuid, '--from-phase', 'implement'], {
+        from: 'user',
+      });
+
+      expect(resumeSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: expect.any(String),
+          fromPhase: 'implement',
+          workerId: expect.any(String),
+        }),
+      );
+      expect(retrySpy).not.toHaveBeenCalled();
+
+      retrySpy.mockRestore();
+      resumeSpy.mockRestore();
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
+      executeSpy.mockRestore();
+      writeSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('writes JSON output on successful execution', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-json-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'resume-json-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-112-20260622-000000',
+      112,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
+      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      const heartbeatSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
+        .mockReturnValue(undefined);
+      const releaseSpy = vi
+        .spyOn(WorkerLeaseRepository.prototype, 'release')
+        .mockReturnValue(undefined);
+      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: runUuid,
+          status: 'passed' as const,
+          displayId: '',
+          issueNumber: 112,
+          type: 'issue_to_pr' as const,
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [{ phase: 'implement', status: 'passed' }],
+      });
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        stdoutChunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', runUuid], { from: 'user' });
+
+      const output = JSON.parse(stdoutChunks.join(''));
+      expect(output).toHaveProperty('run');
+      expect(output.run.uuid).toBe(runUuid);
+      expect(output.run.status).toBe('passed');
+      expect(output).toHaveProperty('phases');
+      expect(output.phases).toHaveLength(1);
+
+      retrySpy.mockRestore();
+      acquireSpy.mockRestore();
+      heartbeatSpy.mockRestore();
+      releaseSpy.mockRestore();
+      executeSpy.mockRestore();
+      writeSpy.mockRestore();
     } finally {
       process.chdir(savedCwd);
     }
