@@ -409,12 +409,29 @@ class AbortRegistry {
 export function buildSpecReviewPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string },
   typecheckSection: string,
+  implReport = '',
 ): string {
+  const reportExcerpt = implReport.split('\n').slice(0, 50).join('\n');
   return [
     '# TASK',
     `Review implementation of step ${ctx.stepIndex}: ${ctx.stepTitle}`,
     '',
     'Check that the implementation matches plan.md task requirements exactly.',
+    '',
+    '## HARD CONSTRAINT — READ-ONLY REVIEW',
+    'You MUST NOT execute any shell commands, run tests, run builds, or invoke any',
+    'tools that modify the filesystem or execute code. Review by reading files only:',
+    'plan.md, implementation-log.md, git diff output, and changed source files.',
+    'If the task was verification-only (no files changed), check the implementer report',
+    'below to confirm all required verifications passed, then write result.json with',
+    '"pass". Do not re-run the verifications yourself.',
+    '',
+    '## CRITICAL: Do Not Trust the Report Alone',
+    'The implementer report below is what the agent claims it built. You MUST read the',
+    "actual committed code and verify line by line. Do not take the implementer's word.",
+    '',
+    '## What the Implementer Claims',
+    reportExcerpt,
     '',
     '## CONTEXT',
     `Working directory: ${ctx.cwd}`,
@@ -424,6 +441,15 @@ export function buildSpecReviewPrompt(
     '## OUTPUT',
     `Write ${ctx.cwd}/result.json: { "result": "pass" | "fail" }`,
     'Do NOT write to a relative path — use the full absolute path above.',
+    '',
+    '## STOP RULE — THIS IS THE MOST IMPORTANT RULE',
+    'After writing result.json you are DONE. Do NOT:',
+    '- Re-read any files',
+    '- Re-verify your work',
+    '- Run any commands',
+    '- Start the review over',
+    '- Do anything at all',
+    'Any action after writing result.json is a contract violation.',
   ].join('\n');
 }
 
@@ -436,6 +462,12 @@ export function buildQualityReviewPrompt(
     `Review implementation quality for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
     '',
     'Check for code quality: maintainability, performance, security, test coverage.',
+    '',
+    '## HARD CONSTRAINT — READ-ONLY REVIEW',
+    'You MUST NOT execute any shell commands, run tests, run builds, or invoke any',
+    'tools that modify the filesystem or execute code. Review by reading files only.',
+    'If the task was verification-only (no files changed), write result.json with',
+    '"pass" — quality review does not apply to verification-only steps.',
     '',
     '## CONTEXT',
     `Working directory: ${ctx.cwd}`,
@@ -1392,7 +1424,13 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return SPEC_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to plan-letter checks until the type error is resolved.`;
 
-        const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection);
+        let implReport = '';
+        try {
+          implReport = readFileSync(join(ctx.cwd, 'implementation-log.md'), 'utf-8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+        }
+        const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
