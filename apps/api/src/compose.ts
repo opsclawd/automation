@@ -1032,11 +1032,15 @@ export function composeRoot(opts: ComposeOptions): Container {
               depends_on: string[];
             }>;
           };
+          fixProfileOverride?: string;
+          fixFallbackProfileOverride?: string;
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const profile =
-          opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
+          opts.useFallback && (opts.fixFallbackProfileOverride ?? fixFallbackProfileName)
+            ? (opts.fixFallbackProfileOverride ?? fixFallbackProfileName)!
+            : (opts.fixProfileOverride ?? fixProfileName);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
@@ -1346,7 +1350,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: import('@ai-sdlc/application').ValidateFixStepContext,
         opts: FixStepOptions,
       ): Promise<import('@ai-sdlc/application').ValidateFixAgentResult> => {
-        const result = await runFix(ctx, opts);
+        const result = await runFix(ctx, {
+          ...opts,
+          fixProfileOverride: fixValidateProfileName,
+          ...(fixValidateFallbackProfileName
+            ? { fixFallbackProfileOverride: fixValidateFallbackProfileName }
+            : {}),
+        });
         const mappedVerdict: 'fixed' | 'cannot_fix' | undefined =
           result.verdict === 'done_with_fixes' || result.verdict === 'done_no_fixes_needed'
             ? 'fixed'
