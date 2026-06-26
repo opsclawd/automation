@@ -50,7 +50,7 @@ export class ValidateFixLoop {
         { index: iterationIndex },
       );
 
-      // --- FIX ---
+      // fix
       const useFallback = consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
       if (useFallback) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
@@ -84,11 +84,32 @@ export class ValidateFixLoop {
       }
       consecutiveFixFailures = 0;
 
-      // --- REVALIDATE ---
+      // revalidate
       const reval = await deps.runRevalidation(ctx);
 
       if (!reval.passed && fix.headBeforeFix && deps.rollbackFix) {
-        await deps.rollbackFix(ctx, fix.headBeforeFix);
+        const rollbackOk = await deps.rollbackFix(ctx, fix.headBeforeFix);
+        if (!rollbackOk) {
+          this.emit(
+            input,
+            'loop.iteration.completed',
+            'error',
+            `rollback failed on iteration ${iterationIndex}, breaking loop`,
+            { index: iterationIndex },
+          );
+          loop = completeIteration(loop, {
+            outcome: 'failed',
+            fixInvocationId: fix.invocationId,
+            now: deps.now(),
+          });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'failed');
+          break;
+        }
+      }
+
+      if (!reval.passed) {
+        consecutiveFixFailures += 1;
       }
 
       const iterOutcome = reval.passed ? 'resolved' : 'revalidation_failed';
