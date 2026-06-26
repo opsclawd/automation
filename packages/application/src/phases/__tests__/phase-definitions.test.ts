@@ -15,13 +15,14 @@ import {
 } from '../phase-definitions.js';
 
 describe('phase definitions registry', () => {
-  it('exposes the target canonical order (9 phases, review-fix)', () => {
+  it('exposes the target canonical order (10 phases, fix-validate)', () => {
     expect(CANONICAL_PHASE_ORDER).toEqual([
       'read_issue',
       'plan-design',
       'plan-write',
       'implement',
       'validate',
+      'fix-validate',
       'review-fix',
       'compound',
       'create-pr',
@@ -36,8 +37,8 @@ describe('phase definitions registry', () => {
     }
   });
 
-  it('has exactly 9 definitions (no extras)', () => {
-    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(9);
+  it('has exactly 10 definitions (no extras)', () => {
+    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(10);
   });
 
   it('exposes typed error classes with correct names', () => {
@@ -80,7 +81,7 @@ describe('phase definitions registry', () => {
       const names = orderedPhases(['compound' as PhaseName]).map((p) => p.name);
       expect(names).not.toContain('compound');
       expect(names).toContain('plan-design');
-      expect(names).toHaveLength(8);
+      expect(names).toHaveLength(9);
     });
 
     it('rejects skipping a non-skippable phase', () => {
@@ -135,7 +136,7 @@ describe('phase definitions registry', () => {
     it('skips phases in the skip list', () => {
       // 'compound' is the only skippable phase; skipping it should not affect nextPhase
       // since read_issue is before compound anyway
-      expect(nextPhase('validate' as PhaseName, ['compound' as PhaseName])).toBe('review-fix');
+      expect(nextPhase('validate' as PhaseName, ['compound' as PhaseName])).toBe('fix-validate');
     });
 
     it('throws UnknownPhaseError for an unknown phase', () => {

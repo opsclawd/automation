@@ -14,6 +14,7 @@ const ALL_PHASES = [
   'plan-write',
   'implement',
   'validate',
+  'fix-validate',
   'review-fix',
   'compound',
   'create-pr',
@@ -207,14 +208,14 @@ describe('RunExecutor', () => {
     const result = await executor.execute(input);
 
     expect(result.run.status).toBe('passed');
-    expect(result.phases).toHaveLength(9);
+    expect(result.phases).toHaveLength(10);
     for (const pr of result.phases) {
       expect(pr.status).toBe('passed');
     }
 
     // Verify runRepository.update called for each phase start + completion + final pass
-    // 9 phase starts + 9 completions + 1 final pass = 19
-    expect(deps.runRepository.update).toHaveBeenCalledTimes(19);
+    // 10 phase starts + 10 completions + 1 final pass = 21
+    expect(deps.runRepository.update).toHaveBeenCalledTimes(21);
   });
 
   it('records skipped phases and does not execute them', async () => {
@@ -240,7 +241,7 @@ describe('RunExecutor', () => {
     expect(skippedPhases[0]!.phase).toBe(makePhaseName('compound'));
 
     const passedPhases = result.phases.filter((p) => p.status === 'passed');
-    expect(passedPhases).toHaveLength(8);
+    expect(passedPhases).toHaveLength(9);
 
     expect(result.run.status).toBe('passed');
 
@@ -453,7 +454,7 @@ describe('RunExecutor', () => {
     // No preloaded artifacts, yet all phases pass because each completed phase's
     // declared outputs are appended to presentArtifacts, satisfying downstream inputs.
     expect(result.run.status).toBe('passed');
-    expect(result.phases).toHaveLength(9);
+    expect(result.phases).toHaveLength(10);
     for (const pr of result.phases) {
       expect(pr.status).toBe('passed');
     }
@@ -547,11 +548,11 @@ describe('RunExecutor', () => {
 
     // Verify phase inserts: each phase starts with status 'running'
     const runningInserts = phaseRepo.inserted.filter((p) => p.status === 'running');
-    expect(runningInserts).toHaveLength(9);
+    expect(runningInserts).toHaveLength(10);
 
     // Verify phase updates: each phase updated to 'passed'
     const passedUpdates = phaseRepo.updated.filter((p) => p.status === 'passed');
-    expect(passedUpdates).toHaveLength(9);
+    expect(passedUpdates).toHaveLength(10);
 
     // Verify run updates: phase start (currentPhase set) + phase complete (currentPhase null) + final pass
     expect(deps.runRepository.update).toHaveBeenCalledWith(
@@ -717,8 +718,8 @@ describe('RunExecutor', () => {
 
     const result = await executor.execute(input);
 
-    // Only the 7 remaining phases execute (9 total - 2 completed)
-    expect(result.phases).toHaveLength(9);
+    // Only the 8 remaining phases execute (10 total - 2 completed)
+    expect(result.phases).toHaveLength(10);
     expect(result.run.status).toBe('passed');
     expect(result.run.completedPhases).toEqual([
       'read_issue',
@@ -726,20 +727,21 @@ describe('RunExecutor', () => {
       'plan-write',
       'implement',
       'validate',
+      'fix-validate',
       'review-fix',
       'compound',
       'create-pr',
       'post-pr-review',
     ]);
 
-    // Phase repository should only have inserts for the 7 new phases,
+    // Phase repository should only have inserts for the 8 new phases,
     // not for the already-completed ones
     const runningInserts = phaseRepo.inserted.filter((p) => p.status === 'running');
-    expect(runningInserts).toHaveLength(7);
+    expect(runningInserts).toHaveLength(8);
 
-    // runRepository updates: 7 phase starts + 7 completions + 1 final pass = 15
-    // (not 19 as when all 9 run from scratch)
-    expect(deps.runRepository.update).toHaveBeenCalledTimes(15);
+    // runRepository updates: 8 phase starts + 8 completions + 1 final pass = 17
+    // (not 21 as when all 10 run from scratch)
+    expect(deps.runRepository.update).toHaveBeenCalledTimes(17);
 
     // Handler for read_issue should never have been called (no new insert for it)
     expect(runningInserts.map((p) => p.name)).not.toContain('read_issue');
@@ -792,8 +794,8 @@ describe('RunExecutor', () => {
 
     const result = await executor.execute(input);
 
-    // All 9 phases recorded in output
-    expect(result.phases).toHaveLength(9);
+    // All 10 phases recorded in output
+    expect(result.phases).toHaveLength(10);
 
     // Previously-skipped compound shows as skipped (not re-inserted)
     const compoundPhase = result.phases.find((p) => p.phase === makePhaseName('compound'))!;
@@ -808,10 +810,11 @@ describe('RunExecutor', () => {
 
     expect(result.run.status).toBe('passed');
 
-    // Phase repo: only post-pr-review was inserted (as 'running')
+    // Phase repo: fix-validate and post-pr-review were inserted (as 'running')
     const runningInserts = phaseRepo.inserted.filter((p) => p.status === 'running');
-    expect(runningInserts).toHaveLength(1);
-    expect(runningInserts[0]!.name).toBe('post-pr-review');
+    expect(runningInserts).toHaveLength(2);
+    expect(runningInserts[0]!.name).toBe('fix-validate');
+    expect(runningInserts[1]!.name).toBe('post-pr-review');
 
     // Skipped phases were NOT re-inserted via the skipSet branch
     const skippedInserts = phaseRepo.inserted.filter((p) => p.status === 'skipped');

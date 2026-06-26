@@ -41,6 +41,7 @@ export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('plan-write'),
   makePhaseName('implement'),
   makePhaseName('validate'),
+  makePhaseName('fix-validate'),
   makePhaseName('review-fix'),
   makePhaseName('compound'),
   makePhaseName('create-pr'),
@@ -84,6 +85,13 @@ const _phaseDefinitions = {
     outputs: [],
     retrySafety: 'safe',
     skippable: false,
+  },
+  'fix-validate': {
+    name: makePhaseName('fix-validate'),
+    inputs: { required: [], optional: [] },
+    outputs: [],
+    retrySafety: 'unsafe',
+    skippable: true,
   },
   'review-fix': {
     name: makePhaseName('review-fix'),
