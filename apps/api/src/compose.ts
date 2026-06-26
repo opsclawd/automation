@@ -1162,6 +1162,18 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const runPostFixGate = async (ctx: StepContext): Promise<PostFixGateResult> => {
         const outputs: string[] = [];
+        // Pre-build: refresh .d.ts files before typecheck. Non-fatal — let
+        // the typecheck surface precise errors if the build actually broke.
+        try {
+          execFileSync('pnpm', ['-r', 'build'], {
+            cwd: ctx.cwd,
+            stdio: ['ignore', 'pipe', 'pipe'],
+            encoding: 'utf-8',
+            timeout: 180_000,
+          });
+        } catch {
+          // Non-fatal
+        }
         const execOrSkip = (command: string, args: string[]): void => {
           try {
             execFileSync(command, args, {
