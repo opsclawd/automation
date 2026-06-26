@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
@@ -22,10 +22,10 @@ const require = createRequire(join(apiRoot, 'package.json'));
 const tsxEsmPath = require.resolve('tsx/esm');
 const cliPath = join(apiRoot, 'src', 'cli.ts');
 
-function spawnOrchestrator(args: string[], cwd: string) {
+function spawnOrchestrator(args: string[], cwd: string, envOverrides?: Record<string, string>) {
   return spawn('node', ['--conditions=development', '--import', tsxEsmPath, cliPath, ...args], {
     cwd,
-    env: { ...process.env, NODE_NO_WARNINGS: '1' },
+    env: { ...process.env, NODE_NO_WARNINGS: '1', ...envOverrides },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 }
@@ -796,17 +796,272 @@ describe('CLI runs execute command', () => {
       process.chdir(savedCwd);
     }
   });
+
+  it('releases lease on SIGTERM during runs execute', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-sigterm-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const runUuid = 'execute-sigterm-uuid';
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-79-20260622-000000',
+      79,
+      'issue_to_pr',
+      'queued',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const child = spawnOrchestrator(['runs', 'execute', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
+
+    const stderr: string[] = [];
+    child.stderr?.on('data', (d) => stderr.push(d.toString()));
+
+    // Wait for the joined run + lease row to appear (up to 15s)
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('timed out waiting for lease row')),
+        15_000,
+      );
+      const poll = () => {
+        try {
+          const d = openDatabase(dbPath);
+          const row = d
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.uuid = ?`,
+            )
+            .get(runUuid);
+          d.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGTERM');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const d2 = openDatabase(dbPath);
+    const run = d2
+      .prepare('SELECT status, failure_reason FROM runs WHERE uuid = ?')
+      .get(runUuid) as { status: string; failure_reason: string | null };
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGTERM/i);
+    expect(d2.prepare('SELECT repo_id FROM worker_leases').get()).toBeUndefined();
+    d2.close();
+  }, 45_000);
+
+  it('releases lease on SIGINT during runs execute', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-exec-sigint-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const runUuid = 'execute-sigint-uuid';
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-80-20260622-000000',
+      80,
+      'issue_to_pr',
+      'queued',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const child = spawnOrchestrator(['runs', 'execute', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
+
+    const stderr: string[] = [];
+    child.stderr?.on('data', (d) => stderr.push(d.toString()));
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error('timed out waiting for lease row')),
+        15_000,
+      );
+      const poll = () => {
+        try {
+          const d = openDatabase(dbPath);
+          const row = d
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.uuid = ?`,
+            )
+            .get(runUuid);
+          d.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGINT');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const d2 = openDatabase(dbPath);
+    const run = d2
+      .prepare('SELECT status, failure_reason FROM runs WHERE uuid = ?')
+      .get(runUuid) as { status: string; failure_reason: string | null };
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+    expect(d2.prepare('SELECT repo_id FROM worker_leases').get()).toBeUndefined();
+    d2.close();
+  }, 45_000);
 });
 
 describe('CLI run command signal handlers', () => {
   it('marks run as cancelled when process receives SIGTERM', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigterm-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
     const scriptPath = join(root, 'long-running.sh');
     writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
     chmodSync(scriptPath, 0o755);
 
-    const child = spawnOrchestrator(['run', '--issue', '77', '--script', scriptPath], root);
+    const child = spawnOrchestrator(
+      ['run', '--issue', '77', '--executor', 'ts', '--script', scriptPath],
+      root,
+      { GITHUB_REPOSITORY: 'opsclawd/automation' },
+    );
 
     const stderr: string[] = [];
     child.stderr?.on('data', (d) => stderr.push(d.toString()));
@@ -819,7 +1074,14 @@ describe('CLI run command signal handlers', () => {
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 77').get();
+          const row = db
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.issue_number = 77`,
+            )
+            .get();
           db.close();
           if (row) {
             clearTimeout(timeout);
@@ -844,6 +1106,8 @@ describe('CLI run command signal handlers', () => {
     const run = db
       .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 77')
       .get() as { status: string; failure_reason: string | null };
+    const lease = db.prepare('SELECT repo_id FROM worker_leases').get();
+    expect(lease).toBeUndefined();
     db.close();
 
     expect(run.status).toBe('cancelled');
@@ -853,11 +1117,49 @@ describe('CLI run command signal handlers', () => {
   it('marks run as cancelled when process receives SIGINT', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigint-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
     const scriptPath = join(root, 'long-running.sh');
     writeFileSync(scriptPath, '#!/usr/bin/env bash\nsleep 60\n');
     chmodSync(scriptPath, 0o755);
 
-    const child = spawnOrchestrator(['run', '--issue', '78', '--script', scriptPath], root);
+    const child = spawnOrchestrator(
+      ['run', '--issue', '78', '--executor', 'ts', '--script', scriptPath],
+      root,
+      { GITHUB_REPOSITORY: 'opsclawd/automation' },
+    );
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
@@ -866,7 +1168,14 @@ describe('CLI run command signal handlers', () => {
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare('SELECT uuid FROM runs WHERE issue_number = 78').get();
+          const row = db
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.issue_number = 78`,
+            )
+            .get();
           db.close();
           if (row) {
             clearTimeout(timeout);
@@ -891,6 +1200,8 @@ describe('CLI run command signal handlers', () => {
     const run = db
       .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 78')
       .get() as { status: string; failure_reason: string | null };
+    const lease = db.prepare('SELECT repo_id FROM worker_leases').get();
+    expect(lease).toBeUndefined();
     db.close();
 
     expect(run.status).toBe('cancelled');
@@ -2543,7 +2854,9 @@ describe('CLI runs resume command', () => {
     db.close();
 
     const savedCwd = process.cwd();
+    const savedGithubRepo = process.env.GITHUB_REPOSITORY;
     process.chdir(root);
+    delete process.env.GITHUB_REPOSITORY;
     try {
       const consoleErrs: string[] = [];
       const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
@@ -2562,6 +2875,7 @@ describe('CLI runs resume command', () => {
       expect(capturedConsole).toMatch(/could not determine repository name/i);
     } finally {
       process.chdir(savedCwd);
+      if (savedGithubRepo !== undefined) process.env.GITHUB_REPOSITORY = savedGithubRepo;
     }
   });
 
@@ -2784,4 +3098,224 @@ describe('CLI runs resume command', () => {
       process.chdir(savedCwd);
     }
   });
+
+  it('releases lease on SIGTERM during runs resume', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-sigterm-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const runUuid = 'resume-sigterm-uuid';
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-81-20260622-000000',
+      81,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      '[]',
+      new Date().toISOString(),
+      'implement',
+    );
+    db.close();
+
+    const child = spawnOrchestrator(['runs', 'resume', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
+
+    const stderr: string[] = [];
+    child.stderr?.on('data', (d) => stderr.push(d.toString()));
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error(`timed out waiting for lease. stderr: ${stderr.join('')}`)),
+        15_000,
+      );
+      const poll = () => {
+        try {
+          const d = openDatabase(dbPath);
+          const row = d
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.uuid = ?`,
+            )
+            .get(runUuid);
+          d.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGTERM');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const d2 = openDatabase(dbPath);
+    const run = d2
+      .prepare('SELECT status, failure_reason FROM runs WHERE uuid = ?')
+      .get(runUuid) as { status: string; failure_reason: string | null };
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGTERM/i);
+    expect(d2.prepare('SELECT repo_id FROM worker_leases').get()).toBeUndefined();
+    d2.close();
+  }, 45_000);
+
+  it('releases lease on SIGINT during runs resume', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-sigint-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const runUuid = 'resume-sigint-uuid';
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-82-20260622-000000',
+      82,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      '[]',
+      new Date().toISOString(),
+      'implement',
+    );
+    db.close();
+
+    const child = spawnOrchestrator(['runs', 'resume', '--uuid', runUuid], root, {
+      GITHUB_REPOSITORY: 'opsclawd/automation',
+    });
+
+    const stderr: string[] = [];
+    child.stderr?.on('data', (d) => stderr.push(d.toString()));
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error(`timed out waiting for lease. stderr: ${stderr.join('')}`)),
+        15_000,
+      );
+      const poll = () => {
+        try {
+          const d = openDatabase(dbPath);
+          const row = d
+            .prepare(
+              `SELECT runs.uuid, worker_leases.repo_id
+               FROM runs
+               JOIN worker_leases ON worker_leases.run_id = runs.uuid
+               WHERE runs.uuid = ?`,
+            )
+            .get(runUuid);
+          d.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    child.kill('SIGINT');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const d2 = openDatabase(dbPath);
+    const run = d2
+      .prepare('SELECT status, failure_reason FROM runs WHERE uuid = ?')
+      .get(runUuid) as { status: string; failure_reason: string | null };
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+    expect(d2.prepare('SELECT repo_id FROM worker_leases').get()).toBeUndefined();
+    d2.close();
+  }, 45_000);
 });

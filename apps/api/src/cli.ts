@@ -80,6 +80,7 @@ function installSignalHandlers(
     ): boolean;
   },
   issueNumber: number,
+  onCleanup?: () => void,
 ): { remove: () => void } {
   const cleanup = async (signal: string) => {
     const existing = runRepository.findByIssueNumber(issueNumber);
@@ -90,6 +91,7 @@ function installSignalHandlers(
         failureReason: `interrupted by ${signal}`,
       });
     }
+    onCleanup?.();
   };
 
   const sigintHandler = () => {
@@ -260,8 +262,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error(`[ts] ${event.message}`);
             });
           }
+          const releaseLeaseOnSignal = () => {
+            try {
+              c.workerLeaseRepository.release(repoId, workerId);
+            } catch (err) {
+              console.error(
+                `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
+              );
+            }
+          };
           try {
-            signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
+            signalHandlers = installSignalHandlers(
+              c.runRepository,
+              opts.issue,
+              releaseLeaseOnSignal,
+            );
             lease = startLeaseHeartbeat(
               c.workerLeaseRepository,
               repoId,
@@ -561,8 +576,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
+            const releaseLeaseOnSignal = () => {
+              try {
+                c.workerLeaseRepository.release(repoId, workerId);
+              } catch (err) {
+                console.error(
+                  `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
+                );
+              }
+            };
             try {
-              signalHandlers = installSignalHandlers(c.runRepository, run.issueNumber);
+              signalHandlers = installSignalHandlers(
+                c.runRepository,
+                run.issueNumber,
+                releaseLeaseOnSignal,
+              );
               lease = startLeaseHeartbeat(
                 c.workerLeaseRepository,
                 repoId,
@@ -672,8 +700,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
+            const releaseLeaseOnSignal = () => {
+              try {
+                c.workerLeaseRepository.release(repoId, workerId);
+              } catch (err) {
+                console.error(
+                  `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
+                );
+              }
+            };
             try {
-              signalHandlers = installSignalHandlers(c.runRepository, updatedRun.issueNumber);
+              signalHandlers = installSignalHandlers(
+                c.runRepository,
+                updatedRun.issueNumber,
+                releaseLeaseOnSignal,
+              );
               lease = startLeaseHeartbeat(
                 c.workerLeaseRepository,
                 repoId,

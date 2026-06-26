@@ -769,6 +769,8 @@ export function composeRoot(opts: ComposeOptions): Container {
   let resolvedRepoFullName: string | undefined;
   if (opts.repoFullName) {
     resolvedRepoFullName = opts.repoFullName;
+  } else if (process.env.GITHUB_REPOSITORY) {
+    resolvedRepoFullName = process.env.GITHUB_REPOSITORY;
   } else {
     try {
       const out = execFileSync(
