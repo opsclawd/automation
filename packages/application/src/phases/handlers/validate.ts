@@ -72,6 +72,12 @@ export class ValidateHandler implements PhaseHandler {
     }
 
     if (passed) {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: 'validate',
+        relativePath: 'validation.result',
+        contents: 'passed\n',
+      });
       emit('validate.completed', 'info', 'validation passed', {
         commands: validationRunLength,
       });
