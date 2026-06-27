@@ -2583,3 +2583,46 @@ PLAN
   [ -n "$first_gh_line" ]
   [ "$gate_line" -lt "$first_gh_line" ]
 }
+
+# Invariant: the antigravity adapter clears the agy scratch directory before
+#   each agent invocation so stale session files from a prior unrelated run
+#   cannot cause the agent to hallucinate on the wrong issue.
+# Source: #521.
+# Failure prevented: agy reads leftover files (e.g. new_gemini_issue.md,
+#   issue_153_feedback.md) from ~/.gemini/antigravity-cli/scratch/ from a
+#   prior session, processes those instead of the stdin prompt, and writes
+#   output for the wrong issue entirely — exits 0, coherent output, wrong
+#   problem → silent wrong-issue hallucination (#520).
+# TS-port contract: the TS AntigravityAgentAdapter must clearDirectory on
+#   its configured scratchDir before calling runExternalCli for each
+#   invocation. Runtime-agnostic — filesystem state assertion.
+@test "parity[#521]: antigravity adapter clears scratch dir before invocation" {
+  run grep -c "clearDirectory" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # scratchDir must be defined on AntigravityAdapterOptions
+  run grep -c "scratchDir" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # scratchDir defaults to ~/.gemini/antigravity-cli/scratch
+  run grep -c "antigravity-cli/scratch" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # homedir must be imported (used for default path resolution)
+  run grep -c "homedir" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # clearDirectory must be called BEFORE runExternalCli in invoke()
+  local adapter="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  local clear_line add_line
+  clear_line=$(grep -n 'clearDirectory' "$adapter" | tail -1 | cut -d: -f1)
+  add_line=$(grep -n 'runExternalCli' "$adapter" | tail -1 | cut -d: -f1)
+  [[ -n "$clear_line" ]]
+  [[ -n "$add_line" ]]
+  [[ "$clear_line" -lt "$add_line" ]]
+}
+
