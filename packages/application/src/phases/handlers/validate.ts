@@ -9,6 +9,9 @@ export interface ValidateHandlerOpts {
   commands: string[];
   timeoutSeconds: number;
   logDir: string;
+  /** When true, validation failures return 'deferred' so the pipeline continues
+   * to fix-validate. When false, failures return 'failed' and stop the pipeline. */
+  fixValidateEnabled: boolean;
 }
 
 export class ValidateHandler implements PhaseHandler {
@@ -99,8 +102,9 @@ export class ValidateHandler implements PhaseHandler {
     } catch {
       emit('validate.artifact_write_failed', 'warn', 'failed to write failure.json artifact');
     }
-    // Deferred failure: outcome is 'deferred' so the pipeline continues to fix-validate.
-    // Failure details are written to failure.json artifact for fix-validate to consume.
+    if (!this.opts.fixValidateEnabled) {
+      return { outcome: 'failed', failure };
+    }
     return { outcome: 'deferred' };
   }
 }

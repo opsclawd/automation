@@ -1034,6 +1034,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
           fixProfileOverride?: string;
           fixFallbackProfileOverride?: string;
+          extraPromptSections?: string[];
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -1103,6 +1104,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 'and consider a different approach to address the findings.',
               ]
             : []),
+          ...(opts.extraPromptSections ?? []),
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         // Clear stale result.json from a prior step so the adapter's
@@ -1348,14 +1350,29 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const validateFixRunFix = async (
         ctx: import('@ai-sdlc/application').ValidateFixStepContext,
-        opts: FixStepOptions,
+        opts: import('@ai-sdlc/application').FixStepOptions,
       ): Promise<import('@ai-sdlc/application').ValidateFixAgentResult> => {
+        let failureContext: string[] = [];
+        try {
+          const failureContent = readFileSync(join(ctx.cwd, 'failure.json'), 'utf-8');
+          failureContext = [
+            '',
+            '## VALIDATION FAILURE CONTEXT',
+            'The following validation failures were detected. Fix them:',
+            '```json',
+            failureContent,
+            '```',
+          ];
+        } catch {
+          // failure.json may not exist — skip
+        }
         const result = await runFix(ctx, {
           ...opts,
           fixProfileOverride: fixValidateProfileName,
           ...(fixValidateFallbackProfileName
             ? { fixFallbackProfileOverride: fixValidateFallbackProfileName }
             : {}),
+          extraPromptSections: failureContext,
         });
         const mappedVerdict: 'fixed' | 'cannot_fix' | 'no_fixes_needed' | undefined =
           result.verdict === 'done_with_fixes'
@@ -1854,6 +1871,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           commands: config.validation.commands,
           timeoutSeconds: config.validation.timeout,
           logDir: join(runsDir, 'validate'),
+          fixValidateEnabled: config.phases.fixValidate?.enabled !== false,
         }),
       );
 

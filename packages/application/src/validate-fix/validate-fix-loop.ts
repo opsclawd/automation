@@ -52,7 +52,7 @@ export class ValidateFixLoop {
       );
 
       // fix
-      const useFallback = consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
+      const useFallback = consecutiveFixFailures >= 2;
       if (useFallback) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
       }
@@ -73,6 +73,18 @@ export class ValidateFixLoop {
       }
 
       if (fix.verdict === 'no_fixes_needed') {
+        const reval = await deps.runRevalidation(ctx);
+        if (reval.passed) {
+          loop = completeIteration(loop, {
+            outcome: 'resolved',
+            fixInvocationId: fix.invocationId,
+            revalidationId: reval.validationRunId,
+            now: deps.now(),
+          });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'resolved');
+          break;
+        }
         consecutiveNoFixesNeeded += 1;
         if (consecutiveNoFixesNeeded >= 2) {
           loop = completeIteration(loop, {
@@ -96,6 +108,7 @@ export class ValidateFixLoop {
 
       if (fix.verdict === undefined || fix.verdict === 'cannot_fix') {
         consecutiveFixFailures += 1;
+        consecutiveNoFixesNeeded = 0;
         loop = completeIteration(loop, {
           outcome: 'fix_failed',
           fixInvocationId: fix.invocationId,
@@ -115,7 +128,7 @@ export class ValidateFixLoop {
         this.emit(
           input,
           'loop.rollback.unavailable',
-          'warn',
+          'error',
           `revalidation failed on iteration ${iterationIndex} but headBeforeFix not set — cannot roll back`,
           { index: iterationIndex },
         );

@@ -96,6 +96,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: true,
       }).run(ctx);
 
       expect(result.outcome).toBe('deferred');
@@ -147,6 +148,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build', 'pnpm lint', 'pnpm typecheck'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: true,
       }).run(ctx);
 
       expect(result.outcome).toBe('deferred');
@@ -221,6 +223,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: true,
       }).run(ctx);
 
       expect(result.outcome).toBe('deferred');
