@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const REPO_ROOT = resolve(import.meta.dirname, '../../../../../');
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../../');
 
 describe('validation commands drift guard (#514)', () => {
   it('validation commands in .ai-orchestrator.json are a superset of CI test steps', () => {

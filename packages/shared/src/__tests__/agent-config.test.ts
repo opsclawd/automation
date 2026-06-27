@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { orchestratorConfigSchema } from '../config/schema.js';
 
@@ -179,7 +180,7 @@ describe('agent config schema', () => {
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
     const text = readFileSync(
-      join(import.meta.dirname, '..', '..', '..', '..', '.ai-orchestrator.json'),
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '.ai-orchestrator.json'),
       'utf8',
     );
     expect(() => orchestratorConfigSchema.parse(JSON.parse(text))).not.toThrow();
