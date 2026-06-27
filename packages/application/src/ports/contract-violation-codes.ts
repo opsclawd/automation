@@ -13,4 +13,5 @@ export const CONTRACT_VIOLATION_CODES = {
   PROVIDER_ERROR: 'provider_error',
   NO_OUTPUT: 'no_output',
   ARTIFACT_IN_SCRATCH_DIR: 'artifact_in_scratch_dir',
+  MISPLACED_ARTIFACT: 'misplaced_artifact',
 } as const;
