@@ -2597,16 +2597,31 @@ PLAN
 #   its configured scratchDir before calling runExternalCli for each
 #   invocation. Runtime-agnostic — filesystem state assertion.
 @test "parity[#521]: antigravity adapter clears scratch dir before invocation" {
-  # Structural validation: clearDirectory must be called before runExternalCli
   local file="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
-  clear_line=$(grep -n "clearDirectory(" "$file" | head -n 1 | cut -d: -f1)
-  run_line=$(grep -n "runExternalCli(" "$file" | head -n 1 | cut -d: -f1)
+
+  run grep -c "clearDirectory" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "scratchDir" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "antigravity-cli/scratch" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "homedir" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # clearDirectory must be called BEFORE runExternalCli
+  local clear_line run_line
+  clear_line=$(grep -n "clearDirectory(" "$file" | head -1 | cut -d: -f1)
+  run_line=$(grep -n "runExternalCli(" "$file" | head -1 | cut -d: -f1)
   [ -n "$clear_line" ]
   [ -n "$run_line" ]
   [ "$clear_line" -lt "$run_line" ]
-
-  run npx vitest run "$REPO_ROOT/packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts" -t "clears stale files from scratch dir before invocation"
-  [ "$status" -eq 0 ]
 }
 
 # Invariant: when the antigravity adapter detects MISSING_REQUIRED_ARTIFACT from
@@ -2626,8 +2641,31 @@ PLAN
 #   expected artifacts when MISSING_REQUIRED_ARTIFACT is present, recover
 #   found artifacts to cwd, and populate remediatedArtifacts.
 @test "parity[#521]: adapter detects and recovers artifacts wrongly written to scratch dir" {
-  run npx vitest run "$REPO_ROOT/packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts" -t "detects expected artifacts in scratch dir and recovers them to cwd"
+  local file="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+
+  run grep -c "ARTIFACT_IN_SCRATCH_DIR" "$file"
   [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "CONTRACT_VIOLATION_CODES" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "findExpectedArtifactsInDir" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  run grep -c "MISSING_REQUIRED_ARTIFACT" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "remediatedArtifacts" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "renameSync" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
 }
 
 

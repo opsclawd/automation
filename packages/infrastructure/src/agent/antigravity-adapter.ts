@@ -11,7 +11,6 @@ import {
 } from 'node:fs';
 import { resolve, join, dirname, relative, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
-import { createHash } from 'node:crypto';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -101,10 +100,8 @@ export class AntigravityAgentAdapter implements AgentPort {
   async invoke(request: AgentInvocationRequest): Promise<AgentInvocationResult> {
     const bin = this.opts.binaryPath ?? 'agy';
     const prompt = readFileSync(request.promptPath, 'utf-8');
-    const baseScratchDir =
+    const scratchDir =
       this.opts.scratchDir ?? resolve(homedir(), '.gemini/antigravity-cli/scratch');
-    const workspaceHash = createHash('sha256').update(request.cwd).digest('hex');
-    const scratchDir = join(baseScratchDir, workspaceHash);
 
     // Pre: clear stale scratch state so agy does not load files
     // from a prior unrelated session.
