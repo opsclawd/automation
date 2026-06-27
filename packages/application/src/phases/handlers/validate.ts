@@ -91,20 +91,21 @@ export class ValidateHandler implements PhaseHandler {
       };
     }
 
-    emit('validate.failed', 'error', failure.message);
     try {
       await ctx.artifacts.write({
         runId: ctx.runUuid,
         phaseId: 'validate',
-        relativePath: 'failure.json',
+        relativePath: 'validate/failure.json',
         contents: JSON.stringify(failure, null, 2),
       });
     } catch {
       emit('validate.artifact_write_failed', 'warn', 'failed to write failure.json artifact');
     }
-    if (!this.opts.fixValidateEnabled) {
-      return { outcome: 'failed', failure };
+    if (this.opts.fixValidateEnabled) {
+      emit('validate.deferred', 'warn', failure.message);
+      return { outcome: 'deferred' };
     }
-    return { outcome: 'deferred' };
+    emit('validate.failed', 'error', failure.message);
+    return { outcome: 'failed', failure };
   }
 }

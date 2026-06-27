@@ -227,7 +227,10 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       expect(result.outcome).toBe('deferred');
-      const content = await artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'failure.json');
+      const content = await artifacts.read(
+        '550e8400-e29b-41d4-a716-446655440000',
+        'validate/failure.json',
+      );
       const parsed = JSON.parse(content);
       expect(parsed.phase).toBe('validate');
       expect(parsed.message).toContain('validation command(s) failed');

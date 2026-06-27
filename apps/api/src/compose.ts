@@ -1038,10 +1038,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
-        const profile =
-          opts.useFallback && (opts.fixFallbackProfileOverride ?? fixFallbackProfileName)
-            ? (opts.fixFallbackProfileOverride ?? fixFallbackProfileName)!
-            : (opts.fixProfileOverride ?? fixProfileName);
+        const fallbackProfile = opts.fixFallbackProfileOverride ?? fixFallbackProfileName;
+        const primaryProfile = opts.fixProfileOverride ?? fixProfileName;
+        const profile = opts.useFallback && fallbackProfile ? fallbackProfile : primaryProfile;
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
@@ -1354,7 +1353,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       ): Promise<import('@ai-sdlc/application').ValidateFixAgentResult> => {
         let failureContext: string[] = [];
         try {
-          const failureContent = readFileSync(join(ctx.cwd, 'failure.json'), 'utf-8');
+          const failureContent = readFileSync(join(ctx.cwd, 'validate/failure.json'), 'utf-8');
           failureContext = [
             '',
             '## VALIDATION FAILURE CONTEXT',

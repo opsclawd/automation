@@ -172,6 +172,85 @@ describe('ValidateFixLoop', () => {
     expect(rollbackCalls).toHaveLength(0);
   });
 
+  it('continues when no_fixes_needed but revalidation fails, then exhausts', async () => {
+    const deps = makeDeps({
+      runFix: async () => ({
+        invocationId: 'f',
+        agentOutcome: 'success',
+        verdict: 'no_fixes_needed' as const,
+      }),
+      runRevalidation: async () => ({
+        validationRunId: 'v',
+        passed: false,
+        category: 'test',
+      }),
+    });
+    const out = await new ValidateFixLoop(deps).execute(baseInput());
+    expect(out.phaseOutcome).toBe('failed');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(3);
+    out.loop.iterations.forEach((iter) => {
+      expect(iter.outcome).toBe('unresolved');
+    });
+  });
+
+  it('converges even after no_fixes_needed iterations when revalidation later passes', async () => {
+    let callCount = 0;
+    const deps = makeDeps({
+      runFix: async () => {
+        callCount += 1;
+        return {
+          invocationId: `f-${callCount}`,
+          agentOutcome: 'success',
+          verdict: 'no_fixes_needed' as const,
+        };
+      },
+      runRevalidation: async () => {
+        if (callCount < 3) return { validationRunId: 'v', passed: false, category: 'test' };
+        return { validationRunId: 'v', passed: true };
+      },
+    });
+    const out = await new ValidateFixLoop(deps).execute(baseInput());
+    expect(out.phaseOutcome).toBe('passed');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(3);
+  });
+
+  it('hard-fails on undefined verdict and emits warning event', async () => {
+    const { events, bus } = collectEvents();
+    const deps = makeDeps({
+      events: bus,
+      runFix: async () => ({ invocationId: 'f', agentOutcome: 'success' as const }),
+    });
+    const out = await new ValidateFixLoop(deps).execute(baseInput());
+    expect(out.phaseOutcome).toBe('failed');
+    expect(out.loop.status).toBe('failed');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('failed');
+    const warnings = events.filter((e) => e.type === 'loop.verdict_missing');
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('rolls back on agent failure when headBeforeFix is set', async () => {
+    const rollbackCalls: Array<{ targetSha: string }> = [];
+    const deps = makeDeps({
+      runFix: async () => ({
+        invocationId: 'f',
+        agentOutcome: 'failed' as const,
+        headBeforeFix: 'abc123def',
+      }),
+      rollbackFix: async (_ctx: ValidateFixStepContext, targetSha: string) => {
+        rollbackCalls.push({ targetSha });
+        return true;
+      },
+    });
+    const out = await new ValidateFixLoop(deps).execute(baseInput());
+    expect(rollbackCalls).toHaveLength(1);
+    expect(rollbackCalls[0]?.targetSha).toBe('abc123def');
+    expect(out.phaseOutcome).toBe('failed');
+    expect(out.loop.status).toBe('failed');
+  });
+
   it('emits iteration started/completed events per iteration', async () => {
     const { events, bus } = collectEvents();
     const deps = makeDeps({ events: bus });

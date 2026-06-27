@@ -30,7 +30,6 @@ export class ValidateFixLoop {
     deps.loops.insert(loop);
 
     let consecutiveFixFailures = 0;
-    let consecutiveNoFixesNeeded = 0;
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -62,6 +61,9 @@ export class ValidateFixLoop {
       deps.loops.update(loop);
 
       if (fix.agentOutcome !== 'success') {
+        if (fix.headBeforeFix && deps.rollbackFix) {
+          await deps.rollbackFix(ctx, fix.headBeforeFix);
+        }
         loop = completeIteration(loop, {
           outcome: 'failed',
           fixInvocationId: fix.invocationId,
@@ -85,17 +87,6 @@ export class ValidateFixLoop {
           this.emitIterationCompleted(input, iterationIndex, 'resolved');
           break;
         }
-        consecutiveNoFixesNeeded += 1;
-        if (consecutiveNoFixesNeeded >= 2) {
-          loop = completeIteration(loop, {
-            outcome: 'unresolved',
-            fixInvocationId: fix.invocationId,
-            now: deps.now(),
-          });
-          deps.loops.update(loop);
-          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-          break;
-        }
         loop = completeIteration(loop, {
           outcome: 'unresolved',
           fixInvocationId: fix.invocationId,
@@ -106,9 +97,26 @@ export class ValidateFixLoop {
         continue;
       }
 
-      if (fix.verdict === undefined || fix.verdict === 'cannot_fix') {
+      if (fix.verdict === undefined) {
+        this.emit(
+          input,
+          'loop.verdict_missing',
+          'warn',
+          `fix agent returned undefined verdict on iteration ${iterationIndex}, breaking loop`,
+          { index: iterationIndex, invocationId: fix.invocationId },
+        );
+        loop = completeIteration(loop, {
+          outcome: 'failed',
+          fixInvocationId: fix.invocationId,
+          now: deps.now(),
+        });
+        deps.loops.update(loop);
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        break;
+      }
+
+      if (fix.verdict === 'cannot_fix') {
         consecutiveFixFailures += 1;
-        consecutiveNoFixesNeeded = 0;
         loop = completeIteration(loop, {
           outcome: 'fix_failed',
           fixInvocationId: fix.invocationId,
@@ -119,7 +127,6 @@ export class ValidateFixLoop {
         continue;
       }
       consecutiveFixFailures = 0;
-      consecutiveNoFixesNeeded = 0;
 
       // revalidate
       const reval = await deps.runRevalidation(ctx);
