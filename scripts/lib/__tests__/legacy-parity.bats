@@ -2626,3 +2626,59 @@ PLAN
   [[ "$clear_line" -lt "$add_line" ]]
 }
 
+# Invariant: when the antigravity adapter detects MISSING_REQUIRED_ARTIFACT from
+#   runExternalCli, it scans the scratch directory for the expected artifacts.
+#   If found, it moves them to the worktree (cwd), sets outcome to success,
+#   adds ARTIFACT_IN_SCRATCH_DIR to contract violatons, and populates
+#   remediatedArtifacts. This distinguishes "artifact produced in wrong location"
+#   from "agent produced nothing" — the orchestrator can continue with the
+#   recovered artifact instead of triggering fallback.
+# Source: #521.
+# Failure prevented: agy writes design.md to ~/.gemini/antigravity-cli/scratch/
+#   instead of the worktree. Without detection, the orchestrator sees
+#   MISSING_REQUIRED_ARTIFACT and triggers a fallback round, wasting compute
+#   and masking the root cause. With detection + recovery, the artifact is
+#   recovered and the invocation succeeds with a diagnostic violation code.
+# TS-port contract: the TS AntigravityAgentAdapter must scan scratchDir for
+#   expected artifacts when MISSING_REQUIRED_ARTIFACT is present, recover
+#   found artifacts to cwd, and populate remediatedArtifacts.
+@test "parity[#521]: adapter detects and recovers artifacts wrongly written to scratch dir" {
+  local adapter="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+
+  # ARTIFACT_IN_SCRATCH_DIR code must be referenced
+  run grep -c "ARTIFACT_IN_SCRATCH_DIR" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # CONTRACT_VIOLATION_CODES must be imported
+  run grep -c "CONTRACT_VIOLATION_CODES" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # findExpectedArtifactsInDir must be defined and called
+  run grep -c "findExpectedArtifactsInDir" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  # MISSING_REQUIRED_ARTIFACT check must gate the scan
+  run grep -c "MISSING_REQUIRED_ARTIFACT" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # remediatedArtifacts must be populated on recovery
+  run grep -c "remediatedArtifacts" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # renameSync must be imported (for artifact recovery)
+  run grep -c "renameSync" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # basename must be present
+  run grep -c "basename" "$adapter"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
+
+
