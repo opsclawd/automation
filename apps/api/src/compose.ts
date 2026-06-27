@@ -1357,10 +1357,14 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? { fixFallbackProfileOverride: fixValidateFallbackProfileName }
             : {}),
         });
-        const mappedVerdict: 'fixed' | 'cannot_fix' | undefined =
-          result.verdict === 'done_with_fixes' || result.verdict === 'done_no_fixes_needed'
+        const mappedVerdict: 'fixed' | 'cannot_fix' | 'no_fixes_needed' | undefined =
+          result.verdict === 'done_with_fixes'
             ? 'fixed'
-            : result.verdict;
+            : result.verdict === 'done_no_fixes_needed'
+              ? 'no_fixes_needed'
+              : result.verdict === 'cannot_fix'
+                ? 'cannot_fix'
+                : undefined;
         return {
           invocationId: result.invocationId,
           agentOutcome: result.agentOutcome,
@@ -1853,27 +1857,29 @@ export function composeRoot(opts: ComposeOptions): Container {
         }),
       );
 
-      phaseRegistry.register(
-        new FixValidateHandler({
-          runLoop: async (ctx) => {
-            const result = await validateFixLoopInstance.execute({
-              runId: RunId(ctx.runUuid),
-              phaseId: PhaseName('fix-validate'),
-              repoId: ctx.repoFullName,
-              cwd: ctx.cwd,
-              maxIterations: config.phases.fixValidate?.maxIterations ?? 3,
-              fixProfile: AgentProfileName(fixValidateProfileName),
-              ...(fixValidateFallbackProfileName
-                ? { fixFallbackProfile: AgentProfileName(fixValidateFallbackProfileName) }
-                : {}),
-            });
-            return {
-              phaseOutcome: result.phaseOutcome,
-              loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
-            };
-          },
-        }),
-      );
+      if (config.phases.fixValidate?.enabled !== false) {
+        phaseRegistry.register(
+          new FixValidateHandler({
+            runLoop: async (ctx) => {
+              const result = await validateFixLoopInstance.execute({
+                runId: RunId(ctx.runUuid),
+                phaseId: PhaseName('fix-validate'),
+                repoId: ctx.repoFullName,
+                cwd: ctx.cwd,
+                maxIterations: config.phases.fixValidate?.maxIterations ?? 3,
+                fixProfile: AgentProfileName(fixValidateProfileName),
+                ...(fixValidateFallbackProfileName
+                  ? { fixFallbackProfile: AgentProfileName(fixValidateFallbackProfileName) }
+                  : {}),
+              });
+              return {
+                phaseOutcome: result.phaseOutcome,
+                loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
+              };
+            },
+          }),
+        );
+      }
 
       phaseRegistry.register(
         new ReviewFixHandler({

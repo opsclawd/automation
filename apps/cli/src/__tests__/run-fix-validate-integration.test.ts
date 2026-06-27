@@ -116,9 +116,11 @@ describe('run-fix-validate integration', () => {
       issueNumber: 337,
       type: 'issue',
       status: 'running',
-      completedPhases: [],
       startedAt: new Date(),
-    } as never);
+      completedPhases: [] as string[],
+      skippedPhases: [] as string[],
+      displayIdHistory: [] as string[],
+    });
 
     const { phaseOutcome, loop } = await c.validateFixLoop!.execute({
       runId: RunId(runUuid),
@@ -150,9 +152,11 @@ describe('run-fix-validate integration', () => {
       issueNumber: 337,
       type: 'issue',
       status: 'running',
-      completedPhases: [],
       startedAt: new Date(),
-    } as never);
+      completedPhases: [] as string[],
+      skippedPhases: [] as string[],
+      displayIdHistory: [] as string[],
+    });
 
     const { phaseOutcome, loop } = await c.validateFixLoop!.execute({
       runId: RunId(runUuid),

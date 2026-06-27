@@ -30,6 +30,7 @@ export class ValidateFixLoop {
     deps.loops.insert(loop);
 
     let consecutiveFixFailures = 0;
+    let consecutiveNoFixesNeeded = 0;
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -71,6 +72,28 @@ export class ValidateFixLoop {
         break;
       }
 
+      if (fix.verdict === 'no_fixes_needed') {
+        consecutiveNoFixesNeeded += 1;
+        if (consecutiveNoFixesNeeded >= 2) {
+          loop = completeIteration(loop, {
+            outcome: 'unresolved',
+            fixInvocationId: fix.invocationId,
+            now: deps.now(),
+          });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          break;
+        }
+        loop = completeIteration(loop, {
+          outcome: 'unresolved',
+          fixInvocationId: fix.invocationId,
+          now: deps.now(),
+        });
+        deps.loops.update(loop);
+        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        continue;
+      }
+
       if (fix.verdict === undefined || fix.verdict === 'cannot_fix') {
         consecutiveFixFailures += 1;
         loop = completeIteration(loop, {
@@ -83,9 +106,20 @@ export class ValidateFixLoop {
         continue;
       }
       consecutiveFixFailures = 0;
+      consecutiveNoFixesNeeded = 0;
 
       // revalidate
       const reval = await deps.runRevalidation(ctx);
+
+      if (!reval.passed && !fix.headBeforeFix && deps.rollbackFix) {
+        this.emit(
+          input,
+          'loop.rollback.unavailable',
+          'warn',
+          `revalidation failed on iteration ${iterationIndex} but headBeforeFix not set — cannot roll back`,
+          { index: iterationIndex },
+        );
+      }
 
       if (!reval.passed && fix.headBeforeFix && deps.rollbackFix) {
         const rollbackOk = await deps.rollbackFix(ctx, fix.headBeforeFix);
@@ -108,6 +142,8 @@ export class ValidateFixLoop {
         }
       }
 
+      const revalidationFailed = !reval.passed;
+      const couldRollback = Boolean(fix.headBeforeFix && deps.rollbackFix);
       const iterOutcome = reval.passed ? 'resolved' : 'revalidation_failed';
       loop = completeIteration(loop, {
         outcome: iterOutcome,
@@ -119,6 +155,9 @@ export class ValidateFixLoop {
       this.emitIterationCompleted(input, iterationIndex, iterOutcome);
 
       if (reval.passed) break;
+      // When revalidation fails and rollback was not possible, break to
+      // prevent accumulating broken state across iterations.
+      if (revalidationFailed && !couldRollback) break;
     }
 
     if (loop.status === 'converged') {
@@ -175,7 +214,8 @@ export class ValidateFixLoop {
   }
 
   private emitEscalation(input: ValidateFixLoopInput, triggerReason: string): void {
-    const toProfile = input.fixFallbackProfile as AgentProfileName;
+    if (input.fixFallbackProfile === undefined) return;
+    const toProfile: AgentProfileName = input.fixFallbackProfile;
     this.emit(input, 'phase.fallback.escalated', 'warn', `escalating fix to ${toProfile}`, {
       fromProfile: input.fixProfile as string,
       toProfile: toProfile as string,

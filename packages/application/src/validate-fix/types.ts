@@ -16,7 +16,7 @@ export interface ValidateFixStepContext {
 export interface ValidateFixAgentResult {
   invocationId: string;
   agentOutcome: StepAgentOutcome;
-  verdict?: 'fixed' | 'cannot_fix';
+  verdict?: 'fixed' | 'cannot_fix' | 'no_fixes_needed';
   headBeforeFix?: string;
 }
 
