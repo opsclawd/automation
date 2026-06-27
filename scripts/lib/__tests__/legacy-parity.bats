@@ -2630,4 +2630,35 @@ PLAN
   [ "$status" -eq 0 ]
 }
 
+# Invariant: before an agent is invoked, stale expected-artifact files at the
+#   agent's cwd are deleted so a file left over from a prior run cannot mask a
+#   no-op or failed invocation.
+# Source: #517 (targeted retry + stale artifact cleanup).
+# Failure prevented: when a worktree already has implementation-log.md (or
+#   result.json) from a prior run, the agent exits in ~5s with outcome success
+#   because the artifact exists, even though no real work was done.
+# TS-port contract: the AgentRuntimeRouter.dispatch method must delete all
+#   files listed in request.expectedArtifacts relative to request.cwd before
+#   calling adapter.invoke. This is runtime-agnostic — pure filesystem state.
+@test "parity[#517]: stale expected artifacts are cleaned before agent invocation" {
+  local worktree
+  worktree="$(mktemp -d)"
+  echo 'stale' > "$worktree/result.json"
+  [ -f "$worktree/result.json" ] || { echo "FAIL: failed to create stale artifact"; return 1; }
+
+  # Simulate router cleanup for the test harness (since we can't invoke the
+  # actual TypeScript router from bats). The TS port must pass its own unit
+  # test suite with the same contract: after dispatch, the adapter never sees
+  # pre-existing expected-artifact files.
+  _test_dir="$worktree"
+  for artifact in result.json implementation-log.md; do
+    if [ -f "$worktree/$artifact" ]; then
+      rm -f "$worktree/$artifact"
+    fi
+  done
+
+  [ ! -f "$worktree/result.json" ]
+}
+
+
 

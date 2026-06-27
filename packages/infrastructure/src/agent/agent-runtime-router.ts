@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { readFileSync, rmSync, statSync } from 'node:fs';
 import {
   AgentInvocationId,
   AgentProfileName,
@@ -147,6 +148,15 @@ export class AgentRuntimeRouter implements AgentPort {
     };
 
     let result: AgentInvocationResult;
+    // Clear stale expected artifacts from previous runs before invoking the
+    // agent, so a file left over from a prior execution cannot mask a no-op or
+    // failed run (#517).
+    if (request.expectedArtifacts?.length) {
+      for (const artifact of request.expectedArtifacts) {
+        rmSync(join(request.cwd, artifact), { force: true });
+      }
+    }
+
     try {
       result = await adapter.invoke(enrichedRequest);
     } catch (err) {

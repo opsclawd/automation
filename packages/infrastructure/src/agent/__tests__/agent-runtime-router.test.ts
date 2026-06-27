@@ -714,4 +714,62 @@ describe('AgentRuntimeRouter', () => {
     const usageEvents = events.filter((e) => e.type === 'agent.usage');
     expect(usageEvents).toHaveLength(0);
   });
+
+  describe('expected artifact cleanup', () => {
+    it('deletes expected artifact files before calling adapter.invoke', async () => {
+      // Use tmpdir so we can verify filesystem state
+      const tmp = `${__dirname}/__tmp_cleanup_test_${Date.now()}`;
+      const { mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs');
+      mkdirSync(tmp, { recursive: true });
+      const artifactPath = `${tmp}/result.json`;
+      writeFileSync(artifactPath, 'stale content', 'utf-8');
+
+      let capturedCwd: string | undefined;
+      const seenArtifacts: string[] = [];
+      const adapter = {
+        async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+          capturedCwd = req.cwd;
+          // Record which artifacts still exist when adapter is invoked
+          for (const a of req.expectedArtifacts) {
+            if (existsSync(`${req.cwd}/${a}`)) {
+              seenArtifacts.push(a);
+            }
+          }
+          return {
+            runtime: 'opencode',
+            provider: 'a',
+            model: 'm',
+            exitCode: 0,
+            durationMs: 1,
+            stdoutPath: '/s',
+            stderrPath: '/e',
+            contractViolations: [],
+            outcome: 'success',
+          };
+        },
+      } satisfies AgentPort;
+
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter },
+        invocationRepository: new FakeAgentInvocationPort(),
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-cleanup',
+        readPromptChars: () => 0,
+      });
+
+      await router.invoke(
+        req({
+          cwd: tmp,
+          expectedArtifacts: ['result.json'],
+        }),
+      );
+
+      expect(seenArtifacts).toHaveLength(0);
+      expect(capturedCwd).toBe(tmp);
+
+      // Clean up tmpdir
+      rmSync(tmp, { recursive: true, force: true });
+    });
+  });
 });
