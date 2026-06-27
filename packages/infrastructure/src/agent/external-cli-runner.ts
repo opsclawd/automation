@@ -10,7 +10,7 @@ import {
   copyFileSync,
   unlinkSync,
 } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, basename } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
@@ -55,7 +55,7 @@ function findMisplacedCandidate(cwd: string, artifactBasename: string): string |
       }
       // skip git-tracked files (only untracked/ignored files are candidates)
       try {
-        execSync(`git ls-files --error-unmatch ${JSON.stringify(entry)}`, {
+        execFileSync('git', ['ls-files', '--error-unmatch', entry], {
           cwd,
           stdio: 'pipe',
         });

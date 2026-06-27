@@ -2521,7 +2521,7 @@ PLAN
   [ "$output" -ge 1 ]
 
   # Must skip git-tracked files
-  run grep -c "ls-files --error-unmatch" "$runner"
+  run grep -c "error-unmatch" "$runner"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }

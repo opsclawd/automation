@@ -477,5 +477,32 @@ describe('runExternalCli', () => {
         rmSync(artifactsDir, { recursive: true, force: true });
       }
     });
+    it('is safe against shell command injection via artifact names/paths', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const injectionDir = join(cwd, 'docs', '');
+        mkdirSync(injectionDir, { recursive: true });
+        writeFileSync(join(injectionDir, 'design.md'), '# Safe');
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+        expect(existsSync(join(cwd, 'injection-test.txt'))).toBe(false);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
   });
 });
