@@ -3044,6 +3044,215 @@ describe('CLI runs resume command', () => {
     }
   });
 
+  it('streams progress to stderr when --verbose is passed during resume', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-verbose-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'resume-verbose-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-113-20260622-000000',
+      113,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const subscribeSpy = vi.spyOn(InMemoryEventBus.prototype, 'subscribe');
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
+      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: runUuid,
+          status: 'passed' as const,
+          displayId: '',
+          issueNumber: 113,
+          type: 'issue_to_pr' as const,
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [{ phase: 'implement', status: 'passed' }],
+      });
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', runUuid, '--verbose'], { from: 'user' });
+
+      expect(subscribeSpy).toHaveBeenCalled();
+      const listener = subscribeSpy.mock.calls[0]?.[1];
+      expect(listener).toBeDefined();
+      listener?.({
+        runId: runUuid,
+        type: 'phase.started',
+        level: 'info' as const,
+        message: 'starting phase implement',
+        timestamp: new Date().toISOString(),
+        metadata: {},
+      });
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[ts] starting phase implement'),
+      );
+
+      subscribeSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+      vi.restoreAllMocks();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('does not stream progress when --no-verbose is passed during resume', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-noverbose-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    const runUuid = 'resume-noverbose-uuid';
+    db.prepare(
+      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      runUuid,
+      'issue-114-20260622-000000',
+      114,
+      'issue_to_pr',
+      'failed',
+      '[]',
+      new Date().toISOString(),
+    );
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const subscribeSpy = vi.spyOn(InMemoryEventBus.prototype, 'subscribe');
+
+      vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
+        repoId: RepositoryId('owner/repo'),
+        workerId: WorkerId(`cli-${process.pid}`),
+        runId: runUuid as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
+        acquiredAt: new Date(),
+        heartbeatAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+      });
+      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
+      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
+      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+        run: {
+          uuid: runUuid,
+          status: 'passed' as const,
+          displayId: '',
+          issueNumber: 114,
+          type: 'issue_to_pr' as const,
+          completedPhases: [],
+          skippedPhases: [],
+          startedAt: new Date(),
+        },
+        phases: [{ phase: 'implement', status: 'passed' }],
+      });
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
+        return true;
+      }) as never);
+
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['resume', '--uuid', runUuid, '--no-verbose'], { from: 'user' });
+
+      expect(subscribeSpy).not.toHaveBeenCalled();
+
+      subscribeSpy.mockRestore();
+      vi.restoreAllMocks();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
   it('exits 1 when repoFullName is missing', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-resume-norepo-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
