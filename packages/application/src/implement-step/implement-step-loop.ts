@@ -11,6 +11,7 @@ import type {
   ImplementStepLoopDeps,
   ImplementStepLoopInput,
   ImplementStepLoopResult,
+  SpecReviewResult,
   StepLoopContext,
 } from './types.js';
 
@@ -130,8 +131,33 @@ export class ImplementStepLoop {
         index: iterationIndex,
       });
 
-      // --- SPEC-REVIEW ---
-      const specReview = await deps.runSpecReview(ctx, tcResult);
+      // --- SPEC-REVIEW (with targeted retry) ---
+      const MAX_SPEC_REVIEW_ATTEMPTS = 3;
+      let specReview: SpecReviewResult;
+      let specReviewAttempts = 0;
+      do {
+        specReviewAttempts += 1;
+        specReview = await deps.runSpecReview(ctx, tcResult);
+
+        if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
+          break;
+        }
+
+        if (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS) {
+          this.emit(
+            input,
+            'step.spec-review.retry',
+            'warn',
+            `spec-review attempt ${specReviewAttempts} failed, retrying...`,
+            {
+              attempt: specReviewAttempts,
+              maxAttempts: MAX_SPEC_REVIEW_ATTEMPTS,
+              agentOutcome: specReview.agentOutcome,
+              hasVerdict: specReview.verdict !== undefined,
+            },
+          );
+        }
+      } while (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS);
       loop = startIteration(loop, {
         reviewInvocationId: specReview.invocationId,
         now: deps.now(),
