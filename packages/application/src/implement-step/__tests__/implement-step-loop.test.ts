@@ -1024,5 +1024,79 @@ describe('ImplementStepLoop', () => {
       expect(out.outcome).toBe('failed'); // exhausted after 1 iter
       expect(specCalls).toBe(1);
     });
+
+    it('hard fails after all 3 attempts fail (exhaustion)', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return { invocationId: `sr-${specCalls}`, agentOutcome: 'timeout' as const };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('failed');
+      expect(out.loop.iterations[0]?.outcome).toBe('failed');
+      expect(specCalls).toBe(3);
+    });
+
+    it('emits step.spec-review.retry events for each failed attempt before the last', async () => {
+      const { events, bus } = collectEvents();
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          if (specCalls < 3) {
+            return { invocationId: `sr-${specCalls}`, agentOutcome: 'contract_violation' as const };
+          }
+          return {
+            invocationId: 'sr-3',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      const retryEvents = events.filter((e) => e.type === 'step.spec-review.retry');
+      expect(retryEvents).toHaveLength(2); // attempts 1 and 2 fail, attempt 3 succeeds
+      expect(retryEvents[0]?.level).toBe('warn');
+      expect(retryEvents[0]?.metadata.attempt).toBe(1);
+      expect(retryEvents[0]?.metadata.maxAttempts).toBe(3);
+      expect(retryEvents[1]?.metadata.attempt).toBe(2);
+    });
+
+    it('emits retry events for undefined verdict and non-success outcome', async () => {
+      const { events, bus } = collectEvents();
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          if (specCalls === 1) {
+            return { invocationId: 'sr-1', agentOutcome: 'success' as const };
+            // verdict undefined, retried
+          }
+          if (specCalls === 2) {
+            return { invocationId: 'sr-2', agentOutcome: 'timeout' as const };
+            // timeout, retried
+          }
+          return {
+            invocationId: 'sr-3',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      const retryEvents = events.filter((e) => e.type === 'step.spec-review.retry');
+      expect(retryEvents).toHaveLength(2);
+      expect(retryEvents[0]?.metadata.agentOutcome).toBe('success');
+      expect(retryEvents[0]?.metadata.hasVerdict).toBe(false);
+      expect(retryEvents[1]?.metadata.agentOutcome).toBe('timeout');
+      expect(retryEvents[1]?.metadata.hasVerdict).toBe(false);
+    });
   });
 });
