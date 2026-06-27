@@ -2619,8 +2619,8 @@ PLAN
   # clearDirectory must be called BEFORE runExternalCli in invoke()
   local adapter="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
   local clear_line add_line
-  clear_line=$(grep -n 'clearDirectory' "$adapter" | tail -1 | cut -d: -f1)
-  add_line=$(grep -n 'runExternalCli' "$adapter" | tail -1 | cut -d: -f1)
+  clear_line=$(grep -n 'clearDirectory(scratchDir)' "$adapter" | head -1 | cut -d: -f1)
+  add_line=$(grep -n 'runExternalCli(' "$adapter" | head -1 | cut -d: -f1)
   [[ -n "$clear_line" ]]
   [[ -n "$add_line" ]]
   [[ "$clear_line" -lt "$add_line" ]]

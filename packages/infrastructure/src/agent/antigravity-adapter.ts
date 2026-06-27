@@ -1,4 +1,12 @@
-import { readFileSync, readdirSync, rmSync, existsSync, renameSync } from 'node:fs';
+import {
+  readFileSync,
+  readdirSync,
+  rmSync,
+  existsSync,
+  renameSync,
+  copyFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
@@ -83,7 +91,18 @@ export class AntigravityAgentAdapter implements AgentPort {
         result.contractViolations = [CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR];
         for (const relPath of stray) {
           const dest = join(request.cwd, basename(relPath));
-          renameSync(join(scratchDir, relPath), dest);
+          const src = join(scratchDir, relPath);
+          try {
+            renameSync(src, dest);
+          } catch (err) {
+            const error = err as { code?: string };
+            if (error.code === 'EXDEV') {
+              copyFileSync(src, dest);
+              unlinkSync(src);
+            } else {
+              throw err;
+            }
+          }
         }
         result.remediatedArtifacts = stray.map((relPath) => ({
           src: join(scratchDir, relPath),
