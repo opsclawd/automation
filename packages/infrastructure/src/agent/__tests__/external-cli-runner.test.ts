@@ -162,10 +162,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'docs', 'superpowers', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(
-          join(specDir, '2026-04-26-ops-57-fix-score-trace-build-design.md'),
-          '# Design',
-        );
+        writeFileSync(join(specDir, 'design.md'), '# Design');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -179,10 +176,7 @@ describe('runExternalCli', () => {
         expect(existsSync(join(cwd, 'design.md'))).toBe(true);
         expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe('# Design');
         expect(result.remediatedArtifacts).toEqual([
-          {
-            src: 'docs/superpowers/specs/2026-04-26-ops-57-fix-score-trace-build-design.md',
-            artifact: 'design.md',
-          },
+          { src: 'docs/superpowers/specs/design.md', artifact: 'design.md' },
         ]);
       } finally {
         rmSync(cwd, { recursive: true, force: true });
@@ -198,7 +192,7 @@ describe('runExternalCli', () => {
         writeFileSync(join(cwd, 'design.md'), '# Existing');
         const specDir = join(cwd, 'docs', 'superpowers', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, '2026-04-26-design.md'), '# Other');
+        writeFileSync(join(specDir, 'design.md'), '# Other');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -222,10 +216,10 @@ describe('runExternalCli', () => {
       const artifactsDir = makeTmpDir();
       try {
         makeGitRepo(cwd);
-        const specDir = join(cwd, 'docs', 'superpowers', 'specs');
-        mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, '2026-04-26-design-a.md'), '# A');
-        writeFileSync(join(specDir, '2026-04-26-design-b.md'), '# B');
+        mkdirSync(join(cwd, 'docs', 'a'), { recursive: true });
+        mkdirSync(join(cwd, 'docs', 'b'), { recursive: true });
+        writeFileSync(join(cwd, 'docs', 'a', 'design.md'), '# A');
+        writeFileSync(join(cwd, 'docs', 'b', 'design.md'), '# B');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -251,8 +245,8 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'docs', 'superpowers', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, '2026-04-26-design.md'), '# Tracked');
-        execSync('git add docs/superpowers/specs/2026-04-26-design.md', { cwd, stdio: 'pipe' });
+        writeFileSync(join(specDir, 'design.md'), '# Tracked');
+        execSync('git add docs/superpowers/specs/design.md', { cwd, stdio: 'pipe' });
         execSync('git commit -m "add tracked design"', { cwd, stdio: 'pipe' });
         const result = await runExternalCli({
           runtime: 'opencode',
@@ -279,7 +273,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'docs', 'superpowers', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, '2026-04-26-design.md'), '# Design');
+        writeFileSync(join(specDir, 'design.md'), '# Design');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -291,9 +285,8 @@ describe('runExternalCli', () => {
         });
         expect(result.outcome).toBe('success');
         expect(existsSync(join(cwd, 'design.md'))).toBe(true);
-        // The spec directory should be removed since it was created by the agent
-        // and is now empty (the file was moved out)
         expect(existsSync(specDir)).toBe(false);
+        expect(existsSync(join(cwd, 'docs'))).toBe(false);
       } finally {
         rmSync(cwd, { recursive: true, force: true });
         rmSync(artifactsDir, { recursive: true, force: true });

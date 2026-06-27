@@ -24,3 +24,15 @@
 ### 2. `scripts/lib/__tests__/legacy-parity.bats`
 - Replaced the body of `parity[#504]` to match the new `readdirSync`, `basename`, and single-candidate requirements.
 - Added `parity[#527]` test verifying the new post-check gitignore-aware find-based scan with `EXDEV` fallback, `NOISE_DIRS` exclusion, and `MISPLACED_ARTIFACT` status conversion.
+
+# Implementation Log - Task 3: Update existing artifact remediation tests to match new exact-basename approach
+
+## Summary of Changes
+
+### 1. `packages/infrastructure/src/agent/__tests__/external-cli-runner.test.ts`
+- Updated the 5 existing tests in the `artifact remediation` describe block to use exact basename matches instead of timestamp-prefixed filenames:
+  - **"moves misplaced design.md from subdirectory to worktree root"**: Changed the subdir filename from `2026-04-26-ops-57-fix-score-trace-build-design.md` to `design.md` and updated `remediatedArtifacts` expectations accordingly.
+  - **"does not remediate when design.md already exists at root"**: Changed the subdir filename from `2026-04-26-design.md` to `design.md`.
+  - **"does not remediate when multiple untracked matching files exist"**: Created two untracked files both named `design.md` in different subdirectories (`docs/a/design.md` and `docs/b/design.md`) instead of pattern-matched names.
+  - **"does not remediate when the misplaced file is git-tracked"**: Changed subdir filename to `design.md` and git-added/committed it before execution.
+  - **"cleans up empty ancestor directories after moving misplaced file"**: Changed subdir filename to `design.md` and updated expectations to assert both `specDir` and parent `docs` directory are cleaned up.
