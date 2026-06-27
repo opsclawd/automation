@@ -4795,9 +4795,6 @@ EOF
   fi
   if [[ "$VALIDATION_STATUS" == "passed" ]]; then
     gh issue edit "$ISSUE_NUM" --add-label "ai:pr-ready" 2>/dev/null || true
-  else
-    gh issue edit "$ISSUE_NUM" --add-label "ai:needs-human-review" 2>/dev/null || true
-    warn "Validation did not pass (status: ${VALIDATION_STATUS}). Labeling as ai:needs-human-review instead of ai:pr-ready."
   fi
 
   # Comment on issue

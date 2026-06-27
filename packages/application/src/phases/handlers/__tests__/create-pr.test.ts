@@ -5,16 +5,14 @@ import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
 /** IMPORTANT: must NOT seed artifacts — absence/fallback tests rely on empty store. */
-function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
+async function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
   const artifacts = new FakeArtifactStore();
   // Seed validation.result to 'passed' by default so tests pass Stage 0 gate
-  artifacts
-    .write({
-      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      relativePath: 'validation.result',
-      contents: 'passed\n',
-    })
-    .catch(() => {});
+  await artifacts.write({
+    runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    relativePath: 'validation.result',
+    contents: 'passed\n',
+  });
 
   const github = new FakeGitHubPort();
   github.issues.set('acme/widgets/7', {
@@ -50,7 +48,7 @@ const HANDLER = new CreatePrHandler({ baseBranch: 'main', headBranch: () => 'fea
 
 describe('CreatePrHandler — deterministic assembly', () => {
   it('assembles pr-summary.md from artifacts, opens PR, writes pr-url.txt, flips labels', async () => {
-    const { artifacts, github, git, ctx, events } = build();
+    const { artifacts, github, git, ctx, events } = await build();
 
     // Seed input artifacts
     await artifacts.write({
@@ -141,7 +139,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('falls back to issue number title when getIssue throws', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     // Don't seed the issue in github — getIssue will throw
     // (FakeGitHubPort built without the issue seeded)
     const github2 = new FakeGitHubPort(); // no issues seeded
@@ -154,7 +152,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('falls back to plan.md task headers when task-manifest.json is absent', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'plan.md',
@@ -169,7 +167,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('includes arbiter rationale and deviation records in Autonomous Actions', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'arbiter-rationale-1.md',
@@ -192,7 +190,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('omits Autonomous Actions section when no arbiter/deviation files exist', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     const res = await HANDLER.run(ctx);
     expect(res.outcome).toBe('passed');
     const summary = await artifacts.read(ctx.runUuid, 'pr-summary.md');
@@ -200,7 +198,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('shows "No code review performed" when neither code-review.md nor review.md exists', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     const res = await HANDLER.run(ctx);
     expect(res.outcome).toBe('passed');
     const summary = await artifacts.read(ctx.runUuid, 'pr-summary.md');
@@ -208,7 +206,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('reads review.md when code-review.md is absent', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'review.md',
@@ -222,7 +220,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('fails when validation.result is absent', async () => {
-    const { ctx } = build();
+    const { ctx } = await build();
     const emptyStore = new FakeArtifactStore();
     const ctxNoVal = { ...ctx, artifacts: emptyStore } as unknown as PhaseHandlerContext;
 
@@ -231,11 +229,12 @@ describe('CreatePrHandler — deterministic assembly', () => {
     if (res.outcome === 'failed') {
       expect(res.failure.kind).toBe('validation_failed');
       expect(res.failure.message).toContain('Validation did not pass (status: missing)');
+      expect(res.failure.artifacts).toEqual([]);
     }
   });
 
   it('fails when validation.result is not passed', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'validation.result',
@@ -251,7 +250,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('correctly marks failed validation steps from validate.log sentinels', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'validate.log',
@@ -265,7 +264,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('does not misattribute a sentinel to the wrong validation step', async () => {
-    const { artifacts, ctx } = build();
+    const { artifacts, ctx } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'validate.log',
@@ -279,7 +278,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('does not create a second PR when pr-url.txt already exists (idempotency)', async () => {
-    const { artifacts, github, ctx, events } = build();
+    const { artifacts, github, ctx, events } = await build();
     const existingUrl = 'https://example/pr/existing';
     await artifacts.write({
       runId: ctx.runUuid,
@@ -311,7 +310,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('returns github_failed when createPullRequest throws', async () => {
-    const { github, ctx, events } = build();
+    const { github, ctx, events } = await build();
     github.createPullRequest = () => Promise.reject(new Error('422 Unprocessable Entity'));
 
     const res = await HANDLER.run(ctx);
@@ -329,7 +328,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('returns git_failed when push throws', async () => {
-    const { git, ctx, events } = build();
+    const { git, ctx, events } = await build();
     git.push = () => Promise.reject(new Error('push rejected'));
 
     const res = await HANDLER.run(ctx);
@@ -340,5 +339,22 @@ describe('CreatePrHandler — deterministic assembly', () => {
     }
     const failedEvents = events.filter((e) => e.type === 'create_pr.failed');
     expect(failedEvents).toHaveLength(1);
+  });
+
+  it('fails with status missing/empty when validation.result is empty', async () => {
+    const { artifacts, ctx } = await build();
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.result',
+      contents: '   \n',
+    });
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('validation_failed');
+      expect(res.failure.message).toContain('Validation did not pass (status: missing)');
+      expect(res.failure.artifacts).toEqual([]);
+    }
   });
 });
