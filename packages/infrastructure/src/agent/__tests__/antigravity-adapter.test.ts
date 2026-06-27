@@ -303,4 +303,73 @@ describe('AntigravityAgentAdapter', () => {
     expect(result.outcome).toBe('success');
     // No error thrown — clearDirectory is a no-op for non-existent dirs
   });
+
+  it('detects expected artifacts in scratch dir and recovers them to cwd', async () => {
+    const cwd = makeWorktree();
+    const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
+    dirs.push(scratchDir);
+
+    // Create a custom fake agy script that writes the artifact to scratchDir during invocation
+    const fakeScript = join(cwd, 'fake-agy-write-scratch.sh');
+    writeFileSync(
+      fakeScript,
+      `#!/usr/bin/env bash
+mkdir -p "${scratchDir}/automation"
+printf "## Recovered design" > "${scratchDir}/automation/design.md"
+echo "fake agy success"
+exit 0
+`,
+      { mode: 0o755 }, // Make it executable
+    );
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+      scratchDir,
+    });
+    // fakeScript exits 0 but never writes design.md to cwd.
+    // runExternalCli will detect MISSING_REQUIRED_ARTIFACT and set
+    // outcome=contract_violation. The adapter's post-invocation hook
+    // should then find design.md in scratchDir, move it to cwd, and
+    // change outcome to success.
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['design.md'] }));
+
+    // Outcome is success because the artifact was recovered
+    expect(result.outcome).toBe('success');
+
+    // Diagnostic violation code is present
+    expect(result.contractViolations).toContain('artifact_in_scratch_dir');
+
+    // The artifact was recovered to cwd
+    expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe('## Recovered design');
+
+    // remediatedArtifacts is populated
+    expect(result.remediatedArtifacts).toBeDefined();
+    expect(result.remediatedArtifacts!.length).toBe(1);
+    expect(result.remediatedArtifacts![0]!.artifact).toBe('design.md');
+
+    // The artifact is no longer in scratch dir (it was moved)
+    expect(existsSync(join(scratchDir, 'automation', 'design.md'))).toBe(false);
+  });
+
+  it('does not recover when scratch dir has no matching expected artifacts', async () => {
+    const cwd = makeWorktree();
+    const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
+    dirs.push(scratchDir);
+    writeFileSync(join(scratchDir, 'unrelated.log'), 'some log');
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      scratchDir,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['design.md'] }));
+
+    // The artifact is genuinely missing — no recovery possible
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).not.toContain('artifact_in_scratch_dir');
+    expect(result.remediatedArtifacts).toBeUndefined();
+  });
 });
