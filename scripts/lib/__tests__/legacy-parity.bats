@@ -2578,7 +2578,7 @@ PLAN
   # The gate must come before any gh pr create or gh issue edit command
   local gate_line first_gh_line
   gate_line=$(awk -v start="$create_pr_start" 'NR >= start && /validation\.result/ {print NR; exit}' "$script")
-  first_gh_line=$(awk -v start="$create_pr_start" 'NR >= start && /gh (pr create|issue edit)/ {print NR; exit}' "$script")
+  first_gh_line=$(awk -v start="$create_pr_start" 'NR >= start && (/gh pr create/ || /gh issue edit/) {print NR; exit}' "$script")
   [ -n "$gate_line" ]
   [ -n "$first_gh_line" ]
   [ "$gate_line" -lt "$first_gh_line" ]
