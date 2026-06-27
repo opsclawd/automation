@@ -205,6 +205,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           process.exit(EXIT_USER_ERROR);
         }
 
+        const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
+
         // --- TS executor path ---
         if (opts.executor === 'ts') {
           if (!c.runExecutor) {
@@ -319,7 +321,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             unsubscribe?.();
             signalHandlers?.remove();
             lease?.stop();
-            process.exit(result.run.status === 'passed' ? 0 : EXIT_USER_ERROR);
+            const isSuccess =
+              result.run.status === 'passed' || pausedStatuses.includes(result.run.status);
+            process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             unsubscribe?.();
             signalHandlers?.remove();
@@ -382,7 +386,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // the same discipline as the TS path. The finally still covers the
             // throw case, where it does run before the error propagates.
             signalHandlers.remove();
-            process.exit(out.status === 'passed' ? 0 : EXIT_USER_ERROR);
+            const isSuccess =
+              out.status === 'passed' || pausedStatuses.includes(out.status as RunStatus);
+            process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } finally {
             signalHandlers.remove();
           }
@@ -677,26 +683,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
             }
 
-            if (opts.fromPhase) {
-              await c.resumeRun.transition({
-                runId: RunId(opts.uuid),
-                fromPhase: opts.fromPhase,
-                workerId,
-              });
-            } else {
-              await c.retryFailedPhase.execute({
-                runId: RunId(opts.uuid),
-                workerId,
-              });
-            }
-
-            const updatedRun = c.runRepository.findByUuid(opts.uuid);
-            if (!updatedRun) {
-              console.error(`Error: run ${opts.uuid} not found after transition.`);
-              process.exit(EXIT_USER_ERROR);
-            }
-
-            c.runRepository.update(updatedRun.uuid, { pid: process.pid });
+            c.runRepository.update(run.uuid, { pid: process.pid });
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
@@ -709,10 +696,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 );
               }
             };
+
             try {
               signalHandlers = installSignalHandlers(
                 c.runRepository,
-                updatedRun.issueNumber,
+                run.issueNumber,
                 releaseLeaseOnSignal,
               );
               lease = startLeaseHeartbeat(
@@ -722,6 +710,25 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 leaseTtlMs,
                 heartbeatIntervalMs,
               );
+
+              if (opts.fromPhase) {
+                await c.resumeRun.transition({
+                  runId: RunId(opts.uuid),
+                  fromPhase: opts.fromPhase,
+                  workerId,
+                });
+              } else {
+                await c.retryFailedPhase.execute({
+                  runId: RunId(opts.uuid),
+                  workerId,
+                });
+              }
+
+              const updatedRun = c.runRepository.findByUuid(opts.uuid);
+              if (!updatedRun) {
+                console.error(`Error: run ${opts.uuid} not found after transition.`);
+                process.exit(EXIT_USER_ERROR);
+              }
 
               const result = await c.runExecutor.execute({
                 run: { ...updatedRun, status: 'running' },
