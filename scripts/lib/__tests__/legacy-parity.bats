@@ -2526,3 +2526,30 @@ PLAN
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+# Invariant: the fix-validate phase delegates to ValidateFixLoop which handles
+#   fix iteration inside the TS orchestrator. The TS loop wires runRevalidation
+#   (re-runs validation after a fix attempt) and rollbackFix (resets HEAD when
+#   revalidation fails), mirroring the ReviewFixLoop pattern.
+# Source: #511.
+# TS-port contract: compose.ts must wire runRevalidation and rollbackFix
+#   into the ValidateFixLoop constructor.
+@test "parity[#511]: ValidateFixLoop wires runRevalidation and rollbackFix" {
+  local compose="$REPO_ROOT/apps/api/src/compose.ts"
+  # ValidateFixLoop must be wired in compose.ts
+  run grep -c "new ValidateFixLoop" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+  # runRevalidation must be wired in ValidateFixLoop constructor
+  run grep -c "runRevalidation" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+  # rollbackFix must be wired in ValidateFixLoop constructor
+  run grep -c "rollbackFix" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+  # fix-validate must be registered as a phase handler
+  run grep -c "FixValidateHandler" "$compose"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}

@@ -29,10 +29,17 @@ export interface PhaseHandlerContext {
   idFactory?: () => string;
 }
 
-export type PhaseOutcome = 'passed' | 'failed' | 'blocked' | 'resting' | 'skipped' | 'needs_human_review';
+export type PhaseOutcome =
+  | 'passed'
+  | 'failed'
+  | 'blocked'
+  | 'resting'
+  | 'skipped'
+  | 'needs_human_review'
+  | 'deferred';
 
 export type PhaseResult =
-  | { outcome: 'passed' | 'resting' | 'skipped' }
+  | { outcome: 'passed' | 'resting' | 'skipped' | 'deferred' }
   | { outcome: 'failed' | 'blocked' | 'needs_human_review'; failure: Failure };
 
 export interface PhaseHandler {

@@ -60,6 +60,8 @@ import {
   createVerifyCodeChange,
   pollTaskResultSchema,
   ReviewFixLoop,
+  ValidateFixLoop,
+  FixValidateHandler,
   ImplementStepLoop,
   readReviewVerdict,
   readFixVerdict,
@@ -367,6 +369,7 @@ export interface Container {
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   buildPhaseHandlerContext: PhaseHandlerContextFactory;
   reviewFixLoop?: ReviewFixLoop;
+  validateFixLoop?: ValidateFixLoop;
   implementStepLoop?: ImplementStepLoopType;
   runStep?: (sctx: {
     stepIndex: number;
@@ -714,13 +717,14 @@ export function composeRoot(opts: ComposeOptions): Container {
   phaseRegistry.register(new ReadIssueHandler());
 
   // Register lightweight unavailable stubs for agent-dependent phases so the
-  // registry always contains all 9 canonical phases. Real handler instances
+  // registry always contains all 10 canonical phases. Real handler instances
   // registered inside the if (config.agent) block below overwrite these.
   const stubPhases = [
     'plan-design',
     'plan-write',
     'implement',
     'validate',
+    'fix-validate',
     'review-fix',
     'compound',
     'create-pr',
@@ -789,6 +793,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   let agentRuntime: AgentRuntimeRouter | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   let reviewFixLoop: ReviewFixLoop | undefined;
+  let validateFixLoop: ValidateFixLoop | undefined;
   let implementStepLoop: ImplementStepLoopType | undefined;
   let runStep: Container['runStep'] | undefined;
   let runExecutor: RunExecutor | undefined;
@@ -1027,11 +1032,15 @@ export function composeRoot(opts: ComposeOptions): Container {
               depends_on: string[];
             }>;
           };
+          fixProfileOverride?: string;
+          fixFallbackProfileOverride?: string;
+          extraPromptSections?: string[];
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
-        const profile =
-          opts.useFallback && fixFallbackProfileName ? fixFallbackProfileName : fixProfileName;
+        const fallbackProfile = opts.fixFallbackProfileOverride ?? fixFallbackProfileName;
+        const primaryProfile = opts.fixProfileOverride ?? fixProfileName;
+        const profile = opts.useFallback && fallbackProfile ? fallbackProfile : primaryProfile;
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
@@ -1094,6 +1103,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                 'and consider a different approach to address the findings.',
               ]
             : []),
+          ...(opts.extraPromptSections ?? []),
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         // Clear stale result.json from a prior step so the adapter's
@@ -1336,6 +1346,67 @@ export function composeRoot(opts: ComposeOptions): Container {
         idFactory: () => randomUUID(),
       });
       reviewFixLoop = reviewFixLoopInstance;
+
+      const validateFixRunFix = async (
+        ctx: import('@ai-sdlc/application').ValidateFixStepContext,
+        opts: import('@ai-sdlc/application').FixStepOptions,
+      ): Promise<import('@ai-sdlc/application').ValidateFixAgentResult> => {
+        let failureContext: string[] = [];
+        try {
+          const failureContent = readFileSync(join(ctx.cwd, 'validate/failure.json'), 'utf-8');
+          failureContext = [
+            '',
+            '## VALIDATION FAILURE CONTEXT',
+            'The following validation failures were detected. Fix them:',
+            '```json',
+            failureContent,
+            '```',
+          ];
+        } catch {
+          // failure.json may not exist — skip
+        }
+        const result = await runFix(ctx, {
+          ...opts,
+          fixProfileOverride: fixValidateProfileName,
+          ...(fixValidateFallbackProfileName
+            ? { fixFallbackProfileOverride: fixValidateFallbackProfileName }
+            : {}),
+          extraPromptSections: failureContext,
+        });
+        const mappedVerdict: 'fixed' | 'cannot_fix' | 'no_fixes_needed' | undefined =
+          result.verdict === 'done_with_fixes'
+            ? 'fixed'
+            : result.verdict === 'done_no_fixes_needed'
+              ? 'no_fixes_needed'
+              : result.verdict === 'cannot_fix'
+                ? 'cannot_fix'
+                : undefined;
+        return {
+          invocationId: result.invocationId,
+          agentOutcome: result.agentOutcome,
+          ...(mappedVerdict !== undefined ? { verdict: mappedVerdict } : {}),
+          ...(result.headBeforeFix !== undefined ? { headBeforeFix: result.headBeforeFix } : {}),
+        };
+      };
+
+      const fixValidateProfileName: string =
+        config.agent.phaseProfiles['fix-validate']?.profile ??
+        config.agent.phaseProfiles['fix-review']?.profile ??
+        'opencode-frontier';
+      const fixValidateFallbackProfileName: string | undefined =
+        config.agent.phaseProfiles['fix-validate']?.fallbackProfile ??
+        config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+
+      const validateFixLoopInstance = new ValidateFixLoop({
+        runFix: validateFixRunFix,
+        runRevalidation,
+        rollbackFix,
+        loops: loopRepository,
+        events: persistingEventBusForLoop,
+        now: () => new Date(),
+        idFactory: () => randomUUID(),
+      });
+      validateFixLoop = validateFixLoopInstance;
 
       const implementProfileName: string =
         config.agent.phaseProfiles['implement']?.profile ?? 'opencode-frontier';
@@ -1799,8 +1870,33 @@ export function composeRoot(opts: ComposeOptions): Container {
           commands: config.validation.commands,
           timeoutSeconds: config.validation.timeout,
           logDir: join(runsDir, 'validate'),
+          fixValidateEnabled: config.phases.fixValidate?.enabled !== false,
         }),
       );
+
+      if (config.phases.fixValidate?.enabled !== false) {
+        phaseRegistry.register(
+          new FixValidateHandler({
+            runLoop: async (ctx) => {
+              const result = await validateFixLoopInstance.execute({
+                runId: RunId(ctx.runUuid),
+                phaseId: PhaseName('fix-validate'),
+                repoId: ctx.repoFullName,
+                cwd: ctx.cwd,
+                maxIterations: config.phases.fixValidate?.maxIterations ?? 3,
+                fixProfile: AgentProfileName(fixValidateProfileName),
+                ...(fixValidateFallbackProfileName
+                  ? { fixFallbackProfile: AgentProfileName(fixValidateFallbackProfileName) }
+                  : {}),
+              });
+              return {
+                phaseOutcome: result.phaseOutcome,
+                loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
+              };
+            },
+          }),
+        );
+      }
 
       phaseRegistry.register(
         new ReviewFixHandler({
@@ -2397,6 +2493,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
     buildPrReviewPoller,
     ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
+    ...(validateFixLoop !== undefined ? { validateFixLoop } : {}),
     ...(implementStepLoop !== undefined ? { implementStepLoop } : {}),
     ...(runStep !== undefined ? { runStep } : {}),
     buildPhaseHandlerContext: composeBuildPhaseHandlerContext,

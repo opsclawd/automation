@@ -7,6 +7,7 @@ export * from './derive-steps.js';
 export * from './handlers/implement.js';
 export * from './handlers/validate.js';
 export * from './handlers/review-fix.js';
+export * from './handlers/fix-validate.js';
 export * from './handlers/compound.js';
 export * from './handlers/create-pr.js';
 export * from './handlers/post-pr-review.js';

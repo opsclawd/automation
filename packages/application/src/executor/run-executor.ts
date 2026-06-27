@@ -260,9 +260,11 @@ export class RunExecutor {
       }
 
       switch (result.outcome) {
+        case 'deferred':
         case 'passed': {
+          const status = result.outcome as 'deferred' | 'passed';
           currentRun = completePhase(currentRun, phaseDef.name as string);
-          phase.status = 'passed';
+          phase.status = status;
           phase.completedAt = now();
           for (const output of phaseDef.outputs) {
             if (!presentArtifacts.includes(output)) {
@@ -287,14 +289,23 @@ export class RunExecutor {
             currentPhase: null,
             completedPhases: currentRun.completedPhases,
           });
-          phases.push({ phase: phaseDef.name, status: 'passed' });
+          // Deferred phases emit 'phase.completed' because the executor's
+          // processing is done — the handler returned, results are persisted,
+          // and the pipeline continues. Event consumers that need to distinguish
+          // can check the event message string (which says "deferred") or the
+          // run step's status field.
+          const eventMsg =
+            status === 'deferred'
+              ? `phase '${String(phaseDef.name)}' deferred — pipeline continues`
+              : `phase '${String(phaseDef.name)}' completed`;
+          phases.push({ phase: phaseDef.name, status });
           this.emit(
             run.displayId,
             run.uuid,
             phaseDef.name as string,
             'info',
             'phase.completed',
-            `phase '${String(phaseDef.name)}' completed`,
+            eventMsg,
             now(),
           );
           break;
