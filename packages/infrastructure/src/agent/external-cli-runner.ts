@@ -6,12 +6,11 @@ import {
   renameSync,
   rmdirSync,
   readdirSync,
-  statSync,
   copyFileSync,
   unlinkSync,
 } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, resolve, relative } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -36,36 +35,35 @@ const NOISE_DIRS = new Set([
 
 function findMisplacedCandidate(cwd: string, artifactBasename: string): string | null {
   try {
-    const entries = readdirSync(cwd, { recursive: true, encoding: 'utf-8' }) as string[];
     const candidates: string[] = [];
-    for (const entry of entries) {
-      // depth >= 2: entry must contain at least one directory separator
-      if (!entry.includes('/') && !entry.includes('\\')) continue;
-      // exact basename match
-      if (basename(entry) !== artifactBasename) continue;
-      // no path component is a noise directory
-      const parts = entry.split(/[\\/]/);
-      if (parts.some((p) => NOISE_DIRS.has(p))) continue;
-      // confirm it is a regular file
-      const fullPath = join(cwd, entry);
-      try {
-        if (!statSync(fullPath).isFile()) continue;
-      } catch {
-        continue;
+    function scan(dir: string, depth: number) {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (NOISE_DIRS.has(entry.name)) continue;
+          scan(join(dir, entry.name), depth + 1);
+        } else if (entry.isFile()) {
+          if (depth >= 2 && entry.name === artifactBasename) {
+            const relativePath = relative(cwd, join(dir, entry.name));
+            // skip git-tracked files (only untracked/ignored files are candidates)
+            try {
+              const gitPath = relativePath.replace(/\\/g, '/');
+              execFileSync('git', ['ls-files', '--error-unmatch', gitPath], {
+                cwd,
+                stdio: 'pipe',
+              });
+              // exit 0 means tracked → skip
+              continue;
+            } catch {
+              // non-zero exit means not tracked → valid candidate
+            }
+            candidates.push(relativePath);
+          }
+        }
       }
-      // skip git-tracked files (only untracked/ignored files are candidates)
-      try {
-        execFileSync('git', ['ls-files', '--error-unmatch', entry], {
-          cwd,
-          stdio: 'pipe',
-        });
-        // exit 0 means tracked → skip
-        continue;
-      } catch {
-        // non-zero exit means not tracked → valid candidate
-      }
-      candidates.push(entry);
     }
+
+    scan(cwd, 1);
     return candidates.length === 1 ? candidates[0]! : null;
   } catch {
     return null;
@@ -87,7 +85,7 @@ function moveMisplacedArtifact(cwd: string, srcRelative: string, destRelative: s
   }
   // Clean up empty ancestor directories up to (but not including) cwd
   let dir = dirname(src);
-  while (dir !== cwd && dir !== dirname(dir)) {
+  while (resolve(dir) !== resolve(cwd) && dir !== dirname(dir)) {
     try {
       rmdirSync(dir);
       dir = dirname(dir);

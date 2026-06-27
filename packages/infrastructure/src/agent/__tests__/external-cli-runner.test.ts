@@ -482,7 +482,7 @@ describe('runExternalCli', () => {
       const artifactsDir = makeTmpDir();
       try {
         makeGitRepo(cwd);
-        const injectionDir = join(cwd, 'docs', '');
+        const injectionDir = join(cwd, 'docs; touch injection-test.txt');
         mkdirSync(injectionDir, { recursive: true });
         writeFileSync(join(injectionDir, 'design.md'), '# Safe');
 
