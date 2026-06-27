@@ -273,7 +273,10 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       const list = await artifacts.list('550e8400-e29b-41d4-a716-446655440000');
-      expect(list).toHaveLength(0);
+      expect(list).toHaveLength(1);
+      expect(list[0]?.relativePath).toBe('validation.result');
+      const contents = await artifacts.read('550e8400-e29b-41d4-a716-446655440000', 'validation.result');
+      expect(contents).toBe('passed\n');
     });
 
     it('emits validate.artifact_write_failed when artifact write throws', async () => {

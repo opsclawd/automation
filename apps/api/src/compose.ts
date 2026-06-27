@@ -1226,6 +1226,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           timeoutSeconds: config.validation.timeout,
         });
         const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
+        if (vr.passed) {
+          writeFileSync(join(ctx.cwd, 'validation.result'), 'passed\n', 'utf-8');
+        }
         return {
           validationRunId: vr.validationRun.id,
           passed: vr.passed,
