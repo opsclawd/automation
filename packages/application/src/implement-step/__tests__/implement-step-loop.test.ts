@@ -927,4 +927,102 @@ describe('ImplementStepLoop', () => {
       expect(esc).toHaveLength(1);
     });
   });
+
+  describe('spec-review retry', () => {
+    it('succeeds on first attempt (no retry needed)', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(specCalls).toBe(1);
+    });
+
+    it('retries on contract_violation and succeeds on attempt 2', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          if (specCalls === 1) {
+            return { invocationId: 'sr-1', agentOutcome: 'contract_violation' as const };
+          }
+          return {
+            invocationId: 'sr-2',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(specCalls).toBe(2);
+    });
+
+    it('retries on undefined verdict (missing result.json) and succeeds on attempt 2', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          if (specCalls === 1) {
+            return { invocationId: 'sr-1', agentOutcome: 'success' as const };
+            // verdict undefined — simulates MISSING_REQUIRED_ARTIFACT
+          }
+          return {
+            invocationId: 'sr-2',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(specCalls).toBe(2);
+    });
+
+    it('retries on timeout and succeeds on attempt 3', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          if (specCalls < 3) {
+            return { invocationId: `sr-${specCalls}`, agentOutcome: 'timeout' as const };
+          }
+          return {
+            invocationId: 'sr-3',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('success');
+      expect(specCalls).toBe(3);
+    });
+
+    it('does NOT retry when spec-review returns success with a defined verdict (even fail verdict)', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: 'sr-1',
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+      });
+      // fail verdict proceeds to quality-review and fix, NOT retried
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      expect(out.outcome).toBe('failed'); // exhausted after 1 iter
+      expect(specCalls).toBe(1);
+    });
+  });
 });
