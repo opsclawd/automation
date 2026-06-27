@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AgentInvocationId, AgentProfileName, type AgentUsage } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import type { AgentPort, AgentUsagePort } from '@ai-sdlc/application/ports';
@@ -718,7 +720,7 @@ describe('AgentRuntimeRouter', () => {
   describe('expected artifact cleanup', () => {
     it('deletes expected artifact files before calling adapter.invoke', async () => {
       // Use tmpdir so we can verify filesystem state
-      const tmp = `${__dirname}/__tmp_cleanup_test_${Date.now()}`;
+      const tmp = join(tmpdir(), `__tmp_cleanup_test_${Date.now()}`);
       const { mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs');
       mkdirSync(tmp, { recursive: true });
       const artifactPath = `${tmp}/result.json`;
@@ -773,7 +775,7 @@ describe('AgentRuntimeRouter', () => {
     });
 
     it('deletes all expected artifacts when multiple are listed', async () => {
-      const tmp = `${__dirname}/__tmp_cleanup_multi_${Date.now()}`;
+      const tmp = join(tmpdir(), `__tmp_cleanup_multi_${Date.now()}`);
       const { mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs');
       mkdirSync(tmp, { recursive: true });
       writeFileSync(`${tmp}/a.json`, 'a', 'utf-8');
@@ -821,7 +823,7 @@ describe('AgentRuntimeRouter', () => {
     });
 
     it('does not throw when expected artifact file does not exist (force: true)', async () => {
-      const tmp = `${__dirname}/__tmp_cleanup_missing_${Date.now()}`;
+      const tmp = join(tmpdir(), `__tmp_cleanup_missing_${Date.now()}`);
       const { mkdirSync, rmSync } = await import('node:fs');
       mkdirSync(tmp, { recursive: true });
 
@@ -854,6 +856,47 @@ describe('AgentRuntimeRouter', () => {
         }),
       );
       expect(result.outcome).toBe('success');
+
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('throws traversal detected error if artifact is empty, dot, or traversal/absolute path', async () => {
+      const tmp = join(tmpdir(), `__tmp_cleanup_traversal_${Date.now()}`);
+      const { mkdirSync, rmSync } = await import('node:fs');
+      mkdirSync(tmp, { recursive: true });
+
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'a',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'success',
+      });
+
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter },
+        invocationRepository: new FakeAgentInvocationPort(),
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-traversal',
+        readPromptChars: () => 0,
+      });
+
+      const invalidPaths = ['', '.', '..', '../etc', '/absolute/path'];
+      for (const invalidPath of invalidPaths) {
+        await expect(
+          router.invoke(
+            req({
+              cwd: tmp,
+              expectedArtifacts: [invalidPath],
+            }),
+          ),
+        ).rejects.toThrow('traversal detected');
+      }
 
       rmSync(tmp, { recursive: true, force: true });
     });

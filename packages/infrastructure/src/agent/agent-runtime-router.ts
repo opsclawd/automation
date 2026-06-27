@@ -155,7 +155,13 @@ export class AgentRuntimeRouter implements AgentPort {
       for (const artifact of request.expectedArtifacts) {
         const resolvedPath = join(request.cwd, artifact);
         const rel = relative(request.cwd, resolvedPath);
-        if (rel.startsWith('..') || isAbsolute(rel)) {
+        if (
+          !rel ||
+          rel === '.' ||
+          rel.startsWith('..') ||
+          isAbsolute(rel) ||
+          isAbsolute(artifact)
+        ) {
           throw new Error(`Invalid artifact path (traversal detected): ${artifact}`);
         }
         rmSync(resolvedPath, { recursive: true, force: true });
