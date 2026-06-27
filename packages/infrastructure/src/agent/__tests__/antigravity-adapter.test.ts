@@ -372,4 +372,51 @@ exit 0
     expect(result.contractViolations).not.toContain('artifact_in_scratch_dir');
     expect(result.remediatedArtifacts).toBeUndefined();
   });
+
+  it('partially recovers some artifacts but fails with contract_violation if others are still missing', async () => {
+    const cwd = makeWorktree();
+    const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
+    dirs.push(scratchDir);
+
+    // Create a custom fake agy script that writes one of the expected artifacts to scratchDir
+    const fakeScript = join(cwd, 'fake-agy-write-partial.sh');
+    writeFileSync(
+      fakeScript,
+      `#!/usr/bin/env bash
+mkdir -p "${scratchDir}"
+printf "## Recovered design" > "${scratchDir}/design.md"
+echo "fake agy success"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+      scratchDir,
+    });
+
+    // We expect both design.md and other.md. Only design.md is in scratchDir.
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['design.md', 'other.md'] }));
+
+    // The invocation should still fail because other.md is missing
+    expect(result.outcome).toBe('contract_violation');
+
+    // Both missing_required_artifact and artifact_in_scratch_dir should be present
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).toContain('artifact_in_scratch_dir');
+
+    // design.md should still be successfully recovered to cwd
+    expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe('## Recovered design');
+
+    // other.md should be missing
+    expect(existsSync(join(cwd, 'other.md'))).toBe(false);
+
+    // remediatedArtifacts should be populated with the recovered design.md
+    expect(result.remediatedArtifacts).toBeDefined();
+    expect(result.remediatedArtifacts!.length).toBe(1);
+    expect(result.remediatedArtifacts![0]!.artifact).toBe('design.md');
+  });
 });
