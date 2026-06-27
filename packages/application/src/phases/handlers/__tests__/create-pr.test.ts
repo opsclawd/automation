@@ -7,6 +7,15 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
 /** IMPORTANT: must NOT seed artifacts — absence/fallback tests rely on empty store. */
 function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
   const artifacts = new FakeArtifactStore();
+  // Seed validation.result to 'passed' by default so tests pass Stage 0 gate
+  artifacts
+    .write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      relativePath: 'validation.result',
+      contents: 'passed\n',
+    })
+    .catch(() => {});
+
   const github = new FakeGitHubPort();
   github.issues.set('acme/widgets/7', {
     number: 7,
@@ -212,12 +221,33 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(summary).toContain('- Medium/Low: 1');
   });
 
-  it('shows Validation: Unknown when validation.result is absent', async () => {
+  it('fails when validation.result is absent', async () => {
+    const { ctx } = build();
+    const emptyStore = new FakeArtifactStore();
+    const ctxNoVal = { ...ctx, artifacts: emptyStore } as unknown as PhaseHandlerContext;
+
+    const res = await HANDLER.run(ctxNoVal);
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('validation_failed');
+      expect(res.failure.message).toContain('Validation did not pass (status: missing)');
+    }
+  });
+
+  it('fails when validation.result is not passed', async () => {
     const { artifacts, ctx } = build();
+    await artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.result',
+      contents: 'failed\n',
+    });
+
     const res = await HANDLER.run(ctx);
-    expect(res.outcome).toBe('passed');
-    const summary = await artifacts.read(ctx.runUuid, 'pr-summary.md');
-    expect(summary).toContain('## Validation: Unknown');
+    expect(res.outcome).toBe('failed');
+    if (res.outcome === 'failed') {
+      expect(res.failure.kind).toBe('validation_failed');
+      expect(res.failure.message).toContain('Validation did not pass (status: failed)');
+    }
   });
 
   it('correctly marks failed validation steps from validate.log sentinels', async () => {

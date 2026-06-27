@@ -16,6 +16,26 @@ export class CreatePrHandler implements PhaseHandler {
     const emit = createEventEmitter(ctx, this.phase);
     emit('create_pr.started', 'info', 'starting create-pr');
 
+    // ── Stage 0: Hard gate — validation must pass before creating a PR (#514) ──
+    let validationResult: string | undefined;
+    try {
+      const raw = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
+      validationResult = raw.trim().split('\n')[0];
+    } catch {
+      validationResult = undefined;
+    }
+    if (validationResult !== 'passed') {
+      const msg = `Validation did not pass (status: ${validationResult ?? 'missing'}). PR creation blocked.`;
+      emit('create_pr.blocked', 'error', msg);
+      return this._fail(
+        ctx,
+        'validation_failed',
+        msg,
+        false,
+        'Re-run the issue to fix validation failures before creating a PR.',
+      );
+    }
+
     // ── Stage 1: Idempotency — reuse existing PR if pr-url.txt exists ──
     let prUrl: string | undefined;
     try {
