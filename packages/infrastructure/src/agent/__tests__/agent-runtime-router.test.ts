@@ -771,5 +771,117 @@ describe('AgentRuntimeRouter', () => {
       // Clean up tmpdir
       rmSync(tmp, { recursive: true, force: true });
     });
+
+    it('deletes all expected artifacts when multiple are listed', async () => {
+      const tmp = `${__dirname}/__tmp_cleanup_multi_${Date.now()}`;
+      const { mkdirSync, writeFileSync, existsSync, rmSync } = await import('node:fs');
+      mkdirSync(tmp, { recursive: true });
+      writeFileSync(`${tmp}/a.json`, 'a', 'utf-8');
+      writeFileSync(`${tmp}/b.md`, 'b', 'utf-8');
+      writeFileSync(`${tmp}/c.txt`, 'c', 'utf-8');
+
+      const seenArtifacts: string[] = [];
+      const adapter = {
+        async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
+          for (const a of req.expectedArtifacts) {
+            if (existsSync(`${req.cwd}/${a}`)) seenArtifacts.push(a);
+          }
+          return {
+            runtime: 'opencode',
+            provider: 'a',
+            model: 'm',
+            exitCode: 0,
+            durationMs: 1,
+            stdoutPath: '/s',
+            stderrPath: '/e',
+            contractViolations: [],
+            outcome: 'success',
+          };
+        },
+      } satisfies AgentPort;
+
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter },
+        invocationRepository: new FakeAgentInvocationPort(),
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-multi',
+        readPromptChars: () => 0,
+      });
+
+      await router.invoke(
+        req({
+          cwd: tmp,
+          expectedArtifacts: ['a.json', 'b.md', 'c.txt'],
+        }),
+      );
+
+      expect(seenArtifacts).toHaveLength(0);
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('does not throw when expected artifact file does not exist (force: true)', async () => {
+      const tmp = `${__dirname}/__tmp_cleanup_missing_${Date.now()}`;
+      const { mkdirSync, rmSync } = await import('node:fs');
+      mkdirSync(tmp, { recursive: true });
+
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'a',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'success',
+      });
+
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter },
+        invocationRepository: new FakeAgentInvocationPort(),
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-missing',
+        readPromptChars: () => 0,
+      });
+
+      // Should not throw even though the file doesn't exist
+      const result = await router.invoke(
+        req({
+          cwd: tmp,
+          expectedArtifacts: ['does-not-exist.json'],
+        }),
+      );
+      expect(result.outcome).toBe('success');
+
+      rmSync(tmp, { recursive: true, force: true });
+    });
+
+    it('works correctly with empty expectedArtifacts array', async () => {
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'a',
+        model: 'm',
+        exitCode: 0,
+        durationMs: 1,
+        stdoutPath: '/s',
+        stderrPath: '/e',
+        contractViolations: [],
+        outcome: 'success',
+      });
+
+      const router = new AgentRuntimeRouter({
+        agent: cfg(),
+        adapters: { opencode: adapter },
+        invocationRepository: new FakeAgentInvocationPort(),
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-empty',
+        readPromptChars: () => 0,
+      });
+
+      const result = await router.invoke(req({ expectedArtifacts: [] }));
+      expect(result.outcome).toBe('success');
+    });
   });
 });
