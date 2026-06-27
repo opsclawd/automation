@@ -36,3 +36,18 @@
   - **"does not remediate when multiple untracked matching files exist"**: Created two untracked files both named `design.md` in different subdirectories (`docs/a/design.md` and `docs/b/design.md`) instead of pattern-matched names.
   - **"does not remediate when the misplaced file is git-tracked"**: Changed subdir filename to `design.md` and git-added/committed it before execution.
   - **"cleans up empty ancestor directories after moving misplaced file"**: Changed subdir filename to `design.md` and updated expectations to assert both `specDir` and parent `docs` directory are cleaned up.
+
+# Implementation Log - Task 4: Add new artifact remediation tests
+
+## Summary of Changes
+
+### 1. `packages/infrastructure/src/agent/__tests__/external-cli-runner.test.ts`
+- Imported `vi` and `afterEach` from `vitest` at the top of the test file.
+- Mocked `node:fs`'s `renameSync` to spy on calls and easily mock its implementation dynamically across tests, while delegating to the actual `renameSync` from `importOriginal` by default.
+- Added a teardown step in `afterEach` to call `vi.restoreAllMocks()` and clean up any spies/mocks between tests.
+- Added 5 new unit tests under the `artifact remediation` describe block:
+  - **"moves misplaced plan.md from subdirectory to worktree root"**: Verifies that a misplaced `plan.md` file is correctly moved and results in a `success` outcome.
+  - **"moves misplaced compound.md from subdirectory to worktree root"**: Verifies that a misplaced `compound.md` file is correctly moved and results in a `success` outcome.
+  - **"remediates misplaced artifact even when the file is gitignored"**: Verifies that a gitignored misplaced `plan.md` is successfully remediated (reproducing the primary driver for using `readdirSync` over `git ls-files`).
+  - **"remains contract_violation when only some artifacts can be remediated"**: Verifies that if multiple artifacts are expected and one is absent while the other is misplaced, the outcome remains `contract_violation` (partial remediation).
+  - **"falls back to copy+unlink on EXDEV rename error"**: Mocks `renameSync` to throw an `EXDEV` error on the first call (using `vi.importActual` to invoke the real FS method on fallback) and asserts that the file is successfully copied and unlinked, resulting in a `success` outcome.

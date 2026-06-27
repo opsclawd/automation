@@ -1,9 +1,29 @@
-import { describe, it, expect } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  renameSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
 import { runExternalCli } from '../external-cli-runner.js';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    renameSync: vi.fn((src: string, dest: string) => actual.renameSync(src, dest)),
+  };
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function makeTmpDir(): string {
   return mkdtempSync(join(tmpdir(), 'ext-cli-test-'));
@@ -288,6 +308,171 @@ describe('runExternalCli', () => {
         expect(existsSync(specDir)).toBe(false);
         expect(existsSync(join(cwd, 'docs'))).toBe(false);
       } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('moves misplaced plan.md from subdirectory to worktree root', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const planDir = join(cwd, 'docs', 'plans');
+        mkdirSync(planDir, { recursive: true });
+        writeFileSync(join(planDir, 'plan.md'), '# Plan');
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['plan.md'],
+        });
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'plan.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'plan.md'), 'utf-8')).toBe('# Plan');
+        expect(result.remediatedArtifacts).toEqual([
+          { src: 'docs/plans/plan.md', artifact: 'plan.md' },
+        ]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('moves misplaced compound.md from subdirectory to worktree root', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const solutionDir = join(cwd, 'docs', 'solutions', 'performance');
+        mkdirSync(solutionDir, { recursive: true });
+        writeFileSync(join(solutionDir, 'compound.md'), '# Solution');
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['compound.md'],
+        });
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'compound.md'))).toBe(true);
+        expect(result.remediatedArtifacts).toEqual([
+          { src: 'docs/solutions/performance/compound.md', artifact: 'compound.md' },
+        ]);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('remediates misplaced artifact even when the file is gitignored', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // Add a .gitignore that hides plan.md from git ls-files
+        writeFileSync(join(cwd, '.gitignore'), 'plan.md\n');
+        execSync('git add .gitignore && git commit -m "add gitignore"', {
+          cwd,
+          stdio: 'pipe',
+          shell: true,
+        });
+        const planDir = join(cwd, 'docs', 'plans');
+        mkdirSync(planDir, { recursive: true });
+        writeFileSync(join(planDir, 'plan.md'), '# Ignored Plan');
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['plan.md'],
+        });
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'plan.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'plan.md'), 'utf-8')).toBe('# Ignored Plan');
+        expect(result.remediatedArtifacts).toHaveLength(1);
+        expect(result.remediatedArtifacts![0]!.artifact).toBe('plan.md');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('remains contract_violation when only some artifacts can be remediated', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // design.md is misplaced — recoverable
+        const specDir = join(cwd, 'docs', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, 'design.md'), '# Design');
+        // plan.md is truly absent — not recoverable
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md', 'plan.md'],
+        });
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        // design.md was moved even though we stayed contract_violation
+        expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to copy+unlink on EXDEV rename error', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, 'docs', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, 'design.md'), '# Design EXDEV');
+
+        // Patch renameSync to throw EXDEV on the first call, then restore
+        const { renameSync: originalRename } =
+          await vi.importActual<typeof import('node:fs')>('node:fs');
+        let callCount = 0;
+        vi.mocked(renameSync).mockImplementation((src, dest) => {
+          callCount++;
+          if (callCount === 1) {
+            const err = Object.assign(new Error('EXDEV'), { code: 'EXDEV' });
+            throw err;
+          }
+          return originalRename(src as string, dest as string);
+        });
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+
+        vi.restoreAllMocks();
+
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe('# Design EXDEV');
+      } finally {
+        vi.restoreAllMocks();
         rmSync(cwd, { recursive: true, force: true });
         rmSync(artifactsDir, { recursive: true, force: true });
       }
