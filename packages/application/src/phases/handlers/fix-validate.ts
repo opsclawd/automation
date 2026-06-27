@@ -15,6 +15,21 @@ export class FixValidateHandler implements PhaseHandler {
 
   async run(ctx: PhaseHandlerContext): Promise<PhaseResult> {
     const emit = createEventEmitter(ctx, this.phase);
+
+    // fix-validate is only needed when validate returned 'deferred' (wrote
+    // validate/failure.json). When validate passed it writes 'validation.result'
+    // instead and there is nothing for this phase to do.
+    try {
+      const artifacts = await ctx.artifacts.list(ctx.runUuid);
+      const hasFailure = artifacts.some((a) => a.relativePath === 'validate/failure.json');
+      if (!hasFailure) {
+        emit('fix_validate.skipped', 'info', 'fix-validate skipped — validation already passed');
+        return { outcome: 'passed' };
+      }
+    } catch {
+      // Non-fatal — proceed with the loop if the artifact store is unavailable.
+    }
+
     emit('fix_validate.started', 'info', 'fix-validate started');
 
     try {

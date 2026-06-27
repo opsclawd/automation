@@ -1,17 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import { FixValidateHandler } from '../fix-validate.js';
+import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import type { PhaseHandlerContext } from '../../handler.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
-function makeCtx() {
+const RUN_UUID = '550e8400-e29b-41d4-a716-446655440000';
+
+function makeCtx(opts: { withFailureJson?: boolean } = {}) {
   const events: OrchestratorEvent[] = [];
+  const artifacts = new FakeArtifactStore();
+  if (opts.withFailureJson) {
+    void artifacts.write({
+      runId: RUN_UUID,
+      phaseId: 'validate',
+      relativePath: 'validate/failure.json',
+      contents: JSON.stringify({ phase: 'validate', message: 'build failed' }),
+    });
+  }
   const ctx = {
     runId: 'human-readable-run',
-    runUuid: '550e8400-e29b-41d4-a716-446655440000',
+    runUuid: RUN_UUID,
     repoFullName: 'acme/widgets',
     issueNumber: 7,
     cwd: '/tmp/wt',
-    artifacts: {} as PhaseHandlerContext['artifacts'],
+    artifacts,
     github: {} as PhaseHandlerContext['github'],
     git: {} as PhaseHandlerContext['git'],
     agent: {} as PhaseHandlerContext['agent'],
@@ -23,16 +35,30 @@ function makeCtx() {
     },
     now: () => new Date('2026-06-26T00:00:00Z'),
   } satisfies PhaseHandlerContext;
-  return { ctx, events };
+  return { ctx, events, artifacts };
 }
 
 describe('FixValidateHandler', () => {
+  it('returns passed immediately when validate/failure.json is absent (validate passed)', async () => {
+    let loopCalled = false;
+    const runLoop = async () => {
+      loopCalled = true;
+      return { phaseOutcome: 'passed' as const, loopStatus: 'converged' as const };
+    };
+    const { ctx, events } = makeCtx(); // no withFailureJson
+    const result = await new FixValidateHandler({ runLoop }).run(ctx);
+    expect(result.outcome).toBe('passed');
+    expect(loopCalled).toBe(false);
+    const skipped = events.filter((e) => e.type === 'fix_validate.skipped');
+    expect(skipped).toHaveLength(1);
+  });
+
   it('returns passed when the loop converges', async () => {
     const runLoop = async () => ({
       phaseOutcome: 'passed' as const,
       loopStatus: 'converged' as const,
     });
-    const { ctx } = makeCtx();
+    const { ctx } = makeCtx({ withFailureJson: true });
     const result = await new FixValidateHandler({ runLoop }).run(ctx);
     expect(result.outcome).toBe('passed');
   });
@@ -42,7 +68,7 @@ describe('FixValidateHandler', () => {
       phaseOutcome: 'failed' as const,
       loopStatus: 'exhausted' as const,
     });
-    const { ctx } = makeCtx();
+    const { ctx } = makeCtx({ withFailureJson: true });
     const result = await new FixValidateHandler({ runLoop }).run(ctx);
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
@@ -50,7 +76,7 @@ describe('FixValidateHandler', () => {
       expect(result.failure.message).toBe('validate/fix loop exhausted without converging');
       expect(result.failure.phase).toBe('fix-validate');
       expect(result.failure.canRetry).toBe(true);
-      expect(result.failure.runUuid).toBe('550e8400-e29b-41d4-a716-446655440000');
+      expect(result.failure.runUuid).toBe(RUN_UUID);
     }
   });
 
@@ -59,7 +85,7 @@ describe('FixValidateHandler', () => {
       phaseOutcome: 'failed' as const,
       loopStatus: 'failed' as const,
     });
-    const { ctx } = makeCtx();
+    const { ctx } = makeCtx({ withFailureJson: true });
     const result = await new FixValidateHandler({ runLoop }).run(ctx);
     expect(result.outcome).toBe('failed');
     if (result.outcome === 'failed') {
@@ -76,7 +102,7 @@ describe('FixValidateHandler', () => {
         phaseOutcome: 'passed' as const,
         loopStatus: 'converged' as const,
       });
-      const { ctx, events } = makeCtx();
+      const { ctx, events } = makeCtx({ withFailureJson: true });
       await new FixValidateHandler({ runLoop }).run(ctx);
 
       const started = events.filter((e) => e.type === 'fix_validate.started');
@@ -96,7 +122,7 @@ describe('FixValidateHandler', () => {
         phaseOutcome: 'failed' as const,
         loopStatus: 'exhausted' as const,
       });
-      const { ctx, events } = makeCtx();
+      const { ctx, events } = makeCtx({ withFailureJson: true });
       await new FixValidateHandler({ runLoop }).run(ctx);
 
       const started = events.filter((e) => e.type === 'fix_validate.started');
@@ -111,7 +137,7 @@ describe('FixValidateHandler', () => {
       const runLoop = async () => {
         throw new Error('DB write failed');
       };
-      const { ctx, events } = makeCtx();
+      const { ctx, events } = makeCtx({ withFailureJson: true });
       const result = await new FixValidateHandler({ runLoop }).run(ctx);
 
       expect(result.outcome).toBe('failed');
@@ -131,7 +157,7 @@ describe('FixValidateHandler', () => {
         phaseOutcome: 'failed' as const,
         loopStatus: 'exhausted' as const,
       });
-      const { ctx, events } = makeCtx();
+      const { ctx, events } = makeCtx({ withFailureJson: true });
       await new FixValidateHandler({ runLoop }).run(ctx);
       const completed = events.filter((e) => e.type === 'fix_validate.completed');
       expect(completed).toHaveLength(0);
