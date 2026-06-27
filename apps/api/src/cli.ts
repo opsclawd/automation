@@ -205,6 +205,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           process.exit(EXIT_USER_ERROR);
         }
 
+        const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
+
         // --- TS executor path ---
         if (opts.executor === 'ts') {
           if (!c.runExecutor) {
@@ -319,7 +321,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             unsubscribe?.();
             signalHandlers?.remove();
             lease?.stop();
-            process.exit(result.run.status === 'passed' ? 0 : EXIT_USER_ERROR);
+            const isSuccess =
+              result.run.status === 'passed' || pausedStatuses.includes(result.run.status);
+            process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             unsubscribe?.();
             signalHandlers?.remove();
@@ -382,7 +386,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // the same discipline as the TS path. The finally still covers the
             // throw case, where it does run before the error propagates.
             signalHandlers.remove();
-            process.exit(out.status === 'passed' ? 0 : EXIT_USER_ERROR);
+            const isSuccess =
+              out.status === 'passed' || pausedStatuses.includes(out.status as RunStatus);
+            process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } finally {
             signalHandlers.remove();
           }
