@@ -135,9 +135,11 @@ export class ImplementStepLoop {
       const MAX_SPEC_REVIEW_ATTEMPTS = 3;
       let specReview: SpecReviewResult;
       let specReviewAttempts = 0;
+      const specReviewAttemptInvocationIds: string[] = [];
       do {
         specReviewAttempts += 1;
         specReview = await deps.runSpecReview(ctx, tcResult);
+        specReviewAttemptInvocationIds.push(specReview.invocationId);
 
         if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
           break;
@@ -148,21 +150,34 @@ export class ImplementStepLoop {
             input,
             'step.spec-review.retry',
             'warn',
-            `spec-review attempt ${specReviewAttempts} failed, retrying...`,
+            `spec-review attempt ${specReviewAttempts} failed (invocation ${specReview.invocationId}), retrying...`,
             {
               attempt: specReviewAttempts,
               maxAttempts: MAX_SPEC_REVIEW_ATTEMPTS,
               agentOutcome: specReview.agentOutcome,
               hasVerdict: specReview.verdict !== undefined,
+              invocationId: specReview.invocationId,
             },
           );
         }
       } while (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS);
+
+      this.emit(
+        input,
+        'step.spec-review.attempts',
+        'info',
+        `spec-review completed after ${specReviewAttempts} attempt(s)`,
+        {
+          index: iterationIndex,
+          attempts: specReviewAttempts,
+          invocationIds: specReviewAttemptInvocationIds,
+        },
+      );
+
       loop = startIteration(loop, {
         reviewInvocationId: specReview.invocationId,
         now: deps.now(),
       });
-      deps.loops.update(loop);
 
       if (specReview.agentOutcome !== 'success' || specReview.verdict === undefined) {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
@@ -170,6 +185,7 @@ export class ImplementStepLoop {
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         return { outcome: 'failed', loop };
       }
+      deps.loops.update(loop);
 
       // --- QUALITY-REVIEW ---
       const qualityReview = await deps.runQualityReview(ctx, tcResult);

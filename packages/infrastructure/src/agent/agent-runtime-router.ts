@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { join, relative, isAbsolute } from 'node:path';
 import { readFileSync, rmSync, statSync } from 'node:fs';
 import {
   AgentInvocationId,
@@ -153,7 +153,12 @@ export class AgentRuntimeRouter implements AgentPort {
     // failed run (#517).
     if (request.expectedArtifacts?.length) {
       for (const artifact of request.expectedArtifacts) {
-        rmSync(join(request.cwd, artifact), { force: true });
+        const resolvedPath = join(request.cwd, artifact);
+        const rel = relative(request.cwd, resolvedPath);
+        if (rel.startsWith('..') || isAbsolute(rel)) {
+          throw new Error(`Invalid artifact path (traversal detected): ${artifact}`);
+        }
+        rmSync(resolvedPath, { recursive: true, force: true });
       }
     }
 

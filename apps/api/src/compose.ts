@@ -927,15 +927,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           '- Write code-review.md first, then result.json.',
         ].join('\n');
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
-        // Clear stale files so a prior iteration's artifacts cannot be
-        // misattributed to this invocation if the agent omits to rewrite them.
-        // result.json is cleared too: after a fix step the worktree contains the
-        // fixer's result.json (fix-review schema); a reviewer that exits 0 but
-        // forgets to write its own result.json would otherwise satisfy the
-        // adapter's artifact-exists check with the stale file, and
-        // readReviewVerdict would parse a fix-review schema as whole-pr-review.
-        rmSync(join(ctx.cwd, 'code-review.md'), { force: true });
-        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
           cwd: ctx.cwd,
         })
@@ -1106,9 +1097,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           ...(opts.extraPromptSections ?? []),
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
-        // Clear stale result.json from a prior step so the adapter's
-        // artifact-exists check cannot be satisfied by a prior step's file.
-        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
           cwd: ctx.cwd,
         })
@@ -1674,7 +1662,6 @@ export function composeRoot(opts: ComposeOptions): Container {
 
         const reviewPrompt = buildQualityReviewPrompt(ctx, typecheckSection);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
-        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
@@ -1738,7 +1725,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           'Write result.json: { "result": "done_with_fixes" } | { "result": "done_no_fixes_needed", "rebuttal": "<reason>" } | { "result": "cannot_fix" }',
         ].join('\n');
         writeFileSync(promptPath, fixPrompt, 'utf-8');
-        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let invokeResult;
         try {

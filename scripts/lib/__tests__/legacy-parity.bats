@@ -2658,6 +2658,7 @@ PLAN
   done
 
   [ ! -f "$worktree/result.json" ]
+  rm -rf "$worktree"
 }
 
 
