@@ -228,5 +228,8 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   };
   if (endCommitSha) ret.endCommitSha = endCommitSha;
   if (remediatedArtifacts) ret.remediatedArtifacts = remediatedArtifacts;
+  if (outcome === 'success' && input.expectedArtifacts?.includes('result.json')) {
+    ret.resultJsonPath = 'result.json';
+  }
   return ret;
 }
