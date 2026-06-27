@@ -2490,29 +2490,23 @@ PLAN
 @test "parity[#504]: TS runner remediates misplaced design.md before artifact check" {
   local runner="$REPO_ROOT/packages/infrastructure/src/agent/external-cli-runner.ts"
 
-  # Must import renameSync for moving the file
-  run grep -c "renameSync" "$runner"
+  # Must use readdirSync for find-based (gitignore-aware) scanning
+  run grep -c "readdirSync" "$runner"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 
-  # Must query untracked files via git ls-files
-  run grep -c "ls-files --others" "$runner"
+  # Must match by exact basename (not pattern)
+  run grep -c "basename" "$runner"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 
-  # Must check that design.md does not exist before attempting remediation
-  # (targetPath is assigned join(input.cwd, 'design.md') then checked with !existsSync)
-  run grep -c "targetPath.*design.md\|!existsSync(targetPath)" "$runner"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # Must filter candidates to .md files containing 'design'
-  run grep -c "\.endsWith.*\.md\|includes.*design" "$runner"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # Must require exactly one candidate (ambiguous = skip)
+  # Must require exactly one candidate
   run grep -c "candidates.length === 1" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must use renameSync to move the file
+  run grep -c "renameSync" "$runner"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 
@@ -2523,6 +2517,52 @@ PLAN
 
   # Must attach remediation metadata to the result
   run grep -c "remediatedArtifacts" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must skip git-tracked files
+  run grep -c "ls-files --error-unmatch" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+}
+
+# Invariant: the TS runner remediates misplaced plan.md and compound.md (not
+#   just design.md) by exact basename match using readdirSync, covering files
+#   hidden from git ls-files by .gitignore.
+# Source: #527.
+# Failure prevented: plan-write and compound phases fail spuriously when agents
+#   follow skill conventions and write to docs/ subdirectories instead of the
+#   worktree root, and the file is gitignored.
+# TS-port contract: the TS runner MUST remediate any expected artifact whose
+#   basename matches a file found at depth >= 2 in the worktree, regardless of
+#   gitignore status, and MUST add MISPLACED_ARTIFACT to contractViolations on
+#   success (so the phase emits an artifact.remediated warning).
+@test "parity[#527]: TS runner remediates gitignored misplaced artifact by readdirSync" {
+  local runner="$REPO_ROOT/packages/infrastructure/src/agent/external-cli-runner.ts"
+
+  # Must run remediation AFTER the artifact enforcement loop (post-check)
+  # evidenced by checking contractViolations for MISSING_REQUIRED_ARTIFACT
+  run grep -c "MISSING_REQUIRED_ARTIFACT" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  # Must add MISPLACED_ARTIFACT on successful remediation
+  run grep -c "MISPLACED_ARTIFACT" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must restore outcome to 'success' after full remediation
+  run grep -c "outcome = 'success'" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must have EXDEV fallback for cross-device renames
+  run grep -c "EXDEV" "$runner"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  # Must filter noise directories (node_modules, .git, dist, etc.)
+  run grep -c "NOISE_DIRS\|node_modules" "$runner"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }

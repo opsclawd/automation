@@ -1,11 +1,101 @@
 import { execa } from 'execa';
-import { existsSync, mkdirSync, writeFileSync, renameSync, rmdirSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  renameSync,
+  rmdirSync,
+  readdirSync,
+  statSync,
+  copyFileSync,
+  unlinkSync,
+} from 'node:fs';
 import { execSync } from 'node:child_process';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { testProviderErrorPatterns, testQuotaPatterns } from './error-patterns.js';
+
+const NOISE_DIRS = new Set([
+  'node_modules',
+  '.next',
+  '.cache',
+  '.git',
+  'dist',
+  'build',
+  '.turbo',
+  '.nuxt',
+  'coverage',
+  '__pycache__',
+  '.venv',
+  'vendor',
+  '.pytest_cache',
+  '.mypy_cache',
+]);
+
+function findMisplacedCandidate(cwd: string, artifactBasename: string): string | null {
+  try {
+    const entries = readdirSync(cwd, { recursive: true, encoding: 'utf-8' }) as string[];
+    const candidates: string[] = [];
+    for (const entry of entries) {
+      // depth >= 2: entry must contain at least one directory separator
+      if (!entry.includes('/') && !entry.includes('\\')) continue;
+      // exact basename match
+      if (basename(entry) !== artifactBasename) continue;
+      // no path component is a noise directory
+      const parts = entry.split(/[\\/]/);
+      if (parts.some((p) => NOISE_DIRS.has(p))) continue;
+      // confirm it is a regular file
+      const fullPath = join(cwd, entry);
+      try {
+        if (!statSync(fullPath).isFile()) continue;
+      } catch {
+        continue;
+      }
+      // skip git-tracked files (only untracked/ignored files are candidates)
+      try {
+        execSync(`git ls-files --error-unmatch ${JSON.stringify(entry)}`, {
+          cwd,
+          stdio: 'pipe',
+        });
+        // exit 0 means tracked → skip
+        continue;
+      } catch {
+        // non-zero exit means not tracked → valid candidate
+      }
+      candidates.push(entry);
+    }
+    return candidates.length === 1 ? candidates[0]! : null;
+  } catch {
+    return null;
+  }
+}
+
+function moveMisplacedArtifact(cwd: string, srcRelative: string, destRelative: string): void {
+  const src = join(cwd, srcRelative);
+  const dest = join(cwd, destRelative);
+  try {
+    renameSync(src, dest);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EXDEV') {
+      copyFileSync(src, dest);
+      unlinkSync(src);
+    } else {
+      throw e;
+    }
+  }
+  // Clean up empty ancestor directories up to (but not including) cwd
+  let dir = dirname(src);
+  while (dir !== cwd && dir !== dirname(dir)) {
+    try {
+      rmdirSync(dir);
+      dir = dirname(dir);
+    } catch {
+      break;
+    }
+  }
+}
 
 export interface ExternalCliRunInput {
   runtime: AgentRuntimeKind;
@@ -147,42 +237,7 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     contractViolations = [...contractViolations, CONTRACT_VIOLATION_CODES.MISSING_COMMIT];
   }
 
-  // --- Artifact remediation (parity with _remediate_misplaced_artifact) ---
   let remediatedArtifacts: { src: string; artifact: string }[] | undefined;
-  if (outcome === 'success' && input.expectedArtifacts?.includes('design.md')) {
-    const targetPath = join(input.cwd, 'design.md');
-    if (!existsSync(targetPath)) {
-      try {
-        const untrackedRaw = execSync('git ls-files --others --exclude-standard', {
-          cwd: input.cwd,
-          encoding: 'utf-8',
-          stdio: ['pipe', 'pipe', 'pipe'],
-        }).trim();
-        const untrackedFiles = untrackedRaw ? untrackedRaw.split('\n') : [];
-        const candidates = untrackedFiles.filter((f) => f.endsWith('.md') && f.includes('design'));
-        if (candidates.length === 1) {
-          const srcRelative = candidates[0]!;
-          const srcAbsolute = join(input.cwd, srcRelative);
-          if (existsSync(srcAbsolute)) {
-            renameSync(srcAbsolute, targetPath);
-            remediatedArtifacts = [{ src: srcRelative, artifact: 'design.md' }];
-            // Clean up empty ancestor directories up to (but not including) cwd
-            let dir = dirname(srcAbsolute);
-            while (dir !== input.cwd && dir !== dirname(dir)) {
-              try {
-                rmdirSync(dir);
-                dir = dirname(dir);
-              } catch {
-                break; // directory not empty or other error — stop climbing
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('artifact remediation failed (rename, rmdir, or git ls-files):', e);
-      }
-    }
-  }
 
   if (
     outcome === 'success' &&
@@ -211,6 +266,42 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         stderrForLog = `MISSING_REQUIRED_ARTIFACT: ${artifact}\n${stderrForLog}`;
         writeFileSync(stderrPath, stderrForLog);
         break;
+      }
+    }
+  }
+
+  // Post-check remediation: if MISSING_REQUIRED_ARTIFACT was set, try to find
+  // each missing artifact anywhere in the worktree by exact basename match.
+  if (
+    outcome === 'contract_violation' &&
+    contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT) &&
+    input.expectedArtifacts?.length
+  ) {
+    for (const artifact of input.expectedArtifacts) {
+      if (existsSync(join(input.cwd, artifact))) continue;
+      const artifactBasename = basename(artifact);
+      const candidate = findMisplacedCandidate(input.cwd, artifactBasename);
+      if (!candidate) continue;
+      try {
+        moveMisplacedArtifact(input.cwd, candidate, artifact);
+        remediatedArtifacts = [...(remediatedArtifacts ?? []), { src: candidate, artifact }];
+      } catch (e) {
+        console.warn('moveMisplacedArtifact failed:', e);
+      }
+    }
+    // If all expected artifacts are now present, swap violation codes and restore outcome.
+    if (remediatedArtifacts?.length) {
+      const allPresent = input.expectedArtifacts.every((a) => existsSync(join(input.cwd, a)));
+      if (allPresent) {
+        outcome = 'success';
+        contractViolations = contractViolations
+          .filter((v) => v !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+          .concat(CONTRACT_VIOLATION_CODES.MISPLACED_ARTIFACT);
+        const remediatedList = remediatedArtifacts
+          .map((r) => `${r.src} → ${r.artifact}`)
+          .join(', ');
+        stderrForLog = `MISPLACED_ARTIFACT: auto-remediated ${remediatedList}\n${stderrForLog}`;
+        writeFileSync(stderrPath, stderrForLog);
       }
     }
   }
