@@ -51,7 +51,7 @@ export class ValidateFixLoop {
       );
 
       // fix
-      const useFallback = consecutiveFixFailures >= 2;
+      const useFallback = consecutiveFixFailures >= 2 && input.fixFallbackProfile !== undefined;
       if (useFallback) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
       }
