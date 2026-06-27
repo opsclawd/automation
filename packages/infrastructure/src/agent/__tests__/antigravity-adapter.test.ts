@@ -1,5 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -251,5 +259,48 @@ describe('AntigravityAgentAdapter', () => {
     const r = await adapter.invoke(req(cwd));
     expect(r.outcome).toBe('contract_violation');
     expect(readFileSync(r.stderrPath, 'utf-8')).toContain('NO_OUTPUT');
+  });
+
+  it('clears stale files from scratch dir before invocation', async () => {
+    const cwd = makeWorktree();
+    const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
+    dirs.push(scratchDir);
+    writeFileSync(join(scratchDir, 'stale-issue.md'), 'old content');
+    writeFileSync(join(scratchDir, 'design.md'), 'old design');
+    mkdirSync(join(scratchDir, 'nested'));
+    writeFileSync(join(scratchDir, 'nested', 'data.json'), '{}');
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      scratchDir,
+    });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.outcome).toBe('success');
+
+    // Scratch dir itself should still exist (we clear contents, not the dir)
+    expect(existsSync(scratchDir)).toBe(true);
+
+    // All stale files should be gone
+    const remaining = readdirSync(scratchDir);
+    expect(remaining.length).toBe(0);
+  });
+
+  it('does not throw when scratch dir does not exist', async () => {
+    const cwd = makeWorktree();
+    const nonExistent = join(tmpdir(), 'agy-scratch-nonexistent');
+    // Ensure it does not exist
+    try {
+      rmSync(nonExistent, { recursive: true, force: true });
+    } catch {}
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      scratchDir: nonExistent,
+    });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.outcome).toBe('success');
+    // No error thrown — clearDirectory is a no-op for non-existent dirs
   });
 });
