@@ -12,4 +12,5 @@ export const CONTRACT_VIOLATION_CODES = {
   CANCELLED_BY_ORCHESTRATOR: 'cancelled_by_orchestrator',
   PROVIDER_ERROR: 'provider_error',
   NO_OUTPUT: 'no_output',
+  ARTIFACT_IN_SCRATCH_DIR: 'artifact_in_scratch_dir',
 } as const;
