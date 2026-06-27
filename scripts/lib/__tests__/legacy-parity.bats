@@ -2583,3 +2583,51 @@ PLAN
   [ -n "$first_gh_line" ]
   [ "$gate_line" -lt "$first_gh_line" ]
 }
+
+# Invariant: the antigravity adapter clears the agy scratch directory before
+#   each agent invocation so stale session files from a prior unrelated run
+#   cannot cause the agent to hallucinate on the wrong issue.
+# Source: #521.
+# Failure prevented: agy reads leftover files (e.g. new_gemini_issue.md,
+#   issue_153_feedback.md) from ~/.gemini/antigravity-cli/scratch/ from a
+#   prior session, processes those instead of the stdin prompt, and writes
+#   output for the wrong issue entirely — exits 0, coherent output, wrong
+#   problem → silent wrong-issue hallucination (#520).
+# TS-port contract: the TS AntigravityAgentAdapter must clearDirectory on
+#   its configured scratchDir before calling runExternalCli for each
+#   invocation. Runtime-agnostic — filesystem state assertion.
+@test "parity[#521]: antigravity adapter clears scratch dir before invocation" {
+  # Structural validation: clearDirectory must be called before runExternalCli
+  local file="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  clear_line=$(grep -n "clearDirectory(" "$file" | head -n 1 | cut -d: -f1)
+  run_line=$(grep -n "runExternalCli(" "$file" | head -n 1 | cut -d: -f1)
+  [ -n "$clear_line" ]
+  [ -n "$run_line" ]
+  [ "$clear_line" -lt "$run_line" ]
+
+  run npx vitest run "$REPO_ROOT/packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts" -t "clears stale files from scratch dir before invocation"
+  [ "$status" -eq 0 ]
+}
+
+# Invariant: when the antigravity adapter detects MISSING_REQUIRED_ARTIFACT from
+#   runExternalCli, it scans the scratch directory for the expected artifacts.
+#   If found, it moves them to the worktree (cwd), sets outcome to success,
+#   adds ARTIFACT_IN_SCRATCH_DIR to contract violatons, and populates
+#   remediatedArtifacts. This distinguishes "artifact produced in wrong location"
+#   from "agent produced nothing" — the orchestrator can continue with the
+#   recovered artifact instead of triggering fallback.
+# Source: #521.
+# Failure prevented: agy writes design.md to ~/.gemini/antigravity-cli/scratch/
+#   instead of the worktree. Without detection, the orchestrator sees
+#   MISSING_REQUIRED_ARTIFACT and triggers a fallback round, wasting compute
+#   and masking the root cause. With detection + recovery, the artifact is
+#   recovered and the invocation succeeds with a diagnostic violation code.
+# TS-port contract: the TS AntigravityAgentAdapter must scan scratchDir for
+#   expected artifacts when MISSING_REQUIRED_ARTIFACT is present, recover
+#   found artifacts to cwd, and populate remediatedArtifacts.
+@test "parity[#521]: adapter detects and recovers artifacts wrongly written to scratch dir" {
+  run npx vitest run "$REPO_ROOT/packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts" -t "detects expected artifacts in scratch dir and recovers them to cwd"
+  [ "$status" -eq 0 ]
+}
+
+
