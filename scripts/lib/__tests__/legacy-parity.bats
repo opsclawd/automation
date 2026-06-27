@@ -2597,33 +2597,8 @@ PLAN
 #   its configured scratchDir before calling runExternalCli for each
 #   invocation. Runtime-agnostic — filesystem state assertion.
 @test "parity[#521]: antigravity adapter clears scratch dir before invocation" {
-  run grep -c "clearDirectory" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  run npx vitest run "$REPO_ROOT/packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts" -t "clears stale files from scratch dir before invocation"
   [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # scratchDir must be defined on AntigravityAdapterOptions
-  run grep -c "scratchDir" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # scratchDir defaults to ~/.gemini/antigravity-cli/scratch
-  run grep -c "antigravity-cli/scratch" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # homedir must be imported (used for default path resolution)
-  run grep -c "homedir" "$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # clearDirectory must be called BEFORE runExternalCli in invoke()
-  local adapter="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
-  local clear_line add_line
-  clear_line=$(grep -n 'clearDirectory(scratchDir)' "$adapter" | head -1 | cut -d: -f1)
-  add_line=$(grep -n 'runExternalCli(' "$adapter" | head -1 | cut -d: -f1)
-  [[ -n "$clear_line" ]]
-  [[ -n "$add_line" ]]
-  [[ "$clear_line" -lt "$add_line" ]]
 }
 
 # Invariant: when the antigravity adapter detects MISSING_REQUIRED_ARTIFACT from
@@ -2643,42 +2618,8 @@ PLAN
 #   expected artifacts when MISSING_REQUIRED_ARTIFACT is present, recover
 #   found artifacts to cwd, and populate remediatedArtifacts.
 @test "parity[#521]: adapter detects and recovers artifacts wrongly written to scratch dir" {
-  local adapter="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
-
-  # ARTIFACT_IN_SCRATCH_DIR code must be referenced
-  run grep -c "ARTIFACT_IN_SCRATCH_DIR" "$adapter"
+  run npx vitest run "$REPO_ROOT/packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts" -t "detects expected artifacts in scratch dir and recovers them to cwd"
   [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # CONTRACT_VIOLATION_CODES must be imported
-  run grep -c "CONTRACT_VIOLATION_CODES" "$adapter"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # findExpectedArtifactsInDir must be defined and called
-  run grep -c "findExpectedArtifactsInDir" "$adapter"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 2 ]
-
-  # MISSING_REQUIRED_ARTIFACT check must gate the scan
-  run grep -c "MISSING_REQUIRED_ARTIFACT" "$adapter"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # remediatedArtifacts must be populated on recovery
-  run grep -c "remediatedArtifacts" "$adapter"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # renameSync must be imported (for artifact recovery)
-  run grep -c "renameSync" "$adapter"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
-
-  # basename must be present
-  run grep -c "basename" "$adapter"
-  [ "$status" -eq 0 ]
-  [ "$output" -ge 1 ]
 }
 
 

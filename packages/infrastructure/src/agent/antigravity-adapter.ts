@@ -7,9 +7,11 @@ import {
   copyFileSync,
   unlinkSync,
   statSync,
+  mkdirSync,
 } from 'node:fs';
-import { resolve, join, basename } from 'node:path';
+import { resolve, join, basename, dirname, relative, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -39,8 +41,10 @@ function validateScratchDir(dir: string): void {
     throw new Error(`Unsafe scratch directory path: ${dir}`);
   }
 
-  const inGemini = resolved.startsWith(join(home, '.gemini'));
-  const inTemp = resolved.startsWith(temp);
+  const relativeGemini = relative(join(home, '.gemini'), resolved);
+  const inGemini = !relativeGemini.startsWith('..') && !isAbsolute(relativeGemini);
+  const relativeTemp = relative(temp, resolved);
+  const inTemp = !relativeTemp.startsWith('..') && !isAbsolute(relativeTemp);
 
   if (!inGemini && !inTemp) {
     throw new Error(`Scratch directory must be inside .gemini or temp directory: ${dir}`);
@@ -60,11 +64,15 @@ function findExpectedArtifactsInDir(scratchDir: string, expectedArtifacts: strin
   const found: string[] = [];
   for (const entry of readdirSync(scratchDir, { recursive: true, encoding: 'utf-8' })) {
     const fullPath = join(scratchDir, entry);
-    if (existsSync(fullPath) && statSync(fullPath).isFile()) {
-      const name = basename(entry);
-      if (expectedArtifacts.includes(name)) {
-        found.push(entry);
+    try {
+      if (statSync(fullPath).isFile()) {
+        const name = basename(entry);
+        if (expectedArtifacts.includes(entry) || expectedArtifacts.includes(name)) {
+          found.push(entry);
+        }
       }
+    } catch {
+      // Ignore errors from broken symlinks, restricted permissions, etc.
     }
   }
   return found;
@@ -78,9 +86,8 @@ export class AntigravityAgentAdapter implements AgentPort {
     const prompt = readFileSync(request.promptPath, 'utf-8');
     const baseScratchDir =
       this.opts.scratchDir ?? resolve(homedir(), '.gemini/antigravity-cli/scratch');
-    const scratchDir = this.opts.scratchDir
-      ? baseScratchDir
-      : join(baseScratchDir, basename(request.cwd));
+    const workspaceHash = createHash('sha256').update(request.cwd).digest('hex');
+    const scratchDir = join(baseScratchDir, workspaceHash);
 
     // Pre: clear stale scratch state so agy does not load files
     // from a prior unrelated session.
@@ -120,9 +127,10 @@ export class AntigravityAgentAdapter implements AgentPort {
       const stray = findExpectedArtifactsInDir(scratchDir, request.expectedArtifacts ?? []);
       if (stray.length > 0) {
         for (const relPath of stray) {
-          const dest = join(request.cwd, basename(relPath));
+          const dest = join(request.cwd, relPath);
           const src = join(scratchDir, relPath);
           try {
+            mkdirSync(dirname(dest), { recursive: true });
             renameSync(src, dest);
           } catch (err) {
             const error = err as { code?: string };
@@ -136,7 +144,7 @@ export class AntigravityAgentAdapter implements AgentPort {
         }
         result.remediatedArtifacts = stray.map((relPath) => ({
           src: join(scratchDir, relPath),
-          artifact: basename(relPath),
+          artifact: relPath,
         }));
 
         // Validate if all expected artifacts now exist in the workspace cwd

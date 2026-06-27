@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { AgentProfileName } from '@ai-sdlc/domain';
 import { AntigravityAgentAdapter } from '../antigravity-adapter.js';
 
@@ -265,10 +266,13 @@ describe('AntigravityAgentAdapter', () => {
     const cwd = makeWorktree();
     const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
     dirs.push(scratchDir);
-    writeFileSync(join(scratchDir, 'stale-issue.md'), 'old content');
-    writeFileSync(join(scratchDir, 'design.md'), 'old design');
-    mkdirSync(join(scratchDir, 'nested'));
-    writeFileSync(join(scratchDir, 'nested', 'data.json'), '{}');
+    const workspaceHash = createHash('sha256').update(cwd).digest('hex');
+    const adapterScratchDir = join(scratchDir, workspaceHash);
+    mkdirSync(adapterScratchDir, { recursive: true });
+    writeFileSync(join(adapterScratchDir, 'stale-issue.md'), 'old content');
+    writeFileSync(join(adapterScratchDir, 'design.md'), 'old design');
+    mkdirSync(join(adapterScratchDir, 'nested'));
+    writeFileSync(join(adapterScratchDir, 'nested', 'data.json'), '{}');
 
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
@@ -279,10 +283,10 @@ describe('AntigravityAgentAdapter', () => {
     expect(result.outcome).toBe('success');
 
     // Scratch dir itself should still exist (we clear contents, not the dir)
-    expect(existsSync(scratchDir)).toBe(true);
+    expect(existsSync(adapterScratchDir)).toBe(true);
 
     // All stale files should be gone
-    const remaining = readdirSync(scratchDir);
+    const remaining = readdirSync(adapterScratchDir);
     expect(remaining.length).toBe(0);
   });
 
@@ -308,14 +312,16 @@ describe('AntigravityAgentAdapter', () => {
     const cwd = makeWorktree();
     const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
     dirs.push(scratchDir);
+    const workspaceHash = createHash('sha256').update(cwd).digest('hex');
+    const adapterScratchDir = join(scratchDir, workspaceHash);
 
     // Create a custom fake agy script that writes the artifact to scratchDir during invocation
     const fakeScript = join(cwd, 'fake-agy-write-scratch.sh');
     writeFileSync(
       fakeScript,
       `#!/usr/bin/env bash
-mkdir -p "${scratchDir}/automation"
-printf "## Recovered design" > "${scratchDir}/automation/design.md"
+mkdir -p "${adapterScratchDir}"
+printf "## Recovered design" > "${adapterScratchDir}/design.md"
 echo "fake agy success"
 exit 0
 `,
@@ -350,7 +356,7 @@ exit 0
     expect(result.remediatedArtifacts![0]!.artifact).toBe('design.md');
 
     // The artifact is no longer in scratch dir (it was moved)
-    expect(existsSync(join(scratchDir, 'automation', 'design.md'))).toBe(false);
+    expect(existsSync(join(adapterScratchDir, 'design.md'))).toBe(false);
   });
 
   it('does not recover when scratch dir has no matching expected artifacts', async () => {
@@ -377,14 +383,16 @@ exit 0
     const cwd = makeWorktree();
     const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
     dirs.push(scratchDir);
+    const workspaceHash = createHash('sha256').update(cwd).digest('hex');
+    const adapterScratchDir = join(scratchDir, workspaceHash);
 
     // Create a custom fake agy script that writes one of the expected artifacts to scratchDir
     const fakeScript = join(cwd, 'fake-agy-write-partial.sh');
     writeFileSync(
       fakeScript,
       `#!/usr/bin/env bash
-mkdir -p "${scratchDir}"
-printf "## Recovered design" > "${scratchDir}/design.md"
+mkdir -p "${adapterScratchDir}"
+printf "## Recovered design" > "${adapterScratchDir}/design.md"
 echo "fake agy success"
 exit 0
 `,
@@ -418,5 +426,41 @@ exit 0
     expect(result.remediatedArtifacts).toBeDefined();
     expect(result.remediatedArtifacts!.length).toBe(1);
     expect(result.remediatedArtifacts![0]!.artifact).toBe('design.md');
+  });
+
+  it('recovers expected artifacts in a subdirectory under scratch dir preserving the relative path', async () => {
+    const cwd = makeWorktree();
+    const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
+    dirs.push(scratchDir);
+    const workspaceHash = createHash('sha256').update(cwd).digest('hex');
+    const adapterScratchDir = join(scratchDir, workspaceHash);
+
+    const fakeScript = join(cwd, 'fake-agy-write-sub.sh');
+    writeFileSync(
+      fakeScript,
+      `#!/usr/bin/env bash
+mkdir -p "${adapterScratchDir}/docs"
+printf "## Sub design" > "${adapterScratchDir}/docs/design.md"
+echo "fake agy success"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+      scratchDir,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['docs/design.md'] }));
+
+    expect(result.outcome).toBe('success');
+    expect(result.contractViolations).toContain('artifact_in_scratch_dir');
+    expect(existsSync(join(cwd, 'docs/design.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'docs/design.md'), 'utf-8')).toBe('## Sub design');
+    expect(result.remediatedArtifacts).toBeDefined();
+    expect(result.remediatedArtifacts!.length).toBe(1);
+    expect(result.remediatedArtifacts![0]!.artifact).toBe('docs/design.md');
+    expect(existsSync(join(adapterScratchDir, 'docs/design.md'))).toBe(false);
   });
 });
