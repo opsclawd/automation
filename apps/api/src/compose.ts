@@ -1619,7 +1619,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
         const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
-        rmSync(join(ctx.cwd, 'result.json'), { force: true });
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
