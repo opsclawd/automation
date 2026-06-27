@@ -2553,3 +2553,33 @@ PLAN
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
+
+# Invariant: the bash executor's create-pr phase MUST gate on
+#   validation.result == "passed" before any PR-creation work.
+#   If validation did not pass, the run is failed with orchestrator_fail.
+# Source: #514.
+# TS-port contract: CreatePrHandler.run() must read validation.result from
+#   the artifact store and return { outcome: 'failed' } when it is missing
+#   or not "passed".
+@test "parity[#514]: create-pr phase gates on validation.result == passed" {
+  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  # The gate must read validation.result before ensure_branch's follow-on work
+  # (compound-draft.md guard, ~line 4592).  We check that the read + fail
+  # appear between the create-pr header and the first gh-related command.
+  local create_pr_start
+  create_pr_start=$(grep -n 'PHASE.*create-pr' "$script" | tail -1 | cut -d: -f1)
+  [ -n "$create_pr_start" ]
+  # validation.result must be read inside the create-pr block
+  run awk -v start="$create_pr_start" 'NR >= start && /validation\.result/ {found=1; exit} END {exit !found}' "$script"
+  [ "$status" -eq 0 ]
+  # orchestrator_fail must be called when status is not passed
+  run awk -v start="$create_pr_start" 'NR >= start && /orchestrator_fail.*[Vv]alidation/ {found=1; exit} END {exit !found}' "$script"
+  [ "$status" -eq 0 ]
+  # The gate must come before any gh pr create or gh issue edit command
+  local gate_line first_gh_line
+  gate_line=$(awk -v start="$create_pr_start" 'NR >= start && /validation\.result/ {print NR; exit}' "$script")
+  first_gh_line=$(awk -v start="$create_pr_start" 'NR >= start && /gh (pr create|issue edit)/ {print NR; exit}' "$script")
+  [ -n "$gate_line" ]
+  [ -n "$first_gh_line" ]
+  [ "$gate_line" -lt "$first_gh_line" ]
+}

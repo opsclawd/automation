@@ -4589,6 +4589,12 @@ if [[ "$PHASE" == "create-pr" ]]; then
   cd "${WORKTREE_DIR}"
   ensure_branch
 
+  # Hard gate: validation must pass before creating a PR (#514)
+  VALIDATION_STATUS=$(cat "${ISSUES_DIR}/validation.result" 2>/dev/null || echo "unknown")
+  if [[ "$VALIDATION_STATUS" != "passed" ]]; then
+    orchestrator_fail "Validation did not pass (status: ${VALIDATION_STATUS}). PR creation blocked. Re-run the issue to fix validation failures."
+  fi
+
   # Guard: remove compound-draft.md if it was committed to the branch before
   # this fix landed. Handles resumed runs that skipped the compound phase
   # cleanup because compound.md already existed (detect_phase → create-pr).
