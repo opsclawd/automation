@@ -717,7 +717,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   phaseRegistry.register(new ReadIssueHandler());
 
   // Register lightweight unavailable stubs for agent-dependent phases so the
-  // registry always contains all 9 canonical phases. Real handler instances
+  // registry always contains all 10 canonical phases. Real handler instances
   // registered inside the if (config.agent) block below overwrite these.
   const stubPhases = [
     'plan-design',

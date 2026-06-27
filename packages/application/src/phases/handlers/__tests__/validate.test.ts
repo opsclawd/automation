@@ -88,7 +88,7 @@ describe('ValidateHandler', () => {
   });
 
   describe('failure paths', () => {
-    it('returns validation_failed when a command fails', async () => {
+    it('returns deferred when a command fails and fix-validate is enabled', async () => {
       const { runValidation } = deps('failed');
       const { ctx } = makeCtx();
       const result = await new ValidateHandler({
@@ -100,6 +100,28 @@ describe('ValidateHandler', () => {
       }).run(ctx);
 
       expect(result.outcome).toBe('deferred');
+    });
+
+    it('returns failed with full failure object when a command fails and fix-validate is disabled', async () => {
+      const { runValidation } = deps('failed');
+      const { ctx } = makeCtx();
+      const result = await new ValidateHandler({
+        runValidation,
+        commands: ['pnpm build'],
+        timeoutSeconds: 300,
+        logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
+      }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('validation_failed');
+        expect(result.failure.phase).toBe('validate');
+        expect(result.failure.canRetry).toBe(true);
+        expect(result.failure.artifacts).toContain('validate/0-build.stdout.log');
+        expect(result.failure.artifacts).toContain('validate/0-build.stderr.log');
+        expect(result.failure.artifacts).toContain('validate/validation-result.json');
+      }
     });
 
     it('failure message lists only failing commands on mixed pass/fail', async () => {
@@ -164,6 +186,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
       }).run(ctx);
 
       const started = events.filter((e) => e.type === 'validate.started');
@@ -186,6 +209,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
       }).run(ctx);
 
       const started = events.filter((e) => e.type === 'validate.started');
@@ -207,6 +231,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
       }).run(ctx);
 
       const completed = events.filter((e) => e.type === 'validate.completed');
@@ -244,6 +269,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
       }).run(ctx);
 
       const list = await artifacts.list('550e8400-e29b-41d4-a716-446655440000');
@@ -259,6 +285,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
       }).run(ctx);
 
       const artifactFailed = events.filter((e) => e.type === 'validate.artifact_write_failed');
@@ -276,6 +303,7 @@ describe('ValidateHandler', () => {
         commands: [],
         timeoutSeconds: 300,
         logDir: '/tmp/wt/.ai-runs/r1/validate',
+        fixValidateEnabled: false,
       }).run(ctx);
 
       expect(result.outcome).toBe('failed');
@@ -302,6 +330,7 @@ describe('ValidateHandler', () => {
         commands: ['pnpm build'],
         timeoutSeconds: 120,
         logDir: '/custom/log/dir',
+        fixValidateEnabled: false,
       }).run(ctx);
 
       expect(validation.lastInput).toBeDefined();

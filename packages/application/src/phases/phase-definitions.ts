@@ -89,7 +89,7 @@ const _phaseDefinitions = {
   'fix-validate': {
     name: makePhaseName('fix-validate'),
     inputs: { required: [], optional: ['validate/failure.json'] },
-    outputs: ['validation-result.json'],
+    outputs: [],
     retrySafety: 'safe',
     skippable: false,
   },

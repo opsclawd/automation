@@ -289,6 +289,11 @@ export class RunExecutor {
             currentPhase: null,
             completedPhases: currentRun.completedPhases,
           });
+          // Deferred phases emit 'phase.completed' because the executor's
+          // processing is done — the handler returned, results are persisted,
+          // and the pipeline continues. Event consumers that need to distinguish
+          // can check the event message string (which says "deferred") or the
+          // run step's status field.
           const eventMsg =
             status === 'deferred'
               ? `phase '${String(phaseDef.name)}' deferred — pipeline continues`
