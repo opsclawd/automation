@@ -683,26 +683,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
             }
 
-            if (opts.fromPhase) {
-              await c.resumeRun.transition({
-                runId: RunId(opts.uuid),
-                fromPhase: opts.fromPhase,
-                workerId,
-              });
-            } else {
-              await c.retryFailedPhase.execute({
-                runId: RunId(opts.uuid),
-                workerId,
-              });
-            }
-
-            const updatedRun = c.runRepository.findByUuid(opts.uuid);
-            if (!updatedRun) {
-              console.error(`Error: run ${opts.uuid} not found after transition.`);
-              process.exit(EXIT_USER_ERROR);
-            }
-
-            c.runRepository.update(updatedRun.uuid, { pid: process.pid });
+            c.runRepository.update(run.uuid, { pid: process.pid });
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
@@ -715,10 +696,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 );
               }
             };
+
             try {
               signalHandlers = installSignalHandlers(
                 c.runRepository,
-                updatedRun.issueNumber,
+                run.issueNumber,
                 releaseLeaseOnSignal,
               );
               lease = startLeaseHeartbeat(
@@ -728,6 +710,25 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 leaseTtlMs,
                 heartbeatIntervalMs,
               );
+
+              if (opts.fromPhase) {
+                await c.resumeRun.transition({
+                  runId: RunId(opts.uuid),
+                  fromPhase: opts.fromPhase,
+                  workerId,
+                });
+              } else {
+                await c.retryFailedPhase.execute({
+                  runId: RunId(opts.uuid),
+                  workerId,
+                });
+              }
+
+              const updatedRun = c.runRepository.findByUuid(opts.uuid);
+              if (!updatedRun) {
+                console.error(`Error: run ${opts.uuid} not found after transition.`);
+                process.exit(EXIT_USER_ERROR);
+              }
 
               const result = await c.runExecutor.execute({
                 run: { ...updatedRun, status: 'running' },

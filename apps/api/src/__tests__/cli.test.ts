@@ -3410,7 +3410,7 @@ describe('CLI runs resume command', () => {
               `SELECT runs.uuid, worker_leases.repo_id
                FROM runs
                JOIN worker_leases ON worker_leases.run_id = runs.uuid
-               WHERE runs.uuid = ?`,
+               WHERE runs.uuid = ? AND runs.status = 'running'`,
             )
             .get(runUuid);
           d.close();
@@ -3520,7 +3520,7 @@ describe('CLI runs resume command', () => {
               `SELECT runs.uuid, worker_leases.repo_id
                FROM runs
                JOIN worker_leases ON worker_leases.run_id = runs.uuid
-               WHERE runs.uuid = ?`,
+               WHERE runs.uuid = ? AND runs.status = 'running'`,
             )
             .get(runUuid);
           d.close();
