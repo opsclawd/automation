@@ -16,6 +16,29 @@ export class CreatePrHandler implements PhaseHandler {
     const emit = createEventEmitter(ctx, this.phase);
     emit('create_pr.started', 'info', 'starting create-pr');
 
+    const writtenArtifacts: string[] = [];
+
+    // ── Stage 0: Hard gate — validation must pass before creating a PR (#514) ──
+    let validationResult: string | undefined;
+    try {
+      const raw = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
+      validationResult = raw.trim().split('\n')[0];
+    } catch {
+      validationResult = undefined;
+    }
+    if (validationResult !== 'passed') {
+      const msg = `Validation did not pass (status: ${validationResult || 'missing'}). PR creation blocked.`;
+      emit('create_pr.blocked', 'error', msg);
+      return this._fail(
+        ctx,
+        'validation_failed',
+        msg,
+        false,
+        'Re-run the issue to fix validation failures before creating a PR.',
+        writtenArtifacts,
+      );
+    }
+
     // ── Stage 1: Idempotency — reuse existing PR if pr-url.txt exists ──
     let prUrl: string | undefined;
     try {
@@ -32,6 +55,7 @@ export class CreatePrHandler implements PhaseHandler {
           msg,
           false,
           'Check artifact store health and resume create-pr.',
+          writtenArtifacts,
         );
       }
     }
@@ -61,10 +85,18 @@ export class CreatePrHandler implements PhaseHandler {
         relativePath: 'pr-summary.md',
         contents: summary,
       });
+      writtenArtifacts.push('pr-summary.md');
     } catch (e) {
       const msg = `failed to write pr-summary.md: ${(e as Error).message}`;
       emit('create_pr.failed', 'error', msg);
-      return this._fail(ctx, 'command_failed', msg, false, 'Check artifact store and resume.');
+      return this._fail(
+        ctx,
+        'command_failed',
+        msg,
+        false,
+        'Check artifact store and resume.',
+        writtenArtifacts,
+      );
     }
 
     // ── Stage 3: Deterministic GitHub operations ──
@@ -82,6 +114,7 @@ export class CreatePrHandler implements PhaseHandler {
         msg,
         true,
         'Check git remote/auth state; resume create-pr.',
+        writtenArtifacts,
       );
     }
 
@@ -104,6 +137,7 @@ export class CreatePrHandler implements PhaseHandler {
         msg,
         true,
         'Check gh auth/branch state; resume create-pr.',
+        writtenArtifacts,
       );
     }
 
@@ -135,6 +169,7 @@ export class CreatePrHandler implements PhaseHandler {
         msg,
         false,
         `PR created at ${prUrl} but pr-url.txt write failed. Verify PR and record URL manually, then resume.`,
+        writtenArtifacts,
       );
     }
 
@@ -148,6 +183,7 @@ export class CreatePrHandler implements PhaseHandler {
     message: string,
     canRetry: boolean,
     suggestedAction: string,
+    artifacts: string[] = [],
   ): PhaseResult {
     return {
       outcome: 'failed',
@@ -158,7 +194,7 @@ export class CreatePrHandler implements PhaseHandler {
         message,
         canRetry,
         suggestedAction,
-        artifacts: ['pr-summary.md'],
+        artifacts,
         detectedAt: ctx.now(),
       },
     };

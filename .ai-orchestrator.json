@@ -1,6 +1,7 @@
 {
   "validation": {
     "commands": [
+      "bash scripts/check-parity-coverage.sh",
       "pnpm build",
       "pnpm lint",
       "pnpm typecheck",
