@@ -144,6 +144,12 @@ export class AntigravityAgentAdapter implements AgentPort {
       try {
         const stray = findExpectedArtifactsInDir(scratchDir, request.expectedArtifacts ?? []);
         if (stray.length > 0) {
+          if (
+            !result.contractViolations.includes(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR)
+          ) {
+            result.contractViolations.push(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR);
+          }
+
           const recovered: string[] = [];
           for (const relPath of stray) {
             const dest = join(request.cwd, relPath);
@@ -188,12 +194,6 @@ export class AntigravityAgentAdapter implements AgentPort {
               result.contractViolations = result.contractViolations.filter(
                 (cv) => cv !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
               );
-            }
-
-            if (
-              !result.contractViolations.includes(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR)
-            ) {
-              result.contractViolations.push(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR);
             }
           }
         }

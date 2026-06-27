@@ -560,4 +560,44 @@ exit 0
     expect(artifacts).toContain('design.md');
     expect(artifacts).toContain('other.md');
   });
+
+  it('still records ARTIFACT_IN_SCRATCH_DIR when recovery fails completely', async () => {
+    const cwd = makeWorktree();
+    const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-'));
+    dirs.push(scratchDir);
+    const workspaceHash = createHash('sha256').update(cwd).digest('hex');
+    const adapterScratchDir = join(scratchDir, workspaceHash);
+
+    // Create a conflict: make design.md a file in cwd so dirname(cwd/design.md/stray.md) fails to mkdir
+    writeFileSync(join(cwd, 'design.md'), 'conflict file');
+
+    const fakeScript = join(cwd, 'fake-agy-fail-recovery.sh');
+    writeFileSync(
+      fakeScript,
+      `#!/usr/bin/env bash
+mkdir -p "${adapterScratchDir}/design.md"
+printf "## Stray" > "${adapterScratchDir}/design.md/stray.md"
+echo "fake agy success"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: fakeScript,
+      artifactsDir: cwd,
+      scratchDir,
+    });
+
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['design.md/stray.md'] }));
+
+    // Should remain contract_violation because recovery failed (destination is blocked by the file)
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+
+    // BUT should still record ARTIFACT_IN_SCRATCH_DIR because the file was found in scratch
+    expect(result.contractViolations).toContain('artifact_in_scratch_dir');
+    expect(result.remediatedArtifacts).toBeUndefined();
+    expect(existsSync(join(cwd, 'design.md/stray.md'))).toBe(false);
+  });
 });
