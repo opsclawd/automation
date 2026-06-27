@@ -9,7 +9,7 @@ import {
   statSync,
   mkdirSync,
 } from 'node:fs';
-import { resolve, join, basename, dirname, relative, isAbsolute } from 'node:path';
+import { resolve, join, dirname, relative, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
@@ -25,26 +25,30 @@ export interface AntigravityAdapterOptions {
   scratchDir?: string;
 }
 
-function validateScratchDir(dir: string): void {
+export function validateScratchDir(dir: string): void {
   const resolved = resolve(dir);
   const home = resolve(homedir());
   const cwd = resolve(process.cwd());
   const temp = resolve(tmpdir());
+  const geminiRoot = resolve(join(home, '.gemini'));
 
   if (
     resolved === '/' ||
     resolved === home ||
     resolved === cwd ||
+    resolved === geminiRoot ||
+    resolved === temp ||
     home.startsWith(resolved) ||
     cwd.startsWith(resolved)
   ) {
     throw new Error(`Unsafe scratch directory path: ${dir}`);
   }
 
-  const relativeGemini = relative(join(home, '.gemini'), resolved);
-  const inGemini = !relativeGemini.startsWith('..') && !isAbsolute(relativeGemini);
+  const relativeGemini = relative(geminiRoot, resolved);
+  const inGemini =
+    relativeGemini !== '' && !relativeGemini.startsWith('..') && !isAbsolute(relativeGemini);
   const relativeTemp = relative(temp, resolved);
-  const inTemp = !relativeTemp.startsWith('..') && !isAbsolute(relativeTemp);
+  const inTemp = relativeTemp !== '' && !relativeTemp.startsWith('..') && !isAbsolute(relativeTemp);
 
   if (!inGemini && !inTemp) {
     throw new Error(`Scratch directory must be inside .gemini or temp directory: ${dir}`);
@@ -54,26 +58,39 @@ function validateScratchDir(dir: string): void {
 function clearDirectory(dir: string): void {
   validateScratchDir(dir);
   if (!existsSync(dir)) return;
-  for (const entry of readdirSync(dir)) {
-    rmSync(resolve(dir, entry), { recursive: true, force: true });
+  try {
+    for (const entry of readdirSync(dir)) {
+      try {
+        rmSync(resolve(dir, entry), { recursive: true, force: true });
+      } catch {
+        // Best effort clean: ignore individual file deletion failures
+      }
+    }
+  } catch {
+    // Best effort: ignore readdir failures
   }
 }
 
 function findExpectedArtifactsInDir(scratchDir: string, expectedArtifacts: string[]): string[] {
   if (!existsSync(scratchDir)) return [];
   const found: string[] = [];
-  for (const entry of readdirSync(scratchDir, { recursive: true, encoding: 'utf-8' })) {
-    const fullPath = join(scratchDir, entry);
-    try {
-      if (statSync(fullPath).isFile()) {
-        const name = basename(entry);
-        if (expectedArtifacts.includes(entry) || expectedArtifacts.includes(name)) {
-          found.push(entry);
+  try {
+    for (const entry of readdirSync(scratchDir, { recursive: true, encoding: 'utf-8' })) {
+      const fullPath = join(scratchDir, entry);
+      try {
+        if (statSync(fullPath).isFile()) {
+          // Only match if the exact relative path in the scratch directory
+          // matches one of the expected relative paths.
+          if (expectedArtifacts.includes(entry)) {
+            found.push(entry);
+          }
         }
+      } catch {
+        // Ignore errors from broken symlinks, restricted permissions, etc.
       }
-    } catch {
-      // Ignore errors from broken symlinks, restricted permissions, etc.
     }
+  } catch {
+    // Ignore readdir failures
   }
   return found;
 }
@@ -124,44 +141,64 @@ export class AntigravityAgentAdapter implements AgentPort {
       result.outcome === 'contract_violation' &&
       result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
     ) {
-      const stray = findExpectedArtifactsInDir(scratchDir, request.expectedArtifacts ?? []);
-      if (stray.length > 0) {
-        for (const relPath of stray) {
-          const dest = join(request.cwd, relPath);
-          const src = join(scratchDir, relPath);
-          try {
-            mkdirSync(dirname(dest), { recursive: true });
-            renameSync(src, dest);
-          } catch (err) {
-            const error = err as { code?: string };
-            if (error.code === 'EXDEV') {
-              copyFileSync(src, dest);
-              unlinkSync(src);
-            } else {
-              throw err;
+      try {
+        const stray = findExpectedArtifactsInDir(scratchDir, request.expectedArtifacts ?? []);
+        if (stray.length > 0) {
+          const recovered: string[] = [];
+          for (const relPath of stray) {
+            const dest = join(request.cwd, relPath);
+            const src = join(scratchDir, relPath);
+            try {
+              mkdirSync(dirname(dest), { recursive: true });
+              try {
+                renameSync(src, dest);
+              } catch (err) {
+                const error = err as { code?: string };
+                if (error.code === 'EXDEV') {
+                  copyFileSync(src, dest);
+                  unlinkSync(src);
+                } else {
+                  throw err;
+                }
+              }
+              recovered.push(relPath);
+            } catch {
+              // Best effort recovery: ignore individual file copy/rename errors
+            }
+          }
+
+          if (recovered.length > 0) {
+            const remediationRecords = recovered.map((relPath) => ({
+              src: join(scratchDir, relPath),
+              artifact: relPath,
+            }));
+
+            result.remediatedArtifacts = [
+              ...(result.remediatedArtifacts ?? []),
+              ...remediationRecords,
+            ];
+
+            // Validate if all expected artifacts now exist in the workspace cwd
+            const allRecovered = (request.expectedArtifacts ?? []).every((art) =>
+              existsSync(join(request.cwd, art)),
+            );
+
+            if (allRecovered) {
+              result.outcome = 'success';
+              result.contractViolations = result.contractViolations.filter(
+                (cv) => cv !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+              );
+            }
+
+            if (
+              !result.contractViolations.includes(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR)
+            ) {
+              result.contractViolations.push(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR);
             }
           }
         }
-        result.remediatedArtifacts = stray.map((relPath) => ({
-          src: join(scratchDir, relPath),
-          artifact: relPath,
-        }));
-
-        // Validate if all expected artifacts now exist in the workspace cwd
-        const allRecovered = (request.expectedArtifacts ?? []).every((art) =>
-          existsSync(join(request.cwd, art)),
-        );
-
-        if (allRecovered) {
-          result.outcome = 'success';
-          result.contractViolations = result.contractViolations.filter(
-            (cv) => cv !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
-          );
-        }
-
-        if (!result.contractViolations.includes(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR)) {
-          result.contractViolations.push(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_SCRATCH_DIR);
-        }
+      } catch {
+        // Best effort: ignore top-level recovery failures to protect the original result
       }
     }
 

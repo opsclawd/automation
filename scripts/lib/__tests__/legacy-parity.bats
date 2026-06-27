@@ -2597,6 +2597,14 @@ PLAN
 #   its configured scratchDir before calling runExternalCli for each
 #   invocation. Runtime-agnostic — filesystem state assertion.
 @test "parity[#521]: antigravity adapter clears scratch dir before invocation" {
+  # Structural validation: clearDirectory must be called before runExternalCli
+  local file="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+  clear_line=$(grep -n "clearDirectory(" "$file" | head -n 1 | cut -d: -f1)
+  run_line=$(grep -n "runExternalCli(" "$file" | head -n 1 | cut -d: -f1)
+  [ -n "$clear_line" ]
+  [ -n "$run_line" ]
+  [ "$clear_line" -lt "$run_line" ]
+
   run npx vitest run "$REPO_ROOT/packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts" -t "clears stale files from scratch dir before invocation"
   [ "$status" -eq 0 ]
 }
