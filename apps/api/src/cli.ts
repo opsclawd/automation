@@ -632,7 +632,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .description('Resume a failed run')
         .requiredOption('--uuid <uuid>', 'Run UUID')
         .option('--from-phase <phase>', 'Phase to resume from (default: auto-detect failed phase)')
-        .action(async (opts: { uuid: string; fromPhase?: string }) => {
+        .option('--verbose', 'Stream progress to terminal (default: auto when TTY)')
+        .option('--no-verbose', 'Suppress streaming progress to terminal')
+        .action(async (opts: { uuid: string; fromPhase?: string; verbose?: boolean }) => {
           try {
             const repoRoot = findRepoRoot(process.cwd());
             const options: ComposeOptions = {
@@ -697,6 +699,14 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               }
             };
 
+            let unsubscribe: (() => void) | undefined;
+            const tee = opts.verbose ?? Boolean(process.stdout.isTTY);
+            if (tee) {
+              unsubscribe = c.eventBus.subscribe(RunId(opts.uuid), (event) => {
+                console.error(`[ts] ${event.message}`);
+              });
+            }
+
             try {
               signalHandlers = installSignalHandlers(
                 c.runRepository,
@@ -743,6 +753,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }) + '\n',
               );
             } finally {
+              unsubscribe?.();
               signalHandlers?.remove();
               lease?.stop();
             }
