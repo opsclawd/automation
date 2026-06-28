@@ -4,6 +4,7 @@ export * from './handlers/read-issue.js';
 export * from './handlers/plan-design.js';
 export * from './handlers/plan-write.js';
 export * from './derive-steps.js';
+export * from './plan-tasks.js';
 export * from './handlers/implement.js';
 export * from './handlers/validate.js';
 export * from './handlers/review-fix.js';

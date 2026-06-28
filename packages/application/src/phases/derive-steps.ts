@@ -1,9 +1,9 @@
+import { derivePlanTasks } from './plan-tasks.js';
+
 export interface DerivedStep {
   index: number;
   title: string;
 }
-
-const TASK_HEADING_RE = /^##\s+(Task\b.*)$/i;
 
 /** Deterministically derive ordered Steps from plan.md markdown.
  *
@@ -17,12 +17,5 @@ const TASK_HEADING_RE = /^##\s+(Task\b.*)$/i;
  *
  *  This matches the Bash `implement-task-N` heading convention. */
 export function deriveSteps(planMarkdown: string): DerivedStep[] {
-  const steps: DerivedStep[] = [];
-  for (const line of planMarkdown.split('\n')) {
-    const m = TASK_HEADING_RE.exec(line.trim());
-    if (m) {
-      steps.push({ index: steps.length + 1, title: m[1]!.trim() });
-    }
-  }
-  return steps;
+  return derivePlanTasks(planMarkdown);
 }
