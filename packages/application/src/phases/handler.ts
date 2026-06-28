@@ -25,6 +25,7 @@ export interface PhaseHandlerContext {
   promptsRoot?: string;
   startCommitSha?: string;
   expectedBranch?: string;
+  baseBranch?: string;
   resolveProfile?: (phase: string) => AgentProfileName;
   idFactory?: () => string;
 }
@@ -71,12 +72,22 @@ export function createEventEmitter(ctx: PhaseHandlerContext, phase: PhaseName): 
 export type PhaseHandlerContextFactory = (
   base: Omit<
     PhaseHandlerContext,
-    'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+    | 'promptsRoot'
+    | 'startCommitSha'
+    | 'expectedBranch'
+    | 'baseBranch'
+    | 'resolveProfile'
+    | 'idFactory'
   >,
   opts?: Partial<
     Pick<
       PhaseHandlerContext,
-      'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+      | 'promptsRoot'
+      | 'startCommitSha'
+      | 'expectedBranch'
+      | 'baseBranch'
+      | 'resolveProfile'
+      | 'idFactory'
     >
   >,
 ) => PhaseHandlerContext;
@@ -84,12 +95,22 @@ export type PhaseHandlerContextFactory = (
 export function buildPhaseHandlerContext(
   base: Omit<
     PhaseHandlerContext,
-    'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+    | 'promptsRoot'
+    | 'startCommitSha'
+    | 'expectedBranch'
+    | 'baseBranch'
+    | 'resolveProfile'
+    | 'idFactory'
   >,
   opts?: Partial<
     Pick<
       PhaseHandlerContext,
-      'promptsRoot' | 'startCommitSha' | 'expectedBranch' | 'resolveProfile' | 'idFactory'
+      | 'promptsRoot'
+      | 'startCommitSha'
+      | 'expectedBranch'
+      | 'baseBranch'
+      | 'resolveProfile'
+      | 'idFactory'
     >
   >,
 ): PhaseHandlerContext {

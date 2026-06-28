@@ -50,6 +50,7 @@ function makeCtx(overrides?: {
   promptsRoot?: string;
   startCommitSha?: string;
   expectedBranch?: string;
+  baseBranch?: string;
   resolveProfile?: (p: string) => string;
   idFactory?: () => string;
 }): PhaseHandlerContext & { _events: OrchestratorEvent[] } {
@@ -75,6 +76,7 @@ function makeCtx(overrides?: {
     promptsRoot: overrides?.promptsRoot,
     startCommitSha: overrides?.startCommitSha,
     expectedBranch: overrides?.expectedBranch,
+    baseBranch: overrides?.baseBranch,
     resolveProfile: overrides?.resolveProfile as PhaseHandlerContext['resolveProfile'],
     idFactory: overrides?.idFactory,
     _events: events,
@@ -103,6 +105,7 @@ describe('CompoundHandler', () => {
       promptsRoot: '/tmp/prompts',
       startCommitSha: 'abc123',
       expectedBranch: 'main',
+      baseBranch: 'main',
       resolveProfile: () => 'pi-qwen-local',
       idFactory: () => 'inv-001',
     });
@@ -257,7 +260,7 @@ describe('CompoundHandler', () => {
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(cleanSpy).toHaveBeenCalledWith(ctx.cwd, ctx.expectedBranch);
+    expect(cleanSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
 
     const restored = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
     expect(restored).toBe('passed');

@@ -257,22 +257,6 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
         isTracked = false;
       }
 
-      // 3.1. Untracked/uncommitted: delete from filesystem
-      if (!isTracked) {
-        await rm(artifactPath, { force: true });
-      }
-
-      // 3.2. Staged but not committed: reset/unstage and delete
-      if (stagedSet.has(artifact)) {
-        try {
-          await git(cwd, ['reset', 'HEAD', '--', artifact]);
-        } catch {
-          // ignore
-        }
-        await rm(artifactPath, { force: true });
-      }
-
-      // 3.3. Already committed to the branch
       if (baseBranch && committedSet.has(artifact)) {
         try {
           await git(cwd, ['rm', '-f', '--', artifact]);
@@ -281,6 +265,15 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
           // If git rm fails, ensure filesystem cleanup
           await rm(artifactPath, { force: true });
         }
+      } else if (stagedSet.has(artifact)) {
+        try {
+          await git(cwd, ['reset', 'HEAD', '--', artifact]);
+        } catch {
+          // ignore
+        }
+        await rm(artifactPath, { force: true });
+      } else if (!isTracked) {
+        await rm(artifactPath, { force: true });
       }
     }
 

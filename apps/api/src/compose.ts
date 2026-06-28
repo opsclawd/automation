@@ -1335,6 +1335,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         events: persistingEventBusForLoop,
         now: () => new Date(),
         idFactory: () => randomUUID(),
+        cleanArtifacts: async (ctx) => {
+          if (typeof gitAdapter.cleanOrchestratorArtifacts === 'function') {
+            await gitAdapter.cleanOrchestratorArtifacts(
+              ctx.cwd,
+              opts.baseBranch ?? resolvedDefaultBranch,
+            );
+          }
+        },
       });
       reviewFixLoop = reviewFixLoopInstance;
 
@@ -1474,6 +1482,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           {
             promptsRoot: join(opts.repoRoot, 'prompts'),
             expectedBranch: `ai/issue-${run.issueNumber}`,
+            baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
           },
         );

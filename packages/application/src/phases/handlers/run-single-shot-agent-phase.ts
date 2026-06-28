@@ -403,9 +403,9 @@ export async function runSingleShotAgentPhase(
       }
     }
 
-    const gitGuard = ctx.git as unknown as ArtifactGuardPort;
+    const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
     if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
-      await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.expectedBranch);
+      await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
     }
 
     if (
