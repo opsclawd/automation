@@ -220,7 +220,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('fails when validation.result is absent', async () => {
-    const { ctx } = await build();
+    const { ctx, events, git, github } = await build();
     const emptyStore = new FakeArtifactStore();
     const ctxNoVal = { ...ctx, artifacts: emptyStore } as unknown as PhaseHandlerContext;
 
@@ -231,6 +231,12 @@ describe('CreatePrHandler — deterministic assembly', () => {
       expect(res.failure.message).toContain('Validation did not pass (status: missing)');
       expect(res.failure.artifacts).toEqual([]);
     }
+
+    const blockedEvent = events.find((e) => e.type === 'create_pr.blocked');
+    expect(blockedEvent).toBeDefined();
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
   });
 
   it('fails when validation.result is not passed', async () => {
