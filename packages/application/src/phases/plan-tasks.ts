@@ -281,7 +281,7 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, _totalFences
   for (let i = startLineIdx + 1; i < lines.length; i++) {
     const line = lines[i]!;
 
-    if (TASK_HEADING_RE.test(line)) {
+    if (activeFenceLength === 0 && TASK_HEADING_RE.test(line)) {
       break;
     }
 
@@ -431,7 +431,7 @@ export function extractTaskBody(
   }
 
   if (lineNum === null && !numberedExhausted && input.title) {
-    const escapedTitle = escapeRegExp(input.title);
+    const escapedTitle = escapeRegExp(input.title.trim());
     const titleRegex = new RegExp(`^#{2,3}\\s+Task\\s+[0-9]+\\b.*${escapedTitle}`, 'i');
     const titleCandidates: number[] = [];
     for (let i = 0; i < lines.length; i++) {
@@ -471,7 +471,7 @@ export function extractTaskBody(
       candidateIndices.length > 0 ||
       (!!input.title &&
         lines.some((line) => {
-          const escapedTitle = escapeRegExp(input.title!);
+          const escapedTitle = escapeRegExp(input.title!.trim());
           const titleRegex = new RegExp(`^#{2,3}\\s+Task\\s+[0-9]+\\b.*${escapedTitle}`, 'i');
           return titleRegex.test(line);
         }));
@@ -496,7 +496,17 @@ function checkUnclosedFences(planMarkdown: string): string | null {
 
     if (TASK_HEADING_RE.test(line)) {
       if (activeFenceLength > 0) {
-        return `unclosed code fence starting at line ${openFenceLine} before task heading at line ${i + 1}: ${line.trim()}`;
+        let closedLater = false;
+        for (let j = i + 1; j < lines.length; j++) {
+          const m = /^\s*(`{3,})/.exec(lines[j]!);
+          if (m && m[1]!.length >= activeFenceLength) {
+            closedLater = true;
+            break;
+          }
+        }
+        if (!closedLater) {
+          return `unclosed code fence starting at line ${openFenceLine} before task heading at line ${i + 1}: ${line.trim()}`;
+        }
       }
     }
 

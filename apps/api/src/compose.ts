@@ -1517,14 +1517,36 @@ export function composeRoot(opts: ComposeOptions): Container {
         const planPath = join(ctx.cwd, 'plan.md');
 
         let manifest: TaskManifest | undefined;
-        try {
-          const manifestJson = readFileSync(join(ctx.cwd, 'task-manifest.json'), 'utf-8');
-          const parsed = parseTaskManifest(manifestJson);
-          if (parsed.success) {
-            manifest = parsed.manifest;
+        const manifestPath = join(ctx.cwd, 'task-manifest.json');
+        if (existsSync(manifestPath)) {
+          try {
+            const manifestJson = readFileSync(manifestPath, 'utf-8');
+            const parsed = parseTaskManifest(manifestJson);
+            if (parsed.success) {
+              manifest = parsed.manifest;
+            } else {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'error',
+                type: 'agent.invoke_failed',
+                message: `Failed to parse task-manifest.json: ${parsed.error}`,
+                timestamp: new Date().toISOString(),
+                metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+              });
+              return { invocationId: '', agentOutcome: 'failed' as const };
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            persistingEventBusForLoop.publish(String(ctx.runId), {
+              runId: String(ctx.runId),
+              level: 'error',
+              type: 'agent.invoke_failed',
+              message: `Failed to read task-manifest.json: ${msg}`,
+              timestamp: new Date().toISOString(),
+              metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            });
+            return { invocationId: '', agentOutcome: 'failed' as const };
           }
-        } catch {
-          // Optional manifest file
         }
 
         const taskTextResult = extractTaskText(planPath, ctx.stepIndex, manifest);

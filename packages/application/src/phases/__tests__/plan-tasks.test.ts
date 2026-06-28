@@ -588,7 +588,7 @@ This body should be extracted.
       }
     });
 
-    it('does not swallow subsequent tasks even if a code fence is left open, and reports validation error', () => {
+    it('does not flag unclosed code fence if it is closed later, and extracts the heading as part of task body', () => {
       const plan = `
 ## Task 1: Heading one
 \`\`\`
@@ -601,18 +601,64 @@ some code
 \`\`\`
 \`\`\`
 `;
-      // 1. Check validation fails
+      // 1. Check validation passes
       const validationResult = validatePlanTaskList(plan);
-      expect(validationResult.success).toBe(false);
-      if (!validationResult.success) {
-        expect(validationResult.error).toContain('unclosed code fence');
-      }
+      expect(validationResult.success).toBe(true);
 
-      // 2. Check extractTaskBody for Task 1 does not swallow Task 2
+      // 2. Check extractTaskBody for Task 1 contains the template heading
       const result1 = extractTaskBody(plan, { taskNumber: 1 });
       expect(result1.ok).toBe(true);
       if (result1.ok) {
-        expect(result1.body).not.toContain('## Task 2');
+        expect(result1.body).toContain('## Task 2');
+      }
+    });
+
+    it('does not stop task body extraction on headings inside active code fences', () => {
+      const plan = `
+## Task 1: Some Task
+Here is an example plan format:
+\`\`\`markdown
+## Task 2: Subtask template
+Some instructions.
+\`\`\`
+The rest of task 1 body.
+
+## Task 2: Actual next task
+Body of task 2.
+`;
+      const result = extractTaskBody(plan, { taskNumber: 1 });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.body).toContain('## Task 2: Subtask template');
+        expect(result.body).toContain('The rest of task 1 body.');
+        expect(result.body).not.toContain('## Task 2: Actual next task');
+      }
+    });
+
+    it('does not flag unclosed code fence error for headings inside correctly closed code fences', () => {
+      const plan = `
+## Task 1: Some Task
+Here is an example:
+\`\`\`markdown
+## Task 2: Subtask template
+\`\`\`
+
+## Task 2: Actual next task
+Body of task 2.
+`;
+      const result = validatePlanTaskList(plan);
+      expect(result.success).toBe(true);
+    });
+
+    it('extractTaskBody matches headings when manifest title has leading/trailing spaces', () => {
+      const plan = `
+## Task 1: My Task Title
+Body of task 1.
+`;
+      const result = extractTaskBody(plan, { taskNumber: 1, title: ' My Task Title ' });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.body.trim()).toBe('Body of task 1.');
       }
     });
   });
