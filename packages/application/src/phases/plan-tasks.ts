@@ -178,6 +178,11 @@ function checkDuplicateTitles(titles: string[]): string | null {
   return null;
 }
 
+/** Strip inline markdown formatting before comparing titles. */
+function normTitle(s: string): string {
+  return s.replace(/`/g, '').trim().toLowerCase();
+}
+
 function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest): string | null {
   const lines = planMarkdown.split(/\r?\n/);
   const totalFences = lines.filter((line) => /^\s*(`{3,})/.test(line)).length;
@@ -204,7 +209,7 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
     if (!matchedLine) {
       missingFromProse.push(`Task ${task.n}`);
     } else {
-      if (proseTitle.trim().toLowerCase() !== task.title.trim().toLowerCase()) {
+      if (normTitle(proseTitle) !== normTitle(task.title)) {
         titleMismatches.push(
           `Task ${task.n} title mismatch: manifest has '${task.title}', prose has '${proseTitle}'`,
         );
