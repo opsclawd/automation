@@ -8,8 +8,9 @@ import {
   unlinkSync,
   statSync,
   mkdirSync,
+  promises as fsPromises,
 } from 'node:fs';
-import { resolve, join, dirname, relative, isAbsolute } from 'node:path';
+import { resolve, join, dirname, basename, relative, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
@@ -22,6 +23,7 @@ export interface AntigravityAdapterOptions {
   timeoutMsDefault?: number;
   env?: Record<string, string>;
   scratchDir?: string;
+  brainDir?: string;
 }
 
 export function validateScratchDir(dir: string): void {
@@ -94,6 +96,102 @@ function findExpectedArtifactsInDir(scratchDir: string, expectedArtifacts: strin
   return found;
 }
 
+/**
+ * Searches one level deep in brainRoot for a file whose basename matches
+ * artifactBasename. Prioritizes the directory matching runId, then falls back
+ * to scanning other UUID subdirectories asynchronously, sorted by mtime descending.
+ */
+async function findArtifactInBrainDir(
+  brainRoot: string,
+  artifactBasename: string,
+  runId?: string,
+): Promise<string | null> {
+  try {
+    const rootStat = await fsPromises.stat(brainRoot);
+    if (!rootStat.isDirectory()) return null;
+  } catch {
+    return null;
+  }
+
+  // 1. Check subdirectory matching runId first
+  if (runId) {
+    const candidate = join(brainRoot, runId, artifactBasename);
+    const resolvedCandidate = resolve(candidate);
+    const resolvedBrainRoot = resolve(brainRoot);
+    if (resolvedCandidate.startsWith(resolvedBrainRoot + '/')) {
+      try {
+        const st = await fsPromises.stat(resolvedCandidate);
+        if (st.isFile()) {
+          return resolvedCandidate;
+        }
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
+  // 2. Fallback scan of the whole directory (performed asynchronously)
+  const matches: { path: string; mtimeMs: number }[] = [];
+  try {
+    const uuidEntries = await fsPromises.readdir(brainRoot);
+    const directoryDetails: { entry: string; mtimeMs: number }[] = [];
+
+    // Limit concurrency by batching directory stat calls (chunk size of 50)
+    const batchSize = 50;
+    for (let i = 0; i < uuidEntries.length; i += batchSize) {
+      const chunk = uuidEntries.slice(i, i + batchSize);
+      await Promise.all(
+        chunk.map(async (entry) => {
+          const fullPath = join(brainRoot, entry);
+          try {
+            const st = await fsPromises.stat(fullPath);
+            if (st.isDirectory()) {
+              directoryDetails.push({ entry, mtimeMs: st.mtimeMs });
+            }
+          } catch {
+            // Skip inaccessible or failed entries
+          }
+        }),
+      );
+    }
+
+    // Sort directories by modification time descending
+    directoryDetails.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    // Limit to the 1000 most recent directories
+    const entriesToCheck = directoryDetails.slice(0, 1000);
+
+    // Limit concurrency by batching candidate file checks (chunk size of 50)
+    for (let i = 0; i < entriesToCheck.length; i += batchSize) {
+      const chunk = entriesToCheck.slice(i, i + batchSize);
+      await Promise.all(
+        chunk.map(async (dirDetail) => {
+          const candidate = join(brainRoot, dirDetail.entry, artifactBasename);
+          try {
+            const fileStat = await fsPromises.stat(candidate);
+            if (fileStat.isFile()) {
+              matches.push({ path: candidate, mtimeMs: fileStat.mtimeMs });
+            }
+          } catch {
+            // Ignore
+          }
+        }),
+      );
+    }
+  } catch {
+    return null;
+  }
+
+  if (matches.length === 0) return null;
+
+  // Implement uniqueness guard: if multiple directories contain the same artifact basename, recovery fails.
+  if (matches.length > 1) {
+    return null;
+  }
+
+  return matches[0]!.path;
+}
+
 export class AntigravityAgentAdapter implements AgentPort {
   constructor(private readonly opts: AntigravityAdapterOptions) {}
 
@@ -148,8 +246,14 @@ export class AntigravityAgentAdapter implements AgentPort {
           }
 
           const recovered: string[] = [];
+          const resolvedCwd = resolve(request.cwd);
           for (const relPath of stray) {
-            const dest = join(request.cwd, relPath);
+            const dest = resolve(join(resolvedCwd, relPath));
+            const rel = relative(resolvedCwd, dest);
+            if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+              console.warn(`Unsafe recovery destination: ${dest}`);
+              continue;
+            }
             const src = join(scratchDir, relPath);
             try {
               mkdirSync(dirname(dest), { recursive: true });
@@ -165,8 +269,8 @@ export class AntigravityAgentAdapter implements AgentPort {
                 }
               }
               recovered.push(relPath);
-            } catch {
-              // Best effort recovery: ignore individual file copy/rename errors
+            } catch (err) {
+              console.warn(`Failed to recover artifact '${relPath}' from scratch dir:`, err);
             }
           }
 
@@ -183,7 +287,7 @@ export class AntigravityAgentAdapter implements AgentPort {
 
             // Validate if all expected artifacts now exist in the workspace cwd
             const allRecovered = (request.expectedArtifacts ?? []).every((art) =>
-              existsSync(join(request.cwd, art)),
+              existsSync(join(resolvedCwd, art)),
             );
 
             if (allRecovered) {
@@ -194,8 +298,63 @@ export class AntigravityAgentAdapter implements AgentPort {
             }
           }
         }
-      } catch {
-        // Best effort: ignore top-level recovery failures to protect the original result
+      } catch (err) {
+        console.warn('Failed to perform scratch recovery:', err);
+      }
+    }
+
+    // Post: detect and recover artifacts wrongly written to brain dir
+    if (
+      result.outcome === 'contract_violation' &&
+      result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+    ) {
+      try {
+        const brainRoot = this.opts.brainDir ?? resolve(homedir(), '.gemini/antigravity-cli/brain');
+        let brainRecoveredAny = false;
+        const resolvedCwd = resolve(request.cwd);
+
+        for (const artifact of request.expectedArtifacts ?? []) {
+          if (existsSync(join(resolvedCwd, artifact))) continue; // already present
+          const match = await findArtifactInBrainDir(brainRoot, basename(artifact), request.runId);
+          if (match === null) continue;
+
+          const dest = resolve(join(resolvedCwd, artifact));
+          const rel = relative(resolvedCwd, dest);
+          if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+            console.warn(`Unsafe recovery destination: ${dest}`);
+            continue;
+          }
+          try {
+            mkdirSync(dirname(dest), { recursive: true });
+            copyFileSync(match, dest);
+            if (
+              !result.contractViolations.includes(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_BRAIN_DIR)
+            ) {
+              result.contractViolations.push(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_BRAIN_DIR);
+            }
+            result.remediatedArtifacts = [
+              ...(result.remediatedArtifacts ?? []),
+              { src: match, artifact },
+            ];
+            brainRecoveredAny = true;
+          } catch (err) {
+            console.warn(`Failed to recover artifact '${artifact}' from brain dir:`, err);
+          }
+        }
+
+        if (brainRecoveredAny) {
+          const allRecovered = (request.expectedArtifacts ?? []).every((art) =>
+            existsSync(join(resolvedCwd, art)),
+          );
+          if (allRecovered) {
+            result.outcome = 'success';
+            result.contractViolations = result.contractViolations.filter(
+              (cv) => cv !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to perform brain recovery:', err);
       }
     }
 
