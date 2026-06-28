@@ -22,6 +22,7 @@ describe('buildImplementPrompt', () => {
     expect(prompt).toContain('Implement JWT-based auth middleware and write integration tests.');
   });
 
+  // Kept explicitly for direct helper formatting compatibility (Task 4)
   it('falls back gracefully when taskText is empty', () => {
     const prompt = buildImplementPrompt(ctx, '', branchName);
     expect(prompt).toContain('## Task Description');

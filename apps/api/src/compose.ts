@@ -92,6 +92,7 @@ import {
   type FixStepOptions,
   type TypecheckResult,
   type ResolveRefShaFn,
+  extractTaskBody,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import {
@@ -155,27 +156,11 @@ export function extractTaskText(planPath: string, taskIndex: number): string {
     console.error(`extractTaskText: failed to read plan at ${planPath}`, err);
     return '';
   }
-  const lines = content.split('\n');
-  const taskHeadingRe = /^##\s+(?:Task|Step)\s+(\d+)\b/i;
-  let capturing = false;
-  const captured: string[] = [];
-  for (const line of lines) {
-    const m = taskHeadingRe.exec(line);
-    if (m) {
-      if (Number(m[1]) === taskIndex) {
-        capturing = true;
-        continue;
-      } else if (capturing) {
-        break;
-      }
-    } else if (capturing && /^##\s/.test(line)) {
-      break;
-    }
-    if (capturing) {
-      captured.push(line);
-    }
+  const result = extractTaskBody(content, { taskNumber: taskIndex });
+  if (result.ok) {
+    return result.body.trim();
   }
-  return captured.join('\n').trim();
+  return '';
 }
 
 export function buildImplementPrompt(
@@ -1503,7 +1488,37 @@ export function composeRoot(opts: ComposeOptions): Container {
         const runDir = run?.displayId ?? String(ctx.runId);
         const issueNumber = run?.issueNumber ?? 0;
         const branchName = `ai/issue-${issueNumber}`;
-        const taskText = extractTaskText(join(ctx.cwd, 'plan.md'), ctx.stepIndex);
+
+        const planPath = join(ctx.cwd, 'plan.md');
+        let planMarkdown = '';
+        try {
+          planMarkdown = readFileSync(planPath, 'utf-8');
+        } catch (err) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message: `Failed to read plan.md at ${planPath}: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
+
+        const bodyResult = extractTaskBody(planMarkdown, { taskNumber: ctx.stepIndex });
+        if (!bodyResult.ok) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message: `Task ${ctx.stepIndex} has no matching heading in plan.md`,
+            timestamp: new Date().toISOString(),
+            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
+
+        const taskText = bodyResult.body;
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);
