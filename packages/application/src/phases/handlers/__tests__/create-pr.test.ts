@@ -352,7 +352,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('fails with status missing/empty when validation.result is empty', async () => {
-    const { artifacts, ctx } = await build();
+    const { artifacts, ctx, git, github } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'validation.result',
@@ -366,5 +366,9 @@ describe('CreatePrHandler — deterministic assembly', () => {
       expect(res.failure.message).toContain('Validation did not pass (status: missing)');
       expect(res.failure.artifacts).toEqual([]);
     }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
   });
 });
