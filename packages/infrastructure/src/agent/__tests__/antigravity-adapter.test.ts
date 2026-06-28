@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   writeFileSync,
+  utimesSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -559,5 +560,287 @@ exit 0
     expect(result.contractViolations).toContain('artifact_in_scratch_dir');
     expect(result.remediatedArtifacts).toBeUndefined();
     expect(existsSync(join(cwd, 'design.md/stray.md'))).toBe(false);
+  });
+
+  // --- Brain-dir recovery tests (#530) ---
+  // Helpers: tests create a tmpdir as brainRoot and pass it via adapter opts.
+  // A "brain UUID dir" is one level of subdirectory under brainRoot.
+
+  it('recovers artifact from brain dir when exactly one UUID dir has a matching file', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-'));
+    dirs.push(brainRoot);
+    const uuidDir = join(brainRoot, 'aaaaaaaa-bbbb-cccc-dddd-111111111111');
+    mkdirSync(uuidDir, { recursive: true });
+    writeFileSync(join(uuidDir, 'compound.md'), '# Learnings\n');
+
+    // Fake agy exits 0 without writing compound.md to cwd → triggers MISSING_REQUIRED_ARTIFACT
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    expect(result.outcome).toBe('success');
+    expect(result.contractViolations).toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'compound.md'), 'utf-8')).toBe('# Learnings\n');
+    expect(result.remediatedArtifacts).toBeDefined();
+    expect(result.remediatedArtifacts!.length).toBe(1);
+    expect(result.remediatedArtifacts![0]!.artifact).toBe('compound.md');
+    // Brain file is COPIED not moved — original must still exist
+    expect(existsSync(join(uuidDir, 'compound.md'))).toBe(true);
+  });
+
+  it('does not recover from brain dir when zero UUID dirs have the expected artifact', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-empty-'));
+    dirs.push(brainRoot);
+    // brainRoot exists but has no UUID subdirs
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).not.toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(false);
+  });
+
+  it('fails to recover when multiple UUID dirs have the same basename (uniqueness guard)', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-multi-'));
+    dirs.push(brainRoot);
+    // Two UUID dirs both have compound.md
+    const uuidDir1 = join(brainRoot, 'aaaaaaaa-bbbb-cccc-dddd-111111111111');
+    const uuidDir2 = join(brainRoot, 'aaaaaaaa-bbbb-cccc-dddd-222222222222');
+    mkdirSync(uuidDir1, { recursive: true });
+    mkdirSync(uuidDir2, { recursive: true });
+
+    const file1 = join(uuidDir1, 'compound.md');
+    const file2 = join(uuidDir2, 'compound.md');
+
+    writeFileSync(file1, '# Learnings session 1\n');
+    writeFileSync(file2, '# Learnings session 2\n');
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).not.toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(false);
+  });
+
+  it('prioritizes the current session runId directory when multiple UUID dirs have the same basename', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-prioritize-'));
+    dirs.push(brainRoot);
+
+    const currentRunId = '00000000-0000-0000-0000-000000000001';
+    const uuidDirCurrent = join(brainRoot, currentRunId);
+    const uuidDirOther = join(brainRoot, 'aaaaaaaa-bbbb-cccc-dddd-222222222222');
+    mkdirSync(uuidDirCurrent, { recursive: true });
+    mkdirSync(uuidDirOther, { recursive: true });
+
+    const fileCurrent = join(uuidDirCurrent, 'compound.md');
+    const fileOther = join(uuidDirOther, 'compound.md');
+
+    // Make the other file newer, but current should still be prioritized
+    writeFileSync(fileCurrent, '# Current run learnings\n');
+    writeFileSync(fileOther, '# Other run learnings\n');
+
+    // Set mtime of current file to be older
+    const time = new Date();
+    time.setSeconds(time.getSeconds() - 10);
+    utimesSync(fileCurrent, time, time);
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+    const result = await adapter.invoke(
+      req(cwd, { expectedArtifacts: ['compound.md'], runId: currentRunId }),
+    );
+
+    expect(result.outcome).toBe('success');
+    expect(result.contractViolations).toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'compound.md'), 'utf-8')).toBe('# Current run learnings\n');
+  });
+
+  it('brain recovery fires after scratch recovery when scratch has no match', async () => {
+    const cwd = makeWorktree();
+    const scratchDir = mkdtempSync(join(tmpdir(), 'agy-scratch-seq-'));
+    dirs.push(scratchDir);
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-seq-'));
+    dirs.push(brainRoot);
+    // Scratch has an unrelated file; brain has the expected artifact
+    writeFileSync(join(scratchDir, 'unrelated.log'), 'log data');
+    const uuidDir = join(brainRoot, 'aaaaaaaa-bbbb-cccc-dddd-333333333333');
+    mkdirSync(uuidDir, { recursive: true });
+    writeFileSync(join(uuidDir, 'compound.md'), '# Learnings from brain\n');
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      scratchDir,
+      brainDir: brainRoot,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    // Scratch miss → brain fires → success
+    expect(result.outcome).toBe('success');
+    expect(result.contractViolations).toContain('artifact_in_brain_dir');
+    expect(result.contractViolations).not.toContain('artifact_in_scratch_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'compound.md'), 'utf-8')).toBe('# Learnings from brain\n');
+  });
+
+  it('ignores invalid runId path traversal attempts during brain recovery', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-traversal-'));
+    dirs.push(brainRoot);
+
+    // Create a file outside the brainRoot that we will attempt to access via path traversal
+    const secretDir = mkdtempSync(join(tmpdir(), 'agy-secret-'));
+    dirs.push(secretDir);
+    const secretFile = join(secretDir, 'sensitive.txt');
+    writeFileSync(secretFile, 'sensitive data');
+
+    // runId is crafted as a relative path targeting the secret directory
+    const traversalRunId = `../${secretDir.substring(secretDir.lastIndexOf('/') + 1)}`;
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+
+    // We request sensitive.txt, which exists in secretDir, which is targetable if traversal succeeded.
+    const result = await adapter.invoke(
+      req(cwd, { expectedArtifacts: ['sensitive.txt'], runId: traversalRunId }),
+    );
+
+    // Should fail with contract_violation / missing_required_artifact because traversal was blocked
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).not.toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'sensitive.txt'))).toBe(false);
+  });
+
+  it('fallback scan sorts by mtime descending and limits search to the 1000 most recent runs', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-limit-'));
+    dirs.push(brainRoot);
+
+    // Create 1005 directories.
+    // 5 old ones (with the artifact)
+    // 1000 newer ones (without the artifact)
+    // The fallback scan should not find the artifact because the 1000 most recent directories
+    // do not contain the artifact, and the 5 older ones with the artifact are excluded.
+
+    const oldDirs: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const d = join(brainRoot, `old-run-${i}`);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, 'compound.md'), `# Old learnings ${i}\n`);
+      oldDirs.push(d);
+    }
+
+    const newDirs: string[] = [];
+    for (let i = 0; i < 1000; i++) {
+      const d = join(brainRoot, `new-run-${i}`);
+      mkdirSync(d, { recursive: true });
+      newDirs.push(d);
+    }
+
+    // Set modification times to ensure old runs are older than new runs
+    const now = Date.now();
+    for (let i = 0; i < 5; i++) {
+      const time = new Date(now - 100000 - i * 1000);
+      utimesSync(oldDirs[i], time, time);
+    }
+    for (let i = 0; i < 1000; i++) {
+      const time = new Date(now - i * 10);
+      utimesSync(newDirs[i], time, time);
+    }
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    // Should fail with contract_violation / missing_required_artifact because the artifact
+    // is only present in the old runs, which were excluded since we only check the 1000 most recent.
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).not.toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(false);
+  });
+
+  it('fallback scan finds artifact in new runs even when there are more than 1000 directories in total', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-find-recent-'));
+    dirs.push(brainRoot);
+
+    // Create 1005 directories:
+    // 1000 older ones (without the artifact)
+    // 5 newer ones (with the artifact)
+    const oldDirs: string[] = [];
+    for (let i = 0; i < 1000; i++) {
+      const d = join(brainRoot, `run-old-${String(i).padStart(4, '0')}`);
+      mkdirSync(d, { recursive: true });
+      oldDirs.push(d);
+    }
+
+    const newDirs: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const d = join(brainRoot, `run-new-${i}`);
+      mkdirSync(d, { recursive: true });
+      if (i === 0) {
+        writeFileSync(join(d, 'compound.md'), `# New learnings ${i}\n`);
+      }
+      newDirs.push(d);
+    }
+
+    // Set modification times to ensure new runs are newer than old runs
+    const now = Date.now();
+    for (let i = 0; i < 1000; i++) {
+      const time = new Date(now - 100000 - i * 10);
+      utimesSync(oldDirs[i], time, time);
+    }
+    for (let i = 0; i < 5; i++) {
+      const time = new Date(now - i * 10);
+      utimesSync(newDirs[i], time, time);
+    }
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    // Should succeed because the new runs containing the artifact are within the 1000 most recent
+    expect(result.outcome).toBe('success');
+    expect(result.contractViolations).toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(true);
+    // Since we sort the found matches by file mtime descending as well, it should pick the most recent one (run-new-0)
+    expect(readFileSync(join(cwd, 'compound.md'), 'utf-8')).toBe('# New learnings 0\n');
   });
 });

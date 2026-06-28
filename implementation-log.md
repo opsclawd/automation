@@ -1,53 +1,114 @@
-# Implementation Log - Task 2: Replace old remediation with universal find-based approach in external-cli-runner.ts
+# Implementation Log - Task 1: Add ARTIFACT_IN_BRAIN_DIR violation code
 
 ## Summary of Changes
 
-### 1. `packages/infrastructure/src/agent/external-cli-runner.ts`
-- Expanded imports from `node:fs` to include `readdirSync`, `statSync`, `copyFileSync`, and `unlinkSync`.
-- Expanded imports from `node:path` to include `basename`.
-- Implemented `findMisplacedCandidate(cwd: string, artifactBasename: string): string | null` to find exact basename matches of missing expected artifacts in the worktree:
-  - Scans recursively using manual recursion via a helper function with `readdirSync` to enforce depth checks and ignore specific noise directories.
-  - Skips top-level/depth < 2 files.
-  - Excludes files that reside in any noise directory (like `node_modules`, `.git`, `dist`, etc.).
-  - Restricts matches to files only (using `statSync(fullPath).isFile()`).
-  - Guards against moving git-tracked files by verifying status with `git ls-files --error-unmatch`.
-  - Ensures remediation only happens when there is exactly one unique candidate (ambiguous matches are skipped).
-- Implemented `moveMisplacedArtifact(cwd: string, srcRelative: string, destRelative: string): void` to move the candidate to the expected destination:
-  - Uses `renameSync(src, dest)`.
-  - Handles cross-device renames by falling back to `copyFileSync(src, dest)` and `unlinkSync(src)` on `EXDEV` error.
-  - Cleans up empty ancestor directories up to the workspace root.
-- Removed the old pre-check `design.md`-only remediation block.
-- Integrated the new universal post-check remediation block right after the artifact enforcement loop (only runs if the outcome was `contract_violation` with `MISSING_REQUIRED_ARTIFACT`).
-  - Attempts to find and remediate each missing expected artifact.
-  - If all expected artifacts are successfully remediated, swaps the violation code to `MISPLACED_ARTIFACT`, restores outcome to `'success'`, logs the warning to `stderr.log`, and updates `remediatedArtifacts` in the result metadata.
+### 1. `packages/application/src/ports/contract-violation-codes.ts`
+- Added the `ARTIFACT_IN_BRAIN_DIR` contract violation code to the `CONTRACT_VIOLATION_CODES` object:
+  ```ts
+  ARTIFACT_IN_BRAIN_DIR: 'artifact_in_brain_dir',
+  ```
+- Positioned it immediately after `ARTIFACT_IN_SCRATCH_DIR` as required by the design/plan specifications.
+
+## Verification
+- Verified that the `packages/application` package builds successfully with no TypeScript compiler errors:
+  ```bash
+  pnpm --filter @ai-sdlc/application build
+  ```
+- Verified that all projects in the workspace typecheck cleanly:
+  ```bash
+  pnpm -r typecheck
+  ```
+
+---
+
+# Implementation Log - Task 2: Inject cwd var in SingleShotAgentHandler + assert in compound tests
+
+## Summary of Changes
+
+### 1. `packages/application/src/phases/handlers/__tests__/compound.test.ts`
+- Added an assertion in the happy path test to verify that `mockRenderPrompt` is called with the correct `cwd` variable inside the `vars` object (derived from `ctx.cwd`).
+
+### 2. `packages/application/src/phases/handlers/single-shot-agent-handler.ts`
+- Injected `cwd: ctx.cwd` into the `vars` object passed to `runSingleShotAgentPhase` around line 82.
+
+## Verification
+- Verified that the new assertion failed initially when `cwd` was not yet injected.
+- Verified that all tests in `packages/application/src/phases/handlers/__tests__/compound.test.ts` passed successfully after implementation.
+- Verified that all 729 tests in the `packages/application` package pass successfully.
+
+---
+
+# Implementation Log - Task 3: Update compound prompt template with absolute worktree path
+
+## Summary of Changes
+
+### 1. `prompts/compound/compound.md`
+- Updated the write instruction to include the absolute working directory path explicitly using the injected `{{var:cwd}}` variable:
+  ```
+  Your working directory is: {{var:cwd}}
+  Write your findings to `{{var:cwd}}/compound.md`.
+  ```
+- Updated the output format block paths to use `{{var:cwd}}` instead of bare file names for `compound.md`:
+  ```
+  Output format:
+  - `{{var:cwd}}/compound.md`: A markdown document explaining what worked, what didn't, and what to do differently next time.
+  - `result.json`: exactly this shape (fill in `summary` with one sentence describing the document):
+    ```json
+    { "result": "written", "path": "{{var:cwd}}/compound.md", "summary": "<one-sentence summary>" }
+    ```
+  ```
+
+## Verification
+- Verified the template contains the new `{{var:cwd}}` references by running `grep -n "var:cwd" prompts/compound/compound.md` and confirming at least 3 lines match.
+
+---
+
+# Implementation Log - Task 4: Write brain-dir recovery tests A (unique match + zero matches)
+
+## Summary of Changes
+
+### 1. `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts`
+- Added two new failing `it` blocks to cover the brain-dir recovery logic:
+  - `recovers artifact from brain dir when exactly one UUID dir has a matching file`: Tests the unique-match scenario. Fails because `brainDir` recovery has not yet been implemented, resulting in a `contract_violation` outcome instead of `success`.
+  - `does not recover from brain dir when zero UUID dirs have the expected artifact`: Tests the zero-match scenario. Passes because recovery is not executed, leading correctly to `contract_violation`.
+
+## Verification
+- Ran the newly added tests to verify that they fail correctly as expected:
+  - The unique match test failed with `AssertionError: expected 'contract_violation' to be 'success'`.
+  - The zero match test passed as no recovery was performed.
+
+---
+
+# Implementation Log - Task 5: Implement brain-dir recovery in AntigravityAgentAdapter + parity test
+
+## Summary of Changes
+
+### 1. `packages/infrastructure/src/agent/antigravity-adapter.ts`
+- Imported `basename` from `node:path`.
+- Added the optional `brainDir?: string` field to `AntigravityAdapterOptions`.
+- Added the `findArtifactInBrainDir` helper function to scan `brainRoot` subdirectories for a matching file, returning the match if unique, or `null` if none or multiple matches are found.
+- Added a brain-dir recovery pass inside `invoke()` when the outcome is `contract_violation` and includes `MISSING_REQUIRED_ARTIFACT`. It iterates over expected artifacts, uses `findArtifactInBrainDir`, copies the unique matches using `copyFileSync`, records the `ARTIFACT_IN_BRAIN_DIR` contract violation, and updates the `outcome` to `success` if all expected artifacts are resolved.
 
 ### 2. `scripts/lib/__tests__/legacy-parity.bats`
-- Replaced the body of `parity[#504]` to match the new `readdirSync`, `basename`, and single-candidate requirements.
-- Added `parity[#527]` test verifying the new post-check gitignore-aware find-based scan with `EXDEV` fallback, `NOISE_DIRS` exclusion, and `MISPLACED_ARTIFACT` status conversion.
+- Appended the `parity[#530]` characterization test to assert that `AntigravityAgentAdapter` uses `ARTIFACT_IN_BRAIN_DIR`, `findArtifactInBrainDir`, `brainDir/brainRoot`, and `copyFileSync` (instead of renameSync) to maintain parity with legacy expectations.
 
-# Implementation Log - Task 3: Update existing artifact remediation tests to match new exact-basename approach
+## Verification
+- Verified that all 27 tests in `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts` now pass, including the two brain-dir recovery tests added in Task 4.
+- Verified that the new BATS parity test passes:
+  ```bash
+  bats scripts/lib/__tests__/legacy-parity.bats --filter "parity\[#530\]"
+  ```
+---
 
-## Summary of Changes
-
-### 1. `packages/infrastructure/src/agent/__tests__/external-cli-runner.test.ts`
-- Updated the 5 existing tests in the `artifact remediation` describe block to use exact basename matches instead of timestamp-prefixed filenames:
-  - **"moves misplaced design.md from subdirectory to worktree root"**: Changed the subdir filename from `2026-04-26-ops-57-fix-score-trace-build-design.md` to `design.md` and updated `remediatedArtifacts` expectations accordingly.
-  - **"does not remediate when design.md already exists at root"**: Changed the subdir filename from `2026-04-26-design.md` to `design.md`.
-  - **"does not remediate when multiple untracked matching files exist"**: Created two untracked files both named `design.md` in different subdirectories (`docs/a/design.md` and `docs/b/design.md`) instead of pattern-matched names.
-  - **"does not remediate when the misplaced file is git-tracked"**: Changed subdir filename to `design.md` and git-added/committed it before execution.
-  - **"cleans up empty ancestor directories after moving misplaced file"**: Changed subdir filename to `design.md` and updated expectations to assert both `specDir` and parent `docs` directory are cleaned up.
-
-# Implementation Log - Task 4: Add new artifact remediation tests
+# Implementation Log - Task 6: Write brain-dir recovery tests B (multiple UUID matches + sequencing)
 
 ## Summary of Changes
 
-### 1. `packages/infrastructure/src/agent/__tests__/external-cli-runner.test.ts`
-- Imported `vi` and `afterEach` from `vitest` at the top of the test file.
-- Mocked `node:fs`'s `renameSync` to spy on calls and easily mock its implementation dynamically across tests, while delegating to the actual `renameSync` from `importOriginal` by default.
-- Added a teardown step in `afterEach` to call `vi.restoreAllMocks()` and clean up any spies/mocks between tests.
-- Added 5 new unit tests under the `artifact remediation` describe block:
-  - **"moves misplaced plan.md from subdirectory to worktree root"**: Verifies that a misplaced `plan.md` file is correctly moved and results in a `success` outcome.
-  - **"moves misplaced compound.md from subdirectory to worktree root"**: Verifies that a misplaced `compound.md` file is correctly moved and results in a `success` outcome.
-  - **"remediates misplaced artifact even when the file is gitignored"**: Verifies that a gitignored misplaced `plan.md` is successfully remediated (reproducing the primary driver for using `readdirSync` over `git ls-files`).
-  - **"remains contract_violation when only some artifacts can be remediated"**: Verifies that if multiple artifacts are expected and one is absent while the other is misplaced, the outcome remains `contract_violation` (partial remediation).
-  - **"falls back to copy+unlink on EXDEV rename error"**: Mocks `renameSync` to throw an `EXDEV` error on the first call (using `vi.importActual` to invoke the real FS method on fallback) and asserts that the file is successfully copied and unlinked, resulting in a `success` outcome.
+### 1. `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts`
+- Added two new tests to the brain-dir recovery section:
+  - `does not recover from brain dir when multiple UUID dirs have the same basename`: Assures that the unique-match guard correctly skips recovery and flags `missing_required_artifact` when the same artifact basename is present in more than one UUID directory.
+  - `brain recovery fires after scratch recovery when scratch has no match`: Assures that brain-dir recovery acts as a fallback step following a scratch-dir recovery miss, successfully recovering the artifact and recording the `artifact_in_brain_dir` violation.
+
+## Verification
+- Verified that all 29 tests in `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts` pass, including the two new ones.
+
