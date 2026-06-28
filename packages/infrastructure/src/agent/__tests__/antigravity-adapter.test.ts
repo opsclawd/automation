@@ -560,4 +560,54 @@ exit 0
     expect(result.remediatedArtifacts).toBeUndefined();
     expect(existsSync(join(cwd, 'design.md/stray.md'))).toBe(false);
   });
+
+  // --- Brain-dir recovery tests (#530) ---
+  // Helpers: tests create a tmpdir as brainRoot and pass it via adapter opts.
+  // A "brain UUID dir" is one level of subdirectory under brainRoot.
+
+  it('recovers artifact from brain dir when exactly one UUID dir has a matching file', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-'));
+    dirs.push(brainRoot);
+    const uuidDir = join(brainRoot, 'aaaaaaaa-bbbb-cccc-dddd-111111111111');
+    mkdirSync(uuidDir, { recursive: true });
+    writeFileSync(join(uuidDir, 'compound.md'), '# Learnings\n');
+
+    // Fake agy exits 0 without writing compound.md to cwd → triggers MISSING_REQUIRED_ARTIFACT
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    expect(result.outcome).toBe('success');
+    expect(result.contractViolations).toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'compound.md'), 'utf-8')).toBe('# Learnings\n');
+    expect(result.remediatedArtifacts).toBeDefined();
+    expect(result.remediatedArtifacts!.length).toBe(1);
+    expect(result.remediatedArtifacts![0]!.artifact).toBe('compound.md');
+    // Brain file is COPIED not moved — original must still exist
+    expect(existsSync(join(uuidDir, 'compound.md'))).toBe(true);
+  });
+
+  it('does not recover from brain dir when zero UUID dirs have the expected artifact', async () => {
+    const cwd = makeWorktree();
+    const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-empty-'));
+    dirs.push(brainRoot);
+    // brainRoot exists but has no UUID subdirs
+
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
+      artifactsDir: cwd,
+      brainDir: brainRoot,
+    });
+    const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
+
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).not.toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(false);
+  });
 });

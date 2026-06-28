@@ -60,3 +60,20 @@
 
 ## Verification
 - Verified the template contains the new `{{var:cwd}}` references by running `grep -n "var:cwd" prompts/compound/compound.md` and confirming at least 3 lines match.
+
+---
+
+# Implementation Log - Task 4: Write brain-dir recovery tests A (unique match + zero matches)
+
+## Summary of Changes
+
+### 1. `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts`
+- Added two new failing `it` blocks to cover the brain-dir recovery logic:
+  - `recovers artifact from brain dir when exactly one UUID dir has a matching file`: Tests the unique-match scenario. Fails because `brainDir` recovery has not yet been implemented, resulting in a `contract_violation` outcome instead of `success`.
+  - `does not recover from brain dir when zero UUID dirs have the expected artifact`: Tests the zero-match scenario. Passes because recovery is not executed, leading correctly to `contract_violation`.
+
+## Verification
+- Ran the newly added tests to verify that they fail correctly as expected:
+  - The unique match test failed with `AssertionError: expected 'contract_violation' to be 'success'`.
+  - The zero match test passed as no recovery was performed.
+
