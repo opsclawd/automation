@@ -4,7 +4,7 @@ import type { TaskManifest } from '@ai-sdlc/application';
 import type { LintTaskSizeResult, OversizedTask } from '@ai-sdlc/application';
 
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx)$|\.bats$/;
-const TEST_CASE_RE = /^\s*(it|test)(\.(skip|only))?\s*\(/gm;
+const TEST_CASE_RE = /^\s*(it|test|xit|xtest)(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*\s*\(/gm;
 
 export interface LintTaskSizeConfig {
   maxTestFileLines: number;
@@ -31,7 +31,14 @@ export function buildLintTaskSize(
           continue;
         }
         const lineCount = content.split('\n').length;
-        const testCaseCount = (content.match(TEST_CASE_RE) ?? []).length;
+        // Documented limitation: This regex-based test counter is a simplified approach
+        // and does not use a full AST parser. To mitigate false positives from test definitions
+        // inside comments or multi-line string/template literals, we strip them before matching.
+        const cleanContent = content
+          .replace(/\/\*[\s\S]*?\*\//g, '') // strip multiline block comments
+          .replace(/\/\/.*$/gm, '') // strip single-line comments
+          .replace(/`[\s\S]*?`/g, ''); // strip template literals
+        const testCaseCount = (cleanContent.match(TEST_CASE_RE) ?? []).length;
         if (lineCount > cfg.maxTestFileLines || testCaseCount > cfg.maxTestCases) {
           oversized.push({
             taskNum: task.n,

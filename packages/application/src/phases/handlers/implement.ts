@@ -123,6 +123,7 @@ export class ImplementHandler implements PhaseHandler {
           emit,
           'invalid_result',
           `task size linting blocked: ${lintResult.oversized.map((t) => `task ${t.taskNum} (${t.file})`).join(', ')} exceed thresholds`,
+          'Split tasks targeting oversized test files in plan.md.',
         );
       }
     }
@@ -235,6 +236,7 @@ export class ImplementHandler implements PhaseHandler {
     emit: EventEmitter,
     kind: FailureKind,
     message: string,
+    suggestedAction?: string,
   ): PhaseResult {
     emit('implement.failed', 'error', message);
     return {
@@ -246,9 +248,10 @@ export class ImplementHandler implements PhaseHandler {
         message,
         canRetry: kind !== 'invalid_result',
         suggestedAction:
-          kind === 'invalid_result'
+          suggestedAction ??
+          (kind === 'invalid_result'
             ? 'Ensure plan.md contains "## Task" headings.'
-            : 'Inspect the failing step artifacts and resume.',
+            : 'Inspect the failing step artifacts and resume.'),
         artifacts: [],
         detectedAt: ctx.now(),
       },

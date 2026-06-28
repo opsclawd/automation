@@ -715,6 +715,9 @@ describe('ImplementHandler', () => {
         expect(result.failure.kind).toBe('invalid_result');
         expect(result.failure.canRetry).toBe(false);
         expect(result.failure.message).toContain('task 1');
+        expect(result.failure.suggestedAction).toBe(
+          'Split tasks targeting oversized test files in plan.md.',
+        );
       }
       expect(runStep).not.toHaveBeenCalled();
       expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
