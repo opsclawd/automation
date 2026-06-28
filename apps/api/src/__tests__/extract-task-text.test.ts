@@ -63,6 +63,14 @@ describe('extractTaskText', () => {
     expect(extractTaskText(planPath, 1)).not.toContain('Validation content.');
   });
 
+  it('stops at the next h2 heading even if not a Task/Step heading', () => {
+    const planPath = makePlan(
+      '## Task 1: First\n\nTask body.\n\n## Verification\n\nSome verification.\n',
+    );
+    expect(extractTaskText(planPath, 1)).toBe('Task body.');
+    expect(extractTaskText(planPath, 1)).not.toContain('Some verification.');
+  });
+
   it('returns empty string when plan file does not exist', () => {
     expect(extractTaskText('/nonexistent/path/plan.md', 1)).toBe('');
   });

@@ -28,7 +28,7 @@ export type TaskBodyResult =
 
 export type PlanTaskListValidationResult = { success: true } | { success: false; error: string };
 
-const TASK_HEADING_RE = /^##\s+(Task\b.*)$/i;
+const TASK_HEADING_RE = /^#{2,3}\s+(Task\b.*)$/i;
 
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -122,13 +122,14 @@ function checkDuplicateTitles(titles: string[]): string | null {
 function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest): string | null {
   const lines = planMarkdown.split(/\r?\n/);
   const totalFences = lines.filter((line) => /^\s*```/.test(line)).length;
+  const cleanLines = stripFencedLines(lines);
 
   let errors = '';
   const missingFromProse: string[] = [];
 
   for (const task of manifest.tasks) {
     const headingRegex = new RegExp(`^#{2,3} Task ${task.n}:`, 'i');
-    const hasHeading = lines.some((line) => headingRegex.test(line));
+    const hasHeading = cleanLines.some((line) => headingRegex.test(line));
     if (!hasHeading) {
       missingFromProse.push(`Task ${task.n}`);
     }
@@ -145,7 +146,7 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
   const proseTasksRegex = /^#{2,3} Task ([0-9]+):/i;
   const seenExtra = new Set<number>();
 
-  for (const line of lines) {
+  for (const line of cleanLines) {
     const m = proseTasksRegex.exec(line.trim());
     if (m) {
       const pn = parseInt(m[1]!, 10);
@@ -194,6 +195,10 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, totalFences:
   const resultLines: string[] = [];
   let inFence = false;
 
+  const taskHeadingLine = lines[startLineIdx]!;
+  const taskLevelMatch = /^#+/.exec(taskHeadingLine);
+  const taskLevel = taskLevelMatch ? taskLevelMatch[0].length : 2;
+
   for (let i = startLineIdx + 1; i < lines.length; i++) {
     const line = lines[i]!;
 
@@ -205,8 +210,20 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, totalFences:
       if (/^\s*```/.test(line)) {
         inFence = !inFence;
       }
-      if (!inFence && /^#{2,3} Task [0-9]+:/i.test(line)) {
-        break;
+      if (!inFence) {
+        const headingMatch = /^(#{2,3})\s/.exec(line);
+        if (headingMatch) {
+          const hLevel = headingMatch[1]!.length;
+          if (hLevel < taskLevel) {
+            break;
+          }
+          if (hLevel === taskLevel) {
+            const isTaskHeading = /^#{2,3} Task [0-9]+:/i.test(line);
+            if (taskLevel === 2 || isTaskHeading) {
+              break;
+            }
+          }
+        }
       }
     }
     resultLines.push(line);
@@ -395,6 +412,18 @@ export function validatePlanTaskList(
     const dupResult = checkDuplicateTitles(manifestTitles);
     if (dupResult) {
       return { success: false, error: dupResult };
+    }
+
+    const seqResult = checkSequentialNumbers(planMarkdown);
+    if (seqResult) {
+      return { success: false, error: seqResult };
+    }
+
+    const parsedTasks = parseTasksNoManifest(planMarkdown);
+    const taskTitles = parsedTasks.map((t) => t.title);
+    const proseDupResult = checkDuplicateTitles(taskTitles);
+    if (proseDupResult) {
+      return { success: false, error: proseDupResult };
     }
 
     const proseResult = checkManifestAgainstProse(planMarkdown, manifest);

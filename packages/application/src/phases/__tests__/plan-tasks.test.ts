@@ -112,6 +112,38 @@ Next body.
       }
     });
 
+    it('H3 headings extraction', () => {
+      const plan = `
+### Task 1: Clean H3 heading
+Body line 1.
+Body line 2.
+
+### Task 2: Next H3 task
+Next body.
+`;
+      const result = extractTaskBody(plan, { taskNumber: 1 });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.body.trim()).toBe('Body line 1.\nBody line 2.');
+        expect(result.headingLine).toBe(2);
+      }
+    });
+
+    it('H3 task heading extraction stops at H2 non-task heading', () => {
+      const plan = `
+### Task 1: H3 heading
+Body line 1.
+
+## Verification
+Some verification.
+`;
+      const result = extractTaskBody(plan, { taskNumber: 1 });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.body.trim()).toBe('Body line 1.');
+      }
+    });
+
     it('unbalanced-fence raw fallback', () => {
       const plan = `
 ## Task 1: Heading one
@@ -199,6 +231,26 @@ Body 2.
       expect(result.success).toBe(true);
     });
 
+    it('valid manifest and matching plan with H3 headings', () => {
+      const plan = `
+### Task 1: T1
+Body 1.
+
+### Task 2: T2
+Body 2.
+`;
+      const manifestJson = JSON.stringify({
+        version: 1,
+        task_count: 2,
+        tasks: [
+          { n: 1, title: 'T1' },
+          { n: 2, title: 'T2' },
+        ],
+      });
+      const result = validatePlanTaskList(plan, manifestJson);
+      expect(result.success).toBe(true);
+    });
+
     it('manifest/prose count mismatch (missing from prose)', () => {
       const plan = `
 ## Task 1: T1
@@ -269,6 +321,15 @@ Body 1.
       expect(result.success).toBe(true);
     });
 
+    it('no manifest validation: contiguous and sequential with H3 headings', () => {
+      const plan = `
+### Task 1: T1
+### Task 2: T2
+`;
+      const result = validatePlanTaskList(plan);
+      expect(result.success).toBe(true);
+    });
+
     it('no manifest validation: non-contiguous task numbers', () => {
       const plan = `
 ## Task 1: T1
@@ -290,6 +351,65 @@ Body 1.
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain('duplicate task titles detected');
+      }
+    });
+
+    it('manifest validation: prose task numbers are non-sequential', () => {
+      const plan = `
+## Task 1: T1
+## Task 3: T2
+`;
+      const manifestJson = JSON.stringify({
+        version: 1,
+        task_count: 2,
+        tasks: [
+          { n: 1, title: 'T1' },
+          { n: 2, title: 'T2' },
+        ],
+      });
+      const result = validatePlanTaskList(plan, manifestJson);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain('task numbers are not sequential');
+      }
+    });
+
+    it('manifest validation: prose task titles are duplicate', () => {
+      const plan = `
+## Task 1: T1
+## Task 2: t1
+`;
+      const manifestJson = JSON.stringify({
+        version: 1,
+        task_count: 2,
+        tasks: [
+          { n: 1, title: 'T1' },
+          { n: 2, title: 'T2' },
+        ],
+      });
+      const result = validatePlanTaskList(plan, manifestJson);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain('duplicate task titles detected');
+      }
+    });
+
+    it('H3 task heading extraction does not stop at H3 subheading', () => {
+      const plan = `
+### Task 1: H3 heading
+Body line 1.
+### Subheading
+Subheading body.
+
+### Task 2: Next task
+Next task body.
+`;
+      const result = extractTaskBody(plan, { taskNumber: 1 });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.body.trim()).toContain('### Subheading');
+        expect(result.body.trim()).toContain('Subheading body.');
+        expect(result.body.trim()).not.toContain('### Task 2:');
       }
     });
   });
@@ -315,6 +435,18 @@ Body 1.
       const plan = `
 ## Task 1: Prose T1
 ## Task 2: Prose T2
+`;
+      const result = derivePlanTasks(plan);
+      expect(result).toEqual([
+        { index: 1, title: 'Task 1: Prose T1' },
+        { index: 2, title: 'Task 2: Prose T2' },
+      ]);
+    });
+
+    it('derives from markdown with H3 headings when manifest is absent', () => {
+      const plan = `
+### Task 1: Prose T1
+### Task 2: Prose T2
 `;
       const result = derivePlanTasks(plan);
       expect(result).toEqual([

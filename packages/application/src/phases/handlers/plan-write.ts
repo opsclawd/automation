@@ -65,28 +65,40 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
       if (e instanceof ArtifactNotFoundError) {
         manifestJson = undefined;
       } else {
-        throw e;
-      }
-    }
-
-    if (manifestJson !== undefined) {
-      const validation = validatePlanTaskList(planMd, manifestJson);
-      if (!validation.success) {
-        emit('plan-write.failed', 'error', validation.error);
+        const message = `Failed to read task-manifest.json: ${e instanceof Error ? e.message : String(e)}`;
+        emit('plan-write.failed', 'error', message);
         return {
           outcome: 'failed',
           failure: {
             runUuid: ctx.runUuid,
             phase: this.phase,
-            kind: 'invalid_result',
-            message: validation.error,
+            kind: 'unknown',
+            message,
             canRetry: false,
-            suggestedAction: 'Review and fix the plan or task manifest structure.',
+            suggestedAction: 'Check artifact store permissions or integrity and retry.',
             artifacts: [],
             detectedAt: ctx.now(),
           },
         };
       }
+    }
+
+    const validation = validatePlanTaskList(planMd, manifestJson);
+    if (!validation.success) {
+      emit('plan-write.failed', 'error', validation.error);
+      return {
+        outcome: 'failed',
+        failure: {
+          runUuid: ctx.runUuid,
+          phase: this.phase,
+          kind: 'invalid_result',
+          message: validation.error,
+          canRetry: false,
+          suggestedAction: 'Review and fix the plan or task manifest structure.',
+          artifacts: [],
+          detectedAt: ctx.now(),
+        },
+      };
     }
 
     if (completedRef.event) {

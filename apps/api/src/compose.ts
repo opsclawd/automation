@@ -1518,7 +1518,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
 
-        const taskText = bodyResult.body;
+        const taskText = bodyResult.body.trim();
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);

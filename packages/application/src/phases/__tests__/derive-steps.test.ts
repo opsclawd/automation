@@ -31,7 +31,7 @@ const mixedHeadingLevelsFixture = `# Top-level (ignored)
 
 ## Task 1: Second-level (captured)
 
- ### Task 2: Third-level (ignored)
+ ### Task 2: Third-level (captured)
 
  #### Task 3: Fourth-level (ignored)
 
@@ -101,10 +101,11 @@ describe('deriveSteps', () => {
     expect(steps[2]!.title).toBe('Task 3: mixed Case title');
   });
 
-  it('only matches second-level headings (ignores ###, ####, #)', () => {
+  it('matches second and third-level headings (ignores ####, #)', () => {
     const steps = deriveSteps(mixedHeadingLevelsFixture);
-    expect(steps).toHaveLength(1);
+    expect(steps).toHaveLength(2);
     expect(steps[0]!.title).toBe('Task 1: Second-level (captured)');
+    expect(steps[1]!.title).toBe('Task 2: Third-level (captured)');
   });
 
   it('requires word boundary after "Task" (excludes Taskforce, Tasks, etc.)', () => {

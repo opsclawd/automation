@@ -54,12 +54,12 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
+    const validation = validatePlanTaskList(planMd, manifestJson);
+    if (!validation.success) {
+      return this.fail(ctx, emit, 'invalid_result', validation.error);
+    }
     let manifest: TaskManifest | undefined;
     if (manifestJson !== undefined) {
-      const validation = validatePlanTaskList(planMd, manifestJson);
-      if (!validation.success) {
-        return this.fail(ctx, emit, 'invalid_result', validation.error);
-      }
       const parsed = parseTaskManifest(manifestJson);
       if (parsed.success) {
         manifest = parsed.manifest;

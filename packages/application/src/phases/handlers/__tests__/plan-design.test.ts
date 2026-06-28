@@ -380,6 +380,45 @@ describe('PlanWriteHandler', () => {
     expect(eventsOf(ctx, 'plan-write.failed')).toHaveLength(1);
     expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(0);
   });
+
+  it('unexpected manifest read error fails gracefully and does not retry', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan-design',
+      relativePath: 'design.md',
+      contents: '# Design\n\nContent.',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('opencode-frontier', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
+    });
+
+    // Mock unexpected error during read
+    const originalRead = ctx.artifacts.read;
+    ctx.artifacts.read = async (runUuid: string, relativePath: string) => {
+      if (relativePath === 'task-manifest.json') {
+        throw new Error('Permission denied');
+      }
+      return originalRead.call(ctx.artifacts, runUuid, relativePath);
+    };
+
+    const handler = new PlanWriteHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('unknown');
+      expect(result.failure.canRetry).toBe(false);
+      expect(result.failure.message).toContain('Permission denied');
+    }
+    expect(eventsOf(ctx, 'plan-write.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
