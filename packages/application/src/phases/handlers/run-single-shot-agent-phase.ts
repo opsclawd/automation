@@ -12,6 +12,8 @@ import { TemplateError, TemplateNotFoundError } from '../../prompts/errors.js';
 import { validateAgentContract } from '../../agent/validate-agent-contract.js';
 import { extractResult } from '../../results/extract-result.js';
 import { AgentInvocationId, type AgentInvocation } from '@ai-sdlc/domain';
+import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import type { ArtifactGuardPort } from '../../ports/git-port.js';
 
 export interface SingleShotConfig {
   phase: PhaseName;
@@ -25,6 +27,7 @@ export interface SingleShotConfig {
    *  producing a result.json (e.g. create-pr, where the result values like
    *  prNumber/prUrl are only known after the handler's deterministic steps). */
   skipResultExtraction?: boolean;
+  cleanArtifacts?: boolean;
 }
 
 function assertField<T>(value: T | undefined, name: string): T {
@@ -387,5 +390,37 @@ export async function runSingleShotAgentPhase(
   if (!config.skipResultExtraction) {
     emit(`${String(config.phase)}.completed`, 'info', `${config.phase as string} completed`);
   }
+
+  if (config.cleanArtifacts) {
+    let validationResult: string | undefined;
+    if (config.phase === 'compound') {
+      try {
+        validationResult = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
+      } catch (err) {
+        if (!(err instanceof ArtifactNotFoundError)) {
+          throw err;
+        }
+      }
+    }
+
+    const gitGuard = ctx.git as unknown as ArtifactGuardPort;
+    if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
+      await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.expectedBranch);
+    }
+
+    if (
+      config.phase === 'compound' &&
+      validationResult !== undefined &&
+      validationResult.trim() !== ''
+    ) {
+      await ctx.artifacts.write({
+        runId: ctx.runUuid,
+        phaseId: config.phase as string,
+        relativePath: 'validation.result',
+        contents: validationResult,
+      });
+    }
+  }
+
   return { outcome: 'passed' };
 }

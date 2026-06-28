@@ -210,4 +210,56 @@ describe('CompoundHandler', () => {
     }
     expect(eventsOf(ctx, 'compound.blocked')).toHaveLength(1);
   });
+
+  it('preserves validation.result across cleanup', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'plan.md',
+      contents: '# Plan\n\nSome plan.',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'written',
+        path: 'compound.md',
+        summary: 'learnings captured',
+      }),
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n\nWhat worked: everything.\n',
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'validation.result',
+      contents: 'passed',
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const git = ctx.git as any;
+    const cleanSpy = vi.fn().mockImplementation(async () => {
+      const key = `${ctx.runUuid}/validation.result`;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (ctx.artifacts as any).files.delete(key);
+    });
+    git.cleanOrchestratorArtifacts = cleanSpy;
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(cleanSpy).toHaveBeenCalledWith(ctx.cwd, ctx.expectedBranch);
+
+    const restored = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
+    expect(restored).toBe('passed');
+  });
 });
