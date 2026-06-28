@@ -31,12 +31,20 @@ const NOISE_DIRS = new Set([
   'vendor',
   '.pytest_cache',
   '.mypy_cache',
+  'target',
+  'out',
+  '.gradle',
 ]);
 
-function findMisplacedCandidate(cwd: string, artifactBasename: string): string | null {
+function findMisplacedCandidate(
+  cwd: string,
+  artifactBasename: string,
+  excludePaths?: Set<string>,
+): string | null {
   try {
     const candidates: string[] = [];
     function scan(dir: string, depth: number) {
+      if (depth > 5) return;
       let entries;
       try {
         entries = readdirSync(dir, { withFileTypes: true });
@@ -50,6 +58,10 @@ function findMisplacedCandidate(cwd: string, artifactBasename: string): string |
         } else if (entry.isFile()) {
           if (depth >= 2 && entry.name === artifactBasename) {
             const relativePath = relative(cwd, join(dir, entry.name));
+            const normalizedRelativePath = relativePath.replace(/\\/g, '/');
+            if (excludePaths?.has(normalizedRelativePath)) {
+              continue;
+            }
             // skip git-tracked files (only untracked/ignored files are candidates)
             try {
               const gitPath = relativePath.replace(/\\/g, '/');
@@ -59,8 +71,14 @@ function findMisplacedCandidate(cwd: string, artifactBasename: string): string |
               });
               // exit 0 means tracked → skip
               continue;
-            } catch {
-              // non-zero exit means not tracked → valid candidate
+            } catch (err) {
+              const errorWithStatus = err as { status?: number };
+              if (errorWithStatus && errorWithStatus.status === 1) {
+                // status 1 means command ran but file is not tracked → valid candidate
+              } else {
+                // any other error (ENOENT, exit code 128, etc.) → do not treat as untracked
+                continue;
+              }
             }
             candidates.push(relativePath);
           }
@@ -281,14 +299,22 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
     contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT) &&
     input.expectedArtifacts?.length
   ) {
+    const excludePaths = new Set<string>();
+    for (const artifact of input.expectedArtifacts) {
+      if (existsSync(join(input.cwd, artifact))) {
+        excludePaths.add(artifact.replace(/\\/g, '/'));
+      }
+    }
+
     for (const artifact of input.expectedArtifacts) {
       if (existsSync(join(input.cwd, artifact))) continue;
       const artifactBasename = basename(artifact);
-      const candidate = findMisplacedCandidate(input.cwd, artifactBasename);
+      const candidate = findMisplacedCandidate(input.cwd, artifactBasename, excludePaths);
       if (!candidate) continue;
       try {
         moveMisplacedArtifact(input.cwd, candidate, artifact);
         remediatedArtifacts = [...(remediatedArtifacts ?? []), { src: candidate, artifact }];
+        excludePaths.add(artifact.replace(/\\/g, '/'));
       } catch (e) {
         console.warn('moveMisplacedArtifact failed:', e);
       }

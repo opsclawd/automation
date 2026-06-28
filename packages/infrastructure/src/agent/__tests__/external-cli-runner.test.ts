@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import { runExternalCli } from '../external-cli-runner.js';
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -24,6 +24,22 @@ vi.mock('node:fs', async (importOriginal) => {
         path: Parameters<typeof actual.readdirSync>[0],
         options?: Parameters<typeof actual.readdirSync>[1],
       ) => actual.readdirSync(path, options),
+    ),
+  };
+});
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const g = globalThis as unknown as { mockOriginalExecFileSync: typeof execFileSync };
+  g.mockOriginalExecFileSync = actual.execFileSync;
+  return {
+    ...actual,
+    execFileSync: vi.fn(
+      (
+        file: Parameters<typeof actual.execFileSync>[0],
+        args: Parameters<typeof actual.execFileSync>[1],
+        options: Parameters<typeof actual.execFileSync>[2],
+      ) => actual.execFileSync(file, args, options),
     ),
   };
 });
@@ -610,6 +626,112 @@ describe('runExternalCli', () => {
         expect(result.contractViolations).toContain('missing_required_artifact');
         expect(result.remediatedArtifacts).toBeUndefined();
       } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not hijack or overwrite correct artifacts situated at expected locations', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // specs/design.md is missing.
+        // docs/design.md is successfully created (untracked).
+        const docsDir = join(cwd, 'docs');
+        mkdirSync(docsDir, { recursive: true });
+        writeFileSync(join(docsDir, 'design.md'), '# Correctly situated');
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['docs/design.md', 'specs/design.md'],
+        });
+
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(existsSync(join(cwd, 'docs', 'design.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'docs', 'design.md'), 'utf-8')).toBe('# Correctly situated');
+        expect(existsSync(join(cwd, 'specs', 'design.md'))).toBe(false);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not scan beyond recursion depth 5', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // create a deep directory: level 1 is cwd
+        // level 2: d2
+        // level 3: d2/d3
+        // level 4: d2/d3/d4
+        // level 5: d2/d3/d4/d5
+        // level 6: d2/d3/d4/d5/d6
+        const deepDir = join(cwd, 'd2', 'd3', 'd4', 'd5', 'd6');
+        mkdirSync(deepDir, { recursive: true });
+        writeFileSync(join(deepDir, 'design.md'), '# Deeply nested');
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(existsSync(join(cwd, 'design.md'))).toBe(false);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('skips candidates when git ls-files fails with an error status other than 1', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, 'docs', 'specs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, 'design.md'), '# Design');
+
+        vi.mocked(execFileSync).mockImplementation((file, args, options) => {
+          if (file === 'git' && Array.isArray(args) && args.includes('ls-files')) {
+            const err = Object.assign(new Error('git command failed with status 128'), {
+              status: 128,
+            });
+            throw err;
+          }
+          const g = globalThis as unknown as { mockOriginalExecFileSync: typeof execFileSync };
+          return g.mockOriginalExecFileSync(file, args, options);
+        });
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(result.remediatedArtifacts).toBeUndefined();
+      } finally {
+        vi.restoreAllMocks();
         rmSync(cwd, { recursive: true, force: true });
         rmSync(artifactsDir, { recursive: true, force: true });
       }
