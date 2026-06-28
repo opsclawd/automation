@@ -6,7 +6,7 @@ Design: {{artifact:design.md}}
 
 ## TASK
 Review the implementation and capture learnings.
-Your working directory is: {{var:cwd}}
+Your working directory is: "{{var:cwd}}"
 Write your findings to `{{var:cwd}}/compound.md`.
 
 Output format:
