@@ -240,7 +240,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('fails when validation.result is not passed', async () => {
-    const { artifacts, ctx } = await build();
+    const { artifacts, ctx, git, github } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'validation.result',
@@ -253,6 +253,10 @@ describe('CreatePrHandler — deterministic assembly', () => {
       expect(res.failure.kind).toBe('validation_failed');
       expect(res.failure.message).toContain('Validation did not pass (status: failed)');
     }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
   });
 
   it('correctly marks failed validation steps from validate.log sentinels', async () => {
