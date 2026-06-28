@@ -116,4 +116,37 @@ describe('RetryFailedPhase', () => {
       /no current phase/i,
     );
   });
+
+  it('treats empty-string currentPhase as absent and falls back to phase records', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ currentPhase: '' }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    phaseRepo.insert({
+      id: 'implement',
+      runUuid: 'run-rp-1',
+      name: 'implement',
+      status: 'failed',
+      attempt: 1,
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      completedAt: new Date('2026-06-01T01:00:00Z'),
+    });
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.fromPhase).toBe('implement');
+  });
+
+  it('throws when currentPhase is empty string and phases table is also empty', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ currentPhase: '' }));
+    const usecase = new RetryFailedPhase({
+      runRepository: runRepo,
+      phaseRepo: new FakePhaseRepository(),
+      resumeRun: new FakeResumeRun(),
+    });
+    await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
+      /no current phase/i,
+    );
+  });
 });

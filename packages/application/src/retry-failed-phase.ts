@@ -19,7 +19,7 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
       throw new Error(`Cannot retry phase for run ${input.runId}: status is '${run.status}'`);
     }
     const phases = this.deps.phaseRepo.listByRun(input.runId);
-    const phaseName = run.currentPhase ?? latestFailedPhaseName(phases);
+    const phaseName = (run.currentPhase || null) ?? latestFailedPhaseName(phases);
     if (!phaseName) {
       throw new Error(`Cannot retry phase for run ${input.runId}: no current phase to retry`);
     }
