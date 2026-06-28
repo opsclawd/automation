@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { ImplementHandler } from '../implement.js';
-import type { StepRunContext, StepRunResult } from '../implement.js';
+import type {
+  StepRunContext,
+  StepRunResult,
+  LintTaskSizeResult,
+  OversizedTask,
+} from '../implement.js';
 import { RunId, PhaseName } from '@ai-sdlc/domain';
 import { FakeArtifactStore } from '../../../test-doubles/fake-artifact-store.js';
 import { FakeStepRepository } from '../../../test-doubles/fake-step-repository.js';
@@ -622,6 +627,149 @@ describe('ImplementHandler', () => {
       expect(runStep).toHaveBeenCalledWith(
         expect.objectContaining({ stepIndex: 1, stepTitle: 'Task 1: first' }),
       );
+    });
+  });
+
+  describe('parity[#269]: task size linting', () => {
+    const MANIFEST_JSON = JSON.stringify({
+      version: 1,
+      task_count: 2,
+      tasks: [
+        { n: 1, title: 'Update big test file', files: ['src/__tests__/big.test.ts'] },
+        { n: 2, title: 'Update config', files: ['tsconfig.json'] },
+      ],
+    });
+
+    it('parity[#269]: emits task_size.oversized event when blockOversizedTasks is false', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: Update big test file', 'Task 2: Update config']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: MANIFEST_JSON,
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi
+        .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+        .mockResolvedValue({ outcome: 'success' });
+      const oversizedTask: OversizedTask = {
+        taskNum: 1,
+        taskTitle: 'Update big test file',
+        file: 'src/__tests__/big.test.ts',
+        lineCount: 600,
+        testCaseCount: 15,
+      };
+      const lintTaskSize = vi
+        .fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>()
+        .mockResolvedValue({ ok: true, oversized: [oversizedTask] });
+      const { ctx, events } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      const warnEvents = events.filter((e) => e.type === 'task_size.oversized');
+      expect(warnEvents).toHaveLength(1);
+      expect(warnEvents[0]?.metadata.taskNum).toBe(1);
+      expect(warnEvents[0]?.level).toBe('warn');
+      expect(lintTaskSize).toHaveBeenCalledTimes(1);
+    });
+
+    it('parity[#269]: fails phase with invalid_result when blockOversizedTasks is true', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: Update big test file']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Update big test file', files: ['src/__tests__/big.test.ts'] }],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+      const oversizedTask: OversizedTask = {
+        taskNum: 1,
+        taskTitle: 'Update big test file',
+        file: 'src/__tests__/big.test.ts',
+        lineCount: 600,
+        testCaseCount: 15,
+      };
+      const lintTaskSize = vi
+        .fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>()
+        .mockResolvedValue({ ok: false, oversized: [oversizedTask] });
+      const { ctx, events } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('invalid_result');
+        expect(result.failure.canRetry).toBe(false);
+        expect(result.failure.message).toContain('task 1');
+      }
+      expect(runStep).not.toHaveBeenCalled();
+      expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
+    });
+
+    it('parity[#269]: silently passes and emits no events when no test files exceed thresholds', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: Update small file']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Update small file', files: ['src/util.ts'] }],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi
+        .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+        .mockResolvedValue({ outcome: 'success' });
+      const lintTaskSize = vi
+        .fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>()
+        .mockResolvedValue({ ok: true, oversized: [] });
+      const { ctx, events } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(events.filter((e) => e.type === 'task_size.oversized')).toHaveLength(0);
+    });
+
+    it('parity[#269]: does not call lintTaskSize when no manifest is present', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: Work']),
+      });
+      // no task-manifest.json written
+      const steps = new FakeStepRepository();
+      const runStep = vi
+        .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+        .mockResolvedValue({ outcome: 'success' });
+      const lintTaskSize = vi.fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>();
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(lintTaskSize).not.toHaveBeenCalled();
     });
   });
 });
