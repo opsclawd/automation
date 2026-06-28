@@ -543,7 +543,7 @@ describe('Artifact Guarding & Cleanup', () => {
       await git(repoPath, ['commit', '-m', 'commit validation.result']);
 
       // Verify validation.result is committed in current branch relative to baseBranch
-      const diffBefore = await git(repoPath, ['diff', `${baseBranch}..HEAD`, '--name-only']);
+      const diffBefore = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
       expect(diffBefore).toContain('validation.result');
 
       await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch);
@@ -553,11 +553,11 @@ describe('Artifact Guarding & Cleanup', () => {
       await expect(fsAccess(artifactFile)).rejects.toThrow();
 
       // Verify it has been removed and committed on the current branch
-      const diffAfter = await git(repoPath, ['diff', `${baseBranch}..HEAD`, '--name-only']);
+      const diffAfter = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
       expect(diffAfter).not.toContain('validation.result');
     });
 
-    it('cleanup removes committed artifacts and commits the removal when baseBranch is omitted', async () => {
+    it('cleanup does not remove committed artifacts when baseBranch is omitted', async () => {
       const repoPath = await makeTempRepo();
 
       const artifactFile = join(repoPath, 'validation.result');
@@ -572,13 +572,13 @@ describe('Artifact Guarding & Cleanup', () => {
 
       await adapter.cleanOrchestratorArtifacts(repoPath);
 
-      // Verify it's no longer present on filesystem
+      // Verify it is still present on filesystem
       const { access: fsAccess } = await import('node:fs/promises');
-      await expect(fsAccess(artifactFile)).rejects.toThrow();
+      await expect(fsAccess(artifactFile)).resolves.not.toThrow();
 
-      // Verify it has been removed from git tracking
+      // Verify it remains in git tracking
       const trackedAfter = await git(repoPath, ['ls-files', 'validation.result']);
-      expect(trackedAfter).toBe('');
+      expect(trackedAfter).toContain('validation.result');
     });
   });
 });

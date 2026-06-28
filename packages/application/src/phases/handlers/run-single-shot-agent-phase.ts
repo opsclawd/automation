@@ -401,18 +401,20 @@ export async function runSingleShotAgentPhase(
       }
     }
 
-    const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
-    if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
-      await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
-    }
-
-    if (validationResult !== undefined && validationResult.trim() !== '') {
-      await ctx.artifacts.write({
-        runId: ctx.runUuid,
-        phaseId: config.phase as string,
-        relativePath: 'validation.result',
-        contents: validationResult,
-      });
+    try {
+      const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
+      if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
+        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
+      }
+    } finally {
+      if (validationResult !== undefined && validationResult.trim() !== '') {
+        await ctx.artifacts.write({
+          runId: ctx.runUuid,
+          phaseId: config.phase as string,
+          relativePath: 'validation.result',
+          contents: validationResult,
+        });
+      }
     }
   }
 

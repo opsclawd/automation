@@ -285,13 +285,15 @@ export class ReviewFixLoop {
       // ignore
     }
 
-    await this.deps.cleanArtifacts(ctx);
-
-    if (validationResult !== undefined && validationResult.trim() !== '') {
-      try {
-        await writeFile(path, validationResult, 'utf8');
-      } catch {
-        // ignore
+    try {
+      await this.deps.cleanArtifacts(ctx);
+    } finally {
+      if (validationResult !== undefined && validationResult.trim() !== '') {
+        try {
+          await writeFile(path, validationResult, 'utf8');
+        } catch {
+          // ignore
+        }
       }
     }
   }

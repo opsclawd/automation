@@ -230,7 +230,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     const committedSet = new Set<string>();
     if (baseBranch) {
       try {
-        const diffOutput = await git(cwd, ['diff', `${baseBranch}..HEAD`, '--name-only']);
+        const diffOutput = await git(cwd, ['diff', `${baseBranch}...HEAD`, '--name-only']);
         for (const line of diffOutput
           .split('\n')
           .map((l) => l.trim())
@@ -242,6 +242,20 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       }
     }
 
+    // Get list of tracked files once
+    let trackedSet = new Set<string>();
+    try {
+      const trackedOutput = await git(cwd, ['ls-files']);
+      trackedSet = new Set(
+        trackedOutput
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean),
+      );
+    } catch {
+      // ignore
+    }
+
     // 3. Process each canonical artifact
     const removedCommittedArtifacts: string[] = [];
 
@@ -249,15 +263,9 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
       const artifactPath = join(cwd, artifact);
 
       // Check if tracked
-      let isTracked = false;
-      try {
-        await git(cwd, ['ls-files', '--error-unmatch', '--', artifact]);
-        isTracked = true;
-      } catch {
-        isTracked = false;
-      }
+      const isTracked = trackedSet.has(artifact);
 
-      if ((baseBranch && committedSet.has(artifact)) || (!baseBranch && isTracked)) {
+      if (baseBranch && committedSet.has(artifact)) {
         try {
           await git(cwd, ['rm', '-f', '--', artifact]);
           removedCommittedArtifacts.push(artifact);
@@ -286,6 +294,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
           '-c',
           'user.email=agent@local',
           'commit',
+          '--no-verify',
           '--only',
           '-m',
           'fix: remove orchestrator artifacts that were committed by agent',
