@@ -116,13 +116,17 @@ async function findArtifactInBrainDir(
   // 1. Check subdirectory matching runId first
   if (runId) {
     const candidate = join(brainRoot, runId, artifactBasename);
-    try {
-      const st = await fsPromises.stat(candidate);
-      if (st.isFile()) {
-        return candidate;
+    const resolvedCandidate = resolve(candidate);
+    const resolvedBrainRoot = resolve(brainRoot);
+    if (resolvedCandidate.startsWith(resolvedBrainRoot + '/')) {
+      try {
+        const st = await fsPromises.stat(resolvedCandidate);
+        if (st.isFile()) {
+          return resolvedCandidate;
+        }
+      } catch {
+        // Ignore
       }
-    } catch {
-      // Ignore
     }
   }
 
@@ -130,18 +134,39 @@ async function findArtifactInBrainDir(
   const matches: { path: string; mtimeMs: number }[] = [];
   try {
     const uuidEntries = await fsPromises.readdir(brainRoot);
-    // Limit the number of directories checked to avoid blocking or taking too long
-    const limit = 1000;
-    const entriesToCheck = uuidEntries.slice(0, limit);
+    const directoryDetails: { entry: string; mtimeMs: number }[] = [];
 
-    await Promise.all(
-      entriesToCheck.map(async (uuidEntry) => {
-        const uuidDir = join(brainRoot, uuidEntry);
-        try {
-          const dirStat = await fsPromises.stat(uuidDir);
-          if (!dirStat.isDirectory()) return;
+    // Limit concurrency by batching directory stat calls (chunk size of 50)
+    const batchSize = 50;
+    for (let i = 0; i < uuidEntries.length; i += batchSize) {
+      const chunk = uuidEntries.slice(i, i + batchSize);
+      await Promise.all(
+        chunk.map(async (entry) => {
+          const fullPath = join(brainRoot, entry);
+          try {
+            const st = await fsPromises.stat(fullPath);
+            if (st.isDirectory()) {
+              directoryDetails.push({ entry, mtimeMs: st.mtimeMs });
+            }
+          } catch {
+            // Skip inaccessible or failed entries
+          }
+        }),
+      );
+    }
 
-          const candidate = join(uuidDir, artifactBasename);
+    // Sort directories by modification time descending
+    directoryDetails.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    // Limit to the 1000 most recent directories
+    const entriesToCheck = directoryDetails.slice(0, 1000);
+
+    // Limit concurrency by batching candidate file checks (chunk size of 50)
+    for (let i = 0; i < entriesToCheck.length; i += batchSize) {
+      const chunk = entriesToCheck.slice(i, i + batchSize);
+      await Promise.all(
+        chunk.map(async (dirDetail) => {
+          const candidate = join(brainRoot, dirDetail.entry, artifactBasename);
           try {
             const fileStat = await fsPromises.stat(candidate);
             if (fileStat.isFile()) {
@@ -150,19 +175,20 @@ async function findArtifactInBrainDir(
           } catch {
             // Ignore
           }
-        } catch {
-          // Skip inaccessible entries
-        }
-      }),
-    );
+        }),
+      );
+    }
   } catch {
     return null;
   }
 
   if (matches.length === 0) return null;
 
-  // Sort candidates by file modification time (mtime descending) and pick the most recent
-  matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  // Implement uniqueness guard: if multiple directories contain the same artifact basename, recovery fails.
+  if (matches.length > 1) {
+    return null;
+  }
+
   return matches[0]!.path;
 }
 
@@ -261,7 +287,7 @@ export class AntigravityAgentAdapter implements AgentPort {
 
             // Validate if all expected artifacts now exist in the workspace cwd
             const allRecovered = (request.expectedArtifacts ?? []).every((art) =>
-              existsSync(join(request.cwd, art)),
+              existsSync(join(resolvedCwd, art)),
             );
 
             if (allRecovered) {
@@ -288,7 +314,7 @@ export class AntigravityAgentAdapter implements AgentPort {
         const resolvedCwd = resolve(request.cwd);
 
         for (const artifact of request.expectedArtifacts ?? []) {
-          if (existsSync(join(request.cwd, artifact))) continue; // already present
+          if (existsSync(join(resolvedCwd, artifact))) continue; // already present
           const match = await findArtifactInBrainDir(brainRoot, basename(artifact), request.runId);
           if (match === null) continue;
 
@@ -318,7 +344,7 @@ export class AntigravityAgentAdapter implements AgentPort {
 
         if (brainRecoveredAny) {
           const allRecovered = (request.expectedArtifacts ?? []).every((art) =>
-            existsSync(join(request.cwd, art)),
+            existsSync(join(resolvedCwd, art)),
           );
           if (allRecovered) {
             result.outcome = 'success';
