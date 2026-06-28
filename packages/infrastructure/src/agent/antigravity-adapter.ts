@@ -9,7 +9,7 @@ import {
   statSync,
   mkdirSync,
 } from 'node:fs';
-import { resolve, join, dirname, relative, isAbsolute } from 'node:path';
+import { resolve, join, dirname, basename, relative, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
@@ -22,6 +22,7 @@ export interface AntigravityAdapterOptions {
   timeoutMsDefault?: number;
   env?: Record<string, string>;
   scratchDir?: string;
+  brainDir?: string;
 }
 
 export function validateScratchDir(dir: string): void {
@@ -92,6 +93,33 @@ function findExpectedArtifactsInDir(scratchDir: string, expectedArtifacts: strin
     // Ignore readdir failures
   }
   return found;
+}
+
+/**
+ * Searches one level deep in brainRoot for a file whose basename matches
+ * artifactBasename. Returns the absolute path to the file if exactly one
+ * UUID dir contains it; returns null if zero or multiple matches (ambiguous).
+ */
+function findArtifactInBrainDir(brainRoot: string, artifactBasename: string): string | null {
+  if (!existsSync(brainRoot)) return null;
+  const matches: string[] = [];
+  try {
+    for (const uuidEntry of readdirSync(brainRoot)) {
+      const uuidDir = join(brainRoot, uuidEntry);
+      try {
+        if (!statSync(uuidDir).isDirectory()) continue;
+        const candidate = join(uuidDir, artifactBasename);
+        if (existsSync(candidate) && statSync(candidate).isFile()) {
+          matches.push(candidate);
+        }
+      } catch {
+        // Skip inaccessible entries
+      }
+    }
+  } catch {
+    return null;
+  }
+  return matches.length === 1 ? matches[0]! : null;
 }
 
 export class AntigravityAgentAdapter implements AgentPort {
@@ -196,6 +224,55 @@ export class AntigravityAgentAdapter implements AgentPort {
         }
       } catch {
         // Best effort: ignore top-level recovery failures to protect the original result
+      }
+    }
+
+    // Post: detect and recover artifacts wrongly written to brain dir
+    if (
+      result.outcome === 'contract_violation' &&
+      result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+    ) {
+      try {
+        const brainRoot = this.opts.brainDir ?? resolve(homedir(), '.gemini/antigravity-cli/brain');
+        let brainRecoveredAny = false;
+
+        for (const artifact of request.expectedArtifacts ?? []) {
+          if (existsSync(join(request.cwd, artifact))) continue; // already present
+          const match = findArtifactInBrainDir(brainRoot, basename(artifact));
+          if (match === null) continue;
+
+          const dest = join(request.cwd, artifact);
+          try {
+            mkdirSync(dirname(dest), { recursive: true });
+            copyFileSync(match, dest);
+            if (
+              !result.contractViolations.includes(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_BRAIN_DIR)
+            ) {
+              result.contractViolations.push(CONTRACT_VIOLATION_CODES.ARTIFACT_IN_BRAIN_DIR);
+            }
+            result.remediatedArtifacts = [
+              ...(result.remediatedArtifacts ?? []),
+              { src: match, artifact },
+            ];
+            brainRecoveredAny = true;
+          } catch {
+            // Best effort recovery: ignore individual file copy errors
+          }
+        }
+
+        if (brainRecoveredAny) {
+          const allRecovered = (request.expectedArtifacts ?? []).every((art) =>
+            existsSync(join(request.cwd, art)),
+          );
+          if (allRecovered) {
+            result.outcome = 'success';
+            result.contractViolations = result.contractViolations.filter(
+              (cv) => cv !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT,
+            );
+          }
+        }
+      } catch {
+        // Best effort: ignore top-level brain recovery failures
       }
     }
 

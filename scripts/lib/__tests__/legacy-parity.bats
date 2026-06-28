@@ -2708,3 +2708,37 @@ PLAN
   [ "$output" -ge 1 ]
 }
 
+# parity[#530]: brain-dir recovery in AntigravityAgentAdapter
+# Invariant: when MISSING_REQUIRED_ARTIFACT is still active after the scratch
+#   recovery pass, the TS adapter must scan brain/<uuid>/ by basename,
+#   copy a uniquely-matching file to the worktree using copyFileSync (not rename),
+#   and add ARTIFACT_IN_BRAIN_DIR to contractViolations.
+# Source: #530.
+# Failure prevented: compound.md written to brain/<uuid>/ instead of worktree.
+#   Without brain recovery, the operator must manually copy the file; with it,
+#   the invocation recovers automatically with a diagnostic violation code.
+# TS-port contract: AntigravityAgentAdapter must expose brainDir option,
+#   implement findArtifactInBrainDir with uniqueness guard, use copyFileSync
+#   (never rename) from brain, and add ARTIFACT_IN_BRAIN_DIR violation code.
+@test "parity[#530]: adapter recovers artifacts from brain dir after scratch pass" {
+  local file="$REPO_ROOT/packages/infrastructure/src/agent/antigravity-adapter.ts"
+
+  run grep -c "ARTIFACT_IN_BRAIN_DIR" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 1 ]
+
+  run grep -c "findArtifactInBrainDir" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 2 ]
+
+  run grep -c "brainDir\|brainRoot" "$file"
+  [ "$status" -eq 0 ]
+  [ "$output" -ge 3 ]
+
+  # Must use copyFileSync (not renameSync) from brain to preserve agy history
+  run grep -n "copyFileSync" "$file"
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -ge 2 ]
+}
+
+

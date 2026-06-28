@@ -77,3 +77,26 @@
   - The unique match test failed with `AssertionError: expected 'contract_violation' to be 'success'`.
   - The zero match test passed as no recovery was performed.
 
+---
+
+# Implementation Log - Task 5: Implement brain-dir recovery in AntigravityAgentAdapter + parity test
+
+## Summary of Changes
+
+### 1. `packages/infrastructure/src/agent/antigravity-adapter.ts`
+- Imported `basename` from `node:path`.
+- Added the optional `brainDir?: string` field to `AntigravityAdapterOptions`.
+- Added the `findArtifactInBrainDir` helper function to scan `brainRoot` subdirectories for a matching file, returning the match if unique, or `null` if none or multiple matches are found.
+- Added a brain-dir recovery pass inside `invoke()` when the outcome is `contract_violation` and includes `MISSING_REQUIRED_ARTIFACT`. It iterates over expected artifacts, uses `findArtifactInBrainDir`, copies the unique matches using `copyFileSync`, records the `ARTIFACT_IN_BRAIN_DIR` contract violation, and updates the `outcome` to `success` if all expected artifacts are resolved.
+
+### 2. `scripts/lib/__tests__/legacy-parity.bats`
+- Appended the `parity[#530]` characterization test to assert that `AntigravityAgentAdapter` uses `ARTIFACT_IN_BRAIN_DIR`, `findArtifactInBrainDir`, `brainDir/brainRoot`, and `copyFileSync` (instead of renameSync) to maintain parity with legacy expectations.
+
+## Verification
+- Verified that all 27 tests in `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts` now pass, including the two brain-dir recovery tests added in Task 4.
+- Verified that the new BATS parity test passes:
+  ```bash
+  bats scripts/lib/__tests__/legacy-parity.bats --filter "parity\[#530\]"
+  ```
+
+
