@@ -64,7 +64,7 @@ export class ResumeRun implements ResumeRunUseCase {
 
     const savedCompletedAt = run.completedAt;
     const savedFailureReason = run.failureReason;
-    const savedCurrentPhase = run.currentPhase;
+    const savedCurrentPhase = run.currentPhase || null;
     const savedCompletedPhases = run.completedPhases;
     const savedSkippedPhases = run.skippedPhases;
 

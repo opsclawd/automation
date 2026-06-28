@@ -7,3 +7,10 @@
 - Verified that the tests failed as expected before the fix (TDD cycle) and passed after the fix.
 - Ran the full test suite for `@ai-sdlc/application` and all 730 tests passed successfully.
 - Ran TypeScript compilation check and it succeeded with no errors.
+
+### Task 2: Prevent empty `currentPhase` from propagating through `ResumeRun` rollbacks
+- Modified [resume-run.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-515/packages/application/src/resume-run.ts#L67) to normalise empty `currentPhase` strings to `null` via `run.currentPhase || null` in the rollback/saved transition state path.
+- Verified all application tests in `resume-run.test.ts` pass, confirming no regressions.
+- Ran the full test suite for `@ai-sdlc/application` and all 730 tests passed successfully.
+- Ran TypeScript compilation check and it succeeded with no errors.
+
