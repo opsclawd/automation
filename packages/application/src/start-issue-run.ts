@@ -301,6 +301,7 @@ export class StartIssueRun {
             exitCode: exec.exitCode,
             durationMs: exec.durationMs,
             failureReason: failure.message,
+            ...(failure.phase ? { currentPhase: failure.phase } : {}),
           });
           try {
             dir.writeRunJson(failRun(run, failure.message, completedAt));

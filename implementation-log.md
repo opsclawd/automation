@@ -13,4 +13,9 @@
 - Verified all application tests in `resume-run.test.ts` pass, confirming no regressions.
 - Ran the full test suite for `@ai-sdlc/application` and all 730 tests passed successfully.
 - Ran TypeScript compilation check and it succeeded with no errors.
-
+### Task 3: Write `currentPhase` to the DB when `StartIssueRun` records a failure, with test
+- Modified [start-issue-run.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-515/packages/application/src/start-issue-run.ts) to conditionally update the run record with `currentPhase: failure.phase` when `failure.phase` is present.
+- Modified [start-issue-run.test.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-515/packages/application/src/__tests__/start-issue-run.test.ts) to add unit tests confirming that `failure.phase` is propagated as `currentPhase` on run failure when available, and is omitted from the update payload when unavailable.
+- Verified that tests fail as expected (TDD cycle) when the feature is missing and pass after applying the fix.
+- Ran all tests across the repository and they all passed successfully.
+- Verified that TypeScript type checking compiles successfully with no warnings or errors.

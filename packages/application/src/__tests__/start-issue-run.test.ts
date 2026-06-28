@@ -454,6 +454,70 @@ describe('StartIssueRun', () => {
     expect(dirs[0]!.failureWrites[0]!.kind).toBe('missing_artifact');
   });
 
+  it('writes failure.phase as currentPhase when classifier identifies the failing phase', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const classifyWithPhase: ClassifyExitFn = (input) => ({
+      runUuid: input.runUuid,
+      phase: 'implement',
+      kind: 'agent_contract_violation',
+      message: 'spec-review contract violation',
+      exitCode: input.exitCode,
+      canRetry: true,
+      suggestedAction: 'Retry.',
+      artifacts: input.artifacts ?? [],
+      detectedAt: input.detectedAt ?? new Date(),
+    });
+    const { factory } = fakeDirectoryFactory({ combinedLogContent: 'contract violation' });
+    const { fn: bash } = fakeBash({ exitCode: 1 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: classifyWithPhase,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 42 });
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.currentPhase).toBe('implement');
+  });
+
+  it('omits currentPhase from failure update when classifier does not identify a phase', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const classifyNoPhase: ClassifyExitFn = (input) => ({
+      runUuid: input.runUuid,
+      kind: 'unknown',
+      message: 'unknown failure',
+      exitCode: input.exitCode,
+      canRetry: false,
+      suggestedAction: 'Inspect logs.',
+      artifacts: input.artifacts ?? [],
+      detectedAt: input.detectedAt ?? new Date(),
+      // no phase field
+    });
+    const { factory } = fakeDirectoryFactory({ combinedLogContent: 'unknown error' });
+    const { fn: bash } = fakeBash({ exitCode: 1 });
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: classifyNoPhase,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({ issueNumber: 43 });
+    const patch = repo.finalPatch(out.uuid);
+    expect(patch.currentPhase).toBeUndefined();
+  });
+
   it('does not create failure.json on passing runs', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();
