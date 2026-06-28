@@ -7,7 +7,6 @@ import {
   readdirSync,
   rmSync,
   writeFileSync,
-  utimesSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -612,7 +611,7 @@ exit 0
     expect(existsSync(join(cwd, 'compound.md'))).toBe(false);
   });
 
-  it('recovers the most recently modified file from brain dir when multiple UUID dirs have the same basename', async () => {
+  it('does not recover from brain dir when multiple UUID dirs have the same basename (uniqueness guard)', async () => {
     const cwd = makeWorktree();
     const brainRoot = mkdtempSync(join(tmpdir(), 'agy-brain-multi-'));
     dirs.push(brainRoot);
@@ -628,11 +627,6 @@ exit 0
     writeFileSync(file1, '# Learnings session 1\n');
     writeFileSync(file2, '# Learnings session 2\n');
 
-    // Set modification times to be distinct
-    const now = Date.now();
-    utimesSync(file1, new Date(now - 10000), new Date(now - 10000));
-    utimesSync(file2, new Date(now), new Date(now));
-
     const adapter = new AntigravityAgentAdapter({
       binaryPath: join(FIXTURES, 'fake-agy-success.sh'),
       artifactsDir: cwd,
@@ -640,13 +634,10 @@ exit 0
     });
     const result = await adapter.invoke(req(cwd, { expectedArtifacts: ['compound.md'] }));
 
-    expect(result.outcome).toBe('success');
-    expect(result.contractViolations).toContain('artifact_in_brain_dir');
-    expect(existsSync(join(cwd, 'compound.md'))).toBe(true);
-    expect(readFileSync(join(cwd, 'compound.md'), 'utf-8')).toBe('# Learnings session 2\n');
-    expect(result.remediatedArtifacts).toBeDefined();
-    expect(result.remediatedArtifacts!.length).toBe(1);
-    expect(result.remediatedArtifacts![0]!.artifact).toBe('compound.md');
+    expect(result.outcome).toBe('contract_violation');
+    expect(result.contractViolations).toContain('missing_required_artifact');
+    expect(result.contractViolations).not.toContain('artifact_in_brain_dir');
+    expect(existsSync(join(cwd, 'compound.md'))).toBe(false);
     expect(existsSync(file1)).toBe(true);
     expect(existsSync(file2)).toBe(true);
   });

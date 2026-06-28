@@ -121,15 +121,7 @@ function findArtifactInBrainDir(brainRoot: string, artifactBasename: string): st
   }
   if (matches.length === 0) return null;
   if (matches.length === 1) return matches[0]!;
-
-  // Sort descending by modification time to get the newest file
-  return matches.sort((a, b) => {
-    try {
-      return statSync(b).mtimeMs - statSync(a).mtimeMs;
-    } catch {
-      return 0;
-    }
-  })[0]!;
+  return null;
 }
 
 export class AntigravityAgentAdapter implements AgentPort {
