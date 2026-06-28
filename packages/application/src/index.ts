@@ -38,3 +38,4 @@ export type {
   ImplementStepLoopResult,
 } from './implement-step/types.js';
 export * from './implement-step/implement-step-loop.js';
+export * from './artifacts/index.js';
