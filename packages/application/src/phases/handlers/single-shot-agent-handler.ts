@@ -79,7 +79,7 @@ export class SingleShotAgentHandler implements PhaseHandler {
       phase: this.phase,
       profile,
       step: this.step,
-      vars: { issue_number: String(ctx.issueNumber) },
+      vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
       agentContract: def.agentContract,
       ...(this.options.skipResultExtraction ? { skipResultExtraction: true } : {}),
     });

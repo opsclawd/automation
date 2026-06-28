@@ -144,6 +144,12 @@ describe('CompoundHandler', () => {
     expect(result.outcome).toBe('passed');
 
     expect(agent.invocations).toHaveLength(1);
+    expect(mockRenderPrompt).toHaveBeenCalledWith(
+      PROMPT_TEMPLATE,
+      expect.objectContaining({
+        vars: expect.objectContaining({ cwd: '/tmp/wt' }),
+      }),
+    );
     const req = agent.invocations[0]!;
     expect(req.profile).toBe('pi-qwen-local');
     expect(req.phaseId).toBe('compound');

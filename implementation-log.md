@@ -18,3 +18,20 @@
   ```bash
   pnpm -r typecheck
   ```
+
+---
+
+# Implementation Log - Task 2: Inject cwd var in SingleShotAgentHandler + assert in compound tests
+
+## Summary of Changes
+
+### 1. `packages/application/src/phases/handlers/__tests__/compound.test.ts`
+- Added an assertion in the happy path test to verify that `mockRenderPrompt` is called with the correct `cwd` variable inside the `vars` object (derived from `ctx.cwd`).
+
+### 2. `packages/application/src/phases/handlers/single-shot-agent-handler.ts`
+- Injected `cwd: ctx.cwd` into the `vars` object passed to `runSingleShotAgentPhase` around line 82.
+
+## Verification
+- Verified that the new assertion failed initially when `cwd` was not yet injected.
+- Verified that all tests in `packages/application/src/phases/handlers/__tests__/compound.test.ts` passed successfully after implementation.
+- Verified that all 729 tests in the `packages/application` package pass successfully.
