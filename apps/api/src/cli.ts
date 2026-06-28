@@ -321,11 +321,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             unsubscribe?.();
             signalHandlers?.remove();
             lease?.stop();
-            const isResting = result.phases.some((p) => p.status === 'resting');
+            // Re-read the persisted run status: post-pr-review sets run status
+            // to 'cancelled' in the DB before returning 'resting', but the
+            // executor's resting branch returns the stale in-memory run
+            // (still 'running'). Without this re-read, a cancelled or timed-out
+            // review would be indistinguishable from a healthy resting pause.
+            const persistedStatus =
+              c.runRepository.findByUuid(result.run.uuid)?.status ?? result.run.status;
+            const isResting =
+              result.phases.some((p) => p.status === 'resting') && persistedStatus === 'running';
             const isSuccess =
-              result.run.status === 'passed' ||
-              pausedStatuses.includes(result.run.status) ||
-              isResting;
+              persistedStatus === 'passed' || pausedStatuses.includes(persistedStatus) || isResting;
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             unsubscribe?.();
