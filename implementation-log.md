@@ -6,7 +6,7 @@
 - Expanded imports from `node:fs` to include `readdirSync`, `statSync`, `copyFileSync`, and `unlinkSync`.
 - Expanded imports from `node:path` to include `basename`.
 - Implemented `findMisplacedCandidate(cwd: string, artifactBasename: string): string | null` to find exact basename matches of missing expected artifacts in the worktree:
-  - Scans recursively using `readdirSync(..., { recursive: true })`.
+  - Scans recursively using manual recursion via a helper function with `readdirSync` to enforce depth checks and ignore specific noise directories.
   - Skips top-level/depth < 2 files.
   - Excludes files that reside in any noise directory (like `node_modules`, `.git`, `dist`, etc.).
   - Restricts matches to files only (using `statSync(fullPath).isFile()`).

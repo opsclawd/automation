@@ -37,7 +37,12 @@ function findMisplacedCandidate(cwd: string, artifactBasename: string): string |
   try {
     const candidates: string[] = [];
     function scan(dir: string, depth: number) {
-      const entries = readdirSync(dir, { withFileTypes: true });
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return; // Skip this unreadable directory and continue
+      }
       for (const entry of entries) {
         if (entry.isDirectory()) {
           if (NOISE_DIRS.has(entry.name)) continue;
@@ -48,7 +53,7 @@ function findMisplacedCandidate(cwd: string, artifactBasename: string): string |
             // skip git-tracked files (only untracked/ignored files are candidates)
             try {
               const gitPath = relativePath.replace(/\\/g, '/');
-              execFileSync('git', ['ls-files', '--error-unmatch', gitPath], {
+              execFileSync('git', ['ls-files', '--error-unmatch', '--', gitPath], {
                 cwd,
                 stdio: 'pipe',
               });
@@ -73,6 +78,7 @@ function findMisplacedCandidate(cwd: string, artifactBasename: string): string |
 function moveMisplacedArtifact(cwd: string, srcRelative: string, destRelative: string): void {
   const src = join(cwd, srcRelative);
   const dest = join(cwd, destRelative);
+  mkdirSync(dirname(dest), { recursive: true });
   try {
     renameSync(src, dest);
   } catch (e) {

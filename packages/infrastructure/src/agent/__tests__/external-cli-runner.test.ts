@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   renameSync,
+  readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +19,12 @@ vi.mock('node:fs', async (importOriginal) => {
   return {
     ...actual,
     renameSync: vi.fn((src: string, dest: string) => actual.renameSync(src, dest)),
+    readdirSync: vi.fn(
+      (
+        path: Parameters<typeof actual.readdirSync>[0],
+        options?: Parameters<typeof actual.readdirSync>[1],
+      ) => actual.readdirSync(path, options),
+    ),
   };
 });
 
@@ -499,6 +506,109 @@ describe('runExternalCli', () => {
         expect(result.outcome).toBe('success');
         expect(existsSync(join(cwd, 'design.md'))).toBe(true);
         expect(existsSync(join(cwd, 'injection-test.txt'))).toBe(false);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('skips subdirectories where readdirSync throws an error and continues scanning', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const badDir = join(cwd, 'docs', 'unreadable');
+        const goodDir = join(cwd, 'docs', 'readable');
+        mkdirSync(badDir, { recursive: true });
+        mkdirSync(goodDir, { recursive: true });
+        writeFileSync(join(goodDir, 'design.md'), '# Design');
+
+        const { readdirSync: originalReaddir } =
+          await vi.importActual<typeof import('node:fs')>('node:fs');
+
+        vi.mocked(readdirSync).mockImplementation(
+          (
+            path: Parameters<typeof readdirSync>[0],
+            options?: Parameters<typeof readdirSync>[1],
+          ) => {
+            if (typeof path === 'string' && path.includes('unreadable')) {
+              throw new Error('EACCES: permission denied');
+            }
+            return originalReaddir(path, options);
+          },
+        );
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'design.md'))).toBe(true);
+      } finally {
+        vi.restoreAllMocks();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('creates missing destination directories recursively when moving misplaced artifact', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, 'temp_docs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, 'plan.md'), '# Nested Plan');
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['nested/docs/plan.md'],
+        });
+
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'nested', 'docs', 'plan.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'nested', 'docs', 'plan.md'), 'utf-8')).toBe('# Nested Plan');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not remediate tracked files when directory begins with a hyphen', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        const specDir = join(cwd, '-docs');
+        mkdirSync(specDir, { recursive: true });
+        writeFileSync(join(specDir, 'design.md'), '# Tracked in hyphen dir');
+        execSync('git add -- "-docs/design.md"', { cwd, stdio: 'pipe' });
+        execSync('git commit -m "add tracked design in hyphen dir"', { cwd, stdio: 'pipe' });
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['design.md'],
+        });
+
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(result.remediatedArtifacts).toBeUndefined();
       } finally {
         rmSync(cwd, { recursive: true, force: true });
         rmSync(artifactsDir, { recursive: true, force: true });
