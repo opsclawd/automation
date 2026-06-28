@@ -35,3 +35,28 @@
 - Verified that the new assertion failed initially when `cwd` was not yet injected.
 - Verified that all tests in `packages/application/src/phases/handlers/__tests__/compound.test.ts` passed successfully after implementation.
 - Verified that all 729 tests in the `packages/application` package pass successfully.
+
+---
+
+# Implementation Log - Task 3: Update compound prompt template with absolute worktree path
+
+## Summary of Changes
+
+### 1. `prompts/compound/compound.md`
+- Updated the write instruction to include the absolute working directory path explicitly using the injected `{{var:cwd}}` variable:
+  ```
+  Your working directory is: {{var:cwd}}
+  Write your findings to `{{var:cwd}}/compound.md`.
+  ```
+- Updated the output format block paths to use `{{var:cwd}}` instead of bare file names for `compound.md`:
+  ```
+  Output format:
+  - `{{var:cwd}}/compound.md`: A markdown document explaining what worked, what didn't, and what to do differently next time.
+  - `result.json`: exactly this shape (fill in `summary` with one sentence describing the document):
+    ```json
+    { "result": "written", "path": "{{var:cwd}}/compound.md", "summary": "<one-sentence summary>" }
+    ```
+  ```
+
+## Verification
+- Verified the template contains the new `{{var:cwd}}` references by running `grep -n "var:cwd" prompts/compound/compound.md` and confirming at least 3 lines match.
