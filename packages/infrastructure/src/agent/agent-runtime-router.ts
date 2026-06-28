@@ -140,6 +140,7 @@ export class AgentRuntimeRouter implements AgentPort {
       ...(composedSignal ? { abortSignal: composedSignal } : {}),
       provider: effectiveProvider,
       model: effectiveModel,
+      timeoutMs: effectiveTimeoutMs,
       ...(profile.promptBudgetTokens !== undefined
         ? { promptBudgetTokens: profile.promptBudgetTokens }
         : {}),

@@ -135,17 +135,16 @@ describe('AntigravityAgentAdapter', () => {
     }
   });
 
-  it('passes --print-timeout derived from timeoutMsDefault', async () => {
+  it('passes --print-timeout derived from request.timeoutMs (effective per-invocation timeout)', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
       const adapter = new AntigravityAgentAdapter({
         binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
         artifactsDir: cwd,
-        timeoutMsDefault: 10 * 60 * 1000, // 10 minutes → expect 9m
         env: { AGY_LOG_DIR: logDir },
       });
-      await adapter.invoke(req(cwd));
+      await adapter.invoke(req(cwd, { timeoutMs: 10 * 60 * 1000 })); // 10 minutes → expect 9m
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       expect(args).toContain('--print-timeout');
       expect(args).toContain('9m');
@@ -154,19 +153,20 @@ describe('AntigravityAgentAdapter', () => {
     }
   });
 
-  it('defaults --print-timeout to 29m when timeoutMsDefault is not set', async () => {
+  it('falls back --print-timeout to timeoutMsDefault when request.timeoutMs is absent', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
       const adapter = new AntigravityAgentAdapter({
         binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
         artifactsDir: cwd,
+        timeoutMsDefault: 20 * 60 * 1000, // 20 minutes → expect 19m
         env: { AGY_LOG_DIR: logDir },
       });
-      await adapter.invoke(req(cwd));
+      await adapter.invoke(req(cwd)); // no timeoutMs on request
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       expect(args).toContain('--print-timeout');
-      expect(args).toContain('29m');
+      expect(args).toContain('19m');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }

@@ -215,9 +215,10 @@ export class AntigravityAgentAdapter implements AgentPort {
     // agy's --print mode has a 5-minute internal response timeout by default.
     // High-quality models on complex prompts regularly exceed this, causing a
     // contract_violation (missing artifact) that forces an unnecessary fallback.
-    // Set --print-timeout to 1 minute less than the process-level timeout so
-    // agy waits as long as we're willing to let the process run.
-    const printTimeoutMs = this.opts.timeoutMsDefault ?? 30 * 60 * 1000;
+    // Derive --print-timeout from the effective per-invocation timeout
+    // (forwarded by the router as request.timeoutMs) so it always matches the
+    // actual orchestrator budget regardless of profile or caller overrides.
+    const printTimeoutMs = request.timeoutMs ?? this.opts.timeoutMsDefault ?? 30 * 60 * 1000;
     const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
     const args = [
       '--dangerously-skip-permissions',
