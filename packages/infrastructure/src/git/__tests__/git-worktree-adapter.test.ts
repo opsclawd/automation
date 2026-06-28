@@ -556,5 +556,29 @@ describe('Artifact Guarding & Cleanup', () => {
       const diffAfter = await git(repoPath, ['diff', `${baseBranch}..HEAD`, '--name-only']);
       expect(diffAfter).not.toContain('validation.result');
     });
+
+    it('cleanup removes committed artifacts and commits the removal when baseBranch is omitted', async () => {
+      const repoPath = await makeTempRepo();
+
+      const artifactFile = join(repoPath, 'validation.result');
+      await writeFile(artifactFile, 'committed content\n');
+
+      await git(repoPath, ['add', 'validation.result']);
+      await git(repoPath, ['commit', '-m', 'commit validation.result']);
+
+      // Verify validation.result is tracked
+      const trackedBefore = await git(repoPath, ['ls-files', 'validation.result']);
+      expect(trackedBefore).toContain('validation.result');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      // Verify it's no longer present on filesystem
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(artifactFile)).rejects.toThrow();
+
+      // Verify it has been removed from git tracking
+      const trackedAfter = await git(repoPath, ['ls-files', 'validation.result']);
+      expect(trackedAfter).toBe('');
+    });
   });
 });

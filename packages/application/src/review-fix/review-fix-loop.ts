@@ -287,7 +287,7 @@ export class ReviewFixLoop {
 
     await this.deps.cleanArtifacts(ctx);
 
-    if (validationResult !== undefined && validationResult.trim() === 'passed') {
+    if (validationResult !== undefined && validationResult.trim() !== '') {
       try {
         await writeFile(path, validationResult, 'utf8');
       } catch {

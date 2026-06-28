@@ -393,13 +393,11 @@ export async function runSingleShotAgentPhase(
 
   if (config.cleanArtifacts) {
     let validationResult: string | undefined;
-    if (config.phase === 'compound') {
-      try {
-        validationResult = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
-      } catch (err) {
-        if (!(err instanceof ArtifactNotFoundError)) {
-          throw err;
-        }
+    try {
+      validationResult = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
+    } catch (err) {
+      if (!(err instanceof ArtifactNotFoundError)) {
+        throw err;
       }
     }
 
@@ -408,11 +406,7 @@ export async function runSingleShotAgentPhase(
       await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
     }
 
-    if (
-      config.phase === 'compound' &&
-      validationResult !== undefined &&
-      validationResult.trim() !== ''
-    ) {
+    if (validationResult !== undefined && validationResult.trim() !== '') {
       await ctx.artifacts.write({
         runId: ctx.runUuid,
         phaseId: config.phase as string,

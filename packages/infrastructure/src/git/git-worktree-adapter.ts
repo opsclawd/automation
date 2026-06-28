@@ -257,7 +257,7 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
         isTracked = false;
       }
 
-      if (baseBranch && committedSet.has(artifact)) {
+      if ((baseBranch && committedSet.has(artifact)) || (!baseBranch && isTracked)) {
         try {
           await git(cwd, ['rm', '-f', '--', artifact]);
           removedCommittedArtifacts.push(artifact);
@@ -281,6 +281,10 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     if (removedCommittedArtifacts.length > 0) {
       try {
         await git(cwd, [
+          '-c',
+          'user.name=Agent',
+          '-c',
+          'user.email=agent@local',
           'commit',
           '--only',
           '-m',
@@ -288,8 +292,10 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
           '--',
           ...removedCommittedArtifacts,
         ]);
-      } catch {
-        // ignore commit failures
+      } catch (err) {
+        console.warn(
+          `Failed to commit orchestrator artifact removal: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
