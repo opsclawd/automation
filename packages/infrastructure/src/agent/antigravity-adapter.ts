@@ -211,7 +211,24 @@ export class AntigravityAgentAdapter implements AgentPort {
     // findings get written outside the worktree and the orchestrator never
     // sees them (observed on issue #146: the .md landed in ~/projects and
     // ~/.gemini/.../scratch instead of the worktree).
-    const args = ['--dangerously-skip-permissions', '--add-dir', request.cwd, '--print', '-'];
+
+    // agy's --print mode has a 5-minute internal response timeout by default.
+    // High-quality models on complex prompts regularly exceed this, causing a
+    // contract_violation (missing artifact) that forces an unnecessary fallback.
+    // Derive --print-timeout from the effective per-invocation timeout
+    // (forwarded by the router as request.timeoutMs) so it always matches the
+    // actual orchestrator budget regardless of profile or caller overrides.
+    const printTimeoutMs = request.timeoutMs ?? this.opts.timeoutMsDefault ?? 30 * 60 * 1000;
+    const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
+    const args = [
+      '--dangerously-skip-permissions',
+      '--add-dir',
+      request.cwd,
+      '--print-timeout',
+      `${printTimeoutMins}m`,
+      '--print',
+      '-',
+    ];
     const result = await runExternalCli({
       runtime: 'antigravity',
       bin,
