@@ -31,9 +31,9 @@ const mixedHeadingLevelsFixture = `# Top-level (ignored)
 
 ## Task 1: Second-level (captured)
 
- ### Task 2: Third-level (captured)
+### Task 2: Third-level (captured)
 
- #### Task 3: Fourth-level (ignored)
+#### Task 3: Fourth-level (ignored)
 
 ## Notes (ignored — no word boundary match)
 

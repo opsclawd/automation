@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   parseTaskManifest,
   derivePlanTasks,
@@ -129,7 +129,7 @@ Next body.
       }
     });
 
-    it('H3 task heading extraction stops at H2 non-task heading', () => {
+    it('H3 task heading extraction preserves H2 non-task headings', () => {
       const plan = `
 ### Task 1: H3 heading
 Body line 1.
@@ -140,7 +140,7 @@ Some verification.
       const result = extractTaskBody(plan, { taskNumber: 1 });
       expect(result.ok).toBe(true);
       if (result.ok) {
-        expect(result.body.trim()).toBe('Body line 1.');
+        expect(result.body.trim()).toBe('Body line 1.\n\n## Verification\nSome verification.');
       }
     });
 
@@ -411,6 +411,72 @@ Next task body.
         expect(result.body.trim()).toContain('Subheading body.');
         expect(result.body.trim()).not.toContain('### Task 2:');
       }
+    });
+
+    it('manifest validation: warns on fixture-like task titles', () => {
+      const plan = `
+## Task 1: Clean heading
+## Task 2: Some task
+`;
+      const manifestJson = JSON.stringify({
+        version: 1,
+        task_count: 2,
+        tasks: [
+          { n: 1, title: 'Clean heading' },
+          { n: 2, title: 'Some task' },
+        ],
+      });
+      const mockEvents = {
+        publish: vi.fn(),
+        subscribe: vi.fn(),
+      };
+      const ctx = {
+        runId: 'test-run-id',
+        runUuid: 'test-run-uuid',
+        events: mockEvents,
+        now: () => new Date('2026-06-28T12:00:00.000Z'),
+      };
+      const result = validatePlanTaskList(plan, manifestJson, ctx, 'plan-write');
+      expect(result.success).toBe(true);
+      expect(mockEvents.publish).toHaveBeenCalledWith('test-run-uuid', {
+        runId: 'test-run-id',
+        phase: 'plan-write',
+        level: 'warn',
+        type: 'sanity_check.fixture_title',
+        message:
+          "fixture-like task titles detected: title 'Some task' matches fixture pattern 'Some task'; ",
+        timestamp: '2026-06-28T12:00:00.000Z',
+        metadata: {},
+      });
+    });
+
+    it('no manifest validation: warns on fixture-like task titles', () => {
+      const plan = `
+## Task 1: Clean heading
+## Task 2: Some task
+`;
+      const mockEvents = {
+        publish: vi.fn(),
+        subscribe: vi.fn(),
+      };
+      const ctx = {
+        runId: 'test-run-id',
+        runUuid: 'test-run-uuid',
+        events: mockEvents,
+        now: () => new Date('2026-06-28T12:00:00.000Z'),
+      };
+      const result = validatePlanTaskList(plan, undefined, ctx, 'implement');
+      expect(result.success).toBe(true);
+      expect(mockEvents.publish).toHaveBeenCalledWith('test-run-uuid', {
+        runId: 'test-run-id',
+        phase: 'implement',
+        level: 'warn',
+        type: 'sanity_check.fixture_title',
+        message:
+          "fixture-like task titles detected: title 'Some task' matches fixture pattern 'Some task'; ",
+        timestamp: '2026-06-28T12:00:00.000Z',
+        metadata: {},
+      });
     });
   });
 

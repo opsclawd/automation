@@ -83,7 +83,7 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
       }
     }
 
-    const validation = validatePlanTaskList(planMd, manifestJson);
+    const validation = validatePlanTaskList(planMd, manifestJson, ctx, 'plan-write');
     if (!validation.success) {
       emit('plan-write.failed', 'error', validation.error);
       return {

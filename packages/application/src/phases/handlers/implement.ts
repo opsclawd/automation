@@ -54,7 +54,7 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
-    const validation = validatePlanTaskList(planMd, manifestJson);
+    const validation = validatePlanTaskList(planMd, manifestJson, ctx, 'implement');
     if (!validation.success) {
       return this.fail(ctx, emit, 'invalid_result', validation.error);
     }

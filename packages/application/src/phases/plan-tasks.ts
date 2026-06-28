@@ -1,3 +1,5 @@
+import type { EventBusPort } from '../ports.js';
+
 export interface TaskManifestEntry {
   n: number;
   title: string;
@@ -56,7 +58,7 @@ function parseTasksNoManifest(planMarkdown: string): { n: number; title: string 
 
   const headingRegex = /^#{2,3} Task ([0-9]+):(.*)$/i;
   for (const line of cleanLines) {
-    const m = headingRegex.exec(line.trim());
+    const m = headingRegex.exec(line);
     if (m) {
       tasks.push({
         n: parseInt(m[1]!, 10),
@@ -74,7 +76,7 @@ function checkSequentialNumbers(planMarkdown: string): string | null {
   const numbers: number[] = [];
   const regex = /^#{2,3} Task ([0-9]+):/i;
   for (const line of cleanLines) {
-    const m = regex.exec(line.trim());
+    const m = regex.exec(line);
     if (m) {
       numbers.push(parseInt(m[1]!, 10));
     }
@@ -93,6 +95,53 @@ function checkSequentialNumbers(planMarkdown: string): string | null {
   }
 
   return null;
+}
+
+const FIXTURE_PATTERNS = [
+  'Phantom',
+  'Real task',
+  'Make CI green',
+  'Fix failing tests',
+  'Some task',
+  'First task',
+  'Example task',
+  'TODO task',
+];
+
+export function checkFixtureTitles(
+  titles: string[],
+  ctx?: {
+    runId: string;
+    runUuid: string;
+    events: EventBusPort;
+    now: () => Date;
+  },
+  phase?: string,
+): void {
+  let warnings = '';
+  for (const title of titles) {
+    if (!title) continue;
+    const lowerTitle = title.toLowerCase();
+    for (const pattern of FIXTURE_PATTERNS) {
+      const lowerPattern = pattern.toLowerCase();
+      if (lowerTitle.includes(lowerPattern)) {
+        warnings += `title '${title}' matches fixture pattern '${pattern}'; `;
+        break;
+      }
+    }
+  }
+
+  if (warnings && ctx) {
+    ctx.events.publish(ctx.runUuid, {
+      runId: ctx.runId,
+      phase: phase || 'implement',
+      level: 'warn',
+      type: 'sanity_check.fixture_title',
+      message: `fixture-like task titles detected: ${warnings}`,
+      timestamp: ctx.now().toISOString(),
+      metadata: {},
+    });
+  }
 }
 
 function checkDuplicateTitles(titles: string[]): string | null {
@@ -147,7 +196,7 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
   const seenExtra = new Set<number>();
 
   for (const line of cleanLines) {
-    const m = proseTasksRegex.exec(line.trim());
+    const m = proseTasksRegex.exec(line);
     if (m) {
       const pn = parseInt(m[1]!, 10);
       if (pn < 1 || pn > manifest.task_count) {
@@ -195,10 +244,6 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, totalFences:
   const resultLines: string[] = [];
   let inFence = false;
 
-  const taskHeadingLine = lines[startLineIdx]!;
-  const taskLevelMatch = /^#+/.exec(taskHeadingLine);
-  const taskLevel = taskLevelMatch ? taskLevelMatch[0].length : 2;
-
   for (let i = startLineIdx + 1; i < lines.length; i++) {
     const line = lines[i]!;
 
@@ -211,18 +256,8 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, totalFences:
         inFence = !inFence;
       }
       if (!inFence) {
-        const headingMatch = /^(#{2,3})\s/.exec(line);
-        if (headingMatch) {
-          const hLevel = headingMatch[1]!.length;
-          if (hLevel < taskLevel) {
-            break;
-          }
-          if (hLevel === taskLevel) {
-            const isTaskHeading = /^#{2,3} Task [0-9]+:/i.test(line);
-            if (taskLevel === 2 || isTaskHeading) {
-              break;
-            }
-          }
+        if (/^#{2,3} Task [0-9]+:/i.test(line)) {
+          break;
         }
       }
     }
@@ -299,7 +334,7 @@ export function derivePlanTasks(planMarkdown: string, manifest?: TaskManifest): 
 
   const steps: DerivedPlanTask[] = [];
   for (const line of planMarkdown.split('\n')) {
-    const m = TASK_HEADING_RE.exec(line.trim());
+    const m = TASK_HEADING_RE.exec(line);
     if (m) {
       steps.push({ index: steps.length + 1, title: m[1]!.trim() });
     }
@@ -399,6 +434,13 @@ export function extractTaskBody(
 export function validatePlanTaskList(
   planMarkdown: string,
   manifestJson?: string,
+  ctx?: {
+    runId: string;
+    runUuid: string;
+    events: EventBusPort;
+    now: () => Date;
+  },
+  phase?: string,
 ): PlanTaskListValidationResult {
   if (manifestJson && manifestJson.trim() !== '') {
     const manifestResult = parseTaskManifest(manifestJson);
@@ -409,6 +451,8 @@ export function validatePlanTaskList(
     const manifest = manifestResult.manifest;
 
     const manifestTitles = manifest.tasks.map((t) => t.title);
+    checkFixtureTitles(manifestTitles, ctx, phase);
+
     const dupResult = checkDuplicateTitles(manifestTitles);
     if (dupResult) {
       return { success: false, error: dupResult };
@@ -437,6 +481,9 @@ export function validatePlanTaskList(
   const parsedTasks = parseTasksNoManifest(planMarkdown);
   const parsedCount = parsedTasks.length;
 
+  const taskTitles = parsedTasks.map((t) => t.title);
+  checkFixtureTitles(taskTitles, ctx, phase);
+
   const declared = extractDeclaredCount(planMarkdown);
   if (declared !== null) {
     if (declared !== parsedCount) {
@@ -452,7 +499,6 @@ export function validatePlanTaskList(
     return { success: false, error: seqResult };
   }
 
-  const taskTitles = parsedTasks.map((t) => t.title);
   const dupResult = checkDuplicateTitles(taskTitles);
   if (dupResult) {
     return { success: false, error: dupResult };
