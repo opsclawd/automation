@@ -93,4 +93,118 @@ describe('buildLintTaskSize', () => {
     expect(result.oversized).toHaveLength(1);
     expect(result.oversized[0]?.testCaseCount).toBe(9);
   });
+
+  it('matches single-dot test files (e.g. test.ts)', async () => {
+    const { dir, relPath } = createTempTestFile(
+      'test.ts',
+      `
+      it('should run', () => {});
+    `,
+    );
+    const linter = buildLintTaskSize({
+      maxTestFileLines: 100,
+      maxTestCases: 0, // trigger oversized
+      blockOversizedTasks: true,
+    });
+    const manifest: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task', files: [relPath] }],
+    };
+    const result = await linter(dir, manifest);
+    expect(result.oversized).toHaveLength(1);
+    expect(result.oversized[0]?.testCaseCount).toBe(1);
+  });
+
+  it('counts bats test cases and strips bats comments', async () => {
+    const { dir, relPath } = createTempTestFile(
+      'my_script.bats',
+      `
+      @test "first test case" {
+        run something
+      }
+      # @test "commented out case" {
+      #   run something
+      # }
+      @test "second test case" {
+        run something
+      }
+    `,
+    );
+    const linter = buildLintTaskSize({
+      maxTestFileLines: 100,
+      maxTestCases: 1, // trigger oversized
+      blockOversizedTasks: true,
+    });
+    const manifest: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task', files: [relPath] }],
+    };
+    const result = await linter(dir, manifest);
+    expect(result.oversized).toHaveLength(1);
+    expect(result.oversized[0]?.testCaseCount).toBe(2);
+  });
+
+  it('prevents path traversal', async () => {
+    const linter = buildLintTaskSize({
+      maxTestFileLines: 100,
+      maxTestCases: 5,
+      blockOversizedTasks: true,
+    });
+    const manifest: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task', files: ['../outside.test.ts'] }],
+    };
+    await expect(linter('/some/cwd', manifest)).rejects.toThrow('Path traversal detected');
+  });
+
+  it('handles escaped backticks in template literals', async () => {
+    const fileContent = `
+      const a = \`foo \\\` bar\`;
+      it('should count', () => {});
+    `;
+    const { dir, relPath } = createTempTestFile('my.test.ts', fileContent);
+    const linter = buildLintTaskSize({
+      maxTestFileLines: 100,
+      maxTestCases: 0,
+      blockOversizedTasks: true,
+    });
+    const manifest: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task', files: [relPath] }],
+    };
+    const result = await linter(dir, manifest);
+    expect(result.oversized[0]?.testCaseCount).toBe(1);
+  });
+
+  it('correctly handles trailing newline for line counts', async () => {
+    const { dir, relPath: relPath1 } = createTempTestFile('with_newline.test.ts', 'line1\nline2\n');
+    const { dir: dir2, relPath: relPath2 } = createTempTestFile(
+      'no_newline.test.ts',
+      'line1\nline2',
+    );
+    const linter = buildLintTaskSize({
+      maxTestFileLines: 1, // trigger oversized
+      maxTestCases: 5,
+      blockOversizedTasks: true,
+    });
+    const manifest1: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task', files: [relPath1] }],
+    };
+    const result1 = await linter(dir, manifest1);
+    expect(result1.oversized[0]?.lineCount).toBe(2);
+
+    const manifest2: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task', files: [relPath2] }],
+    };
+    const result2 = await linter(dir2, manifest2);
+    expect(result2.oversized[0]?.lineCount).toBe(2);
+  });
 });

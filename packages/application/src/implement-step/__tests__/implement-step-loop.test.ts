@@ -796,6 +796,11 @@ describe('ImplementStepLoop', () => {
           verdict: 'done_no_fixes_needed' as const,
           rebuttal: 'Nothing to fix.',
         }),
+        runArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'Reviewer is correct.',
+          rationale: 'Reviewer is correct.',
+        }),
       });
       // Run with 3 iterations; re-run guard must prevent more than 1 extra spec call
       await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
@@ -827,12 +832,17 @@ describe('ImplementStepLoop', () => {
           verdict: 'done_no_fixes_needed' as const,
           rebuttal: 'Nothing to fix.',
         }),
+        runArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'Reviewer is correct.',
+          rationale: 'Reviewer is correct.',
+        }),
       });
       await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
       // Iteration 1: spec(1) initial + spec(2) re-run → needs_human_review after re-run fails
       // The 1-shot re-run is NOT repeated on iterations 2 and 3.
-      // specCalls == 2: 1 initial + 1 re-run (contradictionRetriedThisStep blocks further re-runs)
-      expect(specCalls).toBe(2);
+      // specCalls == 3: 1 initial + 1 re-run on iter 1 + 1 initial on iter 2 (contradictionRetriedThisStep blocks further re-runs)
+      expect(specCalls).toBe(3);
     });
 
     it('parity[#398]: fires before arbiter — re-run attempt precedes reviews_inconsistent escalation', async () => {
