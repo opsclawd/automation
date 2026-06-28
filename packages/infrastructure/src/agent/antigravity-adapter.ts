@@ -8,6 +8,7 @@ import {
   unlinkSync,
   statSync,
   mkdirSync,
+  promises as fsPromises,
 } from 'node:fs';
 import { resolve, join, dirname, basename, relative, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
@@ -97,31 +98,72 @@ function findExpectedArtifactsInDir(scratchDir: string, expectedArtifacts: strin
 
 /**
  * Searches one level deep in brainRoot for a file whose basename matches
- * artifactBasename. Returns the absolute path to the file if exactly one
- * UUID dir contains it; returns null if zero or multiple matches (ambiguous).
+ * artifactBasename. Prioritizes the directory matching runId, then falls back
+ * to scanning other UUID subdirectories asynchronously, sorted by mtime descending.
  */
-function findArtifactInBrainDir(brainRoot: string, artifactBasename: string): string | null {
-  if (!existsSync(brainRoot)) return null;
-  const matches: string[] = [];
+async function findArtifactInBrainDir(
+  brainRoot: string,
+  artifactBasename: string,
+  runId?: string,
+): Promise<string | null> {
   try {
-    for (const uuidEntry of readdirSync(brainRoot)) {
-      const uuidDir = join(brainRoot, uuidEntry);
-      try {
-        if (!statSync(uuidDir).isDirectory()) continue;
-        const candidate = join(uuidDir, artifactBasename);
-        if (existsSync(candidate) && statSync(candidate).isFile()) {
-          matches.push(candidate);
-        }
-      } catch {
-        // Skip inaccessible entries
-      }
-    }
+    const rootStat = await fsPromises.stat(brainRoot);
+    if (!rootStat.isDirectory()) return null;
   } catch {
     return null;
   }
+
+  // 1. Check subdirectory matching runId first
+  if (runId) {
+    const candidate = join(brainRoot, runId, artifactBasename);
+    try {
+      const st = await fsPromises.stat(candidate);
+      if (st.isFile()) {
+        return candidate;
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  // 2. Fallback scan of the whole directory (performed asynchronously)
+  const matches: { path: string; mtimeMs: number }[] = [];
+  try {
+    const uuidEntries = await fsPromises.readdir(brainRoot);
+    // Limit the number of directories checked to avoid blocking or taking too long
+    const limit = 1000;
+    const entriesToCheck = uuidEntries.slice(0, limit);
+
+    await Promise.all(
+      entriesToCheck.map(async (uuidEntry) => {
+        const uuidDir = join(brainRoot, uuidEntry);
+        try {
+          const dirStat = await fsPromises.stat(uuidDir);
+          if (!dirStat.isDirectory()) return;
+
+          const candidate = join(uuidDir, artifactBasename);
+          try {
+            const fileStat = await fsPromises.stat(candidate);
+            if (fileStat.isFile()) {
+              matches.push({ path: candidate, mtimeMs: fileStat.mtimeMs });
+            }
+          } catch {
+            // Ignore
+          }
+        } catch {
+          // Skip inaccessible entries
+        }
+      }),
+    );
+  } catch {
+    return null;
+  }
+
   if (matches.length === 0) return null;
-  if (matches.length === 1) return matches[0]!;
-  return null;
+
+  // Sort candidates by file modification time (mtime descending) and pick the most recent
+  matches.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return matches[0]!.path;
 }
 
 export class AntigravityAgentAdapter implements AgentPort {
@@ -178,8 +220,14 @@ export class AntigravityAgentAdapter implements AgentPort {
           }
 
           const recovered: string[] = [];
+          const resolvedCwd = resolve(request.cwd);
           for (const relPath of stray) {
-            const dest = join(request.cwd, relPath);
+            const dest = resolve(join(resolvedCwd, relPath));
+            const rel = relative(resolvedCwd, dest);
+            if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+              console.warn(`Unsafe recovery destination: ${dest}`);
+              continue;
+            }
             const src = join(scratchDir, relPath);
             try {
               mkdirSync(dirname(dest), { recursive: true });
@@ -195,8 +243,8 @@ export class AntigravityAgentAdapter implements AgentPort {
                 }
               }
               recovered.push(relPath);
-            } catch {
-              // Best effort recovery: ignore individual file copy/rename errors
+            } catch (err) {
+              console.warn(`Failed to recover artifact '${relPath}' from scratch dir:`, err);
             }
           }
 
@@ -224,8 +272,8 @@ export class AntigravityAgentAdapter implements AgentPort {
             }
           }
         }
-      } catch {
-        // Best effort: ignore top-level recovery failures to protect the original result
+      } catch (err) {
+        console.warn('Failed to perform scratch recovery:', err);
       }
     }
 
@@ -237,13 +285,19 @@ export class AntigravityAgentAdapter implements AgentPort {
       try {
         const brainRoot = this.opts.brainDir ?? resolve(homedir(), '.gemini/antigravity-cli/brain');
         let brainRecoveredAny = false;
+        const resolvedCwd = resolve(request.cwd);
 
         for (const artifact of request.expectedArtifacts ?? []) {
           if (existsSync(join(request.cwd, artifact))) continue; // already present
-          const match = findArtifactInBrainDir(brainRoot, basename(artifact));
+          const match = await findArtifactInBrainDir(brainRoot, basename(artifact), request.runId);
           if (match === null) continue;
 
-          const dest = join(request.cwd, artifact);
+          const dest = resolve(join(resolvedCwd, artifact));
+          const rel = relative(resolvedCwd, dest);
+          if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+            console.warn(`Unsafe recovery destination: ${dest}`);
+            continue;
+          }
           try {
             mkdirSync(dirname(dest), { recursive: true });
             copyFileSync(match, dest);
@@ -257,8 +311,8 @@ export class AntigravityAgentAdapter implements AgentPort {
               { src: match, artifact },
             ];
             brainRecoveredAny = true;
-          } catch {
-            // Best effort recovery: ignore individual file copy errors
+          } catch (err) {
+            console.warn(`Failed to recover artifact '${artifact}' from brain dir:`, err);
           }
         }
 
@@ -273,8 +327,8 @@ export class AntigravityAgentAdapter implements AgentPort {
             );
           }
         }
-      } catch {
-        // Best effort: ignore top-level brain recovery failures
+      } catch (err) {
+        console.warn('Failed to perform brain recovery:', err);
       }
     }
 
