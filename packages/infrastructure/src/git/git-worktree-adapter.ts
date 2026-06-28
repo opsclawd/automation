@@ -1,10 +1,38 @@
-import { access, rm } from 'node:fs/promises';
-import { dirname } from 'node:path';
-import type { CreateWorktreeInput, GitPort, PushInput } from '@ai-sdlc/application/ports';
+import { access, rm, readFile, writeFile, mkdir } from 'node:fs/promises';
+import { dirname, resolve, join, isAbsolute } from 'node:path';
+import type {
+  CreateWorktreeInput,
+  GitPort,
+  PushInput,
+  ArtifactGuardPort,
+} from '@ai-sdlc/application/ports';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git, GitFailedError } from './git-runner.js';
 
-export class GitWorktreeAdapter implements GitPort {
+export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
+  'validation.headsha',
+  'review-fix-plan.json',
+  'review-task-manifest.json',
+  'review-triage.md',
+  'code-review.md',
+  'review.md',
+  'task-manifest.json',
+  'arbiter-result.json',
+  'review-loop-history.json',
+  'compound-draft.md',
+  'validation.result',
+  'result.json',
+  'fix-validate-done.marker',
+  'plan-review-passed.marker',
+] as const);
+
+export const ORCHESTRATOR_PATCH_EXCLUDE = '*.patch';
+
+export function orchestratorExcludePatterns(): readonly string[] {
+  return Object.freeze([...ORCHESTRATOR_ARTIFACT_PATHS, ORCHESTRATOR_PATCH_EXCLUDE]);
+}
+
+export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     const { repoLocalBasePath, worktreePath, branch, baseBranch } = input;
 
@@ -149,5 +177,127 @@ export class GitWorktreeAdapter implements GitPort {
     }
 
     await git(cwd, ['reset', '--hard', baseBranch]);
+  }
+
+  async seedArtifactExcludes(cwd: string): Promise<void> {
+    const gitCommonDir = await git(cwd, ['rev-parse', '--git-common-dir']);
+    const excludeFile = isAbsolute(gitCommonDir)
+      ? join(gitCommonDir, 'info', 'exclude')
+      : resolve(cwd, gitCommonDir, 'info', 'exclude');
+
+    const excludeDir = dirname(excludeFile);
+    await mkdir(excludeDir, { recursive: true });
+
+    let content = '';
+    try {
+      content = await readFile(excludeFile, 'utf8');
+    } catch {
+      // File does not exist
+    }
+
+    const lines = content.split('\n').map((l) => l.trim());
+    const existingSet = new Set(lines);
+
+    const patterns = orchestratorExcludePatterns();
+    const toAppend: string[] = [];
+    for (const pattern of patterns) {
+      if (!existingSet.has(pattern)) {
+        toAppend.push(pattern);
+      }
+    }
+
+    if (toAppend.length > 0) {
+      let newContent = content;
+      if (newContent && !newContent.endsWith('\n')) {
+        newContent += '\n';
+      }
+      newContent += toAppend.join('\n') + '\n';
+      await writeFile(excludeFile, newContent, 'utf8');
+    }
+  }
+
+  async cleanOrchestratorArtifacts(cwd: string, baseBranch?: string): Promise<void> {
+    // 1. Get list of staged files
+    const stagedOutput = await git(cwd, ['diff', '--cached', '--name-only']);
+    const stagedSet = new Set(
+      stagedOutput
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean),
+    );
+
+    // 2. Get list of committed files on current branch relative to baseBranch
+    const committedSet = new Set<string>();
+    if (baseBranch) {
+      try {
+        const diffOutput = await git(cwd, ['diff', `${baseBranch}..HEAD`, '--name-only']);
+        for (const line of diffOutput
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean)) {
+          committedSet.add(line);
+        }
+      } catch {
+        // Base branch diff failed or base branch doesn't exist yet
+      }
+    }
+
+    // 3. Process each canonical artifact
+    const removedCommittedArtifacts: string[] = [];
+
+    for (const artifact of ORCHESTRATOR_ARTIFACT_PATHS) {
+      const artifactPath = join(cwd, artifact);
+
+      // Check if tracked
+      let isTracked = false;
+      try {
+        await git(cwd, ['ls-files', '--error-unmatch', '--', artifact]);
+        isTracked = true;
+      } catch {
+        isTracked = false;
+      }
+
+      // 3.1. Untracked/uncommitted: delete from filesystem
+      if (!isTracked) {
+        await rm(artifactPath, { force: true });
+      }
+
+      // 3.2. Staged but not committed: reset/unstage and delete
+      if (stagedSet.has(artifact)) {
+        try {
+          await git(cwd, ['reset', 'HEAD', '--', artifact]);
+        } catch {
+          // ignore
+        }
+        await rm(artifactPath, { force: true });
+      }
+
+      // 3.3. Already committed to the branch
+      if (baseBranch && committedSet.has(artifact)) {
+        try {
+          await git(cwd, ['rm', '-f', '--', artifact]);
+          removedCommittedArtifacts.push(artifact);
+        } catch {
+          // If git rm fails, ensure filesystem cleanup
+          await rm(artifactPath, { force: true });
+        }
+      }
+    }
+
+    // 4. Commit the removals if any committed artifacts were removed
+    if (removedCommittedArtifacts.length > 0) {
+      try {
+        await git(cwd, [
+          'commit',
+          '--only',
+          '-m',
+          'fix: remove orchestrator artifacts that were committed by agent',
+          '--',
+          ...removedCommittedArtifacts,
+        ]);
+      } catch {
+        // ignore commit failures
+      }
+    }
   }
 }
