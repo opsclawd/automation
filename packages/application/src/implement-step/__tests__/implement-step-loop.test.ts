@@ -584,6 +584,48 @@ describe('ImplementStepLoop', () => {
     });
   });
 
+  describe('parity[#403]: typecheck injection into reviewer prompts', () => {
+    it('parity[#403]: runTypecheck is called once after runImplement succeeds', async () => {
+      let tcCalls = 0;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          tcCalls += 1;
+          return { outcome: 'pass', output: '' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(tcCalls).toBe(1);
+    });
+
+    it('parity[#403]: tcResult is forwarded to runSpecReview under ## TYPECHECK RESULT header', async () => {
+      const tcResult: TypecheckResult = { outcome: 'pass', output: 'All good' };
+      let capturedTc: TypecheckResult | undefined;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => tcResult,
+        runSpecReview: async (_ctx: StepLoopContext, tc: TypecheckResult) => {
+          capturedTc = tc;
+          return { invocationId: 'sr-parity403', agentOutcome: 'success', verdict: 'pass' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(capturedTc).toEqual(tcResult);
+    });
+
+    it('parity[#403]: tcResult is forwarded to runQualityReview under ## TYPECHECK RESULT header', async () => {
+      const tcResult: TypecheckResult = { outcome: 'pass', output: 'All good' };
+      let capturedTc: TypecheckResult | undefined;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => tcResult,
+        runQualityReview: async (_ctx: StepLoopContext, tc: TypecheckResult) => {
+          capturedTc = tc;
+          return { invocationId: 'qr-parity403', agentOutcome: 'success', verdict: 'pass' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(capturedTc).toEqual(tcResult);
+    });
+  });
+
   describe('contradiction detection and 1-shot reconciliation', () => {
     it('detects contradiction when fix returns done_no_fixes_needed and spec-review fails', async () => {
       const { events, bus } = collectEvents();
