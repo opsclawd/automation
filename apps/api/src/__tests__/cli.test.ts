@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawn, execFileSync } from 'node:child_process';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram, findRepoRoot } from '../cli.js';
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunExecutor, ResumeRun, RetryFailedPhase } from '@ai-sdlc/application';
@@ -31,6 +31,10 @@ function spawnOrchestrator(args: string[], cwd: string, envOverrides?: Record<st
 }
 
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  vi.spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes').mockResolvedValue(undefined);
+});
 
 afterEach(() => {
   while (tempDirs.length > 0) {
@@ -2107,6 +2111,11 @@ describe('CLI run --executor ts', () => {
         .mockImplementation(async () => {
           callOrder.push('createWorktree');
         });
+      const seedArtifactExcludesSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes')
+        .mockImplementation(async () => {
+          callOrder.push('seedArtifactExcludes');
+        });
       const headCommitShaSpy = vi
         .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
         .mockResolvedValue('deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
@@ -2155,8 +2164,8 @@ describe('CLI run --executor ts', () => {
         '/dev/null',
       ]);
 
-      // createWorktree must happen before execute
-      expect(callOrder).toEqual(['createWorktree', 'execute']);
+      // createWorktree must happen before seedArtifactExcludes, which must happen before execute
+      expect(callOrder).toEqual(['createWorktree', 'seedArtifactExcludes', 'execute']);
       // branch name must be ai/issue-<N>
       expect(createWorktreeSpy.mock.calls[0][0]).toMatchObject({ branch: 'ai/issue-61' });
       // startCommitSha must be set on the run record via update()
@@ -2176,6 +2185,7 @@ describe('CLI run --executor ts', () => {
       heartbeatSpy.mockRestore();
       releaseSpy.mockRestore();
       createWorktreeSpy.mockRestore();
+      seedArtifactExcludesSpy.mockRestore();
       headCommitShaSpy.mockRestore();
       removeWorktreeSpy.mockRestore();
       updateSpy.mockRestore();
