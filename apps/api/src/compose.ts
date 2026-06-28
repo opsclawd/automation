@@ -115,6 +115,7 @@ import {
   ClaudeCodeAgentAdapter,
   CodexAgentAdapter,
 } from '@ai-sdlc/infrastructure';
+import { buildLintTaskSize } from './lint-task-size.js';
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -1922,11 +1923,20 @@ export function composeRoot(opts: ComposeOptions): Container {
         return { ok: true };
       };
 
+      const lintTaskSizeDep = config.taskSplitting
+        ? buildLintTaskSize({
+            maxTestFileLines: config.taskSplitting.maxTestFileLines,
+            maxTestCases: config.taskSplitting.maxTestCases,
+            blockOversizedTasks: config.taskSplitting.blockOversizedTasks,
+          })
+        : undefined;
+
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
           runStep,
           setup: worktreeSetup,
+          ...(lintTaskSizeDep ? { lintTaskSize: lintTaskSizeDep } : {}),
         }),
       );
 
