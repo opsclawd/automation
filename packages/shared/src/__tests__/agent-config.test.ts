@@ -180,7 +180,14 @@ describe('agent config schema', () => {
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
     const text = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '.ai-orchestrator.json'),
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '..',
+        '..',
+        '..',
+        '..',
+        '.ai-orchestrator.json',
+      ),
       'utf8',
     );
     expect(() => orchestratorConfigSchema.parse(JSON.parse(text))).not.toThrow();

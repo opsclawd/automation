@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { CreatePrHandler } from '../create-pr.js';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../../../test-doubles/index.js';
 import type { PhaseHandlerContext } from '../../handler.js';
@@ -220,7 +220,7 @@ describe('CreatePrHandler — deterministic assembly', () => {
   });
 
   it('fails when validation.result is absent', async () => {
-    const { ctx } = await build();
+    const { ctx, events, git, github } = await build();
     const emptyStore = new FakeArtifactStore();
     const ctxNoVal = { ...ctx, artifacts: emptyStore } as unknown as PhaseHandlerContext;
 
@@ -231,10 +231,16 @@ describe('CreatePrHandler — deterministic assembly', () => {
       expect(res.failure.message).toContain('Validation did not pass (status: missing)');
       expect(res.failure.artifacts).toEqual([]);
     }
+
+    const blockedEvent = events.find((e) => e.type === 'create_pr.blocked');
+    expect(blockedEvent).toBeDefined();
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
   });
 
   it('fails when validation.result is not passed', async () => {
-    const { artifacts, ctx } = await build();
+    const { artifacts, ctx, git, github } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'validation.result',
@@ -247,6 +253,10 @@ describe('CreatePrHandler — deterministic assembly', () => {
       expect(res.failure.kind).toBe('validation_failed');
       expect(res.failure.message).toContain('Validation did not pass (status: failed)');
     }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
   });
 
   it('correctly marks failed validation steps from validate.log sentinels', async () => {
@@ -341,8 +351,31 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(failedEvents).toHaveLength(1);
   });
 
+  it('calls cleanOrchestratorArtifacts after PR creation so all artifacts are available during assembly', async () => {
+    const { git, ctx } = await build();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gitAny = git as any;
+    const cleanSpy = vi.fn().mockResolvedValue(undefined);
+    gitAny.cleanOrchestratorArtifacts = cleanSpy;
+
+    const res = await HANDLER.run(ctx);
+
+    expect(res.outcome).toBe('passed');
+    expect(cleanSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
+  });
+
+  it('cleanup failure does not fail the phase', async () => {
+    const { git, ctx } = await build();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gitAny = git as any;
+    gitAny.cleanOrchestratorArtifacts = vi.fn().mockRejectedValue(new Error('git exploded'));
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('passed');
+  });
+
   it('fails with status missing/empty when validation.result is empty', async () => {
-    const { artifacts, ctx } = await build();
+    const { artifacts, ctx, git, github } = await build();
     await artifacts.write({
       runId: ctx.runUuid,
       relativePath: 'validation.result',
@@ -356,5 +389,9 @@ describe('CreatePrHandler — deterministic assembly', () => {
       expect(res.failure.message).toContain('Validation did not pass (status: missing)');
       expect(res.failure.artifacts).toEqual([]);
     }
+
+    expect(git.pushes).toHaveLength(0);
+    expect(github.createdPrInputs).toHaveLength(0);
+    expect(github.labelChanges).toHaveLength(0);
   });
 });

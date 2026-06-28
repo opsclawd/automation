@@ -11,6 +11,7 @@ import {
   WorkerLeaseConflictError,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
+import { type ArtifactGuardPort } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';
 
 export interface LeaseConfig {
@@ -294,6 +295,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               branch: `ai/issue-${opts.issue}`,
               baseBranch: c.defaultBranch,
             });
+            if (
+              'seedArtifactExcludes' in c.git &&
+              typeof c.git.seedArtifactExcludes === 'function'
+            ) {
+              await (c.git as unknown as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
+            }
             const sha = await c.git.headCommitSha(worktreePath);
             c.runRepository.update(run.uuid, { startCommitSha: sha });
             const result = await c.runExecutor.execute({

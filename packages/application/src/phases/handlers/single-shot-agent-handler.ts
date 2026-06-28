@@ -10,7 +10,7 @@ export class SingleShotAgentHandler implements PhaseHandler {
   constructor(
     phaseName: PhaseName,
     private readonly step: string,
-    private readonly options: { skipResultExtraction?: boolean } = {},
+    private readonly options: { skipResultExtraction?: boolean; cleanArtifacts?: boolean } = {},
   ) {
     this.phase = phaseName;
   }
@@ -82,6 +82,7 @@ export class SingleShotAgentHandler implements PhaseHandler {
       vars: { issue_number: String(ctx.issueNumber), cwd: ctx.cwd },
       agentContract: def.agentContract,
       ...(this.options.skipResultExtraction ? { skipResultExtraction: true } : {}),
+      ...(this.options.cleanArtifacts ? { cleanArtifacts: true } : {}),
     });
     if (this.options.skipResultExtraction && result.outcome === 'passed') {
       emit(`${String(this.phase)}.completed`, 'info', `${String(this.phase)} completed`);

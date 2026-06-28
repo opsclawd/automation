@@ -87,6 +87,7 @@ export class ReviewFixLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
+        await this.runCleanArtifacts(ctx);
         break;
       }
 
@@ -164,6 +165,7 @@ export class ReviewFixLoop {
         });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        await this.runCleanArtifacts(ctx);
         continue;
       }
       consecutiveFixFailures = 0;
@@ -263,5 +265,11 @@ export class ReviewFixLoop {
       triggerReason,
       triggerOwner: 'use_case',
     });
+  }
+
+  private async runCleanArtifacts(ctx: StepContext): Promise<void> {
+    if (this.deps.cleanArtifacts) {
+      await this.deps.cleanArtifacts(ctx);
+    }
   }
 }

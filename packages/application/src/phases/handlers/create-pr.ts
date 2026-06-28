@@ -2,6 +2,7 @@ import type { PhaseName, Failure } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../handler.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store.js';
+import type { ArtifactGuardPort } from '../../ports/git-port.js';
 
 export interface CreatePrHandlerOpts {
   baseBranch: string;
@@ -171,6 +172,17 @@ export class CreatePrHandler implements PhaseHandler {
         `PR created at ${prUrl} but pr-url.txt write failed. Verify PR and record URL manually, then resume.`,
         writtenArtifacts,
       );
+    }
+
+    // Clean up orchestrator artifacts now that the PR body has been assembled.
+    // Non-fatal: cleanup failure does not block the run outcome.
+    try {
+      const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
+      if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
+        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
+      }
+    } catch {
+      // ignore
     }
 
     emit('create_pr.completed', 'info', 'create-pr complete');

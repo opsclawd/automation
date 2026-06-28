@@ -118,7 +118,12 @@ export type {
   GitHubReviewComment,
   CreatePullRequestInput,
 } from './ports/github-port.js';
-export type { GitPort, CreateWorktreeInput, PushInput } from './ports/git-port.js';
+export type {
+  GitPort,
+  CreateWorktreeInput,
+  PushInput,
+  ArtifactGuardPort,
+} from './ports/git-port.js';
 export type {
   ValidationPort,
   RunValidationInput,

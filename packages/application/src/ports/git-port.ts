@@ -52,3 +52,8 @@ export interface GitPort {
    */
   resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void>;
 }
+
+export interface ArtifactGuardPort {
+  seedArtifactExcludes(cwd: string): Promise<void>;
+  cleanOrchestratorArtifacts(cwd: string, baseBranch?: string): Promise<void>;
+}

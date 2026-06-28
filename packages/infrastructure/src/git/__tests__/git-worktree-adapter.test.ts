@@ -1,11 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, isAbsolute } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { TrackedSourceDriftError } from '@ai-sdlc/application/ports';
 import { git } from '../git-runner.js';
-import { GitWorktreeAdapter } from '../git-worktree-adapter.js';
+import { GitWorktreeAdapter, orchestratorExcludePatterns } from '../git-worktree-adapter.js';
 import { clearTempDirs, getTempDirs, makeTempRepo, makeRepoWithRemote } from './helpers.js';
 
 let _extraDirs: string[] = [];
@@ -440,5 +440,145 @@ describe('cleanUntracked()', () => {
     await adapter.cleanUntracked(repo);
     const { access: fsAccess } = await import('node:fs/promises');
     await expect(fsAccess(join(repo, 'node_modules', 'pkg.js'))).resolves.toBeUndefined();
+  });
+});
+
+describe('Artifact Guarding & Cleanup', () => {
+  describe('seedArtifactExcludes()', () => {
+    it('writes every canonical artifact and *.patch', async () => {
+      const repoPath = await makeTempRepo();
+      await adapter.seedArtifactExcludes(repoPath);
+
+      const gitCommonDir = await git(repoPath, ['rev-parse', '--git-common-dir']);
+      const excludeFile = isAbsolute(gitCommonDir)
+        ? join(gitCommonDir, 'info', 'exclude')
+        : resolve(repoPath, gitCommonDir, 'info', 'exclude');
+      const content = await readFile(excludeFile, 'utf8');
+
+      const expectedPatterns = orchestratorExcludePatterns();
+      for (const pattern of expectedPatterns) {
+        expect(content).toContain(pattern);
+      }
+    });
+
+    it('running exclude seeding twice does not duplicate entries', async () => {
+      const repoPath = await makeTempRepo();
+      await adapter.seedArtifactExcludes(repoPath);
+      await adapter.seedArtifactExcludes(repoPath);
+
+      const gitCommonDir = await git(repoPath, ['rev-parse', '--git-common-dir']);
+      const excludeFile = isAbsolute(gitCommonDir)
+        ? join(gitCommonDir, 'info', 'exclude')
+        : resolve(repoPath, gitCommonDir, 'info', 'exclude');
+      const content = await readFile(excludeFile, 'utf8');
+
+      const lines = content
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const expectedPatterns = orchestratorExcludePatterns();
+
+      for (const pattern of expectedPatterns) {
+        const occurrences = lines.filter((l) => l === pattern).length;
+        expect(occurrences).toBe(1);
+      }
+    });
+
+    it('after seeding, a root diff.patch and one canonical artifact are invisible to git ls-files --others --exclude-standard', async () => {
+      const repoPath = await makeTempRepo();
+      await adapter.seedArtifactExcludes(repoPath);
+
+      const patchFile = join(repoPath, 'diff.patch');
+      const artifactFile = join(repoPath, 'validation.result');
+
+      await writeFile(patchFile, 'some patch content\n');
+      await writeFile(artifactFile, 'some validation result\n');
+
+      const untracked = await git(repoPath, ['ls-files', '--others', '--exclude-standard']);
+      expect(untracked).toBe('');
+    });
+  });
+
+  describe('cleanOrchestratorArtifacts()', () => {
+    it('cleanup unstages and removes a staged canonical artifact', async () => {
+      const repoPath = await makeTempRepo();
+      const artifactFile = join(repoPath, 'validation.result');
+      await writeFile(artifactFile, 'staged content\n');
+
+      await git(repoPath, ['add', 'validation.result']);
+      const stagedBefore = await git(repoPath, ['diff', '--cached', '--name-only']);
+      expect(stagedBefore).toContain('validation.result');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      const stagedAfter = await git(repoPath, ['diff', '--cached', '--name-only']);
+      expect(stagedAfter).not.toContain('validation.result');
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(artifactFile)).rejects.toThrow();
+    });
+
+    it('cleanup removes untracked canonical artifacts from worktree root', async () => {
+      const repoPath = await makeTempRepo();
+      const artifactFile = join(repoPath, 'validation.result');
+      await writeFile(artifactFile, 'untracked content\n');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(artifactFile)).rejects.toThrow();
+    });
+
+    it('cleanup removes committed artifacts and commits the removal when baseBranch is provided', async () => {
+      const repoPath = await makeTempRepo();
+      const baseBranch = 'main';
+
+      // Create a branch off baseBranch
+      await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
+
+      const artifactFile = join(repoPath, 'validation.result');
+      await writeFile(artifactFile, 'committed content\n');
+
+      await git(repoPath, ['add', 'validation.result']);
+      await git(repoPath, ['commit', '-m', 'commit validation.result']);
+
+      // Verify validation.result is committed in current branch relative to baseBranch
+      const diffBefore = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
+      expect(diffBefore).toContain('validation.result');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch);
+
+      // Verify it's no longer present on filesystem
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(artifactFile)).rejects.toThrow();
+
+      // Verify it has been removed and committed on the current branch
+      const diffAfter = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
+      expect(diffAfter).not.toContain('validation.result');
+    });
+
+    it('cleanup does not remove committed artifacts when baseBranch is omitted', async () => {
+      const repoPath = await makeTempRepo();
+
+      const artifactFile = join(repoPath, 'validation.result');
+      await writeFile(artifactFile, 'committed content\n');
+
+      await git(repoPath, ['add', 'validation.result']);
+      await git(repoPath, ['commit', '-m', 'commit validation.result']);
+
+      // Verify validation.result is tracked
+      const trackedBefore = await git(repoPath, ['ls-files', 'validation.result']);
+      expect(trackedBefore).toContain('validation.result');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      // Verify it is still present on filesystem
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(artifactFile)).resolves.not.toThrow();
+
+      // Verify it remains in git tracking
+      const trackedAfter = await git(repoPath, ['ls-files', 'validation.result']);
+      expect(trackedAfter).toContain('validation.result');
+    });
   });
 });

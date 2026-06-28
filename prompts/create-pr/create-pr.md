@@ -1,11 +1,13 @@
 You are writing the pull request description.
 
 ## CONTEXT
+
 You are working in the repository worktree.
 Plan: `plan.md`
 Design: `design.md`
 
 ## TASK
+
 Produce a PR summary document at `./pr-summary.md`.
 
 The document MUST follow this exact structure (the legacy orchestrator template):
@@ -39,6 +41,7 @@ Run logs and artifacts: `ai/issues/<issue number>/`
 Read `plan.md` to extract the task list. The first `#` heading becomes the PR title — use the issue title if you know it, otherwise derive it from the plan goal.
 
 ## CRITICAL RULES
+
 - Do NOT ask questions.
 - Do NOT switch branches.
 - Write only `pr-summary.md` — do NOT write `result.json`.

@@ -119,6 +119,73 @@ describe('ReviewFixLoop', () => {
     expect(out.loop.iterations[0]?.outcome).toBe('failed');
   });
 
+  it('records review outcome before invoking cleanArtifacts hook on review agent failure', async () => {
+    const orderLog: string[] = [];
+    const deps = makeDeps({
+      runReview: async () => {
+        orderLog.push('runReview');
+        return { invocationId: 'r-fail', agentOutcome: 'failed' as const };
+      },
+      cleanArtifacts: async () => {
+        orderLog.push('cleanArtifacts');
+      },
+    });
+    const originalUpdate = deps.loops.update.bind(deps.loops);
+    deps.loops.update = (loop) => {
+      const outcome = loop.iterations[0]?.outcome;
+      orderLog.push(`loops.update:${outcome ?? 'none'}:${loop.status}`);
+      originalUpdate(loop);
+    };
+
+    await new ReviewFixLoop(deps).execute(baseInput());
+
+    expect(orderLog).toEqual([
+      'runReview',
+      'loops.update:none:running',
+      'loops.update:failed:failed',
+      'cleanArtifacts',
+    ]);
+  });
+
+  it('records unresolved outcome before invoking cleanArtifacts hook on fix failure', async () => {
+    const orderLog: string[] = [];
+    const deps = makeDeps({
+      runReview: async () => {
+        orderLog.push('runReview');
+        return {
+          invocationId: 'r-success',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        };
+      },
+      runFix: async () => {
+        orderLog.push('runFix');
+        return { invocationId: 'f-fail', agentOutcome: 'failed' as const };
+      },
+      cleanArtifacts: async () => {
+        orderLog.push('cleanArtifacts');
+      },
+    });
+    const originalUpdate = deps.loops.update.bind(deps.loops);
+    deps.loops.update = (loop) => {
+      const outcome = loop.iterations[0]?.outcome;
+      orderLog.push(`loops.update:${outcome ?? 'none'}:${loop.status}`);
+      originalUpdate(loop);
+    };
+
+    // Use maxIterations: 1 so the loop completes after the first iteration
+    await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+    expect(orderLog).toEqual([
+      'runReview',
+      'loops.update:none:running',
+      'runFix',
+      'loops.update:unresolved:running',
+      'cleanArtifacts',
+      'loops.update:unresolved:exhausted',
+    ]);
+  });
+
   it('escalates to the fallback profile after two consecutive fix failures', async () => {
     const { events, bus } = collectEvents();
     const fixCalls: FixStepOptions[] = [];

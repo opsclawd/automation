@@ -50,6 +50,7 @@ function makeCtx(overrides?: {
   promptsRoot?: string;
   startCommitSha?: string;
   expectedBranch?: string;
+  baseBranch?: string;
   resolveProfile?: (p: string) => string;
   idFactory?: () => string;
 }): PhaseHandlerContext & { _events: OrchestratorEvent[] } {
@@ -75,6 +76,7 @@ function makeCtx(overrides?: {
     promptsRoot: overrides?.promptsRoot,
     startCommitSha: overrides?.startCommitSha,
     expectedBranch: overrides?.expectedBranch,
+    baseBranch: overrides?.baseBranch,
     resolveProfile: overrides?.resolveProfile as PhaseHandlerContext['resolveProfile'],
     idFactory: overrides?.idFactory,
     _events: events,
@@ -103,6 +105,7 @@ describe('CompoundHandler', () => {
       promptsRoot: '/tmp/prompts',
       startCommitSha: 'abc123',
       expectedBranch: 'main',
+      baseBranch: 'main',
       resolveProfile: () => 'pi-qwen-local',
       idFactory: () => 'inv-001',
     });
@@ -209,5 +212,44 @@ describe('CompoundHandler', () => {
       expect(result.failure.kind).toBe('agent_contract_violation');
     }
     expect(eventsOf(ctx, 'compound.blocked')).toHaveLength(1);
+  });
+
+  it('does not trigger artifact cleanup — cleanup is deferred to create-pr', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan_write',
+      relativePath: 'plan.md',
+      contents: '# Plan\n\nSome plan.',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+    agent.enqueue('pi-qwen-local', successResult());
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'written',
+        path: 'compound.md',
+        summary: 'learnings captured',
+      }),
+    });
+
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'compound.md',
+      contents: '# Learnings\n\nWhat worked: everything.\n',
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const git = ctx.git as any;
+    const cleanSpy = vi.fn();
+    git.cleanOrchestratorArtifacts = cleanSpy;
+
+    const handler = new CompoundHandler();
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(cleanSpy).not.toHaveBeenCalled();
   });
 });
