@@ -56,13 +56,13 @@ function parseTasksNoManifest(planMarkdown: string): { n: number; title: string 
   const cleanLines = stripFencedLines(lines);
   const tasks: { n: number; title: string }[] = [];
 
-  const headingRegex = /^#{2,3} Task ([0-9]+):(.*)$/i;
+  const headingRegex = /^#{2,3}\s+Task\s+([0-9]+)(?:\b\s*[:-]?\s*(.*))?$/i;
   for (const line of cleanLines) {
     const m = headingRegex.exec(line);
     if (m) {
       tasks.push({
         n: parseInt(m[1]!, 10),
-        title: m[2]!.trim(),
+        title: (m[2] ?? '').trim(),
       });
     }
   }
@@ -74,7 +74,7 @@ function checkSequentialNumbers(planMarkdown: string): string | null {
   const cleanLines = stripFencedLines(lines);
 
   const numbers: number[] = [];
-  const regex = /^#{2,3} Task ([0-9]+):/i;
+  const regex = /^#{2,3}\s+Task\s+([0-9]+)\b/i;
   for (const line of cleanLines) {
     const m = regex.exec(line);
     if (m) {
@@ -177,7 +177,7 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
   const missingFromProse: string[] = [];
 
   for (const task of manifest.tasks) {
-    const headingRegex = new RegExp(`^#{2,3} Task ${task.n}:`, 'i');
+    const headingRegex = new RegExp(`^#{2,3}\\s+Task\\s+${task.n}\\b`, 'i');
     const hasHeading = cleanLines.some((line) => headingRegex.test(line));
     if (!hasHeading) {
       missingFromProse.push(`Task ${task.n}`);
@@ -192,7 +192,7 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
   }
 
   const extraInProse: string[] = [];
-  const proseTasksRegex = /^#{2,3} Task ([0-9]+):/i;
+  const proseTasksRegex = /^#{2,3}\s+Task\s+([0-9]+)\b/i;
   const seenExtra = new Set<number>();
 
   for (const line of cleanLines) {
@@ -227,7 +227,7 @@ function extractDeclaredCount(planMarkdown: string): number | null {
 
   let val: string | null = null;
   for (const line of cleanLines) {
-    if (/^#{2,3} Task [0-9]+:/i.test(line)) {
+    if (/^#{2,3}\s+Task\s+[0-9]+\b/i.test(line)) {
       break;
     }
     const match = /<!--\s*task-count:\s*([0-9]+)/i.exec(line);
@@ -248,7 +248,7 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, totalFences:
     const line = lines[i]!;
 
     if (isOddFences) {
-      if (/^#{2,3} Task [0-9]+:/i.test(line)) {
+      if (TASK_HEADING_RE.test(line)) {
         break;
       }
     } else {
@@ -256,7 +256,7 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, totalFences:
         inFence = !inFence;
       }
       if (!inFence) {
-        if (/^#{2,3} Task [0-9]+:/i.test(line)) {
+        if (TASK_HEADING_RE.test(line)) {
           break;
         }
       }
@@ -277,21 +277,24 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
   }
 
   if (parsed === null || typeof parsed !== 'object') {
-    return { success: false, error: 'manifest validation failed' };
+    return { success: false, error: 'manifest must be a JSON object' };
   }
 
   const parsedObj = parsed as Record<string, unknown>;
 
   if (parsedObj.version !== 1) {
-    return { success: false, error: 'manifest validation failed' };
+    return { success: false, error: 'manifest version must be 1' };
   }
 
   if (!Array.isArray(parsedObj.tasks)) {
-    return { success: false, error: 'manifest validation failed' };
+    return { success: false, error: 'manifest is missing tasks array' };
   }
 
   if (parsedObj.task_count !== parsedObj.tasks.length) {
-    return { success: false, error: 'manifest validation failed' };
+    return {
+      success: false,
+      error: `task_count (${parsedObj.task_count}) does not match tasks array length (${parsedObj.tasks.length})`,
+    };
   }
 
   const tasks = parsedObj.tasks as unknown[];
@@ -299,7 +302,7 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
 
   for (const task of tasks) {
     if (!task || typeof task !== 'object') {
-      return { success: false, error: 'manifest validation failed' };
+      return { success: false, error: 'manifest task entry must be a JSON object' };
     }
     const tObj = task as Record<string, unknown>;
     if (
@@ -307,7 +310,10 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
       typeof tObj.title !== 'string' ||
       tObj.title.trim().length === 0
     ) {
-      return { success: false, error: 'manifest validation failed' };
+      return {
+        success: false,
+        error: 'manifest task entry must have a valid n (number) and non-empty title (string)',
+      };
     }
     ns.push(tObj.n);
   }
@@ -318,7 +324,7 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
     sortedNs.length === expectedNs.length &&
     sortedNs.every((val, index) => val === expectedNs[index]);
   if (!isContiguous) {
-    return { success: false, error: 'manifest validation failed' };
+    return { success: false, error: 'task numbers are not contiguous' };
   }
 
   return { success: true, manifest: parsedObj as unknown as TaskManifest };
@@ -333,7 +339,9 @@ export function derivePlanTasks(planMarkdown: string, manifest?: TaskManifest): 
   }
 
   const steps: DerivedPlanTask[] = [];
-  for (const line of planMarkdown.split('\n')) {
+  const lines = planMarkdown.split(/\r?\n/);
+  const cleanLines = stripFencedLines(lines);
+  for (const line of cleanLines) {
     const m = TASK_HEADING_RE.exec(line);
     if (m) {
       steps.push({ index: steps.length + 1, title: m[1]!.trim() });
@@ -352,7 +360,7 @@ export function extractTaskBody(
   let lineNum: number | null = null;
   let numberedExhausted = false;
 
-  const numRegex = new RegExp(`^#{2,3} Task ${input.taskNumber}:`, 'i');
+  const numRegex = new RegExp(`^#{2,3}\\s+Task\\s+${input.taskNumber}\\b`, 'i');
   const candidateIndices: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (numRegex.test(lines[i]!)) {
@@ -383,7 +391,7 @@ export function extractTaskBody(
 
   if (lineNum === null && !numberedExhausted && input.title) {
     const escapedTitle = escapeRegExp(input.title);
-    const titleRegex = new RegExp(`^#{2,3} Task [0-9]+:.*${escapedTitle}`, 'i');
+    const titleRegex = new RegExp(`^#{2,3}\\s+Task\\s+[0-9]+\\b.*${escapedTitle}`, 'i');
     const titleCandidates: number[] = [];
     for (let i = 0; i < lines.length; i++) {
       if (titleRegex.test(lines[i]!)) {
@@ -417,7 +425,7 @@ export function extractTaskBody(
       (!!input.title &&
         lines.some((line) => {
           const escapedTitle = escapeRegExp(input.title!);
-          const titleRegex = new RegExp(`^#{2,3} Task [0-9]+:.*${escapedTitle}`, 'i');
+          const titleRegex = new RegExp(`^#{2,3}\\s+Task\\s+[0-9]+\\b.*${escapedTitle}`, 'i');
           return titleRegex.test(line);
         }));
 

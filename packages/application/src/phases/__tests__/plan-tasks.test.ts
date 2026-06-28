@@ -44,7 +44,7 @@ describe('plan-tasks parsing and validation', () => {
       const result = parseTaskManifest(json);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe('manifest validation failed');
+        expect(result.error).toBe('manifest version must be 1');
       }
     });
 
@@ -60,7 +60,7 @@ describe('plan-tasks parsing and validation', () => {
       const result = parseTaskManifest(json);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe('manifest validation failed');
+        expect(result.error).toBe('task_count (3) does not match tasks array length (2)');
       }
     });
 
@@ -76,7 +76,7 @@ describe('plan-tasks parsing and validation', () => {
       const result = parseTaskManifest(json);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe('manifest validation failed');
+        expect(result.error).toBe('task numbers are not contiguous');
       }
     });
 
@@ -89,7 +89,9 @@ describe('plan-tasks parsing and validation', () => {
       const result = parseTaskManifest(json);
       expect(result.success).toBe(false);
       if (!result.success) {
-        expect(result.error).toBe('manifest validation failed');
+        expect(result.error).toBe(
+          'manifest task entry must have a valid n (number) and non-empty title (string)',
+        );
       }
     });
   });
@@ -206,6 +208,36 @@ Fenced body.
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.reason).toBe('missing_heading');
+      }
+    });
+
+    it('supports flexible formats like spaces, hyphens, and H3 level headings', () => {
+      const plan = `
+## Task 1 - Title with hyphen
+Body one.
+
+### Task 2 Title with space only
+Body two.
+
+## Task 3: Title with colon
+Body three.
+`;
+      const r1 = extractTaskBody(plan, { taskNumber: 1 });
+      expect(r1.ok).toBe(true);
+      if (r1.ok) {
+        expect(r1.body.trim()).toBe('Body one.');
+      }
+
+      const r2 = extractTaskBody(plan, { taskNumber: 2 });
+      expect(r2.ok).toBe(true);
+      if (r2.ok) {
+        expect(r2.body.trim()).toBe('Body two.');
+      }
+
+      const r3 = extractTaskBody(plan, { taskNumber: 3 });
+      expect(r3.ok).toBe(true);
+      if (r3.ok) {
+        expect(r3.body.trim()).toBe('Body three.');
       }
     });
   });

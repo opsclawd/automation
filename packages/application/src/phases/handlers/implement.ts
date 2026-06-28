@@ -78,21 +78,19 @@ export class ImplementHandler implements PhaseHandler {
       );
     }
 
-    if (manifest) {
-      for (const d of derived) {
-        const task = manifest.tasks.find((t) => t.n === d.index);
-        const bodyResult = extractTaskBody(planMd, {
-          taskNumber: d.index,
-          ...(task?.title !== undefined ? { title: task.title } : {}),
-        });
-        if (!bodyResult.ok) {
-          return this.fail(
-            ctx,
-            emit,
-            'invalid_result',
-            `Task ${d.index} has no acceptable heading in plan.md`,
-          );
-        }
+    for (const d of derived) {
+      const task = manifest?.tasks.find((t) => t.n === d.index);
+      const bodyResult = extractTaskBody(planMd, {
+        taskNumber: d.index,
+        ...(task?.title !== undefined ? { title: task.title } : {}),
+      });
+      if (!bodyResult.ok) {
+        return this.fail(
+          ctx,
+          emit,
+          'invalid_result',
+          `Task ${d.index} has no acceptable heading in plan.md`,
+        );
       }
     }
 

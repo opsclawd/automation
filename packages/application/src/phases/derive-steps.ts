@@ -7,11 +7,11 @@ export interface DerivedStep {
 
 /** Deterministically derive ordered Steps from plan.md markdown.
  *
- *  Each second-level heading matching `## Task ...` (case-insensitive,
+ *  Each second-level or third-level heading matching `## Task ...` or `### Task ...` (case-insensitive,
  *  with word-boundary after "Task") produces one `DerivedStep`.
  *  Steps are numbered 1..N in document order.
  *
- *  Heading levels other than `##` (second-level) are ignored.
+ *  Heading levels other than `##` (second-level) and `###` (third-level) are ignored.
  *  Headings that do not match the "Task" word-boundary pattern
  *  (e.g. `## Notes`, `## Taskforce`) are silently skipped.
  *
