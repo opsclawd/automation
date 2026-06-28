@@ -87,6 +87,9 @@ export class ReviewFixLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
+        if (deps.cleanArtifacts) {
+          await deps.cleanArtifacts(ctx);
+        }
         break;
       }
 
@@ -98,6 +101,9 @@ export class ReviewFixLoop {
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
+            if (deps.cleanArtifacts) {
+              await deps.cleanArtifacts(ctx);
+            }
             break;
           }
           loop = completeIteration(loop, {
@@ -107,11 +113,17 @@ export class ReviewFixLoop {
           });
           deps.loops.update(loop);
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          if (deps.cleanArtifacts) {
+            await deps.cleanArtifacts(ctx);
+          }
           continue;
         }
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
+        if (deps.cleanArtifacts) {
+          await deps.cleanArtifacts(ctx);
+        }
         break;
       }
 
@@ -164,6 +176,9 @@ export class ReviewFixLoop {
         });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        if (deps.cleanArtifacts) {
+          await deps.cleanArtifacts(ctx);
+        }
         continue;
       }
       consecutiveFixFailures = 0;
@@ -201,6 +216,9 @@ export class ReviewFixLoop {
       });
       deps.loops.update(loop);
       this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
+      if (deps.cleanArtifacts) {
+        await deps.cleanArtifacts(ctx);
+      }
     }
 
     if (loop.status === 'converged') {

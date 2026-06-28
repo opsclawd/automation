@@ -68,6 +68,7 @@ export interface ReviewFixLoopDeps {
   now: () => Date;
   idFactory: () => string;
   rollbackFix?: (ctx: StepContext, targetSha: string) => Promise<boolean>;
+  cleanArtifacts?: (ctx: StepContext) => Promise<void>;
 }
 
 export interface ReviewFixLoopInput {
