@@ -42,10 +42,10 @@ const mixedHeadingLevelsFixture = `# Top-level (ignored)
 
 const bareTaskFixture = `# Plan
 
-## Task
+## Task 1
 no title, bare heading
 
-## Task 1: With title
+## Task 2: With title
 content
 `;
 
@@ -118,8 +118,8 @@ describe('deriveSteps', () => {
   it('matches bare "## Task" without colon or title', () => {
     const steps = deriveSteps(bareTaskFixture);
     expect(steps).toHaveLength(2);
-    expect(steps[0]!.title).toBe('Task');
-    expect(steps[1]!.title).toBe('Task 1: With title');
+    expect(steps[0]!.title).toBe('Task 1');
+    expect(steps[1]!.title).toBe('Task 2: With title');
   });
 
   it('returns single-element array for a single task heading', () => {
@@ -129,11 +129,11 @@ describe('deriveSteps', () => {
   });
 
   it('assigns indices as 1-based document order', () => {
-    const plan = '## Task B: second\n\n## Task A: first in document';
+    const plan = '## Task 2: second\n\n## Task 1: first in document';
     const steps = deriveSteps(plan);
     expect(steps.map((s) => s.index)).toEqual([1, 2]);
-    expect(steps[0]!.title).toBe('Task B: second');
-    expect(steps[1]!.title).toBe('Task A: first in document');
+    expect(steps[0]!.title).toBe('Task 2: second');
+    expect(steps[1]!.title).toBe('Task 1: first in document');
   });
 
   it('handles duplicate heading numbers (no deduplication)', () => {

@@ -28,9 +28,11 @@ export type TaskBodyResult =
   | { ok: true; body: string; headingLine: number }
   | { ok: false; reason: 'missing_heading' | 'inside_balanced_fence_only' };
 
-export type PlanTaskListValidationResult = { success: true } | { success: false; error: string };
+export type PlanTaskListValidationResult =
+  | { success: true; manifest?: TaskManifest }
+  | { success: false; error: string };
 
-const TASK_HEADING_RE = /^#{2,3}\s+(Task\b.*)$/i;
+const TASK_HEADING_RE = /^#{2,3}\s+(Task\s+[0-9]+\b.*)$/i;
 
 function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -38,13 +40,20 @@ function escapeRegExp(str: string): string {
 
 function stripFencedLines(lines: string[]): string[] {
   const result: string[] = [];
-  let inFence = false;
+  let activeFenceLength = 0;
   for (const line of lines) {
-    if (/^\s*```/.test(line)) {
-      inFence = !inFence;
-      continue;
+    const match = /^\s*(`{3,})/.exec(line);
+    if (match) {
+      const len = match[1]!.length;
+      if (activeFenceLength === 0) {
+        activeFenceLength = len;
+        continue;
+      } else if (len >= activeFenceLength) {
+        activeFenceLength = 0;
+        continue;
+      }
     }
-    if (!inFence) {
+    if (activeFenceLength === 0) {
       result.push(line);
     }
   }
@@ -171,17 +180,35 @@ function checkDuplicateTitles(titles: string[]): string | null {
 
 function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest): string | null {
   const lines = planMarkdown.split(/\r?\n/);
-  const totalFences = lines.filter((line) => /^\s*```/.test(line)).length;
+  const totalFences = lines.filter((line) => /^\s*(`{3,})/.test(line)).length;
   const cleanLines = stripFencedLines(lines);
 
   let errors = '';
   const missingFromProse: string[] = [];
+  const titleMismatches: string[] = [];
 
   for (const task of manifest.tasks) {
-    const headingRegex = new RegExp(`^#{2,3}\\s+Task\\s+${task.n}\\b`, 'i');
-    const hasHeading = cleanLines.some((line) => headingRegex.test(line));
-    if (!hasHeading) {
+    const headingRegex = new RegExp(`^#{2,3}\\s+Task\\s+${task.n}(?:\\b\\s*[:-]?\\s*(.*))?$`, 'i');
+    let matchedLine: string | undefined;
+    let proseTitle = '';
+
+    for (const line of cleanLines) {
+      const match = headingRegex.exec(line);
+      if (match) {
+        matchedLine = line;
+        proseTitle = (match[1] ?? '').trim();
+        break;
+      }
+    }
+
+    if (!matchedLine) {
       missingFromProse.push(`Task ${task.n}`);
+    } else {
+      if (proseTitle.trim().toLowerCase() !== task.title.trim().toLowerCase()) {
+        titleMismatches.push(
+          `Task ${task.n} title mismatch: manifest has '${task.title}', prose has '${proseTitle}'`,
+        );
+      }
     }
   }
 
@@ -190,6 +217,13 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
     if (totalFences % 2 === 1) {
       errors += ` — likely caused by an unbalanced code fence (${totalFences} fences, expected even)`;
     }
+  }
+
+  if (titleMismatches.length > 0) {
+    if (errors.length > 0) {
+      errors += '; ';
+    }
+    errors += titleMismatches.join('; ');
   }
 
   const extraInProse: string[] = [];
@@ -240,26 +274,24 @@ function extractDeclaredCount(planMarkdown: string): number | null {
   return val ? parseInt(val, 10) : null;
 }
 
-function extractBodyFromLine(lines: string[], startLineIdx: number, totalFences: number): string {
-  const isOddFences = totalFences % 2 === 1;
+function extractBodyFromLine(lines: string[], startLineIdx: number, _totalFences: number): string {
   const resultLines: string[] = [];
-  let inFence = false;
+  let activeFenceLength = 0;
 
   for (let i = startLineIdx + 1; i < lines.length; i++) {
     const line = lines[i]!;
 
-    if (isOddFences) {
-      if (TASK_HEADING_RE.test(line)) {
-        break;
-      }
-    } else {
-      if (/^\s*```/.test(line)) {
-        inFence = !inFence;
-      }
-      if (!inFence) {
-        if (TASK_HEADING_RE.test(line)) {
-          break;
-        }
+    if (TASK_HEADING_RE.test(line)) {
+      break;
+    }
+
+    const match = /^\s*(`{3,})/.exec(line);
+    if (match) {
+      const len = match[1]!.length;
+      if (activeFenceLength === 0) {
+        activeFenceLength = len;
+      } else if (len >= activeFenceLength) {
+        activeFenceLength = 0;
       }
     }
     resultLines.push(line);
@@ -328,6 +360,8 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
     return { success: false, error: 'task numbers are not contiguous' };
   }
 
+  (parsedObj.tasks as Record<string, unknown>[]).sort((a, b) => (a.n as number) - (b.n as number));
+
   return { success: true, manifest: parsedObj as unknown as TaskManifest };
 }
 
@@ -356,7 +390,7 @@ export function extractTaskBody(
   input: { taskNumber: number; title?: string },
 ): TaskBodyResult {
   const lines = planMarkdown.split(/\r?\n/);
-  const totalFences = lines.filter((line) => /^\s*```/.test(line)).length;
+  const totalFences = lines.filter((line) => /^\s*(`{3,})/.test(line)).length;
 
   let lineNum: number | null = null;
   let numberedExhausted = false;
@@ -370,13 +404,19 @@ export function extractTaskBody(
   }
 
   for (const candidate of candidateIndices) {
-    let fenceCount = 0;
+    let activeFenceLength = 0;
     for (let j = 0; j < candidate; j++) {
-      if (/^\s*```/.test(lines[j]!)) {
-        fenceCount++;
+      const match = /^\s*(`{3,})/.exec(lines[j]!);
+      if (match) {
+        const len = match[1]!.length;
+        if (activeFenceLength === 0) {
+          activeFenceLength = len;
+        } else if (len >= activeFenceLength) {
+          activeFenceLength = 0;
+        }
       }
     }
-    if (fenceCount % 2 === 0) {
+    if (activeFenceLength === 0) {
       lineNum = candidate + 1;
       break;
     }
@@ -401,13 +441,19 @@ export function extractTaskBody(
     }
 
     for (const candidate of titleCandidates) {
-      let fenceCount = 0;
+      let activeFenceLength = 0;
       for (let j = 0; j < candidate; j++) {
-        if (/^\s*```/.test(lines[j]!)) {
-          fenceCount++;
+        const match = /^\s*(`{3,})/.exec(lines[j]!);
+        if (match) {
+          const len = match[1]!.length;
+          if (activeFenceLength === 0) {
+            activeFenceLength = len;
+          } else if (len >= activeFenceLength) {
+            activeFenceLength = 0;
+          }
         }
       }
-      if (fenceCount % 2 === 0) {
+      if (activeFenceLength === 0) {
         lineNum = candidate + 1;
         break;
       }
@@ -440,6 +486,39 @@ export function extractTaskBody(
   return { ok: true, body, headingLine: lineNum };
 }
 
+function checkUnclosedFences(planMarkdown: string): string | null {
+  const lines = planMarkdown.split(/\r?\n/);
+  let activeFenceLength = 0;
+  let openFenceLine = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+
+    if (TASK_HEADING_RE.test(line)) {
+      if (activeFenceLength > 0) {
+        return `unclosed code fence starting at line ${openFenceLine} before task heading at line ${i + 1}: ${line.trim()}`;
+      }
+    }
+
+    const match = /^\s*(`{3,})/.exec(line);
+    if (match) {
+      const len = match[1]!.length;
+      if (activeFenceLength === 0) {
+        activeFenceLength = len;
+        openFenceLine = i + 1;
+      } else if (len >= activeFenceLength) {
+        activeFenceLength = 0;
+      }
+    }
+  }
+
+  if (activeFenceLength > 0) {
+    return `unclosed code fence starting at line ${openFenceLine} at the end of the plan`;
+  }
+
+  return null;
+}
+
 export function validatePlanTaskList(
   planMarkdown: string,
   manifestJson?: string,
@@ -451,6 +530,11 @@ export function validatePlanTaskList(
   },
   phase?: string,
 ): PlanTaskListValidationResult {
+  const fenceError = checkUnclosedFences(planMarkdown);
+  if (fenceError) {
+    return { success: false, error: fenceError };
+  }
+
   if (manifestJson && manifestJson.trim() !== '') {
     const manifestResult = parseTaskManifest(manifestJson);
     if (!manifestResult.success) {
@@ -484,7 +568,7 @@ export function validatePlanTaskList(
       return { success: false, error: proseResult };
     }
 
-    return { success: true };
+    return { success: true, manifest };
   }
 
   const parsedTasks = parseTasksNoManifest(planMarkdown);

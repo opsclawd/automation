@@ -510,6 +510,111 @@ Next task body.
         metadata: {},
       });
     });
+
+    it('manifest validation: returns parsed manifest on success', () => {
+      const plan = `
+## Task 1: Clean heading
+## Task 2: Another task
+`;
+      const manifestJson = JSON.stringify({
+        version: 1,
+        task_count: 2,
+        tasks: [
+          { n: 1, title: 'Clean heading' },
+          { n: 2, title: 'Another task' },
+        ],
+      });
+      const result = validatePlanTaskList(plan, manifestJson);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.manifest).toBeDefined();
+        expect(result.manifest?.tasks[0]?.title).toBe('Clean heading');
+      }
+    });
+
+    it('manifest validation: fails when manifest and prose titles mismatch', () => {
+      const plan = `
+## Task 1: Mismatched Prose Title
+## Task 2: Another task
+`;
+      const manifestJson = JSON.stringify({
+        version: 1,
+        task_count: 2,
+        tasks: [
+          { n: 1, title: 'Expected Title' },
+          { n: 2, title: 'Another task' },
+        ],
+      });
+      const result = validatePlanTaskList(plan, manifestJson);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain('title mismatch');
+        expect(result.error).toContain("manifest has 'Expected Title'");
+        expect(result.error).toContain("prose has 'Mismatched Prose Title'");
+      }
+    });
+
+    it('manifest validation: trims whitespace in manifest and prose titles before comparing', () => {
+      const plan = `
+## Task 1: My Task Title 
+`;
+      const manifest = {
+        version: 1,
+        task_count: 1,
+        tasks: [{ n: 1, title: ' My Task Title' }],
+      };
+      const result = validatePlanTaskList(plan, JSON.stringify(manifest));
+      expect(result.success).toBe(true);
+    });
+
+    it('handles nested code fences correctly', () => {
+      const plan = `
+## Task 1: Heading one
+\`\`\`\`
+Outer fence start
+\`\`\`
+Inner fence start/end (ignored because of nesting)
+\`\`\`
+Outer fence end
+\`\`\`\`
+
+## Task 2: Heading two
+This body should be extracted.
+`;
+      const result = extractTaskBody(plan, { taskNumber: 2 });
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.body.trim()).toBe('This body should be extracted.');
+      }
+    });
+
+    it('does not swallow subsequent tasks even if a code fence is left open, and reports validation error', () => {
+      const plan = `
+## Task 1: Heading one
+\`\`\`
+unclosed fence inside task 1
+
+## Task 2: Heading two
+This body should be extracted.
+\`\`\`
+some code
+\`\`\`
+\`\`\`
+`;
+      // 1. Check validation fails
+      const validationResult = validatePlanTaskList(plan);
+      expect(validationResult.success).toBe(false);
+      if (!validationResult.success) {
+        expect(validationResult.error).toContain('unclosed code fence');
+      }
+
+      // 2. Check extractTaskBody for Task 1 does not swallow Task 2
+      const result1 = extractTaskBody(plan, { taskNumber: 1 });
+      expect(result1.ok).toBe(true);
+      if (result1.ok) {
+        expect(result1.body).not.toContain('## Task 2');
+      }
+    });
   });
 
   describe('derivePlanTasks', () => {
@@ -550,6 +655,20 @@ Next task body.
       expect(result).toEqual([
         { index: 1, title: 'Task 1: Prose T1' },
         { index: 2, title: 'Task 2: Prose T2' },
+      ]);
+    });
+
+    it('ignores non-numbered headings like Task force when manifest is absent', () => {
+      const plan = `
+## Task force details
+## Task 1: Real Task
+## Task description
+## Task 2: Another Real Task
+`;
+      const result = derivePlanTasks(plan);
+      expect(result).toEqual([
+        { index: 1, title: 'Task 1: Real Task' },
+        { index: 2, title: 'Task 2: Another Real Task' },
       ]);
     });
   });

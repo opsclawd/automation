@@ -463,7 +463,7 @@ describe('ImplementHandler', () => {
       await artifacts.write({
         runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
         relativePath: 'plan.md',
-        contents: planMd(['Task 1: first', 'Task 2: second']),
+        contents: planMd(['Task 1: Manifest Title 1', 'Task 2: Manifest Title 2']),
       });
       await artifacts.write({
         runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -500,7 +500,7 @@ describe('ImplementHandler', () => {
       await artifacts.write({
         runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
         relativePath: 'plan.md',
-        contents: planMd(['Task 1: first']),
+        contents: planMd(['Task 1: Manifest Title 1']),
       });
       await artifacts.write({
         runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -536,9 +536,9 @@ describe('ImplementHandler', () => {
         contents: [
           '# Plan',
           '',
-          '## Task 1: first',
+          '## Task 1: Manifest Title 1',
           '```',
-          '## Task 2: inside balanced fence',
+          '## Task 2: Manifest Title 2',
           '```',
           '## Notes',
         ].join('\n'),
@@ -565,6 +565,39 @@ describe('ImplementHandler', () => {
       if (result.outcome === 'failed') {
         expect(result.failure.kind).toBe('invalid_result');
         expect(result.failure.message).toContain('Task 2');
+      }
+      expect(runStep).not.toHaveBeenCalled();
+    });
+
+    it('manifest-backed plan with mismatched titles fails validation', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: first', 'Task 2: second']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Manifest Title 1' },
+            { n: 2, title: 'Manifest Title 2' },
+          ],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi.fn();
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('invalid_result');
+        expect(result.failure.message).toContain('title mismatch');
       }
       expect(runStep).not.toHaveBeenCalled();
     });

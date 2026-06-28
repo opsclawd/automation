@@ -150,19 +150,43 @@ const classifyExitAdapter = (
   };
 };
 
-export function extractTaskText(planPath: string, taskIndex: number): string {
+export interface ExtractTaskTextResult {
+  ok: boolean;
+  text: string;
+  error?: string;
+  reason?: 'read_failed' | 'missing_heading' | 'inside_balanced_fence_only';
+}
+
+export function extractTaskText(
+  planPath: string,
+  taskIndex: number,
+  manifest?: TaskManifest,
+): ExtractTaskTextResult {
   let content: string;
   try {
     content = readFileSync(planPath, 'utf-8');
   } catch (err) {
-    console.error(`extractTaskText: failed to read plan at ${planPath}`, err);
-    return '';
+    return {
+      ok: false,
+      text: '',
+      error: `Failed to read plan.md at ${planPath}: ${err instanceof Error ? err.message : String(err)}`,
+      reason: 'read_failed',
+    };
   }
-  const result = extractTaskBody(content, { taskNumber: taskIndex });
+  const task = manifest?.tasks.find((t) => t.n === taskIndex);
+  const result = extractTaskBody(content, {
+    taskNumber: taskIndex,
+    ...(task?.title !== undefined ? { title: task.title } : {}),
+  });
   if (result.ok) {
-    return result.body.trim();
+    return { ok: true, text: result.body.trim() };
   }
-  return '';
+  return {
+    ok: false,
+    text: '',
+    error: `Task ${taskIndex} has no matching heading in plan.md`,
+    reason: result.reason,
+  };
 }
 
 export function buildImplementPrompt(
@@ -1490,22 +1514,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const runDir = run?.displayId ?? String(ctx.runId);
         const issueNumber = run?.issueNumber ?? 0;
         const branchName = `ai/issue-${issueNumber}`;
-
         const planPath = join(ctx.cwd, 'plan.md');
-        let planMarkdown = '';
-        try {
-          planMarkdown = readFileSync(planPath, 'utf-8');
-        } catch (err) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
-            runId: String(ctx.runId),
-            level: 'error',
-            type: 'agent.invoke_failed',
-            message: `Failed to read plan.md at ${planPath}: ${err instanceof Error ? err.message : String(err)}`,
-            timestamp: new Date().toISOString(),
-            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
-          });
-          return { invocationId: '', agentOutcome: 'failed' as const };
-        }
 
         let manifest: TaskManifest | undefined;
         try {
@@ -1518,24 +1527,21 @@ export function composeRoot(opts: ComposeOptions): Container {
           // Optional manifest file
         }
 
-        const task = manifest?.tasks.find((t) => t.n === ctx.stepIndex);
-        const bodyResult = extractTaskBody(planMarkdown, {
-          taskNumber: ctx.stepIndex,
-          ...(task?.title !== undefined ? { title: task.title } : {}),
-        });
-        if (!bodyResult.ok) {
+        const taskTextResult = extractTaskText(planPath, ctx.stepIndex, manifest);
+        if (!taskTextResult.ok) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'error',
             type: 'agent.invoke_failed',
-            message: `Task ${ctx.stepIndex} has no matching heading in plan.md`,
+            message:
+              taskTextResult.error || `Task ${ctx.stepIndex} has no matching heading in plan.md`,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
 
-        const taskText = bodyResult.body.trim();
+        const taskText = taskTextResult.text;
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);

@@ -5,13 +5,7 @@ import type { StepRepositoryPort } from '../../ports/step-repository-port.js';
 import type { Step, RunId } from '@ai-sdlc/domain';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
-import {
-  validatePlanTaskList,
-  parseTaskManifest,
-  derivePlanTasks,
-  extractTaskBody,
-  type TaskManifest,
-} from '../plan-tasks.js';
+import { validatePlanTaskList, derivePlanTasks, extractTaskBody } from '../plan-tasks.js';
 
 export interface StepRunContext {
   stepIndex: number;
@@ -58,15 +52,7 @@ export class ImplementHandler implements PhaseHandler {
     if (!validation.success) {
       return this.fail(ctx, emit, 'invalid_result', validation.error);
     }
-    let manifest: TaskManifest | undefined;
-    if (manifestJson !== undefined && manifestJson.trim() !== '') {
-      const parsed = parseTaskManifest(manifestJson);
-      if (parsed.success) {
-        manifest = parsed.manifest;
-      } else {
-        return this.fail(ctx, emit, 'invalid_result', parsed.error);
-      }
-    }
+    const manifest = validation.manifest;
 
     const derived = derivePlanTasks(planMd, manifest);
     if (derived.length === 0) {
