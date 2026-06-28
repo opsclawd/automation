@@ -1337,10 +1337,19 @@ export function composeRoot(opts: ComposeOptions): Container {
         idFactory: () => randomUUID(),
         cleanArtifacts: async (ctx) => {
           if (typeof gitAdapter.cleanOrchestratorArtifacts === 'function') {
+            let savedValidationResult: string | undefined;
+            try {
+              savedValidationResult = await readFile(join(ctx.cwd, 'validation.result'), 'utf-8');
+            } catch {
+              // not present — nothing to restore
+            }
             await gitAdapter.cleanOrchestratorArtifacts(
               ctx.cwd,
               opts.baseBranch ?? resolvedDefaultBranch,
             );
+            if (savedValidationResult !== undefined && savedValidationResult.trim() !== '') {
+              writeFileSync(join(ctx.cwd, 'validation.result'), savedValidationResult, 'utf-8');
+            }
           }
         },
       });
