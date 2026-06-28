@@ -214,7 +214,7 @@ describe('CompoundHandler', () => {
     expect(eventsOf(ctx, 'compound.blocked')).toHaveLength(1);
   });
 
-  it('preserves validation.result across cleanup', async () => {
+  it('does not trigger artifact cleanup — cleanup is deferred to create-pr', async () => {
     await ctx.artifacts.write({
       runId: ctx.runUuid,
       phaseId: 'plan_write',
@@ -241,28 +241,15 @@ describe('CompoundHandler', () => {
       contents: '# Learnings\n\nWhat worked: everything.\n',
     });
 
-    await ctx.artifacts.write({
-      runId: ctx.runUuid,
-      relativePath: 'validation.result',
-      contents: 'passed',
-    });
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const git = ctx.git as any;
-    const cleanSpy = vi.fn().mockImplementation(async () => {
-      const key = `${ctx.runUuid}/validation.result`;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (ctx.artifacts as any).files.delete(key);
-    });
+    const cleanSpy = vi.fn();
     git.cleanOrchestratorArtifacts = cleanSpy;
 
     const handler = new CompoundHandler();
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(cleanSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
-
-    const restored = await ctx.artifacts.read(ctx.runUuid, 'validation.result');
-    expect(restored).toBe('passed');
+    expect(cleanSpy).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { CreatePrHandler } from '../create-pr.js';
 import { FakeArtifactStore, FakeGitPort, FakeGitHubPort } from '../../../test-doubles/index.js';
 import type { PhaseHandlerContext } from '../../handler.js';
@@ -349,6 +349,29 @@ describe('CreatePrHandler — deterministic assembly', () => {
     }
     const failedEvents = events.filter((e) => e.type === 'create_pr.failed');
     expect(failedEvents).toHaveLength(1);
+  });
+
+  it('calls cleanOrchestratorArtifacts after PR creation so all artifacts are available during assembly', async () => {
+    const { git, ctx } = await build();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gitAny = git as any;
+    const cleanSpy = vi.fn().mockResolvedValue(undefined);
+    gitAny.cleanOrchestratorArtifacts = cleanSpy;
+
+    const res = await HANDLER.run(ctx);
+
+    expect(res.outcome).toBe('passed');
+    expect(cleanSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
+  });
+
+  it('cleanup failure does not fail the phase', async () => {
+    const { git, ctx } = await build();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const gitAny = git as any;
+    gitAny.cleanOrchestratorArtifacts = vi.fn().mockRejectedValue(new Error('git exploded'));
+
+    const res = await HANDLER.run(ctx);
+    expect(res.outcome).toBe('passed');
   });
 
   it('fails with status missing/empty when validation.result is empty', async () => {

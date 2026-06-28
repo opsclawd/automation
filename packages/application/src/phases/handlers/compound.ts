@@ -3,6 +3,6 @@ import { SingleShotAgentHandler } from './single-shot-agent-handler.js';
 
 export class CompoundHandler extends SingleShotAgentHandler {
   constructor() {
-    super(PhaseName('compound'), 'compound', { skipResultExtraction: true, cleanArtifacts: true });
+    super(PhaseName('compound'), 'compound', { skipResultExtraction: true });
   }
 }
