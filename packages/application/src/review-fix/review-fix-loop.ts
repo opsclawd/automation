@@ -1,5 +1,3 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import {
   createLoop,
   startIteration,
@@ -89,7 +87,7 @@ export class ReviewFixLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
-        await this.cleanArtifactsWithPreservation(ctx);
+        await this.runCleanArtifacts(ctx);
         break;
       }
 
@@ -101,7 +99,6 @@ export class ReviewFixLoop {
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
-            await this.cleanArtifactsWithPreservation(ctx);
             break;
           }
           loop = completeIteration(loop, {
@@ -111,13 +108,11 @@ export class ReviewFixLoop {
           });
           deps.loops.update(loop);
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-          await this.cleanArtifactsWithPreservation(ctx);
           continue;
         }
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
-        await this.cleanArtifactsWithPreservation(ctx);
         break;
       }
 
@@ -170,7 +165,7 @@ export class ReviewFixLoop {
         });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-        await this.cleanArtifactsWithPreservation(ctx);
+        await this.runCleanArtifacts(ctx);
         continue;
       }
       consecutiveFixFailures = 0;
@@ -208,7 +203,6 @@ export class ReviewFixLoop {
       });
       deps.loops.update(loop);
       this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
-      await this.cleanArtifactsWithPreservation(ctx);
     }
 
     if (loop.status === 'converged') {
@@ -273,28 +267,9 @@ export class ReviewFixLoop {
     });
   }
 
-  private async cleanArtifactsWithPreservation(ctx: StepContext): Promise<void> {
-    if (!this.deps.cleanArtifacts) {
-      return;
-    }
-    const path = join(ctx.cwd, 'validation.result');
-    let validationResult: string | undefined;
-    try {
-      validationResult = await readFile(path, 'utf8');
-    } catch {
-      // ignore
-    }
-
-    try {
+  private async runCleanArtifacts(ctx: StepContext): Promise<void> {
+    if (this.deps.cleanArtifacts) {
       await this.deps.cleanArtifacts(ctx);
-    } finally {
-      if (validationResult !== undefined && validationResult.trim() !== '') {
-        try {
-          await writeFile(path, validationResult, 'utf8');
-        } catch {
-          // ignore
-        }
-      }
     }
   }
 }
