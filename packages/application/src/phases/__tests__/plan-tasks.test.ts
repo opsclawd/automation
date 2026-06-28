@@ -554,6 +554,23 @@ Next task body.
       }
     });
 
+    it('manifest validation: treats backtick-formatted prose heading as matching plain-text manifest title', () => {
+      const plan = `
+## Task 1: Add \`lintTaskSize\` hook to \`ImplementHandlerOpts\`
+## Task 2: Plain title
+`;
+      const manifest = {
+        version: 1,
+        task_count: 2,
+        tasks: [
+          { n: 1, title: 'Add lintTaskSize hook to ImplementHandlerOpts' },
+          { n: 2, title: 'Plain title' },
+        ],
+      };
+      const result = validatePlanTaskList(plan, JSON.stringify(manifest));
+      expect(result.success).toBe(true);
+    });
+
     it('manifest validation: trims whitespace in manifest and prose titles before comparing', () => {
       const plan = `
 ## Task 1: My Task Title 
