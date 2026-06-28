@@ -321,8 +321,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             unsubscribe?.();
             signalHandlers?.remove();
             lease?.stop();
+            const isResting = result.phases.some((p) => p.status === 'resting');
             const isSuccess =
-              result.run.status === 'passed' || pausedStatuses.includes(result.run.status);
+              result.run.status === 'passed' ||
+              pausedStatuses.includes(result.run.status) ||
+              isResting;
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             unsubscribe?.();
