@@ -774,6 +774,100 @@ describe('ImplementHandler', () => {
       expect(result.outcome).toBe('passed');
       expect(lintTaskSize).not.toHaveBeenCalled();
     });
+
+    it('excludes already completed tasks when calling lintTaskSize', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: done', 'Task 2: todo']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'done', files: ['src/__tests__/big.test.ts'] },
+            { n: 2, title: 'todo', files: ['src/util.ts'] },
+          ],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      steps.upsert({
+        id: 'step-1',
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        phaseId: 'implement',
+        index: 1,
+        title: 'Task 1: done',
+        status: 'success',
+        startedAt: new Date('2026-06-16T00:00:00Z'),
+        completedAt: new Date('2026-06-16T00:00:00Z'),
+      });
+      const runStep = vi
+        .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+        .mockResolvedValue({ outcome: 'success' });
+      const lintTaskSize = vi
+        .fn<(cwd: string, manifest: unknown) => Promise<LintTaskSizeResult>>()
+        .mockResolvedValue({ ok: true, oversized: [] });
+      const { ctx } = makeCtx(artifacts);
+
+      await new ImplementHandler({ steps, runStep, lintTaskSize }).run(ctx);
+
+      expect(lintTaskSize).toHaveBeenCalledTimes(1);
+      const passedManifest = lintTaskSize.mock.calls[0]?.[1] as { tasks: { n: number }[] };
+      expect(passedManifest.tasks).toHaveLength(1);
+      expect(passedManifest.tasks[0]?.n).toBe(2);
+    });
+
+    it('classifies path traversal errors as invalid_result and other crashes as unknown', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: Work']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 1,
+          tasks: [{ n: 1, title: 'Work', files: ['src/util.ts'] }],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+
+      // Test Path Traversal
+      const lintTaskSizeTraversal = vi
+        .fn()
+        .mockRejectedValue(new Error('Path traversal detected: ../foo'));
+      const { ctx: ctx1 } = makeCtx(artifacts);
+      const result1 = await new ImplementHandler({
+        steps,
+        runStep,
+        lintTaskSize: lintTaskSizeTraversal,
+      }).run(ctx1);
+      expect(result1.outcome).toBe('failed');
+      expect(result1.failure?.kind).toBe('invalid_result');
+      expect(result1.failure?.canRetry).toBe(false);
+
+      // Test Other Crash
+      const lintTaskSizeCrash = vi
+        .fn()
+        .mockRejectedValue(new Error('Random syntax error or disk full'));
+      const { ctx: ctx2 } = makeCtx(artifacts);
+      const result2 = await new ImplementHandler({
+        steps,
+        runStep,
+        lintTaskSize: lintTaskSizeCrash,
+      }).run(ctx2);
+      expect(result2.outcome).toBe('failed');
+      expect(result2.failure?.kind).toBe('unknown');
+      expect(result2.failure?.canRetry).toBe(true);
+    });
   });
 
   describe('parity[#341]: task result reset (stale verdict cleared on retry)', () => {

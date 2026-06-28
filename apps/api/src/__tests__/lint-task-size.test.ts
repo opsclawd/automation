@@ -180,6 +180,29 @@ describe('buildLintTaskSize', () => {
     expect(result.oversized[0]?.testCaseCount).toBe(1);
   });
 
+  it('correctly handles URLs in string literals, slashes in regexes, and block comment characters in string literals', async () => {
+    const fileContent = `
+      const url = 'https://google.com';
+      const regex = /a\\/b/;
+      const commentInStr = "/* comment */";
+      
+      it('should count', () => {});
+    `;
+    const { dir, relPath } = createTempTestFile('edge_cases.test.ts', fileContent);
+    const linter = buildLintTaskSize({
+      maxTestFileLines: 100,
+      maxTestCases: 0,
+      blockOversizedTasks: true,
+    });
+    const manifest: TaskManifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'task', files: [relPath] }],
+    };
+    const result = await linter(dir, manifest);
+    expect(result.oversized[0]?.testCaseCount).toBe(1);
+  });
+
   it('correctly handles trailing newline for line counts', async () => {
     const { dir, relPath: relPath1 } = createTempTestFile('with_newline.test.ts', 'line1\nline2\n');
     const { dir: dir2, relPath: relPath2 } = createTempTestFile(

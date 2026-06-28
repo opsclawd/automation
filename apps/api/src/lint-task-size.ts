@@ -6,6 +6,8 @@ import type { LintTaskSizeResult, OversizedTask } from '@ai-sdlc/application';
 const TEST_FILE_RE = /(?:\b|_|\.)(test|spec)\.(ts|tsx)$|\.bats$/;
 const TEST_CASE_RE = /^\s*(it|test|xit|xtest)(?:\.[a-zA-Z_$][a-zA-Z0-9_$]*)*\s*\(/gm;
 const BATS_TEST_CASE_RE = /^\s*@test\s+/gm;
+const STR_AND_COMMENT_RE =
+  /\/\*[\s\S]*?\*\/|\/\/.*|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g;
 
 export interface LintTaskSizeConfig {
   maxTestFileLines: number;
@@ -49,10 +51,9 @@ export function buildLintTaskSize(
         if (isBats) {
           cleanContent = cleanContent.replace(/#.*$/gm, ''); // strip single-line comments
         } else {
-          cleanContent = cleanContent
-            .replace(/\/\*[\s\S]*?\*\//g, '') // strip multiline block comments
-            .replace(/\/\/.*$/gm, '') // strip single-line comments
-            .replace(/`(\\.|[^`])*`/g, ''); // strip template literals
+          cleanContent = cleanContent.replace(STR_AND_COMMENT_RE, (match) => {
+            return match.includes('\n') ? '\n'.repeat((match.match(/\n/g) ?? []).length) : '';
+          });
         }
         const testCaseRe = isBats ? BATS_TEST_CASE_RE : TEST_CASE_RE;
         const testCaseCount = (cleanContent.match(testCaseRe) ?? []).length;

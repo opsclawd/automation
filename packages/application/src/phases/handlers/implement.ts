@@ -95,13 +95,26 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
+    const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
+    const doneIdx = new Set(
+      existing
+        .filter((s) => s.phaseId === 'implement' && s.status === 'success')
+        .map((s) => s.index),
+    );
+
     if (this.opts.lintTaskSize && manifest) {
       let lintResult: LintTaskSizeResult;
       try {
-        lintResult = await this.opts.lintTaskSize(ctx.cwd, manifest);
+        const filteredManifest = {
+          ...manifest,
+          tasks: manifest.tasks.filter((t) => !doneIdx.has(t.n)),
+        };
+        lintResult = await this.opts.lintTaskSize(ctx.cwd, filteredManifest);
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        return this.fail(ctx, emit, 'unknown', `lintTaskSize crashed: ${message}`);
+        const isPathTraversal = message.includes('Path traversal detected');
+        const failureKind: FailureKind = isPathTraversal ? 'invalid_result' : 'unknown';
+        return this.fail(ctx, emit, failureKind, `lintTaskSize crashed: ${message}`);
       }
       for (const task of lintResult.oversized) {
         emit(
@@ -127,13 +140,6 @@ export class ImplementHandler implements PhaseHandler {
         );
       }
     }
-
-    const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
-    const doneIdx = new Set(
-      existing
-        .filter((s) => s.phaseId === 'implement' && s.status === 'success')
-        .map((s) => s.index),
-    );
 
     if (this.opts.setup && derived.some((d) => !doneIdx.has(d.index))) {
       try {
