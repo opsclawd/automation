@@ -98,5 +98,17 @@
   ```bash
   bats scripts/lib/__tests__/legacy-parity.bats --filter "parity\[#530\]"
   ```
+---
 
+# Implementation Log - Task 6: Write brain-dir recovery tests B (multiple UUID matches + sequencing)
+
+## Summary of Changes
+
+### 1. `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts`
+- Added two new tests to the brain-dir recovery section:
+  - `does not recover from brain dir when multiple UUID dirs have the same basename`: Assures that the unique-match guard correctly skips recovery and flags `missing_required_artifact` when the same artifact basename is present in more than one UUID directory.
+  - `brain recovery fires after scratch recovery when scratch has no match`: Assures that brain-dir recovery acts as a fallback step following a scratch-dir recovery miss, successfully recovering the artifact and recording the `artifact_in_brain_dir` violation.
+
+## Verification
+- Verified that all 29 tests in `packages/infrastructure/src/agent/__tests__/antigravity-adapter.test.ts` pass, including the two new ones.
 
