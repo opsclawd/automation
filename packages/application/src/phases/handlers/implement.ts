@@ -3,9 +3,9 @@ import type { FailureKind } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
 import type { StepRepositoryPort } from '../../ports/step-repository-port.js';
 import type { Step, RunId } from '@ai-sdlc/domain';
-import { deriveSteps } from '../derive-steps.js';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
+import { validatePlanTaskList, derivePlanTasks, extractTaskBody } from '../plan-tasks.js';
 
 export interface StepRunContext {
   stepIndex: number;
@@ -36,9 +36,48 @@ export class ImplementHandler implements PhaseHandler {
     const planMd = await this.readPlan(ctx, emit);
     if (typeof planMd !== 'string') return planMd;
 
-    const derived = deriveSteps(planMd);
+    let manifestJson: string | undefined;
+    try {
+      manifestJson = await ctx.artifacts.read(ctx.runUuid, 'task-manifest.json');
+    } catch (e) {
+      if (e instanceof ArtifactNotFoundError) {
+        manifestJson = undefined;
+      } else {
+        const message = `Failed to read task-manifest.json: ${e instanceof Error ? e.message : String(e)}`;
+        return this.fail(ctx, emit, 'unknown', message);
+      }
+    }
+
+    const validation = validatePlanTaskList(planMd, manifestJson, ctx, 'implement');
+    if (!validation.success) {
+      return this.fail(ctx, emit, 'invalid_result', validation.error);
+    }
+    const manifest = validation.manifest;
+
+    const derived = derivePlanTasks(planMd, manifest);
     if (derived.length === 0) {
-      return this.fail(ctx, emit, 'invalid_result', 'plan.md has no "## Task" steps');
+      return this.fail(
+        ctx,
+        emit,
+        'invalid_result',
+        manifest ? 'plan.md has no manifest steps' : 'plan.md has no "## Task" steps',
+      );
+    }
+
+    for (const d of derived) {
+      const task = manifest?.tasks.find((t) => t.n === d.index);
+      const bodyResult = extractTaskBody(planMd, {
+        taskNumber: d.index,
+        ...(task?.title !== undefined ? { title: task.title } : {}),
+      });
+      if (!bodyResult.ok) {
+        return this.fail(
+          ctx,
+          emit,
+          'invalid_result',
+          `Task ${d.index} has no acceptable heading in plan.md`,
+        );
+      }
     }
 
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);

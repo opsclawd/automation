@@ -92,6 +92,9 @@ import {
   type FixStepOptions,
   type TypecheckResult,
   type ResolveRefShaFn,
+  extractTaskBody,
+  parseTaskManifest,
+  type TaskManifest,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import {
@@ -147,35 +150,43 @@ const classifyExitAdapter = (
   };
 };
 
-export function extractTaskText(planPath: string, taskIndex: number): string {
+export interface ExtractTaskTextResult {
+  ok: boolean;
+  text: string;
+  error?: string;
+  reason?: 'read_failed' | 'missing_heading' | 'inside_balanced_fence_only';
+}
+
+export function extractTaskText(
+  planPath: string,
+  taskIndex: number,
+  manifest?: TaskManifest,
+): ExtractTaskTextResult {
   let content: string;
   try {
     content = readFileSync(planPath, 'utf-8');
   } catch (err) {
-    console.error(`extractTaskText: failed to read plan at ${planPath}`, err);
-    return '';
+    return {
+      ok: false,
+      text: '',
+      error: `Failed to read plan.md at ${planPath}: ${err instanceof Error ? err.message : String(err)}`,
+      reason: 'read_failed',
+    };
   }
-  const lines = content.split('\n');
-  const taskHeadingRe = /^##\s+(?:Task|Step)\s+(\d+)\b/i;
-  let capturing = false;
-  const captured: string[] = [];
-  for (const line of lines) {
-    const m = taskHeadingRe.exec(line);
-    if (m) {
-      if (Number(m[1]) === taskIndex) {
-        capturing = true;
-        continue;
-      } else if (capturing) {
-        break;
-      }
-    } else if (capturing && /^##\s/.test(line)) {
-      break;
-    }
-    if (capturing) {
-      captured.push(line);
-    }
+  const task = manifest?.tasks.find((t) => t.n === taskIndex);
+  const result = extractTaskBody(content, {
+    taskNumber: taskIndex,
+    ...(task?.title !== undefined ? { title: task.title } : {}),
+  });
+  if (result.ok) {
+    return { ok: true, text: result.body.trim() };
   }
-  return captured.join('\n').trim();
+  return {
+    ok: false,
+    text: '',
+    error: `Task ${taskIndex} has no matching heading in plan.md`,
+    reason: result.reason,
+  };
 }
 
 export function buildImplementPrompt(
@@ -1503,7 +1514,56 @@ export function composeRoot(opts: ComposeOptions): Container {
         const runDir = run?.displayId ?? String(ctx.runId);
         const issueNumber = run?.issueNumber ?? 0;
         const branchName = `ai/issue-${issueNumber}`;
-        const taskText = extractTaskText(join(ctx.cwd, 'plan.md'), ctx.stepIndex);
+        const planPath = join(ctx.cwd, 'plan.md');
+
+        let manifest: TaskManifest | undefined;
+        const manifestPath = join(ctx.cwd, 'task-manifest.json');
+        if (existsSync(manifestPath)) {
+          try {
+            const manifestJson = readFileSync(manifestPath, 'utf-8');
+            const parsed = parseTaskManifest(manifestJson);
+            if (parsed.success) {
+              manifest = parsed.manifest;
+            } else {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'error',
+                type: 'agent.invoke_failed',
+                message: `Failed to parse task-manifest.json: ${parsed.error}`,
+                timestamp: new Date().toISOString(),
+                metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+              });
+              return { invocationId: '', agentOutcome: 'failed' as const };
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            persistingEventBusForLoop.publish(String(ctx.runId), {
+              runId: String(ctx.runId),
+              level: 'error',
+              type: 'agent.invoke_failed',
+              message: `Failed to read task-manifest.json: ${msg}`,
+              timestamp: new Date().toISOString(),
+              metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            });
+            return { invocationId: '', agentOutcome: 'failed' as const };
+          }
+        }
+
+        const taskTextResult = extractTaskText(planPath, ctx.stepIndex, manifest);
+        if (!taskTextResult.ok) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message:
+              taskTextResult.error || `Task ${ctx.stepIndex} has no matching heading in plan.md`,
+            timestamp: new Date().toISOString(),
+            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
+
+        const taskText = taskTextResult.text;
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);

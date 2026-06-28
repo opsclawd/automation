@@ -456,4 +456,172 @@ describe('ImplementHandler', () => {
     expect(runStep).not.toHaveBeenCalled();
     expect(events.filter((e) => e.type === 'implement.failed')).toHaveLength(1);
   });
+
+  describe('manifest-aware step derivation', () => {
+    it('manifest-backed plan persists steps with manifest titles', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: Manifest Title 1', 'Task 2: Manifest Title 2']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Manifest Title 1' },
+            { n: 2, title: 'Manifest Title 2' },
+          ],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi
+        .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+        .mockResolvedValue({ outcome: 'success' });
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(runStep).toHaveBeenCalledTimes(2);
+      expect(runStep).toHaveBeenCalledWith(
+        expect.objectContaining({ stepIndex: 1, stepTitle: 'Task 1: Manifest Title 1' }),
+      );
+      expect(runStep).toHaveBeenCalledWith(
+        expect.objectContaining({ stepIndex: 2, stepTitle: 'Task 2: Manifest Title 2' }),
+      );
+    });
+
+    it('manifest-backed missing heading fails with invalid_result and runStep is not called', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: Manifest Title 1']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Manifest Title 1' },
+            { n: 2, title: 'Manifest Title 2' },
+          ],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('invalid_result');
+        expect(result.failure.message).toContain('Task 2');
+      }
+      expect(runStep).not.toHaveBeenCalled();
+    });
+
+    it('manifest-backed heading inside a balanced fence fails with invalid_result and runStep is not called', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: [
+          '# Plan',
+          '',
+          '## Task 1: Manifest Title 1',
+          '```',
+          '## Task 2: Manifest Title 2',
+          '```',
+          '## Notes',
+        ].join('\n'),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Manifest Title 1' },
+            { n: 2, title: 'Manifest Title 2' },
+          ],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>();
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('invalid_result');
+        expect(result.failure.message).toContain('Task 2');
+      }
+      expect(runStep).not.toHaveBeenCalled();
+    });
+
+    it('manifest-backed plan with mismatched titles fails validation', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: first', 'Task 2: second']),
+      });
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({
+          version: 1,
+          task_count: 2,
+          tasks: [
+            { n: 1, title: 'Manifest Title 1' },
+            { n: 2, title: 'Manifest Title 2' },
+          ],
+        }),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi.fn();
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      expect(result.outcome).toBe('failed');
+      if (result.outcome === 'failed') {
+        expect(result.failure.kind).toBe('invalid_result');
+        expect(result.failure.message).toContain('title mismatch');
+      }
+      expect(runStep).not.toHaveBeenCalled();
+    });
+
+    it('no-manifest plans continue to derive ## Task headings as before', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: first', 'Task 2: second']),
+      });
+      const steps = new FakeStepRepository();
+      const runStep = vi
+        .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+        .mockResolvedValue({ outcome: 'success' });
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(runStep).toHaveBeenCalledTimes(2);
+      expect(runStep).toHaveBeenCalledWith(
+        expect.objectContaining({ stepIndex: 1, stepTitle: 'Task 1: first' }),
+      );
+    });
+  });
 });

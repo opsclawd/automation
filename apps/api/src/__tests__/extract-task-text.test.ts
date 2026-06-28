@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { extractTaskText } from '../compose.js';
+import { extractTaskText, type TaskManifest } from '../compose.js';
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -20,61 +20,95 @@ function makePlan(content: string): string {
   return planPath;
 }
 
+function getTaskText(planPath: string, taskIndex: number, manifest?: TaskManifest): string {
+  const result = extractTaskText(planPath, taskIndex, manifest);
+  return result.ok ? result.text : '';
+}
+
 describe('extractTaskText', () => {
   it('extracts the body of the matching Task heading', () => {
     const planPath = makePlan(
       '# Plan\n\n## Task 1: First\n\nBody of task one.\n\n## Task 2: Second\n\nBody of task two.\n',
     );
-    expect(extractTaskText(planPath, 1)).toBe('Body of task one.');
+    expect(getTaskText(planPath, 1)).toBe('Body of task one.');
   });
 
   it('extracts the correct task when multiple tasks exist', () => {
     const planPath = makePlan(
       '## Task 1: Alpha\n\nAlpha body.\n\n## Task 2: Beta\n\nBeta body.\n\n## Task 3: Gamma\n\nGamma body.\n',
     );
-    expect(extractTaskText(planPath, 2)).toBe('Beta body.');
+    expect(getTaskText(planPath, 2)).toBe('Beta body.');
   });
 
-  it('handles "Step N:" heading variant', () => {
+  it('handles "### Task N:" heading variant', () => {
     const planPath = makePlan(
-      '## Step 3: Do something\n\nStep body here.\n\n## Step 4: Next\n\nOther.\n',
+      '### Task 3: Do something\n\nTask body here.\n\n### Task 4: Next\n\nOther.\n',
     );
-    expect(extractTaskText(planPath, 3)).toBe('Step body here.');
+    expect(getTaskText(planPath, 3)).toBe('Task body here.');
   });
 
-  it('is case-insensitive for the Task/Step keyword', () => {
+  it('is case-insensitive for the Task keyword', () => {
     const planPath = makePlan('## TASK 2: Upper\n\nUpper body.\n');
-    expect(extractTaskText(planPath, 2)).toBe('Upper body.');
+    expect(getTaskText(planPath, 2)).toBe('Upper body.');
   });
 
   it('includes sub-headings (h3+) in the extracted body', () => {
     const planPath = makePlan(
       '## Task 1: With sub\n\n### Sub-heading\n\nSub content.\n\n## Task 2: Next\n\nOther.\n',
     );
-    expect(extractTaskText(planPath, 1)).toContain('### Sub-heading');
-    expect(extractTaskText(planPath, 1)).toContain('Sub content.');
+    expect(getTaskText(planPath, 1)).toContain('### Sub-heading');
+    expect(getTaskText(planPath, 1)).toContain('Sub content.');
   });
 
-  it('stops at the next h2 heading even if not a Task/Step heading', () => {
+  it('stops at the next Task heading', () => {
     const planPath = makePlan(
-      '## Task 1: First\n\nTask body.\n\n## Validation\n\nValidation content.\n',
+      '## Task 1: First\n\nTask body.\n\n## Task 2: Second\n\nValidation content.\n',
     );
-    expect(extractTaskText(planPath, 1)).toBe('Task body.');
-    expect(extractTaskText(planPath, 1)).not.toContain('Validation content.');
+    expect(getTaskText(planPath, 1)).toBe('Task body.');
+    expect(getTaskText(planPath, 1)).not.toContain('Validation content.');
+  });
+
+  it('preserves non-task headings in the body', () => {
+    const planPath = makePlan(
+      '## Task 1: First\n\nTask body.\n\n## Verification\n\nSome verification.\n',
+    );
+    expect(getTaskText(planPath, 1)).toBe('Task body.\n\n## Verification\n\nSome verification.');
   });
 
   it('returns empty string when plan file does not exist', () => {
-    expect(extractTaskText('/nonexistent/path/plan.md', 1)).toBe('');
+    expect(getTaskText('/nonexistent/path/plan.md', 1)).toBe('');
   });
 
   it('returns empty string when task index is not found', () => {
     const planPath = makePlan('## Task 1: Only\n\nOnly task.\n');
-    expect(extractTaskText(planPath, 99)).toBe('');
+    expect(getTaskText(planPath, 99)).toBe('');
   });
 
   it('trims leading and trailing whitespace from the extracted body', () => {
     const planPath = makePlan('## Task 2: Padded\n\n\n  Content here.  \n\n\n## Task 3: Next\n\n');
-    const result = extractTaskText(planPath, 2);
+    const result = getTaskText(planPath, 2);
     expect(result).toBe('Content here.');
+  });
+
+  it('does not return a heading body from inside a balanced fence', () => {
+    const planPath = makePlan(
+      '```\n## Task 1: Inside Fence\nBody inside fence.\n```\n## Task 1: Outside Fence\nBody outside fence.',
+    );
+    expect(getTaskText(planPath, 1)).toBe('Body outside fence.');
+  });
+
+  it('falls back to the first heading (even inside fence) when fences are unbalanced', () => {
+    const planPath = makePlan('```\n## Task 1: Inside Fence\nBody inside fence.\n');
+    expect(getTaskText(planPath, 1)).toBe('Body inside fence.');
+  });
+
+  it('extracts task body using manifest for title-anchored fallback', () => {
+    const planPath = makePlan('## Task 1: Actual Title\n\nTask 1 body.');
+    const manifest = {
+      version: 1,
+      task_count: 1,
+      tasks: [{ n: 1, title: 'Actual Title' }],
+    };
+    expect(getTaskText(planPath, 1, manifest)).toBe('Task 1 body.');
   });
 });
