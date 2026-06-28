@@ -148,6 +148,7 @@ function checkDuplicateTitles(titles: string[]): string | null {
   const seen = new Map<string, number>();
   const duplicates: string[] = [];
   for (const title of titles) {
+    if (title.trim() === '') continue;
     const t = title.toLowerCase();
     const count = seen.get(t) || 0;
     seen.set(t, count + 1);

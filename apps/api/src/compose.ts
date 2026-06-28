@@ -93,6 +93,8 @@ import {
   type TypecheckResult,
   type ResolveRefShaFn,
   extractTaskBody,
+  parseTaskManifest,
+  type TaskManifest,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import {
@@ -1505,7 +1507,22 @@ export function composeRoot(opts: ComposeOptions): Container {
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
 
-        const bodyResult = extractTaskBody(planMarkdown, { taskNumber: ctx.stepIndex });
+        let manifest: TaskManifest | undefined;
+        try {
+          const manifestJson = readFileSync(join(ctx.cwd, 'task-manifest.json'), 'utf-8');
+          const parsed = parseTaskManifest(manifestJson);
+          if (parsed.success) {
+            manifest = parsed.manifest;
+          }
+        } catch {
+          // Optional manifest file
+        }
+
+        const task = manifest?.tasks.find((t) => t.n === ctx.stepIndex);
+        const bodyResult = extractTaskBody(planMarkdown, {
+          taskNumber: ctx.stepIndex,
+          ...(task?.title !== undefined ? { title: task.title } : {}),
+        });
         if (!bodyResult.ok) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
             runId: String(ctx.runId),

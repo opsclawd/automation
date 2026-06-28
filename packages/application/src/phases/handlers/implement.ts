@@ -59,7 +59,7 @@ export class ImplementHandler implements PhaseHandler {
       return this.fail(ctx, emit, 'invalid_result', validation.error);
     }
     let manifest: TaskManifest | undefined;
-    if (manifestJson !== undefined) {
+    if (manifestJson !== undefined && manifestJson.trim() !== '') {
       const parsed = parseTaskManifest(manifestJson);
       if (parsed.success) {
         manifest = parsed.manifest;
