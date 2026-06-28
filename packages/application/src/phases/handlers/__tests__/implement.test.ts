@@ -772,4 +772,86 @@ describe('ImplementHandler', () => {
       expect(lintTaskSize).not.toHaveBeenCalled();
     });
   });
+
+  describe('parity[#341]: task result reset (stale verdict cleared on retry)', () => {
+    it('parity[#341]: re-executes a step whose prior run left status=failed (stale verdict not inherited)', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: retry me']),
+      });
+      const steps = new FakeStepRepository();
+      steps.upsert({
+        id: 'step-seeded-1',
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        phaseId: 'implement',
+        index: 1,
+        title: 'Task 1: retry me',
+        status: 'failed',
+        startedAt: new Date('2026-06-16T00:00:00Z'),
+        completedAt: new Date('2026-06-16T00:00:00Z'),
+      });
+      const runStep = vi
+        .fn<(sctx: StepRunContext) => Promise<StepRunResult>>()
+        .mockResolvedValue({ outcome: 'success' });
+      const { ctx } = makeCtx(artifacts);
+
+      const result = await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      expect(result.outcome).toBe('passed');
+      expect(runStep).toHaveBeenCalledTimes(1);
+      expect(runStep).toHaveBeenCalledWith(
+        expect.objectContaining({ stepIndex: 1, stepTitle: 'Task 1: retry me' }),
+      );
+      const step = steps.findByIndex(
+        RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+        PhaseName('implement'),
+        1,
+      );
+      expect(step!.status).toBe('success');
+    });
+
+    it('parity[#341]: sets step status to running before invoking runStep (clean slate on retry)', async () => {
+      const artifacts = new FakeArtifactStore();
+      await artifacts.write({
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        relativePath: 'plan.md',
+        contents: planMd(['Task 1: check order']),
+      });
+      const steps = new FakeStepRepository();
+      steps.upsert({
+        id: 'step-seeded-1',
+        runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        phaseId: 'implement',
+        index: 1,
+        title: 'Task 1: check order',
+        status: 'needs_human_review',
+        startedAt: new Date('2026-06-16T00:00:00Z'),
+        completedAt: new Date('2026-06-16T00:00:00Z'),
+      });
+      const upsertCalls: string[] = [];
+      const originalUpsert = steps.upsert.bind(steps);
+      vi.spyOn(steps, 'upsert').mockImplementation((step) => {
+        upsertCalls.push(step.status);
+        originalUpsert(step);
+      });
+      const runStep = vi.fn<(sctx: StepRunContext) => Promise<StepRunResult>>(async () => {
+        // At the moment runStep is called, the step should already be 'running'
+        const s = steps.findByIndex(
+          RunId('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'),
+          PhaseName('implement'),
+          1,
+        );
+        expect(s!.status).toBe('running');
+        return { outcome: 'success' };
+      });
+      const { ctx } = makeCtx(artifacts);
+
+      await new ImplementHandler({ steps, runStep }).run(ctx);
+
+      // upsert called with 'running' first, then 'success'
+      expect(upsertCalls).toEqual(['running', 'success']);
+    });
+  });
 });
