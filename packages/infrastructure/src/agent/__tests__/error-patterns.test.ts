@@ -5,6 +5,7 @@ import {
   testProviderErrorPatterns,
   testTokenLimitPatterns,
   getLastLines,
+  getLinesToScan,
 } from '../error-patterns.js';
 
 describe('isOpenCodeLogLine', () => {
@@ -216,9 +217,9 @@ describe('testQuotaPatterns', () => {
   });
 
   it('respects maxLines: stops scanning before the matching line', () => {
-    const text = ['Quota exceeded: API limit', 'line 2 harmless', 'line 3 harmless'].join('\n');
-    // maxLines: 2 — only the last 2 lines are scanned; "Quota exceeded" is on line 1 (skipped)
-    expect(testQuotaPatterns(text, { maxLines: 2 })).toBeNull();
+    const text = ['line 1 harmless', 'Quota exceeded: API limit', 'line 3 harmless'].join('\n');
+    // maxLines: 1 — only first and last lines are scanned; middle line is skipped
+    expect(testQuotaPatterns(text, { maxLines: 1 })).toBeNull();
   });
 
   it('respects maxLines: includes matching line when within limit', () => {
@@ -243,6 +244,11 @@ describe('testQuotaPatterns', () => {
     expect(testQuotaPatterns('token_rate_limit_exceeded')).toBeTruthy();
     expect(testQuotaPatterns('tokens_rate_limit_exceeded')).toBeTruthy();
     expect(testQuotaPatterns('tokens rate limit exceeded')).toBeTruthy();
+  });
+
+  it('matches plural variations of quota patterns (Finding 1)', () => {
+    expect(testQuotaPatterns('quota limits exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quotas exceeded')).toBeTruthy();
   });
 
   it('matches quota errors containing common punctuation', () => {
@@ -366,9 +372,9 @@ describe('testProviderErrorPatterns', () => {
   });
 
   it('respects maxLines: stops scanning before the matching line', () => {
-    const text = ['AI_APICallError: 500', 'line 2 harmless', 'line 3 harmless'].join('\n');
-    // maxLines: 2 — only the last 2 lines are scanned; AI_APICallError is on line 1
-    expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeNull();
+    const text = ['line 1 harmless', 'AI_APICallError: 500', 'line 3 harmless'].join('\n');
+    // maxLines: 1 — only first and last lines are scanned; middle line is skipped
+    expect(testProviderErrorPatterns(text, { maxLines: 1 })).toBeNull();
   });
 
   it('respects maxLines: includes matching line when within limit', () => {
@@ -398,6 +404,18 @@ describe('testProviderErrorPatterns', () => {
     expect(testProviderErrorPatterns("export SOME_PATTERNS='AI_APICallError'")).toBeNull();
     expect(testProviderErrorPatterns('+ AI_APICallError')).toBeNull();
     expect(testProviderErrorPatterns('++ AI_APICallError')).toBeNull();
+  });
+
+  it('scans both the beginning and the end of the log (Finding 2)', () => {
+    const lines = [
+      'AI_APICallError: 500', // line 1 (matching)
+      ...Array(3000).fill('harmless log line'), // 3000 middle lines (ignored)
+      'another harmless line', // last line
+    ];
+    const text = lines.join('\n');
+    // maxLines: 2000 would normally miss line 1 if only scanning the last 2000 lines.
+    // With the fix, it scans the first 2000 and last 2000 lines, so it matches.
+    expect(testProviderErrorPatterns(text, { maxLines: 2000 })).toBeTruthy();
   });
 });
 
@@ -450,9 +468,9 @@ describe('testTokenLimitPatterns', () => {
   });
 
   it('scans correct line range when maxLines is larger and trailing newline is present', () => {
-    const text = 'AI_APICallError: 500\nharmless line 1\nharmless line 2\n';
-    expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeNull();
-    expect(testProviderErrorPatterns(text, { maxLines: 3 })).toBeTruthy();
+    const text = 'harmless line 1\nAI_APICallError: 500\nharmless line 2\n';
+    expect(testProviderErrorPatterns(text, { maxLines: 1 })).toBeNull();
+    expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeTruthy();
   });
 
   it('matches token limit errors containing common punctuation', () => {
@@ -490,5 +508,28 @@ describe('getLastLines', () => {
     expect(getLastLines('\nline 1\nline 2', 3)).toEqual(['', 'line 1', 'line 2']);
     expect(getLastLines('\nline 1\nline 2', 2)).toEqual(['line 1', 'line 2']);
     expect(getLastLines('\nline 1\nline 2', 1)).toEqual(['line 2']);
+  });
+});
+
+describe('getLinesToScan', () => {
+  it('returns clean lines list when maxLines is undefined', () => {
+    expect(getLinesToScan('line 1\nline 2\n')).toEqual(['line 1', 'line 2']);
+  });
+
+  it('scans both head and tail when maxLines is defined and there is no overlap', () => {
+    const text = 'line 1\nline 2\nline 3\nline 4\nline 5';
+    // maxLines = 2 should return first 2 and last 2 lines
+    expect(getLinesToScan(text, 2)).toEqual(['line 1', 'line 2', 'line 4', 'line 5']);
+  });
+
+  it('returns all lines if first and last overlap', () => {
+    const text = 'line 1\nline 2\nline 3';
+    expect(getLinesToScan(text, 2)).toEqual(['line 1', 'line 2', 'line 3']);
+  });
+
+  it('handles empty input and non-positive maxLines', () => {
+    expect(getLinesToScan('', 2)).toEqual(['']);
+    expect(getLinesToScan('line 1\nline 2', 0)).toEqual([]);
+    expect(getLinesToScan('line 1\nline 2', -1)).toEqual([]);
   });
 });

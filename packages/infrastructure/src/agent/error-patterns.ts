@@ -4,7 +4,7 @@ export const QUOTA_PATTERNS = [
   /rate[\s_-]*limit[\s_-]*exceed/i,
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
-  /quota(?:[\s_:,().-]|limit|rate|is|has|been|daily|monthly)*exceed/i,
+  /quota[s]?(?:[\s_:,().-]|limit[s]?|rate|is|has|been|daily|monthly)*exceed/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [
@@ -56,13 +56,69 @@ export function getLastLines(text: string, maxLines?: number): string[] {
   return cleanText.split('\n');
 }
 
+export function getLinesToScan(text: string, maxLines?: number): string[] {
+  const cleanText = text.endsWith('\n') ? text.slice(0, -1) : text;
+  if (maxLines === undefined) {
+    return cleanText.split('\n');
+  }
+  if (maxLines <= 0) {
+    return [];
+  }
+
+  // Find end index of the first maxLines lines
+  let firstCount = 0;
+  let firstIdx = -1;
+  let firstFinished = false;
+  while (firstCount < maxLines) {
+    const nextIdx = cleanText.indexOf('\n', firstIdx + 1);
+    if (nextIdx === -1) {
+      firstFinished = true;
+      break;
+    }
+    firstIdx = nextIdx;
+    firstCount++;
+  }
+
+  if (firstFinished) {
+    // The entire text is less than or equal to maxLines lines
+    return cleanText.split('\n');
+  }
+
+  // Find start index of the last maxLines lines
+  let lastCount = 0;
+  let lastIdx = cleanText.length;
+  while (lastCount < maxLines && lastIdx > 0) {
+    const nextIdx = cleanText.lastIndexOf('\n', lastIdx - 1);
+    if (nextIdx === -1) {
+      lastIdx = -1;
+      break;
+    }
+    lastIdx = nextIdx;
+    lastCount++;
+  }
+  if (lastCount < maxLines && lastIdx === 0) {
+    lastIdx = -1;
+  }
+  const lastStartIdx = lastIdx + 1;
+
+  // If they overlap, just return the whole text
+  if (firstIdx >= lastStartIdx) {
+    return cleanText.split('\n');
+  }
+
+  // Otherwise, combine them
+  const firstLines = cleanText.slice(0, firstIdx).split('\n');
+  const lastLines = cleanText.slice(lastStartIdx).split('\n');
+  return [...firstLines, ...lastLines];
+}
+
 function testPatterns(
   text: string,
   patterns: readonly RegExp[],
   options?: { structuralOnly?: boolean; maxLines?: number },
 ): string | null {
   const structuralOnly = options?.structuralOnly ?? false;
-  const lines = getLastLines(text, options?.maxLines);
+  const lines = getLinesToScan(text, options?.maxLines);
   for (const line of lines) {
     if (structuralOnly && !isOpenCodeLogLine(line)) continue;
     if (
