@@ -148,11 +148,15 @@ export const orchestratorConfigSchema = z
     agent: agentSchema.optional(),
     taskSplitting: z
       .object({
-        maxTestFileLines: z.number().int().positive(),
-        maxTestCases: z.number().int().positive(),
-        blockOversizedTasks: z.boolean(),
+        maxTestFileLines: z.number().int().positive().default(500),
+        maxTestCases: z.number().int().positive().default(10),
+        blockOversizedTasks: z.boolean().default(false),
       })
-      .optional(),
+      .default({
+        maxTestFileLines: 500,
+        maxTestCases: 10,
+        blockOversizedTasks: false,
+      }),
   })
   .superRefine((config, ctx) => {
     const judgmentAgent = config.phases.planReview?.judgmentAgent;

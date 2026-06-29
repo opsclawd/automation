@@ -1924,9 +1924,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       const lintTaskSizeDep = buildLintTaskSize({
-        maxTestFileLines: config.taskSplitting?.maxTestFileLines ?? 500,
-        maxTestCases: config.taskSplitting?.maxTestCases ?? 10,
-        blockOversizedTasks: config.taskSplitting?.blockOversizedTasks ?? false,
+        maxTestFileLines: config.taskSplitting.maxTestFileLines,
+        maxTestCases: config.taskSplitting.maxTestCases,
+        blockOversizedTasks: config.taskSplitting.blockOversizedTasks,
       });
 
       phaseRegistry.register(

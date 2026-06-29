@@ -312,4 +312,47 @@ describe('phases.reviewFix.blockOnSeverity', () => {
     );
     expect(() => loadConfig(dir)).toThrow(ConfigError);
   });
+
+  it('defaults taskSplitting config when omitted', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(dir);
+    expect(cfg.taskSplitting).toEqual({
+      maxTestFileLines: 500,
+      maxTestCases: 10,
+      blockOversizedTasks: false,
+    });
+  });
+
+  it('defaults missing fields inside taskSplitting config when partially specified', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        taskSplitting: {
+          maxTestFileLines: 200,
+        },
+      }),
+    );
+    const cfg = loadConfig(dir);
+    expect(cfg.taskSplitting).toEqual({
+      maxTestFileLines: 200,
+      maxTestCases: 10,
+      blockOversizedTasks: false,
+    });
+  });
 });
