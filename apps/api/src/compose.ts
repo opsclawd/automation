@@ -117,6 +117,7 @@ import {
   CodexAgentAdapter,
 } from '@ai-sdlc/infrastructure';
 import { buildLintTaskSize } from './lint-task-size.js';
+import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -864,64 +865,20 @@ export function composeRoot(opts: ComposeOptions): Container {
       ): Promise<ReviewStepResult> => {
         const gateResult: PostFixGateResult | undefined =
           opts && 'outcome' in opts ? opts : opts?.gateResult;
+        const historyContext: string | undefined =
+          opts && 'historyContext' in opts ? opts.historyContext : undefined;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
-        const gateFailureSection: string[] =
-          gateResult?.outcome === 'fail'
-            ? [
-                '## BUILD/LINT FAILURE',
-                'The orchestrator detected mechanical errors in the fixer commit before this review.',
-                'Result: FAIL',
-                '',
-                'Errors:',
-                '```',
-                gateResult.output,
-                '```',
-                '',
-                'Surface these errors as HIGH severity findings and do NOT pass this review.',
-                '',
-              ]
-            : [];
 
-        const reviewPrompt = [
-          'You are reviewing code changes in a pull request.',
-          '',
-          '## CONTEXT',
-          `Working directory: ${ctx.cwd}`,
-          `Repository: ${ctx.repoId}`,
-          '',
-          '## TASK',
-          `Run: git diff origin/${resolvedDefaultBranch}...HEAD`,
-          'Read the diff carefully.',
-          '',
-          'Write a code review to ./code-review.md.',
-          '',
-          'For each finding you MUST include:',
-          '- severity: critical | high | medium | low',
-          '- file path and line reference (if applicable)',
-          '- evidence: what you observed in the diff',
-          '- failure mode: why this is a problem',
-          '- required fix: specific action to resolve the issue',
-          '',
-          'Categorize findings:',
-          '- critical: security, data loss, production-breaking',
-          '- high: correct behavior violation, significant bugs',
-          '- medium: suboptimal patterns, missing tests',
-          '- low: style, formatting, minor improvements',
-          '',
-          'After writing the review, write a result.json file with:',
-          '{ "result": "pass" | "fail", "findings": [{ "severity": "...", "summary": "..." }] }',
-          'Use "pass" when there are no significant findings, "fail" when changes are needed.',
-          '',
-          ...gateFailureSection,
-          '## CRITICAL RULES',
-          '- Do NOT ask questions.',
-          '- Do NOT switch branches. All work must stay on the current branch.',
-          '- Do NOT write any other files. No scratch files, no `git diff > file`, no temporary files.',
-          '- Write code-review.md first, then result.json.',
-        ].join('\n');
+        const reviewPrompt = buildReviewFixReviewPrompt({
+          cwd: ctx.cwd,
+          repoId: ctx.repoId,
+          defaultBranch: resolvedDefaultBranch,
+          gateFailureOutput: gateResult?.outcome === 'fail' ? gateResult.output : undefined,
+          historyContext,
+        });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
           cwd: ctx.cwd,
@@ -1022,6 +979,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           fixProfileOverride?: string;
           fixFallbackProfileOverride?: string;
           extraPromptSections?: string[];
+          historyContext?: string;
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -1031,67 +989,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
-        const fixPrompt = [
-          'You are fixing code review findings.',
-          '',
-          '## CONTEXT',
-          `Working directory: ${ctx.cwd}`,
-          `Repository: ${ctx.repoId}`,
-          'Review findings: ./code-review.md',
-          '',
-          '## TASK',
-          'Read the code review findings.',
-          'Fix ALL legitimate review findings across all severities.',
-          '',
-          'Rules:',
-          '- Fix only what the review asks for. Do not expand scope.',
-          '- Do not rewrite working code for style preference.',
-          '- If a finding is invalid, skip it.',
-          '',
-          'After fixing, write a result.json file with exactly one of:',
-          '{ "result": "done_with_fixes" }',
-          '{ "result": "done_no_fixes_needed", "rebuttal": "explain why no fixes are needed" }',
-          '{ "result": "cannot_fix" }',
-          '',
-          ...(opts.architectPlan
-            ? [
-                '',
-                '## CROSS-TASK FIX PLAN',
-                `The following architect analysis provides cross-task context for this fix:`,
-                ...opts.architectPlan.tasks.map((t) =>
-                  [
-                    `### Task: ${t.task_id}`,
-                    `**Approach:** ${t.approach}`,
-                    ...(t.conflicts_resolved.length > 0
-                      ? [`**Conflicts resolved:** ${t.conflicts_resolved.join(', ')}`]
-                      : []),
-                    ...(t.constraints.length > 0
-                      ? [`**Constraints:** ${t.constraints.join(', ')}`]
-                      : []),
-                    ...(t.depends_on.length > 0
-                      ? [`**Depends on:** ${t.depends_on.join(', ')}`]
-                      : []),
-                  ].join('\n'),
-                ),
-              ]
-            : []),
-          '',
-          '## CRITICAL RULES',
-          '- Do NOT ask questions.',
-          '- Do NOT switch branches. All work must stay on the current branch.',
-          '- After fixing, run: git add -A && git commit -m "fix: review findings"',
-          '- Write result.json last.',
-          '',
-          ...(opts.useFallback
-            ? [
-                '',
-                '## NOTE',
-                'The previous fix attempt failed. Review the current state carefully',
-                'and consider a different approach to address the findings.',
-              ]
-            : []),
-          ...(opts.extraPromptSections ?? []),
-        ].join('\n');
+        const fixPrompt = buildReviewFixFixPrompt({
+          cwd: ctx.cwd,
+          repoId: ctx.repoId,
+          historyContext: opts.historyContext,
+          architectPlan: opts.architectPlan,
+          useFallback: opts.useFallback,
+          extraPromptSections: opts.extraPromptSections,
+        });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
           cwd: ctx.cwd,
