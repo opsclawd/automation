@@ -1,0 +1,142 @@
+name: Consolidate compound artifacts
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Override --since ref (SHA, tag, or branch)'
+        type: string
+        required: false
+      dry_run:
+        description: 'Run agent but skip commit / PR / tag update'
+        type: boolean
+        default: false
+
+concurrency:
+  group: consolidate-compound
+  cancel-in-progress: false
+
+jobs:
+  consolidate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    env:
+      HUSKY: '0'
+      AI_AGENT_PROVIDER: claude-code
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Resolve since anchor
+        id: anchor
+        env:
+          INPUT_SINCE: ${{ inputs.since }}
+        run: |
+          since=""
+          if [[ -n "$INPUT_SINCE" ]]; then
+            since="$INPUT_SINCE"
+          elif git rev-parse --verify "refs/tags/consolidation/last-run" >/dev/null 2>&1; then
+            since="$(git rev-parse "consolidation/last-run")"
+          else
+            since="$(git log --before='7 days ago' -1 --format='%H' || true)"
+          fi
+
+          since_short="${since:0:8}"
+          if [[ -z "$since_short" ]]; then
+            since_short="initial"
+          fi
+
+          echo "since=${since}" >> "$GITHUB_OUTPUT"
+          echo "since_short=${since_short}" >> "$GITHUB_OUTPUT"
+          echo "Resolved --since anchor: ${since:-<none>}"
+
+      - name: Record new anchor
+        id: new_anchor
+        run: |
+          new_anchor="$(git rev-parse HEAD)"
+          echo "sha=${new_anchor}" >> "$GITHUB_OUTPUT"
+          echo "sha_short=${new_anchor:0:8}" >> "$GITHUB_OUTPUT"
+          echo "New anchor (main HEAD): ${new_anchor}"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      - name: Create consolidation branch
+        id: branch
+        run: |
+          branch="consolidation/$(date -u +%Y%m%d-%H%M%S)"
+          git checkout -b "$branch"
+          echo "name=${branch}" >> "$GITHUB_OUTPUT"
+
+      - name: Run ai-consolidate-compound
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          SINCE: ${{ steps.anchor.outputs.since }}
+        run: |
+          args=(--yes)
+          if [[ -n "$SINCE" ]]; then
+            args+=(--since "$SINCE")
+          fi
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          bash scripts/ai-consolidate-compound "${args[@]}"
+
+      - name: Push and create PR
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_NAME: ${{ steps.branch.outputs.name }}
+          NEW_ANCHOR: ${{ steps.new_anchor.outputs.sha }}
+          SINCE: ${{ steps.anchor.outputs.since }}
+          SINCE_SHORT: ${{ steps.anchor.outputs.since_short }}
+        run: |
+          if git diff --quiet "$NEW_ANCHOR"..HEAD -- docs/solutions/; then
+            echo "No committed changes under docs/solutions/ - skipping PR."
+            exit 0
+          fi
+
+          git push origin "$BRANCH_NAME"
+          gh pr create \
+            --title "docs(solutions): consolidate compound artifacts (since ${SINCE_SHORT})" \
+            --body "Automated weekly consolidation of \`compound.md\` artifacts into \`docs/solutions/\`.
+
+          **Since anchor:** \`${SINCE:-<none>}\`
+          **New anchor:** \`${NEW_ANCHOR}\`
+
+          Review the curated changes and merge if they look correct." \
+            --base main \
+            --head "$BRANCH_NAME"
+
+      - name: Advance consolidation/last-run tag
+        if: ${{ inputs.dry_run != true }}
+        env:
+          NEW_ANCHOR: ${{ steps.new_anchor.outputs.sha }}
+        run: |
+          git tag -f consolidation/last-run "$NEW_ANCHOR"
+          git push origin "refs/tags/consolidation/last-run" --force
