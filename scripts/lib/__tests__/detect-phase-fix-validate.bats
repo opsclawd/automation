@@ -83,6 +83,6 @@ teardown() {
 
 @test "ai-run-issue-v2 sources detect-phase.sh" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -q 'source.*detect-phase.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -q 'source.*detect-phase.sh' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [[ "$status" -eq 0 ]]
 }

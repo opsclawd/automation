@@ -94,6 +94,8 @@ describe('CLI run command', () => {
       'run',
       '--issue',
       '42',
+      '--executor',
+      'bash',
       '--script',
       scriptPath,
     ]);
@@ -130,6 +132,8 @@ describe('CLI run command', () => {
       'run',
       '--issue',
       '99',
+      '--executor',
+      'bash',
       '--script',
       scriptPath,
     ]);

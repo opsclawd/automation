@@ -3,10 +3,13 @@
 # TypeScript poller (apps/cli/src/run-pr-poll.ts, M6-04/M6-05). This script
 # preserves the legacy CLI signature: <PR_NUMBER> [issue] [max_polls] [interval].
 # The legacy loop is preserved at scripts/legacy/ai-pr-review-poll.legacy.
+#
+# ⚠️  DEPRECATED: legacy Bash shim. The default workflow uses the TypeScript
+#     RunExecutor (apps/api worker). Retained for emergency use only.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export REPO_ROOT
 
 PR_NUMBER="${1:-}"

@@ -9,8 +9,8 @@
 # constant no-parity-impact declarations. Add those per-file as they freeze
 # pre-cutover (#210).
 WATCHED_EXACT=(
-  "scripts/ai-run-issue-v2"
-  "scripts/ai-pr-review-poll"
+  "scripts/legacy/ai-run-issue-v2"
+  "scripts/legacy/ai-pr-review-poll"
   "apps/cli/src/run-agent.ts"
   "apps/cli/src/run-pr-poll.ts"
 )

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 # Tests for staging directory lifecycle: cleanup_staging trap handler and
-# stale-dir sweep logic in scripts/ai-run-issue-v2.
+# stale-dir sweep logic in scripts/legacy/ai-run-issue-v2.
 
 setup() {
   TMPDIR_TEST="$(mktemp -d)"
@@ -12,7 +12,7 @@ setup() {
 
   # Extract cleanup_staging function from the actual script
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(sed -n '/^cleanup_staging()/,/^}/p' "$script_path")"
 }
 

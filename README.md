@@ -231,7 +231,8 @@ packages/
   application/ use cases (StartIssueRun)
   infrastructure/ SQLite repositories, RunDirectory, Bash wrapper, failure classifier
 scripts/
-  ai-run-issue-v2       legacy Bash orchestrator (still authoritative in M1)
-  ai-pr-review-poll     legacy PR review poller
+  legacy/
+    ai-run-issue-v2     legacy Bash orchestrator (deprecated — emergency use only; TS executor is the default)
+    ai-pr-review-poll   legacy PR review poller (deprecated — emergency use only)
   ai-consolidate-compound  milestone consolidation pass over `ai/issues/*/compound.md` and `ai/poll-pr-*/compound-*.md`. Run manually after a milestone closes. `--dry-run` to preview, `--since <ref>` or `--issues N,M` to scope.
 ```

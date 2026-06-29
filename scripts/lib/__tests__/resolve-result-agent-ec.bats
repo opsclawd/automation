@@ -1,13 +1,13 @@
 #!/usr/bin/env bats
 
-# Tests for resolve_result's --agent-ec flag in scripts/ai-pr-review-poll.
+# Tests for resolve_result's --agent-ec flag in scripts/legacy/ai-pr-review-poll.
 # When the agent exits non-zero, the extractor should be skipped and the
 # hard-coded fallback used instead. When exit code is 0 (or --agent-ec is
 # absent), the extractor should still run.
-# See: scripts/ai-pr-review-poll — resolve_result()
+# See: scripts/legacy/ai-pr-review-poll — resolve_result()
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-pr-review-poll"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-pr-review-poll"
   SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
   # Source shared helpers, then extract resolve_result (which references them).
   source "$SHARED_LIB"

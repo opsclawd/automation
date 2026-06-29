@@ -2,7 +2,7 @@
 
 # Two roots are tracked here:
 #  - REAL_REPO_ROOT: the actual repo this test file lives in. Used ONLY for
-#    structural greps against scripts/ai-pr-review-poll (read-only).
+#    structural greps against scripts/legacy/ai-pr-review-poll (read-only).
 #  - FIXTURE_REPO:   a throwaway git repo created in TMPDIR_TEST. Used as the
 #    target of `_guard_main_checkout`, which runs `git reset --hard HEAD` and
 #    `git clean -fd` — destructive ops that must NEVER hit the real worktree.
@@ -872,12 +872,12 @@ teardown() {
 }
 
 @test "ai-pr-review-poll has no pushd callsites" {
-  run grep -c 'pushd' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
+  run grep -c 'pushd' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll"
   [ "$output" -eq 0 ]
 }
 
 @test "ai-pr-review-poll has no popd callsites" {
-  run grep -c 'popd' "$REAL_REPO_ROOT/scripts/ai-pr-review-poll"
+  run grep -c 'popd' "$REAL_REPO_ROOT/scripts/legacy/ai-pr-review-poll"
   [ "$output" -eq 0 ]
 }
 

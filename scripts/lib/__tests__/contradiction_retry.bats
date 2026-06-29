@@ -1,11 +1,11 @@
 #!/usr/bin/env bats
-# Tests for contradiction reconciliation in scripts/ai-run-issue-v2.
+# Tests for contradiction reconciliation in scripts/legacy/ai-run-issue-v2.
 # When a review reports FAIL but fix-review returns DONE_NO_FIXES_NEEDED,
 # the orchestrator should re-run the failing review once before aborting.
-# See: scripts/ai-run-issue-v2 — review-fix loop (lines ~1438-1444)
+# See: scripts/legacy/ai-run-issue-v2 — review-fix loop (lines ~1438-1444)
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
 
   # Source shared helpers, then extract remaining functions via awk brace-counting

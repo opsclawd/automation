@@ -8,7 +8,7 @@
 
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  SCRIPT="$REPO_ROOT/scripts/ai-run-issue-v2"
+  SCRIPT="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
 }
 
 @test "IMPLEMENTER_PROMPT builds under set -u without an unbound-variable crash" {

@@ -242,7 +242,7 @@ export function buildImplementPrompt(
     // infrastructure layout. If paths are renamed, moved, or removed, update this
     // list to match.
     "If your task's scope includes a *watched legacy path* (the plan will say so —",
-    'scripts/ai-run-issue-v2, scripts/ai-pr-review-poll, anything under scripts/lib/',
+    'scripts/legacy/ai-run-issue-v2, scripts/legacy/ai-pr-review-poll, anything under scripts/lib/',
     'except __tests__/, apps/cli/src/run-agent.ts, apps/cli/src/run-pr-poll.ts, or',
     'anything under packages/infrastructure/src/agent/ — recursive, any file at or',
     'below those prefixes), your commit MUST also add or extend the parity[#<issue>]',

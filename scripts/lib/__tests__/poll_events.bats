@@ -4,7 +4,7 @@
 # directly and calling it with the poll event types.
 #
 # COVERAGE GAP: These tests validate the event vocabulary and structure
-# but do NOT invoke scripts/ai-pr-review-poll itself. They cannot verify
+# but do NOT invoke scripts/legacy/ai-pr-review-poll itself. They cannot verify
 # that events are emitted at the correct points in the poller's control
 # flow, that env var propagation works, or that exit paths (BLOCKED,
 # PR-already-merged) produce the right terminal events. Integration

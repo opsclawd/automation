@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
 
 # Tests for the dirty-tree detection and run_commit_completion recovery in
-# scripts/ai-run-issue-v2. Verifies that when an implementer reports DONE
+# scripts/legacy/ai-run-issue-v2. Verifies that when an implementer reports DONE
 # but the worktree has uncommitted changes, the orchestrator detects it
 # and either recovers or fails with diagnostics.
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
   source "$SHARED_LIB"
 

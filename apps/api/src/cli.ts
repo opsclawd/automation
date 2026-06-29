@@ -177,8 +177,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     .option('--no-verbose', 'Suppress streaming script output to terminal')
     .option(
       '--executor <executor>',
-      'Execution engine: bash (default) or ts (TypeScript RunExecutor)',
-      'bash',
+      'Execution engine: ts (default, TypeScript RunExecutor) or bash (legacy, emergency use only)',
+      'ts',
     )
     .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
       try {
@@ -187,7 +187,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           ? isAbsolute(opts.script)
             ? opts.script
             : resolve(repoRoot, opts.script)
-          : join(repoRoot, 'scripts', 'ai-run-issue-v2');
+          : join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2');
         const tee = opts.verbose ?? Boolean(process.stdout.isTTY);
         const options: ComposeOptions = {
           repoRoot,
@@ -439,7 +439,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           ? isAbsolute(opts.script)
             ? opts.script
             : resolve(repoRoot, opts.script)
-          : join(repoRoot, 'scripts', 'ai-run-issue-v2');
+          : join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2');
         const composeOpts: ComposeOptions = {
           repoRoot,
           scriptPath,
@@ -488,7 +488,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const repoRoot = findRepoRoot(process.cwd());
             const options: ComposeOptions = {
               repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
               ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
@@ -540,7 +540,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const repoRoot = findRepoRoot(process.cwd());
             const options: ComposeOptions = {
               repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
               runStartupSweeps: false,
               ...buildOpts?.composeOverrides,
             };
@@ -655,7 +655,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const repoRoot = findRepoRoot(process.cwd());
             const options: ComposeOptions = {
               repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'ai-run-issue-v2'),
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
               runStartupSweeps: false,
               ...buildOpts?.composeOverrides,
             };

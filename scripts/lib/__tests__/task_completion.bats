@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   source "$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/review-contract.sh"
   eval "$(awk '
     /^validate_review_artifacts\(\)/ { state=1; depth=0 }

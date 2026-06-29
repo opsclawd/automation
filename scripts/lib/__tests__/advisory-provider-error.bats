@@ -2,7 +2,7 @@
 # Tests for advisory provider-error exit code handling.
 # Verifies that exit code 4 (provider error advisory) does NOT trigger
 # orchestrator_fail, while exit codes 1-3 still do.
-# See: scripts/ai-run-issue-v2 — implement-task, fix-review, etc.
+# See: scripts/legacy/ai-run-issue-v2 — implement-task, fix-review, etc.
 
 setup() {
   SCRIPT_DIR="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"

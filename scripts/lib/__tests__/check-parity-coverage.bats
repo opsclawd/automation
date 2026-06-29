@@ -58,21 +58,21 @@ run_check() {
 }
 
 @test "fails when watched path changes with no parity test" {
-  mkdir -p "$FIXTURE_REPO/scripts"
-  echo "change" >> "$FIXTURE_REPO/scripts/ai-run-issue-v2"
-  git -C "$FIXTURE_REPO" add scripts/ai-run-issue-v2
+  mkdir -p "$FIXTURE_REPO/scripts/legacy"
+  echo "change" >> "$FIXTURE_REPO/scripts/legacy/ai-run-issue-v2"
+  git -C "$FIXTURE_REPO" add scripts/legacy/ai-run-issue-v2
   git -C "$FIXTURE_REPO" commit -q -m "change watched path"
   run_check
   [ "$status" -eq 1 ]
   [[ "$output" = *"Offending paths"* ]]
-  [[ "$output" = *"scripts/ai-run-issue-v2"* ]]
+  [[ "$output" = *"scripts/legacy/ai-run-issue-v2"* ]]
 }
 
 @test "passes when watched path changes AND parity test file is touched" {
-  mkdir -p "$FIXTURE_REPO/scripts"
-  echo "change" >> "$FIXTURE_REPO/scripts/ai-run-issue-v2"
+  mkdir -p "$FIXTURE_REPO/scripts/legacy"
+  echo "change" >> "$FIXTURE_REPO/scripts/legacy/ai-run-issue-v2"
   echo "new test" >> "$FIXTURE_REPO/scripts/lib/__tests__/legacy-parity.bats"
-  git -C "$FIXTURE_REPO" add scripts/ai-run-issue-v2 scripts/lib/__tests__/legacy-parity.bats
+  git -C "$FIXTURE_REPO" add scripts/legacy/ai-run-issue-v2 scripts/lib/__tests__/legacy-parity.bats
   git -C "$FIXTURE_REPO" commit -q -m "change + parity test"
   run_check
   [ "$status" -eq 0 ]
@@ -88,9 +88,10 @@ run_check() {
 }
 
 @test "passes when watched path changes AND a .bats diff adds parity[# tag" {
-  echo "change" >> "$FIXTURE_REPO/scripts/ai-run-issue-v2"
+  mkdir -p "$FIXTURE_REPO/scripts/legacy"
+  echo "change" >> "$FIXTURE_REPO/scripts/legacy/ai-run-issue-v2"
   echo "@test \"parity[#300]: something\" {" >> "$FIXTURE_REPO/scripts/lib/__tests__/fix-review-stash.bats"
-  git -C "$FIXTURE_REPO" add scripts/ai-run-issue-v2 scripts/lib/__tests__/fix-review-stash.bats
+  git -C "$FIXTURE_REPO" add scripts/legacy/ai-run-issue-v2 scripts/lib/__tests__/fix-review-stash.bats
   git -C "$FIXTURE_REPO" commit -q -m "change + inline parity tag"
   run_check
   [ "$status" -eq 0 ]
@@ -151,14 +152,15 @@ run_check() {
 }
 
 @test "failure message links #210 and names offending paths" {
-  echo "change" >> "$FIXTURE_REPO/scripts/ai-run-issue-v2"
+  mkdir -p "$FIXTURE_REPO/scripts/legacy"
+  echo "change" >> "$FIXTURE_REPO/scripts/legacy/ai-run-issue-v2"
   echo "other change" >> "$FIXTURE_REPO/apps/cli/src/run-agent.ts"
-  git -C "$FIXTURE_REPO" add scripts/ai-run-issue-v2 apps/cli/src/run-agent.ts
+  git -C "$FIXTURE_REPO" add scripts/legacy/ai-run-issue-v2 apps/cli/src/run-agent.ts
   git -C "$FIXTURE_REPO" commit -q -m "multi watched"
   run_check
   [ "$status" -eq 1 ]
   [[ "$output" = *"issues/210"* ]]
-  [[ "$output" = *"scripts/ai-run-issue-v2"* ]]
+  [[ "$output" = *"scripts/legacy/ai-run-issue-v2"* ]]
   [[ "$output" = *"run-agent.ts"* ]]
 }
 
