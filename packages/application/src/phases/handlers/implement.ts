@@ -6,6 +6,20 @@ import type { Step, RunId } from '@ai-sdlc/domain';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { validatePlanTaskList, derivePlanTasks, extractTaskBody } from '../plan-tasks.js';
+import type { TaskManifest } from '../plan-tasks.js';
+
+export interface OversizedTask {
+  taskNum: number;
+  taskTitle: string;
+  file: string;
+  lineCount: number;
+  testCaseCount: number;
+}
+
+export interface LintTaskSizeResult {
+  ok: boolean;
+  oversized: OversizedTask[];
+}
 
 export interface StepRunContext {
   stepIndex: number;
@@ -22,6 +36,7 @@ export interface ImplementHandlerOpts {
   steps: StepRepositoryPort;
   runStep: (sctx: StepRunContext) => Promise<StepRunResult>;
   setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
+  lintTaskSize?: (cwd: string, manifest: TaskManifest) => Promise<LintTaskSizeResult>;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -86,6 +101,45 @@ export class ImplementHandler implements PhaseHandler {
         .filter((s) => s.phaseId === 'implement' && s.status === 'success')
         .map((s) => s.index),
     );
+
+    if (this.opts.lintTaskSize && manifest) {
+      let lintResult: LintTaskSizeResult;
+      try {
+        const filteredManifest = {
+          ...manifest,
+          tasks: manifest.tasks.filter((t) => !doneIdx.has(t.n)),
+        };
+        lintResult = await this.opts.lintTaskSize(ctx.cwd, filteredManifest);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        const isPathTraversal = message.includes('Path traversal detected');
+        const failureKind: FailureKind = isPathTraversal ? 'invalid_result' : 'unknown';
+        return this.fail(ctx, emit, failureKind, `lintTaskSize crashed: ${message}`);
+      }
+      for (const task of lintResult.oversized) {
+        emit(
+          'task_size.oversized',
+          'warn',
+          `task ${task.taskNum} targets oversized test file: ${task.file}`,
+          {
+            taskNum: task.taskNum,
+            taskTitle: task.taskTitle,
+            file: task.file,
+            lineCount: task.lineCount,
+            testCaseCount: task.testCaseCount,
+          },
+        );
+      }
+      if (!lintResult.ok) {
+        return this.fail(
+          ctx,
+          emit,
+          'invalid_result',
+          `task size linting blocked: ${lintResult.oversized.map((t) => `task ${t.taskNum} (${t.file})`).join(', ')} exceed thresholds`,
+          'Split tasks targeting oversized test files in plan.md.',
+        );
+      }
+    }
 
     if (this.opts.setup && derived.some((d) => !doneIdx.has(d.index))) {
       try {
@@ -188,6 +242,7 @@ export class ImplementHandler implements PhaseHandler {
     emit: EventEmitter,
     kind: FailureKind,
     message: string,
+    suggestedAction?: string,
   ): PhaseResult {
     emit('implement.failed', 'error', message);
     return {
@@ -199,9 +254,10 @@ export class ImplementHandler implements PhaseHandler {
         message,
         canRetry: kind !== 'invalid_result',
         suggestedAction:
-          kind === 'invalid_result'
+          suggestedAction ??
+          (kind === 'invalid_result'
             ? 'Ensure plan.md contains "## Task" headings.'
-            : 'Inspect the failing step artifacts and resume.',
+            : 'Inspect the failing step artifacts and resume.'),
         artifacts: [],
         detectedAt: ctx.now(),
       },

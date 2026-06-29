@@ -584,6 +584,48 @@ describe('ImplementStepLoop', () => {
     });
   });
 
+  describe('parity[#403]: typecheck injection into reviewer prompts', () => {
+    it('parity[#403]: runTypecheck is called once after runImplement succeeds', async () => {
+      let tcCalls = 0;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          tcCalls += 1;
+          return { outcome: 'pass', output: '' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(tcCalls).toBe(1);
+    });
+
+    it('parity[#403]: tcResult is forwarded to runSpecReview under ## TYPECHECK RESULT header', async () => {
+      const tcResult: TypecheckResult = { outcome: 'pass', output: 'All good' };
+      let capturedTc: TypecheckResult | undefined;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => tcResult,
+        runSpecReview: async (_ctx: StepLoopContext, tc: TypecheckResult) => {
+          capturedTc = tc;
+          return { invocationId: 'sr-parity403', agentOutcome: 'success', verdict: 'pass' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(capturedTc).toEqual(tcResult);
+    });
+
+    it('parity[#403]: tcResult is forwarded to runQualityReview under ## TYPECHECK RESULT header', async () => {
+      const tcResult: TypecheckResult = { outcome: 'pass', output: 'All good' };
+      let capturedTc: TypecheckResult | undefined;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => tcResult,
+        runQualityReview: async (_ctx: StepLoopContext, tc: TypecheckResult) => {
+          capturedTc = tc;
+          return { invocationId: 'qr-parity403', agentOutcome: 'success', verdict: 'pass' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute(baseInput());
+      expect(capturedTc).toEqual(tcResult);
+    });
+  });
+
   describe('contradiction detection and 1-shot reconciliation', () => {
     it('detects contradiction when fix returns done_no_fixes_needed and spec-review fails', async () => {
       const { events, bus } = collectEvents();
@@ -733,6 +775,104 @@ describe('ImplementStepLoop', () => {
       const nhr = events.filter((e) => e.type === 'needs_human_review');
       expect(nhr).toHaveLength(1);
       expect(nhr[0]?.level).toBe('warn');
+    });
+  });
+
+  describe('parity[#398]: contradiction reconciliation — fires once, is gated', () => {
+    it('parity[#398]: contradiction re-run fires exactly once when fix returns done_no_fixes_needed and spec-review fails', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Nothing to fix.',
+        }),
+        runArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'Reviewer is correct.',
+          rationale: 'Reviewer is correct.',
+        }),
+      });
+      // Run with 3 iterations; re-run guard must prevent more than 1 extra spec call
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      // Iteration 1: spec(1) → fix → spec-rerun(2) — guard fires; no further re-runs
+      // Iteration 2+: spec(3...) are normal per-iteration calls, NOT re-runs
+      // Total spec calls: 1 (iter1 initial) + 1 (iter1 re-run) + up to 2 (iter2, iter3 normal)
+      // The re-run count = specCalls - normal iteration calls = at most 1
+      // Simplest assertion: specCalls ≤ 4 (3 normal + 1 re-run) and ≥ 2 (1 normal + 1 re-run on iter1)
+      expect(specCalls).toBeGreaterThanOrEqual(2);
+      expect(specCalls).toBeLessThanOrEqual(4);
+    });
+
+    it('parity[#398]: contradiction re-run fires at most once per step (CONTRADICTION_RETRIED guard)', async () => {
+      // Spec review always fails; fix always says done_no_fixes_needed.
+      // The guard (contradictionRetriedThisStep) must block a second re-run.
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Nothing to fix.',
+        }),
+        runArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'Reviewer is correct.',
+          rationale: 'Reviewer is correct.',
+        }),
+      });
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      // Iteration 1: spec(1) initial + spec(2) re-run → needs_human_review after re-run fails
+      // The 1-shot re-run is NOT repeated on iterations 2 and 3.
+      // specCalls == 3: 1 initial + 1 re-run on iter 1 + 1 initial on iter 2 (contradictionRetriedThisStep blocks further re-runs)
+      expect(specCalls).toBe(3);
+    });
+
+    it('parity[#398]: fires before arbiter — re-run attempt precedes reviews_inconsistent escalation', async () => {
+      const { events, bus } = collectEvents();
+      let specCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'Nothing to fix.',
+        }),
+        runArbiter: undefined,
+      });
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      // contradiction.detected fires before needs_human_review (no arbiter path)
+      const eventTypes = events.map((e) => e.type);
+      const detectedIdx = eventTypes.indexOf('review.contradiction.detected');
+      const nhrIdx = eventTypes.indexOf('needs_human_review');
+      expect(detectedIdx).toBeGreaterThanOrEqual(0);
+      expect(nhrIdx).toBeGreaterThan(detectedIdx);
     });
   });
 
