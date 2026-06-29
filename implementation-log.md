@@ -50,3 +50,14 @@ Implemented **Task 3: Remove API Implementer Prompt Parity Discipline**.
 ## Verifications
 - Verified with Vitest that all tests in `build-implement-prompt.test.ts` pass (`pnpm --filter @ai-sdlc/api test -- build-implement-prompt.test.ts`).
 - Inspected the lines in `apps/api/src/compose.ts` and `apps/api/src/__tests__/build-implement-prompt.test.ts` to ensure no surrounding blocks/tests were affected.
+
+# Implementation Log - Task 4
+
+Implemented **Task 4: Remove Plan-Write Prompt Parity Requirement**.
+
+## Actions Taken
+- Modified `prompts/plan-write/plan-write.md` to remove the single `- PARITY COVERAGE:` bullet.
+- Left neighboring bullets (validation commands, scoped verification, no standalone validation tasks, and oversized test-update task splitting) intact.
+
+## Verifications
+- Verified using `sed -n '24,34p' prompts/plan-write/plan-write.md` that the `PARITY COVERAGE` bullet is removed and neighboring bullets remain.
