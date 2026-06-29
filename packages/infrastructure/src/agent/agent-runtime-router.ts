@@ -15,7 +15,7 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationPort } from '@ai-sdlc/application/ports';
 import type { AgentUsagePort, EventBusPort } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
-import { testQuotaPatterns } from './error-patterns.js';
+import { testQuotaPatterns, testTokenLimitPatterns } from './error-patterns.js';
 
 export interface AgentRuntimeRouterOptions {
   agent: AgentConfig;
@@ -471,19 +471,10 @@ export function normalizeRoutingPhase(phaseId: string): string {
   return phaseId.replace(/(-task)?-\d+$/, '');
 }
 
-const TOKEN_LIMIT_PATTERNS = [
-  /context_length_exceeded/i,
-  /prompt is too long/i,
-  /token[s]?\b[a-zA-Z0-9\s-]*\blimit\b[a-zA-Z0-9\s-]*\bexceed/i,
-  /maximum context length/i,
-  /request too large/i,
-  /\btoken_limit_exceeded\b/i,
-];
-
 function isTokenLimitError(result: AgentInvocationResult): boolean {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
-    return TOKEN_LIMIT_PATTERNS.some((p) => p.test(stderr));
+    return testTokenLimitPatterns(stderr) !== null;
   } catch {
     return false;
   }

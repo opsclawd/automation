@@ -205,10 +205,10 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
-      const providerMatch = testProviderErrorPatterns(stderr);
+      const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 200 });
       if (providerMatch) {
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr);
+        const quotaLine = testQuotaPatterns(stderr, { maxLines: 200 });
         if (quotaLine) {
           stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
         } else {
@@ -216,11 +216,11 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         }
       }
     } else if (outcome === 'success') {
-      const providerMatch = testProviderErrorPatterns(stderr);
+      const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 200 });
       if (providerMatch) {
         outcome = 'failed';
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr);
+        const quotaLine = testQuotaPatterns(stderr, { maxLines: 200 });
         if (quotaLine) {
           stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
           stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;

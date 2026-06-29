@@ -3,6 +3,7 @@ import {
   isOpenCodeLogLine,
   testQuotaPatterns,
   testProviderErrorPatterns,
+  testTokenLimitPatterns,
 } from '../error-patterns.js';
 
 describe('isOpenCodeLogLine', () => {
@@ -225,6 +226,13 @@ describe('testQuotaPatterns', () => {
     expect(testQuotaPatterns(text, { maxLines: 0 })).toBeNull();
     expect(testQuotaPatterns(text, { maxLines: -5 })).toBeNull();
   });
+
+  it('matches quota errors with underscores and rate limit prefixes', () => {
+    expect(testQuotaPatterns('quota_rate_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota_limit_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota-rate-exceed')).toBeTruthy();
+    expect(testQuotaPatterns('quota_exceed')).toBeTruthy();
+  });
 });
 
 describe('testProviderErrorPatterns', () => {
@@ -372,5 +380,38 @@ describe('testProviderErrorPatterns', () => {
     expect(testProviderErrorPatterns("export SOME_PATTERNS='AI_APICallError'")).toBeNull();
     expect(testProviderErrorPatterns('+ AI_APICallError')).toBeNull();
     expect(testProviderErrorPatterns('++ AI_APICallError')).toBeNull();
+  });
+});
+
+describe('testTokenLimitPatterns', () => {
+  it('matches context length exceeded', () => {
+    expect(testTokenLimitPatterns('context_length_exceeded')).toBeTruthy();
+  });
+
+  it('matches prompt is too long', () => {
+    expect(testTokenLimitPatterns('prompt is too long')).toBeTruthy();
+  });
+
+  it('matches token limits with underscores, dashes, spaces, and rate limit prefixes', () => {
+    expect(testTokenLimitPatterns('token_rate_limit_exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens_rate_limit_exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('token_limit_exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('token-limit-exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens rate limit exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens_limit_exceed')).toBeTruthy();
+  });
+
+  it('matches maximum context length', () => {
+    expect(testTokenLimitPatterns('maximum context length')).toBeTruthy();
+  });
+
+  it('matches request too large', () => {
+    expect(testTokenLimitPatterns('request too large')).toBeTruthy();
+  });
+
+  it('ignores environment variable dumps or bash tracing in testTokenLimitPatterns', () => {
+    expect(testTokenLimitPatterns("export SOME_PATTERNS='token_limit_exceeded'")).toBeNull();
+    expect(testTokenLimitPatterns('+ token_limit_exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('++ token_limit_exceeded')).toBeNull();
   });
 });
