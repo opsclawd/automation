@@ -4,6 +4,7 @@ import {
   testQuotaPatterns,
   testProviderErrorPatterns,
   testTokenLimitPatterns,
+  getLastLines,
 } from '../error-patterns.js';
 
 describe('isOpenCodeLogLine', () => {
@@ -233,6 +234,13 @@ describe('testQuotaPatterns', () => {
     expect(testQuotaPatterns('quota-rate-exceed')).toBeTruthy();
     expect(testQuotaPatterns('quota_exceed')).toBeTruthy();
   });
+
+  it('matches quota errors containing common punctuation', () => {
+    expect(testQuotaPatterns('Quota: exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota (exceeded)')).toBeTruthy();
+    expect(testQuotaPatterns('quota.exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota, exceeded')).toBeTruthy();
+  });
 });
 
 describe('testProviderErrorPatterns', () => {
@@ -435,5 +443,30 @@ describe('testTokenLimitPatterns', () => {
     const text = 'AI_APICallError: 500\nharmless line 1\nharmless line 2\n';
     expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeNull();
     expect(testProviderErrorPatterns(text, { maxLines: 3 })).toBeTruthy();
+  });
+
+  it('matches token limit errors containing common punctuation', () => {
+    expect(testTokenLimitPatterns('token limit: exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens (limit exceeded)')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens.limit.exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('token-limit, exceeded')).toBeTruthy();
+  });
+});
+
+describe('getLastLines', () => {
+  it('returns clean lines list with or without trailing newline when maxLines is undefined', () => {
+    const text1 = 'line 1\nline 2\n';
+    const text2 = 'line 1\nline 2';
+    expect(getLastLines(text1)).toEqual(['line 1', 'line 2']);
+    expect(getLastLines(text2)).toEqual(['line 1', 'line 2']);
+  });
+
+  it('returns clean lines list with or without trailing newline when maxLines is defined', () => {
+    const text1 = 'line 1\nline 2\n';
+    const text2 = 'line 1\nline 2';
+    expect(getLastLines(text1, 1)).toEqual(['line 2']);
+    expect(getLastLines(text2, 1)).toEqual(['line 2']);
+    expect(getLastLines(text1, 2)).toEqual(['line 1', 'line 2']);
+    expect(getLastLines(text2, 2)).toEqual(['line 1', 'line 2']);
   });
 });

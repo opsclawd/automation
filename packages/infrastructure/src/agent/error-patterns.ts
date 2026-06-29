@@ -4,7 +4,7 @@ export const QUOTA_PATTERNS = [
   /rate_limit_exceeded/i,
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
-  /quota[a-zA-Z0-9\s_-]*exceed/i,
+  /quota[a-zA-Z0-9\s_:,().-]*exceed/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [
@@ -20,7 +20,7 @@ export const PROVIDER_ERROR_PATTERNS = [
 export const TOKEN_LIMIT_PATTERNS = [
   /context_length_exceeded/i,
   /prompt is too long/i,
-  /token[s]?[a-zA-Z0-9\s_-]*limit[a-zA-Z0-9\s_-]*exceed/i,
+  /token[s]?[a-zA-Z0-9\s_:,().-]*limit[a-zA-Z0-9\s_:,().-]*exceed/i,
   /maximum context length/i,
   /request too large/i,
 ] as const;
@@ -31,12 +31,12 @@ export function isOpenCodeLogLine(line: string): boolean {
   return OPENCODE_LOG_LINE.test(line);
 }
 
-function getLastLines(text: string, maxLines?: number): string[] {
+export function getLastLines(text: string, maxLines?: number): string[] {
+  const cleanText = text.endsWith('\n') ? text.slice(0, -1) : text;
   if (maxLines !== undefined) {
     if (maxLines <= 0) {
       return [];
     }
-    const cleanText = text.endsWith('\n') ? text.slice(0, -1) : text;
     let startIdx = 0;
     let count = 0;
     for (let i = cleanText.length - 1; i >= 0; i--) {
@@ -50,7 +50,7 @@ function getLastLines(text: string, maxLines?: number): string[] {
     }
     return cleanText.slice(startIdx).split('\n');
   }
-  return text.split('\n');
+  return cleanText.split('\n');
 }
 
 export function testQuotaPatterns(

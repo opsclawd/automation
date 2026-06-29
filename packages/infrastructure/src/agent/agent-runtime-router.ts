@@ -474,7 +474,7 @@ export function normalizeRoutingPhase(phaseId: string): string {
 function isTokenLimitError(result: AgentInvocationResult): boolean {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
-    return testTokenLimitPatterns(stderr) !== null;
+    return testTokenLimitPatterns(stderr, { maxLines: 200 }) !== null;
   } catch {
     return false;
   }
