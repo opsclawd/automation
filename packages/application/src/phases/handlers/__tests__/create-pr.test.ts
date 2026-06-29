@@ -351,17 +351,38 @@ describe('CreatePrHandler — deterministic assembly', () => {
     expect(failedEvents).toHaveLength(1);
   });
 
-  it('calls cleanOrchestratorArtifacts after PR creation so all artifacts are available during assembly', async () => {
-    const { git, ctx } = await build();
+  it('calls cleanOrchestratorArtifacts after summary write and before push', async () => {
+    const { artifacts, git, github, ctx } = await build();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const gitAny = git as any;
-    const cleanSpy = vi.fn().mockResolvedValue(undefined);
-    gitAny.cleanOrchestratorArtifacts = cleanSpy;
+
+    const calls: string[] = [];
+    const originalWrite = artifacts.write.bind(artifacts);
+    artifacts.write = async (input) => {
+      if (input.relativePath === 'pr-summary.md') calls.push('write-summary');
+      return originalWrite(input);
+    };
+    gitAny.cleanOrchestratorArtifacts = vi.fn().mockImplementation(async () => {
+      calls.push('cleanup');
+    });
+    git.push = vi.fn().mockImplementation(async () => {
+      calls.push('push');
+    });
+    github.createPullRequest = vi.fn().mockImplementation(async (input) => {
+      calls.push('create-pr');
+      github.createdPrInputs.push(input);
+      return { number: 123, url: 'https://github.com/acme/widgets/pull/123' };
+    });
 
     const res = await HANDLER.run(ctx);
 
     expect(res.outcome).toBe('passed');
-    expect(cleanSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
+    expect(gitAny.cleanOrchestratorArtifacts).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
+
+    expect(calls.indexOf('write-summary')).toBeGreaterThanOrEqual(0);
+    expect(calls.indexOf('cleanup')).toBeGreaterThan(calls.indexOf('write-summary'));
+    expect(calls.indexOf('push')).toBeGreaterThan(calls.indexOf('cleanup'));
+    expect(calls.indexOf('create-pr')).toBeGreaterThan(calls.indexOf('push'));
   });
 
   it('cleanup failure does not fail the phase', async () => {
