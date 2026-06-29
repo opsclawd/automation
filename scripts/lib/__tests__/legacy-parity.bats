@@ -3,7 +3,7 @@
 # Legacy-behaviour parity suite (#210) — SEED.
 #
 # Characterization tests for operationally critical invariants learned from real
-# failures that currently live only as hardening in scripts/ai-run-issue-v2 and
+# failures that currently live only as hardening in scripts/legacy/ai-run-issue-v2 and
 # friends. They run against the live bash runner today. Before any phase's bash
 # path is retired during the TypeScript cutover (M8-11), the TS implementation
 # of that phase MUST satisfy the same contract — parity is "TS passes the same
@@ -86,7 +86,7 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
   # Bash script still delegates to run-review-fix.ts for the review/fix phases
-  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
@@ -118,7 +118,7 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
   # Bash script still delegates to run-review-fix.ts for fix-review phase
-  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -c 'run-review-fix.ts' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
 }
@@ -161,7 +161,7 @@ teardown() {
 # TS-port contract: prompt construction must be smoke-tested so an undefined
 #   interpolation can never crash the orchestrator (see #288).
 @test "parity[#287]: agent prompts do not let the orchestrator expand PRE_HEAD" {
-  run grep -nF '"$PRE_HEAD"' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -nF '"$PRE_HEAD"' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -ne 0 ]
 }
 
@@ -718,7 +718,7 @@ JSON
 #   allowed set per review type).
 @test "parity[#305]: validate_review_artifacts rejects invalid verdict" {
   # Source the library and extract validate_review_artifacts from ai-run-issue-v2
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   source "${REPO_ROOT}/scripts/lib/review-contract.sh"
   # Stubs
   log() { :; }
@@ -1040,7 +1040,7 @@ JSON
   warn() { :; }
 
   # Source seed_excludes from ai-run-issue-v2
-  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2")
   pushd "$repo" >/dev/null
   seed_excludes
   popd >/dev/null
@@ -1333,7 +1333,7 @@ PLAN
 # TS-port contract: the TS orchestrator must validate plan manifest/prose
 #   agreement immediately after plan-write, before advancing to plan-review.
 @test "parity[#315]: validate_task_list runs as post-plan-write gate" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   local section
   section=$(sed -n '/_emit_phase_done "plan-write"/,/_lint_plan_verification/p' "$script")
   echo "$section" | grep -q "validate_task_list" || {
@@ -1351,7 +1351,7 @@ PLAN
 # TS-port contract: the TS implement loop must abort when no column-0
 #   heading is found for a manifest task.
 @test "parity[#315]: missing task heading aborts implement phase (not silent title fallback)" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   ! grep -n "using title as description" "$script" | grep -q "." || {
     local matches
     matches=$(grep -n "using title as description" "$script")
@@ -1496,7 +1496,7 @@ PLAN
   warn() { :; }
 
   source "$REPO_ROOT/scripts/lib/artifacts.sh"
-  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2")
   seed_excludes
 
   local git_dir
@@ -1702,7 +1702,7 @@ PLAN
 # TS-port contract: the TS orchestrator must call run-review-fix.ts from the
 #   fix-review phase and branch on its exit code before reading worktree state.
 @test "parity[#337]: fix-review legacy loop replaced by CLI delegation with post-loop guard" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
 
   # The run-review-fix invocation must exist in the fix-review section
   run grep -c "run-review-fix.ts" "$script"
@@ -2109,7 +2109,7 @@ PLAN
   # pass must NOT be failed by the per-task reviewers. Both reviewer prompts must
   # carry the rule. Regression #379: quality-review demanded export-star that fails
   # pnpm typecheck; the compiling explicit-named-export solution was correctly the fix.
-  run grep -c "BUILD GREEN OVERRIDES THE PLAN'S LETTER" "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -c "BUILD GREEN OVERRIDES THE PLAN'S LETTER" "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
@@ -2125,7 +2125,7 @@ PLAN
 #   bash runner must emit the same canonical name.
 @test "parity[#381]: bash runner emits review-fix as the canonical phase name" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  local script="${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  local script="${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   run grep -q '_emit_phase_started "review-fix"' "$script"
   [ "$status" -eq 0 ]
   run grep -q '_emit_phase_done "review-fix"' "$script"
@@ -2175,7 +2175,7 @@ PLAN
 
   # Source seed_excludes from the live script
   # shellcheck source=../../ai-run-issue-v2
-  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/ai-run-issue-v2")
+  source <(sed -n '/^seed_excludes()/,/^}/p' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2")
   pushd "$repo" >/dev/null
   seed_excludes
   popd >/dev/null
@@ -2300,7 +2300,7 @@ PLAN
 # TS-port contract: the TS whole-pr-review prompt must contain equivalent
 #   no-scratch instruction (Task 4 of this plan adds it to compose.ts).
 @test "parity[#405]: reviewer prompts forbid writing non-artifact scratch files" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   # Spec reviewer must contain the no-scratch clause
   run grep -q "Do NOT write any files other than" "$script"
   [ "$status" -eq 0 ]
@@ -2326,21 +2326,21 @@ PLAN
 #   and runQualityReview so their prompt builders can inject it.
 @test "parity[#403]: bash path uses pnpm -r typecheck (not packages-only build) as per-task gate" {
   # The gate must use full-repo recursive typecheck, not the per-package filter
-  run grep -c 'pnpm -r typecheck' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -c 'pnpm -r typecheck' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 1 ]
   # The interim stopgap command (pnpm --filter "./packages/*" build) must be gone
-  run grep -c 'pnpm --filter.*packages.*build.*&&.*pnpm typecheck' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -c 'pnpm --filter.*packages.*build.*&&.*pnpm typecheck' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -ne 0 ] || [ "$output" -eq 0 ]
 }
 
 @test "parity[#403]: typecheck result is injected into spec and quality reviewer prompts" {
   # _TASK_TYPECHECK_SIGNAL must appear in SPEC_REVIEWER_PROMPT construction
-  run grep -c '_TASK_TYPECHECK_SIGNAL' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -c '_TASK_TYPECHECK_SIGNAL' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 3 ]
   # The TYPECHECK RESULT section header must exist in at least the spec reviewer block
-  run grep -c 'TYPECHECK RESULT' "$REPO_ROOT/scripts/ai-run-issue-v2"
+  run grep -c 'TYPECHECK RESULT' "$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
@@ -2357,7 +2357,7 @@ PLAN
 #   invoking runArbiter. A second call to the re-run for the SAME step contradiction
 #   is not permitted (contradictionRetriedThisStep guards this).
 @test "parity[#398]: bash handle_contradiction_reconciliation fires on DONE_NO_FIXES_NEEDED + review-fail before reviews_inconsistent" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   # The function must exist
   run grep -q 'handle_contradiction_reconciliation()' "$script"
   [ "$status" -eq 0 ]
@@ -2378,7 +2378,7 @@ PLAN
 }
 
 @test "parity[#398]: bash contradiction re-run fires at most once per task (CONTRADICTION_RETRIED guard)" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   # CONTRADICTION_RETRIED must be checked and incremented inside the function
   run grep -c 'CONTRADICTION_RETRIED' "$script"
   [ "$status" -eq 0 ]
@@ -2438,7 +2438,7 @@ PLAN
 # TS-port contract: the TS create-pr handler must implement this sentinel check
 # before applying GitHub labels.
 @test "parity[#434]: create-pr phase contains orchestrator_fail guard for absent sentinel when validation.md shows PASSED" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   # The guard message is unique — if it's present, the guard is wired up.
   run grep -c 'validation.result is absent/unknown but validation.md shows PASSED' "$script"
   [ "$status" -eq 0 ]
@@ -2602,7 +2602,7 @@ PLAN
 #   the artifact store and return { outcome: 'failed' } when it is missing
 #   or not "passed".
 @test "parity[#514]: create-pr phase gates on validation.result == passed" {
-  local script="$REPO_ROOT/scripts/ai-run-issue-v2"
+  local script="$REPO_ROOT/scripts/legacy/ai-run-issue-v2"
   # The gate must read validation.result before ensure_branch's follow-on work
   # (compound-draft.md guard, ~line 4592).  We check that the read + fail
   # appear between the create-pr header and the first gh-related command.
