@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
@@ -11,6 +11,7 @@ import type {
   FixStepOptions,
   StepContext,
   PostFixGateResult,
+  ReviewStepOptions,
 } from '../types.js';
 
 function collectEvents() {
@@ -775,15 +776,15 @@ describe('ReviewFixLoop', () => {
 
     it('passes gate failure result to runReview on iteration 2', async () => {
       let reviewCalls = 0;
-      const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+      const receivedGateResults: Array<ReviewStepOptions | undefined> = [];
       const deps = makeDeps({
         runPostFixGate: async (): Promise<PostFixGateResult> => ({
           outcome: 'fail',
           output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
         }),
-        runReview: async (_ctx, gateResult) => {
+        runReview: async (_ctx, opts) => {
           reviewCalls += 1;
-          receivedGateResults.push(gateResult);
+          receivedGateResults.push(opts);
           return {
             invocationId: `rev-${reviewCalls}`,
             agentOutcome: 'success' as const,
@@ -798,22 +799,24 @@ describe('ReviewFixLoop', () => {
       expect(receivedGateResults[0]).toBeUndefined();
       // Iteration 2: gate called and returns fail, reviewer receives failure
       expect(receivedGateResults[1]).toEqual({
-        outcome: 'fail',
-        output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
+        gateResult: {
+          outcome: 'fail',
+          output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
+        },
       });
     });
 
     it('passes gate pass result to runReview when gate succeeds on iteration 2', async () => {
       let reviewCalls = 0;
-      const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+      const receivedGateResults: Array<ReviewStepOptions | undefined> = [];
       const deps = makeDeps({
         runPostFixGate: async (): Promise<PostFixGateResult> => ({
           outcome: 'pass',
           output: '',
         }),
-        runReview: async (_ctx, gateResult) => {
+        runReview: async (_ctx, opts) => {
           reviewCalls += 1;
-          receivedGateResults.push(gateResult);
+          receivedGateResults.push(opts);
           return {
             invocationId: `rev-${reviewCalls}`,
             agentOutcome: 'success' as const,
@@ -826,7 +829,181 @@ describe('ReviewFixLoop', () => {
       // Iteration 1: gate not called, runReview receives undefined
       expect(receivedGateResults[0]).toBeUndefined();
       // Iteration 2: gate called (pass), runReview receives pass result
-      expect(receivedGateResults[1]).toEqual({ outcome: 'pass', output: '' });
+      expect(receivedGateResults[1]).toEqual({
+        gateResult: { outcome: 'pass', output: '' },
+      });
+    });
+  });
+
+  describe('loop history', () => {
+    it('passes historyContext to reviewer and fixer calls', async () => {
+      const history = [
+        {
+          iteration: 1,
+          review: {
+            verdict: 'fail' as const,
+            offendingFindings: [{ severity: 'high', summary: 'missing guard' }],
+          },
+          fix: {
+            verdict: 'done_with_fixes' as const,
+            invocationId: 'fix-1',
+            summary: 'Added guard',
+          },
+          revalidation: { passed: true, validationRunId: 'val-1' },
+          outcome: 'fixed' as const,
+        },
+      ];
+      const loopHistory = {
+        read: vi.fn(async () => history),
+        append: vi.fn(async () => {}),
+        format: vi.fn((_entries, audience) => `history for ${audience}`),
+      };
+
+      const receivedReviewOpts: Array<ReviewStepOptions | undefined> = [];
+      const receivedFixOpts: Array<FixStepOptions> = [];
+
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        loopHistory,
+        runReview: async (_ctx, opts) => {
+          reviewCalls += 1;
+          receivedReviewOpts.push(opts);
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async (_ctx, opts) => {
+          receivedFixOpts.push(opts);
+          return {
+            invocationId: 'fix-2',
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+        runRevalidation: async () => ({
+          validationRunId: 'val-2',
+          passed: true,
+        }),
+      });
+
+      const architectPlan = {
+        version: 1,
+        tasks: [
+          {
+            task_id: '1',
+            approach: 'do it',
+            conflicts_resolved: [],
+            constraints: [],
+            depends_on: [],
+          },
+        ],
+      };
+
+      const out = await new ReviewFixLoop(deps).execute({
+        ...baseInput(),
+        architectPlan,
+      });
+
+      expect(out.phaseOutcome).toBe('passed');
+      expect(loopHistory.read).toHaveBeenCalled();
+      expect(loopHistory.format).toHaveBeenCalledWith(history, 'reviewer');
+      expect(loopHistory.format).toHaveBeenCalledWith(history, 'fixer');
+
+      // Reviewer called twice: once in iteration 1 (fail) and once in iteration 2 (pass)
+      expect(receivedReviewOpts).toHaveLength(2);
+      expect(receivedReviewOpts[0]).toEqual({
+        historyContext: 'history for reviewer',
+      });
+      expect(receivedReviewOpts[1]).toEqual({
+        historyContext: 'history for reviewer',
+        gateResult: { outcome: 'pass', output: '' },
+      });
+
+      // Fixer called once in iteration 1 (because review failed)
+      expect(receivedFixOpts).toHaveLength(1);
+      expect(receivedFixOpts[0]).toEqual({
+        useFallback: false,
+        architectPlan,
+        historyContext: 'history for fixer',
+      });
+    });
+
+    it('passes historyContext to fixer while retaining useFallback and previousInvocationId', async () => {
+      const history = [
+        {
+          iteration: 1,
+          review: {
+            verdict: 'fail' as const,
+            offendingFindings: [{ severity: 'high', summary: 'missing guard' }],
+          },
+          fix: {
+            verdict: 'done_with_fixes' as const,
+            invocationId: 'fix-1',
+            summary: 'Added guard',
+          },
+          revalidation: { passed: true, validationRunId: 'val-1' },
+          outcome: 'fixed' as const,
+        },
+      ];
+      const loopHistory = {
+        read: vi.fn(async () => history),
+        append: vi.fn(async () => {}),
+        format: vi.fn((_entries, audience) => `history for ${audience}`),
+      };
+
+      const receivedFixOpts: Array<FixStepOptions> = [];
+
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const deps = makeDeps({
+        loopHistory,
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async (_ctx, opts) => {
+          fixCalls += 1;
+          receivedFixOpts.push(opts);
+          return {
+            invocationId: `fix-call-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'cannot_fix' as const,
+          };
+        },
+      });
+
+      await new ReviewFixLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 3,
+      });
+
+      // Fixer called 3 times (iterations 1, 2, 3)
+      expect(receivedFixOpts).toHaveLength(3);
+
+      // Iteration 1: first fix call (consecutive failures = 0)
+      expect(receivedFixOpts[0]).toEqual({
+        useFallback: false,
+        historyContext: 'history for fixer',
+      });
+
+      // Iteration 2: second fix call (consecutive failures = 1)
+      expect(receivedFixOpts[1]).toEqual({
+        useFallback: false,
+        historyContext: 'history for fixer',
+      });
+
+      // Iteration 3: third fix call (consecutive failures = 2) -> useFallback is true
+      expect(receivedFixOpts[2]).toEqual({
+        useFallback: true,
+        previousInvocationId: 'fix-call-2',
+        historyContext: 'history for fixer',
+      });
     });
   });
 });

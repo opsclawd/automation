@@ -14,6 +14,7 @@ import type {
   ReviewFixLoopResult,
   StepContext,
   PostFixGateResult,
+  ReviewLoopHistoryAudience,
 } from './types.js';
 
 export class ReviewFixLoop {
@@ -65,7 +66,15 @@ export class ReviewFixLoop {
           index: iterationIndex,
         },
       );
-      const review = await deps.runReview(ctx, gateResult ? { gateResult } : undefined);
+      const historyContext = await this.readHistoryContext(ctx, 'reviewer');
+      const reviewOptions = {
+        ...(gateResult ? { gateResult } : {}),
+        ...(historyContext ? { historyContext } : {}),
+      };
+      const review = await deps.runReview(
+        ctx,
+        Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
+      );
       if (review.overridden) {
         const direction: 'upgrade' | 'downgrade' =
           review.verdict === 'fail' ? 'upgrade' : 'downgrade';
@@ -142,12 +151,14 @@ export class ReviewFixLoop {
       }
 
       // --- FIX ---
+      const fixerHistoryContext = await this.readHistoryContext(ctx, 'fixer');
       const fix = await deps.runFix(ctx, {
         useFallback,
         ...(useFallback && lastFixInvocationId !== undefined
           ? { previousInvocationId: lastFixInvocationId }
           : {}),
         ...(input.architectPlan !== undefined ? { architectPlan: input.architectPlan } : {}),
+        ...(fixerHistoryContext ? { historyContext: fixerHistoryContext } : {}),
       });
       lastFixInvocationId = fix.invocationId;
 
@@ -271,5 +282,19 @@ export class ReviewFixLoop {
     if (this.deps.cleanArtifacts) {
       await this.deps.cleanArtifacts(ctx);
     }
+  }
+
+  private async readHistoryContext(
+    ctx: StepContext,
+    audience: ReviewLoopHistoryAudience,
+  ): Promise<string | undefined> {
+    if (!this.deps.loopHistory) {
+      return undefined;
+    }
+    const history = await this.deps.loopHistory.read(ctx);
+    if (!history || history.length === 0) {
+      return undefined;
+    }
+    return this.deps.loopHistory.format(history, audience);
   }
 }
