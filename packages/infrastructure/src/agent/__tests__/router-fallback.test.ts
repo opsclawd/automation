@@ -465,8 +465,9 @@ describe('AgentRuntimeRouter fallback', () => {
       }
     });
 
-    it('triggers token_limit_exceeded when stderr contains underscore-delimited token_limit_exceeded (real error pattern)', async () => {
-      const stderrPath = '/tmp/test-stderr-tle-underscore.log';
+    it('does not trigger token_limit_exceeded when stderr contains underscore-delimited token_limit_exceeded (enum name in docs)', async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'router-fallback-tle-underscore-'));
+      const stderrPath = join(tmpDir, 'stderr.log');
       writeFileSync(
         stderrPath,
         '| token_limit_exceeded | The model context window was exceeded | Reduce prompt size |',
@@ -499,10 +500,96 @@ describe('AgentRuntimeRouter fallback', () => {
         await router.invoke(req());
 
         const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-        // Should escalate to fallback — token_limit_exceeded is a real error
-        expect(rows.length).toBe(2);
+        // Should NOT escalate to fallback — token_limit_exceeded here is just a doc name
+        expect(rows.length).toBe(1);
       } finally {
-        if (cleanup) unlinkSync(stderrPath);
+        if (cleanup) rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('triggers token_limit_exceeded on various natural language forms of token limit errors', async () => {
+      const cases = [
+        'Token rate limit exceeded',
+        'token usage limit exceeded',
+        'Token limit exceeded',
+      ];
+      for (const text of cases) {
+        const tmpDir = mkdtempSync(
+          join(tmpdir(), `router-fallback-tle-cases-${text.replace(/\s+/g, '-')}-`),
+        );
+        const stderrPath = join(tmpDir, 'stderr.log');
+        writeFileSync(stderrPath, text);
+        let cleanup = true;
+        const inv = new FakeAgentInvocationPort();
+        const adapter = new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 1,
+          durationMs: 1000,
+          stdoutPath: '/s',
+          stderrPath,
+          contractViolations: [],
+          outcome: 'failed',
+        });
+        const config = cfg();
+        config.phaseProfiles['plan-design'].fallbackTriggers = ['token_limit_exceeded'];
+        const router = new AgentRuntimeRouter({
+          agent: config,
+          adapters: { opencode: adapter, pi: adapter },
+          invocationRepository: inv,
+          clock: () => FIXED_NOW,
+          idFactory: () => 'inv-tle-case',
+          readPromptChars: () => 100,
+        });
+
+        try {
+          await router.invoke(req());
+          const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+          expect(rows.length).toBe(2);
+        } finally {
+          if (cleanup) rmSync(tmpDir, { recursive: true, force: true });
+        }
+      }
+    });
+
+    it('does not trigger token_limit_exceeded when stderr matches literal token.*limit regex pattern string', async () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), 'router-fallback-tle-literal-regex-'));
+      const stderrPath = join(tmpDir, 'stderr.log');
+      writeFileSync(
+        stderrPath,
+        "export REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|token.*limit.*exceed'",
+      );
+      let cleanup = true;
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 1,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['token_limit_exceeded'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-tle-literal',
+        readPromptChars: () => 100,
+      });
+
+      try {
+        await router.invoke(req());
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        expect(rows.length).toBe(1);
+      } finally {
+        if (cleanup) rmSync(tmpDir, { recursive: true, force: true });
       }
     });
   });

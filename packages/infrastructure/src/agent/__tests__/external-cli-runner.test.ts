@@ -789,13 +789,17 @@ describe('runExternalCli', () => {
       }
     });
 
-    it('does not reclassify zero-exit outcome when provider error appears only at the beginning of a very long stderr stream (fixing false positive)', async () => {
+    it('does not reclassify zero-exit outcome on environment variable dumps or bash tracing containing provider error pattern', async () => {
       const cwd = makeTmpDir();
       const artifactsDir = makeTmpDir();
       try {
-        // Simulate a docs file dump containing "Quota exceeded" on line 1, followed by 200+ harmless lines
-        const scriptLines = ['#!/bin/bash'];
-        scriptLines.push('echo "Quota exceeded: API limit reached" >&2');
+        // Simulate env var dumps and bash tracing containing patterns, followed by many lines of log/docs content
+        const scriptLines = [
+          '#!/bin/bash',
+          'echo "export REVIEWER_PROVIDER_ERROR_PATTERNS=\'AI_APICallError\'" >&2',
+          'echo "+ AI_APICallError: HTTP 500 Internal Server Error" >&2',
+          'echo "export SOME_PATTERNS=\'Quota limit exceeded\'" >&2',
+        ];
         for (let i = 1; i <= 250; i++) {
           scriptLines.push(`echo "docs content line ${i}" >&2`);
         }

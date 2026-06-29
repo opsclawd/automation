@@ -70,7 +70,7 @@ describe('testQuotaPatterns', () => {
 
   it('does not match quota regex pattern string in env-var assignment (default mode)', () => {
     const result = testQuotaPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|quota.*exceed'",
+      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|quota.*exceed'",
     );
     expect(result).toBeNull();
   });
@@ -162,13 +162,13 @@ describe('testQuotaPatterns', () => {
     expect(result).toContain('Quota exceeded');
   });
 
-  it('matches underscore-delimited quota_exceeded (enum name in docs)', () => {
-    expect(testQuotaPatterns('quota_exceeded')).toBeTruthy();
+  it('does not match underscore-delimited quota_exceeded (enum name in docs)', () => {
+    expect(testQuotaPatterns('quota_exceeded')).toBeNull();
   });
 
-  it('matches underscore-delimited quota_exceeded in a reference table row', () => {
+  it('does not match underscore-delimited quota_exceeded in a reference table row', () => {
     const tableRow = '| quota_exceeded | The request quota was exhausted | Retry after reset |';
-    expect(testQuotaPatterns(tableRow)).toBeTruthy();
+    expect(testQuotaPatterns(tableRow)).toBeNull();
   });
 
   it('still matches "Quota exceeded" natural-language form', () => {
@@ -183,7 +183,7 @@ describe('testQuotaPatterns', () => {
 
   it('ignores quota pattern in non-structural line (structuralOnly: true)', () => {
     const result = testQuotaPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
       { structuralOnly: true },
     );
     expect(result).toBeNull();
@@ -219,6 +219,12 @@ describe('testQuotaPatterns', () => {
     expect(result).toBeTruthy();
     expect(result).toContain('Quota exceeded');
   });
+
+  it('handles non-positive maxLines correctly (does not match)', () => {
+    const text = ['Quota exceeded: API limit'].join('\n');
+    expect(testQuotaPatterns(text, { maxLines: 0 })).toBeNull();
+    expect(testQuotaPatterns(text, { maxLines: -5 })).toBeNull();
+  });
 });
 
 describe('testProviderErrorPatterns', () => {
@@ -239,7 +245,7 @@ describe('testProviderErrorPatterns', () => {
 
   it('matches provider error in non-structural line (default mode)', () => {
     const result = testProviderErrorPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
     );
     expect(result).toBeTruthy();
   });
@@ -311,7 +317,7 @@ describe('testProviderErrorPatterns', () => {
 
   it('ignores provider error in non-structural line (structuralOnly: true)', () => {
     const result = testProviderErrorPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
       { structuralOnly: true },
     );
     expect(result).toBeNull();
@@ -344,5 +350,27 @@ describe('testProviderErrorPatterns', () => {
     const result = testProviderErrorPatterns(text, { maxLines: 2 });
     expect(result).toBeTruthy();
     expect(result).toContain('AI_APICallError');
+  });
+
+  it('matches various natural language forms of quota errors', () => {
+    expect(testQuotaPatterns('Quota limit exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('Quota has been exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('Quota is exceeded')).toBeTruthy();
+  });
+
+  it('ignores environment variable dumps or bash tracing in testQuotaPatterns', () => {
+    expect(testQuotaPatterns("export REVIEWER_PROVIDER_ERROR_PATTERNS='quota.*exceed'")).toBeNull();
+    expect(testQuotaPatterns("export SOME_PATTERNS='Quota limit exceeded'")).toBeNull();
+    expect(testQuotaPatterns('+ Quota limit exceeded')).toBeNull();
+    expect(testQuotaPatterns('++ Quota limit exceeded')).toBeNull();
+  });
+
+  it('ignores environment variable dumps or bash tracing in testProviderErrorPatterns', () => {
+    expect(
+      testProviderErrorPatterns("export REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError'"),
+    ).toBeNull();
+    expect(testProviderErrorPatterns("export SOME_PATTERNS='AI_APICallError'")).toBeNull();
+    expect(testProviderErrorPatterns('+ AI_APICallError')).toBeNull();
+    expect(testProviderErrorPatterns('++ AI_APICallError')).toBeNull();
   });
 });
