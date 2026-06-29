@@ -1,7 +1,7 @@
 export const QUOTA_PATTERNS = [
   /Usage limit reached/i,
   /"statusCode":\s*429/,
-  /rate_limit_exceeded/i,
+  /rate[\s_-]*limit[\s_-]*exceed/i,
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
   /quota[a-zA-Z0-9\s_:,().-]*exceed/i,
@@ -20,7 +20,7 @@ export const PROVIDER_ERROR_PATTERNS = [
 export const TOKEN_LIMIT_PATTERNS = [
   /context_length_exceeded/i,
   /prompt is too long/i,
-  /token[s]?[a-zA-Z0-9\s_:,().-]*limit[a-zA-Z0-9\s_:,().-]*exceed/i,
+  /token[s]?(?![a-zA-Z0-9\s_:,().-]*rate[\s_-]*limit)[a-zA-Z0-9\s_:,().-]*limit[a-zA-Z0-9\s_:,().-]*exceed/i,
   /maximum context length/i,
   /request too large/i,
 ] as const;
@@ -38,23 +38,24 @@ export function getLastLines(text: string, maxLines?: number): string[] {
       return [];
     }
     let startIdx = 0;
-    let count = 0;
-    for (let i = cleanText.length - 1; i >= 0; i--) {
-      if (cleanText[i] === '\n') {
-        count++;
-        if (count === maxLines) {
-          startIdx = i + 1;
-          break;
-        }
+    let searchIdx = cleanText.length - 1;
+    for (let count = 0; count < maxLines; count++) {
+      const nextIdx = cleanText.lastIndexOf('\n', searchIdx);
+      if (nextIdx === -1) {
+        startIdx = 0;
+        break;
       }
+      startIdx = nextIdx + 1;
+      searchIdx = nextIdx - 1;
     }
     return cleanText.slice(startIdx).split('\n');
   }
   return cleanText.split('\n');
 }
 
-export function testQuotaPatterns(
+function testPatterns(
   text: string,
+  patterns: readonly RegExp[],
   options?: { structuralOnly?: boolean; maxLines?: number },
 ): string | null {
   const structuralOnly = options?.structuralOnly ?? false;
@@ -68,53 +69,30 @@ export function testQuotaPatterns(
     ) {
       continue;
     }
-    for (const pattern of QUOTA_PATTERNS) {
+    for (const pattern of patterns) {
       if (pattern.test(line)) return line.trim();
     }
   }
   return null;
+}
+
+export function testQuotaPatterns(
+  text: string,
+  options?: { structuralOnly?: boolean; maxLines?: number },
+): string | null {
+  return testPatterns(text, QUOTA_PATTERNS, options);
 }
 
 export function testProviderErrorPatterns(
   text: string,
   options?: { structuralOnly?: boolean; maxLines?: number },
 ): string | null {
-  const structuralOnly = options?.structuralOnly ?? false;
-  const lines = getLastLines(text, options?.maxLines);
-  for (const line of lines) {
-    if (structuralOnly && !isOpenCodeLogLine(line)) continue;
-    if (
-      line.includes('_PATTERNS=') ||
-      line.includes('_PROVIDER_ERROR_PATTERNS') ||
-      line.trimStart().startsWith('+')
-    ) {
-      continue;
-    }
-    for (const pattern of PROVIDER_ERROR_PATTERNS) {
-      if (pattern.test(line)) return line.trim();
-    }
-  }
-  return null;
+  return testPatterns(text, PROVIDER_ERROR_PATTERNS, options);
 }
 
 export function testTokenLimitPatterns(
   text: string,
   options?: { structuralOnly?: boolean; maxLines?: number },
 ): string | null {
-  const structuralOnly = options?.structuralOnly ?? false;
-  const lines = getLastLines(text, options?.maxLines);
-  for (const line of lines) {
-    if (structuralOnly && !isOpenCodeLogLine(line)) continue;
-    if (
-      line.includes('_PATTERNS=') ||
-      line.includes('_PROVIDER_ERROR_PATTERNS') ||
-      line.trimStart().startsWith('+')
-    ) {
-      continue;
-    }
-    for (const pattern of TOKEN_LIMIT_PATTERNS) {
-      if (pattern.test(line)) return line.trim();
-    }
-  }
-  return null;
+  return testPatterns(text, TOKEN_LIMIT_PATTERNS, options);
 }

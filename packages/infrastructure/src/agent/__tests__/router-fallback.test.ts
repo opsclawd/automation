@@ -508,11 +508,7 @@ describe('AgentRuntimeRouter fallback', () => {
     });
 
     it('triggers token_limit_exceeded on various natural language forms of token limit errors', async () => {
-      const cases = [
-        'Token rate limit exceeded',
-        'token usage limit exceeded',
-        'Token limit exceeded',
-      ];
+      const cases = ['token usage limit exceeded', 'Token limit exceeded'];
       for (const text of cases) {
         const tmpDir = mkdtempSync(
           join(tmpdir(), `router-fallback-tle-cases-${text.replace(/\s+/g, '-')}-`),

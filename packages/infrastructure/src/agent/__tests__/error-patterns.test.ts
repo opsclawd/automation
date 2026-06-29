@@ -233,6 +233,9 @@ describe('testQuotaPatterns', () => {
     expect(testQuotaPatterns('quota_limit_exceeded')).toBeTruthy();
     expect(testQuotaPatterns('quota-rate-exceed')).toBeTruthy();
     expect(testQuotaPatterns('quota_exceed')).toBeTruthy();
+    expect(testQuotaPatterns('token_rate_limit_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('tokens_rate_limit_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('tokens rate limit exceeded')).toBeTruthy();
   });
 
   it('matches quota errors containing common punctuation', () => {
@@ -401,11 +404,11 @@ describe('testTokenLimitPatterns', () => {
   });
 
   it('matches token limits with underscores, dashes, spaces, and rate limit prefixes', () => {
-    expect(testTokenLimitPatterns('token_rate_limit_exceeded')).toBeTruthy();
-    expect(testTokenLimitPatterns('tokens_rate_limit_exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('token_rate_limit_exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('tokens_rate_limit_exceeded')).toBeNull();
     expect(testTokenLimitPatterns('token_limit_exceeded')).toBeTruthy();
     expect(testTokenLimitPatterns('token-limit-exceeded')).toBeTruthy();
-    expect(testTokenLimitPatterns('tokens rate limit exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens rate limit exceeded')).toBeNull();
     expect(testTokenLimitPatterns('tokens_limit_exceed')).toBeTruthy();
   });
 

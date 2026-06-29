@@ -474,7 +474,7 @@ export function normalizeRoutingPhase(phaseId: string): string {
 function isTokenLimitError(result: AgentInvocationResult): boolean {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
-    return testTokenLimitPatterns(stderr, { maxLines: 200 }) !== null;
+    return testTokenLimitPatterns(stderr, { maxLines: 2000 }) !== null;
   } catch {
     return false;
   }
@@ -483,7 +483,7 @@ function isTokenLimitError(result: AgentInvocationResult): boolean {
 function isQuotaError(result: AgentInvocationResult): boolean {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
-    return testQuotaPatterns(stderr) !== null;
+    return testQuotaPatterns(stderr, { maxLines: 2000 }) !== null;
   } catch {
     return false;
   }
