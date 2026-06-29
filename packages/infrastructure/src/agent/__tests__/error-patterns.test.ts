@@ -414,4 +414,26 @@ describe('testTokenLimitPatterns', () => {
     expect(testTokenLimitPatterns('+ token_limit_exceeded')).toBeNull();
     expect(testTokenLimitPatterns('++ token_limit_exceeded')).toBeNull();
   });
+
+  it('ignores indented bash tracing lines', () => {
+    expect(testProviderErrorPatterns('  + AI_APICallError')).toBeNull();
+    expect(testProviderErrorPatterns('\t++ AI_APICallError')).toBeNull();
+    expect(testQuotaPatterns('  + Quota limit exceeded')).toBeNull();
+    expect(testQuotaPatterns('\t++ Quota limit exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('  + token_limit_exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('\t++ token_limit_exceeded')).toBeNull();
+  });
+
+  it('handles trailing newline correctly without losing the last non-empty line', () => {
+    const text = 'harmless line 1\nAI_APICallError: 500\n';
+    const result = testProviderErrorPatterns(text, { maxLines: 1 });
+    expect(result).toBeTruthy();
+    expect(result).toContain('AI_APICallError');
+  });
+
+  it('scans correct line range when maxLines is larger and trailing newline is present', () => {
+    const text = 'AI_APICallError: 500\nharmless line 1\nharmless line 2\n';
+    expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeNull();
+    expect(testProviderErrorPatterns(text, { maxLines: 3 })).toBeTruthy();
+  });
 });

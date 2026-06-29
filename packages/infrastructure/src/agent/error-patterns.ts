@@ -5,7 +5,6 @@ export const QUOTA_PATTERNS = [
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
   /quota[a-zA-Z0-9\s_-]*exceed/i,
-  /\bquota_exceeded\b/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [
@@ -24,7 +23,6 @@ export const TOKEN_LIMIT_PATTERNS = [
   /token[s]?[a-zA-Z0-9\s_-]*limit[a-zA-Z0-9\s_-]*exceed/i,
   /maximum context length/i,
   /request too large/i,
-  /\btoken_limit_exceeded\b/i,
 ] as const;
 
 const OPENCODE_LOG_LINE = /^\s*(INFO|ERROR|WARN|DEBUG)\s+\d{4}-\d{2}-\d{2}T/;
@@ -38,10 +36,11 @@ function getLastLines(text: string, maxLines?: number): string[] {
     if (maxLines <= 0) {
       return [];
     }
+    const cleanText = text.endsWith('\n') ? text.slice(0, -1) : text;
     let startIdx = 0;
     let count = 0;
-    for (let i = text.length - 1; i >= 0; i--) {
-      if (text[i] === '\n') {
+    for (let i = cleanText.length - 1; i >= 0; i--) {
+      if (cleanText[i] === '\n') {
         count++;
         if (count === maxLines) {
           startIdx = i + 1;
@@ -49,7 +48,7 @@ function getLastLines(text: string, maxLines?: number): string[] {
         }
       }
     }
-    return text.slice(startIdx).split('\n');
+    return cleanText.slice(startIdx).split('\n');
   }
   return text.split('\n');
 }
@@ -65,7 +64,7 @@ export function testQuotaPatterns(
     if (
       line.includes('_PATTERNS=') ||
       line.includes('_PROVIDER_ERROR_PATTERNS') ||
-      line.startsWith('+')
+      line.trimStart().startsWith('+')
     ) {
       continue;
     }
@@ -87,7 +86,7 @@ export function testProviderErrorPatterns(
     if (
       line.includes('_PATTERNS=') ||
       line.includes('_PROVIDER_ERROR_PATTERNS') ||
-      line.startsWith('+')
+      line.trimStart().startsWith('+')
     ) {
       continue;
     }
@@ -109,7 +108,7 @@ export function testTokenLimitPatterns(
     if (
       line.includes('_PATTERNS=') ||
       line.includes('_PROVIDER_ERROR_PATTERNS') ||
-      line.startsWith('+')
+      line.trimStart().startsWith('+')
     ) {
       continue;
     }

@@ -739,7 +739,7 @@ describe('runExternalCli', () => {
   });
 
   describe('provider error reclassification on zero-exit path', () => {
-    it('reclassifies outcome to failed when provider error appears in first 200 lines of stderr (exit 0)', async () => {
+    it('reclassifies outcome to failed when provider error appears in last 200 lines of stderr (exit 0)', async () => {
       const cwd = makeTmpDir();
       const artifactsDir = makeTmpDir();
       try {
