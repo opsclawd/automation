@@ -737,4 +737,56 @@ describe('runExternalCli', () => {
       }
     });
   });
+
+  describe('provider error reclassification on zero-exit path', () => {
+    it('reclassifies outcome to failed when provider error appears in first 200 lines of stderr (exit 0)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: ['-c', 'echo "AI_APICallError: HTTP 500 Internal Server Error" >&2'],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('failed');
+        expect(result.contractViolations).toContain('provider_error');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not reclassify zero-exit outcome when provider error only appears after line 200 of stderr (regression: issue-542)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        // Simulate codex echoing a docs file: 200 harmless lines, then "Quota exceeded" on line 201
+        const scriptLines = ['#!/bin/bash'];
+        for (let i = 1; i <= 200; i++) {
+          scriptLines.push(`echo "docs content line ${i}" >&2`);
+        }
+        // Line 201: natural-language quota error — real-looking but past maxLines limit
+        scriptLines.push('echo "Quota exceeded: API limit reached" >&2');
+        const scriptPath = join(cwd, 'stderr-gen.sh');
+        writeFileSync(scriptPath, scriptLines.join('\n'));
+        execSync(`chmod +x ${scriptPath}`);
+
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: [scriptPath],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('success');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+  });
 });
