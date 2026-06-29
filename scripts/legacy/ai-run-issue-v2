@@ -35,7 +35,7 @@ if [[ -z "$ISSUE_NUM" ]]; then
 fi
 
 # ── env / defaults ────────────────────────────────────────────────────────────
-REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 cd "$REPO_ROOT"
 
 declare -r _TSX_LOADER="${REPO_ROOT}/apps/cli/node_modules/tsx/dist/loader.mjs"
@@ -4861,7 +4861,7 @@ if [[ "$PHASE" == "done" ]]; then
     AI_RUN_EVENTS_FILE="${AI_RUN_EVENTS_FILE:-}" \
     AI_RUN_DISPLAY_ID="${AI_RUN_DISPLAY_ID:-}" \
     AI_RUN_UUID="$RUN_ID" \
-    nohup "${REPO_ROOT}/scripts/ai-pr-review-poll" "$PR_NUM_VALUE" "$ISSUE_NUM" \
+    nohup "${REPO_ROOT}/scripts/legacy/ai-pr-review-poll" "$PR_NUM_VALUE" "$ISSUE_NUM" \
       "$_PR_REVIEW_MAX_POLLS" "$_PR_REVIEW_POLL_INTERVAL" \
       >> "${ISSUES_DIR}/poll-pr.log" 2>&1 &
     POLL_PID=$!
