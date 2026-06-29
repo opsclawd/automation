@@ -162,13 +162,13 @@ describe('testQuotaPatterns', () => {
     expect(result).toContain('Quota exceeded');
   });
 
-  it('does not match underscore-delimited quota_exceeded (enum name in docs)', () => {
-    expect(testQuotaPatterns('quota_exceeded')).toBeNull();
+  it('matches underscore-delimited quota_exceeded (enum name in docs)', () => {
+    expect(testQuotaPatterns('quota_exceeded')).toBeTruthy();
   });
 
-  it('does not match underscore-delimited quota_exceeded in a reference table row', () => {
+  it('matches underscore-delimited quota_exceeded in a reference table row', () => {
     const tableRow = '| quota_exceeded | The request quota was exhausted | Retry after reset |';
-    expect(testQuotaPatterns(tableRow)).toBeNull();
+    expect(testQuotaPatterns(tableRow)).toBeTruthy();
   });
 
   it('still matches "Quota exceeded" natural-language form', () => {
@@ -207,14 +207,14 @@ describe('testQuotaPatterns', () => {
   });
 
   it('respects maxLines: stops scanning before the matching line', () => {
-    const text = ['line 1 harmless', 'line 2 harmless', 'Quota exceeded: API limit'].join('\n');
-    // maxLines: 2 — only lines 1 and 2 are scanned; "Quota exceeded" is on line 3
+    const text = ['Quota exceeded: API limit', 'line 2 harmless', 'line 3 harmless'].join('\n');
+    // maxLines: 2 — only the last 2 lines are scanned; "Quota exceeded" is on line 1 (skipped)
     expect(testQuotaPatterns(text, { maxLines: 2 })).toBeNull();
   });
 
   it('respects maxLines: includes matching line when within limit', () => {
-    const text = ['Quota exceeded: API limit', 'line 2', 'line 3'].join('\n');
-    // maxLines: 2 — line 1 is in scope
+    const text = ['line 1 harmless', 'line 2 harmless', 'Quota exceeded: API limit'].join('\n');
+    // maxLines: 2 — last 2 lines are scanned; "Quota exceeded" is on line 3 (in scope)
     const result = testQuotaPatterns(text, { maxLines: 2 });
     expect(result).toBeTruthy();
     expect(result).toContain('Quota exceeded');
@@ -334,13 +334,13 @@ describe('testProviderErrorPatterns', () => {
   });
 
   it('respects maxLines: stops scanning before the matching line', () => {
-    const text = ['line 1 harmless', 'line 2 harmless', 'AI_APICallError: 500'].join('\n');
-    // maxLines: 2 — only lines 1-2 are scanned; AI_APICallError is on line 3
+    const text = ['AI_APICallError: 500', 'line 2 harmless', 'line 3 harmless'].join('\n');
+    // maxLines: 2 — only the last 2 lines are scanned; AI_APICallError is on line 1
     expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeNull();
   });
 
   it('respects maxLines: includes matching line when within limit', () => {
-    const text = ['AI_APICallError: 500', 'line 2', 'line 3'].join('\n');
+    const text = ['line 1 harmless', 'line 2 harmless', 'AI_APICallError: 500'].join('\n');
     const result = testProviderErrorPatterns(text, { maxLines: 2 });
     expect(result).toBeTruthy();
     expect(result).toContain('AI_APICallError');

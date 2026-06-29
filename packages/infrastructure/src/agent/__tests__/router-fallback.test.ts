@@ -465,9 +465,8 @@ describe('AgentRuntimeRouter fallback', () => {
       }
     });
 
-    it('does not trigger token_limit_exceeded when stderr contains underscore-delimited token_limit_exceeded (enum name in docs)', async () => {
+    it('triggers token_limit_exceeded when stderr contains underscore-delimited token_limit_exceeded (real error pattern)', async () => {
       const stderrPath = '/tmp/test-stderr-tle-underscore.log';
-      // This is the false-positive scenario: a docs reference table row echoed to stderr
       writeFileSync(
         stderrPath,
         '| token_limit_exceeded | The model context window was exceeded | Reduce prompt size |',
@@ -500,8 +499,8 @@ describe('AgentRuntimeRouter fallback', () => {
         await router.invoke(req());
 
         const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-        // Should NOT escalate to fallback — token_limit_exceeded with underscore is not a real error
-        expect(rows.length).toBe(1);
+        // Should escalate to fallback — token_limit_exceeded is a real error
+        expect(rows.length).toBe(2);
       } finally {
         if (cleanup) unlinkSync(stderrPath);
       }

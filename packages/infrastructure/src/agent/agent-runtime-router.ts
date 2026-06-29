@@ -474,7 +474,7 @@ export function normalizeRoutingPhase(phaseId: string): string {
 const TOKEN_LIMIT_PATTERNS = [
   /context_length_exceeded/i,
   /prompt is too long/i,
-  /token\s+limit.*exceed/i,
+  /token[s\s_-]+limit.*exceed/i,
   /maximum context length/i,
   /request too large/i,
 ];

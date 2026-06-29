@@ -4,7 +4,7 @@ export const QUOTA_PATTERNS = [
   /rate_limit_exceeded/i,
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
-  /quota\s+exceed/i,
+  /quota[\s_-]+exceed/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [
@@ -29,7 +29,7 @@ export function testQuotaPatterns(
 ): string | null {
   const structuralOnly = options?.structuralOnly ?? false;
   const rawLines = text.split('\n');
-  const lines = options?.maxLines !== undefined ? rawLines.slice(0, options.maxLines) : rawLines;
+  const lines = options?.maxLines !== undefined ? rawLines.slice(-options.maxLines) : rawLines;
   for (const line of lines) {
     if (structuralOnly && !isOpenCodeLogLine(line)) continue;
     for (const pattern of QUOTA_PATTERNS) {
@@ -45,7 +45,7 @@ export function testProviderErrorPatterns(
 ): string | null {
   const structuralOnly = options?.structuralOnly ?? false;
   const rawLines = text.split('\n');
-  const lines = options?.maxLines !== undefined ? rawLines.slice(0, options.maxLines) : rawLines;
+  const lines = options?.maxLines !== undefined ? rawLines.slice(-options.maxLines) : rawLines;
   for (const line of lines) {
     if (structuralOnly && !isOpenCodeLogLine(line)) continue;
     for (const pattern of PROVIDER_ERROR_PATTERNS) {

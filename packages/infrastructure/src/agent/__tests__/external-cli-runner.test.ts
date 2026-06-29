@@ -759,18 +759,47 @@ describe('runExternalCli', () => {
       }
     });
 
-    it('does not reclassify zero-exit outcome when provider error only appears after line 200 of stderr (regression: issue-542)', async () => {
+    it('reclassifies zero-exit outcome when provider error appears at the end of a long stderr stream (fixing false negative)', async () => {
       const cwd = makeTmpDir();
       const artifactsDir = makeTmpDir();
       try {
-        // Simulate codex echoing a docs file: 200 harmless lines, then "Quota exceeded" on line 201
+        // Simulate a command echoing 200 harmless lines, then "Quota exceeded" at the end
         const scriptLines = ['#!/bin/bash'];
         for (let i = 1; i <= 200; i++) {
           scriptLines.push(`echo "docs content line ${i}" >&2`);
         }
-        // Line 201: natural-language quota error — real-looking but past maxLines limit
         scriptLines.push('echo "Quota exceeded: API limit reached" >&2');
         const scriptPath = join(cwd, 'stderr-gen.sh');
+        writeFileSync(scriptPath, scriptLines.join('\n'));
+        execSync(`chmod +x ${scriptPath}`);
+
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: [scriptPath],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('failed');
+        expect(result.contractViolations).toContain('provider_error');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not reclassify zero-exit outcome when provider error appears only at the beginning of a very long stderr stream (fixing false positive)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        // Simulate a docs file dump containing "Quota exceeded" on line 1, followed by 200+ harmless lines
+        const scriptLines = ['#!/bin/bash'];
+        scriptLines.push('echo "Quota exceeded: API limit reached" >&2');
+        for (let i = 1; i <= 250; i++) {
+          scriptLines.push(`echo "docs content line ${i}" >&2`);
+        }
+        const scriptPath = join(cwd, 'stderr-gen-fp.sh');
         writeFileSync(scriptPath, scriptLines.join('\n'));
         execSync(`chmod +x ${scriptPath}`);
 
