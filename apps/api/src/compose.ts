@@ -85,6 +85,7 @@ import {
   type GitPort,
   type RevalidationResult,
   type PostFixGateResult,
+  type ReviewStepOptions,
   type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
   type ImplementStepLoop as ImplementStepLoopType,
@@ -859,8 +860,10 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const runReview = async (
         ctx: StepContext,
-        gateResult?: PostFixGateResult,
+        opts?: ReviewStepOptions | PostFixGateResult,
       ): Promise<ReviewStepResult> => {
+        const gateResult: PostFixGateResult | undefined =
+          opts && 'outcome' in opts ? opts : opts?.gateResult;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -890,7 +893,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           `Repository: ${ctx.repoId}`,
           '',
           '## TASK',
-          `Run: git diff origin/${opts.baseBranch ?? resolvedDefaultBranch}...HEAD`,
+          `Run: git diff origin/${resolvedDefaultBranch}...HEAD`,
           'Read the diff carefully.',
           '',
           'Write a code review to ./code-review.md.',
