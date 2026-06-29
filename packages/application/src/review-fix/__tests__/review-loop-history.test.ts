@@ -21,12 +21,17 @@ describe('formatReviewLoopHistoryForPrompt', () => {
           ],
           excerpt: 'Please add explicit return type to compile()',
         },
+        fix: {
+          verdict: 'done_with_fixes',
+          invocationId: 'fix-1',
+          summary: 'Added return type to compile() function',
+        },
         revalidation: {
           passed: false,
           validationRunId: 'val-1',
           category: 'build',
         },
-        outcome: 'unresolved',
+        outcome: 'fixed',
       },
     ];
 
@@ -42,6 +47,10 @@ describe('formatReviewLoopHistoryForPrompt', () => {
     // Reviewer instruction check:
     expect(result).toMatch(/history is context, not authority/i);
     expect(result).toMatch(/inspect the current diff/i);
+
+    expect(result).toContain('Outcome: fixed');
+    expect(result).toContain('Fix Verdict: done_with_fixes');
+    expect(result).toContain('Fix Summary: Added return type to compile() function');
   });
 
   it('formats history for fixer correctly', () => {

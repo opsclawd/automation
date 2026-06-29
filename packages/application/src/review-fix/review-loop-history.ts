@@ -64,6 +64,13 @@ export function formatReviewLoopHistoryForPrompt(
             .join('\n'),
         );
       }
+      lines.push(`  Outcome: ${entry.outcome}`);
+      if (entry.fix?.verdict) {
+        lines.push(`  Fix Verdict: ${entry.fix.verdict}`);
+      }
+      if (entry.fix?.summary) {
+        lines.push(`  Fix Summary: ${entry.fix.summary}`);
+      }
     } else {
       // audience === 'fixer'
       if (entry.fix) {
