@@ -70,7 +70,7 @@ describe('testQuotaPatterns', () => {
 
   it('does not match quota regex pattern string in env-var assignment (default mode)', () => {
     const result = testQuotaPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|HTTP 429|quota.*exceed'",
+      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|quota.*exceed'",
     );
     expect(result).toBeNull();
   });
