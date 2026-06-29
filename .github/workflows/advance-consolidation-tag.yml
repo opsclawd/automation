@@ -1,0 +1,37 @@
+name: Advance consolidation tag
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  advance-tag:
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'consolidation/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Extract new anchor and advance tag
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          NEW_ANCHOR=$(echo "$PR_BODY" | sed -n 's/.*\*\*New anchor:\*\* `\([0-9a-f]\{7,40\}\)`.*/\1/p')
+          if [[ -z "$NEW_ANCHOR" ]]; then
+            echo "Could not parse New anchor from PR body. Falling back to the merge commit SHA."
+            NEW_ANCHOR="${{ github.event.pull_request.merge_commit_sha }}"
+          fi
+
+          echo "Advancing consolidation/last-run tag to $NEW_ANCHOR"
+          git tag -f consolidation/last-run "$NEW_ANCHOR"
+          git push origin "refs/tags/consolidation/last-run" --force

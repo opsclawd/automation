@@ -40,9 +40,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code
-
       - name: Resolve since anchor
         id: anchor
         env:
@@ -83,6 +80,9 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@0.2.9
+
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
 
@@ -122,21 +122,11 @@ jobs:
           fi
 
           git push origin "$BRANCH_NAME"
+
+          printf -v PR_BODY "Automated weekly consolidation of \`compound.md\` artifacts into \`docs/solutions/\`.\n\n**Since anchor:** \`%s\`\n**New anchor:** \`%s\`\n\nReview the curated changes and merge if they look correct." "${SINCE:-<none>}" "${NEW_ANCHOR}"
+
           gh pr create \
             --title "docs(solutions): consolidate compound artifacts (since ${SINCE_SHORT})" \
-            --body "Automated weekly consolidation of \`compound.md\` artifacts into \`docs/solutions/\`.
-
-          **Since anchor:** \`${SINCE:-<none>}\`
-          **New anchor:** \`${NEW_ANCHOR}\`
-
-          Review the curated changes and merge if they look correct." \
+            --body "$PR_BODY" \
             --base main \
             --head "$BRANCH_NAME"
-
-      - name: Advance consolidation/last-run tag
-        if: ${{ inputs.dry_run != true }}
-        env:
-          NEW_ANCHOR: ${{ steps.new_anchor.outputs.sha }}
-        run: |
-          git tag -f consolidation/last-run "$NEW_ANCHOR"
-          git push origin "refs/tags/consolidation/last-run" --force
