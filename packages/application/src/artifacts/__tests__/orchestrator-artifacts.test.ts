@@ -19,6 +19,7 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'code-review.md',
       'review.md',
       'task-manifest.json',
+      'implementation-log.md',
       'arbiter-result.json',
       'review-loop-history.json',
       'compound-draft.md',
