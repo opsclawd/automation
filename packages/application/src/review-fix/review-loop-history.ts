@@ -1,0 +1,99 @@
+import type { ReviewLoopHistoryEntry, ReviewLoopHistoryAudience } from './types.js';
+
+export function formatReviewLoopHistoryForPrompt(
+  history: ReviewLoopHistoryEntry[],
+  audience: ReviewLoopHistoryAudience,
+  opts?: { maxEntries?: number; maxChars?: number },
+): string {
+  if (!history || history.length === 0) {
+    return '';
+  }
+
+  const maxEntries = opts?.maxEntries ?? 5;
+  const maxChars = opts?.maxChars ?? 4000;
+
+  // Use newest entries, preserving chronological order
+  const slicedHistory = history.slice(-maxEntries);
+
+  let header = '';
+  let instruction = '';
+
+  if (audience === 'reviewer') {
+    header = '## Prior Iteration History';
+    instruction = 'Note: Prior loop history is context, not authority; inspect the current diff.';
+  } else {
+    header = '## Prior Fix Attempts';
+    instruction =
+      'Note: Current code-review.md is primary; avoid repeating approaches already rejected.';
+  }
+
+  const entryStrings: string[] = [];
+
+  for (const entry of slicedHistory) {
+    const lines: string[] = [];
+    lines.push(`- Iteration ${entry.iteration}:`);
+
+    if (audience === 'reviewer') {
+      if (entry.review.verdict) {
+        lines.push(`  Verdict: ${entry.review.verdict}`);
+      }
+      if (entry.review.offendingFindings && entry.review.offendingFindings.length > 0) {
+        lines.push('  Offending Findings:');
+        for (const finding of entry.review.offendingFindings) {
+          lines.push(`    - [${finding.severity}] ${finding.summary}`);
+        }
+      }
+      if (entry.revalidation) {
+        const status = entry.revalidation.passed ? 'passed' : 'failed';
+        const parts: string[] = [];
+        if (entry.revalidation.category) {
+          parts.push(`Category: ${entry.revalidation.category}`);
+        }
+        if (entry.revalidation.validationRunId) {
+          parts.push(`ValidationRunId: ${entry.revalidation.validationRunId}`);
+        }
+        const suffix = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+        lines.push(`  Revalidation: ${status}${suffix}`);
+      }
+      if (entry.review.excerpt) {
+        lines.push('  Excerpt:');
+        lines.push(
+          entry.review.excerpt
+            .split('\n')
+            .map((l) => `    ${l}`)
+            .join('\n'),
+        );
+      }
+    } else {
+      // audience === 'fixer'
+      if (entry.fix) {
+        if (entry.fix.verdict) {
+          lines.push(`  Verdict: ${entry.fix.verdict}`);
+        }
+        if (entry.fix.headBeforeFix) {
+          lines.push(`  Head before fix: ${entry.fix.headBeforeFix}`);
+        }
+        if (entry.fix.summary) {
+          lines.push(`  Summary: ${entry.fix.summary}`);
+        }
+      }
+    }
+
+    entryStrings.push(lines.join('\n'));
+  }
+
+  const body = entryStrings.join('\n\n');
+  const fullText = `${header}\n\n${instruction}\n\n${body}\n`;
+
+  if (fullText.length <= maxChars) {
+    return fullText;
+  }
+
+  // Truncate at line boundaries where possible
+  const sliced = fullText.slice(0, maxChars);
+  const lastNewline = sliced.lastIndexOf('\n');
+  if (lastNewline > 0) {
+    return sliced.slice(0, lastNewline + 1);
+  }
+  return sliced;
+}
