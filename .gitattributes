@@ -1,5 +1,0 @@
-# legacy-parity.bats is an append-only registry of parity invariants.
-# Both sides of a merge may legitimately append new tests to the end of the
-# file; a conflict-marker resolution always drops one side's additions.
-# Union merge combines both sets of appended lines without conflict markers.
-scripts/lib/__tests__/legacy-parity.bats merge=union

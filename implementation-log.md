@@ -23,3 +23,18 @@ Implemented **Task 1: Remove Parity Gate CI And Gate Scripts**.
 - Verified all Vitest tests, ESLint, TypeScript typecheck, and Dependency Cruiser pass successfully (`pnpm test && pnpm lint && pnpm -r typecheck && pnpm depcruise`).
 - Checked that all deleted files are indeed absent and the CI workflow has been properly updated.
 - Committed all changes to branch `ai/issue-369`.
+
+# Implementation Log - Task 2
+
+Implemented **Task 2: Remove Legacy Parity Registry And Merge Attribute**.
+
+## Actions Taken
+- Deleted `scripts/lib/__tests__/legacy-parity.bats` to retire the legacy parity registry.
+- Deleted `.gitattributes` because removing the `legacy-parity.bats merge=union` rule and its explanatory comment left it empty.
+- Modified `scripts/lib/__tests__/seed-excludes.bats` to remove the two obsolete test cases:
+  1. `seed_excludes writes merge=union attribute for legacy-parity.bats`
+  2. `seed_excludes attributes seeding is idempotent — calling twice does not duplicate`
+
+## Verifications
+- Verified all 651 BATS tests passed (`pnpm test:bash`).
+- Verified all Vitest tests pass successfully (`pnpm test`).
