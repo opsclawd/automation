@@ -65,7 +65,7 @@ export class ReviewFixLoop {
           index: iterationIndex,
         },
       );
-      const review = await deps.runReview(ctx, gateResult);
+      const review = await deps.runReview(ctx, gateResult ? { gateResult } : undefined);
       if (review.overridden) {
         const direction: 'upgrade' | 'downgrade' =
           review.verdict === 'fail' ? 'upgrade' : 'downgrade';
