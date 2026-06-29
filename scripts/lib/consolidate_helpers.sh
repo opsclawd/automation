@@ -63,16 +63,16 @@ discover_inputs() {
     return 0
   fi
 
-  # filter to files modified after since_ref via mtime comparison
-  local since_epoch
-  since_epoch=$(git log -1 --format=%ct "$since_ref" 2>/dev/null) || {
+  git rev-parse --verify "$since_ref" >/dev/null 2>&1 || {
     warn "Invalid --since ref: '${since_ref}'. Use a valid commit, tag, or branch name."
     return 2
   }
+
+  local changed_files
+  changed_files=$(git diff --name-only --diff-filter=d "$since_ref" 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)
+
   echo "$all_files" | sed -n '/^$/!p' | while IFS= read -r f; do
-    local mtime
-    mtime=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
-    if [[ "$mtime" -gt "$since_epoch" ]]; then
+    if echo "$changed_files" | grep -Fqx "$f"; then
       echo "$f"
     fi
   done | sort
