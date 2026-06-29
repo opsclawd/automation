@@ -205,8 +205,6 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
-      // Limit scanning to the last 2000 lines to optimize performance. Note: if a provider error
-      // occurs early in a very large log output (exceeding 2000 lines), it may not be detected.
       const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 2000 });
       if (providerMatch) {
         contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
@@ -218,8 +216,6 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         }
       }
     } else if (outcome === 'success') {
-      // Limit scanning to the last 2000 lines to optimize performance. Note: if a provider error
-      // occurs early in a very large log output (exceeding 2000 lines), it may not be detected.
       const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 2000 });
       if (providerMatch) {
         outcome = 'failed';

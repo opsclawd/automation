@@ -121,13 +121,6 @@ function testPatterns(
   const lines = getLinesToScan(text, options?.maxLines);
   for (const line of lines) {
     if (structuralOnly && !isOpenCodeLogLine(line)) continue;
-    if (
-      line.includes('_PATTERNS=') ||
-      line.includes('_PROVIDER_ERROR_PATTERNS') ||
-      line.trimStart().startsWith('+')
-    ) {
-      continue;
-    }
     for (const pattern of patterns) {
       if (pattern.test(line)) return line.trim();
     }
