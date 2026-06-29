@@ -21,12 +21,12 @@ warn() { echo "WARN: $*" >&2; }
 #   discover_inputs --issues a,b,c — only ai/issues/<a>/compound.md etc.
 #                                    (poll-pr files excluded in issue mode)
 #
-# LIMITATION (auto / --since mode): Filesystem mtime (stat -c %Y) is compared
-# against git committer timestamp (git log -1 --format=%ct). These clocks can
-# diverge — git checkout, clone, cp -a, or backup/restore can reset mtime to a
-# value that no longer corresponds to when the file was written. In practice this
-# is acceptable for a developer-run, manually-triggered consolidation tool. For
-# CI automation, prefer --issues to pin exact paths.
+# NOTE (auto / --since mode): Filesystem mtime (stat -c %Y / stat -f %m) is
+# compared against the anchor commit's committer timestamp (git log -1
+# --format=%ct). These clocks can diverge after a git checkout, clone, cp -a,
+# or backup/restore. In practice this is acceptable for a developer-run,
+# manually-triggered consolidation tool — ai/ is gitignored so git diff cannot
+# see new files there, making mtime the only viable filter.
 #
 # Requires REPO_ROOT to be set.
 discover_inputs() {
@@ -68,13 +68,13 @@ discover_inputs() {
     return 2
   }
 
-  local changed_files
-  changed_files=$(git diff --name-only --diff-filter=d "$since_ref" 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)
+  local since_ts
+  since_ts=$(git log -1 --format=%ct "$since_ref")
 
   echo "$all_files" | sed -n '/^$/!p' | while IFS= read -r f; do
-    if echo "$changed_files" | grep -Fqx "$f"; then
-      echo "$f"
-    fi
+    local file_ts
+    file_ts=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
+    [[ "$file_ts" -gt "$since_ts" ]] && echo "$f"
   done | sort
 }
 
