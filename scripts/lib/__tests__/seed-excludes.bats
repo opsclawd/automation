@@ -2,7 +2,7 @@
 
 # Regression test: worktree exclude rules must be seeded on every orchestrator
 # invocation, including resumed runs where the worktree already exists.
-# See: scripts/ai-run-issue-v2 — seed_excludes() / ensure_worktree()
+# See: scripts/legacy/ai-run-issue-v2 — seed_excludes() / ensure_worktree()
 setup() {
   TMPDIR_TEST="$(mktemp -d)"
   REPO_ROOT="$TMPDIR_TEST/repo"
@@ -27,7 +27,7 @@ teardown() {
   # Source the helper from the script (it is defined as a shell function).
   # We extract just the seed_excludes function to test in isolation.
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   # Extract seed_excludes function and source it
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
   seed_excludes
@@ -45,7 +45,7 @@ teardown() {
 }
 @test "seed_excludes is idempotent — calling twice does not duplicate patterns" {
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
   seed_excludes
   seed_excludes
@@ -60,7 +60,7 @@ teardown() {
 }
 @test "orchestrator artifacts are excluded from git after seed_excludes" {
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
   seed_excludes
   cd "$WORKTREE_DIR"
@@ -77,7 +77,7 @@ teardown() {
 }
 @test "git add -A and commit do not include excluded artifacts" {
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
   seed_excludes
   cd "$WORKTREE_DIR"
@@ -98,7 +98,7 @@ teardown() {
   # present. After calling seed_excludes (as ensure_worktree now does),
   # design.md must NOT be tracked.
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   # First, create design.md BEFORE calling seed_excludes (simulates resume)
   cd "$WORKTREE_DIR"
   echo "# existing design from prior run" > design.md
@@ -121,7 +121,7 @@ teardown() {
   # (arbiter-result.json) but not the new pattern (task-manifest.json).
   # seed_excludes must re-seed so task-manifest.json is excluded.
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   cd "$WORKTREE_DIR"
   local common_dir
   common_dir=$(git rev-parse --git-common-dir)
@@ -147,7 +147,7 @@ OLDBLOCK
 
 @test "fix-validate artifacts are excluded from git after seed_excludes" {
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
   seed_excludes
   cd "$WORKTREE_DIR"
@@ -162,7 +162,7 @@ OLDBLOCK
 
 @test "seed_excludes writes merge=union attribute for legacy-parity.bats" {
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
   seed_excludes
   local git_dir
@@ -174,7 +174,7 @@ OLDBLOCK
 
 @test "seed_excludes attributes seeding is idempotent — calling twice does not duplicate" {
   local script_path
-  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  script_path="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(sed -n '/^seed_excludes()/,/^}/p' "$script_path")"
   seed_excludes
   seed_excludes

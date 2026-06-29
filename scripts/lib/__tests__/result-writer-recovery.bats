@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
 
 # Tests for the SHA-comparison guard and run_result_writer recovery in
-# scripts/ai-run-issue-v2. Verifies that when resolve_result returns BLOCKED
+# scripts/legacy/ai-run-issue-v2. Verifies that when resolve_result returns BLOCKED
 # for an implement-task, the guard checks HEAD vs base_sha and either invokes
 # the result-writer (HEAD advanced) or preserves BLOCKED (HEAD unchanged).
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
   source "$SHARED_LIB"
 

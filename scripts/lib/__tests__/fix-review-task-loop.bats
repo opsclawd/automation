@@ -143,7 +143,7 @@ JSON
 
 @test "ai-run-issue-v2 contains pre-flight baseline check" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -q 'fix-review-preflight' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -q 'fix-review-preflight' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
 
@@ -187,20 +187,20 @@ JSON
 # iteration in parity[#283] (legacy-parity.bats).
 @test "ai-run-issue-v2 fix-review delegates to run-review-fix.ts" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -c 'run-review-fix.ts' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -c 'run-review-fix.ts' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
   [ "$output" -ge 2 ]
 }
 
 @test "ai-run-issue-v2 sources fix-review-stash.sh" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -q 'fix-review-stash.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -q 'fix-review-stash.sh' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
 
 @test "ai-run-issue-v2 contains exit-code gate after manifest fix-review loop" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -q 'fix-status.txt' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -q 'fix-status.txt' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
 @test "FIX_REVIEW_ALL_FIXED=0 triggers HAS_UNRESOLVED branch" {
@@ -225,12 +225,12 @@ JSON
 }
 @test "ai-run-issue-v2 sources fix-review-revert.sh (regression guard)" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -q 'fix-review-revert.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -q 'fix-review-revert.sh' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [ "$status" -eq 0 ]
 }
 
 @test "ai-run-issue-v2 clears validation.result at review-fix phase start" {
   REAL_REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
-  run grep -A5 '_emit_phase_started "review-fix"' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -A5 '_emit_phase_started "review-fix"' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [[ "$output" == *"validation.result"* ]]
 }

@@ -1,13 +1,13 @@
 #!/usr/bin/env bats
 
-# Tests for resolve_result's stale-result detection in scripts/ai-run-issue-v2.
+# Tests for resolve_result's stale-result detection in scripts/legacy/ai-run-issue-v2.
 # The stale guard only applies to spec-review-task-*/quality-review-task-*
 # filenames; implementer and fix-review tasks legitimately write .result
 # without .md, and their values must pass through.
-# See: scripts/ai-run-issue-v2 — resolve_result()
+# See: scripts/legacy/ai-run-issue-v2 — resolve_result()
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/result-resolver.sh"
   # Source shared helpers, then extract resolve_result (which references them).
   source "$SHARED_LIB"

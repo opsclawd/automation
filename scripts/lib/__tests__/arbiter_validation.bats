@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(awk '
     /^_validate_arbiter_result\(\)/ { found=1 }
     found { print; if (/\{/) depth+=gsub(/{/,"{"); if (/\}/) depth-=gsub(/}/,"}"); if (depth==0 && found) { found=0; depth=0 } }
@@ -23,7 +23,7 @@ teardown() {
 {
   "outcome": "RESOLVED_TIEBREAK",
   "defect_classification": "verification_spec_defect",
-  "evidence": "scripts/ai-run-issue-v2:2216 — grep matches content in revalidate block, which is out of scope per task description",
+  "evidence": "scripts/legacy/ai-run-issue-v2:2216 — grep matches content in revalidate block, which is out of scope per task description",
   "rationale": "The spec reviewer's failure references out-of-scope code",
   "amended_verification": "",
   "original_verification": ""
@@ -53,10 +53,10 @@ JSON
 {
   "outcome": "RESOLVED_AMENDED",
   "defect_classification": "verification_spec_defect",
-  "evidence": "scripts/ai-run-issue-v2:2216 — original grep was whole-file, task scope is validate block only",
+  "evidence": "scripts/legacy/ai-run-issue-v2:2216 — original grep was whole-file, task scope is validate block only",
   "rationale": "Narrowing grep to validate block matches task scope",
-  "amended_verification": "grep -n 'build failed' scripts/ai-run-issue-v2 | awk 'NR>=2094 && NR<=2101'",
-  "original_verification": "grep -n 'build failed' scripts/ai-run-issue-v2"
+  "amended_verification": "grep -n 'build failed' scripts/legacy/ai-run-issue-v2 | awk 'NR>=2094 && NR<=2101'",
+  "original_verification": "grep -n 'build failed' scripts/legacy/ai-run-issue-v2"
 }
 JSON
   _validate_arbiter_result
@@ -71,7 +71,7 @@ JSON
   "evidence": "some evidence",
   "rationale": "Removing the check",
   "amended_verification": "",
-  "original_verification": "grep -n 'build failed' scripts/ai-run-issue-v2"
+  "original_verification": "grep -n 'build failed' scripts/legacy/ai-run-issue-v2"
 }
 JSON
   _validate_arbiter_result || true

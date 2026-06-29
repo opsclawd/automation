@@ -5,19 +5,19 @@ teardown() {
 }
 
 @test "ai-pr-review-poll prints usage when no PR given" {
-  run scripts/ai-pr-review-poll
+  run scripts/legacy/ai-pr-review-poll
   [ "$status" -eq 1 ]
   [[ "$output" == *"Usage:"* ]]
 }
 
 @test "ai-pr-review-poll exits 1 when ISSUE_NUM is empty" {
-  run scripts/ai-pr-review-poll 42
+  run scripts/legacy/ai-pr-review-poll 42
   [ "$status" -eq 1 ]
   [[ "$output" == *"ISSUE_NUM is required"* ]]
 }
 
 @test "ai-pr-review-poll exits 1 when worktree does not exist" {
-  run scripts/ai-pr-review-poll 42 999
+  run scripts/legacy/ai-pr-review-poll 42 999
   [ "$status" -eq 1 ]
   [[ "$output" == *"does not exist"* ]]
 }
@@ -35,7 +35,7 @@ SCRIPT
   workdir="$repo_root/.ai-worktrees/issue-7"
   mkdir -p "$workdir"
   _work_dir="$workdir"
-  run env PATH="$fake_bin:$PATH" OWNER_REPO= scripts/ai-pr-review-poll 42 7
+  run env PATH="$fake_bin:$PATH" OWNER_REPO= scripts/legacy/ai-pr-review-poll 42 7
 
   [ "$status" -eq 1 ]
   [[ "$output" == *"could not determine owner/repo"* ]]

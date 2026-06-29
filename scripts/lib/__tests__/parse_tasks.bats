@@ -1107,7 +1107,7 @@ PLAN
 { "version": 1, "task_count": 3, "tasks": [
   { "n": 1, "title": "Add read_manifest function", "files": ["scripts/lib/parse_tasks_helpers.sh"] },
   { "n": 2, "title": "Update parse_tasks to prefer manifest", "files": ["scripts/lib/parse_tasks_helpers.sh"] },
-  { "n": 3, "title": "Update plan-write prompt", "files": ["scripts/ai-run-issue-v2"] }
+  { "n": 3, "title": "Update plan-write prompt", "files": ["scripts/legacy/ai-run-issue-v2"] }
 ] }
 JSON
   cat > "$TMPDIR_TEST/plan.md" << 'PLAN'

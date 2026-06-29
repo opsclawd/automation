@@ -1,10 +1,10 @@
 #!/usr/bin/env bats
 
-# Tests for the validate_review_artifacts function in scripts/ai-run-issue-v2.
-# See: scripts/ai-run-issue-v2 — validate_review_artifacts()
+# Tests for the validate_review_artifacts function in scripts/legacy/ai-run-issue-v2.
+# See: scripts/legacy/ai-run-issue-v2 — validate_review_artifacts()
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   SHARED_LIB="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/lib/review-contract.sh"
   source "$SHARED_LIB"
   # Extract the function using awk brace-counting (robust against } inside heredocs).

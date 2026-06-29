@@ -31,7 +31,7 @@ teardown() {
 # The block starts at the "# ── Phase iteration limits" comment and ends
 # at the log line that follows the fi.
 _load_config_block() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
   eval "$(awk '
     /# ── Phase iteration limits from config/ { found=1 }
     found {

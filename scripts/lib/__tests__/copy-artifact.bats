@@ -4,7 +4,7 @@
 # ISSUES_DIR == WORKTREE_DIR in the issue-to-PR orchestrator, so persisting an
 # artifact the agent already wrote is a self-copy; a plain `cp X X` errors and
 # aborts the run. _copy_if_distinct must tolerate that.
-# See: scripts/ai-run-issue-v2 — review-triage phase; scripts/lib/copy-artifact.sh
+# See: scripts/legacy/ai-run-issue-v2 — review-triage phase; scripts/lib/copy-artifact.sh
 
 setup() {
   TMPDIR_TEST="$(mktemp -d)"

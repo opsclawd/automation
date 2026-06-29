@@ -240,65 +240,65 @@ _run_agent() {
 }
 
 @test "script has valid bash syntax" {
-  run bash -n scripts/ai-run-issue-v2
+  run bash -n scripts/legacy/ai-run-issue-v2
   [ "$status" -eq 0 ]
 }
 
 @test "no run_agent_raw callsites remain in ai-run-issue-v2" {
-  run grep -c 'run_agent_raw' scripts/ai-run-issue-v2
+  run grep -c 'run_agent_raw' scripts/legacy/ai-run-issue-v2
   [ "$output" -eq 0 ]
 }
 
 @test "no AGENT_MODEL default assignment remains" {
-  run grep -c 'AGENT_MODEL=' scripts/ai-run-issue-v2
+  run grep -c 'AGENT_MODEL=' scripts/legacy/ai-run-issue-v2
   [ "$output" -eq 0 ]
 }
 
 @test "no AGENT_CLI default assignment remains" {
-  run grep -c 'AGENT_CLI=' scripts/ai-run-issue-v2
+  run grep -c 'AGENT_CLI=' scripts/legacy/ai-run-issue-v2
   [ "$output" -eq 0 ]
 }
 
 @test "all primary phases halt on tee failure (arbitrate exempt: soft intervention)" {
-  halt_count=$(grep -c 'orchestrator_fail.*tee failed' scripts/ai-run-issue-v2)
+  halt_count=$(grep -c 'orchestrator_fail.*tee failed' scripts/legacy/ai-run-issue-v2)
   [[ "$halt_count" =~ ^[0-9]+$ ]]
   [ "$halt_count" -ge 10 ]
   # The arbiter is a soft intervention and is the ONLY phase allowed to warn
   # (not halt) on tee failure. Any warn-on-tee handler must be the arbiter's.
-  if grep -q 'warn.*tee failed' scripts/ai-run-issue-v2; then
-    warn_count=$(grep -c 'warn.*tee failed' scripts/ai-run-issue-v2)
-    arbiter_warn_count=$(grep -c 'warn.*tee failed writing log for arbiter' scripts/ai-run-issue-v2)
+  if grep -q 'warn.*tee failed' scripts/legacy/ai-run-issue-v2; then
+    warn_count=$(grep -c 'warn.*tee failed' scripts/legacy/ai-run-issue-v2)
+    arbiter_warn_count=$(grep -c 'warn.*tee failed writing log for arbiter' scripts/legacy/ai-run-issue-v2)
     [ "$warn_count" -eq "$arbiter_warn_count" ]
   fi
 }
 
 @test "PIPESTATUS used in all agent phase pipelines" {
-  run grep -cE 'PIPESTATUS\[' scripts/ai-run-issue-v2
+  run grep -cE 'PIPESTATUS\[' scripts/legacy/ai-run-issue-v2
   [ "$output" -ge 10 ]
 }
 
 @test "_TSX_LOADER error message references ai:run-issue" {
-  run grep 'tsx loader not found' scripts/ai-run-issue-v2
+  run grep 'tsx loader not found' scripts/legacy/ai-run-issue-v2
   [[ "$output" != *"pnpm install"* ]]
 }
 
 @test "script requires issue number argument" {
-  run bash -c 'bash scripts/ai-run-issue-v2 < /dev/null 2>&1; exit $?; echo "unreachable"'
+  run bash -c 'bash scripts/legacy/ai-run-issue-v2 < /dev/null 2>&1; exit $?; echo "unreachable"'
   [ "$status" -eq 1 ]
   [[ "$output" == *"Usage:"* ]]
   [[ "$output" == *"ai:run-issue"* ]]
 }
 
 @test "script defines required functions" {
-  grep -q 'check_branch_after_agent()' scripts/ai-run-issue-v2
-  grep -q 'orchestrator_fail()' scripts/ai-run-issue-v2
-  grep -q "^warn()" scripts/ai-run-issue-v2
-  grep -q "^log()" scripts/ai-run-issue-v2
+  grep -q 'check_branch_after_agent()' scripts/legacy/ai-run-issue-v2
+  grep -q 'orchestrator_fail()' scripts/legacy/ai-run-issue-v2
+  grep -q "^warn()" scripts/legacy/ai-run-issue-v2
+  grep -q "^log()" scripts/legacy/ai-run-issue-v2
 }
 
 @test "all run_* callsites have function definitions" {
-  callees=$(grep -oE '\brun_[a-z_]+\b' scripts/ai-run-issue-v2 | sort -u)
-  defs=$(grep -oE '^[[:space:]]*run_[a-z_]+\(\)' scripts/ai-run-issue-v2 | grep -oE 'run_[a-z_]+' | sort -u)
+  callees=$(grep -oE '\brun_[a-z_]+\b' scripts/legacy/ai-run-issue-v2 | sort -u)
+  defs=$(grep -oE '^[[:space:]]*run_[a-z_]+\(\)' scripts/legacy/ai-run-issue-v2 | grep -oE 'run_[a-z_]+' | sort -u)
   lib_defs=$(grep -roE '^[[:space:]]*run_[a-z_]+\(\)' scripts/lib/ | grep -oE 'run_[a-z_]+' | sort -u)
   all_defs=$(echo -e "$defs\n$lib_defs" | sort -u)
   missing=$(comm -23 <(echo "$callees") <(echo "$all_defs") | grep -v -E '^(run|run_id|run_agent)$' || true)
@@ -306,22 +306,22 @@ _run_agent() {
 }
 
 @test "ai-pr-review-poll has valid bash syntax" {
-  run bash -n scripts/ai-pr-review-poll
+  run bash -n scripts/legacy/ai-pr-review-poll
   [ "$status" -eq 0 ]
 }
 
 @test "no 'opencode --model' callsites remain in ai-pr-review-poll" {
-  run grep -c 'opencode --model' scripts/ai-pr-review-poll
+  run grep -c 'opencode --model' scripts/legacy/ai-pr-review-poll
   [ "$output" -eq 0 ]
 }
 
 @test "no AGENT_MODEL default remains in ai-pr-review-poll" {
-  run grep -c 'AGENT_MODEL=' scripts/ai-pr-review-poll
+  run grep -c 'AGENT_MODEL=' scripts/legacy/ai-pr-review-poll
   [ "$output" -eq 0 ]
 }
 
 @test "no AGENT_CLI reference remains in ai-pr-review-poll" {
-  run grep -c 'AGENT_CLI' scripts/ai-pr-review-poll
+  run grep -c 'AGENT_CLI' scripts/legacy/ai-pr-review-poll
   [ "$output" -eq 0 ]
 }
 

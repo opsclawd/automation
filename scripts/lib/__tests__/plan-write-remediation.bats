@@ -315,12 +315,12 @@ teardown() {
 }
 
 @test "ai-run-issue-v2 sources plan-write-remediation.sh" {
-  run grep -q 'source.*plan-write-remediation.sh' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -q 'source.*plan-write-remediation.sh' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [[ "$status" -eq 0 ]]
 }
 
 @test "ai-run-issue-v2 calls _remediate_plan_write_violations" {
-  run grep -cE '^[[:space:]]+_remediate_plan_write_violations$' "${REAL_REPO_ROOT}/scripts/ai-run-issue-v2"
+  run grep -cE '^[[:space:]]+_remediate_plan_write_violations$' "${REAL_REPO_ROOT}/scripts/legacy/ai-run-issue-v2"
   [[ "$output" -eq 1 ]]
 }
 

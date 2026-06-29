@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 setup() {
-  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/ai-run-issue-v2"
+  SCRIPT_PATH="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)/scripts/legacy/ai-run-issue-v2"
 
   eval "$(awk '
     /^_lint_plan_verification\(\)/ { found=1 }
@@ -27,10 +27,10 @@ teardown() {
 ## Task 1: Some task
 
 ### Files
-- Modify: `scripts/ai-run-issue-v2`
+- Modify: `scripts/legacy/ai-run-issue-v2`
 
 ### Validation
-Run: `grep -n 'some pattern' scripts/ai-run-issue-v2`
+Run: `grep -n 'some pattern' scripts/legacy/ai-run-issue-v2`
 Expected: exit code 0
 PLAN
 
@@ -43,7 +43,7 @@ PLAN
 ## Task 1: Some task
 
 ### Validation
-Run: `grep -n 'some pattern' scripts/ai-run-issue-v2 | awk 'NR>=100 && NR<=200'`
+Run: `grep -n 'some pattern' scripts/legacy/ai-run-issue-v2 | awk 'NR>=100 && NR<=200'`
 Expected: exit code 0
 PLAN
 
@@ -82,7 +82,7 @@ Expected: exit code 0
 ## Task 2: Run full validation suite
 
 ### Files
-- Modify: `scripts/ai-run-issue-v2`
+- Modify: `scripts/legacy/ai-run-issue-v2`
 
 ### Validation
 Run: `pnpm build && pnpm lint && pnpm test`
@@ -198,7 +198,7 @@ PLAN
 ## Task 5: Run verification
 
 ### Validation
-Run: `bash -n scripts/ai-run-issue-v2 && pnpm test:bash`
+Run: `bash -n scripts/legacy/ai-run-issue-v2 && pnpm test:bash`
 PLAN
 
   EMIT_EVENT_ARGS=""
@@ -224,7 +224,7 @@ PLAN
 ## Task 2: Add runtime verification checks
 
 ### Files
-- Modify: `scripts/ai-run-issue-v2`
+- Modify: `scripts/legacy/ai-run-issue-v2`
 
 ### Validation
 Run: `pnpm test:bash -- scripts/lib/__tests__/foo.bats`
