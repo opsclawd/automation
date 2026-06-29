@@ -465,7 +465,7 @@ describe('AgentRuntimeRouter fallback', () => {
       }
     });
 
-    it('does not trigger token_limit_exceeded when stderr contains underscore-delimited token_limit_exceeded (enum name in docs)', async () => {
+    it('triggers token_limit_exceeded when stderr contains underscore-delimited token_limit_exceeded', async () => {
       const tmpDir = mkdtempSync(join(tmpdir(), 'router-fallback-tle-underscore-'));
       const stderrPath = join(tmpDir, 'stderr.log');
       writeFileSync(
@@ -500,8 +500,8 @@ describe('AgentRuntimeRouter fallback', () => {
         await router.invoke(req());
 
         const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
-        // Should NOT escalate to fallback — token_limit_exceeded here is just a doc name
-        expect(rows.length).toBe(1);
+        // Should escalate to fallback — token_limit_exceeded triggers fallback
+        expect(rows.length).toBe(2);
       } finally {
         if (cleanup) rmSync(tmpDir, { recursive: true, force: true });
       }

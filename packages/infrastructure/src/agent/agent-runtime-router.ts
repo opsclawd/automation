@@ -477,6 +477,7 @@ const TOKEN_LIMIT_PATTERNS = [
   /token[s]?\b[a-zA-Z0-9\s-]*\blimit\b[a-zA-Z0-9\s-]*\bexceed/i,
   /maximum context length/i,
   /request too large/i,
+  /\btoken_limit_exceeded\b/i,
 ];
 
 function isTokenLimitError(result: AgentInvocationResult): boolean {

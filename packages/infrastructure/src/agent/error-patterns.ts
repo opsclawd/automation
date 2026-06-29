@@ -5,6 +5,7 @@ export const QUOTA_PATTERNS = [
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
   /quota\b[a-zA-Z0-9\s-]*\bexceed/i,
+  /\bquota_exceeded\b/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [

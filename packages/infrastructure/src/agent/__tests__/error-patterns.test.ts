@@ -162,13 +162,13 @@ describe('testQuotaPatterns', () => {
     expect(result).toContain('Quota exceeded');
   });
 
-  it('does not match underscore-delimited quota_exceeded (enum name in docs)', () => {
-    expect(testQuotaPatterns('quota_exceeded')).toBeNull();
+  it('matches underscore-delimited quota_exceeded', () => {
+    expect(testQuotaPatterns('quota_exceeded')).toBeTruthy();
   });
 
-  it('does not match underscore-delimited quota_exceeded in a reference table row', () => {
+  it('matches underscore-delimited quota_exceeded in a reference table row', () => {
     const tableRow = '| quota_exceeded | The request quota was exhausted | Retry after reset |';
-    expect(testQuotaPatterns(tableRow)).toBeNull();
+    expect(testQuotaPatterns(tableRow)).toBeTruthy();
   });
 
   it('still matches "Quota exceeded" natural-language form', () => {
