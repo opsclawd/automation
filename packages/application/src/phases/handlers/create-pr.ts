@@ -100,7 +100,19 @@ export class CreatePrHandler implements PhaseHandler {
       );
     }
 
-    // ── Stage 3: Deterministic GitHub operations ──
+    // ── Stage 3: Branch hygiene before deterministic GitHub operations ──
+
+    // Clean up orchestrator artifacts now that the PR body has been assembled.
+    // Non-fatal: cleanup failure does not block the run outcome.
+    try {
+      const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
+      if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
+        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
+      }
+    } catch {
+      // ignore
+    }
+
     const title = _firstHeadingOrLine(summary, ctx.issueNumber);
 
     // Push the branch so gh pr create's --head ref exists on remote.
@@ -172,17 +184,6 @@ export class CreatePrHandler implements PhaseHandler {
         `PR created at ${prUrl} but pr-url.txt write failed. Verify PR and record URL manually, then resume.`,
         writtenArtifacts,
       );
-    }
-
-    // Clean up orchestrator artifacts now that the PR body has been assembled.
-    // Non-fatal: cleanup failure does not block the run outcome.
-    try {
-      const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
-      if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
-        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
-      }
-    } catch {
-      // ignore
     }
 
     emit('create_pr.completed', 'info', 'create-pr complete');
