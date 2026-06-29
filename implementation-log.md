@@ -38,3 +38,15 @@ Implemented **Task 2: Remove Legacy Parity Registry And Merge Attribute**.
 ## Verifications
 - Verified all 651 BATS tests passed (`pnpm test:bash`).
 - Verified all Vitest tests pass successfully (`pnpm test`).
+
+# Implementation Log - Task 3
+
+Implemented **Task 3: Remove API Implementer Prompt Parity Discipline**.
+
+## Actions Taken
+- Modified `apps/api/src/compose.ts` to remove the entire implementer prompt `## PARITY COVERAGE` block (from the heading string through the blank string immediately before `## Your Job`).
+- Modified `apps/api/src/__tests__/build-implement-prompt.test.ts` to delete only the test case named `includes PARITY COVERAGE section referencing watched legacy paths`.
+
+## Verifications
+- Verified with Vitest that all tests in `build-implement-prompt.test.ts` pass (`pnpm --filter @ai-sdlc/api test -- build-implement-prompt.test.ts`).
+- Inspected the lines in `apps/api/src/compose.ts` and `apps/api/src/__tests__/build-implement-prompt.test.ts` to ensure no surrounding blocks/tests were affected.
