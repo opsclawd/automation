@@ -49,9 +49,9 @@ Exit code 0 means the run passed; exit code 1 means it failed.
 
 All run data is under `.ai-runs/` in the repo root.
 
-| Path                                | Contents                               |
-| ----------------------------------- | -------------------------------------- |
-| `.ai-runs/orchestrator.sqlite`      | SQLite database of all runs            |
+| Path                                           | Contents                    |
+| ---------------------------------------------- | --------------------------- |
+| `.ai-runs/orchestrator.sqlite`                 | SQLite database of all runs |
 | `.ai-runs/agent-artifacts/<inv-id>/stdout.log` | Agent stdout per invocation |
 | `.ai-runs/agent-artifacts/<inv-id>/stderr.log` | Agent stderr per invocation |
 
@@ -63,12 +63,12 @@ Worktrees for active runs are under `.ai-worktrees/issue-<N>/`. Completed run ar
 
 CLI flags for the `run` command:
 
-| Flag                     | Purpose                                            |
-| ------------------------ | -------------------------------------------------- |
-| `--base-branch <branch>` | Base branch (default: main)                        |
-| `--model <model>`        | Override the AI model for this run                 |
-| `--agent-cli <cli>`      | Sets `AI_RUNTIME`                                  |
-| `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only)  |
+| Flag                     | Purpose                                           |
+| ------------------------ | ------------------------------------------------- |
+| `--base-branch <branch>` | Base branch (default: main)                       |
+| `--model <model>`        | Override the AI model for this run                |
+| `--agent-cli <cli>`      | Sets `AI_RUNTIME`                                 |
+| `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only) |
 
 ## Troubleshooting
 

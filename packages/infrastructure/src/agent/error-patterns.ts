@@ -4,7 +4,7 @@ export const QUOTA_PATTERNS = [
   /rate[\s_-]*limit[\s_-]*exceed/i,
   /\b(?:status(?:Code)?|HTTP)\D{0,12}429\b/i,
   /Not Enough Credits/i,
-  /quota[a-zA-Z0-9\s_:,().-]*exceed/i,
+  /quota(?:[\s_:,().-]|limit|rate|is|has|been|daily|monthly)*exceed/i,
 ] as const;
 
 export const PROVIDER_ERROR_PATTERNS = [
@@ -20,7 +20,7 @@ export const PROVIDER_ERROR_PATTERNS = [
 export const TOKEN_LIMIT_PATTERNS = [
   /context_length_exceeded/i,
   /prompt is too long/i,
-  /token[s]?(?![a-zA-Z0-9\s_:,().-]*rate[\s_-]*limit)[a-zA-Z0-9\s_:,().-]*limit[a-zA-Z0-9\s_:,().-]*exceed/i,
+  /token[s]?[a-zA-Z0-9\s_:,().-]*(?<!rate[\s_-]*)limit[a-zA-Z0-9\s_:,().-]*exceed/i,
   /maximum context length/i,
   /request too large/i,
 ] as const;
@@ -37,18 +37,21 @@ export function getLastLines(text: string, maxLines?: number): string[] {
     if (maxLines <= 0) {
       return [];
     }
-    let startIdx = 0;
-    let searchIdx = cleanText.length - 1;
-    for (let count = 0; count < maxLines; count++) {
-      const nextIdx = cleanText.lastIndexOf('\n', searchIdx);
+    let count = 0;
+    let idx = cleanText.length;
+    while (count < maxLines && idx > 0) {
+      const nextIdx = cleanText.lastIndexOf('\n', idx - 1);
       if (nextIdx === -1) {
-        startIdx = 0;
+        idx = -1;
         break;
       }
-      startIdx = nextIdx + 1;
-      searchIdx = nextIdx - 1;
+      idx = nextIdx;
+      count++;
     }
-    return cleanText.slice(startIdx).split('\n');
+    if (count < maxLines && idx === 0) {
+      idx = -1;
+    }
+    return cleanText.slice(idx + 1).split('\n');
   }
   return cleanText.split('\n');
 }

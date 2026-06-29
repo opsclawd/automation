@@ -183,6 +183,13 @@ describe('testQuotaPatterns', () => {
     expect(testQuotaPatterns('quota exceeded for user')).toBeTruthy();
   });
 
+  it('does not match unrelated lines with quota and exceed separated by arbitrary words', () => {
+    expect(testQuotaPatterns('quotas: none. The process exceeded memory')).toBeNull();
+    expect(
+      testQuotaPatterns('Current quotas: default. Error: Execution time exceeded limit'),
+    ).toBeNull();
+  });
+
   it('ignores quota pattern in non-structural line (structuralOnly: true)', () => {
     const result = testQuotaPatterns(
       "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
@@ -454,6 +461,12 @@ describe('testTokenLimitPatterns', () => {
     expect(testTokenLimitPatterns('tokens.limit.exceeded')).toBeTruthy();
     expect(testTokenLimitPatterns('token-limit, exceeded')).toBeTruthy();
   });
+
+  it('matches token limit when rate limit is also mentioned on the same line', () => {
+    expect(testTokenLimitPatterns('token limit exceeded. rate limit is fine.')).toBeTruthy();
+    expect(testTokenLimitPatterns('token limit exceeded (rate limit: 100/min)')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens rate limit exceeded')).toBeNull();
+  });
 });
 
 describe('getLastLines', () => {
@@ -471,5 +484,11 @@ describe('getLastLines', () => {
     expect(getLastLines(text2, 1)).toEqual(['line 2']);
     expect(getLastLines(text1, 2)).toEqual(['line 1', 'line 2']);
     expect(getLastLines(text2, 2)).toEqual(['line 1', 'line 2']);
+  });
+
+  it('handles leading newlines correctly with maxLines', () => {
+    expect(getLastLines('\nline 1\nline 2', 3)).toEqual(['', 'line 1', 'line 2']);
+    expect(getLastLines('\nline 1\nline 2', 2)).toEqual(['line 1', 'line 2']);
+    expect(getLastLines('\nline 1\nline 2', 1)).toEqual(['line 2']);
   });
 });
