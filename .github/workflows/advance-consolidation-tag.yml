@@ -26,7 +26,7 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          NEW_ANCHOR=$(echo "$PR_BODY" | sed -n 's/.*\*\*New anchor:\*\* `\([0-9a-f]\{7,40\}\)`.*/\1/p')
+          NEW_ANCHOR=$(printf "%s\n" "$PR_BODY" | sed -n 's/.*\*\*New anchor:\*\* `\([0-9a-f]\{7,40\}\)`.*/\1/p' | tail -n 1)
           if [[ -z "$NEW_ANCHOR" ]]; then
             echo "Could not parse New anchor from PR body. Falling back to the merge commit SHA."
             NEW_ANCHOR="${{ github.event.pull_request.merge_commit_sha }}"

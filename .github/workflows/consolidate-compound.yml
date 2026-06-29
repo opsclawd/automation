@@ -29,6 +29,7 @@ jobs:
       HUSKY: '0'
       AI_AGENT_PROVIDER: claude-code
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_VERSION: '0.2.9'
 
     steps:
       - uses: actions/checkout@v4
@@ -50,8 +51,6 @@ jobs:
             since="$INPUT_SINCE"
           elif git rev-parse --verify "refs/tags/consolidation/last-run" >/dev/null 2>&1; then
             since="$(git rev-parse "consolidation/last-run")"
-          else
-            since="$(git log --before='7 days ago' -1 --format='%H' || true)"
           fi
 
           since_short="${since:0:8}"
@@ -81,7 +80,7 @@ jobs:
           cache: pnpm
 
       - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@0.2.9
+        run: npm install -g @anthropic-ai/claude-code@${{ env.CLAUDE_CODE_VERSION }}
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
@@ -118,6 +117,9 @@ jobs:
         run: |
           if git diff --quiet "$NEW_ANCHOR"..HEAD -- docs/solutions/; then
             echo "No committed changes under docs/solutions/ - skipping PR."
+            echo "Advancing consolidation tag to new anchor directly."
+            git tag -f consolidation/last-run "$NEW_ANCHOR"
+            git push origin "refs/tags/consolidation/last-run" --force
             exit 0
           fi
 
