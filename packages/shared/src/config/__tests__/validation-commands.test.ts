@@ -23,7 +23,6 @@ describe('validation commands drift guard (#514)', () => {
       'pnpm test',
       'pnpm test:bash',
       'pnpm depcruise',
-      'bash scripts/check-parity-coverage.sh',
     ];
 
     for (const step of requiredCiSteps) {

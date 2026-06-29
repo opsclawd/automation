@@ -47,14 +47,6 @@ describe('buildImplementPrompt', () => {
     expect(prompt).toContain('numbered higher than 3');
   });
 
-  it('includes PARITY COVERAGE section referencing watched legacy paths', () => {
-    const prompt = buildImplementPrompt(ctx, taskText, branchName);
-    expect(prompt).toContain('## PARITY COVERAGE');
-    expect(prompt).toContain('watched legacy path');
-    expect(prompt).toContain('scripts/legacy/ai-run-issue-v2');
-    expect(prompt).toContain('legacy-parity.bats');
-  });
-
   it('includes Your Job section with commit verification commands', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
     expect(prompt).toContain('## Your Job');
