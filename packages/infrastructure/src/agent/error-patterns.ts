@@ -26,6 +26,10 @@ export const TOKEN_LIMIT_PATTERNS = [
 ] as const;
 
 const OPENCODE_LOG_LINE = /^\s*(INFO|ERROR|WARN|DEBUG)\s+\d{4}-\d{2}-\d{2}T/;
+// bash set -x trace lines (+ cmd, ++ cmd, indented variants) and shell variable
+// assignment/export lines that echo pattern values — both are false-positive sources.
+const BASH_TRACE_LINE = /^\s*\+{1,3} /;
+const SHELL_ASSIGNMENT_LINE = /^\s*(?:export\s+)?\w+=(['"]?)/;
 
 export function isOpenCodeLogLine(line: string): boolean {
   return OPENCODE_LOG_LINE.test(line);
@@ -121,6 +125,7 @@ function testPatterns(
   const lines = getLinesToScan(text, options?.maxLines);
   for (const line of lines) {
     if (structuralOnly && !isOpenCodeLogLine(line)) continue;
+    if (BASH_TRACE_LINE.test(line) || SHELL_ASSIGNMENT_LINE.test(line)) continue;
     for (const pattern of patterns) {
       if (pattern.test(line)) return line.trim();
     }

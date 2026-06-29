@@ -275,11 +275,13 @@ describe('testProviderErrorPatterns', () => {
     expect(result).toBeTruthy();
   });
 
-  it('matches provider error in non-structural line (default mode)', () => {
-    const result = testProviderErrorPatterns(
-      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
-    );
-    expect(result).toBeTruthy();
+  it('does not match shell assignment lines echoing error pattern values', () => {
+    // Shell assignments are false-positive sources (e.g. env dumps, set -a output).
+    expect(
+      testProviderErrorPatterns(
+        "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      ),
+    ).toBeNull();
   });
 
   it('matches RESOURCE_EXHAUSTED in non-structural line (default mode)', () => {
