@@ -63,10 +63,7 @@ export interface PostFixGateResult {
 
 export interface ReviewFixLoopDeps {
   runPostFixGate: (ctx: StepContext) => Promise<PostFixGateResult>;
-  runReview: (
-    ctx: StepContext,
-    opts?: ReviewStepOptions | PostFixGateResult,
-  ) => Promise<ReviewStepResult>;
+  runReview: (ctx: StepContext, opts?: ReviewStepOptions) => Promise<ReviewStepResult>;
   runFix: (ctx: StepContext, opts: FixStepOptions) => Promise<FixStepResult>;
   runRevalidation: (ctx: StepContext) => Promise<RevalidationResult>;
   loops: LoopRepositoryPort;
