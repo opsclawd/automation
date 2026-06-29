@@ -737,4 +737,89 @@ describe('runExternalCli', () => {
       }
     });
   });
+
+  describe('provider error reclassification on zero-exit path', () => {
+    it('reclassifies outcome to failed when provider error appears in last 200 lines of stderr (exit 0)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: ['-c', 'echo "AI_APICallError: HTTP 500 Internal Server Error" >&2'],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('failed');
+        expect(result.contractViolations).toContain('provider_error');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('reclassifies zero-exit outcome when provider error appears at the end of a long stderr stream (fixing false negative)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        // Simulate a command echoing 200 harmless lines, then "Quota exceeded" at the end
+        const scriptLines = ['#!/bin/bash'];
+        for (let i = 1; i <= 200; i++) {
+          scriptLines.push(`echo "docs content line ${i}" >&2`);
+        }
+        scriptLines.push('echo "Quota exceeded: API limit reached" >&2');
+        const scriptPath = join(cwd, 'stderr-gen.sh');
+        writeFileSync(scriptPath, scriptLines.join('\n'));
+        execSync(`chmod +x ${scriptPath}`);
+
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: [scriptPath],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('failed');
+        expect(result.contractViolations).toContain('provider_error');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not reclassify zero-exit outcome on environment variable dumps or bash tracing containing provider error pattern', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        // Simulate env var dumps and bash tracing containing patterns, followed by many lines of log/docs content
+        const scriptLines = [
+          '#!/bin/bash',
+          'echo "export REVIEWER_PROVIDER_ERROR_PATTERNS=\'AI_APICallError\'" >&2',
+          'echo "+ AI_APICallError: HTTP 500 Internal Server Error" >&2',
+          'echo "export SOME_PATTERNS=\'Quota limit exceeded\'" >&2',
+        ];
+        for (let i = 1; i <= 250; i++) {
+          scriptLines.push(`echo "docs content line ${i}" >&2`);
+        }
+        const scriptPath = join(cwd, 'stderr-gen-fp.sh');
+        writeFileSync(scriptPath, scriptLines.join('\n'));
+        execSync(`chmod +x ${scriptPath}`);
+
+        const result = await runExternalCli({
+          runtime: 'codex',
+          bin: 'bash',
+          args: [scriptPath],
+          cwd,
+          artifactsDir,
+          model: 'test',
+        });
+        expect(result.outcome).toBe('success');
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+  });
 });

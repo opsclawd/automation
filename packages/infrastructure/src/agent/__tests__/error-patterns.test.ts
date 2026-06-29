@@ -3,6 +3,9 @@ import {
   isOpenCodeLogLine,
   testQuotaPatterns,
   testProviderErrorPatterns,
+  testTokenLimitPatterns,
+  getLastLines,
+  getLinesToScan,
 } from '../error-patterns.js';
 
 describe('isOpenCodeLogLine', () => {
@@ -68,11 +71,11 @@ describe('testQuotaPatterns', () => {
     expect(result).toContain('Usage limit reached');
   });
 
-  it('matches quota pattern in unstructured text (default mode)', () => {
+  it('does not match quota regex pattern string in env-var assignment (default mode)', () => {
     const result = testQuotaPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|HTTP 429|quota.*exceed'",
+      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|quota.*exceed'",
     );
-    expect(result).toBeTruthy();
+    expect(result).toBeNull();
   });
 
   it('matches 429 in unstructured bash variable assignment (default mode)', () => {
@@ -162,9 +165,35 @@ describe('testQuotaPatterns', () => {
     expect(result).toContain('Quota exceeded');
   });
 
+  it('matches underscore-delimited quota_exceeded', () => {
+    expect(testQuotaPatterns('quota_exceeded')).toBeTruthy();
+  });
+
+  it('matches underscore-delimited quota_exceeded in a reference table row', () => {
+    const tableRow = '| quota_exceeded | The request quota was exhausted | Retry after reset |';
+    expect(testQuotaPatterns(tableRow)).toBeTruthy();
+  });
+
+  it('still matches "Quota exceeded" natural-language form', () => {
+    const result = testQuotaPatterns('ERROR: Quota exceeded for this billing period.');
+    expect(result).toBeTruthy();
+    expect(result).toContain('Quota exceeded');
+  });
+
+  it('still matches "quota exceeded" natural-language form (lowercase)', () => {
+    expect(testQuotaPatterns('quota exceeded for user')).toBeTruthy();
+  });
+
+  it('does not match unrelated lines with quota and exceed separated by arbitrary words', () => {
+    expect(testQuotaPatterns('quotas: none. The process exceeded memory')).toBeNull();
+    expect(
+      testQuotaPatterns('Current quotas: default. Error: Execution time exceeded limit'),
+    ).toBeNull();
+  });
+
   it('ignores quota pattern in non-structural line (structuralOnly: true)', () => {
     const result = testQuotaPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
       { structuralOnly: true },
     );
     expect(result).toBeNull();
@@ -186,6 +215,48 @@ describe('testQuotaPatterns', () => {
     ].join('\n');
     expect(testQuotaPatterns(text, { structuralOnly: true })).toBeNull();
   });
+
+  it('respects maxLines: stops scanning before the matching line', () => {
+    const text = ['line 1 harmless', 'Quota exceeded: API limit', 'line 3 harmless'].join('\n');
+    // maxLines: 1 — only first and last lines are scanned; middle line is skipped
+    expect(testQuotaPatterns(text, { maxLines: 1 })).toBeNull();
+  });
+
+  it('respects maxLines: includes matching line when within limit', () => {
+    const text = ['line 1 harmless', 'line 2 harmless', 'Quota exceeded: API limit'].join('\n');
+    // maxLines: 2 — last 2 lines are scanned; "Quota exceeded" is on line 3 (in scope)
+    const result = testQuotaPatterns(text, { maxLines: 2 });
+    expect(result).toBeTruthy();
+    expect(result).toContain('Quota exceeded');
+  });
+
+  it('handles non-positive maxLines correctly (does not match)', () => {
+    const text = ['Quota exceeded: API limit'].join('\n');
+    expect(testQuotaPatterns(text, { maxLines: 0 })).toBeNull();
+    expect(testQuotaPatterns(text, { maxLines: -5 })).toBeNull();
+  });
+
+  it('matches quota errors with underscores and rate limit prefixes', () => {
+    expect(testQuotaPatterns('quota_rate_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota_limit_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota-rate-exceed')).toBeTruthy();
+    expect(testQuotaPatterns('quota_exceed')).toBeTruthy();
+    expect(testQuotaPatterns('token_rate_limit_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('tokens_rate_limit_exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('tokens rate limit exceeded')).toBeTruthy();
+  });
+
+  it('matches plural variations of quota patterns (Finding 1)', () => {
+    expect(testQuotaPatterns('quota limits exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quotas exceeded')).toBeTruthy();
+  });
+
+  it('matches quota errors containing common punctuation', () => {
+    expect(testQuotaPatterns('Quota: exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota (exceeded)')).toBeTruthy();
+    expect(testQuotaPatterns('quota.exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('quota, exceeded')).toBeTruthy();
+  });
 });
 
 describe('testProviderErrorPatterns', () => {
@@ -204,11 +275,13 @@ describe('testProviderErrorPatterns', () => {
     expect(result).toBeTruthy();
   });
 
-  it('matches provider error in non-structural line (default mode)', () => {
-    const result = testProviderErrorPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
-    );
-    expect(result).toBeTruthy();
+  it('does not match shell assignment lines echoing error pattern values', () => {
+    // Shell assignments are false-positive sources (e.g. env dumps, set -a output).
+    expect(
+      testProviderErrorPatterns(
+        "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      ),
+    ).toBeNull();
   });
 
   it('matches RESOURCE_EXHAUSTED in non-structural line (default mode)', () => {
@@ -278,7 +351,7 @@ describe('testProviderErrorPatterns', () => {
 
   it('ignores provider error in non-structural line (structuralOnly: true)', () => {
     const result = testProviderErrorPatterns(
-      "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
+      "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
       { structuralOnly: true },
     );
     expect(result).toBeNull();
@@ -298,5 +371,167 @@ describe('testProviderErrorPatterns', () => {
       { structuralOnly: true },
     );
     expect(result).toBeNull();
+  });
+
+  it('respects maxLines: stops scanning before the matching line', () => {
+    const text = ['line 1 harmless', 'AI_APICallError: 500', 'line 3 harmless'].join('\n');
+    // maxLines: 1 — only first and last lines are scanned; middle line is skipped
+    expect(testProviderErrorPatterns(text, { maxLines: 1 })).toBeNull();
+  });
+
+  it('respects maxLines: includes matching line when within limit', () => {
+    const text = ['line 1 harmless', 'line 2 harmless', 'AI_APICallError: 500'].join('\n');
+    const result = testProviderErrorPatterns(text, { maxLines: 2 });
+    expect(result).toBeTruthy();
+    expect(result).toContain('AI_APICallError');
+  });
+
+  it('matches various natural language forms of quota errors', () => {
+    expect(testQuotaPatterns('Quota limit exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('Quota has been exceeded')).toBeTruthy();
+    expect(testQuotaPatterns('Quota is exceeded')).toBeTruthy();
+  });
+
+  it('ignores environment variable dumps or bash tracing in testQuotaPatterns', () => {
+    expect(testQuotaPatterns("export REVIEWER_PROVIDER_ERROR_PATTERNS='quota.*exceed'")).toBeNull();
+    expect(testQuotaPatterns("export SOME_PATTERNS='Quota limit exceeded'")).toBeNull();
+    expect(testQuotaPatterns('+ Quota limit exceeded')).toBeNull();
+    expect(testQuotaPatterns('++ Quota limit exceeded')).toBeNull();
+  });
+
+  it('ignores environment variable dumps or bash tracing in testProviderErrorPatterns', () => {
+    expect(
+      testProviderErrorPatterns("export REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError'"),
+    ).toBeNull();
+    expect(testProviderErrorPatterns("export SOME_PATTERNS='AI_APICallError'")).toBeNull();
+    expect(testProviderErrorPatterns('+ AI_APICallError')).toBeNull();
+    expect(testProviderErrorPatterns('++ AI_APICallError')).toBeNull();
+  });
+
+  it('scans both the beginning and the end of the log (Finding 2)', () => {
+    const lines = [
+      'AI_APICallError: 500', // line 1 (matching)
+      ...Array(3000).fill('harmless log line'), // 3000 middle lines (ignored)
+      'another harmless line', // last line
+    ];
+    const text = lines.join('\n');
+    // maxLines: 2000 would normally miss line 1 if only scanning the last 2000 lines.
+    // With the fix, it scans the first 2000 and last 2000 lines, so it matches.
+    expect(testProviderErrorPatterns(text, { maxLines: 2000 })).toBeTruthy();
+  });
+});
+
+describe('testTokenLimitPatterns', () => {
+  it('matches context length exceeded', () => {
+    expect(testTokenLimitPatterns('context_length_exceeded')).toBeTruthy();
+  });
+
+  it('matches prompt is too long', () => {
+    expect(testTokenLimitPatterns('prompt is too long')).toBeTruthy();
+  });
+
+  it('matches token limits with underscores, dashes, spaces, and rate limit prefixes', () => {
+    expect(testTokenLimitPatterns('token_rate_limit_exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('tokens_rate_limit_exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('token_limit_exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('token-limit-exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens rate limit exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('tokens_limit_exceed')).toBeTruthy();
+  });
+
+  it('matches maximum context length', () => {
+    expect(testTokenLimitPatterns('maximum context length')).toBeTruthy();
+  });
+
+  it('matches request too large', () => {
+    expect(testTokenLimitPatterns('request too large')).toBeTruthy();
+  });
+
+  it('ignores environment variable dumps or bash tracing in testTokenLimitPatterns', () => {
+    expect(testTokenLimitPatterns("export SOME_PATTERNS='token_limit_exceeded'")).toBeNull();
+    expect(testTokenLimitPatterns('+ token_limit_exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('++ token_limit_exceeded')).toBeNull();
+  });
+
+  it('ignores indented bash tracing lines', () => {
+    expect(testProviderErrorPatterns('  + AI_APICallError')).toBeNull();
+    expect(testProviderErrorPatterns('\t++ AI_APICallError')).toBeNull();
+    expect(testQuotaPatterns('  + Quota limit exceeded')).toBeNull();
+    expect(testQuotaPatterns('\t++ Quota limit exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('  + token_limit_exceeded')).toBeNull();
+    expect(testTokenLimitPatterns('\t++ token_limit_exceeded')).toBeNull();
+  });
+
+  it('handles trailing newline correctly without losing the last non-empty line', () => {
+    const text = 'harmless line 1\nAI_APICallError: 500\n';
+    const result = testProviderErrorPatterns(text, { maxLines: 1 });
+    expect(result).toBeTruthy();
+    expect(result).toContain('AI_APICallError');
+  });
+
+  it('scans correct line range when maxLines is larger and trailing newline is present', () => {
+    const text = 'harmless line 1\nAI_APICallError: 500\nharmless line 2\n';
+    expect(testProviderErrorPatterns(text, { maxLines: 1 })).toBeNull();
+    expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeTruthy();
+  });
+
+  it('matches token limit errors containing common punctuation', () => {
+    expect(testTokenLimitPatterns('token limit: exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens (limit exceeded)')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens.limit.exceeded')).toBeTruthy();
+    expect(testTokenLimitPatterns('token-limit, exceeded')).toBeTruthy();
+  });
+
+  it('matches token limit when rate limit is also mentioned on the same line', () => {
+    expect(testTokenLimitPatterns('token limit exceeded. rate limit is fine.')).toBeTruthy();
+    expect(testTokenLimitPatterns('token limit exceeded (rate limit: 100/min)')).toBeTruthy();
+    expect(testTokenLimitPatterns('tokens rate limit exceeded')).toBeNull();
+  });
+});
+
+describe('getLastLines', () => {
+  it('returns clean lines list with or without trailing newline when maxLines is undefined', () => {
+    const text1 = 'line 1\nline 2\n';
+    const text2 = 'line 1\nline 2';
+    expect(getLastLines(text1)).toEqual(['line 1', 'line 2']);
+    expect(getLastLines(text2)).toEqual(['line 1', 'line 2']);
+  });
+
+  it('returns clean lines list with or without trailing newline when maxLines is defined', () => {
+    const text1 = 'line 1\nline 2\n';
+    const text2 = 'line 1\nline 2';
+    expect(getLastLines(text1, 1)).toEqual(['line 2']);
+    expect(getLastLines(text2, 1)).toEqual(['line 2']);
+    expect(getLastLines(text1, 2)).toEqual(['line 1', 'line 2']);
+    expect(getLastLines(text2, 2)).toEqual(['line 1', 'line 2']);
+  });
+
+  it('handles leading newlines correctly with maxLines', () => {
+    expect(getLastLines('\nline 1\nline 2', 3)).toEqual(['', 'line 1', 'line 2']);
+    expect(getLastLines('\nline 1\nline 2', 2)).toEqual(['line 1', 'line 2']);
+    expect(getLastLines('\nline 1\nline 2', 1)).toEqual(['line 2']);
+  });
+});
+
+describe('getLinesToScan', () => {
+  it('returns clean lines list when maxLines is undefined', () => {
+    expect(getLinesToScan('line 1\nline 2\n')).toEqual(['line 1', 'line 2']);
+  });
+
+  it('scans both head and tail when maxLines is defined and there is no overlap', () => {
+    const text = 'line 1\nline 2\nline 3\nline 4\nline 5';
+    // maxLines = 2 should return first 2 and last 2 lines
+    expect(getLinesToScan(text, 2)).toEqual(['line 1', 'line 2', 'line 4', 'line 5']);
+  });
+
+  it('returns all lines if first and last overlap', () => {
+    const text = 'line 1\nline 2\nline 3';
+    expect(getLinesToScan(text, 2)).toEqual(['line 1', 'line 2', 'line 3']);
+  });
+
+  it('handles empty input and non-positive maxLines', () => {
+    expect(getLinesToScan('', 2)).toEqual(['']);
+    expect(getLinesToScan('line 1\nline 2', 0)).toEqual([]);
+    expect(getLinesToScan('line 1\nline 2', -1)).toEqual([]);
   });
 });
