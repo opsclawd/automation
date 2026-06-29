@@ -489,10 +489,10 @@ describe('Artifact Guarding & Cleanup', () => {
       await adapter.seedArtifactExcludes(repoPath);
 
       const patchFile = join(repoPath, 'diff.patch');
-      const artifactFile = join(repoPath, 'validation.result');
+      const artifactFile = join(repoPath, 'implementation-log.md');
 
       await writeFile(patchFile, 'some patch content\n');
-      await writeFile(artifactFile, 'some validation result\n');
+      await writeFile(artifactFile, 'some implementation log content\n');
 
       const untracked = await git(repoPath, ['ls-files', '--others', '--exclude-standard']);
       expect(untracked).toBe('');
