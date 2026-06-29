@@ -611,8 +611,9 @@ exit 1
         outcome: 'fail',
         output: 'src/bar.ts(3,5): error TS2345: no-explicit-any violation',
       }),
-      runReview: async (_ctx, gateResult) => {
+      runReview: async (_ctx, opts) => {
         reviewCalls += 1;
+        const gateResult = opts && 'gateResult' in opts ? opts.gateResult : opts;
         receivedGateResults.push(gateResult);
         return {
           invocationId: `review-${reviewCalls}`,

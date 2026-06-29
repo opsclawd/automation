@@ -18,6 +18,7 @@ export interface ReviewStepResult {
   verdict?: 'pass' | 'fail';
   overridden?: boolean;
   offendingFindings?: Array<{ severity: string; summary: string }>;
+  excerpt?: string;
 }
 
 export interface FixStepResult {
@@ -25,6 +26,7 @@ export interface FixStepResult {
   agentOutcome: StepAgentOutcome;
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
   headBeforeFix?: string; // commit SHA before the fix, for rollback on revalidation failure
+  summary?: string;
 }
 
 export interface RevalidationResult {
@@ -51,6 +53,7 @@ export interface FixStepOptions {
   previousInvocationId?: string;
   architectPlan?: ArchitectPlan;
   reconciliationContext?: string;
+  historyContext?: string;
 }
 
 export interface PostFixGateResult {
@@ -60,7 +63,7 @@ export interface PostFixGateResult {
 
 export interface ReviewFixLoopDeps {
   runPostFixGate: (ctx: StepContext) => Promise<PostFixGateResult>;
-  runReview: (ctx: StepContext, gateResult?: PostFixGateResult) => Promise<ReviewStepResult>;
+  runReview: (ctx: StepContext, opts?: ReviewStepOptions) => Promise<ReviewStepResult>;
   runFix: (ctx: StepContext, opts: FixStepOptions) => Promise<FixStepResult>;
   runRevalidation: (ctx: StepContext) => Promise<RevalidationResult>;
   loops: LoopRepositoryPort;
@@ -69,6 +72,42 @@ export interface ReviewFixLoopDeps {
   idFactory: () => string;
   rollbackFix?: (ctx: StepContext, targetSha: string) => Promise<boolean>;
   cleanArtifacts?: (ctx: StepContext) => Promise<void>;
+  loopHistory?: ReviewLoopHistoryPort;
+}
+
+export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';
+
+export interface ReviewLoopHistoryEntry {
+  iteration: number;
+  review: {
+    verdict?: 'pass' | 'fail';
+    invocationId?: string;
+    offendingFindings?: Array<{ severity: string; summary: string }>;
+    excerpt?: string;
+  };
+  fix?: {
+    verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
+    invocationId?: string;
+    headBeforeFix?: string;
+    summary?: string;
+  };
+  revalidation?: {
+    passed: boolean;
+    validationRunId?: string;
+    category?: string;
+  };
+  outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed';
+}
+
+export interface ReviewLoopHistoryPort {
+  read(ctx: StepContext): Promise<ReviewLoopHistoryEntry[]>;
+  append(ctx: StepContext, entry: ReviewLoopHistoryEntry): Promise<void>;
+  format(history: ReviewLoopHistoryEntry[], audience: ReviewLoopHistoryAudience): string;
+}
+
+export interface ReviewStepOptions {
+  gateResult?: PostFixGateResult;
+  historyContext?: string;
 }
 
 export interface ReviewFixLoopInput {

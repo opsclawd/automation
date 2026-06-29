@@ -14,6 +14,11 @@ import type {
   ReviewFixLoopResult,
   StepContext,
   PostFixGateResult,
+  ReviewLoopHistoryAudience,
+  ReviewLoopHistoryEntry,
+  ReviewStepResult,
+  FixStepResult,
+  RevalidationResult,
 } from './types.js';
 
 export class ReviewFixLoop {
@@ -65,7 +70,15 @@ export class ReviewFixLoop {
           index: iterationIndex,
         },
       );
-      const review = await deps.runReview(ctx, gateResult);
+      const historyContext = await this.readHistoryContext(ctx, 'reviewer', input);
+      const reviewOptions = {
+        ...(gateResult ? { gateResult } : {}),
+        ...(historyContext ? { historyContext } : {}),
+      };
+      const review = await deps.runReview(
+        ctx,
+        Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
+      );
       if (review.overridden) {
         const direction: 'upgrade' | 'downgrade' =
           review.verdict === 'fail' ? 'upgrade' : 'downgrade';
@@ -87,6 +100,7 @@ export class ReviewFixLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
+        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
         await this.runCleanArtifacts(ctx);
         break;
       }
@@ -99,6 +113,7 @@ export class ReviewFixLoop {
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
+            await this.appendHistoryEntry(ctx, review, undefined, reval, 'resolved', input);
             break;
           }
           loop = completeIteration(loop, {
@@ -108,11 +123,13 @@ export class ReviewFixLoop {
           });
           deps.loops.update(loop);
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          await this.appendHistoryEntry(ctx, review, undefined, reval, 'unresolved', input);
           continue;
         }
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
+        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'resolved', input);
         break;
       }
 
@@ -142,12 +159,14 @@ export class ReviewFixLoop {
       }
 
       // --- FIX ---
+      const fixerHistoryContext = await this.readHistoryContext(ctx, 'fixer', input);
       const fix = await deps.runFix(ctx, {
         useFallback,
         ...(useFallback && lastFixInvocationId !== undefined
           ? { previousInvocationId: lastFixInvocationId }
           : {}),
         ...(input.architectPlan !== undefined ? { architectPlan: input.architectPlan } : {}),
+        ...(fixerHistoryContext ? { historyContext: fixerHistoryContext } : {}),
       });
       lastFixInvocationId = fix.invocationId;
 
@@ -165,6 +184,7 @@ export class ReviewFixLoop {
         });
         deps.loops.update(loop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input);
         await this.runCleanArtifacts(ctx);
         continue;
       }
@@ -203,6 +223,14 @@ export class ReviewFixLoop {
       });
       deps.loops.update(loop);
       this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
+      await this.appendHistoryEntry(
+        ctx,
+        review,
+        fix,
+        reval,
+        reval.passed ? 'fixed' : 'unresolved',
+        input,
+      );
     }
 
     if (loop.status === 'converged') {
@@ -270,6 +298,99 @@ export class ReviewFixLoop {
   private async runCleanArtifacts(ctx: StepContext): Promise<void> {
     if (this.deps.cleanArtifacts) {
       await this.deps.cleanArtifacts(ctx);
+    }
+  }
+
+  private async readHistoryContext(
+    ctx: StepContext,
+    audience: ReviewLoopHistoryAudience,
+    input: ReviewFixLoopInput,
+  ): Promise<string | undefined> {
+    if (!this.deps.loopHistory) {
+      return undefined;
+    }
+    try {
+      const history = await this.deps.loopHistory.read(ctx);
+      if (!history || history.length === 0) {
+        return undefined;
+      }
+      return this.deps.loopHistory.format(history, audience);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        input,
+        'review_loop_history.read_failed',
+        'warn',
+        `failed to read loop history: ${errorMsg}`,
+        {
+          iterationIndex: ctx.iterationIndex,
+          audience,
+          error: errorMsg,
+        },
+      );
+      return '';
+    }
+  }
+
+  private async appendHistoryEntry(
+    ctx: StepContext,
+    review: ReviewStepResult,
+    fix: FixStepResult | undefined,
+    reval: RevalidationResult | undefined,
+    outcome: ReviewLoopHistoryEntry['outcome'],
+    input: ReviewFixLoopInput,
+  ): Promise<void> {
+    if (!this.deps.loopHistory) {
+      return;
+    }
+    try {
+      const entry: ReviewLoopHistoryEntry = {
+        iteration: ctx.iterationIndex,
+        review: {
+          ...(review.verdict !== undefined ? { verdict: review.verdict } : {}),
+          ...(review.invocationId !== undefined ? { invocationId: review.invocationId } : {}),
+          ...(review.offendingFindings !== undefined
+            ? { offendingFindings: review.offendingFindings }
+            : {}),
+          ...(review.excerpt !== undefined ? { excerpt: review.excerpt } : {}),
+        },
+        ...(fix
+          ? {
+              fix: {
+                ...(fix.verdict !== undefined ? { verdict: fix.verdict } : {}),
+                ...(fix.invocationId !== undefined ? { invocationId: fix.invocationId } : {}),
+                ...(fix.headBeforeFix !== undefined ? { headBeforeFix: fix.headBeforeFix } : {}),
+                ...(fix.summary !== undefined ? { summary: fix.summary } : {}),
+              },
+            }
+          : {}),
+        ...(reval
+          ? {
+              revalidation: {
+                passed: reval.passed,
+                ...(reval.validationRunId !== undefined
+                  ? { validationRunId: reval.validationRunId }
+                  : {}),
+                ...(reval.category !== undefined ? { category: reval.category } : {}),
+              },
+            }
+          : {}),
+        outcome,
+      };
+      await this.deps.loopHistory.append(ctx, entry);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(
+        input,
+        'review_loop_history.append_failed',
+        'warn',
+        `failed to append loop history: ${errorMsg}`,
+        {
+          iterationIndex: ctx.iterationIndex,
+          outcome,
+          error: errorMsg,
+        },
+      );
     }
   }
 }

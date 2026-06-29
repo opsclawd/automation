@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
@@ -11,6 +11,7 @@ import type {
   FixStepOptions,
   StepContext,
   PostFixGateResult,
+  ReviewStepOptions,
 } from '../types.js';
 
 function collectEvents() {
@@ -775,15 +776,15 @@ describe('ReviewFixLoop', () => {
 
     it('passes gate failure result to runReview on iteration 2', async () => {
       let reviewCalls = 0;
-      const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+      const receivedGateResults: Array<ReviewStepOptions | undefined> = [];
       const deps = makeDeps({
         runPostFixGate: async (): Promise<PostFixGateResult> => ({
           outcome: 'fail',
           output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
         }),
-        runReview: async (_ctx, gateResult) => {
+        runReview: async (_ctx, opts) => {
           reviewCalls += 1;
-          receivedGateResults.push(gateResult);
+          receivedGateResults.push(opts);
           return {
             invocationId: `rev-${reviewCalls}`,
             agentOutcome: 'success' as const,
@@ -798,22 +799,24 @@ describe('ReviewFixLoop', () => {
       expect(receivedGateResults[0]).toBeUndefined();
       // Iteration 2: gate called and returns fail, reviewer receives failure
       expect(receivedGateResults[1]).toEqual({
-        outcome: 'fail',
-        output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
+        gateResult: {
+          outcome: 'fail',
+          output: 'src/foo.ts(1,1): error TS2322: Type string is not assignable to type number',
+        },
       });
     });
 
     it('passes gate pass result to runReview when gate succeeds on iteration 2', async () => {
       let reviewCalls = 0;
-      const receivedGateResults: Array<PostFixGateResult | undefined> = [];
+      const receivedGateResults: Array<ReviewStepOptions | undefined> = [];
       const deps = makeDeps({
         runPostFixGate: async (): Promise<PostFixGateResult> => ({
           outcome: 'pass',
           output: '',
         }),
-        runReview: async (_ctx, gateResult) => {
+        runReview: async (_ctx, opts) => {
           reviewCalls += 1;
-          receivedGateResults.push(gateResult);
+          receivedGateResults.push(opts);
           return {
             invocationId: `rev-${reviewCalls}`,
             agentOutcome: 'success' as const,
@@ -826,7 +829,414 @@ describe('ReviewFixLoop', () => {
       // Iteration 1: gate not called, runReview receives undefined
       expect(receivedGateResults[0]).toBeUndefined();
       // Iteration 2: gate called (pass), runReview receives pass result
-      expect(receivedGateResults[1]).toEqual({ outcome: 'pass', output: '' });
+      expect(receivedGateResults[1]).toEqual({
+        gateResult: { outcome: 'pass', output: '' },
+      });
+    });
+  });
+
+  describe('loop history', () => {
+    it('passes historyContext to reviewer and fixer calls', async () => {
+      const history = [
+        {
+          iteration: 1,
+          review: {
+            verdict: 'fail' as const,
+            offendingFindings: [{ severity: 'high', summary: 'missing guard' }],
+          },
+          fix: {
+            verdict: 'done_with_fixes' as const,
+            invocationId: 'fix-1',
+            summary: 'Added guard',
+          },
+          revalidation: { passed: true, validationRunId: 'val-1' },
+          outcome: 'fixed' as const,
+        },
+      ];
+      const loopHistory = {
+        read: vi.fn(async () => history),
+        append: vi.fn(async () => {}),
+        format: vi.fn((_entries, audience) => `history for ${audience}`),
+      };
+
+      const receivedReviewOpts: Array<ReviewStepOptions | undefined> = [];
+      const receivedFixOpts: Array<FixStepOptions> = [];
+
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        loopHistory,
+        runReview: async (_ctx, opts) => {
+          reviewCalls += 1;
+          receivedReviewOpts.push(opts);
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async (_ctx, opts) => {
+          receivedFixOpts.push(opts);
+          return {
+            invocationId: 'fix-2',
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+        runRevalidation: async () => ({
+          validationRunId: 'val-2',
+          passed: true,
+        }),
+      });
+
+      const architectPlan = {
+        version: 1,
+        tasks: [
+          {
+            task_id: '1',
+            approach: 'do it',
+            conflicts_resolved: [],
+            constraints: [],
+            depends_on: [],
+          },
+        ],
+      };
+
+      const out = await new ReviewFixLoop(deps).execute({
+        ...baseInput(),
+        architectPlan,
+      });
+
+      expect(out.phaseOutcome).toBe('passed');
+      expect(loopHistory.read).toHaveBeenCalled();
+      expect(loopHistory.format).toHaveBeenCalledWith(history, 'reviewer');
+      expect(loopHistory.format).toHaveBeenCalledWith(history, 'fixer');
+
+      // Reviewer called twice: once in iteration 1 (fail) and once in iteration 2 (pass)
+      expect(receivedReviewOpts).toHaveLength(2);
+      expect(receivedReviewOpts[0]).toEqual({
+        historyContext: 'history for reviewer',
+      });
+      expect(receivedReviewOpts[1]).toEqual({
+        historyContext: 'history for reviewer',
+        gateResult: { outcome: 'pass', output: '' },
+      });
+
+      // Fixer called once in iteration 1 (because review failed)
+      expect(receivedFixOpts).toHaveLength(1);
+      expect(receivedFixOpts[0]).toEqual({
+        useFallback: false,
+        architectPlan,
+        historyContext: 'history for fixer',
+      });
+    });
+
+    it('passes historyContext to fixer while retaining useFallback and previousInvocationId', async () => {
+      const history = [
+        {
+          iteration: 1,
+          review: {
+            verdict: 'fail' as const,
+            offendingFindings: [{ severity: 'high', summary: 'missing guard' }],
+          },
+          fix: {
+            verdict: 'done_with_fixes' as const,
+            invocationId: 'fix-1',
+            summary: 'Added guard',
+          },
+          revalidation: { passed: true, validationRunId: 'val-1' },
+          outcome: 'fixed' as const,
+        },
+      ];
+      const loopHistory = {
+        read: vi.fn(async () => history),
+        append: vi.fn(async () => {}),
+        format: vi.fn((_entries, audience) => `history for ${audience}`),
+      };
+
+      const receivedFixOpts: Array<FixStepOptions> = [];
+
+      let reviewCalls = 0;
+      let fixCalls = 0;
+      const deps = makeDeps({
+        loopHistory,
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async (_ctx, opts) => {
+          fixCalls += 1;
+          receivedFixOpts.push(opts);
+          return {
+            invocationId: `fix-call-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'cannot_fix' as const,
+          };
+        },
+      });
+
+      await new ReviewFixLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 3,
+      });
+
+      // Fixer called 3 times (iterations 1, 2, 3)
+      expect(receivedFixOpts).toHaveLength(3);
+
+      // Iteration 1: first fix call (consecutive failures = 0)
+      expect(receivedFixOpts[0]).toEqual({
+        useFallback: false,
+        historyContext: 'history for fixer',
+      });
+
+      // Iteration 2: second fix call (consecutive failures = 1)
+      expect(receivedFixOpts[1]).toEqual({
+        useFallback: false,
+        historyContext: 'history for fixer',
+      });
+
+      // Iteration 3: third fix call (consecutive failures = 2) -> useFallback is true
+      expect(receivedFixOpts[2]).toEqual({
+        useFallback: true,
+        previousInvocationId: 'fix-call-2',
+        historyContext: 'history for fixer',
+      });
+    });
+
+    it('appends completed loop history entries for each loop outcome', async () => {
+      // 1. resolved (review pass)
+      const loopHistory1 = {
+        read: vi.fn(async () => []),
+        append: vi.fn(async () => {}),
+        format: vi.fn(() => ''),
+      };
+      const deps1 = makeDeps({
+        loopHistory: loopHistory1,
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+      });
+      await new ReviewFixLoop(deps1).execute(baseInput());
+      expect(loopHistory1.append).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          iteration: 1,
+          review: expect.objectContaining({ verdict: 'pass', invocationId: 'rev-1' }),
+          outcome: 'resolved',
+        }),
+      );
+
+      // 2. fixed (fix + revalidation pass)
+      const loopHistory2 = {
+        read: vi.fn(async () => []),
+        append: vi.fn(async () => {}),
+        format: vi.fn(() => ''),
+      };
+      let revCalls2 = 0;
+      const deps2 = makeDeps({
+        loopHistory: loopHistory2,
+        runReview: async () => {
+          revCalls2 += 1;
+          return {
+            invocationId: `rev-${revCalls2}`,
+            agentOutcome: 'success' as const,
+            verdict: revCalls2 === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runRevalidation: async () => ({
+          validationRunId: 'val-1',
+          passed: true,
+        }),
+      });
+      await new ReviewFixLoop(deps2).execute(baseInput());
+      expect(loopHistory2.append).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          fix: expect.objectContaining({ verdict: 'done_with_fixes', invocationId: 'fix-1' }),
+          revalidation: expect.objectContaining({ passed: true, validationRunId: 'val-1' }),
+          outcome: 'fixed',
+        }),
+      );
+
+      // 3. unresolved (fix failure or cannot_fix)
+      const loopHistory3 = {
+        read: vi.fn(async () => []),
+        append: vi.fn(async () => {}),
+        format: vi.fn(() => ''),
+      };
+      const deps3 = makeDeps({
+        loopHistory: loopHistory3,
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'cannot_fix' as const,
+        }),
+      });
+      await new ReviewFixLoop(deps3).execute({
+        ...baseInput(),
+        maxIterations: 1,
+      });
+      expect(loopHistory3.append).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          outcome: 'unresolved',
+        }),
+      );
+
+      // 4. failed (review agent fails)
+      const loopHistory4 = {
+        read: vi.fn(async () => []),
+        append: vi.fn(async () => {}),
+        format: vi.fn(() => ''),
+      };
+      const deps4 = makeDeps({
+        loopHistory: loopHistory4,
+        runReview: async () => ({
+          invocationId: 'rev-fail',
+          agentOutcome: 'failure' as const,
+        }),
+      });
+      await new ReviewFixLoop(deps4).execute(baseInput());
+      expect(loopHistory4.append).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          review: expect.objectContaining({ invocationId: 'rev-fail' }),
+          outcome: 'failed',
+        }),
+      );
+    });
+
+    it('gracefully handles loopHistory.read failure before reviewer invocation', async () => {
+      const { events, bus } = collectEvents();
+      const loopHistory = {
+        read: vi.fn(async () => {
+          throw new Error('read error before reviewer');
+        }),
+        append: vi.fn(async () => {}),
+        format: vi.fn(() => ''),
+      };
+      const deps = makeDeps({
+        loopHistory,
+        events: bus,
+        runReview: async () => ({
+          invocationId: 'rev-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.status).toBe('converged');
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'review_loop_history.read_failed',
+          metadata: expect.objectContaining({ iterationIndex: 1, audience: 'reviewer' }),
+        }),
+      );
+    });
+
+    it('gracefully handles loopHistory.read failure before fixer invocation', async () => {
+      const { events, bus } = collectEvents();
+      let readCount = 0;
+      const loopHistory = {
+        read: vi.fn(async () => {
+          readCount++;
+          if (readCount === 2) {
+            throw new Error('read error before fixer');
+          }
+          return [];
+        }),
+        append: vi.fn(async () => {}),
+        format: vi.fn(() => ''),
+      };
+      let revCalls = 0;
+      const deps = makeDeps({
+        loopHistory,
+        events: bus,
+        runReview: async () => {
+          revCalls += 1;
+          return {
+            invocationId: `rev-${revCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: revCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runRevalidation: async () => ({
+          validationRunId: 'val-1',
+          passed: true,
+        }),
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.status).toBe('converged');
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'review_loop_history.read_failed',
+          metadata: expect.objectContaining({ iterationIndex: 1, audience: 'fixer' }),
+        }),
+      );
+    });
+
+    it('gracefully handles loopHistory.append failure after a completed iteration', async () => {
+      const { events, bus } = collectEvents();
+      const loopHistory = {
+        read: vi.fn(async () => []),
+        append: vi.fn(async () => {
+          throw new Error('append error');
+        }),
+        format: vi.fn(() => ''),
+      };
+      let revCalls = 0;
+      const deps = makeDeps({
+        loopHistory,
+        events: bus,
+        runReview: async () => {
+          revCalls += 1;
+          return {
+            invocationId: `rev-${revCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: revCalls === 1 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runRevalidation: async () => ({
+          validationRunId: 'val-1',
+          passed: true,
+        }),
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.status).toBe('converged');
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'review_loop_history.append_failed',
+          metadata: expect.objectContaining({ iterationIndex: 1, outcome: 'fixed' }),
+        }),
+      );
     });
   });
 });
