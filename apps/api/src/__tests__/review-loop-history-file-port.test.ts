@@ -107,6 +107,43 @@ describe('createReviewLoopHistoryFilePort', () => {
     );
   });
 
+  it('warning event payload includes runId, phase, and iterationIndex matching the event bus shape in compose', async () => {
+    const published: Array<{
+      runUuid: string;
+      event: {
+        runId: string;
+        phase?: string;
+        metadata: { iterationIndex?: number; error?: string };
+      };
+    }> = [];
+    const composeEventBus: EventBusPort = {
+      subscribe: vi.fn(),
+      publish: (runUuid, event) => {
+        published.push({
+          runUuid,
+          event: event as {
+            runId: string;
+            phase?: string;
+            metadata: { iterationIndex?: number; error?: string };
+          },
+        });
+      },
+    };
+
+    const port = createReviewLoopHistoryFilePort(composeEventBus);
+    writeFileSync(join(tempDir, 'review-loop-history.json'), '{malformed', 'utf-8');
+
+    await port.read(ctx);
+
+    expect(published).toHaveLength(1);
+    const { runUuid, event } = published[0];
+    expect(runUuid).toBe('run-1');
+    expect(event.runId).toBe('run-1');
+    expect(event.phase).toBe('review-fix');
+    expect(event.metadata).toBeDefined();
+    expect(event.metadata.iterationIndex).toBe(1);
+  });
+
   it('append successfully writes entry and preserves existing entries', async () => {
     const port = createReviewLoopHistoryFilePort(mockEventBus as unknown as EventBusPort);
     const entry1: ReviewLoopHistoryEntry = {

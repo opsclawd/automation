@@ -118,6 +118,7 @@ import {
 } from '@ai-sdlc/infrastructure';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
+import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -1150,6 +1151,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
       };
 
+      const loopHistory = createReviewLoopHistoryFilePort(persistingEventBusForLoop);
+
       const resolveStartCommitSha = (cwd: string, runId: string): string => {
         try {
           return execFileSync('git', ['rev-parse', 'HEAD'], { cwd }).toString().trim();
@@ -1234,6 +1237,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         rollbackFix,
         loops: loopRepository,
         events: persistingEventBusForLoop,
+        loopHistory,
         now: () => new Date(),
         idFactory: () => randomUUID(),
         cleanArtifacts: async (ctx) => {
