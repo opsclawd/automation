@@ -674,7 +674,7 @@ exit 1
   it('exposes a buildPrReviewPoller factory', () => {
     const c = composeRoot({
       repoRoot: trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-'))),
-      scriptPath: 'scripts/ai-run-issue-v2',
+      scriptPath: 'scripts/legacy/ai-run-issue-v2',
       dbPath: ':memory:',
     });
     expect(typeof c.buildPrReviewPoller).toBe('function');

@@ -2,6 +2,10 @@
 # =============================================================================
 # ai-run-issue-v2.sh — Non-interactive GitHub issue-to-PR orchestrator
 #
+# ⚠️  DEPRECATED: legacy Bash orchestrator. The default workflow is the TypeScript
+#     RunExecutor (apps/api worker). This script is retained for emergency use only.
+#     See docs/adr/ADR-0002-typescript-cutover.md for the cutover.
+#
 # Usage: pnpm ai:run-issue <issue-number>
 #
 # State labels: ai:blocked | ai:failed | ai:needs-human-review | ai:pr-ready

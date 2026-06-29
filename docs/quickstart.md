@@ -1,4 +1,4 @@
-# Orchestrator Quickstart (M1)
+# Orchestrator Quickstart
 
 ## Prerequisites
 
@@ -8,8 +8,8 @@
   corepack enable
   corepack prepare pnpm@9.12.3 --activate
   ```
-- **`gh` CLI** authenticated (`gh auth status` to verify) — required by the legacy Bash script.
-- A repository that contains `scripts/ai-run-issue-v2` and a valid `.ai-orchestrator.json`.
+- **`gh` CLI** authenticated (`gh auth status` to verify)
+- A valid `.ai-orchestrator.json` at the repo root
 
 ## Install
 
@@ -36,7 +36,7 @@ pnpm --filter @ai-sdlc/web dev           # http://127.0.0.1:4310
 pnpm --filter @ai-sdlc/api dev run --issue 123
 ```
 
-On success the CLI prints a JSON line:
+The default executor is the TypeScript `RunExecutor`. On success the CLI prints a JSON line:
 
 <!-- prettier-ignore -->
 ```json
@@ -51,73 +51,46 @@ All run data is under `.ai-runs/` in the repo root.
 
 | Path                                | Contents                               |
 | ----------------------------------- | -------------------------------------- |
-| `.ai-runs/<displayId>/run.json`     | Structured run metadata                |
-| `.ai-runs/<displayId>/stdout.log`   | Script stdout                          |
-| `.ai-runs/<displayId>/stderr.log`   | Script stderr                          |
-| `.ai-runs/<displayId>/combined.log` | Merged stdout + stderr                 |
-| `.ai-runs/<displayId>/failure.json` | Classified failure (if the run failed) |
-| `.ai-runs/<displayId>/events.jsonl` | Structured event log                   |
 | `.ai-runs/orchestrator.sqlite`      | SQLite database of all runs            |
+| `.ai-runs/agent-artifacts/<inv-id>/stdout.log` | Agent stdout per invocation |
+| `.ai-runs/agent-artifacts/<inv-id>/stderr.log` | Agent stderr per invocation |
 
-Each run directory also contains `phases/` and `artifacts/` subdirectories.
-
-The legacy Bash script works in `.ai-worktrees/issue-<N>` and archives its
-outputs (design.md, plan.md, validation logs, reviews, PR metadata) to
-`ai/issues/<N>/` on completion. In M1 the wrapper does not copy those files
-into `.ai-runs/<displayId>/artifacts`; find the legacy script's working
-artifacts in `ai/issues/<N>/` instead.
+Worktrees for active runs are under `.ai-worktrees/issue-<N>/`. Completed run artifacts (design.md, plan.md, reviews, PR metadata) are archived to `ai/issues/<N>/`.
 
 ## Configuration
 
-`.ai-orchestrator.json` at the repo root defines a schema for validation
-commands, skip-list, and timeouts
-(see [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schema.ts)),
-but the M1 wrapper run path does **not** read this file.
-The legacy Bash script also hard-codes its own validation commands and
-timeouts. Editing `.ai-orchestrator.json` will not affect M1 runs.
+`.ai-orchestrator.json` at the repo root defines validation commands, phase skip-list, agent profiles, and timeouts. See [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schema.ts) for the full schema.
 
 CLI flags for the `run` command:
 
-| Flag                     | Wrapper env var  | Script env var   | Purpose                                            |
-| ------------------------ | ---------------- | ---------------- | -------------------------------------------------- |
-| `--base-branch <branch>` | `AI_BASE_BRANCH` | `BASE_BRANCH`    | Base branch (default: main)                        |
-| `--model <model>`        | `AI_AGENT_MODEL` | `AI_AGENT_MODEL` | Override the AI model                              |
-| `--agent-cli <cli>`      | `AI_RUNTIME`     | —                | Sets `AI_RUNTIME` (runtime resolved from profiles) |
-
-The wrapper passes CLI flags as `AI_*` env vars to the script's process
-environment. The script reads `BASE_BRANCH` for branch config, and
-`AI_AGENT_MODEL` / `AI_AGENT_PROVIDER` are handled by `run-agent.ts` via
-`AgentRuntimeRouter`. `AI_RUNTIME` is set by the wrapper but not consumed
-by the routed agent path (runtime is determined by profiles in
-`.ai-orchestrator.json`).
-
-For the orchestrator's agent runtime, set `AI_AGENT_PROVIDER` and
-`AI_AGENT_MODEL` to override the provider and model from
-`.ai-orchestrator.json` for a single run:
-
-```bash
-AI_AGENT_PROVIDER=opencode-go AI_AGENT_MODEL=glm-5.1 \
-  pnpm --filter @ai-sdlc/api dev run --issue 115
-```
-
-These apply to all phases for the run, including fallback profiles.
-Blank values fall through to the profile default.
+| Flag                     | Purpose                                            |
+| ------------------------ | -------------------------------------------------- |
+| `--base-branch <branch>` | Base branch (default: main)                        |
+| `--model <model>`        | Override the AI model for this run                 |
+| `--agent-cli <cli>`      | Sets `AI_RUNTIME`                                  |
+| `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only)  |
 
 ## Troubleshooting
 
 **Run row stuck in `running`**
-The wrapper process died without updating the row. This will be fixed in a future milestone. For now, update the row directly:
+Update the row directly:
 
 ```bash
 sqlite3 .ai-runs/orchestrator.sqlite "UPDATE runs SET status = 'failed' WHERE display_id = '<displayId>' AND status = 'running';"
 ```
 
-Replace `<displayId>` with the stuck run's display ID (visible in the run list or the `displayId` field from the CLI output).
-
-Verify the schema first with `.schema runs` in the SQLite shell. If the table or column names differ, adjust the statement accordingly.
-
 **`active run already exists for issue N`**
-A previous run for that issue is in a non-terminal state. Resolve or fail the previous run before starting a new one.
+A previous run for that issue is in a non-terminal state. Resume or fail it before starting a new one.
 
 **Next.js shows `Failed to load runs: 500`**
 The API server is not running. Start it with `pnpm --filter @ai-sdlc/api dev serve` and refresh the dashboard.
+
+## Emergency: legacy Bash executor
+
+The legacy Bash orchestrator is preserved at `scripts/legacy/ai-run-issue-v2` for emergency use. To invoke it explicitly:
+
+```bash
+pnpm --filter @ai-sdlc/api dev run --issue 123 --executor bash
+```
+
+This path is not the default and is not maintained going forward. See `docs/adr/ADR-0002-typescript-cutover.md` for the cutover history.

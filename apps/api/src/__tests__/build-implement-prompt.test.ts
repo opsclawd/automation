@@ -51,7 +51,7 @@ describe('buildImplementPrompt', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
     expect(prompt).toContain('## PARITY COVERAGE');
     expect(prompt).toContain('watched legacy path');
-    expect(prompt).toContain('scripts/ai-run-issue-v2');
+    expect(prompt).toContain('scripts/legacy/ai-run-issue-v2');
     expect(prompt).toContain('legacy-parity.bats');
   });
 
