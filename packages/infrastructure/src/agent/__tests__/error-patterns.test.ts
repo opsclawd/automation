@@ -68,11 +68,11 @@ describe('testQuotaPatterns', () => {
     expect(result).toContain('Usage limit reached');
   });
 
-  it('matches quota pattern in unstructured text (default mode)', () => {
+  it('does not match quota regex pattern string in env-var assignment (default mode)', () => {
     const result = testQuotaPatterns(
       "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|HTTP 429|quota.*exceed'",
     );
-    expect(result).toBeTruthy();
+    expect(result).toBeNull();
   });
 
   it('matches 429 in unstructured bash variable assignment (default mode)', () => {
@@ -162,6 +162,25 @@ describe('testQuotaPatterns', () => {
     expect(result).toContain('Quota exceeded');
   });
 
+  it('does not match underscore-delimited quota_exceeded (enum name in docs)', () => {
+    expect(testQuotaPatterns('quota_exceeded')).toBeNull();
+  });
+
+  it('does not match underscore-delimited quota_exceeded in a reference table row', () => {
+    const tableRow = '| quota_exceeded | The request quota was exhausted | Retry after reset |';
+    expect(testQuotaPatterns(tableRow)).toBeNull();
+  });
+
+  it('still matches "Quota exceeded" natural-language form', () => {
+    const result = testQuotaPatterns('ERROR: Quota exceeded for this billing period.');
+    expect(result).toBeTruthy();
+    expect(result).toContain('Quota exceeded');
+  });
+
+  it('still matches "quota exceeded" natural-language form (lowercase)', () => {
+    expect(testQuotaPatterns('quota exceeded for user')).toBeTruthy();
+  });
+
   it('ignores quota pattern in non-structural line (structuralOnly: true)', () => {
     const result = testQuotaPatterns(
       "REVIEWER_PROVIDER_ERROR_PATTERNS='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
@@ -185,6 +204,20 @@ describe('testQuotaPatterns', () => {
       'some bash variable',
     ].join('\n');
     expect(testQuotaPatterns(text, { structuralOnly: true })).toBeNull();
+  });
+
+  it('respects maxLines: stops scanning before the matching line', () => {
+    const text = ['line 1 harmless', 'line 2 harmless', 'Quota exceeded: API limit'].join('\n');
+    // maxLines: 2 — only lines 1 and 2 are scanned; "Quota exceeded" is on line 3
+    expect(testQuotaPatterns(text, { maxLines: 2 })).toBeNull();
+  });
+
+  it('respects maxLines: includes matching line when within limit', () => {
+    const text = ['Quota exceeded: API limit', 'line 2', 'line 3'].join('\n');
+    // maxLines: 2 — line 1 is in scope
+    const result = testQuotaPatterns(text, { maxLines: 2 });
+    expect(result).toBeTruthy();
+    expect(result).toContain('Quota exceeded');
   });
 });
 
@@ -298,5 +331,18 @@ describe('testProviderErrorPatterns', () => {
       { structuralOnly: true },
     );
     expect(result).toBeNull();
+  });
+
+  it('respects maxLines: stops scanning before the matching line', () => {
+    const text = ['line 1 harmless', 'line 2 harmless', 'AI_APICallError: 500'].join('\n');
+    // maxLines: 2 — only lines 1-2 are scanned; AI_APICallError is on line 3
+    expect(testProviderErrorPatterns(text, { maxLines: 2 })).toBeNull();
+  });
+
+  it('respects maxLines: includes matching line when within limit', () => {
+    const text = ['AI_APICallError: 500', 'line 2', 'line 3'].join('\n');
+    const result = testProviderErrorPatterns(text, { maxLines: 2 });
+    expect(result).toBeTruthy();
+    expect(result).toContain('AI_APICallError');
   });
 });
