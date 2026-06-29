@@ -1923,20 +1923,18 @@ export function composeRoot(opts: ComposeOptions): Container {
         return { ok: true };
       };
 
-      const lintTaskSizeDep = config.taskSplitting
-        ? buildLintTaskSize({
-            maxTestFileLines: config.taskSplitting.maxTestFileLines,
-            maxTestCases: config.taskSplitting.maxTestCases,
-            blockOversizedTasks: config.taskSplitting.blockOversizedTasks,
-          })
-        : undefined;
+      const lintTaskSizeDep = buildLintTaskSize({
+        maxTestFileLines: config.taskSplitting?.maxTestFileLines ?? 500,
+        maxTestCases: config.taskSplitting?.maxTestCases ?? 10,
+        blockOversizedTasks: config.taskSplitting?.blockOversizedTasks ?? false,
+      });
 
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
           runStep,
           setup: worktreeSetup,
-          ...(lintTaskSizeDep ? { lintTaskSize: lintTaskSizeDep } : {}),
+          lintTaskSize: lintTaskSizeDep,
         }),
       );
 
