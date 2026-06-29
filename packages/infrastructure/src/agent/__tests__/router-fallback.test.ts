@@ -464,6 +464,48 @@ describe('AgentRuntimeRouter fallback', () => {
         if (cleanup) unlinkSync(stderrPath);
       }
     });
+
+    it('does not trigger token_limit_exceeded when stderr contains underscore-delimited token_limit_exceeded (enum name in docs)', async () => {
+      const stderrPath = '/tmp/test-stderr-tle-underscore.log';
+      // This is the false-positive scenario: a docs reference table row echoed to stderr
+      writeFileSync(
+        stderrPath,
+        '| token_limit_exceeded | The model context window was exceeded | Reduce prompt size |',
+      );
+      let cleanup = true;
+      const inv = new FakeAgentInvocationPort();
+      const adapter = new StubAdapter({
+        runtime: 'opencode',
+        provider: 'anthropic',
+        model: 'm',
+        exitCode: 1,
+        durationMs: 1000,
+        stdoutPath: '/s',
+        stderrPath,
+        contractViolations: [],
+        outcome: 'failed',
+      });
+      const config = cfg();
+      config.phaseProfiles['plan-design'].fallbackTriggers = ['token_limit_exceeded'];
+      const router = new AgentRuntimeRouter({
+        agent: config,
+        adapters: { opencode: adapter, pi: adapter },
+        invocationRepository: inv,
+        clock: () => FIXED_NOW,
+        idFactory: () => 'inv-tle-underscore',
+        readPromptChars: () => 100,
+      });
+
+      try {
+        await router.invoke(req());
+
+        const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+        // Should NOT escalate to fallback — token_limit_exceeded with underscore is not a real error
+        expect(rows.length).toBe(1);
+      } finally {
+        if (cleanup) unlinkSync(stderrPath);
+      }
+    });
   });
 
   describe('quota_exceeded trigger', () => {
