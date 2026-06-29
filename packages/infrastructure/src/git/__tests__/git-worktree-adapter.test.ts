@@ -489,10 +489,10 @@ describe('Artifact Guarding & Cleanup', () => {
       await adapter.seedArtifactExcludes(repoPath);
 
       const patchFile = join(repoPath, 'diff.patch');
-      const artifactFile = join(repoPath, 'validation.result');
+      const artifactFile = join(repoPath, 'implementation-log.md');
 
       await writeFile(patchFile, 'some patch content\n');
-      await writeFile(artifactFile, 'some validation result\n');
+      await writeFile(artifactFile, 'some implementation log content\n');
 
       const untracked = await git(repoPath, ['ls-files', '--others', '--exclude-standard']);
       expect(untracked).toBe('');
@@ -536,15 +536,15 @@ describe('Artifact Guarding & Cleanup', () => {
       // Create a branch off baseBranch
       await git(repoPath, ['checkout', '-b', 'ai/work-branch']);
 
-      const artifactFile = join(repoPath, 'validation.result');
+      const artifactFile = join(repoPath, 'implementation-log.md');
       await writeFile(artifactFile, 'committed content\n');
 
-      await git(repoPath, ['add', 'validation.result']);
-      await git(repoPath, ['commit', '-m', 'commit validation.result']);
+      await git(repoPath, ['add', 'implementation-log.md']);
+      await git(repoPath, ['commit', '-m', 'commit implementation-log.md']);
 
-      // Verify validation.result is committed in current branch relative to baseBranch
+      // Verify implementation-log.md is committed in current branch relative to baseBranch
       const diffBefore = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
-      expect(diffBefore).toContain('validation.result');
+      expect(diffBefore).toContain('implementation-log.md');
 
       await adapter.cleanOrchestratorArtifacts(repoPath, baseBranch);
 
@@ -554,7 +554,7 @@ describe('Artifact Guarding & Cleanup', () => {
 
       // Verify it has been removed and committed on the current branch
       const diffAfter = await git(repoPath, ['diff', `${baseBranch}...HEAD`, '--name-only']);
-      expect(diffAfter).not.toContain('validation.result');
+      expect(diffAfter).not.toContain('implementation-log.md');
     });
 
     it('cleanup does not remove committed artifacts when baseBranch is omitted', async () => {
