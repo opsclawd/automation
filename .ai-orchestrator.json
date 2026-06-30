@@ -143,32 +143,42 @@
         "timeoutMinutes": 45
       }
     },
+    "roles": {
+      "planner": { "profile": "architect", "fallback": "senior" },
+      "implementer": { "profile": "qwen", "fallback": "builder" },
+      "fixer": { "profile": "builder", "fallback": "junior" },
+      "critic": { "profile": "task-reviewer", "fallback": "junior" },
+      "task-agent": { "profile": "junior", "fallback": "builder" },
+      "post-pr-agent": { "profile": "mimo-pro", "fallback": "junior" },
+      "pr-reviewer": { "profile": "gemini", "fallback": "junior" },
+      "verify-reviewer": { "profile": "reviewer", "fallback": "junior" }
+    },
     "phaseProfiles": {
-      "plan-design": { "profile": "architect", "fallbackProfile": "senior" },
+      "plan-design": { "role": "planner" },
       "plan-write": { "profile": "codex-writer", "fallbackProfile": "architect" },
-      "implement": { "profile": "qwen", "fallbackProfile": "builder" },
-      "quality-review": { "profile": "task-reviewer", "fallbackProfile": "junior" },
+      "implement": { "role": "implementer" },
+      "quality-review": { "role": "critic" },
       "spec-review": {
-        "profile": "task-reviewer",
+        "role": "critic",
         "fallbackProfile": "codex-reviewer",
         "fallbackTriggers": ["timeout", "quota_exceeded", "runtime_error"]
       },
-      "fix-review": { "profile": "builder", "fallbackProfile": "junior" },
-      "whole-pr-fix-review": { "profile": "builder", "fallbackProfile": "junior" },
-      "fix-validate": { "profile": "builder", "fallbackProfile": "junior" },
-      "whole-pr-review": { "profile": "gemini", "fallbackProfile": "junior" },
-      "review-triage": { "profile": "architect", "fallbackProfile": "senior" },
-      "post-pr-review": { "profile": "mimo-pro", "fallbackProfile": "junior" },
-      "compound": { "profile": "junior", "fallbackProfile": "builder" },
-      "extract": { "profile": "junior", "fallbackProfile": "builder" },
-      "create-pr": { "profile": "junior", "fallbackProfile": "builder" },
-      "arbitrate": { "profile": "architect", "fallbackProfile": "senior" },
-      "plan-review": { "profile": "architect", "fallbackProfile": "senior" },
-      "plan-fix": { "profile": "architect", "fallbackProfile": "senior" },
-      "result-writer": { "profile": "task-reviewer", "fallbackProfile": "junior" },
-      "fix-review-architect": { "profile": "architect", "fallbackProfile": "senior" },
-      "commit-completion": { "profile": "junior", "fallbackProfile": "builder" },
-      "verify-pr-review": { "profile": "reviewer", "fallbackProfile": "junior" }
+      "fix-review": { "role": "fixer" },
+      "whole-pr-fix-review": { "role": "fixer" },
+      "fix-validate": { "role": "fixer" },
+      "whole-pr-review": { "role": "pr-reviewer" },
+      "review-triage": { "role": "planner" },
+      "post-pr-review": { "role": "post-pr-agent" },
+      "compound": { "role": "task-agent" },
+      "extract": { "role": "task-agent" },
+      "create-pr": { "role": "task-agent" },
+      "arbitrate": { "role": "planner" },
+      "plan-review": { "role": "planner" },
+      "plan-fix": { "role": "planner" },
+      "result-writer": { "role": "critic" },
+      "fix-review-architect": { "role": "planner" },
+      "commit-completion": { "role": "task-agent" },
+      "verify-pr-review": { "role": "verify-reviewer" }
     }
   }
 }
