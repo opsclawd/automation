@@ -100,14 +100,14 @@ _ORCHESTRATOR_LOCAL_CONFIG="${REPO_ROOT}/.ai-orchestrator.local.json"
 _ACTIVE_CONFIG="$_ORCHESTRATOR_CONFIG"
 if [[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]]; then
   _ACTIVE_CONFIG=$(mktemp)
-  # jq '*' merges phaseProfile objects key-by-key, so a local {profile:...} override on a base
-  # {role:...} entry produces {role:..., profile:...} which the schema rejects. Strip role when
-  # the merged entry already has an explicit profile so local profile overrides take precedence.
+  # jq '*' merges phaseProfile objects key-by-key, so a base {profile:...} entry merged with a
+  # local {role:...} override produces {role:..., profile:..., fallbackProfile:...} which the
+  # schema rejects. When both are present, role wins (local intent) — drop profile/fallbackProfile.
   jq -s '
     .[0] * .[1]
     | if .agent.phaseProfiles then
         .agent.phaseProfiles |= with_entries(
-          if .value.profile and .value.role then del(.value.role) else . end
+          if .value.profile and .value.role then del(.value.profile) | del(.value.fallbackProfile) else . end
         )
       else . end
   ' "$_ORCHESTRATOR_CONFIG" "$_ORCHESTRATOR_LOCAL_CONFIG" > "$_ACTIVE_CONFIG" 2>/dev/null || { warn '.ai-orchestrator.local.json is invalid JSON — using base config'; mv "$_ORCHESTRATOR_LOCAL_CONFIG" "${_ORCHESTRATOR_LOCAL_CONFIG}.malformed-$(date +%s)" 2>/dev/null || true; cp "$_ORCHESTRATOR_CONFIG" "$_ACTIVE_CONFIG"; }
