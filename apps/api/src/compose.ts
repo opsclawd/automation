@@ -348,7 +348,7 @@ export interface Container {
       fromPhase?: string;
       workerId: import('@ai-sdlc/domain').WorkerId;
       attempt?: number;
-    }): Promise<void>;
+    }): Promise<{ jobId: import('@ai-sdlc/domain').JobId; jobStatus: 'queued' }>;
     transition(input: {
       runId: RunId;
       fromPhase?: string;

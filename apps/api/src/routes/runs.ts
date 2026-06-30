@@ -7,14 +7,7 @@ import { planRunRecoveryAction, UnknownPhaseError } from '@ai-sdlc/application';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_INT_RE = /^-?\d+$/;
 
-interface ResumeRunUseCaseWithJob {
-  execute(input: {
-    runId: RunId;
-    fromPhase?: string;
-    workerId: WorkerId;
-    attempt?: number;
-  }): Promise<{ jobId: import('@ai-sdlc/domain').JobId; jobStatus: string }>;
-}
+
 
 function validateBodyObject(body: unknown): boolean {
   if (body === undefined) return true;
@@ -161,8 +154,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         });
       }
 
-      const resumeRun = c.resumeRun as unknown as ResumeRunUseCaseWithJob;
-      const result = await resumeRun.execute({
+      const result = await c.resumeRun.execute({
         runId: RunId(req.params.runId),
         workerId: apiWorkerId(),
         ...(plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
@@ -244,8 +236,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       }
 
       const hasFromPhase = body.fromPhase !== undefined;
-      const resumeRun = c.resumeRun as unknown as ResumeRunUseCaseWithJob;
-      const result = await resumeRun.execute({
+      const result = await c.resumeRun.execute({
         runId: RunId(req.params.runId),
         workerId: apiWorkerId(),
         ...(hasFromPhase && plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
