@@ -1093,16 +1093,20 @@ describe('ProcessPrReviewComments — build failure feedback', () => {
     });
     const capturedErrors: Array<string | undefined> = [];
     let buildChecks = 0;
-    const { deps, github, repo } = makeDeps({
+    const order: string[] = [];
+    const { deps, github, repo, git } = makeDeps({
       agent,
       renderTaskPrompt: async (input) => {
         capturedErrors.push(input.previousBuildError);
+        order.push(`prompt:${input.previousBuildError ?? 'none'}`);
         return '/tmp/prompt.md';
       },
-      verifyBuildPasses: async () =>
-        buildChecks++ === 0
+      verifyBuildPasses: async () => {
+        order.push('build');
+        return buildChecks++ === 0
           ? { passed: false, error: 'TS2722: Cannot invoke object' }
-          : { passed: true },
+          : { passed: true };
+      },
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
@@ -1133,7 +1137,16 @@ describe('ProcessPrReviewComments — build failure feedback', () => {
 
     expect(out.outcome).toBe('ALL_RESOLVED');
     expect(capturedErrors).toEqual([undefined, 'TS2722: Cannot invoke object']);
+    expect(git.pushes).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
+    expect(order).toEqual([
+      'prompt:none',
+      'build',
+      'prompt:TS2722: Cannot invoke object',
+      'build',
+      'build',
+    ]);
   });
 });
 
