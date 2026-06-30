@@ -928,3 +928,118 @@ describe('AgentRuntimeRouter', () => {
     });
   });
 });
+
+describe('variant suffix in effectiveProfile', () => {
+  function cfgWithVariant(): AgentConfig {
+    return {
+      defaultProfile: 'flash-high',
+      profiles: {
+        'flash-high': {
+          runtime: 'opencode',
+          provider: 'google',
+          model: 'gemini-3.5-flash',
+          variant: 'high',
+          timeoutMinutes: 1,
+        },
+      },
+      phaseProfiles: {
+        'plan-design': { profile: 'flash-high' },
+      },
+    };
+  }
+
+  it('appends variant suffix to model when variant is set and AI_AGENT_MODEL is absent', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'google',
+      model: 'gemini-3.5-flash-high',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfgWithVariant(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-variant',
+      readPromptChars: () => 0,
+      env: {},
+    });
+    await router.invoke(req({ profile: AgentProfileName('flash-high') }));
+    const row = inv.findById(AgentInvocationId('inv-variant'));
+    expect(row?.model).toBe('gemini-3.5-flash-high');
+  });
+
+  it('does NOT append variant suffix when AI_AGENT_MODEL env is set', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'google',
+      model: 'my-override-model',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfgWithVariant(),
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-variant-env',
+      readPromptChars: () => 0,
+      env: { AI_AGENT_MODEL: 'my-override-model' },
+    });
+    await router.invoke(req({ profile: AgentProfileName('flash-high') }));
+    const row = inv.findById(AgentInvocationId('inv-variant-env'));
+    expect(row?.model).toBe('my-override-model');
+  });
+
+  it('uses profile model unchanged when no variant is set', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const cfgNoVariant: AgentConfig = {
+      defaultProfile: 'basic',
+      profiles: {
+        basic: {
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'claude-opus',
+          timeoutMinutes: 1,
+        },
+      },
+      phaseProfiles: {
+        'plan-design': { profile: 'basic' },
+      },
+    };
+    const adapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'anthropic',
+      model: 'claude-opus',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: '/s',
+      stderrPath: '/e',
+      contractViolations: [],
+      outcome: 'success',
+    });
+    const router = new AgentRuntimeRouter({
+      agent: cfgNoVariant,
+      adapters: { opencode: adapter },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-no-variant',
+      readPromptChars: () => 0,
+      env: {},
+    });
+    await router.invoke(req({ profile: AgentProfileName('basic') }));
+    const row = inv.findById(AgentInvocationId('inv-no-variant'));
+    expect(row?.model).toBe('claude-opus');
+  });
+});

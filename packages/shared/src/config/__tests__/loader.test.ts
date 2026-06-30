@@ -356,3 +356,81 @@ describe('phases.reviewFix.blockOnSeverity', () => {
     });
   });
 });
+
+describe('loadConfig role normalization', () => {
+  const BASE_WITH_ROLES = JSON.stringify({
+    validation: { commands: ['pnpm build'], timeout: 300 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 10 },
+      implement: { maxIterations: 5 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+    agent: {
+      defaultProfile: 'p1',
+      profiles: {
+        p1: { runtime: 'opencode', provider: 'a', model: 'm1', timeoutMinutes: 1 },
+        p2: { runtime: 'opencode', provider: 'a', model: 'm2', timeoutMinutes: 1 },
+      },
+      roles: {
+        architect: { profile: 'p1', fallback: 'p2' },
+        reviewer: { profile: 'p2' },
+      },
+      phaseProfiles: {
+        implement: { role: 'architect' },
+        review: { role: 'reviewer' },
+      },
+    },
+  });
+
+  it('resolves role to profile after loadConfig', () => {
+    const dir = makeRepo(BASE_WITH_ROLES);
+    const cfg = loadConfig(dir);
+    expect(cfg.agent!.phaseProfiles['implement'].profile).toBe('p1');
+  });
+
+  it('resolves role fallback to fallbackProfile when role has fallback', () => {
+    const dir = makeRepo(BASE_WITH_ROLES);
+    const cfg = loadConfig(dir);
+    expect(cfg.agent!.phaseProfiles['implement'].fallbackProfile).toBe('p2');
+  });
+
+  it('does not set fallbackProfile when role has no fallback', () => {
+    const dir = makeRepo(BASE_WITH_ROLES);
+    const cfg = loadConfig(dir);
+    expect(cfg.agent!.phaseProfiles['review'].fallbackProfile).toBeUndefined();
+  });
+
+  it('resolves fallbackRole to fallbackProfile', () => {
+    const withFallbackRole = JSON.stringify({
+      validation: { commands: ['pnpm build'], timeout: 300 },
+      phases: { skip: [], reviewFix: { maxIterations: 10 }, implement: { maxIterations: 5 } },
+      timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      agent: {
+        defaultProfile: 'p1',
+        profiles: {
+          p1: { runtime: 'opencode', provider: 'a', model: 'm1', timeoutMinutes: 1 },
+          p2: { runtime: 'opencode', provider: 'a', model: 'm2', timeoutMinutes: 1 },
+        },
+        roles: {
+          architect: { profile: 'p1' },
+          reviewer: { profile: 'p2' },
+        },
+        phaseProfiles: {
+          implement: { role: 'architect', fallbackRole: 'reviewer' },
+        },
+      },
+    });
+    const dir = makeRepo(withFallbackRole);
+    const cfg = loadConfig(dir);
+    expect(cfg.agent!.phaseProfiles['implement'].profile).toBe('p1');
+    expect(cfg.agent!.phaseProfiles['implement'].fallbackProfile).toBe('p2');
+  });
+
+  it('leaves legacy profile/fallbackProfile entries unchanged', () => {
+    const dir = makeRepo(BASE_WITH_AGENT);
+    const cfg = loadConfig(dir);
+    expect(cfg.agent!.phaseProfiles['implement'].profile).toBe('senior');
+    expect(cfg.agent!.phaseProfiles['review'].profile).toBe('junior');
+  });
+});

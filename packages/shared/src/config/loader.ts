@@ -28,6 +28,30 @@ function deepMerge(base: unknown, override: unknown): unknown {
   return override;
 }
 
+function normalizeRoles(config: OrchestratorConfig): OrchestratorConfig {
+  const agent = config.agent;
+  if (!agent?.roles) return config;
+  const { roles, phaseProfiles } = agent;
+  for (const entry of Object.values(phaseProfiles)) {
+    if (entry.role) {
+      const role = roles[entry.role];
+      if (role && !entry.profile) {
+        entry.profile = role.profile;
+      }
+      if (role && !entry.fallbackProfile && !entry.fallbackRole && role.fallback) {
+        entry.fallbackProfile = role.fallback;
+      }
+    }
+    if (entry.fallbackRole) {
+      const fbRole = roles[entry.fallbackRole];
+      if (fbRole && !entry.fallbackProfile) {
+        entry.fallbackProfile = fbRole.profile;
+      }
+    }
+  }
+  return config;
+}
+
 export function loadConfig(repoRoot: string): OrchestratorConfig {
   const path = resolve(repoRoot, CONFIG_FILENAME);
   let raw: string;
@@ -75,7 +99,7 @@ export function loadConfig(repoRoot: string): OrchestratorConfig {
     const extraMsg = hasLocal ? ` (validated with overrides from ${LOCAL_CONFIG_FILENAME})` : '';
     throw new ConfigError(`${formatZodError(parsed.error)}${extraMsg}`, parsed.error);
   }
-  return parsed.data;
+  return normalizeRoles(parsed.data);
 }
 
 function formatZodError(err: ZodError): string {

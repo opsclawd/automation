@@ -65,6 +65,7 @@ const agentProfileSchema = z
     runtime: agentRuntime,
     provider: nonBlankString,
     model: nonBlankString,
+    variant: z.enum(['low', 'medium', 'high']).optional(),
     contextLimitTokens: z.number().int().positive().optional(),
     promptBudgetTokens: z.number().int().positive().optional(),
     outputBudgetTokens: z.number().int().positive().optional(),
@@ -94,48 +95,163 @@ const fallbackTriggerSchema = z.enum([
   'no_output',
 ]);
 
-const phaseProfileEntrySchema = z.strictObject({
+const roleEntrySchema = z.strictObject({
   profile: nonBlankString,
+  fallback: nonBlankString.optional(),
+});
+
+const phaseProfileEntrySchema = z.strictObject({
+  profile: nonBlankString.optional(),
   fallbackProfile: nonBlankString.optional(),
   fallbackTriggers: z.array(fallbackTriggerSchema).optional(),
+  role: nonBlankString.optional(),
+  fallbackRole: nonBlankString.optional(),
 });
 
 const agentSchema = z
   .strictObject({
     defaultProfile: nonBlankString,
     profiles: z.record(recordKeySchema, agentProfileSchema),
+    roles: z.record(recordKeySchema, roleEntrySchema).optional(),
     phaseProfiles: z.record(recordKeySchema, phaseProfileEntrySchema),
   })
   .superRefine((agent, ctx) => {
-    const names = new Set(Object.keys(agent.profiles));
-    if (!names.has(agent.defaultProfile)) {
+    const profileNames = new Set(Object.keys(agent.profiles));
+    const roleNames = new Set(Object.keys(agent.roles ?? {}));
+
+    if (!profileNames.has(agent.defaultProfile)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['defaultProfile'],
         message: `defaultProfile '${agent.defaultProfile}' is not defined in profiles`,
       });
     }
+
+    if (agent.roles) {
+      for (const [roleName, roleEntry] of Object.entries(agent.roles)) {
+        if (!profileNames.has(roleEntry.profile)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['roles', roleName, 'profile'],
+            message: `roles.${roleName}.profile '${roleEntry.profile}' is not defined in profiles`,
+          });
+        }
+        if (roleEntry.fallback && !profileNames.has(roleEntry.fallback)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['roles', roleName, 'fallback'],
+            message: `roles.${roleName}.fallback '${roleEntry.fallback}' is not defined in profiles`,
+          });
+        }
+      }
+    }
+
     for (const [phaseName, entry] of Object.entries(agent.phaseProfiles)) {
-      if (!names.has(entry.profile)) {
+      // Mutual exclusion: profile and role
+      if (entry.profile && entry.role) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['phaseProfiles', phaseName],
+          message: `phaseProfiles.${phaseName} has both profile and role; use one or the other`,
+        });
+        continue;
+      }
+      // Mutual exclusion: fallbackProfile and fallbackRole
+      if (entry.fallbackProfile && entry.fallbackRole) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['phaseProfiles', phaseName],
+          message: `phaseProfiles.${phaseName} has both fallbackProfile and fallbackRole; use one or the other`,
+        });
+      }
+      // Must have at least one of profile or role
+      if (!entry.profile && !entry.role) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['phaseProfiles', phaseName],
+          message: `phaseProfiles.${phaseName} must have either profile or role`,
+        });
+        continue;
+      }
+
+      // Validate profile membership
+      if (entry.profile && !profileNames.has(entry.profile)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['phaseProfiles', phaseName, 'profile'],
           message: `phaseProfiles.${phaseName}.profile '${entry.profile}' is not defined in profiles`,
         });
       }
-      if (entry.fallbackProfile && !names.has(entry.fallbackProfile)) {
+
+      // Validate role membership and its referenced profile/fallback
+      if (entry.role) {
+        if (!roleNames.has(entry.role)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['phaseProfiles', phaseName, 'role'],
+            message: `phaseProfiles.${phaseName}.role '${entry.role}' is not defined in roles`,
+          });
+        } else {
+          const roleProfile = agent.roles![entry.role]!.profile;
+          if (!profileNames.has(roleProfile)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['phaseProfiles', phaseName, 'role'],
+              message: `phaseProfiles.${phaseName}.role '${entry.role}' references profile '${roleProfile}' which is not defined in profiles`,
+            });
+          }
+          const roleFallback = agent.roles![entry.role]!.fallback;
+          if (roleFallback && !profileNames.has(roleFallback)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['phaseProfiles', phaseName, 'role'],
+              message: `roles.${entry.role}.fallback '${roleFallback}' is not defined in profiles`,
+            });
+          }
+        }
+      }
+
+      // Validate fallbackProfile membership
+      if (entry.fallbackProfile && !profileNames.has(entry.fallbackProfile)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['phaseProfiles', phaseName, 'fallbackProfile'],
           message: `phaseProfiles.${phaseName}.fallbackProfile '${entry.fallbackProfile}' is not defined in profiles`,
         });
       }
-      if (entry.fallbackTriggers && !entry.fallbackProfile) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['phaseProfiles', phaseName, 'fallbackTriggers'],
-          message: `phaseProfiles.${phaseName} has fallbackTriggers but no fallbackProfile; triggers require a fallback to be useful`,
-        });
+
+      // Validate fallbackRole membership and its referenced profile
+      if (entry.fallbackRole) {
+        if (!roleNames.has(entry.fallbackRole)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['phaseProfiles', phaseName, 'fallbackRole'],
+            message: `phaseProfiles.${phaseName}.fallbackRole '${entry.fallbackRole}' is not defined in roles`,
+          });
+        } else {
+          const fbRoleProfile = agent.roles![entry.fallbackRole]!.profile;
+          if (!profileNames.has(fbRoleProfile)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['phaseProfiles', phaseName, 'fallbackRole'],
+              message: `phaseProfiles.${phaseName}.fallbackRole '${entry.fallbackRole}' references profile '${fbRoleProfile}' which is not defined in profiles`,
+            });
+          }
+        }
+      }
+
+      // fallbackTriggers requires a fallback target — either an explicit fallbackProfile/
+      // fallbackRole on the phase entry, or a role-level fallback that normalizeRoles
+      // will later promote into fallbackProfile.
+      if (entry.fallbackTriggers && !entry.fallbackProfile && !entry.fallbackRole) {
+        const roleHasFallback = entry.role && agent.roles?.[entry.role]?.fallback;
+        if (!roleHasFallback) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['phaseProfiles', phaseName, 'fallbackTriggers'],
+            message: `phaseProfiles.${phaseName} has fallbackTriggers but no fallbackProfile, fallbackRole, or role-level fallback; triggers require a fallback to be useful`,
+          });
+        }
       }
     }
   });
