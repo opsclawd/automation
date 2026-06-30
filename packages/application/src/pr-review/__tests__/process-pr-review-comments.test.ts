@@ -1997,7 +1997,7 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
   });
 });
 
-describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
+describe('ProcessPrReviewComments - codeVerified retry behavior', () => {
   it('passes codeVerifyReason into next attempt prompt when code verify fails', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
@@ -2005,11 +2005,11 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
     const capturedPromptInputs: Array<{ previousCodeVerifyReason?: string }> = [];
     let verifyCallCount = 0;
 
-    const { deps, github } = makeDeps({
+    const { deps, github, git } = makeDeps({
       agent,
       verifyCodeChange: async () => {
         verifyCallCount++;
-        if (verifyCallCount === 1) return { pass: false, reason: 'still uses let' };
+        if (verifyCallCount === 1) return { pass: false, reason: 'verifier rejected fix' };
         return { pass: true, reason: 'ok' };
       },
       renderTaskPrompt: async (input) => {
@@ -2044,7 +2044,12 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
     });
 
     expect(result.processed).toBe(1);
-    expect(capturedPromptInputs[1]?.previousCodeVerifyReason).toBe('still uses let');
+    expect(capturedPromptInputs).toEqual([
+      { previousCodeVerifyReason: undefined },
+      { previousCodeVerifyReason: 'verifier rejected fix' },
+    ]);
+    expect(git.pushes).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(1);
   });
 
   it('reports not processed when all attempts exhaust with code verify failures', async () => {
@@ -2056,13 +2061,18 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
       ],
     });
 
-    const { deps, github } = makeDeps({
+    const rollbackCalls: Array<{ ctx: { cwd: string; branch: string }; sha: string }> = [];
+    const { deps, github, git } = makeDeps({
       agent,
       verifyCodeChange: async () => ({ pass: false, reason: 'never satisfied' }),
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'fixed', replyBody: 'Fixed.' },
       }),
+      rollbackFix: async (ctx, sha) => {
+        rollbackCalls.push({ ctx, sha });
+        return true;
+      },
     });
 
     const rc = {
@@ -2088,5 +2098,7 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
 
     expect(result.processed).toBe(0);
     expect(result.blocked).toBe(1);
+    expect(rollbackCalls).toHaveLength(1);
+    expect(git.pushes).toHaveLength(0);
   });
 });
