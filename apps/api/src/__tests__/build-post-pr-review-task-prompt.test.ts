@@ -23,6 +23,25 @@ describe('buildPostPrReviewTaskPrompt', () => {
     expect(prompt).not.toContain('commit and push');
   });
 
+  it('requires agent to verify HEAD advanced after commit before reporting fixed', () => {
+    const prompt = buildPostPrReviewTaskPrompt(baseInput);
+
+    expect(prompt).toContain('PRE_HEAD=$(git rev-parse HEAD)');
+    expect(prompt).toContain('COMMIT DID NOT ADVANCE HEAD');
+    expect(prompt).toContain('WORKTREE DIRTY AFTER COMMIT');
+    expect(prompt).toContain(
+      'Only write action=fixed in result.json after steps d and e both pass',
+    );
+  });
+
+  it('instructs agent to fix pre-commit hook failures before reporting done', () => {
+    const prompt = buildPostPrReviewTaskPrompt(baseInput);
+
+    expect(prompt).toContain('pre-commit hook failed');
+    expect(prompt).toContain('FIX the reported errors');
+    expect(prompt).toContain('Never report action=fixed');
+  });
+
   it('includes previous build error and previous code verify reason when provided', () => {
     const inputWithErrors = {
       ...baseInput,
