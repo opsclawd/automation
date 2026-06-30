@@ -59,6 +59,11 @@ export class FakeGitPort implements GitPort {
 
   async push(input: PushInput): Promise<void> {
     this.pushes.push(input);
+    const remote = input.remote ?? 'origin';
+    const head = this.headByCwd.get(input.cwd);
+    if (head) {
+      this.remoteRefs.set(`${remote}/${input.branch}`, head);
+    }
   }
 
   async remoteRef(input: {

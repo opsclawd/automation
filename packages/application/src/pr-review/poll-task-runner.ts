@@ -78,7 +78,7 @@ export class PollTaskRunner {
     const d = this.deps;
     const { comment } = input;
 
-    await d.git.resetHard(input.cwd, 'HEAD');
+    await d.git.resetHard(input.cwd, input.startCommitSha);
     await d.git.cleanUntracked(input.cwd);
 
     // 1. Render single-comment prompt
@@ -146,22 +146,8 @@ export class PollTaskRunner {
       };
     }
 
-    // 4. Post reply — idempotent. A comment can be reprocessed after a failed
-    // verification (reset to pending on a later poll), so posting unconditionally
-    // would accumulate one duplicate reply per attempt. Only post if this comment
-    // has no reply on GitHub yet. (Finding H1)
-    const repliesBefore = await d.github.listReviewComments(input.repoFullName, input.prNumber);
-    const alreadyReplied = repliesBefore.some((c) => c.inReplyToId === comment.commentId);
-    if (!alreadyReplied) {
-      await d.github.replyToReviewComment(
-        input.repoFullName,
-        input.prNumber,
-        comment.commentId,
-        result.replyBody,
-      );
-    }
-
     if (result.action === 'blocked') {
+      await this.postReplyIfMissing(input, result.replyBody);
       d.prReviewRepo.insertReply({
         id: d.idFactory(),
         runId: input.runId,
@@ -180,72 +166,200 @@ export class PollTaskRunner {
       };
     }
 
-    // 5. Capture fix commit SHA (verification delegated to shared verifyComment)
-    let fixCommitSha: string | undefined;
-    if (result.action === 'fixed') {
-      fixCommitSha = await d.git.headCommitSha(input.cwd);
-    }
+    if (result.action === 'no_fix') {
+      await this.postReplyIfMissing(input, result.replyBody);
+      const replied: PrReviewComment = {
+        ...comment,
+        state: 'replied',
+        outcome: 'no_fix',
+        attempts: comment.attempts + 1,
+        lastPoll: input.pollNumber,
+        updatedAt: d.now(),
+      };
+      d.prReviewRepo.upsertComment(replied);
 
-    // 6. Mark replied
-    const replied: PrReviewComment = {
-      ...comment,
-      state: 'replied',
-      outcome: result.action === 'fixed' ? 'fixed' : 'no_fix',
-      attempts: comment.attempts + 1,
-      lastPoll: input.pollNumber,
-      updatedAt: d.now(),
-    };
-    if (result.action === 'fixed' && fixCommitSha !== undefined) {
-      replied.commitSha = fixCommitSha;
-    }
-    d.prReviewRepo.upsertComment(replied);
-
-    // 7. Verify with shared function
-    const verification = await verifyComment(replied, d, {
-      cwd: input.cwd,
-      branch: input.branch,
-      prNumber: input.prNumber,
-      repoFullName: input.repoFullName,
-      startCommitSha: input.startCommitSha,
-      repoId: String(input.repoId),
-    });
-
-    if (verification.ok) {
-      d.prReviewRepo.insertReply({
-        id: d.idFactory(),
-        runId: input.runId,
+      const verification = await verifyComment(replied, d, {
+        cwd: input.cwd,
+        branch: input.branch,
         prNumber: input.prNumber,
-        commentId: comment.commentId,
-        body: result.replyBody,
-        postedAt: d.now(),
-        verified: true,
+        repoFullName: input.repoFullName,
+        startCommitSha: input.startCommitSha,
+        repoId: String(input.repoId),
       });
-      d.prReviewRepo.upsertComment(
-        markProcessed(replied, {
-          commitVerified: verification.commitVerified,
-          replyVerified: verification.replyVerified,
-          buildVerified: verification.buildVerified,
-        }),
-      );
-      await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+
+      if (verification.ok) {
+        d.prReviewRepo.insertReply({
+          id: d.idFactory(),
+          runId: input.runId,
+          prNumber: input.prNumber,
+          commentId: comment.commentId,
+          body: result.replyBody,
+          postedAt: d.now(),
+          verified: true,
+        });
+        d.prReviewRepo.upsertComment(
+          markProcessed(replied, {
+            commitVerified: verification.commitVerified,
+            replyVerified: verification.replyVerified,
+            buildVerified: verification.buildVerified,
+          }),
+        );
+        await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+        return {
+          commentId: comment.commentId,
+          action: 'no_fix',
+          processed: true,
+          blocked: false,
+        };
+      }
+
       return {
         commentId: comment.commentId,
-        action: result.action,
-        processed: true,
+        action: 'no_fix',
+        processed: false,
         blocked: false,
       };
     }
 
-    // Verification failed — return as not processed (retry loop in caller handles this)
+    if (result.action === 'fixed') {
+      const fixCommitSha = await d.git.headCommitSha(input.cwd);
+      if (fixCommitSha === input.startCommitSha) {
+        await this.resetToStart(input);
+        return {
+          commentId: comment.commentId,
+          action: 'fixed',
+          processed: false,
+          blocked: false,
+          buildError: 'agent did not produce a new commit (commitSha unchanged)',
+        };
+      }
+
+      const buildResult = await d.verifyBuildPasses({
+        cwd: input.cwd,
+        runId: String(input.runId),
+      });
+      if (!buildResult.passed) {
+        await this.resetToStart(input);
+        return {
+          commentId: comment.commentId,
+          action: 'fixed',
+          processed: false,
+          blocked: false,
+          ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
+        };
+      }
+
+      if (d.verifyCodeChange) {
+        const codeResult = await d.verifyCodeChange({
+          commentBody: comment.body,
+          path: comment.path,
+          line: comment.line,
+          cwd: input.cwd,
+          startCommitSha: input.startCommitSha,
+          fixCommitSha,
+          runId: String(input.runId),
+          repoId: String(input.repoId),
+        });
+        if (!codeResult.pass) {
+          await this.resetToStart(input);
+          return {
+            commentId: comment.commentId,
+            action: 'fixed',
+            processed: false,
+            blocked: false,
+            codeVerifyReason: codeResult.reason,
+          };
+        }
+      }
+
+      await d.git.push({ cwd: input.cwd, branch: input.branch });
+
+      const replied: PrReviewComment = {
+        ...comment,
+        state: 'replied',
+        outcome: 'fixed',
+        attempts: comment.attempts + 1,
+        lastPoll: input.pollNumber,
+        updatedAt: d.now(),
+        commitSha: fixCommitSha,
+      };
+      d.prReviewRepo.upsertComment(replied);
+
+      await this.postReplyIfMissing(input, result.replyBody);
+
+      const verification = await verifyComment(replied, d, {
+        cwd: input.cwd,
+        branch: input.branch,
+        prNumber: input.prNumber,
+        repoFullName: input.repoFullName,
+        startCommitSha: input.startCommitSha,
+        repoId: String(input.repoId),
+      });
+
+      if (verification.ok) {
+        d.prReviewRepo.insertReply({
+          id: d.idFactory(),
+          runId: input.runId,
+          prNumber: input.prNumber,
+          commentId: comment.commentId,
+          body: result.replyBody,
+          postedAt: d.now(),
+          verified: true,
+        });
+        d.prReviewRepo.upsertComment(
+          markProcessed(replied, {
+            commitVerified: verification.commitVerified,
+            replyVerified: verification.replyVerified,
+            buildVerified: verification.buildVerified,
+          }),
+        );
+        await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+        return {
+          commentId: comment.commentId,
+          action: 'fixed',
+          processed: true,
+          blocked: false,
+        };
+      }
+
+      return {
+        commentId: comment.commentId,
+        action: 'fixed',
+        processed: false,
+        blocked: false,
+        ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
+        ...(verification.codeVerifyReason !== undefined
+          ? { codeVerifyReason: verification.codeVerifyReason }
+          : {}),
+      };
+    }
+
     return {
       commentId: comment.commentId,
-      action: result.action,
+      action: 'failed',
       processed: false,
       blocked: false,
-      ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
-      ...(verification.codeVerifyReason !== undefined
-        ? { codeVerifyReason: verification.codeVerifyReason }
-        : {}),
     };
+  }
+
+  private async resetToStart(input: PollTaskInput): Promise<void> {
+    await this.deps.git.resetHard(input.cwd, input.startCommitSha);
+    await this.deps.git.cleanUntracked(input.cwd);
+  }
+
+  private async postReplyIfMissing(input: PollTaskInput, body: string): Promise<void> {
+    const repliesBefore = await this.deps.github.listReviewComments(
+      input.repoFullName,
+      input.prNumber,
+    );
+    const alreadyReplied = repliesBefore.some((c) => c.inReplyToId === input.comment.commentId);
+    if (!alreadyReplied) {
+      await this.deps.github.replyToReviewComment(
+        input.repoFullName,
+        input.prNumber,
+        input.comment.commentId,
+        body,
+      );
+    }
   }
 }
