@@ -169,9 +169,11 @@ describe('testQuotaPatterns', () => {
     expect(testQuotaPatterns('quota_exceeded')).toBeTruthy();
   });
 
-  it('matches underscore-delimited quota_exceeded in a reference table row', () => {
+  it('does not match underscore-delimited quota_exceeded in a markdown table row', () => {
+    // Markdown table rows are false positives: codex echoes its prompt (which may
+    // contain documentation tables listing error type names) to stderr.
     const tableRow = '| quota_exceeded | The request quota was exhausted | Retry after reset |';
-    expect(testQuotaPatterns(tableRow)).toBeTruthy();
+    expect(testQuotaPatterns(tableRow)).toBeNull();
   });
 
   it('still matches "Quota exceeded" natural-language form', () => {
@@ -282,6 +284,18 @@ describe('testProviderErrorPatterns', () => {
         "SOME_OTHER_VAR='AI_APICallError|RESOURCE_EXHAUSTED|429|quota.*exceed'",
       ),
     ).toBeNull();
+  });
+
+  it('does not match error type names in markdown table rows (codex prompt echo)', () => {
+    // Codex echoes its full prompt to stderr; prompts may contain documentation
+    // tables that list error type names like quota_exceeded as identifiers.
+    const markdownTable = [
+      '| **Router** | `timeout`, `runtime_error`, `token_limit_exceeded`, `quota_exceeded` |',
+      '| Detected from `AgentInvocationResult` after adapter returns |',
+    ].join('\n');
+    expect(testProviderErrorPatterns(markdownTable)).toBeNull();
+    expect(testQuotaPatterns(markdownTable)).toBeNull();
+    expect(testTokenLimitPatterns(markdownTable)).toBeNull();
   });
 
   it('matches RESOURCE_EXHAUSTED in non-structural line (default mode)', () => {

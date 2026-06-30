@@ -30,6 +30,9 @@ const OPENCODE_LOG_LINE = /^\s*(INFO|ERROR|WARN|DEBUG)\s+\d{4}-\d{2}-\d{2}T/;
 // assignment/export lines that echo pattern values — both are false-positive sources.
 const BASH_TRACE_LINE = /^\s*\+{1,3} /;
 const SHELL_ASSIGNMENT_LINE = /^\s*(?:export\s+)?\w+=(['"]?)/;
+// Markdown table rows (lines starting with |) — codex echoes its prompt to stderr,
+// which may contain documentation tables listing these error type names as identifiers.
+const MARKDOWN_TABLE_LINE = /^\s*\|/;
 
 export function isOpenCodeLogLine(line: string): boolean {
   return OPENCODE_LOG_LINE.test(line);
@@ -125,7 +128,12 @@ function testPatterns(
   const lines = getLinesToScan(text, options?.maxLines);
   for (const line of lines) {
     if (structuralOnly && !isOpenCodeLogLine(line)) continue;
-    if (BASH_TRACE_LINE.test(line) || SHELL_ASSIGNMENT_LINE.test(line)) continue;
+    if (
+      BASH_TRACE_LINE.test(line) ||
+      SHELL_ASSIGNMENT_LINE.test(line) ||
+      MARKDOWN_TABLE_LINE.test(line)
+    )
+      continue;
     for (const pattern of patterns) {
       if (pattern.test(line)) return line.trim();
     }

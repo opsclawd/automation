@@ -470,7 +470,7 @@ describe('AgentRuntimeRouter fallback', () => {
       const stderrPath = join(tmpDir, 'stderr.log');
       writeFileSync(
         stderrPath,
-        '| token_limit_exceeded | The model context window was exceeded | Reduce prompt size |',
+        'Error code: token_limit_exceeded — The model context window was exceeded.',
       );
       let cleanup = true;
       const inv = new FakeAgentInvocationPort();
