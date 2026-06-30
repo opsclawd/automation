@@ -1,0 +1,206 @@
+import {
+  claimJob,
+  markJobCancelled,
+  markJobFailed,
+  markJobRunning,
+  markJobSucceeded,
+  resetJobToQueued,
+  unclaimJob,
+  type Job,
+  type JobId,
+  type RepositoryId,
+  type RunId,
+  type WorkerId,
+  type IssueNumber,
+  RepositoryNotApprovedError,
+  DuplicateJobIdError,
+  type JobStatus,
+  JobId as mkJobId,
+  RepositoryId as mkRepositoryId,
+  RunId as mkRunId,
+  WorkerId as mkWorkerId,
+} from '@ai-sdlc/domain';
+import type { JobQueuePort, RepositoryPort, EnqueueJobInput } from '@ai-sdlc/application/ports';
+import type { Db } from './database.js';
+
+interface JobRow {
+  id: string;
+  run_id: string;
+  repo_id: string;
+  issue_number: number;
+  status: string;
+  priority: number;
+  attempts: number;
+  claimed_by: string | null;
+  created_at: string;
+  claimed_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+function toJob(row: JobRow): Job {
+  return {
+    id: mkJobId(row.id),
+    runId: mkRunId(row.run_id),
+    repoId: mkRepositoryId(row.repo_id),
+    issueNumber: row.issue_number as IssueNumber,
+    status: row.status as JobStatus,
+    priority: row.priority,
+    attempts: row.attempts,
+    claimedBy: row.claimed_by ? mkWorkerId(row.claimed_by) : undefined,
+    createdAt: new Date(row.created_at),
+    claimedAt: row.claimed_at ? new Date(row.claimed_at) : undefined,
+    startedAt: row.started_at ? new Date(row.started_at) : undefined,
+    completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
+  };
+}
+
+export class JobQueueRepository implements JobQueuePort {
+  private readonly claimTx: (workerId: WorkerId, skipJobIds?: Set<JobId>) => Job | undefined;
+
+  constructor(
+    private readonly db: Db,
+    private readonly repos: RepositoryPort,
+  ) {
+    this.claimTx = this.db.transaction(
+      (workerId: WorkerId, skipJobIds?: Set<JobId>): Job | undefined => {
+        const rows = this.db
+          .prepare(
+            `SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority DESC, created_at ASC, id ASC`,
+          )
+          .all() as JobRow[];
+
+        const nextRow = rows.find((r) => !skipJobIds?.has(mkJobId(r.id)));
+        if (!nextRow) return undefined;
+
+        const job = toJob(nextRow);
+        const claimedJob = claimJob(job, workerId, new Date());
+
+        this.db
+          .prepare(
+            `UPDATE jobs
+         SET status = @status, claimed_by = @claimed_by, claimed_at = @claimed_at, attempts = @attempts
+         WHERE id = @id`,
+          )
+          .run({
+            status: claimedJob.status,
+            claimed_by: claimedJob.claimedBy ?? null,
+            claimed_at: claimedJob.claimedAt?.toISOString() ?? null,
+            attempts: claimedJob.attempts,
+            id: claimedJob.id,
+          });
+
+        return claimedJob;
+      },
+    );
+  }
+
+  enqueue(input: EnqueueJobInput): void {
+    const repo = this.repos.findById(input.job.repoId);
+    if (!repo || !repo.enabled) {
+      throw new RepositoryNotApprovedError(input.job.repoId);
+    }
+
+    const existing = this.db.prepare('SELECT 1 FROM jobs WHERE id = ?').get(input.job.id);
+    if (existing) {
+      throw new DuplicateJobIdError(input.job.id);
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, created_at, claimed_at, started_at, completed_at)
+       VALUES (@id, @run_id, @repo_id, @issue_number, @status, @priority, @attempts, @claimed_by, @created_at, @claimed_at, @started_at, @completed_at)`,
+      )
+      .run({
+        id: input.job.id,
+        run_id: input.job.runId,
+        repo_id: input.job.repoId,
+        issue_number: input.job.issueNumber,
+        status: input.job.status,
+        priority: input.job.priority,
+        attempts: input.job.attempts,
+        claimed_by: input.job.claimedBy ?? null,
+        created_at: input.job.createdAt.toISOString(),
+        claimed_at: input.job.claimedAt?.toISOString() ?? null,
+        started_at: input.job.startedAt?.toISOString() ?? null,
+        completed_at: input.job.completedAt?.toISOString() ?? null,
+      });
+  }
+
+  claimNext(input: { workerId: WorkerId; skipJobIds?: Set<JobId> }): Job | undefined {
+    return this.claimTx(input.workerId, input.skipJobIds);
+  }
+
+  releaseClaim(jobId: JobId): void {
+    this.updateJob(jobId, (j) => unclaimJob(j));
+  }
+
+  resetToQueued(jobId: JobId): void {
+    this.updateJob(jobId, (j) => resetJobToQueued(j));
+  }
+
+  markRunning(jobId: JobId, now: Date): void {
+    this.updateJob(jobId, (j) => markJobRunning(j, now));
+  }
+
+  markSucceeded(jobId: JobId, now: Date): void {
+    this.updateJob(jobId, (j) => markJobSucceeded(j, now));
+  }
+
+  markFailed(jobId: JobId, now: Date): void {
+    this.updateJob(jobId, (j) => markJobFailed(j, now));
+  }
+
+  markCancelled(jobId: JobId, now: Date): void {
+    this.updateJob(jobId, (j) => markJobCancelled(j, now));
+  }
+
+  listForRepo(repoId: RepositoryId): Job[] {
+    const rows = this.db.prepare('SELECT * FROM jobs WHERE repo_id = ?').all(repoId) as JobRow[];
+    return rows.map(toJob);
+  }
+
+  listForRun(runId: RunId): Job[] {
+    const rows = this.db.prepare('SELECT * FROM jobs WHERE run_id = ?').all(runId) as JobRow[];
+    return rows.map(toJob);
+  }
+
+  findById(jobId: JobId): Job | undefined {
+    const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as JobRow | undefined;
+    return row ? toJob(row) : undefined;
+  }
+
+  private updateJob(jobId: JobId, transition: (job: Job) => Job): void {
+    const tx = this.db.transaction(() => {
+      const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as
+        | JobRow
+        | undefined;
+      if (!row) {
+        throw new Error(`unknown job ${jobId}`);
+      }
+      const job = toJob(row);
+      const updated = transition(job);
+      this.db
+        .prepare(
+          `UPDATE jobs
+         SET status = @status,
+             attempts = @attempts,
+             claimed_by = @claimed_by,
+             claimed_at = @claimed_at,
+             started_at = @started_at,
+             completed_at = @completed_at
+         WHERE id = @id`,
+        )
+        .run({
+          status: updated.status,
+          attempts: updated.attempts,
+          claimed_by: updated.claimedBy ?? null,
+          claimed_at: updated.claimedAt?.toISOString() ?? null,
+          started_at: updated.startedAt?.toISOString() ?? null,
+          completed_at: updated.completedAt?.toISOString() ?? null,
+          id: updated.id,
+        });
+    });
+    tx();
+  }
+}
