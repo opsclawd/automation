@@ -14,3 +14,21 @@ Specifically:
 - `poll-task-runner-reply-order.test.ts` passes successfully, verifying the correct database operation ordering: `insertReply` occurs before `upsertComment` in the `replied` state.
 - `poll-task-runner.test.ts` tests (including `happy path` and `failure isolation` patterns) pass successfully, verifying that all previous functional requirements are intact.
 - The entire `pr-review` test suite runs and passes (115 tests).
+
+# Implementation Log - Task 3: Pin validation failure diagnostic artifacts
+
+## Summary of Changes
+Strengthened invariant 10 for validation failures by asserting that the persisted `validate/failure.json` contains the same diagnostic artifact paths as the `Failure` object returned by `RunValidation`.
+
+Specifically:
+- In `packages/application/src/phases/handlers/__tests__/validate.test.ts`, updated the existing test `writes failure.json on validation failure` in `describe('artifact emission')`.
+- Asserted that after parsing `validate/failure.json`, `parsed.artifacts` matches the expected diagnostic artifacts:
+  - `validate/0-build.stdout.log`
+  - `validate/0-build.stderr.log`
+  - `validate/validation-result.json`
+- Verified that the returned deferred result did not discard the diagnostic failure details by checking other fields in the parsed artifact JSON (including `parsed.kind`, `parsed.canRetry`, `parsed.runUuid`) instead of only checking phase and message.
+
+## Verification Results
+- Verified that all tests in `packages/application/src/phases/handlers/__tests__/validate.test.ts` pass, specifically the updated `writes failure.json on validation failure` test.
+- Verified that `validation-run-to-failure.test.ts` passes the matching pattern tests.
+
