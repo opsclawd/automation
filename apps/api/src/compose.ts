@@ -527,7 +527,6 @@ export interface BuildPostPrReviewTaskPromptInput {
     body: string;
   };
   diff: string;
-  branch: string;
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
 }
@@ -2095,7 +2094,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         cwd,
         comment,
         diff,
-        branch,
+        branch: _branch,
         previousBuildError,
         previousCodeVerifyReason,
       }) => {
@@ -2106,7 +2105,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           cwd,
           comment,
           diff,
-          branch,
           ...(previousBuildError !== undefined ? { previousBuildError } : {}),
           ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
         });
