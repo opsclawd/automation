@@ -20,6 +20,10 @@ export interface ImplementResult {
   agentOutcome: StepAgentOutcome;
 }
 
+export interface ImplementStepOptions {
+  typecheckErrors?: string;
+}
+
 export interface TypecheckResult {
   outcome: 'pass' | 'fail';
   output: string;
@@ -52,7 +56,7 @@ export interface ArbiterResult {
 }
 
 export interface ImplementStepLoopDeps {
-  runImplement: (ctx: StepLoopContext) => Promise<ImplementResult>;
+  runImplement: (ctx: StepLoopContext, opts?: ImplementStepOptions) => Promise<ImplementResult>;
   runTypecheck: (ctx: StepLoopContext) => Promise<TypecheckResult>;
   runSpecReview: (ctx: StepLoopContext, tcResult: TypecheckResult) => Promise<SpecReviewResult>;
   runQualityReview: (
@@ -81,6 +85,7 @@ export interface ImplementStepLoopInput {
   stepIndex: number;
   stepTitle: string;
   maxIterations: number;
+  maxTypeCheckRetries?: number;
 }
 
 export interface ImplementStepLoopResult {
