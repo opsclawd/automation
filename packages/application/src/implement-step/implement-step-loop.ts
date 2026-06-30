@@ -68,6 +68,48 @@ export class ImplementStepLoop {
 
     // --- PRE-LOOP: TYPECHECK GATE ---
     let tcResult = await deps.runTypecheck(baseCtx);
+    const maxTypeCheckRetries = input.maxTypeCheckRetries ?? 2;
+    let typecheckRetryCount = 0;
+
+    while (tcResult.outcome === 'fail' && typecheckRetryCount < maxTypeCheckRetries) {
+      typecheckRetryCount += 1;
+      this.emit(
+        input,
+        'step.typecheck.retry',
+        'warn',
+        `step ${input.stepIndex} failed typecheck gate; retrying implement attempt ${typecheckRetryCount}/${maxTypeCheckRetries}`,
+        {
+          attempt: typecheckRetryCount,
+          maxRetries: maxTypeCheckRetries,
+          index: input.stepIndex,
+          output: tcResult.output.slice(0, 2000),
+        },
+      );
+
+      const retryImplementResult = await deps.runImplement(baseCtx, {
+        typecheckErrors: tcResult.output.slice(0, 2000),
+      });
+
+      if (retryImplementResult.agentOutcome !== 'success') {
+        this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
+          index: 1,
+        });
+        loop = startIteration(loop, {
+          reviewInvocationId: '',
+          now: deps.now(),
+        });
+        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(loop);
+        this.emit(input, 'loop.iteration.completed', 'info', 'implement step failed', {
+          index: 1,
+          outcome: 'failed',
+        });
+        return { outcome: 'failed', loop };
+      }
+
+      tcResult = await deps.runTypecheck(baseCtx);
+    }
+
     if (tcResult.outcome === 'fail') {
       this.emit(
         input,

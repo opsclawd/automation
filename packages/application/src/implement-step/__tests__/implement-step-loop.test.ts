@@ -485,6 +485,71 @@ describe('ImplementStepLoop', () => {
   });
 
   describe('typecheck gate (post-implement, pre-review)', () => {
+    it('retries implement once when typecheck fails, then proceeds to review after typecheck passes', async () => {
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      let specCalls = 0;
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, _opts?: ImplementStepOptions) => {
+          implementCalls += 1;
+          return {
+            invocationId: `impl-${implementCalls}`,
+            agentOutcome: 'success' as const,
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return typecheckCalls === 1
+            ? { outcome: 'fail', output: 'error TS2345: initial type mismatch' }
+            : { outcome: 'pass', output: '' };
+        },
+        runSpecReview: async (_ctx, _tcResult) => {
+          specCalls += 1;
+          return {
+            invocationId: 'sr-1',
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+
+      expect(out.outcome).toBe('success');
+      expect(implementCalls).toBe(2);
+      expect(typecheckCalls).toBe(2);
+      expect(specCalls).toBe(1);
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    });
+
+    it('passes typecheck errors to implement agent on retry', async () => {
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          retryOptions.push(opts);
+          return {
+            invocationId: `impl-${retryOptions.length}`,
+            agentOutcome: 'success' as const,
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return typecheckCalls === 1
+            ? { outcome: 'fail', output: 'error TS2322: string is not assignable to number' }
+            : { outcome: 'pass', output: '' };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+
+      expect(out.outcome).toBe('success');
+      expect(retryOptions).toHaveLength(2);
+      expect(retryOptions[0]).toBeUndefined();
+      expect(retryOptions[1]?.typecheckErrors).toContain('error TS2322');
+    });
+
     it('returns failed when typecheck fails, without calling spec or quality review', async () => {
       const specSpy = vi.fn<() => Promise<SpecReviewResult>>().mockResolvedValue({
         invocationId: 'sr-1',
