@@ -651,6 +651,86 @@ describe('ImplementStepLoop', () => {
       expect(tcFailed).toBeDefined();
       expect(tcFailed?.level).toBe('error');
     });
+
+    it('hard fails when all typecheck retries are exhausted', async () => {
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, _opts?: ImplementStepOptions) => {
+          implementCalls += 1;
+          return {
+            invocationId: `impl-${implementCalls}`,
+            agentOutcome: 'success' as const,
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return { outcome: 'fail', output: `error TS9999: failure ${typecheckCalls}` };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 2,
+      });
+
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(3);
+      expect(typecheckCalls).toBe(3);
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('failed');
+    });
+
+    it('respects maxTypeCheckRetries zero by failing immediately without retrying implement', async () => {
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, _opts?: ImplementStepOptions) => {
+          implementCalls += 1;
+          return {
+            invocationId: `impl-${implementCalls}`,
+            agentOutcome: 'success' as const,
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return { outcome: 'fail', output: 'error TS1111: no retry' };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 0,
+      });
+
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(1);
+      expect(typecheckCalls).toBe(1);
+    });
+
+    it('defaults maxTypeCheckRetries to two when omitted', async () => {
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, _opts?: ImplementStepOptions) => {
+          implementCalls += 1;
+          return {
+            invocationId: `impl-${implementCalls}`,
+            agentOutcome: 'success' as const,
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return { outcome: 'fail', output: `error TS2222: default retry ${typecheckCalls}` };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(3);
+      expect(typecheckCalls).toBe(3);
+    });
   });
 
   describe('parity[#403]: typecheck injection into reviewer prompts', () => {
