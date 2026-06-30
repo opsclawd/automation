@@ -695,10 +695,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               const g = globalThis as unknown as {
                 expect?: { getState?: () => { testPath?: string } };
               };
-              isCliTestSuite =
+              isCliTestSuite = !!(
                 (opts.uuid && opts.uuid.startsWith('resume-')) ||
                 (typeof g.expect?.getState === 'function' &&
-                  g.expect.getState?.()?.testPath?.endsWith('cli.test.ts'));
+                  g.expect.getState?.()?.testPath?.endsWith('cli.test.ts'))
+              );
 
               if (!isCliTestSuite) {
                 if (!plan.allowed) {
