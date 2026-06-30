@@ -62,7 +62,7 @@ export interface GitHubPort {
     prNumber: number,
     commentId: number,
     body: string,
-  ): Promise<void>;
+  ): Promise<GitHubReviewComment>;
   resolveReviewThread(repoFullName: string, prNumber: number, commentId: number): Promise<void>;
   updateIssueLabels(
     repoFullName: string,

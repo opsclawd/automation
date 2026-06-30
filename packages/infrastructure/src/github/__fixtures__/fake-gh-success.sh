@@ -13,8 +13,12 @@ case "$1 ${2:-}" in
     # resolveReviewThread query or mutation — return minimal success
     echo '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"T_1","isResolved":false,"comments":{"nodes":[{"databaseId":9001}]}}]}}}}}' ;;
   "api"*)
-    # REST: pulls/.../comments listing
-    echo '[{"id":9001,"path":"a.ts","line":3,"user":{"login":"octocat"},"body":"fix","created_at":"2026-06-04T00:00:00Z","in_reply_to_id":null}]' ;;
+    # REST: pulls/.../comments listing or replies post
+    if [[ "$*" == *"/replies"* ]]; then
+      echo '{"id":9002,"path":"a.ts","line":3,"user":{"login":"octocat"},"body":"thanks","created_at":"2026-06-04T00:00:00Z","in_reply_to_id":9001}'
+    else
+      echo '[{"id":9001,"path":"a.ts","line":3,"user":{"login":"octocat"},"body":"fix","created_at":"2026-06-04T00:00:00Z","in_reply_to_id":null}]'
+    fi ;;
   "pr create")
     echo "https://github.com/o/r/pull/99" ;;
   "issue edit")

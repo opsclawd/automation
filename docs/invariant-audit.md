@@ -27,7 +27,7 @@
 
 **Enforcement:** `packages/infrastructure/src/sqlite/run-repository.ts:68` — `insertIfNoActive()` runs a serialised transaction: SELECT for any run whose `issue_number` matches and whose status is not terminal; throws if one exists.
 
-**Gap:** The query filters by `issue_number` only, not by `(repoId, issueNumber)`. The PRD invariant is scoped to a (Repository, Issue) pair, but the implementation is scoped globally to issue number — meaning two runs for issue `#1` in *different* repositories would incorrectly block each other, and no test exercises the cross-repo boundary. In the current single-repo deployment this cannot manifest, but the enforcement does not match the invariant as written.
+**Gap:** The query filters by `issue_number` only, not by `(repoId, issueNumber)`. The PRD invariant is scoped to a (Repository, Issue) pair, but the implementation is scoped globally to issue number — meaning two runs for issue `#1` in _different_ repositories would incorrectly block each other, and no test exercises the cross-repo boundary. In the current single-repo deployment this cannot manifest, but the enforcement does not match the invariant as written.
 
 **Test:** `packages/application/src/__tests__/start-issue-run.test.ts:256` — `'refuses to start a second active run for the same issue'` (same-repo only)
 
@@ -202,11 +202,13 @@
 **Invariant:** A Run retains enough artifacts to diagnose the latest failure (NFR2).
 
 **Enforcement:**
+
 - **Validation failures:** `packages/application/src/phases/handlers/validate.ts` ensures that `validate/failure.json` is written, preserving the stdout/stderr path logs (e.g., `validate/0-build.stdout.log`, `validate/0-build.stderr.log`) and `validate/validation-result.json`.
 - **PR-review:** `packages/application/src/pr-review/process-pr-review-comments.ts` and `packages/application/src/pr-review/poll-task-runner.ts` ensure blocked/retry state and the poll terminal state are persisted.
 - **Loop exhaustion:** Implement-step and review-fix loops write explicit terminal status and return a `needs_human_review` or failure outcome to prevent silent execution loss.
 
 **Test:**
+
 - `packages/application/src/phases/handlers/__tests__/validate.test.ts` (asserts `validate/failure.json` contains stdout/stderr log paths and `validation-result.json`).
 - `packages/application/src/pr-review/__tests__/process-pr-review-comments.test.ts` (asserts poll records and states).
 - Loop exhaustion tests (assert `needs_human_review` outputs on max-loop).
@@ -243,27 +245,28 @@
 
 ## Summary
 
-| Invariant | Status |
-|-----------|--------|
-| 0a — repo approved on enqueue | `covered` |
-| 0b — one active run per (repo, issue) | **GAP** |
-| 0c — one lease per repo | `covered` |
-| 0d — lease before worktree/exec | **GAP** |
-| 0e — concurrent different-repo workers | `covered` |
-| 0f — start enqueues, no inline exec | **GAP** (blocked on #450) |
-| 1 — no pass with failed phase | **GAP** |
-| 2 — phase always records result | `covered` |
-| 3 — missing artifact → `missing_artifact` | `covered` |
-| 4 — invalid result → `invalid_result` | `covered` |
-| 5 — branch changed → `branch_changed` | `covered` |
-| 6 — no double comment processing | `covered` |
-| 7 — reply recorded before replied state | `covered` |
-| 8 — validation records each command | `covered` |
-| 9 — max-loop → needs_human_review | `covered` |
-| 10 — artifacts for failure diagnosis | `covered` |
-| 11 — unsafe retry requires confirmation | `covered` |
-| 12 — poll records count/terminal state | `covered` |
+| Invariant                                 | Status                    |
+| ----------------------------------------- | ------------------------- |
+| 0a — repo approved on enqueue             | `covered`                 |
+| 0b — one active run per (repo, issue)     | **GAP**                   |
+| 0c — one lease per repo                   | `covered`                 |
+| 0d — lease before worktree/exec           | **GAP**                   |
+| 0e — concurrent different-repo workers    | `covered`                 |
+| 0f — start enqueues, no inline exec       | **GAP** (blocked on #450) |
+| 1 — no pass with failed phase             | **GAP**                   |
+| 2 — phase always records result           | `covered`                 |
+| 3 — missing artifact → `missing_artifact` | `covered`                 |
+| 4 — invalid result → `invalid_result`     | `covered`                 |
+| 5 — branch changed → `branch_changed`     | `covered`                 |
+| 6 — no double comment processing          | `covered`                 |
+| 7 — reply recorded before replied state   | `covered`                 |
+| 8 — validation records each command       | `covered`                 |
+| 9 — max-loop → needs_human_review         | `covered`                 |
+| 10 — artifacts for failure diagnosis      | `covered`                 |
+| 11 — unsafe retry requires confirmation   | `covered`                 |
+| 12 — poll records count/terminal state    | `covered`                 |
 
 **GAPs: 4** → assigned to sub-issues:
+
 - **#395 (14b — 0a–0f):** 0b (repo-scoped uniqueness), 0d (lease ordering), 0f (blocked on #450)
 - **#396 (14c — 1–5):** 1 (passRun phase check)

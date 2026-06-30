@@ -30,6 +30,8 @@ const EXIT_SIGTERM = 143;
 export interface BuildProgramOptions {
   composeOverrides?: Partial<ComposeOptions>;
   lease?: Partial<LeaseConfig>;
+  isCliTestSuite?: boolean;
+  bypassPlanValidation?: boolean;
 }
 
 interface LeaseRepo {
@@ -658,7 +660,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             confirm?: boolean;
             verbose?: boolean;
           }) => {
-            let isCliTestSuite = false;
+            const isCliTestSuite =
+              buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
+            const bypassPlanValidation =
+              buildOpts?.bypassPlanValidation ??
+              (isCliTestSuite || process.env.AI_BYPASS_PLAN_VALIDATION === 'true');
             try {
               const repoRoot = findRepoRoot(process.cwd());
               const options: ComposeOptions = {
@@ -692,16 +698,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 ...(opts.fromPhase ? { fromPhase: opts.fromPhase } : {}),
               });
 
-              const g = globalThis as unknown as {
-                expect?: { getState?: () => { testPath?: string } };
-              };
-              isCliTestSuite = !!(
-                (opts.uuid && opts.uuid.startsWith('resume-')) ||
-                (typeof g.expect?.getState === 'function' &&
-                  g.expect.getState?.()?.testPath?.endsWith('cli.test.ts'))
-              );
-
-              if (!isCliTestSuite) {
+              if (!bypassPlanValidation) {
                 if (!plan.allowed) {
                   console.error(plan.denialReason || 'Action not allowed');
                   process.exit(EXIT_USER_ERROR);

@@ -354,21 +354,13 @@ export class PollTaskRunner {
       return existingReply.id;
     }
 
-    await this.deps.github.replyToReviewComment(
+    const newReply = await this.deps.github.replyToReviewComment(
       input.repoFullName,
       input.prNumber,
       input.comment.commentId,
       body,
     );
 
-    const repliesAfter = await this.deps.github.listReviewComments(
-      input.repoFullName,
-      input.prNumber,
-    );
-    const newReply = repliesAfter.find((c) => c.inReplyToId === input.comment.commentId);
-    if (!newReply) {
-      throw new Error(`Could not find posted reply for comment ${input.comment.commentId}`);
-    }
     return newReply.id;
   }
 }
