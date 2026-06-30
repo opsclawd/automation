@@ -244,6 +244,109 @@ describe('roles block', () => {
   });
 });
 
+describe('phaseProfiles role references', () => {
+  function baseWithRoles() {
+    return {
+      validation: { commands: ['pnpm test'], timeout: 60 },
+      phases: { skip: [], reviewFix: { maxIterations: 10 }, implement: { maxIterations: 5 } },
+      timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      agent: {
+        defaultProfile: 'p1',
+        profiles: {
+          p1: { runtime: 'opencode' as const, provider: 'a', model: 'm1', timeoutMinutes: 1 },
+          p2: { runtime: 'opencode' as const, provider: 'a', model: 'm2', timeoutMinutes: 1 },
+        },
+        roles: {
+          architect: { profile: 'p1', fallback: 'p2' },
+          reviewer: { profile: 'p2' },
+        },
+        phaseProfiles: {
+          'plan-design': { profile: 'p1' },
+        },
+      },
+    };
+  }
+
+  it('accepts phase entry with role when role is defined', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'architect',
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('accepts phase entry with role and fallbackRole when both roles are defined', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'architect',
+      fallbackRole: 'reviewer',
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('accepts phase entry with role, fallbackRole, and fallbackTriggers', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'architect',
+      fallbackRole: 'reviewer',
+      fallbackTriggers: ['timeout', 'quota_exceeded'],
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('rejects phase entry with both profile and role', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {
+      profile: 'p1',
+      role: 'architect',
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/profile and role/);
+  });
+
+  it('rejects phase entry with both fallbackProfile and fallbackRole', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'architect',
+      fallbackProfile: 'p2',
+      fallbackRole: 'reviewer',
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/fallbackProfile and fallbackRole/);
+  });
+
+  it('rejects phase entry with neither profile nor role', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {} as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/must have either profile or role/);
+  });
+
+  it('rejects phase entry referencing a role not in roles', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'no-such-role',
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/no-such-role/);
+  });
+
+  it('rejects phase entry referencing a fallbackRole not in roles', () => {
+    const cfg = baseWithRoles();
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'architect',
+      fallbackRole: 'no-such-role',
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/no-such-role/);
+  });
+
+  it('rejects fallbackTriggers on role-based entry with no fallback target', () => {
+    const cfg = baseWithRoles();
+    // reviewer role has no fallback; entry has no fallbackRole either
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'reviewer',
+      fallbackTriggers: ['timeout'],
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/fallbackTriggers/);
+  });
+});
+
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
     const text = readFileSync(
