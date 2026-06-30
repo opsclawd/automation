@@ -1,4 +1,4 @@
-import { canResume, resumeRun, createJob } from '@ai-sdlc/domain';
+import { canResume, resumeRun, createJob, WorkerLeaseConflictError } from '@ai-sdlc/domain';
 import { IssueNumber } from '@ai-sdlc/domain';
 import type { RunId, WorkerId, RepositoryId, JobId, Step, Phase, RunStatus } from '@ai-sdlc/domain';
 import type {
@@ -171,13 +171,21 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
 
-    this.deps.leases.acquire({
-      repoId: repo.id,
-      workerId: input.workerId,
-      runId: input.runId,
-      now: now(),
-      ttlMs: LEASE_TTL_MS,
-    });
+    let leaseAcquired = false;
+    try {
+      this.deps.leases.acquire({
+        repoId: repo.id,
+        workerId: input.workerId,
+        runId: input.runId,
+        now: now(),
+        ttlMs: LEASE_TTL_MS,
+      });
+      leaseAcquired = true;
+    } catch (err) {
+      if (!(err instanceof WorkerLeaseConflictError)) {
+        throw err;
+      }
+    }
 
     try {
       const transitionState = await this.transition(input);
@@ -219,10 +227,14 @@ export class ResumeRun implements ResumeRunUseCase {
         throw err;
       }
 
-      this.deps.leases.release(repo.id, input.workerId);
+      if (leaseAcquired) {
+        this.deps.leases.release(repo.id, input.workerId);
+      }
       return { jobId: job.id, jobStatus: job.status as 'queued' };
     } catch (err) {
-      this.deps.leases.release(repo.id, input.workerId);
+      if (leaseAcquired) {
+        this.deps.leases.release(repo.id, input.workerId);
+      }
       throw err;
     }
   }
