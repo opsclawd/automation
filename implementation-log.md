@@ -1,48 +1,42 @@
-# Implementation Log - Task 5: Add Recovery REST Endpoints
+# Implementation Log - Task 6: Add Web Recovery Client And RunActions UI
 
-Implemented the recovery REST endpoints to expose cancel, retry, and resume functionalities for Runs with server-side safety checks and confirmation flow enforcement.
+Implemented thin client helpers and a run-detail Actions component that delegates recovery policy (cancellation, retrying, and resuming) to the API.
 
 ## Changes Made
 
-### API Package (`apps/api`)
+### Web Package (`apps/web`)
 
-- **Modified `apps/api/src/routes/runs.ts`**:
-  - Implemented body parsing validators ensuring proper JSON objects and parameter types.
-  - Implemented helper `apiWorkerId()` to return worker IDs formatted as `api-${process.pid}`.
-  - Added `POST /api/runs/:runId/cancel`:
-    - Validates UUID formatting and body presence.
-    - Uses `planRunRecoveryAction` to check if cancellation is allowed.
-    - If denied (run is in a terminal state), returns `409`.
-    - Otherwise, executes `CancelRun` use case, refetches the Run, and returns `200 { run, action: 'cancel' }`.
-  - Added `POST /api/runs/:runId/retry`:
-    - Validates UUID formatting and body presence.
-    - Resolves failed target phase and attempts using `planRunRecoveryAction`.
-    - If denied (run not in failed state), returns `409`.
-    - If target phase is unsafe and `confirm: true` is missing, returns `409 confirmation_required` with safety metadata.
-    - Otherwise, calls `ResumeRun` usecase, refetches the Run and queued Job, and returns `202 { run, action: 'retry', ... }`.
-  - Added `POST /api/runs/:runId/resume`:
-    - Validates UUID formatting and body presence.
-    - Determines resume target from existing progress or explicitly provided `fromPhase`.
-    - Enforces the same confirmation flow for unsafe phases.
-    - Initiates `ResumeRun` usecase (passing `fromPhase` and `attempt` only when restarting a phase).
-    - Refetches the Run and queued Job, and returns `202 { run, action: 'resume', ... }`.
-  - Mapped specific errors (e.g. `UnknownPhaseError` to `400`, missing run to `404`, denied/concurrent updates to `409`, others to `500`).
+- **Modified `apps/web/src/lib/api-client.ts`**:
+  - Added TypeScript interfaces: `JobDto`, `RunActionSuccessDto`, and `ConfirmationRequiredDto`.
+  - Added a custom typed `RunActionConfirmationRequiredError` class carrying the parsed 409 payload.
+  - Implemented client-safe functions using relative URLs in the browser (or `apiUrl` on the server):
+    - `cancelRunAction(runUuid, reason?)`
+    - `retryRunAction(runUuid, confirm?)`
+    - `resumeRunAction(runUuid, input?: { fromPhase?: string; confirm?: boolean })`
+  - Handled dynamic construction of `RequestInit` options to avoid typescript compiler errors under `exactOptionalPropertyTypes: true`.
 
-- **Created Route Tests `apps/api/src/__tests__/runs-recovery-routes.test.ts`**:
-  - Wrote 11 test cases asserting:
-    - Invalid UUID returns 400 for all endpoints.
-    - Unknown valid UUID returns 404 for all endpoints.
-    - Invalid body types and invalid values for `reason`, `confirm`, `fromPhase` return 400.
-    - Cancel active Run returns 200 and correctly marks it as cancelled.
-    - Cancel terminal Run returns 409.
-    - Retry safe phase queues work without confirmation.
-    - Retry unsafe phase without confirmation returns 409 confirmation required.
-    - Retry unsafe phase with `confirm: true` enqueues the job and returns a queued status.
-    - Resume without `fromPhase` queues default target.
-    - Resume with unknown `fromPhase` returns 400.
-    - Resume with unsafe `fromPhase` enforces confirmation checks.
+- **Created `apps/web/src/lib/__tests__/run-actions-api.test.ts`**:
+  - Implemented 9 unit tests mocking `globalThis.fetch` to cover:
+    - Success responses for cancel, retry, and resume.
+    - Throwing `RunActionConfirmationRequiredError` on 409 confirmation-required errors.
+    - Handling invalid responses (non-confirmation_required JSON, or syntax/parse errors) by throwing normal Errors.
+
+- **Created `apps/web/src/components/RunActions.tsx`**:
+  - Built a client-side component displaying run recovery control actions.
+  - Displays "Cancel" button for any non-terminal status other than `failed`.
+  - Displays "Resume" and "Retry phase" ("Retry phase") buttons for `failed` runs.
+  - Added a compact phase selector dropdown (`<select>`) for explicit resume restarts, listing "Automatic (failed step)" followed by the 10 canonical phases from `CANONICAL_PHASE_ORDER`.
+  - Disabled all actions and controls while a recovery request is in flight.
+  - Handled `RunActionConfirmationRequiredError` by opening a modal dialog displaying the target phase and the server safety warning message.
+  - Resubmits the failed action with `confirm: true` upon user confirmation.
+  - Calls `router.refresh()` upon successful recovery action completion to update the page state.
+
+- **Modified `apps/web/src/app/runs/[id]/page.tsx`**:
+  - Imported and rendered `<RunActions run={run} />` in the run-detail header next to the run metadata.
 
 ## Verification Result
-- Successfully type-checked the entire workspace.
-- Ran all `@ai-sdlc/api` tests, confirming all 223 tests pass.
-- Verified that all 11 new recovery routes tests pass successfully.
+
+- Successfully type-checked the web package with no errors.
+- Executed `vitest` unit tests covering the new client functions:
+  - `pnpm exec vitest run apps/web/src/lib/__tests__/run-actions-api.test.ts`
+  - All 9 unit tests passed successfully.

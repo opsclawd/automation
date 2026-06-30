@@ -109,3 +109,140 @@ export async function listReviewFix(runUuid: string): Promise<LoopDto[]> {
   if (!r.ok) throw new Error(`failed to load review-fix: ${r.status}`);
   return ((await r.json()) as { loops: LoopDto[] }).loops;
 }
+
+export interface JobDto {
+  id: string;
+  status: string;
+  runId: string;
+  repoId: string;
+  issueNumber: number;
+  attempts: number;
+  createdAt: string;
+  claimedAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface RunActionSuccessDto {
+  run: RunDto;
+  action: 'cancel' | 'retry' | 'resume';
+  targetPhase?: string;
+  requiresConfirmation?: false;
+  job?: JobDto;
+}
+
+export interface ConfirmationRequiredDto {
+  error: 'confirmation_required';
+  requiresConfirmation: true;
+  action: 'retry' | 'resume';
+  targetPhase?: string;
+  retrySafety: 'unsafe';
+  message: string;
+}
+
+export class RunActionConfirmationRequiredError extends Error {
+  public payload: ConfirmationRequiredDto;
+  constructor(payload: ConfirmationRequiredDto) {
+    super(payload.message || 'Confirmation required');
+    this.name = 'RunActionConfirmationRequiredError';
+    this.payload = payload;
+  }
+}
+
+export async function cancelRunAction(
+  runUuid: string,
+  reason?: string,
+): Promise<RunActionSuccessDto> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const init: RequestInit = {
+    method: 'POST',
+    cache: 'no-store',
+  };
+  if (reason !== undefined) {
+    init.body = JSON.stringify({ reason });
+    init.headers = { 'Content-Type': 'application/json' };
+  }
+  const r = await fetch(`${base}/api/runs/${runUuid}/cancel`, init);
+  if (!r.ok) {
+    if (r.status === 409) {
+      try {
+        const data = await r.json();
+        if (data && data.error === 'confirmation_required') {
+          throw new RunActionConfirmationRequiredError(data);
+        }
+      } catch (e) {
+        if (e instanceof RunActionConfirmationRequiredError) {
+          throw e;
+        }
+      }
+    }
+    throw new Error(`failed to cancel run action: ${r.status}`);
+  }
+  return r.json() as Promise<RunActionSuccessDto>;
+}
+
+export async function retryRunAction(
+  runUuid: string,
+  confirm?: boolean,
+): Promise<RunActionSuccessDto> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const init: RequestInit = {
+    method: 'POST',
+    cache: 'no-store',
+  };
+  if (confirm !== undefined) {
+    init.body = JSON.stringify({ confirm });
+    init.headers = { 'Content-Type': 'application/json' };
+  }
+  const r = await fetch(`${base}/api/runs/${runUuid}/retry`, init);
+  if (!r.ok) {
+    if (r.status === 409) {
+      try {
+        const data = await r.json();
+        if (data && data.error === 'confirmation_required') {
+          throw new RunActionConfirmationRequiredError(data);
+        }
+      } catch (e) {
+        if (e instanceof RunActionConfirmationRequiredError) {
+          throw e;
+        }
+      }
+    }
+    throw new Error(`failed to retry run action: ${r.status}`);
+  }
+  return r.json() as Promise<RunActionSuccessDto>;
+}
+
+export async function resumeRunAction(
+  runUuid: string,
+  input?: { fromPhase?: string; confirm?: boolean },
+): Promise<RunActionSuccessDto> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const init: RequestInit = {
+    method: 'POST',
+    cache: 'no-store',
+  };
+  const hasBody =
+    input !== undefined && (input.fromPhase !== undefined || input.confirm !== undefined);
+  if (hasBody) {
+    init.body = JSON.stringify(input);
+    init.headers = { 'Content-Type': 'application/json' };
+  }
+  const r = await fetch(`${base}/api/runs/${runUuid}/resume`, init);
+  if (!r.ok) {
+    if (r.status === 409) {
+      try {
+        const data = await r.json();
+        if (data && data.error === 'confirmation_required') {
+          throw new RunActionConfirmationRequiredError(data);
+        }
+      } catch (e) {
+        if (e instanceof RunActionConfirmationRequiredError) {
+          throw e;
+        }
+      }
+    }
+    throw new Error(`failed to resume run action: ${r.status}`);
+  }
+  return r.json() as Promise<RunActionSuccessDto>;
+}
