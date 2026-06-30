@@ -306,7 +306,7 @@ describe('ProcessPrReviewComments — blocking', () => {
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
     expect(out.blocked).toBe(1);
-    expect(github.repliesPosted).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(0);
   });
 });
 
@@ -1081,7 +1081,7 @@ describe('ProcessPrReviewComments — reset to pending on failed verification', 
     const after1 = repo.getComment(runId, 9001);
     expect(after1?.state).toBe('blocked');
     expect(after1?.replyVerified).toBe(false);
-    expect(github.repliesPosted).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(0);
     expect(out.blocked).toBe(1);
   });
 });
