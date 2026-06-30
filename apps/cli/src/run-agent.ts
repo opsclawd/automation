@@ -25,7 +25,7 @@ interface Flags {
 
 export type ConfigForProfileResolution = {
   profiles: Record<string, unknown>;
-  phaseProfiles: Record<string, { profile: string }>;
+  phaseProfiles: Record<string, { profile?: string | undefined; role?: string | undefined }>;
 };
 
 export type ProfileResolution = { ok: true; profileName: string } | { ok: false; error: string };
