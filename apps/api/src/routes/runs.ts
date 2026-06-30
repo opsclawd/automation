@@ -1,9 +1,29 @@
 import type { FastifyInstance } from 'fastify';
 import type { Container } from '../compose.js';
-import { serializeRun, serializeFailure } from '../serializers.js';
+import { serializeRun, serializeFailure, serializeJob } from '../serializers.js';
+import { WorkerId, RunId } from '@ai-sdlc/domain';
+import { planRunRecoveryAction, UnknownPhaseError } from '@ai-sdlc/application';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_INT_RE = /^-?\d+$/;
+
+interface ResumeRunUseCaseWithJob {
+  execute(input: {
+    runId: RunId;
+    fromPhase?: string;
+    workerId: WorkerId;
+    attempt?: number;
+  }): Promise<{ jobId: import('@ai-sdlc/domain').JobId; jobStatus: string }>;
+}
+
+function validateBodyObject(body: unknown): boolean {
+  if (body === undefined) return true;
+  return typeof body === 'object' && body !== null && !Array.isArray(body);
+}
+
+function apiWorkerId(): WorkerId {
+  return WorkerId(`api-${process.pid}`);
+}
 
 export async function runsRoutes(app: FastifyInstance, c: Container): Promise<void> {
   app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req, reply) => {
@@ -51,5 +71,216 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (!run) return reply.code(404).send({ error: 'not_found' });
     const failure = c.failureRepository.findLatestByRun(req.params.runId);
     return { run: serializeRun(run), failure: failure ? serializeFailure(failure) : null };
+  });
+
+  app.post<{ Params: { runId: string } }>('/api/runs/:runId/cancel', async (req, reply) => {
+    if (!UUID_RE.test(req.params.runId)) {
+      return reply.code(400).send({ error: 'invalid_id' });
+    }
+    if (!validateBodyObject(req.body)) {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (body.reason !== undefined && typeof body.reason !== 'string') {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+
+    try {
+      const run = c.runRepository.findByUuid(req.params.runId);
+      if (!run) return reply.code(404).send({ error: 'not_found' });
+
+      const phases = c.phaseRepository.listByRun(req.params.runId);
+      const plan = planRunRecoveryAction({ action: 'cancel', run, phases });
+      if (!plan.allowed) {
+        return reply.code(409).send({ error: 'denied', message: plan.denialReason });
+      }
+
+      await c.cancelRun.execute({
+        runId: RunId(req.params.runId),
+        ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
+      });
+
+      const refetchedRun = c.runRepository.findByUuid(req.params.runId);
+      return reply.code(200).send({
+        run: refetchedRun ? serializeRun(refetchedRun) : null,
+        action: 'cancel',
+      });
+    } catch (err) {
+      if (err instanceof UnknownPhaseError) {
+        return reply.code(400).send({ error: 'unknown_phase', message: err.message });
+      }
+      if (err instanceof Error) {
+        if (err.message.includes('No run found') || err.message.includes('no run found')) {
+          return reply.code(404).send({ error: 'not_found', message: err.message });
+        }
+        if (
+          err.message.includes('concurrent modification') ||
+          err.message.includes('Cannot resume') ||
+          err.message.includes('Cannot cancel') ||
+          err.message.includes('Cannot retry')
+        ) {
+          return reply.code(409).send({ error: 'denied', message: err.message });
+        }
+        return reply.code(500).send({ error: 'unexpected_error', message: err.message });
+      }
+      return reply.code(500).send({ error: 'unexpected_error', message: String(err) });
+    }
+  });
+
+  app.post<{ Params: { runId: string } }>('/api/runs/:runId/retry', async (req, reply) => {
+    if (!UUID_RE.test(req.params.runId)) {
+      return reply.code(400).send({ error: 'invalid_id' });
+    }
+    if (!validateBodyObject(req.body)) {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (body.confirm !== undefined && typeof body.confirm !== 'boolean') {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+
+    try {
+      const run = c.runRepository.findByUuid(req.params.runId);
+      if (!run) return reply.code(404).send({ error: 'not_found' });
+
+      const phases = c.phaseRepository.listByRun(req.params.runId);
+      const plan = planRunRecoveryAction({ action: 'retry', run, phases });
+
+      if (!plan.allowed) {
+        return reply.code(409).send({ error: 'denied', message: plan.denialReason });
+      }
+
+      if (plan.requiresConfirmation && !body.confirm) {
+        return reply.code(409).send({
+          error: 'confirmation_required',
+          requiresConfirmation: true,
+          action: 'retry',
+          targetPhase: plan.targetPhase,
+          retrySafety: 'unsafe',
+          message: 'Retrying this phase can duplicate side effects. Confirm to continue.',
+        });
+      }
+
+      const resumeRun = c.resumeRun as unknown as ResumeRunUseCaseWithJob;
+      const result = await resumeRun.execute({
+        runId: RunId(req.params.runId),
+        workerId: apiWorkerId(),
+        ...(plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
+        ...(plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
+      });
+
+      const refetchedRun = c.runRepository.findByUuid(req.params.runId);
+      const job = c.jobQueue.findById(result.jobId);
+
+      return reply.code(202).send({
+        run: refetchedRun ? serializeRun(refetchedRun) : null,
+        action: 'retry',
+        targetPhase: plan.targetPhase,
+        requiresConfirmation: false,
+        job: job ? serializeJob(job) : null,
+      });
+    } catch (err) {
+      if (err instanceof UnknownPhaseError) {
+        return reply.code(400).send({ error: 'unknown_phase', message: err.message });
+      }
+      if (err instanceof Error) {
+        if (err.message.includes('No run found') || err.message.includes('no run found')) {
+          return reply.code(404).send({ error: 'not_found', message: err.message });
+        }
+        if (
+          err.message.includes('concurrent modification') ||
+          err.message.includes('Cannot resume') ||
+          err.message.includes('Cannot cancel') ||
+          err.message.includes('Cannot retry')
+        ) {
+          return reply.code(409).send({ error: 'denied', message: err.message });
+        }
+        return reply.code(500).send({ error: 'unexpected_error', message: err.message });
+      }
+      return reply.code(500).send({ error: 'unexpected_error', message: String(err) });
+    }
+  });
+
+  app.post<{ Params: { runId: string } }>('/api/runs/:runId/resume', async (req, reply) => {
+    if (!UUID_RE.test(req.params.runId)) {
+      return reply.code(400).send({ error: 'invalid_id' });
+    }
+    if (!validateBodyObject(req.body)) {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (body.fromPhase !== undefined && typeof body.fromPhase !== 'string') {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+    if (body.confirm !== undefined && typeof body.confirm !== 'boolean') {
+      return reply.code(400).send({ error: 'invalid_body' });
+    }
+
+    try {
+      const run = c.runRepository.findByUuid(req.params.runId);
+      if (!run) return reply.code(404).send({ error: 'not_found' });
+
+      const phases = c.phaseRepository.listByRun(req.params.runId);
+      const plan = planRunRecoveryAction({
+        action: 'resume',
+        run,
+        phases,
+        ...(typeof body.fromPhase === 'string' ? { fromPhase: body.fromPhase } : {}),
+      });
+
+      if (!plan.allowed) {
+        return reply.code(409).send({ error: 'denied', message: plan.denialReason });
+      }
+
+      if (plan.requiresConfirmation && !body.confirm) {
+        return reply.code(409).send({
+          error: 'confirmation_required',
+          requiresConfirmation: true,
+          action: 'resume',
+          targetPhase: plan.targetPhase,
+          retrySafety: 'unsafe',
+          message: 'Retrying this phase can duplicate side effects. Confirm to continue.',
+        });
+      }
+
+      const hasFromPhase = body.fromPhase !== undefined;
+      const resumeRun = c.resumeRun as unknown as ResumeRunUseCaseWithJob;
+      const result = await resumeRun.execute({
+        runId: RunId(req.params.runId),
+        workerId: apiWorkerId(),
+        ...(hasFromPhase && plan.targetPhase !== undefined ? { fromPhase: plan.targetPhase } : {}),
+        ...(hasFromPhase && plan.attempt !== undefined ? { attempt: plan.attempt } : {}),
+      });
+
+      const refetchedRun = c.runRepository.findByUuid(req.params.runId);
+      const job = c.jobQueue.findById(result.jobId);
+
+      return reply.code(202).send({
+        run: refetchedRun ? serializeRun(refetchedRun) : null,
+        action: 'resume',
+        targetPhase: plan.targetPhase,
+        requiresConfirmation: false,
+        job: job ? serializeJob(job) : null,
+      });
+    } catch (err) {
+      if (err instanceof UnknownPhaseError) {
+        return reply.code(400).send({ error: 'unknown_phase', message: err.message });
+      }
+      if (err instanceof Error) {
+        if (err.message.includes('No run found') || err.message.includes('no run found')) {
+          return reply.code(404).send({ error: 'not_found', message: err.message });
+        }
+        if (
+          err.message.includes('concurrent modification') ||
+          err.message.includes('Cannot resume') ||
+          err.message.includes('Cannot cancel') ||
+          err.message.includes('Cannot retry')
+        ) {
+          return reply.code(409).send({ error: 'denied', message: err.message });
+        }
+        return reply.code(500).send({ error: 'unexpected_error', message: err.message });
+      }
+      return reply.code(500).send({ error: 'unexpected_error', message: String(err) });
+    }
   });
 }
