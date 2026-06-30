@@ -424,13 +424,16 @@ export class AgentRuntimeRouter implements AgentPort {
     return 'unknown';
   }
 
-  private effectiveProfile(p: { provider: string; model: string }): {
+  private effectiveProfile(p: { provider: string; model: string; variant?: string | undefined }): {
     provider: string;
     model: string;
   } {
+    const envModel = this.env.AI_AGENT_MODEL?.trim();
+    const baseModel = envModel || p.model;
+    const effectiveModel = !envModel && p.variant ? `${baseModel}-${p.variant}` : baseModel;
     return {
       provider: this.env.AI_AGENT_PROVIDER?.trim() || p.provider,
-      model: this.env.AI_AGENT_MODEL?.trim() || p.model,
+      model: effectiveModel,
     };
   }
 
