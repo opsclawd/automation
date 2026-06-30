@@ -32,3 +32,17 @@ Specifically:
 - Verified that all tests in `packages/application/src/phases/handlers/__tests__/validate.test.ts` pass, specifically the updated `writes failure.json on validation failure` test.
 - Verified that `validation-run-to-failure.test.ts` passes the matching pattern tests.
 
+# Implementation Log - Task 4: Add focused CLI unsafe-confirmation tests
+
+## Summary of Changes
+- Created a new test file: `apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
+- Implemented tests to verify CLI `runs resume` command behavior under various unsafe/safe and confirmed/unconfirmed conditions.
+- Specifically added the following test cases:
+  1. **Unsafe default retry without `--confirm`**: inserts a failed run with `current_phase = 'create-pr'` (an unsafe phase) and parses `runs resume --uuid <uuid>`. Asserts that the exit code is 1, console error output mentions confirmation, and no side-effects (lease acquisition, retry execution, run transition, or run executor calls) are triggered.
+  2. **Unsafe `--from-phase implement` resume without `--confirm`**: asserts the same rejection and no-side-effects when resuming implementing phase (unsafe phase) without the `--confirm` flag.
+  3. **Unsafe default retry with `--confirm`**: asserts that with `--confirm` flag, the `RetryFailedPhase.execute` and `RunExecutor.execute` are called after lease acquisition.
+  4. **Safe resume without `--confirm`**: asserts that resuming from a safe phase (like `validate`) works without the `--confirm` flag, invoking `ResumeRun.transition` and `RunExecutor.execute` as expected.
+
+## Verification Results
+- Verified that the new tests fail against the current CLI implementation (exit code: 1, 4 failed tests) because CLI resume currently has no `--confirm` gate. This proves the tests are valid and correctly capture the gap.
+
