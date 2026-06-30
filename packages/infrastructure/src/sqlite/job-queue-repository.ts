@@ -39,7 +39,7 @@ interface JobRow {
 }
 
 function toJob(row: JobRow): Job {
-  return {
+  const job: Job = {
     id: mkJobId(row.id),
     runId: mkRunId(row.run_id),
     repoId: mkRepositoryId(row.repo_id),
@@ -47,12 +47,21 @@ function toJob(row: JobRow): Job {
     status: row.status as JobStatus,
     priority: row.priority,
     attempts: row.attempts,
-    claimedBy: row.claimed_by ? mkWorkerId(row.claimed_by) : undefined,
     createdAt: new Date(row.created_at),
-    claimedAt: row.claimed_at ? new Date(row.claimed_at) : undefined,
-    startedAt: row.started_at ? new Date(row.started_at) : undefined,
-    completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
   };
+  if (row.claimed_by !== null) {
+    job.claimedBy = mkWorkerId(row.claimed_by);
+  }
+  if (row.claimed_at !== null) {
+    job.claimedAt = new Date(row.claimed_at);
+  }
+  if (row.started_at !== null) {
+    job.startedAt = new Date(row.started_at);
+  }
+  if (row.completed_at !== null) {
+    job.completedAt = new Date(row.completed_at);
+  }
+  return job;
 }
 
 export class JobQueueRepository implements JobQueuePort {
