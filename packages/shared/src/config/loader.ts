@@ -93,6 +93,22 @@ export function loadConfig(repoRoot: string): OrchestratorConfig {
       );
     }
     json = deepMerge(json, localJson);
+    // deepMerge is key-additive: a base {profile, fallbackProfile} merged with a local {role}
+    // produces all three keys, which the schema rejects. When role wins, drop profile/fallbackProfile.
+    if (isPlainObject(json)) {
+      const agent = (json as Record<string, unknown>).agent;
+      if (isPlainObject(agent)) {
+        const phaseProfiles = (agent as Record<string, unknown>).phaseProfiles;
+        if (isPlainObject(phaseProfiles)) {
+          for (const entry of Object.values(phaseProfiles)) {
+            if (isPlainObject(entry) && entry.role && entry.profile) {
+              delete (entry as Record<string, unknown>).profile;
+              delete (entry as Record<string, unknown>).fallbackProfile;
+            }
+          }
+        }
+      }
+    }
   }
   const parsed = orchestratorConfigSchema.safeParse(json);
   if (!parsed.success) {
