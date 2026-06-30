@@ -22,6 +22,7 @@ async function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
     labels: [],
   });
   const git = new FakeGitPort();
+  git.headByCwd.set('/tmp/wt', 'base-sha');
   const events: OrchestratorEvent[] = [];
   const ctx = {
     runId: 'run-1',

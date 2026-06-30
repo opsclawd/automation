@@ -14,6 +14,76 @@ export interface VerificationResult {
   codeVerifyReason?: string;
 }
 
+export async function verifyReplyPosted(
+  deps: { github: GitHubPort },
+  context: { repoFullName: string; prNumber: number },
+  commentId: number,
+): Promise<boolean> {
+  const afterComments = await deps.github.listReviewComments(
+    context.repoFullName,
+    context.prNumber,
+  );
+  return afterComments.some((c) => c.inReplyToId === commentId);
+}
+
+export interface RemoteFixCommitVerification {
+  commitVerified: boolean;
+  fixCommitOnRemote: boolean;
+  isNewerThanStart: boolean;
+  reason: string;
+}
+
+export async function verifyRemoteFixCommit(
+  deps: {
+    git: GitPort;
+    verifyCommitPushed: (input: {
+      cwd: string;
+      branch: string;
+      startCommitSha: string;
+      commitSha?: string;
+    }) => Promise<boolean>;
+  },
+  context: { cwd: string; branch: string; startCommitSha: string | undefined },
+  commitSha: string | undefined,
+): Promise<RemoteFixCommitVerification> {
+  if (!commitSha) {
+    return {
+      commitVerified: false,
+      fixCommitOnRemote: false,
+      isNewerThanStart: false,
+      reason: 'commit not pushed to remote',
+    };
+  }
+
+  const commitVerified = context.startCommitSha
+    ? await deps.verifyCommitPushed({
+        cwd: context.cwd,
+        branch: context.branch,
+        startCommitSha: context.startCommitSha,
+        commitSha,
+      })
+    : true;
+
+  const remoteSha = await deps.git.remoteRef({
+    cwd: context.cwd,
+    remote: 'origin',
+    ref: context.branch,
+  });
+  const fixCommitOnRemote = remoteSha
+    ? await deps.git.isAncestor(context.cwd, commitSha, remoteSha)
+    : false;
+  const isNewerThanStart = context.startCommitSha
+    ? (await deps.git.logBetween(context.cwd, context.startCommitSha, commitSha)).length > 0
+    : true;
+
+  let reason = '';
+  if (!fixCommitOnRemote) reason = 'fix commit is not an ancestor of remote branch tip';
+  else if (!isNewerThanStart) reason = 'fix commit is not newer than start (logBetween empty)';
+  else if (!commitVerified) reason = 'commit not pushed to remote';
+
+  return { commitVerified, fixCommitOnRemote, isNewerThanStart, reason };
+}
+
 export async function verifyComment(
   comment: PrReviewComment,
   deps: {
@@ -40,11 +110,7 @@ export async function verifyComment(
     repoId?: string;
   },
 ): Promise<VerificationResult> {
-  const afterComments = await deps.github.listReviewComments(
-    context.repoFullName,
-    context.prNumber,
-  );
-  const replyVerified = afterComments.some((c) => c.inReplyToId === comment.commentId);
+  const replyVerified = await verifyReplyPosted(deps, context, comment.commentId);
 
   if (comment.outcome === 'no_fix') {
     return {
@@ -56,10 +122,6 @@ export async function verifyComment(
       reason: replyVerified ? '' : 'reply not found on GitHub',
     };
   }
-
-  let commitVerified = true;
-  let buildVerified = true;
-  let failReason = '';
 
   const commitShaChanged =
     comment.commitSha !== undefined && comment.commitSha !== context.startCommitSha;
@@ -74,63 +136,34 @@ export async function verifyComment(
     };
   }
 
-  if (comment.commitSha && context.startCommitSha) {
-    commitVerified = await deps.verifyCommitPushed({
-      cwd: context.cwd,
-      branch: context.branch,
-      startCommitSha: context.startCommitSha,
-      commitSha: comment.commitSha,
-    });
-  } else if (comment.commitSha) {
-    commitVerified = true;
-  } else {
-    commitVerified = false;
-  }
-
   const buildResult = await deps.verifyBuildPasses({
     cwd: context.cwd,
     runId: String(comment.runId),
   });
-  buildVerified = buildResult.passed;
+  const buildVerified = buildResult.passed;
   const buildError = buildResult.error;
 
-  let fixCommitOnRemote = true;
-  let isNewerThanStart = true;
-  if (comment.commitSha) {
-    const remoteSha = await deps.git.remoteRef({
-      cwd: context.cwd,
-      remote: 'origin',
-      ref: context.branch,
-    });
-    if (remoteSha) {
-      fixCommitOnRemote = await deps.git.isAncestor(context.cwd, comment.commitSha, remoteSha);
-    } else {
-      fixCommitOnRemote = false;
-    }
-    if (context.startCommitSha) {
-      const commitsSinceStart = await deps.git.logBetween(
-        context.cwd,
-        context.startCommitSha,
-        comment.commitSha,
-      );
-      isNewerThanStart = commitsSinceStart.length > 0;
-    }
-  }
+  const remote = await verifyRemoteFixCommit(deps, context, comment.commitSha);
 
+  let failReason = '';
   if (!replyVerified) failReason = 'reply not found on GitHub';
-  else if (!fixCommitOnRemote && !failReason)
+  else if (!remote.fixCommitOnRemote)
     failReason = 'fix commit is not an ancestor of remote branch tip';
-  else if (!isNewerThanStart && !failReason)
+  else if (!remote.isNewerThanStart)
     failReason = 'fix commit is not newer than start (logBetween empty)';
-  else if (!commitVerified && !failReason) failReason = 'commit not pushed to remote';
-  else if (!buildVerified && !failReason) failReason = 'build did not pass';
+  else if (!remote.commitVerified) failReason = 'commit not pushed to remote';
+  else if (!buildVerified) failReason = 'build did not pass';
 
   // Semantic code verification — only when all mechanical checks pass
   let codeVerified = true;
   let codeVerifyReason: string | undefined;
 
   const mechanicalOk =
-    fixCommitOnRemote && isNewerThanStart && commitVerified && replyVerified && buildVerified;
+    remote.fixCommitOnRemote &&
+    remote.isNewerThanStart &&
+    remote.commitVerified &&
+    replyVerified &&
+    buildVerified;
 
   if (mechanicalOk && deps.verifyCodeChange && comment.commitSha) {
     const codeResult = await deps.verifyCodeChange({
@@ -155,7 +188,7 @@ export async function verifyComment(
   return {
     ok,
     replyVerified,
-    commitVerified,
+    commitVerified: remote.commitVerified,
     buildVerified,
     codeVerified,
     reason: ok ? '' : failReason,

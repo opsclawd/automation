@@ -3,7 +3,7 @@ import { RunId, createPrReviewComment } from '@ai-sdlc/domain';
 import { FakeGitHubPort, FakeGitPort } from '../../test-doubles/index.js';
 import type { GitPort } from '../../ports/git-port.js';
 import type { GitHubPort } from '../../ports/github-port.js';
-import { verifyComment } from '../verify-comment.js';
+import { verifyComment, verifyReplyPosted, verifyRemoteFixCommit } from '../verify-comment.js';
 import type { VerifyCodeChangeFn } from '../verify-code-change.js';
 
 interface VerifyCommentDeps {
@@ -520,6 +520,28 @@ describe('verifyComment — fixed outcome', () => {
     expect(result.buildVerified).toBe(false);
     expect(result.buildError).toBe('typecheck failed: TS2322');
   });
+
+  describe('verifyRemoteFixCommit helper', () => {
+    it('returns false/error when commitSha is undefined', async () => {
+      const { deps } = makeDeps();
+      const ctx = makeContext();
+      const result = await verifyRemoteFixCommit(deps, ctx, undefined);
+      expect(result.commitVerified).toBe(false);
+      expect(result.fixCommitOnRemote).toBe(false);
+      expect(result.reason).toBe('commit not pushed to remote');
+    });
+
+    it('returns true when startCommitSha is undefined', async () => {
+      const { deps, git } = makeDeps();
+      const ctx = makeContext({ startCommitSha: undefined });
+      git.remoteRefs.set('origin/feat-x', 'tipSha');
+      git.ancestorResults.set('fixSha|tipSha', true);
+      const result = await verifyRemoteFixCommit(deps, ctx, 'fixSha');
+      expect(result.commitVerified).toBe(true);
+      expect(result.fixCommitOnRemote).toBe(true);
+      expect(result.isNewerThanStart).toBe(true);
+    });
+  });
 });
 
 describe('verifyComment — no_fix outcome', () => {
@@ -604,6 +626,54 @@ describe('verifyComment — no_fix outcome', () => {
     const result = await verifyComment(comment, deps, ctx);
     expect(result.ok).toBe(false);
     expect(result.replyVerified).toBe(false);
+  });
+
+  describe('verifyReplyPosted helper', () => {
+    it('returns true when reply is found', async () => {
+      const { deps, github } = makeDeps();
+      const ctx = makeContext();
+      github.comments.set('o/r/5', [
+        {
+          id: 9001,
+          prNumber: 5,
+          path: 'a.ts',
+          line: 3,
+          reviewer: 'octocat',
+          body: 'fix please',
+          createdAt: new Date(),
+        },
+        {
+          id: 9002,
+          prNumber: 5,
+          path: 'a.ts',
+          line: 3,
+          reviewer: 'agent',
+          body: 'reply',
+          createdAt: new Date(),
+          inReplyToId: 9001,
+        },
+      ]);
+      const result = await verifyReplyPosted(deps, ctx, 9001);
+      expect(result).toBe(true);
+    });
+
+    it('returns false when reply is missing', async () => {
+      const { deps, github } = makeDeps();
+      const ctx = makeContext();
+      github.comments.set('o/r/5', [
+        {
+          id: 9001,
+          prNumber: 5,
+          path: 'a.ts',
+          line: 3,
+          reviewer: 'octocat',
+          body: 'fix please',
+          createdAt: new Date(),
+        },
+      ]);
+      const result = await verifyReplyPosted(deps, ctx, 9001);
+      expect(result).toBe(false);
+    });
   });
 });
 

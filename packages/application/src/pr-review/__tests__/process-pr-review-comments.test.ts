@@ -306,7 +306,7 @@ describe('ProcessPrReviewComments — blocking', () => {
     });
     expect(repo.getComment(runId, 9001)?.state).toBe('blocked');
     expect(out.blocked).toBe(1);
-    expect(github.repliesPosted).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(0);
   });
 });
 
@@ -1081,7 +1081,7 @@ describe('ProcessPrReviewComments — reset to pending on failed verification', 
     const after1 = repo.getComment(runId, 9001);
     expect(after1?.state).toBe('blocked');
     expect(after1?.replyVerified).toBe(false);
-    expect(github.repliesPosted).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(0);
     expect(out.blocked).toBe(1);
   });
 });
@@ -1093,16 +1093,20 @@ describe('ProcessPrReviewComments — build failure feedback', () => {
     });
     const capturedErrors: Array<string | undefined> = [];
     let buildChecks = 0;
-    const { deps, github, repo } = makeDeps({
+    const order: string[] = [];
+    const { deps, github, repo, git } = makeDeps({
       agent,
       renderTaskPrompt: async (input) => {
         capturedErrors.push(input.previousBuildError);
+        order.push(`prompt:${input.previousBuildError ?? 'none'}`);
         return '/tmp/prompt.md';
       },
-      verifyBuildPasses: async () =>
-        buildChecks++ === 0
+      verifyBuildPasses: async () => {
+        order.push('build');
+        return buildChecks++ === 0
           ? { passed: false, error: 'TS2722: Cannot invoke object' }
-          : { passed: true },
+          : { passed: true };
+      },
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
@@ -1133,7 +1137,16 @@ describe('ProcessPrReviewComments — build failure feedback', () => {
 
     expect(out.outcome).toBe('ALL_RESOLVED');
     expect(capturedErrors).toEqual([undefined, 'TS2722: Cannot invoke object']);
+    expect(git.pushes).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(1);
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
+    expect(order).toEqual([
+      'prompt:none',
+      'build',
+      'prompt:TS2722: Cannot invoke object',
+      'build',
+      'build',
+    ]);
   });
 });
 
@@ -1194,7 +1207,7 @@ describe('ProcessPrReviewComments — every comment gets its own task', () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
-    const { deps, github, repo } = makeDeps({ agent });
+    const { deps, github, repo, git } = makeDeps({ agent });
     github.comments.set('o/r/5', [
       {
         id: 9001,
@@ -1231,6 +1244,8 @@ describe('ProcessPrReviewComments — every comment gets its own task', () => {
     expect(github.repliesPosted.some((r) => r.commentId === 9002)).toBe(true);
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
     expect(repo.getComment(runId, 9002)?.state).toBe('processed');
+    expect(git.pushes).toHaveLength(2);
+    expect(git.pushes.map((p) => p.branch)).toEqual(['feat-x', 'feat-x']);
   });
 
   it('resolves every comment independently and reports allResolved', async () => {
@@ -1283,7 +1298,7 @@ describe('ProcessPrReviewComments — start SHA advances per task (M1)', () => {
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
     const verifyCalls: Array<{ startCommitSha: string; commitSha?: string }> = [];
-    const { deps, github } = makeDeps({
+    const { deps, github, git } = makeDeps({
       agent,
       verifyCommitPushed: async (input) => {
         verifyCalls.push({ startCommitSha: input.startCommitSha, commitSha: input.commitSha });
@@ -1322,6 +1337,7 @@ describe('ProcessPrReviewComments — start SHA advances per task (M1)', () => {
       pollNumber: 1,
     });
 
+    expect(git.pushes).toHaveLength(2);
     expect(verifyCalls).toHaveLength(2);
     // The second task's start SHA must differ from the first task's start SHA,
     // proving the loop reads git HEAD before each task rather than staying
@@ -1981,7 +1997,7 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
   });
 });
 
-describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
+describe('ProcessPrReviewComments - codeVerified retry behavior', () => {
   it('passes codeVerifyReason into next attempt prompt when code verify fails', async () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
@@ -1989,11 +2005,11 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
     const capturedPromptInputs: Array<{ previousCodeVerifyReason?: string }> = [];
     let verifyCallCount = 0;
 
-    const { deps, github } = makeDeps({
+    const { deps, github, git } = makeDeps({
       agent,
       verifyCodeChange: async () => {
         verifyCallCount++;
-        if (verifyCallCount === 1) return { pass: false, reason: 'still uses let' };
+        if (verifyCallCount === 1) return { pass: false, reason: 'verifier rejected fix' };
         return { pass: true, reason: 'ok' };
       },
       renderTaskPrompt: async (input) => {
@@ -2028,7 +2044,12 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
     });
 
     expect(result.processed).toBe(1);
-    expect(capturedPromptInputs[1]?.previousCodeVerifyReason).toBe('still uses let');
+    expect(capturedPromptInputs).toEqual([
+      { previousCodeVerifyReason: undefined },
+      { previousCodeVerifyReason: 'verifier rejected fix' },
+    ]);
+    expect(git.pushes).toHaveLength(1);
+    expect(github.repliesPosted).toHaveLength(1);
   });
 
   it('reports not processed when all attempts exhaust with code verify failures', async () => {
@@ -2040,13 +2061,18 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
       ],
     });
 
-    const { deps, github } = makeDeps({
+    const rollbackCalls: Array<{ ctx: { cwd: string; branch: string }; sha: string }> = [];
+    const { deps, github, git } = makeDeps({
       agent,
       verifyCodeChange: async () => ({ pass: false, reason: 'never satisfied' }),
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'fixed', replyBody: 'Fixed.' },
       }),
+      rollbackFix: async (ctx, sha) => {
+        rollbackCalls.push({ ctx, sha });
+        return true;
+      },
     });
 
     const rc = {
@@ -2072,5 +2098,7 @@ describe('ProcessPrReviewComments — codeVerified retry behavior', () => {
 
     expect(result.processed).toBe(0);
     expect(result.blocked).toBe(1);
+    expect(rollbackCalls).toHaveLength(1);
+    expect(git.pushes).toHaveLength(0);
   });
 });

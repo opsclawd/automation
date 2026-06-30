@@ -126,9 +126,13 @@ function makeInput(overrides: Partial<PollTaskInput> = {}): PollTaskInput {
 
 describe('PollTaskRunner — happy path', () => {
   it('processes a fixed comment: invokes agent, posts reply, verifies, marks processed', async () => {
-    const { deps, github, git } = makeDeps();
+    const { deps, github, git, agent } = makeDeps();
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'def456');
+      return makeSuccessAgentResult();
+    });
     // Simulate agent creating a new commit
-    git.headByCwd.set('/work/tree', 'def456');
     git.remoteRefs.set('origin/feat-x', 'def456');
     git.ancestorResults.set('def456|def456', true);
     git.logBetweenResults.set('abc123|def456', ['def456']);
@@ -142,6 +146,8 @@ describe('PollTaskRunner — happy path', () => {
       processed: true,
       blocked: false,
     });
+    expect(git.pushes).toHaveLength(1);
+    expect(git.pushes[0]).toEqual({ cwd: '/work/tree', branch: 'feat-x' });
     expect(github.repliesPosted).toHaveLength(1);
     expect(github.resolvedThreads).toEqual(
       expect.arrayContaining([expect.objectContaining({ commentId: 9001 })]),
@@ -149,7 +155,7 @@ describe('PollTaskRunner — happy path', () => {
   });
 
   it('processes a no_fix comment', async () => {
-    const { deps, github } = makeDeps({
+    const { deps, github, git } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
         result: { commentId: 9001, action: 'no_fix', replyBody: 'Comment is invalid.' },
@@ -162,10 +168,11 @@ describe('PollTaskRunner — happy path', () => {
     expect(out.action).toBe('no_fix');
     expect(out.processed).toBe(true);
     expect(github.repliesPosted).toHaveLength(1);
+    expect(git.pushes).toHaveLength(0);
   });
 
   it('processes a blocked comment', async () => {
-    const { deps, repo } = makeDeps({
+    const { deps, repo, git, github } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
         result: {
@@ -184,12 +191,14 @@ describe('PollTaskRunner — happy path', () => {
     expect(out.blocked).toBe(true);
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('blocked');
+    expect(github.repliesPosted).toHaveLength(1);
+    expect(git.pushes).toHaveLength(0);
   });
 
   it('forwards resultJsonPath from agent invocation to extractTaskResult', async () => {
     let capturedResultJsonPath: string | undefined;
     let capturedCwd = '';
-    const { deps, git } = makeDeps({
+    const { deps, git, agent } = makeDeps({
       extractTaskResult: async (input) => {
         capturedResultJsonPath = input.resultJsonPath;
         capturedCwd = input.cwd;
@@ -199,7 +208,11 @@ describe('PollTaskRunner — happy path', () => {
         };
       },
     });
-    git.headByCwd.set('/work/tree', 'def456');
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'def456');
+      return makeSuccessAgentResult();
+    });
     git.remoteRefs.set('origin/feat-x', 'def456');
     git.ancestorResults.set('def456|def456', true);
     git.logBetweenResults.set('abc123|def456', ['def456']);
@@ -211,10 +224,14 @@ describe('PollTaskRunner — happy path', () => {
   });
 
   it('returns buildError when verification fails due to build', async () => {
-    const { deps, git } = makeDeps({
+    const { deps, git, agent } = makeDeps({
       verifyBuildPasses: async () => ({ passed: false, error: 'tsc failed: TS2322' }),
     });
-    git.headByCwd.set('/work/tree', 'newSha');
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'newSha');
+      return makeSuccessAgentResult();
+    });
     const runner = new PollTaskRunner(deps);
     const output = await runner.execute({
       runId,
@@ -233,18 +250,46 @@ describe('PollTaskRunner — happy path', () => {
     expect(output.processed).toBe(false);
     expect(output.buildError).toBe('tsc failed: TS2322');
     expect(output.action).toBe('fixed');
+    expect(git.pushes).toHaveLength(0);
+    expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // reset to start SHA
+    expect(git.cleanUntrackedCalls).toContain('/work/tree');
+  });
+
+  it('returns codeVerifyReason when verification fails due to code change verification', async () => {
+    const { deps, git, agent, github } = makeDeps({
+      verifyCodeChange: async () => ({ pass: false, reason: 'unwanted change' }),
+    });
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'newSha');
+      return makeSuccessAgentResult();
+    });
+    const runner = new PollTaskRunner(deps);
+    const output = await runner.execute(makeInput());
+
+    expect(output.processed).toBe(false);
+    expect(output.codeVerifyReason).toBe('unwanted change');
+    expect(output.action).toBe('fixed');
+    expect(git.pushes).toHaveLength(0);
+    expect(github.repliesPosted).toHaveLength(0);
+    expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // reset to start SHA
+    expect(git.cleanUntrackedCalls).toContain('/work/tree');
   });
 
   it('passes previousBuildError to renderTaskPrompt', async () => {
     let capturedInput: Record<string, unknown> | undefined;
-    const { deps, git } = makeDeps({
+    const { deps, git, agent } = makeDeps({
       renderTaskPrompt: async (input) => {
         capturedInput = input;
         return '/tmp/prompt.md';
       },
       verifyBuildPasses: async () => ({ passed: false, error: 'build broke' }),
     });
-    git.headByCwd.set('/work/tree', 'abc123');
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'newSha');
+      return makeSuccessAgentResult();
+    });
     const runner = new PollTaskRunner(deps);
     await runner.execute({
       runId,
