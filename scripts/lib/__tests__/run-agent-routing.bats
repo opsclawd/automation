@@ -387,19 +387,25 @@ _run_agent() {
   [[ "$output" == *"No compound inputs to consolidate"* ]]
 }
 
-@test ".ai-orchestrator.json has compound phase profile with valid profile" {
+@test ".ai-orchestrator.json has compound phase with a resolvable profile" {
   run python3 -c "
 import json, sys
 with open('.ai-orchestrator.json') as f:
     cfg = json.load(f)
 phases = cfg.get('agent', {}).get('phaseProfiles', {})
 profiles = cfg.get('agent', {}).get('profiles', {})
+roles = cfg.get('agent', {}).get('roles', {})
 if 'compound' not in phases:
     print('MISSING: compound not in phaseProfiles')
     sys.exit(1)
-prof = phases['compound'].get('profile')
+entry = phases['compound']
+prof = entry.get('profile')
 if not prof:
-    print('MISSING: compound phase has no profile')
+    role = entry.get('role')
+    if role and role in roles:
+        prof = roles[role].get('profile')
+if not prof:
+    print('MISSING: compound phase has no resolvable profile (checked profile and role)')
     sys.exit(1)
 if prof not in profiles:
     print(f'MISSING: profile {prof!r} not found in agent.profiles')
