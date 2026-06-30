@@ -518,6 +518,111 @@ export function buildQualityReviewPrompt(
   ].join('\n');
 }
 
+export interface BuildPostPrReviewTaskPromptInput {
+  cwd: string;
+  comment: {
+    commentId: number;
+    path: string;
+    line: number;
+    body: string;
+  };
+  diff: string;
+  branch: string;
+  previousBuildError?: string;
+  previousCodeVerifyReason?: string;
+}
+
+export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptInput): string {
+  const { cwd, comment, diff, previousBuildError, previousCodeVerifyReason } = input;
+  const sections = [
+    '# PR Review Comment Task',
+    '',
+    'Address the following PR review comment:',
+    '',
+    `- [commentId: ${comment.commentId}] ${comment.path}:${comment.line} - ${comment.body}`,
+    '',
+    '## Current Diff',
+    '',
+    diff,
+    '',
+  ];
+
+  if (previousBuildError !== undefined) {
+    const truncatedError =
+      previousBuildError.length > 4000
+        ? previousBuildError.slice(0, 2000) +
+          '\n... (truncated) ...\n' +
+          previousBuildError.slice(-2000)
+        : previousBuildError;
+    sections.push(
+      '## Previous Attempt Failed',
+      '',
+      'The previous fix attempt failed the build with the following error:',
+      '',
+      '```',
+      truncatedError,
+      '```',
+      '',
+      'Please adjust your fix to resolve this error.',
+      '',
+    );
+  }
+
+  if (previousCodeVerifyReason !== undefined) {
+    sections.push(
+      '## Previous Fix Rejected by Code Verifier',
+      '',
+      'An independent verifier reviewed your previous fix and rejected it with this reason:',
+      '',
+      `> ${previousCodeVerifyReason}`,
+      '',
+      'Please revisit your fix with this feedback in mind before trying again.',
+      '',
+    );
+  }
+
+  sections.push(
+    '## Instructions',
+    '',
+    'Make a judgement call: is this comment technically valid?',
+    '',
+    'If a code change is required:',
+    '1. Edit the relevant source files',
+    '2. Stage and commit: `git add -A && git commit -m "fix: address PR review feedback"`',
+    '3. Do NOT push. The orchestrator will push only after validation passes.',
+    '',
+    'If the comment is invalid, include your reasoning in replyBody.',
+    '',
+    'IMPORTANT: Do NOT post replies yourself. The orchestrator handles posting.',
+    'IMPORTANT: Do NOT push to any remote branch.',
+    '',
+    '---',
+    '',
+    '**CRITICAL: Do NOT run any of the following commands.**',
+    '- Do NOT run npm/pnpm/yarn/bun build, test, lint, typecheck, depcruise, or test:bash',
+    '- Do NOT run any shell scripts that invoke tests or linters',
+    '- Do NOT run npm/pnpm/yarn/bun install or any package manager commands',
+    '- Do NOT verify your fix - the orchestrator handles all verification deterministically',
+    '',
+    'Your ONLY responsibility is: read the comment, make a code change (if needed), commit the change locally (if one was made), write result.json, and stop immediately.',
+    '',
+    '## Required Output',
+    '',
+    `Write a result.json file at: ${join(cwd, 'result.json')}`,
+    '',
+    '```json',
+    '{',
+    '  "commentId": <number>,',
+    '  "action": "fixed" | "no_fix" | "blocked",',
+    '  "replyBody": "<non-empty string>",',
+    '  "blockedReason": "<string - only when action is blocked>"',
+    '}',
+    '```',
+  );
+
+  return sections.join('\n');
+}
+
 export function captureExecOutput(err: unknown): string {
   if (err instanceof Error && 'stdout' in err && 'stderr' in err) {
     const e = err as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
@@ -1997,91 +2102,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
-        const sections = [
-          '# PR Review Comment Task',
-          '',
-          'Address the following PR review comment:',
-          '',
-          `- [commentId: ${comment.commentId}] ${comment.path}:${comment.line} — ${comment.body}`,
-          '',
-          '## Current Diff',
-          '',
+        const content = buildPostPrReviewTaskPrompt({
+          cwd,
+          comment,
           diff,
-          '',
-        ];
-
-        if (previousBuildError !== undefined) {
-          const truncatedError =
-            previousBuildError.length > 4000
-              ? previousBuildError.slice(0, 2000) +
-                '\n... (truncated) ...\n' +
-                previousBuildError.slice(-2000)
-              : previousBuildError;
-          sections.push(
-            '## Previous Attempt Failed',
-            '',
-            'The previous fix attempt failed the build with the following error:',
-            '',
-            '```',
-            truncatedError,
-            '```',
-            '',
-            'Please adjust your fix to resolve this error.',
-            '',
-          );
-        }
-
-        if (previousCodeVerifyReason !== undefined) {
-          sections.push(
-            '## Previous Fix Rejected by Code Verifier',
-            '',
-            'An independent verifier reviewed your previous fix and rejected it with this reason:',
-            '',
-            `> ${previousCodeVerifyReason}`,
-            '',
-            'Please revisit your fix with this feedback in mind before trying again.',
-            '',
-          );
-        }
-
-        sections.push(
-          '## Instructions',
-          '',
-          'Make a judgement call: is this comment technically valid?',
-          '',
-          'If a code change is required:',
-          '1. Edit the relevant source files',
-          '2. Stage and commit: `git add -A && git commit -m "fix: address PR review feedback"`',
-          `3. Push: \`git push origin '${branch.replace(/'/g, "'\\''")}'\``,
-          '',
-          'If the comment is invalid, include your reasoning in replyBody.',
-          '',
-          'IMPORTANT: Do NOT post replies yourself. The orchestrator handles posting.',
-          '',
-          '---',
-          '',
-          '**CRITICAL: Do NOT run any of the following commands.**',
-          '- Do NOT run npm/pnpm/yarn/bun build, test, lint, typecheck, depcruise, or test:bash',
-          '- Do NOT run any shell scripts that invoke tests or linters',
-          '- Do NOT run npm/pnpm/yarn/bun install or any package manager commands',
-          '- Do NOT verify your fix — the orchestrator handles all verification deterministically',
-          '',
-          'Your ONLY responsibility is: read the comment, make a code change (if needed), commit and push the change (if one was made), write result.json, and stop immediately.',
-          '',
-          '## Required Output',
-          '',
-          `Write a result.json file at: ${join(cwd, 'result.json')}`,
-          '',
-          '```json',
-          '{',
-          '  "commentId": <number>,',
-          '  "action": "fixed" | "no_fix" | "blocked",',
-          '  "replyBody": "<non-empty string>",',
-          '  "blockedReason": "<string — only when action is blocked>"',
-          '}',
-          '```',
-        );
-        const content = sections.join('\n');
+          branch,
+          ...(previousBuildError !== undefined ? { previousBuildError } : {}),
+          ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
+        });
         writeFileSync(promptPath, content, 'utf-8');
         return promptPath;
       },
