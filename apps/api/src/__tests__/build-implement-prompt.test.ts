@@ -88,4 +88,16 @@ describe('buildImplementPrompt', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
     expect(prompt).toContain('implementation-log.md');
   });
+
+  it('includes typecheck errors section when typecheckErrors provided', () => {
+    const errors = 'src/foo.ts(10,5): error TS2345: Argument of type string not assignable';
+    const prompt = buildImplementPrompt(ctx, taskText, branchName, errors);
+    expect(prompt).toContain('Typecheck Errors From Previous Attempt');
+    expect(prompt).toContain(errors);
+  });
+
+  it('omits typecheck errors section when not provided', () => {
+    const prompt = buildImplementPrompt(ctx, taskText, branchName);
+    expect(prompt).not.toContain('Typecheck Errors From Previous Attempt');
+  });
 });
