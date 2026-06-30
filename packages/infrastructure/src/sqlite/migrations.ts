@@ -13,6 +13,7 @@ import * as addSkippedPhases from './migrations/0011-add-skipped-phases-column.j
 import * as addStartCommitSha from './migrations/0012-add-start-commit-sha-column.js';
 import * as addWorkerLeases from './migrations/0013-add-worker-leases.js';
 import * as addSteps from './migrations/0014-add-steps.js';
+import * as addJobs from './migrations/0015-add-jobs.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -29,6 +30,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addStartCommitSha.version, sql: addStartCommitSha.sql },
   { version: addWorkerLeases.version, sql: addWorkerLeases.sql },
   { version: addSteps.version, sql: addSteps.sql },
+  { version: addJobs.version, sql: addJobs.sql },
 ];
 
 export function applyMigrations(db: Db): void {

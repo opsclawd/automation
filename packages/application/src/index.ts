@@ -42,3 +42,4 @@ export type {
 } from './implement-step/types.js';
 export * from './implement-step/implement-step-loop.js';
 export * from './artifacts/index.js';
+export * from './run-recovery-actions.js';

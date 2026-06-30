@@ -172,10 +172,77 @@ describe('ResumeRun', () => {
       findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
-    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(result.jobId.startsWith('resume-')).toBe(true);
+    expect(result.jobStatus).toBe('queued');
+
     const jobs = queue.listForRun(rid('run-1'));
     expect(jobs).toHaveLength(1);
     expect(jobs[0]!.status).toBe('queued');
+  });
+
+  it('proves lease release still happens after a successful returned enqueue', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue: new FakeJobQueuePort(repos),
+      stepRepo: new FakeStepRepository(),
+      phaseRepo: new FakePhaseRepository(),
+      findRepoId: (r) => repoid(r),
+      now: fixedNow,
+    });
+    const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(result.jobId.startsWith('resume-')).toBe(true);
+    expect(result.jobStatus).toBe('queued');
+    const lease = leases.current(repoid('run-1'));
+    expect(lease).toBeUndefined();
+  });
+
+  it('enqueues a job even if repository lease is already held by another worker', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun());
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    registry.register({ workerId: wid('w-2'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    // w-2 acquires lease first
+    leases.acquire({
+      repoId: repoid('run-1'),
+      workerId: wid('w-2'),
+      runId: rid('run-other'),
+      now: fixedNow(),
+      ttlMs: 30_000,
+    });
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeJobQueuePort(repos);
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo: new FakeStepRepository(),
+      phaseRepo: new FakePhaseRepository(),
+      findRepoId: (r) => repoid(r),
+      now: fixedNow,
+    });
+    const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(result.jobId.startsWith('resume-')).toBe(true);
+    expect(result.jobStatus).toBe('queued');
+
+    const jobs = queue.listForRun(rid('run-1'));
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.status).toBe('queued');
+
+    // Lease should still be held by w-2
+    const lease = leases.current(repoid('run-1'));
+    expect(lease?.workerId).toBe('w-2');
   });
 
   it('throws when repo is disabled', async () => {

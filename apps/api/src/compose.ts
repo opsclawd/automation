@@ -35,6 +35,7 @@ import {
   GhCliAdapter,
   GitWorktreeAdapter,
   WorkerLeaseRepository,
+  JobQueueRepository,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -101,7 +102,6 @@ import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-
 import {
   AgentProfileName,
   AgentInvocationId,
-  Job,
   PhaseName,
   Repository,
   Run,
@@ -332,6 +332,7 @@ export interface Container {
   prReviewRepository: PrReviewRepository;
   loopRepository: LoopRepository;
   workerLeaseRepository: WorkerLeaseRepository;
+  jobQueue: JobQueuePort;
   /** Exposed for worktree lifecycle management in CLI and tests. */
   git: GitPort;
   /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
@@ -440,52 +441,6 @@ class SingleRepoAdapter implements RepositoryPort {
 
   listEnabled(): Repository[] {
     return this.repo.enabled ? [this.repo] : [];
-  }
-}
-
-class NoOpJobQueue implements JobQueuePort {
-  enqueue(): void {
-    // No-op: CLI handles execution inline
-  }
-
-  claimNext(): Job | undefined {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  releaseClaim(): void {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  resetToQueued(): void {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  markRunning(): void {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  markSucceeded(): void {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  markFailed(): void {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  markCancelled(): void {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  listForRepo(): Job[] {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  listForRun(): Job[] {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
-  }
-
-  findById(): Job | undefined {
-    throw new Error('NoOpJobQueue only supports enqueue for CLI inline resume');
   }
 }
 
@@ -1983,13 +1938,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         updatedAt: new Date(),
       });
 
-  const noOpQueue = new NoOpJobQueue();
+  const jobQueue = new JobQueueRepository(db, singleRepo);
 
   const resumeRun = new ResumeRun({
     runRepository,
     repos: singleRepo,
     leases: workerLeaseRepository,
-    queue: noOpQueue,
+    queue: jobQueue,
     stepRepo: stepRepository,
     phaseRepo: phaseRepository,
     findRepoId: (runId: RunId) => {
@@ -2453,6 +2408,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     prReviewRepository,
     loopRepository,
     workerLeaseRepository,
+    jobQueue,
     git: gitAdapter,
     ...(resolvedRepoFullName !== undefined ? { repoFullName: resolvedRepoFullName } : {}),
     runValidation,

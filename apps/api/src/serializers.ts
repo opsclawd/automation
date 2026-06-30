@@ -1,4 +1,5 @@
 import type { Container } from './compose.js';
+import type { Job } from '@ai-sdlc/domain';
 
 type RunItem = ReturnType<Container['runRepository']['list']>['runs'][number];
 type FailureItem = NonNullable<ReturnType<Container['failureRepository']['findLatestByRun']>>;
@@ -41,5 +42,20 @@ export function serializeFailure(f: FailureItem) {
     ...(f.exitCode !== undefined ? { exitCode: f.exitCode } : {}),
     suggestedAction: f.suggestedAction,
     artifacts: f.artifacts,
+  };
+}
+
+export function serializeJob(job: Job) {
+  return {
+    id: job.id,
+    status: job.status,
+    runId: job.runId,
+    repoId: job.repoId,
+    issueNumber: job.issueNumber,
+    attempts: job.attempts,
+    createdAt: job.createdAt.toISOString(),
+    claimedAt: job.claimedAt?.toISOString() ?? null,
+    startedAt: job.startedAt?.toISOString() ?? null,
+    completedAt: job.completedAt?.toISOString() ?? null,
   };
 }
