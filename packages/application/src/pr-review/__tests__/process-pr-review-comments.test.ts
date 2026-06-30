@@ -1207,7 +1207,7 @@ describe('ProcessPrReviewComments — every comment gets its own task', () => {
     const agent = new FakeAgentPort({
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
-    const { deps, github, repo } = makeDeps({ agent });
+    const { deps, github, repo, git } = makeDeps({ agent });
     github.comments.set('o/r/5', [
       {
         id: 9001,
@@ -1244,6 +1244,8 @@ describe('ProcessPrReviewComments — every comment gets its own task', () => {
     expect(github.repliesPosted.some((r) => r.commentId === 9002)).toBe(true);
     expect(repo.getComment(runId, 9001)?.state).toBe('processed');
     expect(repo.getComment(runId, 9002)?.state).toBe('processed');
+    expect(git.pushes).toHaveLength(2);
+    expect(git.pushes.map((p) => p.branch)).toEqual(['feat-x', 'feat-x']);
   });
 
   it('resolves every comment independently and reports allResolved', async () => {
@@ -1296,7 +1298,7 @@ describe('ProcessPrReviewComments — start SHA advances per task (M1)', () => {
       'post-pr-review-profile': [makeSuccessAgentResult(), makeSuccessAgentResult()],
     });
     const verifyCalls: Array<{ startCommitSha: string; commitSha?: string }> = [];
-    const { deps, github } = makeDeps({
+    const { deps, github, git } = makeDeps({
       agent,
       verifyCommitPushed: async (input) => {
         verifyCalls.push({ startCommitSha: input.startCommitSha, commitSha: input.commitSha });
@@ -1335,6 +1337,7 @@ describe('ProcessPrReviewComments — start SHA advances per task (M1)', () => {
       pollNumber: 1,
     });
 
+    expect(git.pushes).toHaveLength(2);
     expect(verifyCalls).toHaveLength(2);
     // The second task's start SHA must differ from the first task's start SHA,
     // proving the loop reads git HEAD before each task rather than staying
