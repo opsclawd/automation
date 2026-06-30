@@ -93,18 +93,19 @@ export function loadConfig(repoRoot: string): OrchestratorConfig {
       );
     }
     json = deepMerge(json, localJson);
-    // deepMerge is key-additive: a base {profile, fallbackProfile} merged with a local {role}
-    // produces all three keys, which the schema rejects. When role wins, drop profile/fallbackProfile.
-    if (isPlainObject(json)) {
-      const agent = (json as Record<string, unknown>).agent;
-      if (isPlainObject(agent)) {
-        const phaseProfiles = (agent as Record<string, unknown>).phaseProfiles;
-        if (isPlainObject(phaseProfiles)) {
-          for (const entry of Object.values(phaseProfiles)) {
-            if (isPlainObject(entry) && entry.role && entry.profile) {
-              delete (entry as Record<string, unknown>).profile;
-              delete (entry as Record<string, unknown>).fallbackProfile;
-            }
+    // phaseProfiles entries must be replaced wholesale, not deep-merged key-by-key.
+    // deepMerge accumulates keys from both sides, so base {profile, fallbackProfile} + local
+    // {role} produces all three keys and fails schema validation. Re-stamp any phase the local
+    // config defines so the local entry wins entirely, regardless of which keys it uses.
+    if (isPlainObject(json) && isPlainObject(localJson)) {
+      const localAgent = (localJson as Record<string, unknown>).agent;
+      if (isPlainObject(localAgent)) {
+        const localPhaseProfiles = (localAgent as Record<string, unknown>).phaseProfiles;
+        if (isPlainObject(localPhaseProfiles)) {
+          const mergedAgent = (json as Record<string, unknown>).agent as Record<string, unknown>;
+          const mergedPhaseProfiles = mergedAgent.phaseProfiles as Record<string, unknown>;
+          for (const [phase, localEntry] of Object.entries(localPhaseProfiles)) {
+            mergedPhaseProfiles[phase] = localEntry;
           }
         }
       }
