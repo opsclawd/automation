@@ -28,3 +28,15 @@
 - Ran Vitest targeting these new tests and verified they pass:
   `pnpm --filter @ai-sdlc/application test -- src/implement-step/__tests__/implement-step-loop.test.ts -t "hard fails when all typecheck retries are exhausted|respects maxTypeCheckRetries zero|defaults maxTypeCheckRetries to two"`
 - Verified type safety by running `pnpm --filter @ai-sdlc/application typecheck`.
+
+## Task 4: Add Retry Failure And Event Tests
+
+### Changes
+- Modified `packages/application/src/implement-step/__tests__/implement-step-loop.test.ts` to add test cases within the `typecheck gate (post-implement, pre-review)` describe block:
+  - `hard fails when implement agent fails during typecheck retry`: Verifies that if `runImplement` returns a non-success outcome (e.g. `failed`) during a retry, the loop hard-fails with outcome `'failed'` and records a failed iteration.
+  - `emits step.typecheck.retry event on each retry`: Verifies that when a typecheck retry occurs, a `step.typecheck.retry` event is emitted with the correct level ('warn') and metadata containing attempt, maxRetries, index, and truncated compiler output.
+
+### Verifications
+- Ran Vitest targeting these new tests and verified they pass:
+  `pnpm --filter @ai-sdlc/application test -- src/implement-step/__tests__/implement-step-loop.test.ts -t "typecheck gate \\(post-implement, pre-review\\)"`
+- Verified type safety by running `pnpm --filter @ai-sdlc/application typecheck`.

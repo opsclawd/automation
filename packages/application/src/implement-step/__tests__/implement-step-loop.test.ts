@@ -731,6 +731,68 @@ describe('ImplementStepLoop', () => {
       expect(implementCalls).toBe(3);
       expect(typecheckCalls).toBe(3);
     });
+
+    it('hard fails when implement agent fails during typecheck retry', async () => {
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, _opts?: ImplementStepOptions) => {
+          implementCalls += 1;
+          return {
+            invocationId: `impl-${implementCalls}`,
+            agentOutcome: implementCalls === 1 ? ('success' as const) : ('failed' as const),
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return { outcome: 'fail', output: 'error TS3333: retry implement fails' };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(2);
+      expect(typecheckCalls).toBe(1);
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('failed');
+    });
+
+    it('emits step.typecheck.retry event on each retry', async () => {
+      const { events, bus } = collectEvents();
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        events: bus,
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return typecheckCalls <= 2
+            ? { outcome: 'fail', output: `error TS4444: retry event ${typecheckCalls}` }
+            : { outcome: 'pass', output: '' };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 2,
+      });
+
+      expect(out.outcome).toBe('success');
+      const retryEvents = events.filter((e) => e.type === 'step.typecheck.retry');
+      expect(retryEvents).toHaveLength(2);
+      expect(retryEvents[0]?.level).toBe('warn');
+      expect(retryEvents[0]?.metadata).toMatchObject({
+        attempt: 1,
+        maxRetries: 2,
+        index: 1,
+        output: 'error TS4444: retry event 1',
+      });
+      expect(retryEvents[1]?.metadata).toMatchObject({
+        attempt: 2,
+        maxRetries: 2,
+        index: 1,
+        output: 'error TS4444: retry event 2',
+      });
+    });
   });
 
   describe('parity[#403]: typecheck injection into reviewer prompts', () => {
