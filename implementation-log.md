@@ -1,48 +1,21 @@
-# Implementation Log - Task 2: Reorder PollTaskRunner reply persistence
+# Task 6 Implementation Log: Update invariant audit rows 6-12
 
-## Summary of Changes
-Enforced invariant 7 in `packages/application/src/pr-review/poll-task-runner.ts` by recording the reply attempt in the repository (`insertReply`) before persisting a `replied` comment state (`markReplied` and `upsertComment`) in both the successful `no_fix` and `fixed` paths.
+**Date:** 2026-06-30
+**Task Status:** DONE
 
-Specifically:
-- Updated the domain import in `poll-task-runner.ts` to import `markReplied`.
-- Updated `postReplyIfMissing` to return `Promise<number>` containing the GitHub reply ID. It first searches for an existing reply matching the parent comment ID, and if not found, posts the reply, re-lists comments, and returns the newly posted reply's ID (throwing an error if it remains missing).
-- Modified the `no_fix` path to first post the reply (and get the GitHub reply ID), insert the reply record in the database, call `markReplied` (which generates the correct replied comment using domain helper logic), and then upsert the replied comment. Verification (`verifyComment` and `markProcessed`) is performed on the returned domain-created replied comment.
-- Modified the `fixed` path to follow the same ordering: push the changes, post the reply to obtain the ID, insert the reply record in the database, call `markReplied` (passing `commitSha` and other metadata), and then upsert the replied comment. Verification follows.
-- Kept the `blocked` path behavior unchanged, except for awaiting but ignoring the return value of `postReplyIfMissing`.
+## Overview
+We have completed Task 6 of the implementation plan, updating rows 6-12 of `docs/invariant-audit.md`.
 
-## Verification Results
-- `poll-task-runner-reply-order.test.ts` passes successfully, verifying the correct database operation ordering: `insertReply` occurs before `upsertComment` in the `replied` state.
-- `poll-task-runner.test.ts` tests (including `happy path` and `failure isolation` patterns) pass successfully, verifying that all previous functional requirements are intact.
-- The entire `pr-review` test suite runs and passes (115 tests).
+## Changes Implemented
+1. **Invariant 7:** Cited `packages/application/src/pr-review/poll-task-runner.ts` using `markReplied()` and `packages/application/src/pr-review/__tests__/poll-task-runner-reply-order.test.ts`. Marked as `covered`.
+2. **Invariant 8:** Cited `packages/application/src/run-validation.ts`, `packages/application/src/__tests__/run-validation.test.ts`, and `packages/infrastructure/src/validation/__tests__/validation-adapter.test.ts`. Marked as `covered`.
+3. **Invariant 9:** Cited the existing implement-step loop exhaustion test `packages/application/src/implement-step/__tests__/implement-step-loop.test.ts` and review-fix loop exhaustion test `packages/application/src/review-fix/__tests__/review-fix-loop.test.ts`. Marked as `covered`.
+4. **Invariant 10:** Defined the covered minimum evidence set for the issue: validation failures include failed command stdout/stderr paths plus `validate/validation-result.json` and `validate/failure.json`; PR-review blocked/retry state and poll terminal state are persisted; Loop exhaustion returns an explicit `needs_human_review` or failure outcome. Marked as `covered`.
+5. **Invariant 11:** Cited REST route confirmation tests (`apps/api/src/__tests__/runs-recovery-routes.test.ts`) and new CLI confirmation tests (`apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`). Marked as `covered`.
+6. **Invariant 12:** Clarified that `recordPoll()` records poll count and terminal state while `PrReviewPoller` owns `nextPollAt` scheduling. Marked as `covered`.
+7. **Summary Table & GAPs:** Updated summary table rows for 7, 10, and 11 from `GAP` to `covered`. Updated the final GAP assignment list to remove the sub-issue #397 entirely since all its associated invariants (7, 10, and 11) are now fully covered. Adjusted the total GAP count to 4.
 
-# Implementation Log - Task 3: Pin validation failure diagnostic artifacts
-
-## Summary of Changes
-Strengthened invariant 10 for validation failures by asserting that the persisted `validate/failure.json` contains the same diagnostic artifact paths as the `Failure` object returned by `RunValidation`.
-
-Specifically:
-- In `packages/application/src/phases/handlers/__tests__/validate.test.ts`, updated the existing test `writes failure.json on validation failure` in `describe('artifact emission')`.
-- Asserted that after parsing `validate/failure.json`, `parsed.artifacts` matches the expected diagnostic artifacts:
-  - `validate/0-build.stdout.log`
-  - `validate/0-build.stderr.log`
-  - `validate/validation-result.json`
-- Verified that the returned deferred result did not discard the diagnostic failure details by checking other fields in the parsed artifact JSON (including `parsed.kind`, `parsed.canRetry`, `parsed.runUuid`) instead of only checking phase and message.
-
-## Verification Results
-- Verified that all tests in `packages/application/src/phases/handlers/__tests__/validate.test.ts` pass, specifically the updated `writes failure.json on validation failure` test.
-- Verified that `validation-run-to-failure.test.ts` passes the matching pattern tests.
-
-# Implementation Log - Task 4: Add focused CLI unsafe-confirmation tests
-
-## Summary of Changes
-- Created a new test file: `apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
-- Implemented tests to verify CLI `runs resume` command behavior under various unsafe/safe and confirmed/unconfirmed conditions.
-- Specifically added the following test cases:
-  1. **Unsafe default retry without `--confirm`**: inserts a failed run with `current_phase = 'create-pr'` (an unsafe phase) and parses `runs resume --uuid <uuid>`. Asserts that the exit code is 1, console error output mentions confirmation, and no side-effects (lease acquisition, retry execution, run transition, or run executor calls) are triggered.
-  2. **Unsafe `--from-phase implement` resume without `--confirm`**: asserts the same rejection and no-side-effects when resuming implementing phase (unsafe phase) without the `--confirm` flag.
-  3. **Unsafe default retry with `--confirm`**: asserts that with `--confirm` flag, the `RetryFailedPhase.execute` and `RunExecutor.execute` are called after lease acquisition.
-  4. **Safe resume without `--confirm`**: asserts that resuming from a safe phase (like `validate`) works without the `--confirm` flag, invoking `ResumeRun.transition` and `RunExecutor.execute` as expected.
-
-## Verification Results
-- Verified that the new tests fail against the current CLI implementation (exit code: 1, 4 failed tests) because CLI resume currently has no `--confirm` gate. This proves the tests are valid and correctly capture the gap.
-
+## Verification
+The verification commands were executed and returned the expected structure and status:
+- `sed -n '/^## Group 6/,/^## Summary/p' docs/invariant-audit.md` (verified Group 6-12 detail section)
+- `sed -n '/^| 6 /,/^\*\*GAPs:/p' docs/invariant-audit.md` (verified summary table and remaining GAPs list)

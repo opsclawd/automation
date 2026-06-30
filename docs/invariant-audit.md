@@ -165,11 +165,11 @@
 
 **Invariant:** A PR review run cannot mark a comment replied without recording the reply attempt (M6).
 
-**Enforcement:** None. In the `no_fix` path (`poll-task-runner.ts:~170–201`) and the `fixed` path (`~279–315`), `upsertComment(replied)` persists `state: 'replied'` in the DB *before* `insertReply` is called — the ordering is the reverse of what the invariant requires. The domain's `markReplied` function does not require a reply record to exist first, so there is no guard at any layer.
+**Enforcement:** `packages/application/src/pr-review/poll-task-runner.ts` — in both the `no_fix` and `fixed` paths, the task runner calls `insertReply()` to write the reply record first, then invokes the domain's `markReplied()` to transition the comment's status, and finally calls `upsertComment()` to persist the comment state.
 
-**Test:** None. The existing poll-task-runner tests do not assert the relative ordering of `insertReply` vs the `replied` state transition.
+**Test:** `packages/application/src/pr-review/__tests__/poll-task-runner-reply-order.test.ts` — asserts that `insertReply()` is executed prior to `upsertComment(replied)` for both `no_fix` and `fixed` outcomes.
 
-**Status:** `GAP` — the invariant is unenforced in production code. The fix requires either reordering the `insertReply` call to precede `upsertComment(replied)` in both paths, or adding a domain-level precondition to `markReplied` that rejects the transition unless a reply record already exists.
+**Status:** `covered`
 
 ---
 
@@ -177,9 +177,9 @@
 
 **Invariant:** A validation phase records each command result (M5).
 
-**Enforcement:** `packages/application/src/run-validation.ts:74` — maps all command results to `ValidationCommandRecord[]` and persists the whole `ValidationRun` including every command outcome via `validationRunRepository.insert`.
+**Enforcement:** `packages/application/src/run-validation.ts` — maps all command results to `ValidationCommandRecord[]` and persists the whole `ValidationRun` including every command outcome via `validationRunRepository.insert`.
 
-**Test:** Run-validation tests cover the full command-to-record path.
+**Test:** `packages/application/src/__tests__/run-validation.test.ts` covers the full command-to-record path, and `packages/infrastructure/src/validation/__tests__/validation-adapter.test.ts` verifies validation execution and record generation at the adapter layer.
 
 **Status:** `covered`
 
@@ -189,9 +189,9 @@
 
 **Invariant:** Max-loop-reached → `needs_human_review` or `failed`, never silent continue (Q8, M7/M8-04/M8-06).
 
-**Enforcement:** `packages/application/src/implement-step/implement-step-loop.ts:349,356,406,413,419,428` — every exhausted-iterations branch returns `{ outcome: 'needs_human_review' }`. The review-fix loop (`review-fix-loop.ts:251`) follows the same pattern.
+**Enforcement:** `packages/application/src/implement-step/implement-step-loop.ts` and `packages/application/src/review-fix/review-fix-loop.ts` — every exhausted-iterations branch returns `{ outcome: 'needs_human_review' }` or failure, preventing silent continuation.
 
-**Test:** `packages/application/src/implement-step/__tests__/implement-step-loop.test.ts:858` — `needs_human_review` outcome on exhaustion. `packages/application/src/phases/handlers/__tests__/implement.test.ts:170` — handler propagates `needs_human_review`.
+**Test:** `packages/application/src/implement-step/__tests__/implement-step-loop.test.ts` (asserts `needs_human_review` outcome on loop iteration exhaustion) and `packages/application/src/review-fix/__tests__/review-fix-loop.test.ts` (asserts exhaustion behavior).
 
 **Status:** `covered`
 
@@ -201,13 +201,17 @@
 
 **Invariant:** A Run retains enough artifacts to diagnose the latest failure (NFR2).
 
-**Enforcement:** `packages/application/src/phases/handlers/validate.ts:78` writes `validation.result` artifact; individual phase handlers write their outputs to the artifact store. The `fix-validate` phase reads `validate/failure.json` (`fix-validate.ts:26`), implying it must exist.
+**Enforcement:**
+- **Validation failures:** `packages/application/src/phases/handlers/validate.ts` ensures that `validate/failure.json` is written, preserving the stdout/stderr path logs (e.g., `validate/0-build.stdout.log`, `validate/0-build.stderr.log`) and `validate/validation-result.json`.
+- **PR-review:** `packages/application/src/pr-review/process-pr-review-comments.ts` and `packages/application/src/pr-review/poll-task-runner.ts` ensure blocked/retry state and the poll terminal state are persisted.
+- **Loop exhaustion:** Implement-step and review-fix loops write explicit terminal status and return a `needs_human_review` or failure outcome to prevent silent execution loss.
 
-**Note:** "Enough to diagnose" is not formally specified — there is no code path that asserts a minimum artifact set is present at failure time. Retention is by convention (handlers write what they produce) rather than by an enforced invariant.
+**Test:**
+- `packages/application/src/phases/handlers/__tests__/validate.test.ts` (asserts `validate/failure.json` contains stdout/stderr log paths and `validation-result.json`).
+- `packages/application/src/pr-review/__tests__/process-pr-review-comments.test.ts` (asserts poll records and states).
+- Loop exhaustion tests (assert `needs_human_review` outputs on max-loop).
 
-**Test:** None that would fail if a diagnostic artifact were omitted.
-
-**Status:** `GAP` — define the minimum artifact set for each failure kind and add a test asserting those artifacts are present after a failed run (or that `fix-validate` cannot proceed without `failure.json`).
+**Status:** `covered`
 
 ---
 
@@ -215,13 +219,13 @@
 
 **Invariant:** Unsafe retries require explicit user confirmation (M8-12).
 
-**Enforcement (flag):** `packages/application/src/run-recovery-actions.ts:96,165` — computes `requiresConfirmation: true` when `retrySafety === 'unsafe'`.
+**Enforcement (flag):** `packages/application/src/run-recovery-actions.ts` — computes `requiresConfirmation: true` when `retrySafety === 'unsafe'`.
 
-**Enforcement (gate):** Missing. `apps/api/src/cli.ts:747` calls `c.retryFailedPhase.execute()` without inspecting `requiresConfirmation`. `retry-failed-phase.ts` does not accept or check the flag. An unsafe retry proceeds identically to a safe one.
+**Enforcement (gate):** `apps/api/src/cli.ts` uses `planRunRecoveryAction()` to verify if a resume/retry requires confirmation. If confirmation is required and the `--confirm` flag is missing, the command exits with an error before lease acquisition or phase execution. The REST recovery routes (`apps/api/src/serve.ts`) also enforce confirmation constraints.
 
-**Test:** None that would fail if the confirmation check were bypassed.
+**Test:** `apps/api/src/__tests__/runs-recovery-routes.test.ts` (covers REST API recovery route confirmation checks) and `apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts` (covers CLI retry/resume confirmation checks).
 
-**Status:** `GAP` — the `requiresConfirmation` flag is computed by `run-recovery-actions` but is never enforced before executing. Add a gate in the CLI retry handler (or use-case) that requires an explicit `--confirm` flag when `requiresConfirmation` is true, and a test that the retry is rejected without it.
+**Status:** `covered`
 
 ---
 
@@ -229,11 +233,11 @@
 
 **Invariant:** A managed PR-review poll job records poll count, next poll time, and terminal state (M6-04).
 
-**Enforcement:** `packages/application/src/pr-review/process-pr-review-comments.ts:397` — `recordPoll()` called on every exit path; inserts `pollNumber`, `commentsFetched`, `commentsProcessed`, and optional `terminalState`. `nextPollAt` is a field on `PollAttempt` (`pr-review.ts`) and is set by `pr-review-poller.ts:193` but is not included in `recordPoll`'s insert — it is written separately by the poller when scheduling the next poll.
+**Enforcement:** `packages/application/src/pr-review/process-pr-review-comments.ts` — `recordPoll()` is called on every exit path to record the poll count (`pollNumber`), comments fetched/processed, and optional terminal state. The `nextPollAt` scheduling is owned and written separately by `PrReviewPoller` when scheduling the next poll attempt.
 
-**Test:** `packages/application/src/pr-review/__tests__/process-pr-review-comments.test.ts` covers the `recordPoll` call on various exit paths.
+**Test:** `packages/application/src/pr-review/__tests__/process-pr-review-comments.test.ts` covers the `recordPoll` calls and state transitions on various exit paths.
 
-**Status:** `covered` (poll count and terminal state); `nextPollAt` is optional in the schema and written by the poller rather than `recordPoll` — acceptable by design, but worth noting.
+**Status:** `covered`
 
 ---
 
@@ -253,14 +257,13 @@
 | 4 — invalid result → `invalid_result` | `covered` |
 | 5 — branch changed → `branch_changed` | `covered` |
 | 6 — no double comment processing | `covered` |
-| 7 — reply recorded before replied state | **GAP** |
+| 7 — reply recorded before replied state | `covered` |
 | 8 — validation records each command | `covered` |
 | 9 — max-loop → needs_human_review | `covered` |
-| 10 — artifacts for failure diagnosis | **GAP** |
-| 11 — unsafe retry requires confirmation | **GAP** |
+| 10 — artifacts for failure diagnosis | `covered` |
+| 11 — unsafe retry requires confirmation | `covered` |
 | 12 — poll records count/terminal state | `covered` |
 
-**GAPs: 7** → assigned to sub-issues:
+**GAPs: 4** → assigned to sub-issues:
 - **#395 (14b — 0a–0f):** 0b (repo-scoped uniqueness), 0d (lease ordering), 0f (blocked on #450)
 - **#396 (14c — 1–5):** 1 (passRun phase check)
-- **#397 (14d — 6–12):** 7 (reply-before-replied ordering), 10 (artifact retention), 11 (unsafe retry gate)
