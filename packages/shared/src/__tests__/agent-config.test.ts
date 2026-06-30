@@ -177,6 +177,73 @@ describe('agent config schema', () => {
     expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
   });
 });
+
+describe('variant field on profiles', () => {
+  it('accepts variant low on a profile', () => {
+    const cfg = structuredClone(baseValid);
+    (cfg.agent.profiles['opencode-frontier'] as Record<string, unknown>).variant = 'low';
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('accepts variant medium on a profile', () => {
+    const cfg = structuredClone(baseValid);
+    (cfg.agent.profiles['opencode-frontier'] as Record<string, unknown>).variant = 'medium';
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('accepts variant high on a profile', () => {
+    const cfg = structuredClone(baseValid);
+    (cfg.agent.profiles['opencode-frontier'] as Record<string, unknown>).variant = 'high';
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
+
+  it('rejects an unknown variant value', () => {
+    const cfg = structuredClone(baseValid);
+    (cfg.agent.profiles['opencode-frontier'] as Record<string, unknown>).variant = 'ultra';
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/variant/);
+  });
+
+  it('accepts profile without variant (backward compat)', () => {
+    expect(() => orchestratorConfigSchema.parse(baseValid)).not.toThrow();
+  });
+});
+
+describe('roles block', () => {
+  function withRoles(): typeof baseValid {
+    const cfg = structuredClone(baseValid);
+    (cfg.agent as Record<string, unknown>).roles = {
+      architect: { profile: 'opencode-frontier' },
+      fallback: { profile: 'opencode-frontier', fallback: 'opencode-frontier' },
+    };
+    return cfg;
+  }
+
+  it('accepts a roles block with valid profile references', () => {
+    expect(() => orchestratorConfigSchema.parse(withRoles())).not.toThrow();
+  });
+
+  it('rejects when roles[x].profile is not in profiles', () => {
+    const cfg = withRoles();
+    ((cfg.agent as Record<string, unknown>).roles as Record<string, unknown>)['architect'] = {
+      profile: 'no-such-profile',
+    };
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/no-such-profile/);
+  });
+
+  it('rejects when roles[x].fallback is not in profiles', () => {
+    const cfg = withRoles();
+    ((cfg.agent as Record<string, unknown>).roles as Record<string, unknown>)['fallback'] = {
+      profile: 'opencode-frontier',
+      fallback: 'missing-fallback',
+    };
+    expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/missing-fallback/);
+  });
+
+  it('accepts config without a roles block (backward compat)', () => {
+    expect(() => orchestratorConfigSchema.parse(baseValid)).not.toThrow();
+  });
+});
+
 describe('committed .ai-orchestrator.json', () => {
   it('parses against orchestratorConfigSchema', () => {
     const text = readFileSync(

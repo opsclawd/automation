@@ -127,6 +127,25 @@ const agentSchema = z
       });
     }
 
+    if (agent.roles) {
+      for (const [roleName, roleEntry] of Object.entries(agent.roles)) {
+        if (!profileNames.has(roleEntry.profile)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['roles', roleName, 'profile'],
+            message: `roles.${roleName}.profile '${roleEntry.profile}' is not defined in profiles`,
+          });
+        }
+        if (roleEntry.fallback && !profileNames.has(roleEntry.fallback)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['roles', roleName, 'fallback'],
+            message: `roles.${roleName}.fallback '${roleEntry.fallback}' is not defined in profiles`,
+          });
+        }
+      }
+    }
+
     for (const [phaseName, entry] of Object.entries(agent.phaseProfiles)) {
       // Mutual exclusion: profile and role
       if (entry.profile && entry.role) {
