@@ -27,11 +27,11 @@
 
 **Enforcement:** `packages/infrastructure/src/sqlite/run-repository.ts:68` — `insertIfNoActive()` runs a serialised transaction: SELECT for any run whose `issue_number` matches and whose status is not terminal; throws if one exists.
 
-**Note:** The query filters by `issue_number` only, not by `(repoId, issueNumber)`. In the current single-repo deployment this is equivalent, but would not prevent cross-repo collisions if issue numbers repeat. Filed under `covered` for current scope; revisit when multi-repo is activated (#450).
+**Gap:** The query filters by `issue_number` only, not by `(repoId, issueNumber)`. The PRD invariant is scoped to a (Repository, Issue) pair, but the implementation is scoped globally to issue number — meaning two runs for issue `#1` in *different* repositories would incorrectly block each other, and no test exercises the cross-repo boundary. In the current single-repo deployment this cannot manifest, but the enforcement does not match the invariant as written.
 
-**Test:** `packages/application/src/__tests__/start-issue-run.test.ts:256` — `'refuses to start a second active run for the same issue'`
+**Test:** `packages/application/src/__tests__/start-issue-run.test.ts:256` — `'refuses to start a second active run for the same issue'` (same-repo only)
 
-**Status:** `covered`
+**Status:** `GAP` — fix `insertIfNoActive` to scope the uniqueness check to `(repoId, issueNumber)` and add a test asserting that two runs for the same issue in different repositories are permitted.
 
 ---
 
@@ -165,13 +165,11 @@
 
 **Invariant:** A PR review run cannot mark a comment replied without recording the reply attempt (M6).
 
-**Enforcement:** `packages/application/src/pr-review/poll-task-runner.ts:151,191,300` — `prReviewRepo.insertReply()` is called before the comment's state object is set to `replied`. `markProcessed` (domain, `pr-review.ts:92`) throws `CommentStateError` if state is not `replied`, so the transition chain is: `insertReply` → state set to `replied` → `markProcessed`.
+**Enforcement:** None. In the `no_fix` path (`poll-task-runner.ts:~170–201`) and the `fixed` path (`~279–315`), `upsertComment(replied)` persists `state: 'replied'` in the DB *before* `insertReply` is called — the ordering is the reverse of what the invariant requires. The domain's `markReplied` function does not require a reply record to exist first, so there is no guard at any layer.
 
-**Note:** The ordering between `insertReply` and the `replied` state update is enforced by convention in application code, not by a domain invariant on `markReplied`. The domain function `markReplied` does not require a DB reply record to already exist.
+**Test:** None. The existing poll-task-runner tests do not assert the relative ordering of `insertReply` vs the `replied` state transition.
 
-**Test:** Not directly tested as an ordering constraint. Covered implicitly by poll-task-runner integration tests.
-
-**Status:** `GAP` — add a test that asserts `insertReply` is called before the comment state advances to `replied` (or that the state cannot advance without `insertReply` having been called first).
+**Status:** `GAP` — the invariant is unenforced in production code. The fix requires either reordering the `insertReply` call to precede `upsertComment(replied)` in both paths, or adding a domain-level precondition to `markReplied` that rejects the transition unless a reply record already exists.
 
 ---
 
@@ -244,7 +242,7 @@
 | Invariant | Status |
 |-----------|--------|
 | 0a — repo approved on enqueue | `covered` |
-| 0b — one active run per issue | `covered` |
+| 0b — one active run per (repo, issue) | **GAP** |
 | 0c — one lease per repo | `covered` |
 | 0d — lease before worktree/exec | **GAP** |
 | 0e — concurrent different-repo workers | `covered` |
@@ -262,7 +260,7 @@
 | 11 — unsafe retry requires confirmation | **GAP** |
 | 12 — poll records count/terminal state | `covered` |
 
-**GAPs: 6** → assigned to sub-issues:
-- **#395 (14b — 0a–0f):** 0d (lease ordering), 0f (blocked on #450)
+**GAPs: 7** → assigned to sub-issues:
+- **#395 (14b — 0a–0f):** 0b (repo-scoped uniqueness), 0d (lease ordering), 0f (blocked on #450)
 - **#396 (14c — 1–5):** 1 (passRun phase check)
 - **#397 (14d — 6–12):** 7 (reply-before-replied ordering), 10 (artifact retention), 11 (unsafe retry gate)
