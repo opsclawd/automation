@@ -6,6 +6,7 @@ import { ImplementStepLoop } from '../implement-step-loop.js';
 import type {
   ImplementStepLoopDeps,
   ImplementResult,
+  ImplementStepOptions,
   SpecReviewResult,
   QualityReviewResult,
   FixResult,
@@ -47,7 +48,10 @@ function makeDeps(over: Partial<ImplementStepLoopDeps>): ImplementStepLoopDeps {
   let n = 0;
   const { bus } = collectEvents();
   return {
-    runImplement: async (): Promise<ImplementResult> => ({
+    runImplement: async (
+      _ctx: StepLoopContext,
+      _opts?: ImplementStepOptions,
+    ): Promise<ImplementResult> => ({
       invocationId: `impl-${++n}`,
       agentOutcome: 'success',
     }),
