@@ -345,6 +345,16 @@ describe('phaseProfiles role references', () => {
     } as (typeof cfg.agent.phaseProfiles)['plan-design'];
     expect(() => orchestratorConfigSchema.parse(cfg)).toThrow(/fallbackTriggers/);
   });
+
+  it('accepts fallbackTriggers on role-based entry when the role itself has a fallback', () => {
+    const cfg = baseWithRoles();
+    // architect role has fallback: 'haiku' — triggers are valid without explicit fallbackRole
+    cfg.agent.phaseProfiles['plan-design'] = {
+      role: 'architect',
+      fallbackTriggers: ['timeout'],
+    } as (typeof cfg.agent.phaseProfiles)['plan-design'];
+    expect(() => orchestratorConfigSchema.parse(cfg)).not.toThrow();
+  });
 });
 
 describe('committed .ai-orchestrator.json', () => {

@@ -240,13 +240,18 @@ const agentSchema = z
         }
       }
 
-      // fallbackTriggers requires a fallback target
+      // fallbackTriggers requires a fallback target — either an explicit fallbackProfile/
+      // fallbackRole on the phase entry, or a role-level fallback that normalizeRoles
+      // will later promote into fallbackProfile.
       if (entry.fallbackTriggers && !entry.fallbackProfile && !entry.fallbackRole) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['phaseProfiles', phaseName, 'fallbackTriggers'],
-          message: `phaseProfiles.${phaseName} has fallbackTriggers but no fallbackProfile or fallbackRole; triggers require a fallback to be useful`,
-        });
+        const roleHasFallback = entry.role && agent.roles?.[entry.role]?.fallback;
+        if (!roleHasFallback) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['phaseProfiles', phaseName, 'fallbackTriggers'],
+            message: `phaseProfiles.${phaseName} has fallbackTriggers but no fallbackProfile, fallbackRole, or role-level fallback; triggers require a fallback to be useful`,
+          });
+        }
       }
     }
   });
