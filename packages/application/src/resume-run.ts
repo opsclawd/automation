@@ -156,7 +156,7 @@ export class ResumeRun implements ResumeRunUseCase {
     fromPhase?: string;
     workerId: WorkerId;
     attempt?: number;
-  }): Promise<void> {
+  }): Promise<{ jobId: JobId; jobStatus: 'queued' }> {
     const now = this.deps.now ?? (() => new Date());
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
@@ -220,6 +220,7 @@ export class ResumeRun implements ResumeRunUseCase {
       }
 
       this.deps.leases.release(repo.id, input.workerId);
+      return { jobId: job.id, jobStatus: job.status as 'queued' };
     } catch (err) {
       this.deps.leases.release(repo.id, input.workerId);
       throw err;

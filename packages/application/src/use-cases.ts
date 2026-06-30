@@ -14,7 +14,7 @@ export interface ResumeRunUseCase {
     fromPhase?: string;
     workerId: WorkerId;
     attempt?: number;
-  }): Promise<void>;
+  }): Promise<{ jobId: JobId; jobStatus: 'queued' }>;
 }
 
 export interface RetryFailedPhaseUseCase {
