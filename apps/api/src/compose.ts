@@ -92,6 +92,7 @@ import {
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
   type FixStepOptions,
+  type ImplementStepOptions,
   type TypecheckResult,
   type ResolveRefShaFn,
   extractTaskBody,
@@ -197,6 +198,7 @@ export function buildImplementPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string; repoId: string },
   taskText: string,
   branchName: string,
+  typecheckErrors?: string,
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -240,6 +242,18 @@ export function buildImplementPrompt(
     'You may READ files associated with later tasks for context, but you must',
     'not write, modify, stage, or commit them in this run.',
     '',
+    ...(typecheckErrors
+      ? [
+          '## Typecheck Errors From Previous Attempt',
+          'Your previous implementation failed the typecheck gate. Fix ALL of the',
+          'following errors before committing — do not skip any:',
+          '',
+          '```',
+          typecheckErrors,
+          '```',
+          '',
+        ]
+      : []),
     '## Your Job',
     '',
     `1. Read issue.md, design.md, and plan.md for context. Identify the`,
@@ -1463,7 +1477,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
       buildRunContext = buildContext;
 
-      const runImplement = async (ctx: StepLoopContext) => {
+      const runImplement = async (ctx: StepLoopContext, opts?: ImplementStepOptions) => {
         const run = runRepository.findByUuid(String(ctx.runId));
         const runDir = run?.displayId ?? String(ctx.runId);
         const issueNumber = run?.issueNumber ?? 0;
@@ -1521,7 +1535,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);
-        const implementPrompt = buildImplementPrompt(ctx, taskText, branchName);
+        const implementPrompt = buildImplementPrompt(
+          ctx,
+          taskText,
+          branchName,
+          opts?.typecheckErrors,
+        );
         writeFileSync(promptPath, implementPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
