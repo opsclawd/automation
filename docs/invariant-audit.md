@@ -93,9 +93,9 @@
 
 **Enforcement:** `packages/application/src/executor/run-executor.ts:396` — `passRun()` is only called at the point labelled "All phases passed"; any phase failure routes to `failRun` / `blockRun` / early return before that line is reached. `passRun()` itself (`packages/domain/src/run.ts:107`) only checks `currentPhase` is unset and run is not already terminal — it does not re-validate phase outcomes.
 
-**Test:** No test directly verifies that `passRun` cannot be reached when a phase has failed. The protection is by executor flow control, not by a domain assertion that could be independently exercised.
+**Test:** `packages/application/src/executor/__tests__/run-executor.test.ts` — `describe('invariant 1 — run cannot be passed when a required phase failed')` covers `failed`, `blocked`, and `needs_human_review` handler outcomes and asserts each result is not `passed`.
 
-**Status:** `GAP` — add a test that confirms a run with a failed phase record cannot be set to `passed` (either by asserting `passRun` throws, or by verifying the executor always routes failed-phase runs to `failRun`).
+**Status:** `covered`
 
 ---
 
@@ -105,9 +105,9 @@
 
 **Enforcement:** `packages/application/src/executor/run-executor.ts:266–329` — every completion branch (success, failure, blocked, needs_human_review) calls `phaseRepository.update(phase)` before returning. Phase handlers are typed to return `PhaseResult` which the executor unpacks; there is no code path that skips the update.
 
-**Test:** `packages/application/src/executor/__tests__/` covers the executor flow; individual handler tests cover result emission. The coverage is via the handler contract rather than a single "result always written" assertion.
+**Test:** `packages/application/src/executor/__tests__/run-executor.test.ts` — `persists state via repositories at each transition` asserts every completed phase is updated in the phase repository; `stops on first phase failure and marks run failed` asserts the failed phase is recorded with its failure.
 
-**Status:** `covered` (by flow; a dedicated "no silent completion" test would strengthen this)
+**Status:** `covered`
 
 ---
 
@@ -117,7 +117,7 @@
 
 **Enforcement:** `packages/application/src/phases/handlers/run-single-shot-agent-phase.ts:146,167` and `packages/application/src/executor/run-executor.ts:581,613` catch `ArtifactNotFoundError` and surface `missing_artifact` failure kind.
 
-**Test:** `packages/application/src/__tests__/render-prompt.test.ts:66,70` covers `ArtifactNotFoundError` propagation. Handler-level `missing_artifact` paths are exercised in `implement.test.ts`.
+**Test:** `packages/application/src/__tests__/extract-result.test.ts` — `returns missing when resultJsonPath is not set` and `returns missing with detail when artifact not found in store`; `packages/application/src/__tests__/validate-agent-contract.test.ts` — `returns missing_required_artifact when a required artifact is absent`.
 
 **Status:** `covered`
 
@@ -129,7 +129,7 @@
 
 **Enforcement:** `packages/application/src/phases/handlers/run-single-shot-agent-phase.ts:331`, `packages/application/src/phases/handlers/implement.ts:68,77,92` — schema parse failures and contract violations map to `invalid_result` failure kind.
 
-**Test:** `packages/application/src/phases/handlers/__tests__/implement.test.ts` covers the invalid-result paths.
+**Test:** `packages/application/src/__tests__/extract-result.test.ts` — `(c) still-invalid after rerun → ok:false, no third LLM call`; `packages/application/src/__tests__/validate-agent-contract.test.ts` — `returns invalid_result_value when result.json has a disallowed value`.
 
 **Status:** `covered`
 
@@ -141,7 +141,7 @@
 
 **Enforcement:** `packages/application/src/agent/validate-agent-contract.ts:65,70,74` — checks `currentBranch !== expectedBranch` and HEAD SHA drift; pushes `BRANCH_CHANGED` violation code.
 
-**Test:** `packages/application/src/__tests__/validate-agent-contract.test.ts:101` — `'returns branch_changed when branch name differs from expected'` and `:139` — SHA drift case.
+**Test:** `packages/application/src/__tests__/validate-agent-contract.test.ts` — `returns branch_changed when branch name differs from expected` and `returns branch_changed when expectedBranch is not provided and HEAD SHA differs from startCommitSha`.
 
 **Status:** `covered`
 
@@ -253,7 +253,7 @@
 | 0d — lease before worktree/exec           | **GAP**                   |
 | 0e — concurrent different-repo workers    | `covered`                 |
 | 0f — start enqueues, no inline exec       | **GAP** (blocked on #450) |
-| 1 — no pass with failed phase             | **GAP**                   |
+| 1 — no pass with failed phase             | `covered`                 |
 | 2 — phase always records result           | `covered`                 |
 | 3 — missing artifact → `missing_artifact` | `covered`                 |
 | 4 — invalid result → `invalid_result`     | `covered`                 |
