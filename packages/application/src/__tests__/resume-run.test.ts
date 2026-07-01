@@ -21,6 +21,7 @@ function makeRun(overrides: Partial<RunRecord> = {}): RunRecord {
   return {
     uuid: 'run-1',
     displayId: 'issue-1-20260601-000000',
+    repoId: repoid('run-1'),
     issueNumber: 1,
     type: 'issue_to_pr',
     status: 'failed',
@@ -62,7 +63,6 @@ describe('ResumeRun', () => {
       queue,
       stepRepo,
       phaseRepo,
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
@@ -85,7 +85,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(new FakeRepositoryPort([seededRepo])),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await expect(
@@ -105,7 +104,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(new FakeRepositoryPort([seededRepo])),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
@@ -125,7 +123,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(new FakeRepositoryPort([seededRepo])),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
@@ -147,7 +144,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(new FakeRepositoryPort([seededRepo])),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
@@ -169,7 +165,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(repos),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
@@ -191,7 +186,6 @@ describe('ResumeRun', () => {
       queue,
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
@@ -201,6 +195,7 @@ describe('ResumeRun', () => {
     const jobs = queue.listForRun(rid('run-1'));
     expect(jobs).toHaveLength(1);
     expect(jobs[0]!.status).toBe('queued');
+    expect(jobs[0]!.repoId).toBe(repoid('run-1'));
   });
 
   it('proves lease release still happens after a successful returned enqueue', async () => {
@@ -217,7 +212,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(repos),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
@@ -251,7 +245,6 @@ describe('ResumeRun', () => {
       queue,
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
@@ -280,7 +273,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(repos),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
@@ -312,7 +304,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(repos),
       stepRepo,
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await usecase.transition({
@@ -374,7 +365,6 @@ describe('ResumeRun', () => {
       queue,
       stepRepo,
       phaseRepo,
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await expect(
@@ -429,7 +419,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(repos),
       stepRepo,
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1'), fromPhase: 'test-phase' });
@@ -464,7 +453,6 @@ describe('ResumeRun', () => {
       queue: new FakeJobQueuePort(repos),
       stepRepo: new FakeStepRepository(),
       phaseRepo: new FakePhaseRepository(),
-      findRepoId: (r) => repoid(r),
       now: fixedNow,
     });
     await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
