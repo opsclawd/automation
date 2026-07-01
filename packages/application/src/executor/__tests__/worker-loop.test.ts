@@ -265,13 +265,16 @@ describe('workerLoop', () => {
       ttlMs: 60_000,
     });
 
+    const executeRun = vi.fn(executeOk);
+    const prepareWorktree = vi.fn(prepareOk);
+
     await workerLoop(WorkerId('w1'), {
       registry: s.registry,
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
-      executeRun: executeOk,
-      prepareWorktree: prepareOk,
+      executeRun,
+      prepareWorktree,
       resetWorktree: (_repoId) => {},
       isWorkerAlive: (_workerId) => true,
       recoverableRunIds: new Set([RunId('run-1')]),
@@ -284,6 +287,8 @@ describe('workerLoop', () => {
     expect(job).toBeDefined();
     expect(job!.status).toBe('queued');
     expect(s.leases.current(RepositoryId('r1'))?.workerId).toBe('w2');
+    expect(prepareWorktree).not.toHaveBeenCalled();
+    expect(executeRun).not.toHaveBeenCalled();
   });
 
   it('does not release a pre-existing lease held by the same worker on acquire conflict', async () => {
