@@ -40,7 +40,7 @@ export interface StartIssueRunDeps {
 
 export interface StartIssueRunInput {
   issueNumber: number;
-  repoId?: RepositoryId;
+  repoId: RepositoryId;
 }
 
 export interface StartIssueRunOutput {

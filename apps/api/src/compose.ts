@@ -782,11 +782,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       }
       return 'HEAD';
     },
-    // findRepoId resolves the repo full name at compose time via `gh repo view`.
-    // Returns undefined when unresolved so CancelRun's best-effort cleanups skip
-    // cleanly instead of throwing. Full run→repo wiring lands in #388.
-    findRepoId: (_runId: RunId): RepositoryId | undefined =>
-      resolvedRepoFullName ? (resolvedRepoFullName as RepositoryId) : undefined,
   });
 
   const phaseRegistry = new PhaseHandlerRegistry();

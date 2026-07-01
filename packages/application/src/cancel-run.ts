@@ -1,5 +1,5 @@
 import { cancelRun } from '@ai-sdlc/domain';
-import type { RunId, RepositoryId } from '@ai-sdlc/domain';
+import type { RunId } from '@ai-sdlc/domain';
 import type {
   RunRepositoryPort,
   RunAbortPort,
@@ -18,9 +18,6 @@ export interface CancelRunDeps {
   leases: WorkerLeasePort;
   findCwd: ResolveWorktreeCwdFn;
   findStartCommitSha: ResolveStartCommitShaFn;
-  // Best-effort: returns undefined when the run→repo mapping is unresolved, in
-  // which case the lease-release cleanup is skipped cleanly.
-  findRepoId: (runId: RunId) => RepositoryId | undefined;
   logger: LoggerPort;
   now?: () => Date;
 }
@@ -84,12 +81,7 @@ export class CancelRun implements CancelRunUseCase {
     }
 
     // Step 5: Release lease (best-effort) — requires repoId
-    let repoId: RepositoryId | undefined;
-    try {
-      repoId = this.deps.findRepoId(input.runId);
-    } catch (err) {
-      this.deps.logger.error(`CancelRun: findRepoId failed for ${input.runId}`, err);
-    }
+    const repoId = run.repoId;
     if (repoId !== undefined) {
       try {
         const lease = leases.current(repoId);

@@ -24,7 +24,6 @@ const noopLeases: WorkerLeasePort = {
 };
 const noopFindCwd = () => '/tmp';
 const noopFindStartSha = () => 'abc123';
-const noopFindRepoId = () => 'repo-1' as RepositoryId;
 const noopLogger: LoggerPort = { error: () => {} };
 
 function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.constructor>[0]> = {}) {
@@ -35,7 +34,6 @@ function makeCancelRun(deps: Partial<Parameters<typeof CancelRun.prototype.const
     leases: deps.leases ?? noopLeases,
     findCwd: deps.findCwd ?? noopFindCwd,
     findStartCommitSha: deps.findStartCommitSha ?? noopFindStartSha,
-    findRepoId: deps.findRepoId ?? noopFindRepoId,
     logger: deps.logger ?? noopLogger,
     now: deps.now ?? fixedNow,
   });
@@ -177,6 +175,7 @@ describe('CancelRun', () => {
         uuid: 'order-1',
         displayId: 'issue-1-20260513-000000',
         issueNumber: 1,
+        repoId: 'repo-1' as RepositoryId,
         type: 'issue_to_pr',
         status: 'running',
         completedPhases: [],
@@ -189,7 +188,6 @@ describe('CancelRun', () => {
         leases,
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as RepositoryId,
       });
       await usecase.execute({ runId: runId('order-1') });
       const abortIdx = callOrder.indexOf('abort');
@@ -229,6 +227,7 @@ describe('CancelRun', () => {
         uuid: 'order-2',
         displayId: 'issue-2-20260513-000000',
         issueNumber: 2,
+        repoId: 'repo-1' as RepositoryId,
         type: 'issue_to_pr',
         status: 'running',
         completedPhases: [],
@@ -251,7 +250,6 @@ describe('CancelRun', () => {
         leases,
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as RepositoryId,
       });
       await usecase.execute({ runId: runId('order-2') });
       const resetIdx = callOrder.indexOf('reset');
@@ -265,6 +263,7 @@ describe('CancelRun', () => {
         uuid: 'best-effort',
         displayId: 'issue-3-20260513-000000',
         issueNumber: 3,
+        repoId: 'repo-1' as RepositoryId,
         type: 'issue_to_pr',
         status: 'running',
         completedPhases: [],
@@ -318,9 +317,6 @@ describe('CancelRun', () => {
         findStartCommitSha: () => {
           throw new Error('sha fail');
         },
-        findRepoId: () => {
-          throw new Error('repoId fail');
-        },
         logger: noopLogger,
         now: fixedNow,
       });
@@ -336,6 +332,7 @@ describe('CancelRun', () => {
         uuid: 'abort-throws',
         displayId: 'issue-4-20260513-000000',
         issueNumber: 4,
+        repoId: 'repo-1' as RepositoryId,
         type: 'issue_to_pr',
         status: 'running',
         completedPhases: [],
@@ -383,7 +380,6 @@ describe('CancelRun', () => {
         leases,
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as RepositoryId,
       });
       await usecase.execute({ runId: runId('abort-throws') });
       expect(repo.updates).toHaveLength(1);
@@ -398,6 +394,7 @@ describe('CancelRun', () => {
         uuid: 'reset-throws',
         displayId: 'issue-5-20260513-000000',
         issueNumber: 5,
+        repoId: 'repo-1' as RepositoryId,
         type: 'issue_to_pr',
         status: 'running',
         completedPhases: [],
@@ -446,7 +443,6 @@ describe('CancelRun', () => {
         leases,
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as RepositoryId,
       });
       await usecase.execute({ runId: runId('reset-throws') });
       expect(repo.updates).toHaveLength(1);
@@ -461,6 +457,7 @@ describe('CancelRun', () => {
         uuid: 'lease-throws',
         displayId: 'issue-6-20260513-000000',
         issueNumber: 6,
+        repoId: 'repo-1' as RepositoryId,
         type: 'issue_to_pr',
         status: 'running',
         completedPhases: [],
@@ -509,7 +506,6 @@ describe('CancelRun', () => {
         leases,
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => 'repo-1' as RepositoryId,
       });
       await usecase.execute({ runId: runId('lease-throws') });
       expect(repo.updates).toHaveLength(1);
@@ -524,6 +520,7 @@ describe('CancelRun', () => {
         uuid: 'no-repo',
         displayId: 'issue-10-20260513-000000',
         issueNumber: 10,
+        repoId: undefined as unknown as RepositoryId,
         type: 'issue_to_pr',
         status: 'running',
         completedPhases: [],
@@ -568,7 +565,6 @@ describe('CancelRun', () => {
         leases,
         findCwd: () => '/tmp',
         findStartCommitSha: () => 'sha',
-        findRepoId: () => undefined,
         logger: noopLogger,
         now: fixedNow,
       });

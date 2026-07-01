@@ -72,7 +72,19 @@ export class FakeRunRepository implements RunRepositoryPort {
     return this.runs.get(uuid);
   }
 
-  findByIssueNumber(repoId: RepositoryId, issueNumber: number): RunRecord | undefined {
+  findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined {
+    if (typeof repoId === 'number') {
+      const actualIssueNumber = repoId;
+      let latest: RunRecord | undefined;
+      for (const r of this.runs.values()) {
+        if (r.issueNumber === actualIssueNumber) {
+          if (!latest || r.startedAt > latest.startedAt) {
+            latest = r;
+          }
+        }
+      }
+      return latest;
+    }
     let latest: RunRecord | undefined;
     for (const r of this.runs.values()) {
       if (r.repoId === repoId && r.issueNumber === issueNumber) {
@@ -91,25 +103,60 @@ export class FakeRunRepository implements RunRepositoryPort {
   }
 
   updateStatusByIssueNumber(
-    repoId: RepositoryId,
-    issueNumber: number,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+    repoId: RepositoryId | number,
+    issueNumber: number | { status: RunStatus; completedAt: Date; failureReason?: string },
+    patch?: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
+    if (typeof repoId === 'number') {
+      const actualIssueNumber = repoId;
+      const actualPatch = issueNumber as {
+        status: RunStatus;
+        completedAt: Date;
+        failureReason?: string;
+      };
+      for (const [uuid, r] of this.runs) {
+        if (
+          r.issueNumber === actualIssueNumber &&
+          !['passed', 'failed', 'cancelled'].includes(r.status)
+        ) {
+          r.status = actualPatch.status;
+          r.completedAt = actualPatch.completedAt;
+          if (actualPatch.failureReason !== undefined) r.failureReason = actualPatch.failureReason;
+          this.updates.push({
+            uuid,
+            patch: {
+              status: actualPatch.status,
+              completedAt: actualPatch.completedAt,
+              ...(actualPatch.failureReason !== undefined
+                ? { failureReason: actualPatch.failureReason }
+                : {}),
+            },
+          });
+          return true;
+        }
+      }
+      return false;
+    }
+
+    const actualIssueNumber = issueNumber as number;
+    const actualPatch = patch!;
     for (const [uuid, r] of this.runs) {
       if (
         r.repoId === repoId &&
-        r.issueNumber === issueNumber &&
+        r.issueNumber === actualIssueNumber &&
         !['passed', 'failed', 'cancelled'].includes(r.status)
       ) {
-        r.status = patch.status;
-        r.completedAt = patch.completedAt;
-        if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
+        r.status = actualPatch.status;
+        r.completedAt = actualPatch.completedAt;
+        if (actualPatch.failureReason !== undefined) r.failureReason = actualPatch.failureReason;
         this.updates.push({
           uuid,
           patch: {
-            status: patch.status,
-            completedAt: patch.completedAt,
-            ...(patch.failureReason !== undefined ? { failureReason: patch.failureReason } : {}),
+            status: actualPatch.status,
+            completedAt: actualPatch.completedAt,
+            ...(actualPatch.failureReason !== undefined
+              ? { failureReason: actualPatch.failureReason }
+              : {}),
           },
         });
         return true;
