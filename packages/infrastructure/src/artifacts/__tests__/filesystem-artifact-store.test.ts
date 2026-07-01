@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
@@ -143,4 +151,87 @@ describe('createFilesystemArtifactStore', () => {
       }
     },
   );
+
+  it('rejects unsafe path with backslashes on POSIX and Windows', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await expect(
+        store.write({
+          runId: 'run-1',
+          relativePath: '..\\escape.md',
+          contents: 'escape',
+        }),
+      ).rejects.toThrow();
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects path containing symlink pointing outside the root', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      // Create a directory outside the roots
+      const externalDir = join(baseDir, 'external');
+      mkdirSync(externalDir, { recursive: true });
+      writeFileSync(join(externalDir, 'secret.txt'), 'sensitive content', 'utf8');
+
+      // Create a symlink in the worktree root pointing to the external directory
+      const symlinkPath = join(worktreeRoot, 'symlink_outside');
+      symlinkSync(externalDir, symlinkPath, 'dir');
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+      // Trying to write or read relative to the symlink should fail
+      await expect(
+        store.write({
+          runId: 'run-1',
+          relativePath: 'symlink_outside/secret.txt',
+          contents: 'hack',
+        }),
+      ).rejects.toThrow();
+
+      await expect(store.read('run-1', 'symlink_outside/secret.txt')).rejects.toThrow();
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not block reading a valid file if a directory exists with the same name in the other root', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      mkdirSync(durableRoot, { recursive: true });
+      mkdirSync(worktreeRoot, { recursive: true });
+
+      // Create a file in durableRoot and a directory in worktreeRoot with the same relative path
+      writeFileSync(join(durableRoot, 'conflicting.md'), 'durable content', 'utf8');
+      mkdirSync(join(worktreeRoot, 'conflicting.md'), { recursive: true });
+
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+
+      // Reading should succeed and return durable content
+      await expect(store.read('run-1', 'conflicting.md')).resolves.toBe('durable content');
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects binary content containing null bytes', async () => {
+    const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
+    try {
+      const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
+      await expect(
+        store.write({
+          runId: 'run-1',
+          relativePath: 'binary.bin',
+          contents: 'hello\0world',
+        }),
+      ).rejects.toThrow(/binary files are not supported/);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { readFile, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 import type {
   AgentInvocationRequest,
   AgentInvocationResult,
@@ -20,6 +20,25 @@ function isBestEffortMissingArtifactError(err: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR';
 }
 
+async function isBinaryFile(absolutePath: string): Promise<boolean> {
+  let fileHandle;
+  try {
+    fileHandle = await open(absolutePath, 'r');
+    const buffer = Buffer.alloc(1024);
+    const { bytesRead } = await fileHandle.read(buffer, 0, 1024, 0);
+    for (let i = 0; i < bytesRead; i++) {
+      if (buffer[i] === 0) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    await fileHandle?.close();
+  }
+}
+
 async function captureArtifact(
   store: ArtifactStore,
   request: AgentInvocationRequest,
@@ -30,6 +49,9 @@ async function captureArtifact(
     const fileStat = await stat(absolutePath);
     if (!fileStat.isFile()) {
       return;
+    }
+    if (await isBinaryFile(absolutePath)) {
+      throw new Error(`cannot capture artifact '${relativePath}': binary files are not supported`);
     }
     const contents = await readFile(absolutePath, 'utf-8');
     await store.write({

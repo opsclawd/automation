@@ -213,4 +213,27 @@ describe('createArtifactCapturingAgent', () => {
     expect(writes).toEqual([]);
     expect(storeFactoryCalls).toBe(0);
   });
+
+  it('throws an error and rejects capturing binary files', async () => {
+    const cwd = makeWorktree();
+    // Write a file containing a null byte
+    const binaryData = Buffer.from('hello\0world', 'utf-8');
+    writeFileSync(path.join(cwd, 'binary-artifact.bin'), binaryData);
+
+    const writes: WriteArtifactInput[] = [];
+    const wrapped = createArtifactCapturingAgent({
+      agent: {
+        async invoke(): Promise<AgentInvocationResult> {
+          return makeResult();
+        },
+      },
+      artifactStoreForRequest: () => makeStore(writes),
+      phaseOutputs: { implement: ['binary-artifact.bin'] },
+    });
+
+    await expect(wrapped.invoke(makeRequest(cwd))).rejects.toThrow(
+      /binary files are not supported/,
+    );
+    expect(writes).toEqual([]);
+  });
 });

@@ -1,5 +1,5 @@
 import { type Stats } from 'node:fs';
-import { access, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import type { Artifact, ArtifactStore, WriteArtifactInput } from '@ai-sdlc/application/ports';
 import { ArtifactNotFoundError } from '@ai-sdlc/application/ports';
@@ -27,9 +27,21 @@ export function createFilesystemArtifactStore(
 
   return {
     async write(input: WriteArtifactInput): Promise<Artifact> {
+      if (input.contents.includes('\0')) {
+        throw new Error('binary files are not supported');
+      }
+
       const normalizedPath = normalizeSafeRelativePath(input.relativePath);
-      const durablePath = resolveArtifactPath(durableRoot, normalizedPath);
-      const worktreePath = resolveArtifactPath(worktreeRoot, normalizedPath);
+      const durablePath = await resolveArtifactPath(
+        durableRoot,
+        normalizedPath,
+        input.relativePath,
+      );
+      const worktreePath = await resolveArtifactPath(
+        worktreeRoot,
+        normalizedPath,
+        input.relativePath,
+      );
 
       await assertFileTarget(durablePath, input.relativePath);
       await assertFileTarget(worktreePath, input.relativePath);
@@ -50,11 +62,8 @@ export function createFilesystemArtifactStore(
 
     async read(runId: string, relativePath: string): Promise<string> {
       const normalizedPath = normalizeSafeRelativePath(relativePath);
-      const durablePath = resolveArtifactPath(durableRoot, normalizedPath);
-      const worktreePath = resolveArtifactPath(worktreeRoot, normalizedPath);
-
-      await assertReadTarget(durablePath, relativePath);
-      await assertReadTarget(worktreePath, relativePath);
+      const durablePath = await resolveArtifactPath(durableRoot, normalizedPath, relativePath);
+      const worktreePath = await resolveArtifactPath(worktreeRoot, normalizedPath, relativePath);
 
       const durableContents = await readFileIfPresent(durablePath, relativePath);
       if (durableContents !== undefined) {
@@ -101,42 +110,75 @@ function normalizeSafeRelativePath(relativePath: string): string {
   if (relativePath.trim() === '') {
     throw new InvalidArtifactPathError(relativePath, 'path must not be empty');
   }
-  if (isAbsolute(relativePath)) {
+
+  // Normalize backslashes to forward slashes first to prevent escape bypasses
+  const posixPath = relativePath.replace(/\\/g, '/');
+
+  if (isAbsolute(posixPath)) {
     throw new InvalidArtifactPathError(relativePath, 'absolute paths are not allowed');
   }
 
-  const normalizedPath = normalize(relativePath);
+  const normalizedPath = normalize(posixPath);
   if (normalizedPath === '.' || normalizedPath === '') {
     throw new InvalidArtifactPathError(relativePath, 'path must not resolve to the root');
   }
 
-  const segments = normalizedPath.split(sep);
+  const posixNormalized = normalizedPath.replace(/\\/g, '/');
+  const segments = posixNormalized.split('/');
   if (segments.some((segment) => segment === '..')) {
     throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
   }
 
-  return normalizedPath.replace(/\\/g, '/');
+  return posixNormalized;
 }
 
-function resolveArtifactPath(root: string, normalizedPath: string): string {
+async function resolveArtifactPath(
+  root: string,
+  normalizedPath: string,
+  relativePath: string,
+): Promise<string> {
   const rootAbs = resolve(root);
   const targetAbs = resolve(rootAbs, normalizedPath);
   const rel = relative(rootAbs, targetAbs);
   const insideRoot = targetAbs === rootAbs || (!isAbsolute(rel) && rel.split(sep)[0] !== '..');
   if (!insideRoot) {
-    throw new InvalidArtifactPathError(normalizedPath, 'path may not escape the artifact root');
+    throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
   }
+
+  // Ensure root exists so we can get its canonical path
+  await mkdir(rootAbs, { recursive: true });
+  const canonicalRoot = await realpath(rootAbs);
+
+  const canonicalTarget = await getExistingCanonicalPath(targetAbs);
+  const isInside =
+    canonicalTarget === canonicalRoot || canonicalTarget.startsWith(canonicalRoot + sep);
+  if (!isInside) {
+    throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
+  }
+
   return targetAbs;
 }
 
-async function assertFileTarget(absolutePath: string, relativePath: string): Promise<void> {
-  const fileStat = await statIfPresent(absolutePath);
-  if (fileStat?.isDirectory()) {
-    throw new InvalidArtifactPathError(relativePath, 'path points to a directory');
+async function getExistingCanonicalPath(path: string): Promise<string> {
+  let current = path;
+  while (true) {
+    try {
+      return await realpath(current);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        const parent = dirname(current);
+        if (parent === current) {
+          throw err;
+        }
+        current = parent;
+      } else {
+        throw err;
+      }
+    }
   }
 }
 
-async function assertReadTarget(absolutePath: string, relativePath: string): Promise<void> {
+async function assertFileTarget(absolutePath: string, relativePath: string): Promise<void> {
   const fileStat = await statIfPresent(absolutePath);
   if (fileStat?.isDirectory()) {
     throw new InvalidArtifactPathError(relativePath, 'path points to a directory');
