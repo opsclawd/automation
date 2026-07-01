@@ -2080,12 +2080,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     queue: jobQueue,
     stepRepo: stepRepository,
     phaseRepo: phaseRepository,
-    findRepoId: (runId: RunId) => {
-      if (!resolvedRepoFullName) {
-        throw new Error(`No repository configured for run ${runId}`);
-      }
-      return RepositoryId(resolvedRepoFullName);
-    },
     logger,
   }) as unknown as Container['resumeRun'];
 

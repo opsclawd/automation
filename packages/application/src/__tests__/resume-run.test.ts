@@ -198,6 +198,36 @@ describe('ResumeRun', () => {
     expect(jobs[0]!.repoId).toBe(repoid('run-1'));
   });
 
+  it('receives the persisted run repository id when a resume job is queued', async () => {
+    const runRepo = new FakeRunRepository();
+    const runRepoId = repoid('custom-repo-id-123');
+    runRepo.addRun(makeRun({ repoId: runRepoId }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const seededRepoWithCustomId = {
+      ...seededRepo,
+      id: runRepoId,
+    };
+    const repos = new FakeRepositoryPort([seededRepoWithCustomId]);
+    const queue = new FakeJobQueuePort(repos);
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases: new FakeWorkerLeasePort(registry),
+      queue,
+      stepRepo: new FakeStepRepository(),
+      phaseRepo: new FakePhaseRepository(),
+      now: fixedNow,
+    });
+    const result = await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(result.jobId.startsWith('resume-')).toBe(true);
+    expect(result.jobStatus).toBe('queued');
+
+    const jobs = queue.listForRun(rid('run-1'));
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]!.repoId).toBe(runRepoId);
+  });
+
   it('proves lease release still happens after a successful returned enqueue', async () => {
     const runRepo = new FakeRunRepository();
     runRepo.addRun(makeRun());
