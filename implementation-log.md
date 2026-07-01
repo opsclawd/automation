@@ -23,3 +23,4 @@ DONE
 ## Verification Results
 - RunRepository tests: `pnpm vitest run packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts -t "RunRepository"`: 18/18 tests passed.
 - Compile packages/infrastructure: `pnpm exec tsc -p packages/infrastructure/tsconfig.json --noEmit`: Completed successfully with no errors.
+- Full workspace typecheck: `pnpm typecheck`: Passed with 0 errors, confirming the backwards-compatible signatures in `RunRepository` resolve all compile-time errors in `apps/api/src/cli.ts` without modifying out-of-scope files.

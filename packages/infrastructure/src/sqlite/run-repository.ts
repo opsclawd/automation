@@ -212,7 +212,13 @@ export class RunRepository {
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
   }
 
-  findByIssueNumber(repoId: RepositoryId, issueNumber: number): RunRecord | undefined {
+  findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined {
+    if (typeof repoId === 'number') {
+      const row = this.db
+        .prepare('SELECT * FROM runs WHERE issue_number = ? ORDER BY started_at DESC LIMIT 1')
+        .get(repoId) as RunRow | undefined;
+      return row ? toRecord(row) : undefined;
+    }
     const row = this.db
       .prepare(
         'SELECT * FROM runs WHERE repo_id = ? AND issue_number = ? ORDER BY started_at DESC LIMIT 1',
@@ -231,21 +237,42 @@ export class RunRepository {
   }
 
   updateStatusByIssueNumber(
-    repoId: RepositoryId,
-    issueNumber: number,
-    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+    repoId: RepositoryId | number,
+    issueNumber: number | { status: RunStatus; completedAt: Date; failureReason?: string },
+    patch?: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
+    if (typeof repoId === 'number') {
+      const actualIssueNumber = repoId;
+      const actualPatch = issueNumber as {
+        status: RunStatus;
+        completedAt: Date;
+        failureReason?: string;
+      };
+      const result = this.db
+        .prepare(
+          `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
+           WHERE issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
+        )
+        .run({
+          status: actualPatch.status,
+          completed_at: actualPatch.completedAt.toISOString(),
+          failure_reason: actualPatch.failureReason ?? null,
+          issue_number: actualIssueNumber,
+        });
+      return result.changes > 0;
+    }
+
     const result = this.db
       .prepare(
         `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
          WHERE repo_id = @repo_id AND issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
       )
       .run({
-        status: patch.status,
-        completed_at: patch.completedAt.toISOString(),
-        failure_reason: patch.failureReason ?? null,
+        status: patch!.status,
+        completed_at: patch!.completedAt.toISOString(),
+        failure_reason: patch!.failureReason ?? null,
         repo_id: repoId,
-        issue_number: issueNumber,
+        issue_number: issueNumber as number,
       });
     return result.changes > 0;
   }
