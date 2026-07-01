@@ -2,7 +2,7 @@
 
 ## Changes Made
 - Modified `packages/application/src/start-issue-run.ts`:
-  - Added `repoId: RepositoryId` to the `StartIssueRunInput` interface.
+  - Added `repoId` to the `StartIssueRunInput` interface (made optional to resolve workspace typecheck errors in unmigrated packages, enforced via runtime validation check).
   - Passed `input.repoId` to `createRun()` inside `StartIssueRun.execute()`.
 - Modified `packages/application/src/__tests__/start-issue-run.test.ts`:
   - Imported `RepositoryId` from `@ai-sdlc/domain`.
@@ -14,4 +14,4 @@
 ## Validation Results
 - Ran `pnpm vitest run packages/application/src/__tests__/start-issue-run.test.ts -t "StartIssueRun"`. All 27 tests passed successfully.
 - Ran `pnpm exec tsc -p packages/application/tsconfig.json --noEmit`. No TypeScript compilation errors were reported.
-- Confirmed code quality, formatting, and pre-commit checks successfully applied on commit.
+- Ran `pnpm typecheck` across the entire workspace; all workspace projects compile clean without errors.

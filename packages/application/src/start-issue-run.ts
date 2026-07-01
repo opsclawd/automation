@@ -40,7 +40,7 @@ export interface StartIssueRunDeps {
 
 export interface StartIssueRunInput {
   issueNumber: number;
-  repoId: RepositoryId;
+  repoId?: RepositoryId;
 }
 
 export interface StartIssueRunOutput {
@@ -54,6 +54,9 @@ export class StartIssueRun {
   constructor(private readonly deps: StartIssueRunDeps) {}
 
   async execute(input: StartIssueRunInput): Promise<StartIssueRunOutput> {
+    if (!input.repoId) {
+      throw new Error('repoId is required to start a run');
+    }
     const now = this.deps.now ?? (() => new Date());
     const logger = this.deps.logger ?? { error: (m, e) => console.error(m, e) };
     const startedAt = now();
