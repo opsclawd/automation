@@ -476,13 +476,16 @@ describe('workerLoop', () => {
       }),
     });
 
+    const executeRun = vi.fn(executeOk);
+    const prepareWorktree = vi.fn(prepareOk);
+
     await workerLoop(WorkerId('w1'), {
       registry: s.registry,
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
-      executeRun: executeOk,
-      prepareWorktree: prepareOk,
+      executeRun,
+      prepareWorktree,
       resetWorktree: (_repoId) => {},
       isWorkerAlive: (_workerId) => true,
       recoverableRunIds: new Set([RunId('run-1'), RunId('run-2')]),
@@ -499,6 +502,12 @@ describe('workerLoop', () => {
     expect(s.leases.current(RepositoryId('r1'))?.workerId).toBe('w2');
     // r2 lease was released
     expect(s.leases.current(RepositoryId('r2'))).toBeUndefined();
+
+    expect(prepareWorktree).toHaveBeenCalledTimes(1);
+    expect(prepareWorktree.mock.calls[0]?.[0].repoId).toBe(RepositoryId('r2'));
+    expect(prepareWorktree.mock.calls[0]?.[0].runId).toBe(RunId('run-2'));
+    expect(executeRun).toHaveBeenCalledTimes(1);
+    expect(executeRun.mock.calls[0]?.[0].run.uuid).toBe('run-2');
   });
 
   it('no jobs available: returns without side effects', async () => {
