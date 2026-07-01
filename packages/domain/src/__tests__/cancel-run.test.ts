@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { RepositoryId } from '../ids.js';
 import { createRun, cancelRun, passRun, failRun, RunStateError } from '../run.js';
 
 const base = {
   uuid: '11111111-1111-1111-1111-111111111111',
   displayId: 'issue-1-20260513-000000',
+  repoId: RepositoryId('owner/repo'),
   issueNumber: 1,
   startedAt: new Date('2026-05-13T00:00:00Z'),
 };

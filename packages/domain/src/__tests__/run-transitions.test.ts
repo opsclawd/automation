@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
+import { RepositoryId } from '../ids.js';
 import {
   createRun,
   transitionToReady,
@@ -9,7 +10,13 @@ import {
   passRun,
 } from '../run.js';
 
-const baseInput = { uuid: 'u', displayId: 'd', issueNumber: 1, startedAt: new Date('2026-01-01') };
+const baseInput = {
+  uuid: 'u',
+  displayId: 'd',
+  repoId: RepositoryId('owner/repo'),
+  issueNumber: 1,
+  startedAt: new Date('2026-01-01'),
+};
 
 describe('transitionToReady', () => {
   it('transitions a running run with no currentPhase to waiting', () => {
