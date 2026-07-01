@@ -68,9 +68,11 @@ export function createArtifactCapturingAgent({
         capturePaths.add(relativePath);
       }
 
-      for (const relativePath of capturePaths) {
-        await captureArtifact(store, request, relativePath);
-      }
+      await Promise.all(
+        Array.from(capturePaths).map((relativePath) =>
+          captureArtifact(store, request, relativePath),
+        ),
+      );
 
       return result;
     },

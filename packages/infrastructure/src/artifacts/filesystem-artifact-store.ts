@@ -1,12 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  type Stats,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { type Stats } from 'node:fs';
+import { access, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import type { Artifact, ArtifactStore, WriteArtifactInput } from '@ai-sdlc/application/ports';
 import { ArtifactNotFoundError } from '@ai-sdlc/application/ports';
@@ -38,16 +31,16 @@ export function createFilesystemArtifactStore(
       const durablePath = resolveArtifactPath(durableRoot, normalizedPath);
       const worktreePath = resolveArtifactPath(worktreeRoot, normalizedPath);
 
-      assertFileTarget(durablePath, input.relativePath);
-      assertFileTarget(worktreePath, input.relativePath);
+      await assertFileTarget(durablePath, input.relativePath);
+      await assertFileTarget(worktreePath, input.relativePath);
 
-      mkdirSync(dirname(durablePath), { recursive: true });
-      mkdirSync(dirname(worktreePath), { recursive: true });
+      await mkdir(dirname(durablePath), { recursive: true });
+      await mkdir(dirname(worktreePath), { recursive: true });
 
-      writeFileSync(durablePath, input.contents, 'utf8');
-      writeFileSync(worktreePath, input.contents, 'utf8');
+      await writeFile(durablePath, input.contents, 'utf8');
+      await writeFile(worktreePath, input.contents, 'utf8');
 
-      return artifactFromPath({
+      return await artifactFromPath({
         runId: input.runId,
         ...(input.phaseId ? { phaseId: input.phaseId } : {}),
         relativePath: normalizedPath,
@@ -60,15 +53,15 @@ export function createFilesystemArtifactStore(
       const durablePath = resolveArtifactPath(durableRoot, normalizedPath);
       const worktreePath = resolveArtifactPath(worktreeRoot, normalizedPath);
 
-      assertReadTarget(durablePath, relativePath);
-      assertReadTarget(worktreePath, relativePath);
+      await assertReadTarget(durablePath, relativePath);
+      await assertReadTarget(worktreePath, relativePath);
 
-      const durableContents = readFileIfPresent(durablePath, relativePath);
+      const durableContents = await readFileIfPresent(durablePath, relativePath);
       if (durableContents !== undefined) {
         return durableContents;
       }
 
-      const worktreeContents = readFileIfPresent(worktreePath, relativePath);
+      const worktreeContents = await readFileIfPresent(worktreePath, relativePath);
       if (worktreeContents !== undefined) {
         return worktreeContents;
       }
@@ -79,10 +72,15 @@ export function createFilesystemArtifactStore(
     async list(runId: string): Promise<Artifact[]> {
       const artifacts = new Map<string, Artifact>();
 
-      for (const artifact of listRootArtifacts(durableRoot, runId)) {
+      const [durableArtifacts, worktreeArtifacts] = await Promise.all([
+        listRootArtifacts(durableRoot, runId),
+        listRootArtifacts(worktreeRoot, runId),
+      ]);
+
+      for (const artifact of durableArtifacts) {
         artifacts.set(artifact.relativePath, artifact);
       }
-      for (const artifact of listRootArtifacts(worktreeRoot, runId)) {
+      for (const artifact of worktreeArtifacts) {
         if (!artifacts.has(artifact.relativePath)) {
           artifacts.set(artifact.relativePath, artifact);
         }
@@ -117,36 +115,37 @@ function normalizeSafeRelativePath(relativePath: string): string {
     throw new InvalidArtifactPathError(relativePath, 'path may not escape the artifact root');
   }
 
-  return normalizedPath;
+  return normalizedPath.replace(/\\/g, '/');
 }
 
 function resolveArtifactPath(root: string, normalizedPath: string): string {
   const rootAbs = resolve(root);
   const targetAbs = resolve(rootAbs, normalizedPath);
-  const insideRoot = targetAbs === rootAbs || relative(rootAbs, targetAbs).split(sep)[0] !== '..';
+  const rel = relative(rootAbs, targetAbs);
+  const insideRoot = targetAbs === rootAbs || (!isAbsolute(rel) && rel.split(sep)[0] !== '..');
   if (!insideRoot) {
     throw new InvalidArtifactPathError(normalizedPath, 'path may not escape the artifact root');
   }
   return targetAbs;
 }
 
-function assertFileTarget(absolutePath: string, relativePath: string): void {
-  const stat = statIfPresent(absolutePath);
-  if (stat?.isDirectory()) {
+async function assertFileTarget(absolutePath: string, relativePath: string): Promise<void> {
+  const fileStat = await statIfPresent(absolutePath);
+  if (fileStat?.isDirectory()) {
     throw new InvalidArtifactPathError(relativePath, 'path points to a directory');
   }
 }
 
-function assertReadTarget(absolutePath: string, relativePath: string): void {
-  const stat = statIfPresent(absolutePath);
-  if (stat?.isDirectory()) {
+async function assertReadTarget(absolutePath: string, relativePath: string): Promise<void> {
+  const fileStat = await statIfPresent(absolutePath);
+  if (fileStat?.isDirectory()) {
     throw new InvalidArtifactPathError(relativePath, 'path points to a directory');
   }
 }
 
-function statIfPresent(absolutePath: string) {
+async function statIfPresent(absolutePath: string): Promise<Stats | undefined> {
   try {
-    return statSync(absolutePath);
+    return await stat(absolutePath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return undefined;
@@ -155,17 +154,20 @@ function statIfPresent(absolutePath: string) {
   }
 }
 
-function readFileIfPresent(absolutePath: string, relativePath: string): string | undefined {
-  const stat = statIfPresent(absolutePath);
-  if (!stat) {
+async function readFileIfPresent(
+  absolutePath: string,
+  relativePath: string,
+): Promise<string | undefined> {
+  const fileStat = await statIfPresent(absolutePath);
+  if (!fileStat) {
     return undefined;
   }
-  if (stat.isDirectory()) {
+  if (fileStat.isDirectory()) {
     throw new InvalidArtifactPathError(relativePath, 'path points to a directory');
   }
 
   try {
-    return readFileSync(absolutePath, 'utf8');
+    return await readFile(absolutePath, 'utf8');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return undefined;
@@ -174,8 +176,10 @@ function readFileIfPresent(absolutePath: string, relativePath: string): string |
   }
 }
 
-function listRootArtifacts(root: string, runId: string): Artifact[] {
-  if (!existsSync(root)) {
+async function listRootArtifacts(root: string, runId: string): Promise<Artifact[]> {
+  try {
+    await access(root);
+  } catch {
     return [];
   }
 
@@ -185,15 +189,16 @@ function listRootArtifacts(root: string, runId: string): Artifact[] {
   while (stack.length > 0) {
     const currentRelativeDir = stack.pop()!;
     const currentAbsoluteDir = currentRelativeDir === '' ? root : join(root, currentRelativeDir);
-    const entries = readdirSync(currentAbsoluteDir, { withFileTypes: true });
+    const entries = await readdir(currentAbsoluteDir, { withFileTypes: true });
 
     for (const entry of entries) {
-      const relativePath =
+      const relativePathRaw =
         currentRelativeDir === '' ? entry.name : join(currentRelativeDir, entry.name);
-      const absolutePath = join(root, relativePath);
+      const relativePath = relativePathRaw.replace(/\\/g, '/');
+      const absolutePath = join(root, relativePathRaw);
 
       if (entry.isDirectory()) {
-        stack.push(relativePath);
+        stack.push(relativePathRaw);
         continue;
       }
 
@@ -201,19 +206,19 @@ function listRootArtifacts(root: string, runId: string): Artifact[] {
         continue;
       }
 
-      const stat = statIfPresent(absolutePath);
-      if (!stat) {
+      const fileStat = await statIfPresent(absolutePath);
+      if (!fileStat) {
         continue;
       }
 
       results.push(
-        artifactFromPath(
+        await artifactFromPath(
           {
             runId,
             relativePath,
             absolutePath,
           },
-          stat,
+          fileStat,
         ),
       );
     }
@@ -222,16 +227,16 @@ function listRootArtifacts(root: string, runId: string): Artifact[] {
   return results;
 }
 
-function artifactFromPath(
+async function artifactFromPath(
   input: {
     runId: string;
     phaseId?: string;
     relativePath: string;
     absolutePath: string;
   },
-  stat?: Stats,
-): Artifact {
-  const fileStat = stat ?? statSync(input.absolutePath);
+  statObj?: Stats,
+): Promise<Artifact> {
+  const fileStat = statObj ?? (await stat(input.absolutePath));
   return {
     runId: input.runId,
     ...(input.phaseId ? { phaseId: input.phaseId } : {}),
