@@ -40,6 +40,7 @@ export interface StartIssueRunDeps {
 
 export interface StartIssueRunInput {
   issueNumber: number;
+  repoId: RepositoryId;
 }
 
 export interface StartIssueRunOutput {
@@ -62,7 +63,7 @@ export class StartIssueRun {
       displayId: ids.displayId,
       issueNumber: input.issueNumber,
       startedAt,
-      repoId: undefined as unknown as RepositoryId,
+      repoId: input.repoId,
     });
     this.deps.runRepository.insertIfNoActive(run);
     let dir: RunDirectoryHandle;

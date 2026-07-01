@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { RepositoryId } from '@ai-sdlc/domain';
 import type { Failure, Run, ClassifyExitInput } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { StartIssueRun } from '../start-issue-run.js';
+
+const stableRepoId = RepositoryId('owner/repo');
 import type {
   ClassifyExitFn,
   EventRepositoryPort,
@@ -161,7 +164,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 42 });
+    const out = await usecase.execute({ issueNumber: 42, repoId: stableRepoId });
     expect(out.status).toBe('passed');
     expect(out.exitCode).toBe(0);
     expect(out.displayId).toBe('issue-42-20260513-192300000');
@@ -169,6 +172,8 @@ describe('StartIssueRun', () => {
     expect(patch.status).toBe('passed');
     expect(patch.exitCode).toBe(0);
     expect(patch.durationMs).toBe(42);
+    expect(repo.inserted).toHaveLength(1);
+    expect(repo.inserted[0]!.repoId).toBe(stableRepoId);
     expect(dirs[0]!.writes).toHaveLength(1);
     expect(calls[0]!.env.AI_RUN_UUID).toBe(out.uuid);
     expect(calls[0]!.env.AI_ISSUE_NUMBER).toBe('42');
@@ -196,7 +201,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 42 });
+    const out = await usecase.execute({ issueNumber: 42, repoId: stableRepoId });
     // Must resolve from the actual worktree dir (sibling of runsDir), not under it.
     expect(refCalls).toEqual([{ cwd: '/fake/.ai-worktrees/issue-42', ref: 'origin/main' }]);
     expect(repo.findByUuid(out.uuid)?.startCommitSha).toBe('base-sha-123');
@@ -218,7 +223,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 7 });
+    const out = await usecase.execute({ issueNumber: 7, repoId: stableRepoId });
     expect(out.status).toBe('failed');
     expect(out.exitCode).toBe(3);
     const patch = repo.finalPatch(out.uuid);
@@ -245,7 +250,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 42 });
+    const out = await usecase.execute({ issueNumber: 42, repoId: stableRepoId });
     expect(out.status).toBe('passed');
     expect(out.exitCode).toBe(0);
     const patch = repo.finalPatch(out.uuid);
@@ -259,6 +264,7 @@ describe('StartIssueRun', () => {
     repo.addRun({
       uuid: 'pre-existing',
       displayId: 'issue-7-20260513-000000',
+      repoId: stableRepoId,
       issueNumber: 7,
       type: 'issue_to_pr',
       status: 'running',
@@ -278,7 +284,9 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    await expect(usecase.execute({ issueNumber: 7 })).rejects.toThrow(/active run/i);
+    await expect(usecase.execute({ issueNumber: 7, repoId: stableRepoId })).rejects.toThrow(
+      /active run/i,
+    );
   });
 
   it('passes optional env vars only when provided', async () => {
@@ -300,7 +308,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    await usecase.execute({ issueNumber: 10 });
+    await usecase.execute({ issueNumber: 10, repoId: stableRepoId });
     expect(calls[0]!.env.AI_BASE_BRANCH).toBe('develop');
     expect(calls[0]!.env.AI_AGENT_MODEL).toBe('gpt-4');
     expect(calls[0]!.env.AI_RUNTIME).toBe('codex');
@@ -322,7 +330,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    await usecase.execute({ issueNumber: 1 });
+    await usecase.execute({ issueNumber: 1, repoId: stableRepoId });
     expect(calls[0]!.env.AI_BASE_BRANCH).toBeUndefined();
     expect(calls[0]!.env.AI_AGENT_MODEL).toBeUndefined();
     expect(calls[0]!.env.AI_RUNTIME).toBeUndefined();
@@ -344,7 +352,9 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    await expect(usecase.execute({ issueNumber: 5 })).rejects.toThrow(/mkdir/);
+    await expect(usecase.execute({ issueNumber: 5, repoId: stableRepoId })).rejects.toThrow(
+      /mkdir/,
+    );
     expect(repo.inserted).toHaveLength(1);
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
     expect(patch.status).toBe('failed');
@@ -370,7 +380,7 @@ describe('StartIssueRun', () => {
       now: fixedNow,
       logger: { error: (m) => errors.push(m) },
     });
-    const out = await usecase.execute({ issueNumber: 3 });
+    const out = await usecase.execute({ issueNumber: 3, repoId: stableRepoId });
     expect(out.status).toBe('passed');
     expect(errors[0]).toMatch(/Failed to write run\.json/);
     const patch = repo.finalPatch(out.uuid);
@@ -400,7 +410,9 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    await expect(usecase.execute({ issueNumber: 8 })).rejects.toThrow(/spawn EACCES/);
+    await expect(usecase.execute({ issueNumber: 8, repoId: stableRepoId })).rejects.toThrow(
+      /spawn EACCES/,
+    );
     expect(classifierCalled).toBe(false);
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
     expect(patch.status).toBe('failed');
@@ -443,7 +455,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 9 });
+    const out = await usecase.execute({ issueNumber: 9, repoId: stableRepoId });
     expect(out.status).toBe('failed');
     expect(out.exitCode).toBe(1);
     const patch = repo.finalPatch(out.uuid);
@@ -481,7 +493,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 42 });
+    const out = await usecase.execute({ issueNumber: 42, repoId: stableRepoId });
     const patch = repo.finalPatch(out.uuid);
     expect(patch.currentPhase).toBe('implement');
   });
@@ -513,7 +525,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 43 });
+    const out = await usecase.execute({ issueNumber: 43, repoId: stableRepoId });
     const patch = repo.finalPatch(out.uuid);
     expect(patch.currentPhase).toBeUndefined();
   });
@@ -534,7 +546,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    await usecase.execute({ issueNumber: 11 });
+    await usecase.execute({ issueNumber: 11, repoId: stableRepoId });
     expect(failureRepo.records).toHaveLength(0);
     expect(dirs[0]!.failureWrites).toHaveLength(0);
   });
@@ -557,7 +569,7 @@ describe('StartIssueRun', () => {
       now: fixedNow,
       logger: { error: (m) => errors.push(m) },
     });
-    const out = await usecase.execute({ issueNumber: 4 });
+    const out = await usecase.execute({ issueNumber: 4, repoId: stableRepoId });
     expect(out.status).toBe('failed');
     expect(failureRepo.records).toHaveLength(1);
     const patch = repo.finalPatch(out.uuid);
@@ -582,7 +594,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const result = await usecase.execute({ issueNumber: 7 });
+    const result = await usecase.execute({ issueNumber: 7, repoId: stableRepoId });
     expect(calls[0]!.env.AI_RUN_EVENTS_FILE).toMatch(/events\.jsonl$/);
     expect(calls[0]!.env.AI_RUN_DISPLAY_ID).toBe(result.displayId);
   });
@@ -612,7 +624,7 @@ describe('StartIssueRun', () => {
       now: fixedNow,
       logger: { error: (m) => errors.push(m) },
     });
-    const out = await usecase.execute({ issueNumber: 5 });
+    const out = await usecase.execute({ issueNumber: 5, repoId: stableRepoId });
     expect(out.status).toBe('failed');
     const patch = repo.finalPatch(out.uuid);
     expect(patch.status).toBe('failed');
@@ -639,7 +651,7 @@ describe('StartIssueRun', () => {
       ...defaultEventDeps(),
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 20 });
+    const out = await usecase.execute({ issueNumber: 20, repoId: stableRepoId });
     const env = calls[0]!.env;
     expect(env.TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
     expect(env.SQLITE_TMPDIR).toBe(`/fake/.ai-tmp/${out.uuid}`);
@@ -663,7 +675,7 @@ describe('StartIssueRun', () => {
       tmpDirectoryFactory: fakeTmpDir,
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 30 });
+    const out = await usecase.execute({ issueNumber: 30, repoId: stableRepoId });
     const env = calls[0]!.env;
     expect(env.TMPDIR).toBe(`/custom/tmp/${out.uuid}`);
     expect(env.SQLITE_TMPDIR).toBe(`/custom/tmp/${out.uuid}`);
@@ -693,7 +705,7 @@ describe('StartIssueRun', () => {
       tmpDirectoryFactory: trackingTmpDir,
       now: fixedNow,
     });
-    const out = await usecase.execute({ issueNumber: 40 });
+    const out = await usecase.execute({ issueNumber: 40, repoId: stableRepoId });
     expect(removedDirs).toHaveLength(1);
     expect(removedDirs[0]).toBe(`/fake/.ai-tmp/${out.uuid}`);
   });
@@ -722,7 +734,7 @@ describe('StartIssueRun', () => {
       tmpDirectoryFactory: trackingTmpDir,
       now: fixedNow,
     });
-    await usecase.execute({ issueNumber: 41 });
+    await usecase.execute({ issueNumber: 41, repoId: stableRepoId });
     expect(removedDirs).toHaveLength(1);
   });
 
@@ -750,7 +762,9 @@ describe('StartIssueRun', () => {
       tmpDirectoryFactory: trackingTmpDir,
       now: fixedNow,
     });
-    await expect(usecase.execute({ issueNumber: 42 })).rejects.toThrow(/spawn EACCES/);
+    await expect(usecase.execute({ issueNumber: 42, repoId: stableRepoId })).rejects.toThrow(
+      /spawn EACCES/,
+    );
     expect(removedDirs).toHaveLength(1);
   });
 
@@ -775,7 +789,9 @@ describe('StartIssueRun', () => {
       tmpDirectoryFactory: failingTmpDir,
       now: fixedNow,
     });
-    await expect(usecase.execute({ issueNumber: 50 })).rejects.toThrow(/ENOSPC/);
+    await expect(usecase.execute({ issueNumber: 50, repoId: stableRepoId })).rejects.toThrow(
+      /ENOSPC/,
+    );
     const patch = repo.finalPatch(repo.inserted[0]!.uuid);
     expect(patch.status).toBe('failed');
     expect(patch.failureReason).toContain('ENOSPC');
@@ -832,7 +848,7 @@ describe('StartIssueRun event ingestion', () => {
       now: fixedNow,
     });
 
-    const out = await usecase.execute({ issueNumber: 12 });
+    const out = await usecase.execute({ issueNumber: 12, repoId: stableRepoId });
     expect(tailerOnEvent).not.toBeNull();
 
     const event: OrchestratorEvent = {
@@ -887,7 +903,7 @@ describe('StartIssueRun event ingestion', () => {
       now: fixedNow,
     });
 
-    await usecase.execute({ issueNumber: 13 });
+    await usecase.execute({ issueNumber: 13, repoId: stableRepoId });
 
     const mismatchEvent: OrchestratorEvent = {
       runId: 'wrong-display-id',
@@ -961,7 +977,7 @@ describe('StartIssueRun event ingestion', () => {
     });
 
     bashResult = { exitCode: 1, durationMs: 100 };
-    const executePromise = usecase.execute({ issueNumber: 42 });
+    const executePromise = usecase.execute({ issueNumber: 42, repoId: stableRepoId });
 
     tailerOnEvent!({
       runId: 'issue-42-20260513-192300000',
@@ -1031,7 +1047,7 @@ describe('StartIssueRun event ingestion', () => {
       now: fixedNow,
     });
 
-    const out = await usecase.execute({ issueNumber: 55 });
+    const out = await usecase.execute({ issueNumber: 55, repoId: stableRepoId });
 
     expect(capturedInputs).toHaveLength(1);
     const eventsBeforeDrain = capturedInputs[0]!.events ?? [];
