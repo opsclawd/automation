@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { RepositoryId } from '../ids.js';
 import {
   createRun,
   startPhase,
@@ -18,10 +19,16 @@ const base = {
   uuid: '11111111-1111-1111-1111-111111111111',
   displayId: 'issue-1-20260513-000000',
   issueNumber: 1,
+  repoId: RepositoryId('owner/repo'),
   startedAt: new Date('2026-05-13T00:00:00Z'),
 };
 
 describe('Run state machine', () => {
+  it('requires and preserves repoId', () => {
+    const r = createRun(base);
+    expect(r.repoId).toBe('owner/repo');
+  });
+
   it('starts in running with no current phase', () => {
     const r = createRun(base);
     expect(r.status).toBe('running');

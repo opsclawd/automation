@@ -1,4 +1,11 @@
-import type { Run, RunStatus, Failure, ClassifyExitInput, RunId } from '@ai-sdlc/domain';
+import type {
+  Run,
+  RunStatus,
+  Failure,
+  ClassifyExitInput,
+  RunId,
+  RepositoryId,
+} from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 
 /**
@@ -41,9 +48,14 @@ export interface RunRepositoryPort {
     expectedStatus: RunStatus,
   ): boolean;
   findByUuid(uuid: string): RunRecord | undefined;
-  findByIssueNumber(issueNumber: number): RunRecord | undefined;
+  findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined;
   findActiveRuns(): RunRecord[];
   updateStatusByIssueNumber(
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoId: RepositoryId,
     issueNumber: number,
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean;

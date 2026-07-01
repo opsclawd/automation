@@ -3,7 +3,7 @@ import { RunExecutor } from '../run-executor.js';
 import { PhaseHandlerRegistry } from '../phase-handler-registry.js';
 import type { PhaseHandler } from '../../phases/handler.js';
 import type { Run, Failure } from '@ai-sdlc/domain';
-import { createRun, PhaseName as makePhaseName } from '@ai-sdlc/domain';
+import { createRun, PhaseName as makePhaseName, RepositoryId } from '@ai-sdlc/domain';
 import {
   FakeRunRepository,
   FakePhaseRepository,
@@ -16,6 +16,7 @@ function makeRun(overrides?: Partial<Run>): Run {
   return createRun({
     uuid: 'test-uuid',
     displayId: 'run-42',
+    repoId: RepositoryId('owner/repo'),
     issueNumber: 42,
     startedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,

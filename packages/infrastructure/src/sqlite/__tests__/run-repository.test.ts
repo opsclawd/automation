@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { RepositoryId } from '@ai-sdlc/domain';
 import { openDatabase, applyMigrations } from '../../index.js';
 import { RunRepository } from '../run-repository.js';
 
@@ -19,6 +20,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'running',
@@ -28,6 +30,7 @@ describe('RunRepository', () => {
     const found = repo.findByUuid('u1');
     expect(found?.displayId).toBe('issue-1-20260513-000000');
     expect(found?.status).toBe('running');
+    expect(found?.repoId).toBe('owner/repo');
     expect(found?.exitCode).toBeUndefined();
     expect(found?.durationMs).toBeUndefined();
     db.close();
@@ -40,6 +43,7 @@ describe('RunRepository', () => {
       repo.insert({
         uuid: `u${i}`,
         displayId: `issue-${i}-20260513-00000${i}`,
+        repoId: RepositoryId('owner/repo'),
         issueNumber: i,
         type: 'issue_to_pr',
         status: 'running',
@@ -59,6 +63,7 @@ describe('RunRepository', () => {
       repo.insert({
         uuid: `u${i}`,
         displayId: `issue-${i}-20260513-00000${i}`,
+        repoId: RepositoryId('owner/repo'),
         issueNumber: i,
         type: 'issue_to_pr',
         status: 'running',
@@ -78,6 +83,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u',
       displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'running',
@@ -104,6 +110,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'a',
       displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'running',
@@ -114,6 +121,7 @@ describe('RunRepository', () => {
       repo.insertIfNoActive({
         uuid: 'b',
         displayId: 'issue-1-20260513-000001',
+        repoId: RepositoryId('owner/repo'),
         issueNumber: 1,
         type: 'issue_to_pr',
         status: 'running',
@@ -130,6 +138,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'a',
       displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'passed',
@@ -140,6 +149,7 @@ describe('RunRepository', () => {
       repo.insertIfNoActive({
         uuid: 'b',
         displayId: 'issue-1-20260513-000001',
+        repoId: RepositoryId('owner/repo'),
         issueNumber: 1,
         type: 'issue_to_pr',
         status: 'running',
@@ -157,6 +167,7 @@ describe('RunRepository', () => {
       {
         uuid: 'u1',
         displayId: 'issue-1-20260513-000000',
+        repoId: RepositoryId('owner/repo'),
         issueNumber: 1,
         type: 'issue_to_pr',
         status: 'running',
@@ -176,6 +187,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'passed',
@@ -185,13 +197,14 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u2',
       displayId: 'issue-1-20260513-000001',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'running',
       completedPhases: [],
       startedAt: new Date('2026-05-13T01:00:00Z'),
     });
-    const found = repo.findByIssueNumber(1);
+    const found = repo.findByIssueNumber(RepositoryId('owner/repo'), 1);
     expect(found?.uuid).toBe('u2');
     db.close();
   });
@@ -202,6 +215,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-1-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'passed',
@@ -211,6 +225,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u2',
       displayId: 'issue-2-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 2,
       type: 'issue_to_pr',
       status: 'running',
@@ -220,6 +235,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u3',
       displayId: 'issue-3-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 3,
       type: 'issue_to_pr',
       status: 'waiting',
@@ -237,19 +253,20 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-5-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 5,
       type: 'issue_to_pr',
       status: 'running',
       completedPhases: [],
       startedAt: new Date('2026-05-13T00:00:00Z'),
     });
-    const updated = repo.updateStatusByIssueNumber(5, {
+    const updated = repo.updateStatusByIssueNumber(RepositoryId('owner/repo'), 5, {
       status: 'cancelled',
       completedAt: new Date('2026-05-13T01:00:00Z'),
       failureReason: 'test',
     });
     expect(updated).toBe(true);
-    const row = repo.findByIssueNumber(5);
+    const row = repo.findByIssueNumber(RepositoryId('owner/repo'), 5);
     expect(row?.status).toBe('cancelled');
     expect(row?.failureReason).toBe('test');
     db.close();
@@ -261,13 +278,14 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-6-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 6,
       type: 'issue_to_pr',
       status: 'passed',
       completedPhases: [],
       startedAt: new Date('2026-05-13T00:00:00Z'),
     });
-    const updated = repo.updateStatusByIssueNumber(6, {
+    const updated = repo.updateStatusByIssueNumber(RepositoryId('owner/repo'), 6, {
       status: 'cancelled',
       completedAt: new Date('2026-05-13T01:00:00Z'),
     });
@@ -281,6 +299,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-7-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 7,
       type: 'issue_to_pr',
       status: 'running',
@@ -305,6 +324,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-8-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 8,
       type: 'issue_to_pr',
       status: 'passed',
@@ -325,6 +345,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-9-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 9,
       type: 'issue_to_pr',
       status: 'running',
@@ -344,6 +365,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-10-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 10,
       type: 'issue_to_pr',
       status: 'passed',
@@ -361,6 +383,7 @@ describe('RunRepository', () => {
     repo.insert({
       uuid: 'u1',
       displayId: 'issue-11-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 11,
       type: 'issue_to_pr',
       status: 'running',
@@ -370,6 +393,105 @@ describe('RunRepository', () => {
     repo.atomicUpdateByUuid('u1', { status: 'failed' }, 'cancelled');
     const row = repo.findByUuid('u1');
     expect(row?.status).toBe('running');
+    db.close();
+  });
+
+  it('enforces active uniqueness scoped to repoId and issueNumber', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    const repoA = RepositoryId('owner/repo-a');
+    const repoB = RepositoryId('owner/repo-b');
+
+    // Insert active run for issue 1 in repo A
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-1-repo-a',
+      repoId: repoA,
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    // Inserting another active run for issue 1 in SAME repo (repo A) should throw
+    expect(() =>
+      repo.insertIfNoActive({
+        uuid: 'u2',
+        displayId: 'issue-1-repo-a-2',
+        repoId: repoA,
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T00:00:01Z'),
+      }),
+    ).toThrow(/active run/i);
+
+    // Inserting active run for issue 1 in DIFFERENT repo (repo B) should succeed
+    expect(() =>
+      repo.insertIfNoActive({
+        uuid: 'u3',
+        displayId: 'issue-1-repo-b',
+        repoId: repoB,
+        issueNumber: 1,
+        type: 'issue_to_pr',
+        status: 'running',
+        completedPhases: [],
+        startedAt: new Date('2026-05-13T00:00:02Z'),
+      }),
+    ).not.toThrow();
+
+    db.close();
+  });
+
+  it('proves findByIssueNumber and updateStatusByIssueNumber do not cross repository boundaries', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    const repoA = RepositoryId('owner/repo-a');
+    const repoB = RepositoryId('owner/repo-b');
+
+    repo.insert({
+      uuid: 'ua',
+      displayId: 'issue-42-repo-a',
+      repoId: repoA,
+      issueNumber: 42,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    repo.insert({
+      uuid: 'ub',
+      displayId: 'issue-42-repo-b',
+      repoId: repoB,
+      issueNumber: 42,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:01Z'),
+    });
+
+    // findByIssueNumber for repo A finds repo A's run, not repo B's
+    const foundA = repo.findByIssueNumber(repoA, 42);
+    expect(foundA?.uuid).toBe('ua');
+
+    const foundB = repo.findByIssueNumber(repoB, 42);
+    expect(foundB?.uuid).toBe('ub');
+
+    // updateStatusByIssueNumber for repo A only updates repo A
+    const updated = repo.updateStatusByIssueNumber(repoA, 42, {
+      status: 'passed',
+      completedAt: new Date('2026-05-13T02:00:00Z'),
+    });
+    expect(updated).toBe(true);
+
+    // repo A's run is now passed
+    expect(repo.findByIssueNumber(repoA, 42)?.status).toBe('passed');
+    // repo B's run remains running
+    expect(repo.findByIssueNumber(repoB, 42)?.status).toBe('running');
+
     db.close();
   });
 });

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createRun, type Run, type Failure, PhaseName as makePhaseName } from '@ai-sdlc/domain';
+import {
+  createRun,
+  type Run,
+  type Failure,
+  PhaseName as makePhaseName,
+  RepositoryId,
+} from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult } from '../../phases/handler.js';
 import { PhaseHandlerRegistry } from '../phase-handler-registry.js';
 import type { RunRepositoryPort, FailureRepositoryPort, EventBusPort } from '../../ports.js';
@@ -25,6 +31,7 @@ function makeRun(overrides?: Partial<Run>): Run {
   return createRun({
     uuid: 'test-uuid',
     displayId: 'run-1',
+    repoId: RepositoryId('acme/widgets'),
     issueNumber: 42,
     startedAt: new Date('2026-01-01T00:00:00Z'),
     ...overrides,

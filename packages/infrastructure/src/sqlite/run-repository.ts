@@ -1,3 +1,4 @@
+import { RepositoryId } from '@ai-sdlc/domain';
 import type { Run, RunStatus } from '@ai-sdlc/domain';
 import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
@@ -5,6 +6,7 @@ import type { Db } from './database.js';
 interface RunRow {
   uuid: string;
   display_id: string;
+  repo_id: string | null;
   issue_number: number;
   type: string;
   status: string;
@@ -43,14 +45,15 @@ export class RunRepository {
   insert(run: Run, pid?: number): void {
     this.db
       .prepare(
-        `INSERT INTO runs (uuid, display_id, issue_number, type, status, current_phase,
+        `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
         completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha)
-         VALUES (@uuid, @display_id, @issue_number, @type, @status, @current_phase,
+         VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
            @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha)`,
       )
       .run({
         uuid: run.uuid,
         display_id: run.displayId,
+        repo_id: run.repoId,
         issue_number: run.issueNumber,
         type: run.type,
         status: run.status,
@@ -67,13 +70,18 @@ export class RunRepository {
 
   insertIfNoActive(run: Run): void {
     const tx = this.db.transaction((r: Run) => {
+      // Also block on legacy rows backfilled with 'unknown' — we can't know
+      // their real repo so treat them as conflicting with any new run on the
+      // same issue number until they reach a terminal state.
       const active = this.db
         .prepare(
-          `SELECT 1 FROM runs WHERE issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
+          `SELECT 1 FROM runs WHERE (repo_id = ? OR repo_id = 'unknown') AND issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
         )
-        .get(r.issueNumber);
+        .get(r.repoId, r.issueNumber);
       if (active) {
-        throw new Error(`An active run already exists for issue ${r.issueNumber}`);
+        throw new Error(
+          `An active run already exists for repository ${r.repoId} issue ${r.issueNumber}`,
+        );
       }
       this.insert(r, process.pid);
     });
@@ -209,10 +217,18 @@ export class RunRepository {
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
   }
 
-  findByIssueNumber(issueNumber: number): RunRecord | undefined {
+  findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined {
+    if (typeof repoId === 'number') {
+      const row = this.db
+        .prepare('SELECT * FROM runs WHERE issue_number = ? ORDER BY started_at DESC LIMIT 1')
+        .get(repoId) as RunRow | undefined;
+      return row ? toRecord(row) : undefined;
+    }
     const row = this.db
-      .prepare('SELECT * FROM runs WHERE issue_number = ? ORDER BY started_at DESC LIMIT 1')
-      .get(issueNumber) as RunRow | undefined;
+      .prepare(
+        'SELECT * FROM runs WHERE repo_id = ? AND issue_number = ? ORDER BY started_at DESC LIMIT 1',
+      )
+      .get(repoId, issueNumber) as RunRow | undefined;
     return row ? toRecord(row) : undefined;
   }
 
@@ -228,17 +244,61 @@ export class RunRepository {
   updateStatusByIssueNumber(
     issueNumber: number,
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoId: RepositoryId,
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoIdOrIssueNumber: RepositoryId | number,
+    issueNumberOrPatch?: number | { status: RunStatus; completedAt: Date; failureReason?: string },
+    maybePatch?: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
+    if (typeof repoIdOrIssueNumber === 'number') {
+      const actualIssueNumber = repoIdOrIssueNumber;
+      const actualPatch = issueNumberOrPatch as
+        | {
+            status: RunStatus;
+            completedAt: Date;
+            failureReason?: string;
+          }
+        | undefined;
+      if (!actualPatch) {
+        throw new Error('Missing patch argument for updateStatusByIssueNumber');
+      }
+      const result = this.db
+        .prepare(
+          `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
+           WHERE issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
+        )
+        .run({
+          status: actualPatch.status,
+          completed_at: actualPatch.completedAt.toISOString(),
+          failure_reason: actualPatch.failureReason ?? null,
+          issue_number: actualIssueNumber,
+        });
+      return result.changes > 0;
+    }
+
+    if (typeof issueNumberOrPatch !== 'number') {
+      throw new Error('Invalid or missing issueNumber argument for updateStatusByIssueNumber');
+    }
+    if (!maybePatch) {
+      throw new Error('Missing patch argument for updateStatusByIssueNumber');
+    }
+
     const result = this.db
       .prepare(
         `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
-         WHERE issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
+         WHERE repo_id = @repo_id AND issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
       )
       .run({
-        status: patch.status,
-        completed_at: patch.completedAt.toISOString(),
-        failure_reason: patch.failureReason ?? null,
-        issue_number: issueNumber,
+        status: maybePatch.status,
+        completed_at: maybePatch.completedAt.toISOString(),
+        failure_reason: maybePatch.failureReason ?? null,
+        repo_id: repoIdOrIssueNumber,
+        issue_number: issueNumberOrPatch,
       });
     return result.changes > 0;
   }
@@ -276,6 +336,7 @@ function toRecord(row: RunRow): RunRecord {
   return {
     uuid: row.uuid,
     displayId: row.display_id,
+    repoId: RepositoryId(row.repo_id ?? 'unknown'),
     issueNumber: row.issue_number,
     type: row.type as Run['type'],
     status: row.status as RunStatus,

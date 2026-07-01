@@ -1,5 +1,5 @@
 import { createRun, passRun, failRun, cancelRun } from '@ai-sdlc/domain';
-import type { Failure, ClassifierEvent } from '@ai-sdlc/domain';
+import type { Failure, ClassifierEvent, RepositoryId } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -40,6 +40,7 @@ export interface StartIssueRunDeps {
 
 export interface StartIssueRunInput {
   issueNumber: number;
+  repoId: RepositoryId;
 }
 
 export interface StartIssueRunOutput {
@@ -53,6 +54,9 @@ export class StartIssueRun {
   constructor(private readonly deps: StartIssueRunDeps) {}
 
   async execute(input: StartIssueRunInput): Promise<StartIssueRunOutput> {
+    if (!input.repoId) {
+      throw new Error('repoId is required to start a run');
+    }
     const now = this.deps.now ?? (() => new Date());
     const logger = this.deps.logger ?? { error: (m, e) => console.error(m, e) };
     const startedAt = now();
@@ -62,6 +66,7 @@ export class StartIssueRun {
       displayId: ids.displayId,
       issueNumber: input.issueNumber,
       startedAt,
+      repoId: input.repoId,
     });
     this.deps.runRepository.insertIfNoActive(run);
     let dir: RunDirectoryHandle;

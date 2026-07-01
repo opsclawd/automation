@@ -125,9 +125,9 @@ function makeDeps(overrides: Partial<RunPollDeps> = {}): RunPollDeps {
       findByUuid: vi.fn(() => undefined),
       update: vi.fn(),
       insertIfNoActive: vi.fn(),
-      findByIssueNumber: vi.fn(() => undefined),
+      findByIssueNumber: vi.fn((_repoId, _issueNumber) => undefined),
       findActiveRuns: vi.fn(() => []),
-      updateStatusByIssueNumber: vi.fn(() => false),
+      updateStatusByIssueNumber: vi.fn((_repoId, _issueNumber, _patch) => false),
       updateStatusByUuid: vi.fn(() => false),
     },
     buildPrReviewPoller: vi.fn(() => ({
@@ -360,7 +360,7 @@ describe('runPoll', () => {
       .mockReturnValueOnce(undefined)
       .mockReturnValueOnce({ uuid: 'race-uuid', displayId: 'race-run', status: 'running' });
     (deps.runRepository.insertIfNoActive as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      throw new Error('An active run already exists for issue 7');
+      throw new Error('An active run already exists for repository o/r issue 7');
     });
 
     const exitCode = await runPoll(defaultArgs, deps);

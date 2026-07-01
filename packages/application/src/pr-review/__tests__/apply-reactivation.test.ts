@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRun, transitionToReady } from '@ai-sdlc/domain';
+import { createRun, transitionToReady, RepositoryId } from '@ai-sdlc/domain';
 import type { Run } from '@ai-sdlc/domain';
 import { applyReactivation, type ApplyReactivationDeps } from '../apply-reactivation.js';
 import type { RunRepositoryPort, RunRepositoryUpdatePatch } from '../../ports.js';
@@ -9,6 +9,7 @@ function readyRun(): Run {
   const run = createRun({
     uuid: '77777777-7777-7777-7777-777777777777',
     displayId: 'issue-7-20260604-000000',
+    repoId: RepositoryId('owner/repo'),
     issueNumber: 7,
     startedAt: new Date('2026-06-04T00:00:00Z'),
     type: 'pr_review',

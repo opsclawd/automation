@@ -1,4 +1,4 @@
-import type { Run, RunStatus } from '@ai-sdlc/domain';
+import type { Run, RunStatus, RepositoryId } from '@ai-sdlc/domain';
 import type { RunRecord, RunRepositoryPort, RunRepositoryUpdatePatch } from '../ports.js';
 
 export interface RecordedUpdate {
@@ -24,10 +24,13 @@ export class FakeRunRepository implements RunRepositoryPort {
   insertIfNoActive(run: Run): void {
     for (const r of this.runs.values()) {
       if (
+        r.repoId === run.repoId &&
         r.issueNumber === run.issueNumber &&
         !['passed', 'failed', 'cancelled'].includes(r.status)
       ) {
-        throw new Error(`An active run already exists for issue ${run.issueNumber}`);
+        throw new Error(
+          `An active run already exists for repository ${run.repoId} issue ${run.issueNumber}`,
+        );
       }
     }
     this.runs.set(run.uuid, { ...run } as RunRecord);
@@ -71,10 +74,22 @@ export class FakeRunRepository implements RunRepositoryPort {
     return this.runs.get(uuid);
   }
 
-  findByIssueNumber(issueNumber: number): RunRecord | undefined {
+  findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined {
+    if (typeof repoId === 'number') {
+      const actualIssueNumber = repoId;
+      let latest: RunRecord | undefined;
+      for (const r of this.runs.values()) {
+        if (r.issueNumber === actualIssueNumber) {
+          if (!latest || r.startedAt > latest.startedAt) {
+            latest = r;
+          }
+        }
+      }
+      return latest;
+    }
     let latest: RunRecord | undefined;
     for (const r of this.runs.values()) {
-      if (r.issueNumber === issueNumber) {
+      if (r.repoId === repoId && r.issueNumber === issueNumber) {
         if (!latest || r.startedAt > latest.startedAt) {
           latest = r;
         }
@@ -92,18 +107,79 @@ export class FakeRunRepository implements RunRepositoryPort {
   updateStatusByIssueNumber(
     issueNumber: number,
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoId: RepositoryId,
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoIdOrIssueNumber: RepositoryId | number,
+    issueNumberOrPatch?: number | { status: RunStatus; completedAt: Date; failureReason?: string },
+    maybePatch?: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
+    if (typeof repoIdOrIssueNumber === 'number') {
+      const actualIssueNumber = repoIdOrIssueNumber;
+      const actualPatch = issueNumberOrPatch as
+        | {
+            status: RunStatus;
+            completedAt: Date;
+            failureReason?: string;
+          }
+        | undefined;
+      if (!actualPatch) {
+        throw new Error('Missing patch argument for updateStatusByIssueNumber');
+      }
+      for (const [uuid, r] of this.runs) {
+        if (
+          r.issueNumber === actualIssueNumber &&
+          !['passed', 'failed', 'cancelled'].includes(r.status)
+        ) {
+          r.status = actualPatch.status;
+          r.completedAt = actualPatch.completedAt;
+          if (actualPatch.failureReason !== undefined) r.failureReason = actualPatch.failureReason;
+          this.updates.push({
+            uuid,
+            patch: {
+              status: actualPatch.status,
+              completedAt: actualPatch.completedAt,
+              ...(actualPatch.failureReason !== undefined
+                ? { failureReason: actualPatch.failureReason }
+                : {}),
+            },
+          });
+          return true;
+        }
+      }
+      return false;
+    }
+
+    if (typeof issueNumberOrPatch !== 'number') {
+      throw new Error('Invalid or missing issueNumber argument for updateStatusByIssueNumber');
+    }
+    if (!maybePatch) {
+      throw new Error('Missing patch argument for updateStatusByIssueNumber');
+    }
+
+    const actualIssueNumber = issueNumberOrPatch;
+    const actualPatch = maybePatch;
     for (const [uuid, r] of this.runs) {
-      if (r.issueNumber === issueNumber && !['passed', 'failed', 'cancelled'].includes(r.status)) {
-        r.status = patch.status;
-        r.completedAt = patch.completedAt;
-        if (patch.failureReason !== undefined) r.failureReason = patch.failureReason;
+      if (
+        r.repoId === repoIdOrIssueNumber &&
+        r.issueNumber === actualIssueNumber &&
+        !['passed', 'failed', 'cancelled'].includes(r.status)
+      ) {
+        r.status = actualPatch.status;
+        r.completedAt = actualPatch.completedAt;
+        if (actualPatch.failureReason !== undefined) r.failureReason = actualPatch.failureReason;
         this.updates.push({
           uuid,
           patch: {
-            status: patch.status,
-            completedAt: patch.completedAt,
-            ...(patch.failureReason !== undefined ? { failureReason: patch.failureReason } : {}),
+            status: actualPatch.status,
+            completedAt: actualPatch.completedAt,
+            ...(actualPatch.failureReason !== undefined
+              ? { failureReason: actualPatch.failureReason }
+              : {}),
           },
         });
         return true;

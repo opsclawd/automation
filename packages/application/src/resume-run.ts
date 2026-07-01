@@ -1,6 +1,6 @@
 import { canResume, resumeRun, createJob, WorkerLeaseConflictError } from '@ai-sdlc/domain';
 import { IssueNumber } from '@ai-sdlc/domain';
-import type { RunId, WorkerId, RepositoryId, JobId, Step, Phase, RunStatus } from '@ai-sdlc/domain';
+import type { RunId, WorkerId, JobId, Step, Phase, RunStatus } from '@ai-sdlc/domain';
 import type {
   RunRepositoryPort,
   RepositoryPort,
@@ -25,7 +25,6 @@ export interface ResumeRunDeps {
   queue: JobQueuePort;
   stepRepo: StepRepositoryPort;
   phaseRepo: PhaseRepositoryPort;
-  findRepoId: (runId: RunId) => RepositoryId;
   logger: LoggerPort;
   now?: () => Date;
 }
@@ -55,9 +54,14 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: status is '${run.status}'`);
     }
 
-    const repoId = this.deps.findRepoId(input.runId);
+    const repoId = run.repoId;
     const repo = this.deps.repos.findById(repoId);
     if (!repo) throw new Error(`No repo found for run ${input.runId}`);
+    if (repo.id !== run.repoId) {
+      throw new Error(
+        `Repo ID mismatch for run ${input.runId}: expected '${run.repoId}', got '${repo.id}'`,
+      );
+    }
     if (!repo.enabled) {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
@@ -164,9 +168,14 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: status is '${run.status}'`);
     }
 
-    const repoId = this.deps.findRepoId(input.runId);
+    const repoId = run.repoId;
     const repo = this.deps.repos.findById(repoId);
     if (!repo) throw new Error(`No repo found for run ${input.runId}`);
+    if (repo.id !== run.repoId) {
+      throw new Error(
+        `Repo ID mismatch for run ${input.runId}: expected '${run.repoId}', got '${repo.id}'`,
+      );
+    }
     if (!repo.enabled) {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }

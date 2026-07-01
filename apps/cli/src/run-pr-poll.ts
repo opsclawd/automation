@@ -123,6 +123,7 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
     const run = createRun({
       uuid: runIdStr,
       displayId: `poll-pr-${args.prNumber}-${runIdStr}`,
+      repoId: RepositoryId(args.repoFullName),
       issueNumber: args.issueNumber ?? 0,
       type: 'pr_review',
       startedAt: new Date(),

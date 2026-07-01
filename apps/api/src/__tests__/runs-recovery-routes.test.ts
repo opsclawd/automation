@@ -1,4 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest';
+import { RepositoryId } from '@ai-sdlc/domain';
 import { composeRoot } from '../compose.js';
 import { buildServer } from '../server.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -74,6 +75,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-bb',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 11,
       type: 'issue',
       status: 'failed',
@@ -145,6 +147,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-cc',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 12,
       type: 'issue',
       status: 'running',
@@ -177,6 +180,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-dd',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 13,
       type: 'issue',
       status: 'passed',
@@ -205,6 +209,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-ee',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 14,
       type: 'issue',
       status: 'failed',
@@ -246,6 +251,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-ff',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 15,
       type: 'issue',
       status: 'failed',
@@ -289,6 +295,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-100',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 16,
       type: 'issue',
       status: 'failed',
@@ -330,6 +337,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-101',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 17,
       type: 'issue',
       status: 'failed',
@@ -361,6 +369,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-104',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 20,
       type: 'issue',
       status: 'blocked',
@@ -392,6 +401,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-102',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 18,
       type: 'issue',
       status: 'failed',
@@ -419,6 +429,7 @@ describe('Recovery REST Endpoints', () => {
     c.runRepository.insertIfNoActive({
       uuid,
       displayId: 'run-103',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 19,
       type: 'issue',
       status: 'failed',

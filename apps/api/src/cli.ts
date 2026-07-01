@@ -76,19 +76,21 @@ function startLeaseHeartbeat(
 
 function installSignalHandlers(
   runRepository: {
-    findByIssueNumber(n: number): { pid?: number | null } | undefined;
+    findByIssueNumber(repoId: RepositoryId, n: number): { pid?: number | null } | undefined;
     updateStatusByIssueNumber(
+      repoId: RepositoryId,
       issueNumber: number,
       patch: { status: RunStatus; completedAt: Date; failureReason?: string },
     ): boolean;
   },
+  repoId: RepositoryId,
   issueNumber: number,
   onCleanup?: () => void,
 ): { remove: () => void } {
   const cleanup = async (signal: string) => {
-    const existing = runRepository.findByIssueNumber(issueNumber);
+    const existing = runRepository.findByIssueNumber(repoId, issueNumber);
     if (existing && existing.pid === process.pid) {
-      runRepository.updateStatusByIssueNumber(issueNumber, {
+      runRepository.updateStatusByIssueNumber(repoId, issueNumber, {
         status: 'cancelled',
         completedAt: new Date(),
         failureReason: `interrupted by ${signal}`,
@@ -232,6 +234,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           const run = createRun({
             uuid: ids.uuid,
             displayId: ids.displayId,
+            repoId,
             issueNumber: opts.issue,
             startedAt,
           });
@@ -279,6 +282,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           try {
             signalHandlers = installSignalHandlers(
               c.runRepository,
+              repoId,
               opts.issue,
               releaseLeaseOnSignal,
             );
@@ -384,12 +388,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           // immediately before exiting, so the lease is released exactly once.
         } else {
           // --- Bash executor path ---
+          if (!c.repoFullName) {
+            console.error(
+              'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
+            );
+            process.exit(EXIT_USER_ERROR);
+          }
 
-          const signalHandlers = installSignalHandlers(c.runRepository, opts.issue);
+          const repoId = RepositoryId(c.repoFullName);
+          const signalHandlers = installSignalHandlers(c.runRepository, repoId, opts.issue);
 
           try {
             const out = await c.startIssueRun.execute({
               issueNumber: opts.issue,
+              repoId,
             });
             // Use process.stdout.write with a callback (not console.log) because
             // process.exit() does not wait for stdout to flush.
@@ -498,7 +510,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             if (opts.uuid) {
               uuid = opts.uuid;
             } else {
-              const run = c.runRepository.findByIssueNumber(opts.issue!);
+              if (!c.repoFullName) {
+                console.error('Error: could not determine repository name.');
+                process.exit(EXIT_USER_ERROR);
+              }
+              const repoId = RepositoryId(c.repoFullName);
+              const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
               if (!run) {
                 console.error(`No run found for issue ${opts.issue}`);
                 process.exit(EXIT_USER_ERROR);
@@ -612,6 +629,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             try {
               signalHandlers = installSignalHandlers(
                 c.runRepository,
+                repoId,
                 run.issueNumber,
                 releaseLeaseOnSignal,
               );
@@ -765,6 +783,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               try {
                 signalHandlers = installSignalHandlers(
                   c.runRepository,
+                  repoId,
                   run.issueNumber,
                   releaseLeaseOnSignal,
                 );

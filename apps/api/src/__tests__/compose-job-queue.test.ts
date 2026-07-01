@@ -79,6 +79,7 @@ describe('Compose Job Queue', () => {
     container.runRepository.insertIfNoActive({
       uuid: 'run-1',
       displayId: 'issue-1-20260601-000000',
+      repoId: RepositoryId('owner/repo'),
       issueNumber: 1,
       type: 'issue_to_pr',
       status: 'failed',

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { AgentProfileName, RunId, createRun, type Run } from '@ai-sdlc/domain';
+import { AgentProfileName, RunId, createRun, type Run, RepositoryId } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
 import { copyFileSync, createReadStream, existsSync, mkdirSync } from 'node:fs';
@@ -317,6 +317,7 @@ async function main() {
     const run = createRun({
       uuid: runId,
       displayId: runId,
+      repoId: RepositoryId(values['repo-id'] || 'synthetic'),
       issueNumber: 0,
       startedAt: new Date(),
       type: phaseToRunType(values.phase),
