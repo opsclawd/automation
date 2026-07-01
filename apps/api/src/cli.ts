@@ -647,9 +647,12 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     )
     .addCommand(
       new Command('resume')
-        .description('Resume a failed run')
+        .description('Resume a failed or blocked run')
         .requiredOption('--uuid <uuid>', 'Run UUID')
-        .option('--from-phase <phase>', 'Phase to resume from (default: auto-detect failed phase)')
+        .option(
+          '--from-phase <phase>',
+          'Phase to resume from (default: auto-detect failed or blocked phase)',
+        )
         .option('--confirm', 'Confirm retry/resume of an unsafe phase')
         .option('--verbose', 'Stream progress to terminal (default: auto when TTY)')
         .option('--no-verbose', 'Suppress streaming progress to terminal')

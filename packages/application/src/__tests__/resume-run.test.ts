@@ -93,7 +93,7 @@ describe('ResumeRun', () => {
     ).rejects.toThrow(/no run found/i);
   });
 
-  it('throws when run is not failed', async () => {
+  it('throws when run is not recoverable', async () => {
     const runRepo = new FakeRunRepository();
     runRepo.addRun(makeRun({ status: 'running' }));
     const registry = new FakeWorkerRegistryPort();
@@ -111,6 +111,28 @@ describe('ResumeRun', () => {
     await expect(usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') })).rejects.toThrow(
       /cannot resume/i,
     );
+  });
+
+  it('resumes a blocked run', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeRun({ status: 'blocked' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos: new FakeRepositoryPort([seededRepo]),
+      leases: new FakeWorkerLeasePort(registry),
+      queue: new FakeJobQueuePort(new FakeRepositoryPort([seededRepo])),
+      stepRepo: new FakeStepRepository(),
+      phaseRepo: new FakePhaseRepository(),
+      findRepoId: (r) => repoid(r),
+      now: fixedNow,
+    });
+    await usecase.execute({ runId: rid('run-1'), workerId: wid('w-1') });
+    expect(runRepo.updates).toHaveLength(1);
+    expect(runRepo.updates[0]!.patch.status).toBe('running');
+    expect(runRepo.updates[0]!.patch.completedAt).toBeNull();
+    expect(runRepo.updates[0]!.patch.failureReason).toBeNull();
   });
 
   it('throws when run is passed', async () => {

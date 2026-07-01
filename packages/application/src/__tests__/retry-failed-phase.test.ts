@@ -68,7 +68,7 @@ describe('RetryFailedPhase', () => {
     ).rejects.toThrow(/no run found/i);
   });
 
-  it('throws when run is not failed (guards against non-failed status)', async () => {
+  it('throws when run is not recoverable', async () => {
     const runRepo = new FakeRunRepository();
     runRepo.addRun(makeFailedRun({ status: 'running' }));
     const resumeRun = new FakeResumeRun();
@@ -78,7 +78,7 @@ describe('RetryFailedPhase', () => {
       resumeRun,
     });
     await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
-      /cannot retry phase.*status.*running/i,
+      /expected 'failed' or 'blocked'/i,
     );
     expect(resumeRun.calls).toHaveLength(0);
   });
@@ -104,9 +104,30 @@ describe('RetryFailedPhase', () => {
     expect(resumeRun.calls[0]!.attempt).toBe(2);
   });
 
-  it('throws when run has no currentPhase and no failed phase records', async () => {
+  it('derives phase from blocked phase records when run.currentPhase is undefined', async () => {
     const runRepo = new FakeRunRepository();
-    runRepo.addRun(makeFailedRun({ currentPhase: undefined }));
+    runRepo.addRun(makeFailedRun({ status: 'blocked', currentPhase: undefined }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    phaseRepo.insert({
+      id: 'implement',
+      runUuid: 'run-rp-1',
+      name: 'implement',
+      status: 'blocked',
+      attempt: 1,
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      completedAt: new Date('2026-06-01T01:00:00Z'),
+    });
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.fromPhase).toBe('implement');
+    expect(resumeRun.calls[0]!.attempt).toBe(2);
+  });
+
+  it('throws when run has no currentPhase and no recoverable phase records', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ status: 'blocked', currentPhase: undefined }));
     const usecase = new RetryFailedPhase({
       runRepository: runRepo,
       phaseRepo: new FakePhaseRepository(),

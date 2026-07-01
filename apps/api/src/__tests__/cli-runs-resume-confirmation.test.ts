@@ -281,6 +281,58 @@ describe('CLI runs resume confirmation tests', () => {
     }
   });
 
+  it('allows blocked runs to resume without --confirm when the target phase is safe', async () => {
+    const uuid = 'blocked-default-resume-uuid';
+    const root = setupTempRepo(uuid, 'validate', 'blocked');
+
+    const acquireSpy = vi
+      .spyOn(WorkerLeaseRepository.prototype, 'acquire')
+      .mockImplementation(() => {
+        return {
+          repoId: RepositoryId('owner/repo'),
+          workerId: WorkerId(`cli-${process.pid}`),
+          runId: RunId(uuid),
+          acquiredAt: new Date(),
+          heartbeatAt: new Date(),
+          expiresAt: new Date(Date.now() + 120_000),
+        };
+      });
+
+    const retrySpy = vi.spyOn(RetryFailedPhase.prototype, 'execute').mockResolvedValue(undefined);
+    const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
+      run: {
+        uuid,
+        status: 'passed' as const,
+        displayId: 'issue-123-20260622-000000',
+        issueNumber: 123,
+        type: 'issue_to_pr' as const,
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
+      },
+      phases: [],
+    });
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+
+    try {
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+
+      await expect(
+        runsCmd.parseAsync(['resume', '--uuid', uuid], { from: 'user' }),
+      ).rejects.toThrow(/process.exit: 0/);
+
+      expect(acquireSpy).toHaveBeenCalled();
+      expect(retrySpy).toHaveBeenCalled();
+      expect(executeSpy).toHaveBeenCalled();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
   it('allows safe resume without --confirm', async () => {
     const uuid = 'safe-resume-validate-uuid';
     const root = setupTempRepo(uuid, 'validate', 'failed');

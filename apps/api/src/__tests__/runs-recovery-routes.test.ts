@@ -352,6 +352,37 @@ describe('Recovery REST Endpoints', () => {
     expect(body.job.status).toBe('queued');
   });
 
+  it('resume blocked run without fromPhase queues default target', async () => {
+    const tempDir = createTempDir();
+    const c = compose(tempDir);
+    const app = await buildServer(c);
+    const uuid = '00000000-0000-0000-0000-000000000104';
+
+    c.runRepository.insertIfNoActive({
+      uuid,
+      displayId: 'run-104',
+      issueNumber: 20,
+      type: 'issue',
+      status: 'blocked',
+      completedPhases: ['read_issue'],
+      skippedPhases: [],
+      startedAt: new Date(),
+    } as unknown as import('@ai-sdlc/domain').Run);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/runs/${uuid}/resume`,
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(202);
+    const body = res.json();
+    expect(body.action).toBe('resume');
+    expect(body.targetPhase).toBe('plan-design');
+    expect(body.job).toBeDefined();
+    expect(body.job.status).toBe('queued');
+  });
+
   it('resume with unknown fromPhase returns 400', async () => {
     const tempDir = createTempDir();
     const c = compose(tempDir);

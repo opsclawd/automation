@@ -38,7 +38,7 @@ export function RunActions({ run }: RunActionsProps) {
 
   const showCancel =
     run.status !== 'passed' && run.status !== 'failed' && run.status !== 'cancelled';
-  const showResumeRetry = run.status === 'failed';
+  const showResumeRetry = run.status === 'failed' || run.status === 'blocked';
 
   if (!showCancel && !showResumeRetry) {
     return null;
@@ -146,7 +146,7 @@ export function RunActions({ run }: RunActionsProps) {
               disabled={isLoading}
               className="rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 transition-colors"
             >
-              <option value="">Automatic (failed step)</option>
+              <option value="">Automatic (failed or blocked step)</option>
               {CANONICAL_PHASE_ORDER.map((p) => (
                 <option key={p} value={p}>
                   {p}

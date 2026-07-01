@@ -198,7 +198,7 @@ export function reactivate(run: Run): Run {
 }
 
 export function canResume(run: Run): boolean {
-  return run.status === 'failed';
+  return run.status === 'failed' || run.status === 'blocked';
 }
 
 /**
@@ -210,9 +210,9 @@ export function canResume(run: Run): boolean {
  * also preserved and the run restarts from the first phase.
  */
 export function resumeRun(run: Run, phase?: string): Run {
-  if (run.status !== 'failed') {
+  if (!canResume(run)) {
     throw new RunStateError(
-      `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed'`,
+      `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed' or 'blocked'`,
     );
   }
   const {

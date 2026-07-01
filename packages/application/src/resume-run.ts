@@ -91,7 +91,7 @@ export class ResumeRun implements ResumeRunUseCase {
         completedPhases: reactivated.completedPhases,
         skippedPhases: reactivated.skippedPhases,
       },
-      'failed' as RunStatus,
+      run.status,
     );
     if (!updated) {
       throw new Error(`Run ${input.runId} status could not be updated (concurrent modification)`);
