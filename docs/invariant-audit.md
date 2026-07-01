@@ -15,7 +15,10 @@
 
 **Enforcement:** `packages/infrastructure/src/sqlite/job-queue-repository.ts:110` — `enqueue()` reads the `singleRepo` binding passed at construction; throws `RepositoryNotApprovedError` when the job's `repoId` does not match the approved repository.
 
-**Test:** `packages/infrastructure/src/sqlite/__tests__/job-queue-repository.test.ts:84` — `'enqueue: throws RepositoryNotApprovedError when repository is missing or disabled'`
+**Test:**
+
+- `packages/infrastructure/src/sqlite/__tests__/job-queue-repository.test.ts:84` — `enqueue: throws RepositoryNotApprovedError when repository is missing or disabled`
+- `packages/application/src/__tests__/fake-job-queue-port.test.ts:32` and `:36` — fake queue rejects unknown and disabled repositories
 
 **Status:** `covered`
 
@@ -31,7 +34,7 @@
 
 **Test:** `packages/application/src/__tests__/start-issue-run.test.ts:256` — `'refuses to start a second active run for the same issue'` (same-repo only)
 
-**Status:** `GAP` — fix `insertIfNoActive` to scope the uniqueness check to `(repoId, issueNumber)` and add a test asserting that two runs for the same issue in different repositories are permitted.
+**Status:** `GAP -> #569` — fix `insertIfNoActive` to scope the uniqueness check to `(repoId, issueNumber)` and add a test asserting that two runs for the same issue in different repositories are permitted.
 
 ---
 
@@ -43,7 +46,11 @@
 
 **Enforcement (app):** `packages/infrastructure/src/sqlite/worker-lease-repository.ts:40` — `acquire()` uses an `INSERT … ON CONFLICT DO UPDATE … WHERE expires_at <= now` pattern; a live (unexpired) lease blocks the upsert and surfaces `WorkerLeaseConflictError`.
 
-**Test:** `packages/application/src/executor/__tests__/worker-loop.test.ts:247` — `'WorkerLeaseConflictError caught: worker skips job without crashing'`
+**Test:**
+
+- `packages/infrastructure/src/sqlite/__tests__/migrations-0013.test.ts:33`
+- `packages/infrastructure/src/sqlite/__tests__/worker-lease-repository.test.ts:38` and `:360`
+- `packages/application/src/__tests__/fake-worker-lease-port.test.ts:20` and `:249`
 
 **Status:** `covered`
 
@@ -55,9 +62,12 @@
 
 **Enforcement:** `packages/application/src/executor/worker-loop.ts:84` — `leases.acquire()` is called before `prepareWorktree` or `executeRun` in the tick body. If it throws `WorkerLeaseConflictError` the tick aborts before either call.
 
-**Test:** None. The ordering is verified by code inspection (acquire at line 84, prepareWorktree/executeRun later in the same function) but no test would fail if the two were swapped.
+**Test:**
 
-**Status:** `GAP` — add a test that asserts `prepareWorktree` is never called when `acquire` has not first succeeded (e.g. verify prepare is not called when a conflicting lease exists).
+- `packages/application/src/executor/__tests__/worker-loop.test.ts:247` — direct lease conflict does not call `prepareWorktree` or `executeRun`
+- `packages/application/src/executor/__tests__/worker-loop.test.ts:443` — lease-conflicted repo is skipped and only the different repo prepares/executes
+
+**Status:** `covered`
 
 ---
 
@@ -67,7 +77,10 @@
 
 **Enforcement:** Architecture — the lease is keyed per repo, so two workers holding leases on different repos can both reach `executeRun` simultaneously.
 
-**Test:** `packages/application/src/executor/__tests__/worker-loop.test.ts:122` — `'two queued jobs on different repos: both run concurrently'`
+**Test:**
+
+- `packages/application/src/executor/__tests__/worker-loop.test.ts:122`
+- `packages/application/src/__tests__/worker-concurrency.test.ts:96`
 
 **Status:** `covered`
 
@@ -81,7 +94,7 @@
 
 **Test:** None.
 
-**Status:** `GAP` — blocked on #450 (worker-pool / SQLite job queue). Once #450 lands, add a test asserting that the `/run` handler writes a Job row and returns without calling `RunExecutor.execute` on the request path.
+**Status:** `GAP -> #450`
 
 ---
 
@@ -245,26 +258,26 @@
 
 ## Summary
 
-| Invariant                                 | Status                    |
-| ----------------------------------------- | ------------------------- |
-| 0a — repo approved on enqueue             | `covered`                 |
-| 0b — one active run per (repo, issue)     | **GAP**                   |
-| 0c — one lease per repo                   | `covered`                 |
-| 0d — lease before worktree/exec           | **GAP**                   |
-| 0e — concurrent different-repo workers    | `covered`                 |
-| 0f — start enqueues, no inline exec       | **GAP** (blocked on #450) |
-| 1 — no pass with failed phase             | `covered`                 |
-| 2 — phase always records result           | `covered`                 |
-| 3 — missing artifact → `missing_artifact` | `covered`                 |
-| 4 — invalid result → `invalid_result`     | `covered`                 |
-| 5 — branch changed → `branch_changed`     | `covered`                 |
-| 6 — no double comment processing          | `covered`                 |
-| 7 — reply recorded before replied state   | `covered`                 |
-| 8 — validation records each command       | `covered`                 |
-| 9 — max-loop → needs_human_review         | `covered`                 |
-| 10 — artifacts for failure diagnosis      | `covered`                 |
-| 11 — unsafe retry requires confirmation   | `covered`                 |
-| 12 — poll records count/terminal state    | `covered`                 |
+| Invariant                                 | Status          |
+| ----------------------------------------- | --------------- |
+| 0a — repo approved on enqueue             | `covered`       |
+| 0b — one active run per (repo, issue)     | **GAP -> #569** |
+| 0c — one lease per repo                   | `covered`       |
+| 0d — lease before worktree/exec           | `covered`       |
+| 0e — concurrent different-repo workers    | `covered`       |
+| 0f — start enqueues, no inline exec       | **GAP -> #450** |
+| 1 — no pass with failed phase             | `covered`       |
+| 2 — phase always records result           | `covered`       |
+| 3 — missing artifact → `missing_artifact` | `covered`       |
+| 4 — invalid result → `invalid_result`     | `covered`       |
+| 5 — branch changed → `branch_changed`     | `covered`       |
+| 6 — no double comment processing          | `covered`       |
+| 7 — reply recorded before replied state   | `covered`       |
+| 8 — validation records each command       | `covered`       |
+| 9 — max-loop → needs_human_review         | `covered`       |
+| 10 — artifacts for failure diagnosis      | `covered`       |
+| 11 — unsafe retry requires confirmation   | `covered`       |
+| 12 — poll records count/terminal state    | `covered`       |
 
 **GAPs: 4** → assigned to sub-issues:
 
