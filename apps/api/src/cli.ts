@@ -232,6 +232,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           const run = createRun({
             uuid: ids.uuid,
             displayId: ids.displayId,
+            repoId,
             issueNumber: opts.issue,
             startedAt,
           });

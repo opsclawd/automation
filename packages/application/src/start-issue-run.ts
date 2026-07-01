@@ -1,5 +1,5 @@
 import { createRun, passRun, failRun, cancelRun } from '@ai-sdlc/domain';
-import type { Failure, ClassifierEvent } from '@ai-sdlc/domain';
+import type { Failure, ClassifierEvent, RepositoryId } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -62,6 +62,7 @@ export class StartIssueRun {
       displayId: ids.displayId,
       issueNumber: input.issueNumber,
       startedAt,
+      repoId: undefined as unknown as RepositoryId,
     });
     this.deps.runRepository.insertIfNoActive(run);
     let dir: RunDirectoryHandle;

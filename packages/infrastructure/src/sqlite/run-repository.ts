@@ -1,4 +1,4 @@
-import type { Run, RunStatus } from '@ai-sdlc/domain';
+import type { Run, RunStatus, RepositoryId } from '@ai-sdlc/domain';
 import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
@@ -276,6 +276,7 @@ function toRecord(row: RunRow): RunRecord {
   return {
     uuid: row.uuid,
     displayId: row.display_id,
+    repoId: 'unknown' as RepositoryId,
     issueNumber: row.issue_number,
     type: row.type as Run['type'],
     status: row.status as RunStatus,
