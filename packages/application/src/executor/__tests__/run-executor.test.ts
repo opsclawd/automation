@@ -446,6 +446,23 @@ describe('RunExecutor', () => {
       expect(result.phases).toHaveLength(1);
       expect(result.phases[0]!.status).toBe('failed');
     });
+
+    it('keeps the run blocked when a required phase handler returns blocked', async () => {
+      const registry = new PhaseHandlerRegistry();
+      registry.register(makeStubHandler('read_issue', 'blocked'));
+
+      const deps = makeDeps({ registry });
+      const executor = new RunExecutor(deps);
+      const run = makeRun();
+
+      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+      const result = await executor.execute(input);
+
+      expect(result.run.status).not.toBe('passed');
+      expect(result.run.status).toBe('blocked');
+      expect(result.phases).toHaveLength(1);
+      expect(result.phases[0]!.status).toBe('blocked');
+    });
   });
 
   it('handles blocked outcome — marks run blocked with failure', async () => {
