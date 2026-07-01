@@ -48,12 +48,20 @@ describe('planRunRecoveryAction', () => {
   });
 
   describe('retry action', () => {
-    it('requires run.status === failed', () => {
+    it('allows failed and blocked runs', () => {
+      for (const status of ['failed', 'blocked'] as const) {
+        const run = makeRun({ status, currentPhase: 'validate' });
+        const plan = planRunRecoveryAction({ action: 'retry', run, phases: [] });
+        expect(plan.allowed).toBe(true);
+      }
+    });
+
+    it('denies retry for non-recoverable runs', () => {
       const run = makeRun({ status: 'running' });
       const plan = planRunRecoveryAction({ action: 'retry', run, phases: [] });
       expect(plan.allowed).toBe(false);
       expect(plan.statusCodeOnDenied).toBe(409);
-      expect(plan.denialReason).toContain('not in failed state');
+      expect(plan.denialReason).toContain('failed or blocked');
     });
 
     it('retry target prefers run.currentPhase', () => {
@@ -100,6 +108,32 @@ describe('planRunRecoveryAction', () => {
       expect(plan.attempt).toBe(2);
     });
 
+    it('retry target falls back to the latest blocked phase by completedAt', () => {
+      const run = makeRun({ status: 'blocked', currentPhase: undefined });
+      const phases: Phase[] = [
+        {
+          id: 'p-1',
+          runUuid: 'run-recovery-1',
+          name: 'read_issue',
+          status: 'blocked',
+          attempt: 1,
+          completedAt: new Date('2026-06-01T01:00:00Z'),
+        },
+        {
+          id: 'p-2',
+          runUuid: 'run-recovery-1',
+          name: 'plan-design',
+          status: 'blocked',
+          attempt: 2,
+          completedAt: new Date('2026-06-01T02:00:00Z'),
+        },
+      ];
+      const plan = planRunRecoveryAction({ action: 'retry', run, phases });
+      expect(plan.allowed).toBe(true);
+      expect(plan.targetPhase).toBe('plan-design');
+      expect(plan.attempt).toBe(3);
+    });
+
     it('retry attempt is max failed attempt plus one', () => {
       const run = makeRun({ status: 'failed', currentPhase: 'implement' });
       const phases: Phase[] = [
@@ -135,12 +169,20 @@ describe('planRunRecoveryAction', () => {
   });
 
   describe('resume action', () => {
-    it('requires run.status === failed', () => {
+    it('allows failed and blocked runs', () => {
+      for (const status of ['failed', 'blocked'] as const) {
+        const run = makeRun({ status, currentPhase: 'validate' });
+        const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
+        expect(plan.allowed).toBe(true);
+      }
+    });
+
+    it('denies resume for non-recoverable runs', () => {
       const run = makeRun({ status: 'running' });
       const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
       expect(plan.allowed).toBe(false);
       expect(plan.statusCodeOnDenied).toBe(409);
-      expect(plan.denialReason).toContain('not in failed state');
+      expect(plan.denialReason).toContain('failed or blocked');
     });
 
     it('resume with fromPhase validates unknown phases and reads retry safety', () => {
@@ -239,6 +281,40 @@ describe('planRunRecoveryAction', () => {
           runUuid: 'run-recovery-1',
           name: 'implement',
           status: 'failed',
+          attempt: 1,
+          completedAt: new Date('2026-06-01T01:00:00Z'),
+        },
+      ];
+      const plan = planRunRecoveryAction({ action: 'resume', run, phases });
+      expect(plan.allowed).toBe(true);
+      expect(plan.targetPhase).toBe('implement');
+      expect(plan.attempt).toBe(2);
+    });
+
+    it('default resume target falls back to latest blocked phase when all complete and currentPhase is missing', () => {
+      const run = makeRun({
+        status: 'blocked',
+        completedPhases: [
+          'read_issue',
+          'plan-design',
+          'plan-write',
+          'implement',
+          'validate',
+          'fix-validate',
+          'review-fix',
+          'compound',
+          'create-pr',
+          'post-pr-review',
+        ],
+        skippedPhases: [],
+        currentPhase: undefined,
+      });
+      const phases: Phase[] = [
+        {
+          id: 'p-1',
+          runUuid: 'run-recovery-1',
+          name: 'implement',
+          status: 'blocked',
           attempt: 1,
           completedAt: new Date('2026-06-01T01:00:00Z'),
         },

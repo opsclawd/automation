@@ -16,6 +16,28 @@ export interface RecoveryPlan {
   requiresConfirmation: boolean;
 }
 
+const RECOVERABLE_RUN_STATUSES = new Set<RunRecord['status']>(['failed', 'blocked']);
+const RECOVERABLE_PHASE_STATUSES = new Set<Phase['status']>(['failed', 'blocked']);
+
+function isRecoverableRunStatus(status: RunRecord['status']): boolean {
+  return RECOVERABLE_RUN_STATUSES.has(status);
+}
+
+function latestRecoverablePhaseName(phases: Phase[]): string | undefined {
+  const recoverablePhases = phases
+    .filter((p) => RECOVERABLE_PHASE_STATUSES.has(p.status))
+    .slice()
+    .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0));
+  return recoverablePhases[0]?.name;
+}
+
+function maxRecoverableAttempt(phases: Phase[], phaseName: string): number {
+  const attempts = phases
+    .filter((p) => p.name === phaseName && RECOVERABLE_PHASE_STATUSES.has(p.status))
+    .map((p) => p.attempt ?? 0);
+  return attempts.length > 0 ? Math.max(...attempts) : 0;
+}
+
 export function planRunRecoveryAction(input: {
   action: RecoveryAction;
   run: RunRecord;
@@ -45,27 +67,19 @@ export function planRunRecoveryAction(input: {
   }
 
   if (action === 'retry') {
-    if (run.status !== 'failed') {
+    if (!isRecoverableRunStatus(run.status)) {
       return {
         action: 'retry',
         allowed: false,
         statusCodeOnDenied: 409,
-        denialReason: `Cannot retry a run that is not in failed state (status is '${run.status}')`,
+        denialReason: `Cannot retry a run that is not in failed or blocked state (status is '${run.status}')`,
         requiresConfirmation: false,
       };
     }
 
     let targetPhase = run.currentPhase;
     if (!targetPhase) {
-      const failedPhases = phases.filter((p) => p.status === 'failed');
-      if (failedPhases.length > 0) {
-        failedPhases.sort((a, b) => {
-          const timeA = a.completedAt ? a.completedAt.getTime() : 0;
-          const timeB = b.completedAt ? b.completedAt.getTime() : 0;
-          return timeB - timeA;
-        });
-        targetPhase = failedPhases[0]!.name;
-      }
+      targetPhase = latestRecoverablePhaseName(phases);
     }
 
     if (!targetPhase) {
@@ -73,18 +87,13 @@ export function planRunRecoveryAction(input: {
         action: 'retry',
         allowed: false,
         statusCodeOnDenied: 409,
-        denialReason: 'No current phase or failed phase found to retry',
+        denialReason: 'No current phase or recoverable phase found to retry',
         requiresConfirmation: false,
       };
     }
 
     const def = getPhaseDefinition(PhaseName(targetPhase));
-    const failedAttemptsForTarget = phases
-      .filter((p) => p.name === targetPhase && p.status === 'failed')
-      .map((p) => p.attempt ?? 0);
-    const maxAttempt =
-      failedAttemptsForTarget.length > 0 ? Math.max(...failedAttemptsForTarget) : 0;
-    const attempt = maxAttempt + 1;
+    const attempt = maxRecoverableAttempt(phases, targetPhase) + 1;
 
     return {
       action: 'retry',
@@ -98,12 +107,12 @@ export function planRunRecoveryAction(input: {
   }
 
   if (action === 'resume') {
-    if (run.status !== 'failed') {
+    if (!isRecoverableRunStatus(run.status)) {
       return {
         action: 'resume',
         allowed: false,
         statusCodeOnDenied: 409,
-        denialReason: `Cannot resume a run that is not in failed state (status is '${run.status}')`,
+        denialReason: `Cannot resume a run that is not in failed or blocked state (status is '${run.status}')`,
         requiresConfirmation: false,
       };
     }
@@ -124,15 +133,7 @@ export function planRunRecoveryAction(input: {
       if (!targetPhase) {
         targetPhase = run.currentPhase;
         if (!targetPhase) {
-          const failedPhases = phases.filter((p) => p.status === 'failed');
-          if (failedPhases.length > 0) {
-            failedPhases.sort((a, b) => {
-              const timeA = a.completedAt ? a.completedAt.getTime() : 0;
-              const timeB = b.completedAt ? b.completedAt.getTime() : 0;
-              return timeB - timeA;
-            });
-            targetPhase = failedPhases[0]!.name;
-          }
+          targetPhase = latestRecoverablePhaseName(phases);
         }
       }
     }
@@ -148,12 +149,7 @@ export function planRunRecoveryAction(input: {
     }
 
     const def = getPhaseDefinition(PhaseName(targetPhase));
-    const failedAttemptsForTarget = phases
-      .filter((p) => p.name === targetPhase && p.status === 'failed')
-      .map((p) => p.attempt ?? 0);
-    const maxAttempt =
-      failedAttemptsForTarget.length > 0 ? Math.max(...failedAttemptsForTarget) : 0;
-    const attempt = maxAttempt + 1;
+    const attempt = maxRecoverableAttempt(phases, targetPhase) + 1;
 
     return {
       action: 'resume',

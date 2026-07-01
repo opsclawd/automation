@@ -134,10 +134,14 @@ describe('Run state machine', () => {
       expect(canResume(r)).toBe(true);
     });
 
+    it('returns true for blocked runs', () => {
+      const r = blockRun(createRun(base), 'blocked');
+      expect(canResume(r)).toBe(true);
+    });
+
     it('returns false for running, passed, cancelled, waiting runs', () => {
       expect(canResume(createRun(base))).toBe(false);
       expect(canResume(passRun(createRun(base), new Date()))).toBe(false);
-      expect(canResume(blockRun(createRun(base), 'blocked'))).toBe(false);
       expect(canResume(cancelRun(createRun(base)))).toBe(false);
     });
   });
@@ -209,6 +213,12 @@ describe('Run state machine', () => {
     it('throws when run is passed', () => {
       const r = passRun(createRun(base), new Date());
       expect(() => resumeRun(r)).toThrow(RunStateError);
+    });
+
+    it('transitions blocked → running', () => {
+      const r = blockRun(createRun(base), 'blocked');
+      const resumed = resumeRun(r);
+      expect(resumed.status).toBe('running');
     });
   });
 });
