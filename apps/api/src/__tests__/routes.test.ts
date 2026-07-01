@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type Container } from '../compose.js';
 import { startServer } from '../server.js';
+import { RepositoryId } from '@ai-sdlc/domain';
 
 async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
   baseUrl: string;
@@ -15,8 +16,9 @@ async function bootServer(opts: { withRun?: boolean } = {}): Promise<{
   const scriptPath = join(repoRoot, 'fake.sh');
   writeFileSync(scriptPath, '#!/usr/bin/env bash\necho ok\nexit 0\n');
   chmodSync(scriptPath, 0o755);
-  const container = composeRoot({ repoRoot, scriptPath });
-  if (opts.withRun) await container.startIssueRun.execute({ issueNumber: 1 });
+  const container = composeRoot({ repoRoot, scriptPath, repoFullName: 'owner/repo' });
+  if (opts.withRun)
+    await container.startIssueRun.execute({ issueNumber: 1, repoId: RepositoryId('owner/repo') });
   const server = await startServer({ container, port: 0, forceCloseAllOnStop: true });
   stoppers.push(server.stop);
   const address = server.address as { port: number };
@@ -47,7 +49,7 @@ describe('routes', () => {
   it('GET /api/runs accepts limit/offset and returns total', async () => {
     const { baseUrl, container } = await bootServer({ withRun: true });
     for (let i = 2; i <= 4; i++) {
-      await container.startIssueRun.execute({ issueNumber: i });
+      await container.startIssueRun.execute({ issueNumber: i, repoId: RepositoryId('owner/repo') });
     }
     const r = await fetch(`${baseUrl}/api/runs?limit=2&offset=1`);
     expect(r.status).toBe(200);

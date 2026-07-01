@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { composeRoot, type Container } from '../compose.js';
 import { startServer } from '../server.js';
+import { RepositoryId } from '@ai-sdlc/domain';
 
 async function bootServer(opts?: { scriptPath?: string }): Promise<{
   baseUrl: string;
@@ -19,7 +20,7 @@ async function bootServer(opts?: { scriptPath?: string }): Promise<{
     writeFileSync(scriptPath, '#!/usr/bin/env bash\necho ok\nexit 0\n');
     chmodSync(scriptPath, 0o755);
   }
-  const container = composeRoot({ repoRoot, scriptPath });
+  const container = composeRoot({ repoRoot, scriptPath, repoFullName: 'owner/repo' });
   const server = await startServer({ container, port: 0, forceCloseAllOnStop: true });
   stoppers.push(server.stop);
   const address = server.address as { port: number };
@@ -58,7 +59,10 @@ describe('GET /api/runs/:runId/events', () => {
 
   it('returns events for a run in ascending order', async () => {
     const { baseUrl, container } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 99 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 99,
+      repoId: RepositoryId('owner/repo'),
+    });
     container.eventRepository.insert({
       runUuid: result.uuid,
       level: 'info',
@@ -81,7 +85,10 @@ describe('GET /api/runs/:runId/events', () => {
 
   it('filters with ?since=ISO using strict-greater comparison', async () => {
     const { baseUrl, container } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 98 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 98,
+      repoId: RepositoryId('owner/repo'),
+    });
     container.eventRepository.insert({
       runUuid: result.uuid,
       level: 'info',
@@ -105,7 +112,10 @@ describe('GET /api/runs/:runId/events', () => {
 
   it('returns 400 for invalid since cursor', async () => {
     const { baseUrl, container } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 97 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 97,
+      repoId: RepositoryId('owner/repo'),
+    });
     const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events?since=garbage`);
     expect(r.status).toBe(400);
   });
@@ -126,14 +136,20 @@ describe('GET /api/runs/:runId/events/stream', () => {
 
   it('returns 400 for invalid since cursor on SSE stream', async () => {
     const { baseUrl, container } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 106 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 106,
+      repoId: RepositoryId('owner/repo'),
+    });
     const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events/stream?since=garbage`);
     expect(r.status).toBe(400);
   });
 
   it('returns SSE stream with backfilled events', async () => {
     const { container, port } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 101 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 101,
+      repoId: RepositoryId('owner/repo'),
+    });
     container.eventRepository.insert({
       runUuid: result.uuid,
       level: 'info',
@@ -172,7 +188,10 @@ describe('GET /api/runs/:runId/events/stream', () => {
 
   it('sends live events via event bus after backfill', async () => {
     const { container, port } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 102 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 102,
+      repoId: RepositoryId('owner/repo'),
+    });
 
     const body = await new Promise<string>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout>;
@@ -219,7 +238,10 @@ describe('GET /api/runs/:runId/events/stream', () => {
 
   it('skips events already sent during backfill (dedup on reconnect)', async () => {
     const { container, port } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 103 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 103,
+      repoId: RepositoryId('owner/repo'),
+    });
     const ts = '2026-05-16T12:00:00.000Z';
     container.eventRepository.insert({
       runUuid: result.uuid,
@@ -271,7 +293,10 @@ describe('GET /api/runs/:runId/events/stream', () => {
 
   it('receives live events published after SSE connection is established', async () => {
     const { container, port } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 104 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 104,
+      repoId: RepositoryId('owner/repo'),
+    });
     container.eventRepository.insert({
       runUuid: result.uuid,
       level: 'info',
@@ -331,7 +356,10 @@ describe('GET /api/runs/:runId/events/stream', () => {
 
   it('deduplicates live event against backfill when timestamps match', async () => {
     const { container, port } = await bootServer();
-    const result = await container.startIssueRun.execute({ issueNumber: 105 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 105,
+      repoId: RepositoryId('owner/repo'),
+    });
     const ts = '2026-05-16T12:00:00.000Z';
     container.eventRepository.insert({
       runUuid: result.uuid,
@@ -410,7 +438,10 @@ exit 0
     chmodSync(scriptPath, 0o755);
 
     const { baseUrl, container } = await bootServer({ scriptPath });
-    const result = await container.startIssueRun.execute({ issueNumber: 200 });
+    const result = await container.startIssueRun.execute({
+      issueNumber: 200,
+      repoId: RepositoryId('owner/repo'),
+    });
 
     const r = await fetch(`${baseUrl}/api/runs/${result.uuid}/events`);
     expect(r.status).toBe(200);
