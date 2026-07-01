@@ -8,8 +8,15 @@ import {
   startPhase,
   passRun,
 } from '../run.js';
+import { RepositoryId } from '../ids.js';
 
-const baseInput = { uuid: 'u', displayId: 'd', issueNumber: 1, startedAt: new Date('2026-01-01') };
+const baseInput = {
+  repoId: RepositoryId('owner/repo'),
+  uuid: 'u',
+  displayId: 'd',
+  issueNumber: 1,
+  startedAt: new Date('2026-01-01'),
+};
 
 describe('transitionToReady', () => {
   it('transitions a running run with no currentPhase to waiting', () => {

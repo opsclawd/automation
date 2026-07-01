@@ -121,6 +121,7 @@ export async function runPoll(args: PollArgs, deps: RunPollDeps): Promise<number
   let createdSyntheticRun = false;
   if (!existing) {
     const run = createRun({
+      repoId: RepositoryId(args.repoFullName),
       uuid: runIdStr,
       displayId: `poll-pr-${args.prNumber}-${runIdStr}`,
       issueNumber: args.issueNumber ?? 0,

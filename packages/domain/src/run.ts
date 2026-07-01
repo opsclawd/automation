@@ -1,3 +1,5 @@
+import type { RepositoryId } from './ids.js';
+
 export type RunStatus =
   | 'queued'
   | 'running'
@@ -11,6 +13,7 @@ export type RunStatus =
 const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set(['passed', 'failed', 'cancelled']);
 
 export interface Run {
+  repoId: RepositoryId;
   uuid: string;
   displayId: string;
   issueNumber: number;
@@ -25,6 +28,7 @@ export interface Run {
 }
 
 export interface CreateRunInput {
+  repoId: RepositoryId;
   uuid: string;
   displayId: string;
   issueNumber: number;
@@ -41,6 +45,7 @@ export class RunStateError extends Error {
 
 export function createRun(input: CreateRunInput): Run {
   return {
+    repoId: input.repoId,
     uuid: input.uuid,
     displayId: input.displayId,
     issueNumber: input.issueNumber,

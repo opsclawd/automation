@@ -2,7 +2,7 @@
 import { parseArgs } from 'node:util';
 import { join } from 'node:path';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { RunId, PhaseName, createRun } from '@ai-sdlc/domain';
+import { RunId, PhaseName, createRun, RepositoryId } from '@ai-sdlc/domain';
 import { ConfigError, loadConfig } from '@ai-sdlc/shared';
 
 interface Flags {
@@ -98,6 +98,7 @@ async function main() {
   let createdSynthetic = false;
   if (!c.runRepository.findByUuid(runId)) {
     const syntheticRun = createRun({
+      repoId: RepositoryId(''),
       uuid: runId,
       displayId: runId,
       issueNumber: 0,

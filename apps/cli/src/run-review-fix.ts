@@ -2,7 +2,7 @@
 import { readFileSync, appendFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
-import { RunId, PhaseName, AgentProfileName, createRun } from '@ai-sdlc/domain';
+import { RunId, PhaseName, AgentProfileName, createRun, RepositoryId } from '@ai-sdlc/domain';
 import { ConfigError, loadConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { formatEvent } from './format-event.js';
 
@@ -125,7 +125,13 @@ async function main() {
   const runId = values['run-id']!;
   if (!c.runRepository.findByUuid(runId)) {
     c.runRepository.insert(
-      createRun({ uuid: runId, displayId: runId, issueNumber: 0, startedAt: new Date() }),
+      createRun({
+        repoId: RepositoryId(''),
+        uuid: runId,
+        displayId: runId,
+        issueNumber: 0,
+        startedAt: new Date(),
+      }),
     );
   }
 

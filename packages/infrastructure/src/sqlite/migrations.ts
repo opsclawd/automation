@@ -14,6 +14,7 @@ import * as addStartCommitSha from './migrations/0012-add-start-commit-sha-colum
 import * as addWorkerLeases from './migrations/0013-add-worker-leases.js';
 import * as addSteps from './migrations/0014-add-steps.js';
 import * as addJobs from './migrations/0015-add-jobs.js';
+import * as addRepoIdToRuns from './migrations/0016-add-repo-id-to-runs.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -31,6 +32,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addWorkerLeases.version, sql: addWorkerLeases.sql },
   { version: addSteps.version, sql: addSteps.sql },
   { version: addJobs.version, sql: addJobs.sql },
+  { version: addRepoIdToRuns.version, sql: addRepoIdToRuns.sql },
 ];
 
 export function applyMigrations(db: Db): void {

@@ -1,10 +1,12 @@
 import type { Run, RunStatus } from '@ai-sdlc/domain';
+import { RepositoryId } from '@ai-sdlc/domain';
 import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
 interface RunRow {
   uuid: string;
   display_id: string;
+  repo_id: string;
   issue_number: number;
   type: string;
   status: string;
@@ -43,14 +45,15 @@ export class RunRepository {
   insert(run: Run, pid?: number): void {
     this.db
       .prepare(
-        `INSERT INTO runs (uuid, display_id, issue_number, type, status, current_phase,
+        `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
         completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha)
-         VALUES (@uuid, @display_id, @issue_number, @type, @status, @current_phase,
+         VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
            @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha)`,
       )
       .run({
         uuid: run.uuid,
         display_id: run.displayId,
+        repo_id: run.repoId,
         issue_number: run.issueNumber,
         type: run.type,
         status: run.status,
@@ -69,11 +72,13 @@ export class RunRepository {
     const tx = this.db.transaction((r: Run) => {
       const active = this.db
         .prepare(
-          `SELECT 1 FROM runs WHERE issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
+          `SELECT 1 FROM runs WHERE repo_id = ? AND issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
         )
-        .get(r.issueNumber);
+        .get(r.repoId, r.issueNumber);
       if (active) {
-        throw new Error(`An active run already exists for issue ${r.issueNumber}`);
+        throw new Error(
+          `An active run already exists for issue ${r.issueNumber} in repo ${r.repoId}`,
+        );
       }
       this.insert(r, process.pid);
     });
@@ -276,6 +281,7 @@ function toRecord(row: RunRow): RunRecord {
   return {
     uuid: row.uuid,
     displayId: row.display_id,
+    repoId: RepositoryId(row.repo_id),
     issueNumber: row.issue_number,
     type: row.type as Run['type'],
     status: row.status as RunStatus,

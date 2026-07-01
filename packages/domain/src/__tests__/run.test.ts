@@ -13,8 +13,10 @@ import {
   resumeRun,
   RunStateError,
 } from '../run.js';
+import { RepositoryId } from '../ids.js';
 
 const base = {
+  repoId: RepositoryId('owner/repo'),
   uuid: '11111111-1111-1111-1111-111111111111',
   displayId: 'issue-1-20260513-000000',
   issueNumber: 1,
@@ -26,6 +28,7 @@ describe('Run state machine', () => {
     const r = createRun(base);
     expect(r.status).toBe('running');
     expect(r.currentPhase).toBeUndefined();
+    expect(r.repoId).toBe('owner/repo');
   });
 
   it('transitions current phase', () => {

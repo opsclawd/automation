@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createRun, startPhase } from '../run.js';
 import { serializeRun, deserializeRun, RunDeserializeError } from '../serialization.js';
+import { RepositoryId } from '../ids.js';
 
 const base = {
+  repoId: RepositoryId('owner/repo'),
   uuid: '11111111-1111-1111-1111-111111111111',
   displayId: 'issue-1-20260513-000000',
   issueNumber: 1,
@@ -17,6 +19,7 @@ describe('Run serialization', () => {
     expect(back.startedAt.toISOString()).toBe('2026-05-13T00:00:00.000Z');
     expect(back.completedAt).toBeUndefined();
     expect(back.currentPhase).toBe('read_issue');
+    expect(back.repoId).toBe('owner/repo');
   });
 
   it('coerces completedAt when present', () => {

@@ -230,6 +230,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           const startedAt = new Date();
           const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
           const run = createRun({
+            repoId,
             uuid: ids.uuid,
             displayId: ids.displayId,
             issueNumber: opts.issue,
@@ -389,6 +390,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           try {
             const out = await c.startIssueRun.execute({
+              repoId: RepositoryId(c.repoFullName ?? ''),
               issueNumber: opts.issue,
             });
             // Use process.stdout.write with a callback (not console.log) because

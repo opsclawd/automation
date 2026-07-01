@@ -1,4 +1,4 @@
-import { createRun, passRun, failRun, cancelRun } from '@ai-sdlc/domain';
+import { createRun, passRun, failRun, cancelRun, type RepositoryId } from '@ai-sdlc/domain';
 import type { Failure, ClassifierEvent } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
@@ -39,6 +39,7 @@ export interface StartIssueRunDeps {
 }
 
 export interface StartIssueRunInput {
+  repoId: RepositoryId;
   issueNumber: number;
 }
 
@@ -58,6 +59,7 @@ export class StartIssueRun {
     const startedAt = now();
     const ids = newRunId({ issueNumber: input.issueNumber, now: startedAt });
     const run = createRun({
+      repoId: input.repoId,
       uuid: ids.uuid,
       displayId: ids.displayId,
       issueNumber: input.issueNumber,
