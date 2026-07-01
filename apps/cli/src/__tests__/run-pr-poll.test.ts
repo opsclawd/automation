@@ -360,7 +360,7 @@ describe('runPoll', () => {
       .mockReturnValueOnce(undefined)
       .mockReturnValueOnce({ uuid: 'race-uuid', displayId: 'race-run', status: 'running' });
     (deps.runRepository.insertIfNoActive as ReturnType<typeof vi.fn>).mockImplementation(() => {
-      throw new Error('An active run already exists for issue 7');
+      throw new Error('An active run already exists for repository o/r issue 7');
     });
 
     const exitCode = await runPoll(defaultArgs, deps);

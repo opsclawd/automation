@@ -28,7 +28,9 @@ export class FakeRunRepository implements RunRepositoryPort {
         r.issueNumber === run.issueNumber &&
         !['passed', 'failed', 'cancelled'].includes(r.status)
       ) {
-        throw new Error(`An active run already exists for issue ${run.issueNumber}`);
+        throw new Error(
+          `An active run already exists for repository ${run.repoId} issue ${run.issueNumber}`,
+        );
       }
     }
     this.runs.set(run.uuid, { ...run } as RunRecord);
@@ -103,17 +105,31 @@ export class FakeRunRepository implements RunRepositoryPort {
   }
 
   updateStatusByIssueNumber(
-    repoId: RepositoryId | number,
-    issueNumber: number | { status: RunStatus; completedAt: Date; failureReason?: string },
-    patch?: { status: RunStatus; completedAt: Date; failureReason?: string },
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoId: RepositoryId,
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoIdOrIssueNumber: RepositoryId | number,
+    issueNumberOrPatch?: number | { status: RunStatus; completedAt: Date; failureReason?: string },
+    maybePatch?: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
-    if (typeof repoId === 'number') {
-      const actualIssueNumber = repoId;
-      const actualPatch = issueNumber as {
-        status: RunStatus;
-        completedAt: Date;
-        failureReason?: string;
-      };
+    if (typeof repoIdOrIssueNumber === 'number') {
+      const actualIssueNumber = repoIdOrIssueNumber;
+      const actualPatch = issueNumberOrPatch as
+        | {
+            status: RunStatus;
+            completedAt: Date;
+            failureReason?: string;
+          }
+        | undefined;
+      if (!actualPatch) {
+        throw new Error('Missing patch argument for updateStatusByIssueNumber');
+      }
       for (const [uuid, r] of this.runs) {
         if (
           r.issueNumber === actualIssueNumber &&
@@ -138,11 +154,18 @@ export class FakeRunRepository implements RunRepositoryPort {
       return false;
     }
 
-    const actualIssueNumber = issueNumber as number;
-    const actualPatch = patch!;
+    if (typeof issueNumberOrPatch !== 'number') {
+      throw new Error('Invalid or missing issueNumber argument for updateStatusByIssueNumber');
+    }
+    if (!maybePatch) {
+      throw new Error('Missing patch argument for updateStatusByIssueNumber');
+    }
+
+    const actualIssueNumber = issueNumberOrPatch;
+    const actualPatch = maybePatch;
     for (const [uuid, r] of this.runs) {
       if (
-        r.repoId === repoId &&
+        r.repoId === repoIdOrIssueNumber &&
         r.issueNumber === actualIssueNumber &&
         !['passed', 'failed', 'cancelled'].includes(r.status)
       ) {

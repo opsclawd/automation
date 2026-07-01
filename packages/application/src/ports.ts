@@ -51,9 +51,13 @@ export interface RunRepositoryPort {
   findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined;
   findActiveRuns(): RunRecord[];
   updateStatusByIssueNumber(
-    repoId: RepositoryId | number,
-    issueNumber: number | { status: RunStatus; completedAt: Date; failureReason?: string },
-    patch?: { status: RunStatus; completedAt: Date; failureReason?: string },
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoId: RepositoryId,
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean;
   updateStatusByUuid(
     uuid: string,

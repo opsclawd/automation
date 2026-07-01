@@ -76,7 +76,9 @@ export class RunRepository {
         )
         .get(r.repoId, r.issueNumber);
       if (active) {
-        throw new Error(`An active run already exists for issue ${r.issueNumber}`);
+        throw new Error(
+          `An active run already exists for repository ${r.repoId} issue ${r.issueNumber}`,
+        );
       }
       this.insert(r, process.pid);
     });
@@ -237,17 +239,31 @@ export class RunRepository {
   }
 
   updateStatusByIssueNumber(
-    repoId: RepositoryId | number,
-    issueNumber: number | { status: RunStatus; completedAt: Date; failureReason?: string },
-    patch?: { status: RunStatus; completedAt: Date; failureReason?: string },
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoId: RepositoryId,
+    issueNumber: number,
+    patch: { status: RunStatus; completedAt: Date; failureReason?: string },
+  ): boolean;
+  updateStatusByIssueNumber(
+    repoIdOrIssueNumber: RepositoryId | number,
+    issueNumberOrPatch?: number | { status: RunStatus; completedAt: Date; failureReason?: string },
+    maybePatch?: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
-    if (typeof repoId === 'number') {
-      const actualIssueNumber = repoId;
-      const actualPatch = issueNumber as {
-        status: RunStatus;
-        completedAt: Date;
-        failureReason?: string;
-      };
+    if (typeof repoIdOrIssueNumber === 'number') {
+      const actualIssueNumber = repoIdOrIssueNumber;
+      const actualPatch = issueNumberOrPatch as
+        | {
+            status: RunStatus;
+            completedAt: Date;
+            failureReason?: string;
+          }
+        | undefined;
+      if (!actualPatch) {
+        throw new Error('Missing patch argument for updateStatusByIssueNumber');
+      }
       const result = this.db
         .prepare(
           `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
@@ -262,17 +278,24 @@ export class RunRepository {
       return result.changes > 0;
     }
 
+    if (typeof issueNumberOrPatch !== 'number') {
+      throw new Error('Invalid or missing issueNumber argument for updateStatusByIssueNumber');
+    }
+    if (!maybePatch) {
+      throw new Error('Missing patch argument for updateStatusByIssueNumber');
+    }
+
     const result = this.db
       .prepare(
         `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
          WHERE repo_id = @repo_id AND issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
       )
       .run({
-        status: patch!.status,
-        completed_at: patch!.completedAt.toISOString(),
-        failure_reason: patch!.failureReason ?? null,
-        repo_id: repoId,
-        issue_number: issueNumber as number,
+        status: maybePatch.status,
+        completed_at: maybePatch.completedAt.toISOString(),
+        failure_reason: maybePatch.failureReason ?? null,
+        repo_id: repoIdOrIssueNumber,
+        issue_number: issueNumberOrPatch,
       });
     return result.changes > 0;
   }

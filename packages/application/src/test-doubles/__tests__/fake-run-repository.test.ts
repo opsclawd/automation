@@ -24,7 +24,9 @@ describe('FakeRunRepository', () => {
     });
 
     repo.insertIfNoActive(run1);
-    expect(() => repo.insertIfNoActive(run2)).toThrow('An active run already exists for issue 42');
+    expect(() => repo.insertIfNoActive(run2)).toThrow(
+      'An active run already exists for repository owner/repo-a issue 42',
+    );
   });
 
   it('permits active run insertion for the same issue number in different repositories', () => {

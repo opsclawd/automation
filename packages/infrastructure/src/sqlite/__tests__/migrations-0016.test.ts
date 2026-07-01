@@ -49,4 +49,40 @@ describe('migration 0016 — repo_id column on runs table', () => {
     expect(row?.version).toBe(16);
     db.close();
   });
+
+  it('backfills existing run records with repo_id = unknown', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai-orch-m16-backfill-'));
+    const db = openDatabase(join(dir, 'orch.sqlite'));
+
+    db.exec(`
+      CREATE TABLE runs (
+        uuid TEXT PRIMARY KEY,
+        display_id TEXT NOT NULL UNIQUE,
+        issue_number INTEGER NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL
+      );
+    `);
+
+    db.prepare(
+      `
+      INSERT INTO runs (uuid, display_id, issue_number, type, status, started_at)
+      VALUES ('test-uuid', 'display-1', 42, 'test-type', 'passed', '2026-07-01T12:00:00Z');
+    `,
+    ).run();
+
+    db.exec(`
+      ALTER TABLE runs ADD COLUMN repo_id TEXT;
+      UPDATE runs SET repo_id = 'unknown' WHERE repo_id IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_runs_repo_issue_status ON runs (repo_id, issue_number, status);
+    `);
+
+    const row = db.prepare("SELECT repo_id FROM runs WHERE uuid = 'test-uuid'").get() as {
+      repo_id: string;
+    };
+    expect(row.repo_id).toBe('unknown');
+
+    db.close();
+  });
 });
