@@ -1,10 +1,12 @@
-import type { Run, RunStatus, RepositoryId } from '@ai-sdlc/domain';
+import { RepositoryId } from '@ai-sdlc/domain';
+import type { Run, RunStatus } from '@ai-sdlc/domain';
 import type { RunRepositoryUpdatePatch } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
 interface RunRow {
   uuid: string;
   display_id: string;
+  repo_id: string | null;
   issue_number: number;
   type: string;
   status: string;
@@ -43,14 +45,15 @@ export class RunRepository {
   insert(run: Run, pid?: number): void {
     this.db
       .prepare(
-        `INSERT INTO runs (uuid, display_id, issue_number, type, status, current_phase,
+        `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
         completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha)
-         VALUES (@uuid, @display_id, @issue_number, @type, @status, @current_phase,
+         VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
            @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha)`,
       )
       .run({
         uuid: run.uuid,
         display_id: run.displayId,
+        repo_id: run.repoId,
         issue_number: run.issueNumber,
         type: run.type,
         status: run.status,
@@ -69,9 +72,9 @@ export class RunRepository {
     const tx = this.db.transaction((r: Run) => {
       const active = this.db
         .prepare(
-          `SELECT 1 FROM runs WHERE issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
+          `SELECT 1 FROM runs WHERE repo_id = ? AND issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
         )
-        .get(r.issueNumber);
+        .get(r.repoId, r.issueNumber);
       if (active) {
         throw new Error(`An active run already exists for issue ${r.issueNumber}`);
       }
@@ -209,10 +212,12 @@ export class RunRepository {
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
   }
 
-  findByIssueNumber(issueNumber: number): RunRecord | undefined {
+  findByIssueNumber(repoId: RepositoryId, issueNumber: number): RunRecord | undefined {
     const row = this.db
-      .prepare('SELECT * FROM runs WHERE issue_number = ? ORDER BY started_at DESC LIMIT 1')
-      .get(issueNumber) as RunRow | undefined;
+      .prepare(
+        'SELECT * FROM runs WHERE repo_id = ? AND issue_number = ? ORDER BY started_at DESC LIMIT 1',
+      )
+      .get(repoId, issueNumber) as RunRow | undefined;
     return row ? toRecord(row) : undefined;
   }
 
@@ -226,18 +231,20 @@ export class RunRepository {
   }
 
   updateStatusByIssueNumber(
+    repoId: RepositoryId,
     issueNumber: number,
     patch: { status: RunStatus; completedAt: Date; failureReason?: string },
   ): boolean {
     const result = this.db
       .prepare(
         `UPDATE runs SET status = @status, completed_at = @completed_at, failure_reason = @failure_reason
-         WHERE issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
+         WHERE repo_id = @repo_id AND issue_number = @issue_number AND status NOT IN ('passed','failed','cancelled')`,
       )
       .run({
         status: patch.status,
         completed_at: patch.completedAt.toISOString(),
         failure_reason: patch.failureReason ?? null,
+        repo_id: repoId,
         issue_number: issueNumber,
       });
     return result.changes > 0;
@@ -276,7 +283,7 @@ function toRecord(row: RunRow): RunRecord {
   return {
     uuid: row.uuid,
     displayId: row.display_id,
-    repoId: 'unknown' as RepositoryId,
+    repoId: RepositoryId(row.repo_id ?? 'unknown'),
     issueNumber: row.issue_number,
     type: row.type as Run['type'],
     status: row.status as RunStatus,

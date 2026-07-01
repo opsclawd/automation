@@ -1,17 +1,25 @@
-# Task 4 Implementation Log
+# Task 5 Implementation Log
 
 ## Status
-DONE (with blocked git commit due to environment permissions)
+DONE
 
 ## What Was Implemented
-- Resolved the type check error in `apps/api/src/compose.ts` by removing the `findRepoId` property from the `ResumeRun` dependency object argument.
-- Verified that `packages/application/src/resume-run.ts` has no reference to `findRepoId`, and uses `run.repoId` to resolve the repository ID and perform `repos.findById(repoId)` directly.
-- Added a focused test case in `packages/application/src/__tests__/resume-run.test.ts` to assert that a queued resume job receives the persisted run repository ID.
+- Created migration `0016-add-repo-id-to-runs.ts` (version 16) adding nullable `repo_id TEXT` and composite index `idx_runs_repo_issue_status` on `(repo_id, issue_number, status)` to the `runs` table.
+- Registered migration 16 in `packages/infrastructure/src/sqlite/migrations.ts`.
+- Added `repo_id: string | null` to the internal `RunRow` schema.
+- Updated database queries in `RunRepository` (`insert`, `insertIfNoActive`, `findByIssueNumber`, `updateStatusByIssueNumber`) to filter/save by repository identity.
+- Updated `toRecord` to resolve and map `repoId: RepositoryId(row.repo_id ?? 'unknown')`.
+- Updated all existing unit tests in `packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts` to supply `repoId`.
+- Added unit tests verifying active run conflict constraint is repo-scoped (uniqueness on same repo conflicts, but allowed across different repositories).
+- Added unit tests verifying query filters (`findByIssueNumber` and `updateStatusByIssueNumber`) enforce strict repository boundaries.
 
-## Files Modified
-- `apps/api/src/compose.ts`
-- `packages/application/src/__tests__/resume-run.test.ts`
+## Files Modified/Created
+- `packages/infrastructure/src/sqlite/migrations/0016-add-repo-id-to-runs.ts` (Created)
+- `packages/infrastructure/src/sqlite/migrations.ts` (Modified)
+- `packages/infrastructure/src/sqlite/run-repository.ts` (Modified)
+- `packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts` (Modified)
+- `implementation-log.md` (Modified)
 
 ## Verification Results
-- `pnpm vitest run packages/application/src/__tests__/resume-run.test.ts -t "ResumeRun"`: All 15 tests passed.
-- `pnpm -r exec tsc --noEmit`: Completed successfully with no errors across all workspace projects.
+- RunRepository tests: `pnpm vitest run packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts -t "RunRepository"`: 18/18 tests passed.
+- Compile packages/infrastructure: `pnpm exec tsc -p packages/infrastructure/tsconfig.json --noEmit`: Completed successfully with no errors.
