@@ -1,9 +1,7 @@
-# Task 2 Implementation Summary
+# Task 4 Implementation Summary
 
-- Added `apps/api/src/durable-agent-artifacts.ts` with `createArtifactCapturingAgent(...)`.
-- The helper wraps an `AgentPort`, waits for the wrapped invocation to resolve, then captures a de-duplicated set of expected, phase, and optional artifact paths into the configured `ArtifactStore`.
-- Missing files are skipped on a per-path best-effort basis; read and write errors still surface.
-- Added `apps/api/src/__tests__/durable-agent-artifacts.test.ts` covering successful capture, missing optional artifacts, passthrough of the wrapped result, and propagation of agent failures without capture.
-- Verified with:
-  - `pnpm vitest run apps/api/src/__tests__/durable-agent-artifacts.test.ts --reporter=verbose`
-  - `pnpm --filter @ai-sdlc/api typecheck`
+- Added `packages/application/src/executor/__tests__/run-executor-durable-resume.test.ts` to cover durable resume behavior after `implement`.
+- The first test verifies completed phases are treated as passed from durable artifact listings, `implement` is not re-run, and execution continues into `validate`.
+- The second test preserves the `missing_artifact` corruption guard when `implementation-log.md` is absent from the artifact listing.
+- Added `packages/application/src/phases/handlers/__tests__/create-pr-durable-artifacts.test.ts` to verify `CreatePrHandler` reads durable artifacts after worktree cleanup and still writes `pr-summary.md` and `pr-url.txt` through the artifact store.
+- Verified the tests with the targeted Vitest command and then ran the application typecheck.
