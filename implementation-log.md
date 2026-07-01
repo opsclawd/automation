@@ -6,8 +6,8 @@
 - Replaced `manifest validation: treats backtick-formatted prose heading as matching plain-text manifest title` with `manifest validation: accepts backtick-formatted headings by task number`.
 - Kept the assertion focused on task-number matching while preserving the backtick-formatted heading scenario.
 
-## Verification
+## Task 3: Align the implement-phase expectation with cosmetic title drift
 
-- `sed -n '550,575p' packages/application/src/phases/__tests__/plan-tasks.test.ts | rg "manifest validation: accepts backtick-formatted headings by task number"`
-- `pnpm exec vitest run packages/application/src/phases/__tests__/plan-tasks.test.ts -t "manifest validation: accepts backtick-formatted headings by task number"`
-- `pnpm exec eslint packages/application/src/phases/__tests__/plan-tasks.test.ts`
+- Updated `packages/application/src/phases/handlers/__tests__/implement.test.ts`.
+- Replaced the stale failure expectation with a passing run that uses cosmetically different manifest and prose titles.
+- Verified the handler still derives the task bodies by number and executes both steps.

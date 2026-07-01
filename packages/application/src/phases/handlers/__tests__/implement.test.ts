@@ -574,12 +574,15 @@ describe('ImplementHandler', () => {
       expect(runStep).not.toHaveBeenCalled();
     });
 
-    it('manifest-backed plan with mismatched titles fails validation', async () => {
+    it('manifest-backed plan with cosmetically different titles still runs', async () => {
       const artifacts = new FakeArtifactStore();
       await artifacts.write({
         runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
         relativePath: 'plan.md',
-        contents: planMd(['Task 1: first', 'Task 2: second']),
+        contents: planMd([
+          'Task 1: Wire `repoId` through CLI call sites',
+          'Task 2: Implement the warning-instead-of-failure behavior',
+        ]),
       });
       await artifacts.write({
         runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -588,23 +591,38 @@ describe('ImplementHandler', () => {
           version: 1,
           task_count: 2,
           tasks: [
-            { n: 1, title: 'Manifest Title 1' },
-            { n: 2, title: 'Manifest Title 2' },
+            { n: 1, title: 'Wire repoId through CLI startIssueRun.execute() call' },
+            {
+              n: 2,
+              title: 'Implement the warning-instead-of-failure behavior in run-executor.ts',
+            },
           ],
         }),
       });
       const steps = new FakeStepRepository();
-      const runStep = vi.fn();
+      const runStepCalls: StepRunContext[] = [];
+      const runStep = async (sctx: StepRunContext): Promise<StepRunResult> => {
+        runStepCalls.push(sctx);
+        return { outcome: 'success' };
+      };
       const { ctx } = makeCtx(artifacts);
 
       const result = await new ImplementHandler({ steps, runStep }).run(ctx);
 
-      expect(result.outcome).toBe('failed');
-      if (result.outcome === 'failed') {
-        expect(result.failure.kind).toBe('invalid_result');
-        expect(result.failure.message).toContain('title mismatch');
-      }
-      expect(runStep).not.toHaveBeenCalled();
+      expect(result.outcome).toBe('passed');
+      expect(runStepCalls).toHaveLength(2);
+      expect(runStepCalls[0]).toEqual(
+        expect.objectContaining({
+          stepIndex: 1,
+          stepTitle: 'Task 1: Wire repoId through CLI startIssueRun.execute() call',
+        }),
+      );
+      expect(runStepCalls[1]).toEqual(
+        expect.objectContaining({
+          stepIndex: 2,
+          stepTitle: 'Task 2: Implement the warning-instead-of-failure behavior in run-executor.ts',
+        }),
+      );
     });
 
     it('no-manifest plans continue to derive ## Task headings as before', async () => {

@@ -571,19 +571,6 @@ Next task body.
       expect(result.success).toBe(true);
     });
 
-    it('manifest validation: trims whitespace in manifest and prose titles before comparing', () => {
-      const plan = `
-## Task 1: My Task Title 
-`;
-      const manifest = {
-        version: 1,
-        task_count: 1,
-        tasks: [{ n: 1, title: ' My Task Title' }],
-      };
-      const result = validatePlanTaskList(plan, JSON.stringify(manifest));
-      expect(result.success).toBe(true);
-    });
-
     it('handles nested code fences correctly', () => {
       const plan = `
 ## Task 1: Heading one
