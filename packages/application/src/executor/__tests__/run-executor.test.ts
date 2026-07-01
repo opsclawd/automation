@@ -463,6 +463,23 @@ describe('RunExecutor', () => {
       expect(result.phases).toHaveLength(1);
       expect(result.phases[0]!.status).toBe('blocked');
     });
+
+    it('keeps the run in needs_human_review when a required phase handler returns needs_human_review', async () => {
+      const registry = new PhaseHandlerRegistry();
+      registry.register(makeStubHandler('read_issue', 'needs_human_review'));
+
+      const deps = makeDeps({ registry });
+      const executor = new RunExecutor(deps);
+      const run = makeRun();
+
+      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+      const result = await executor.execute(input);
+
+      expect(result.run.status).not.toBe('passed');
+      expect(result.run.status).toBe('needs_human_review');
+      expect(result.phases).toHaveLength(1);
+      expect(result.phases[0]!.status).toBe('needs_human_review');
+    });
   });
 
   it('handles blocked outcome — marks run blocked with failure', async () => {
