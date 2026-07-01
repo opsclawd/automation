@@ -70,9 +70,12 @@ export class RunRepository {
 
   insertIfNoActive(run: Run): void {
     const tx = this.db.transaction((r: Run) => {
+      // Also block on legacy rows backfilled with 'unknown' — we can't know
+      // their real repo so treat them as conflicting with any new run on the
+      // same issue number until they reach a terminal state.
       const active = this.db
         .prepare(
-          `SELECT 1 FROM runs WHERE repo_id = ? AND issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
+          `SELECT 1 FROM runs WHERE (repo_id = ? OR repo_id = 'unknown') AND issue_number = ? AND status NOT IN ('passed','failed','cancelled')`,
         )
         .get(r.repoId, r.issueNumber);
       if (active) {
