@@ -429,6 +429,25 @@ describe('RunExecutor', () => {
     expect(result.phases[1]!.status).toBe('failed');
   });
 
+  describe('invariant 1 — run cannot be passed when a required phase failed', () => {
+    it('keeps the run failed when a required phase handler returns failed', async () => {
+      const registry = new PhaseHandlerRegistry();
+      registry.register(makeStubHandler('read_issue', 'failed'));
+
+      const deps = makeDeps({ registry });
+      const executor = new RunExecutor(deps);
+      const run = makeRun();
+
+      const input: ExecuteRunInput = { run, skip: [], presentArtifacts: [] };
+      const result = await executor.execute(input);
+
+      expect(result.run.status).not.toBe('passed');
+      expect(result.run.status).toBe('failed');
+      expect(result.phases).toHaveLength(1);
+      expect(result.phases[0]!.status).toBe('failed');
+    });
+  });
+
   it('handles blocked outcome — marks run blocked with failure', async () => {
     const registry = new PhaseHandlerRegistry();
     registry.register(makeStubHandler('read_issue', 'blocked'));
