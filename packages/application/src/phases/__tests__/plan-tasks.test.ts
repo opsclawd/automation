@@ -532,53 +532,51 @@ Next task body.
       }
     });
 
-    it('manifest validation: fails when manifest and prose titles mismatch', () => {
-      const plan = `
-## Task 1: Mismatched Prose Title
-## Task 2: Another task
-`;
-      const manifestJson = JSON.stringify({
+    it('manifest validation: passes when manifest title and prose heading title differ cosmetically', () => {
+      const plan1 = ['## Task 1: Wire `repoId` through CLI call sites', 'Body.'].join('\n');
+      const manifest1 = JSON.stringify({
         version: 1,
-        task_count: 2,
+        task_count: 1,
+        tasks: [{ n: 1, title: 'Wire repoId through CLI startIssueRun.execute() call' }],
+      });
+      expect(validatePlanTaskList(plan1, manifest1).success).toBe(true);
+
+      const plan2 = ['## Task 1: Implement the warning-instead-of-failure behavior', 'Body.'].join(
+        '\n',
+      );
+      const manifest2 = JSON.stringify({
+        version: 1,
+        task_count: 1,
         tasks: [
-          { n: 1, title: 'Expected Title' },
-          { n: 2, title: 'Another task' },
+          { n: 1, title: 'Implement the warning-instead-of-failure behavior in run-executor.ts' },
         ],
       });
-      const result = validatePlanTaskList(plan, manifestJson);
-      expect(result.success).toBe(false);
-      if (!result.success) {
-        expect(result.error).toContain('title mismatch');
-        expect(result.error).toContain("manifest has 'Expected Title'");
-        expect(result.error).toContain("prose has 'Mismatched Prose Title'");
-      }
+      expect(validatePlanTaskList(plan2, manifest2).success).toBe(true);
     });
 
-    it('manifest validation: treats backtick-formatted prose heading as matching plain-text manifest title', () => {
-      const plan = `
-## Task 1: Add \`lintTaskSize\` hook to \`ImplementHandlerOpts\`
-## Task 2: Plain title
-`;
+    it('manifest validation: accepts backtick-formatted headings by task number', () => {
+      const plan = [
+        '## Task 1: Add `lintTaskSize` hook to `ImplementHandlerOpts`',
+        '## Task 2: Plain title in prose',
+      ].join('\n');
       const manifest = {
         version: 1,
         task_count: 2,
         tasks: [
-          { n: 1, title: 'Add lintTaskSize hook to ImplementHandlerOpts' },
-          { n: 2, title: 'Plain title' },
+          { n: 1, title: 'Add lint task size validation to implement handler options' },
+          { n: 2, title: 'Plain manifest title' },
         ],
       };
       const result = validatePlanTaskList(plan, JSON.stringify(manifest));
       expect(result.success).toBe(true);
     });
 
-    it('manifest validation: trims whitespace in manifest and prose titles before comparing', () => {
-      const plan = `
-## Task 1: My Task Title 
-`;
+    it('manifest validation: accepts whitespace-only title differences by task number', () => {
+      const plan = ['## Task 1: My Task Title '].join('\n');
       const manifest = {
         version: 1,
         task_count: 1,
-        tasks: [{ n: 1, title: ' My Task Title' }],
+        tasks: [{ n: 1, title: ' Different Manifest Title' }],
       };
       const result = validatePlanTaskList(plan, JSON.stringify(manifest));
       expect(result.success).toBe(true);

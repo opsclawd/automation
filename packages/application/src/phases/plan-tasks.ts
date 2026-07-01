@@ -178,11 +178,6 @@ function checkDuplicateTitles(titles: string[]): string | null {
   return null;
 }
 
-/** Strip inline markdown formatting before comparing titles. */
-function normTitle(s: string): string {
-  return s.replace(/`/g, '').trim().toLowerCase();
-}
-
 function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest): string | null {
   const lines = planMarkdown.split(/\r?\n/);
   const totalFences = lines.filter((line) => /^\s*(`{3,})/.test(line)).length;
@@ -190,30 +185,13 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
 
   let errors = '';
   const missingFromProse: string[] = [];
-  const titleMismatches: string[] = [];
 
   for (const task of manifest.tasks) {
-    const headingRegex = new RegExp(`^#{2,3}\\s+Task\\s+${task.n}(?:\\b\\s*[:-]?\\s*(.*))?$`, 'i');
-    let matchedLine: string | undefined;
-    let proseTitle = '';
-
-    for (const line of cleanLines) {
-      const match = headingRegex.exec(line);
-      if (match) {
-        matchedLine = line;
-        proseTitle = (match[1] ?? '').trim();
-        break;
-      }
-    }
+    const headingRegex = new RegExp(`^#{2,3}\\s+Task\\s+${task.n}\\b`, 'i');
+    const matchedLine = cleanLines.find((line) => headingRegex.test(line));
 
     if (!matchedLine) {
       missingFromProse.push(`Task ${task.n}`);
-    } else {
-      if (normTitle(proseTitle) !== normTitle(task.title)) {
-        titleMismatches.push(
-          `Task ${task.n} title mismatch: manifest has '${task.title}', prose has '${proseTitle}'`,
-        );
-      }
     }
   }
 
@@ -222,13 +200,6 @@ function checkManifestAgainstProse(planMarkdown: string, manifest: TaskManifest)
     if (totalFences % 2 === 1) {
       errors += ` — likely caused by an unbalanced code fence (${totalFences} fences, expected even)`;
     }
-  }
-
-  if (titleMismatches.length > 0) {
-    if (errors.length > 0) {
-      errors += '; ';
-    }
-    errors += titleMismatches.join('; ');
   }
 
   const extraInProse: string[] = [];
