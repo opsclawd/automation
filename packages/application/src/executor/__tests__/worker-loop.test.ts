@@ -18,6 +18,8 @@ import {
 } from '../../test-doubles/index.js';
 import { workerLoop } from '../worker-loop.js';
 
+let currentQueue: FakeJobQueuePort | undefined;
+
 function setup() {
   const repos = new FakeRepositoryPort([
     {
@@ -46,6 +48,7 @@ function setup() {
     },
   ]);
   const queue = new FakeJobQueuePort(repos);
+  currentQueue = queue;
   const registry = new FakeWorkerRegistryPort();
   const leases = new FakeWorkerLeasePort(registry);
   const now = new Date();
@@ -68,9 +71,12 @@ const prepareOk = async (_input: { repoId: RepositoryId; runId: RunId; signal: A
 });
 
 function makeRun(runId: string): Run {
+  const jobs = currentQueue?.listForRun(RunId(runId)) ?? [];
+  const repoId = jobs[0]?.repoId ?? RepositoryId('r1');
   return createRun({
     uuid: runId,
     displayId: `disp-${runId}`,
+    repoId,
     issueNumber: IssueNumber(1),
     startedAt: new Date(),
   });

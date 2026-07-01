@@ -1,29 +1,27 @@
-# Task 6 Implementation Log
+# Task 7 Implementation Log
 
 ## Status
 DONE
 
 ## What Was Implemented
-- Updated `installSignalHandlers()` in `apps/api/src/cli.ts` to accept `repoId` and scope its `findByIssueNumber()` and `updateStatusByIssueNumber()` queries to the repository of the run.
-- Updated all `installSignalHandlers()` callers in `apps/api/src/cli.ts` (the TS executor run path, execute command path, and resume command path) to pass the appropriate `repoId` for the run being protected.
-- Required `c.repoFullName` in the Bash executor run path before invoking `StartIssueRun.execute()`, resolving `repoId: RepositoryId(c.repoFullName)` and passing it to both `installSignalHandlers()` and `StartIssueRun.execute()`.
-- Updated `runs cancel --issue` in `apps/api/src/cli.ts` to resolve `RepositoryId(c.repoFullName)` before issue lookup and call `findByIssueNumber(repoId, issueNumber)`.
-- Verified that `compose.ts` does not pass `findRepoId` to `new ResumeRun(...)` (already removed in Task 4).
-- Updated integration/API test databases in `cli.test.ts` and `runs-recovery-routes.test.ts` to seed runs with `repo_id` (so repository lookups and signal handlers locate them properly).
-- Updated `compose.test.ts` to pass `repoId: RepositoryId('owner/repo')` to all `c.startIssueRun.execute()` calls.
+- Updated `apps/cli/src/__tests__/run-pr-poll.test.ts` to implement repo-scoped `findByIssueNumber` and `updateStatusByIssueNumber` mocks.
+- Updated executor test helper `makeRun` in `packages/application/src/executor/__tests__/run-executor.test.ts` to include `repoId: RepositoryId('acme/widgets')` as default.
+- Updated `makeRun` in `packages/application/src/executor/__tests__/worker-loop.test.ts` to dynamically resolve `repoId` from `currentQueue` or default to `RepositoryId('r1')`, ensuring all created Runs include a repository identity.
+- Updated `makeRun` in `packages/application/src/executor/__tests__/e2e.test.ts` to include `repoId: RepositoryId('owner/repo')`.
+- Updated `readyRun` in `packages/application/src/pr-review/__tests__/apply-reactivation.test.ts` to include `repoId: RepositoryId('owner/repo')`.
 
 ## Files Modified
-- `apps/api/src/cli.ts`
-- `apps/api/src/__tests__/cli.test.ts`
-- `apps/api/src/__tests__/runs-recovery-routes.test.ts`
-- `apps/api/src/__tests__/compose.test.ts`
+- `apps/cli/src/__tests__/run-pr-poll.test.ts`
+- `packages/application/src/executor/__tests__/run-executor.test.ts`
+- `packages/application/src/executor/__tests__/worker-loop.test.ts`
+- `packages/application/src/executor/__tests__/e2e.test.ts`
+- `packages/application/src/pr-review/__tests__/apply-reactivation.test.ts`
 - `implementation-log.md`
 
 ## Verification Results
-- All 49 CLI tests passed: `pnpm vitest run apps/api/src/__tests__/cli.test.ts`
-- All 5 CLI runs resume confirmation tests passed: `pnpm vitest run apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
-- All 12 recovery routes tests passed: `pnpm vitest run apps/api/src/__tests__/runs-recovery-routes.test.ts`
-- All 41 compose tests passed: `pnpm vitest run apps/api/src/__tests__/compose.test.ts -t "composeRoot"`
-- API typescript compiler output: `pnpm exec tsc -p apps/api/tsconfig.json --noEmit` completed successfully with 0 errors.
-- Linter verification: `pnpm lint` passed with no warnings or errors.
-- Layer boundaries verification: `pnpm depcruise` completed with 0 errors.
+- All `apps/cli/src/__tests__/run-pr-poll.test.ts` tests passed (39/39).
+- All `packages/application/src/executor/__tests__/run-executor.test.ts` tests passed (23/23).
+- All `packages/application/src/executor/__tests__/worker-loop.test.ts` tests passed (15/15).
+- All `packages/application/src/executor/__tests__/e2e.test.ts` tests passed (8/8).
+- All `packages/application/src/pr-review/__tests__/apply-reactivation.test.ts` tests passed (4/4).
+- Type checking `apps/cli` and `packages/application` succeeded with no errors.

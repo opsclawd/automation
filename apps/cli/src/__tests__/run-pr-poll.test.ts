@@ -125,9 +125,9 @@ function makeDeps(overrides: Partial<RunPollDeps> = {}): RunPollDeps {
       findByUuid: vi.fn(() => undefined),
       update: vi.fn(),
       insertIfNoActive: vi.fn(),
-      findByIssueNumber: vi.fn(() => undefined),
+      findByIssueNumber: vi.fn((_repoId, _issueNumber) => undefined),
       findActiveRuns: vi.fn(() => []),
-      updateStatusByIssueNumber: vi.fn(() => false),
+      updateStatusByIssueNumber: vi.fn((_repoId, _issueNumber, _patch) => false),
       updateStatusByUuid: vi.fn(() => false),
     },
     buildPrReviewPoller: vi.fn(() => ({
