@@ -571,6 +571,17 @@ Next task body.
       expect(result.success).toBe(true);
     });
 
+    it('manifest validation: accepts whitespace-only title differences by task number', () => {
+      const plan = ['## Task 1: My Task Title '].join('\n');
+      const manifest = {
+        version: 1,
+        task_count: 1,
+        tasks: [{ n: 1, title: ' Different Manifest Title' }],
+      };
+      const result = validatePlanTaskList(plan, JSON.stringify(manifest));
+      expect(result.success).toBe(true);
+    });
+
     it('handles nested code fences correctly', () => {
       const plan = `
 ## Task 1: Heading one
