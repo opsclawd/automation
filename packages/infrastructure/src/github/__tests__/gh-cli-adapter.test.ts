@@ -39,7 +39,7 @@ describe('GhCliAdapter reads', () => {
 });
 
 describe('GhCliAdapter writes', () => {
-  it('posts a reply via the REST replies endpoint', async () => {
+  it('posts a reply via the REST replies endpoint and returns the created comment', async () => {
     const log = join(tmpdir(), `gh-log-${Date.now()}.txt`);
     writeFileSync(log, '');
     try {
@@ -48,7 +48,17 @@ describe('GhCliAdapter writes', () => {
         maxRetries: 0,
         env: { FAKE_GH_LOG: log },
       });
-      await adapter.replyToReviewComment('o/r', 5, 9001, 'thanks');
+      const res = await adapter.replyToReviewComment('o/r', 5, 9001, 'thanks');
+      expect(res).toEqual({
+        id: 9002,
+        prNumber: 5,
+        path: 'a.ts',
+        line: 3,
+        reviewer: 'octocat',
+        body: 'thanks',
+        createdAt: new Date('2026-06-04T00:00:00Z'),
+        inReplyToId: 9001,
+      });
       const calls = readFileSync(log, 'utf-8');
       expect(calls).toContain('api repos/o/r/pulls/5/comments/9001/replies --method POST');
     } finally {

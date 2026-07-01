@@ -1,5 +1,5 @@
 import type { PrReviewComment } from '@ai-sdlc/domain';
-import { markProcessed, blockComment } from '@ai-sdlc/domain';
+import { markProcessed, blockComment, markReplied } from '@ai-sdlc/domain';
 import type { RunId, RepositoryId, PhaseName } from '@ai-sdlc/domain';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
@@ -167,15 +167,23 @@ export class PollTaskRunner {
     }
 
     if (result.action === 'no_fix') {
-      await this.postReplyIfMissing(input, result.replyBody);
-      const replied: PrReviewComment = {
-        ...comment,
-        state: 'replied',
+      const githubReplyId = await this.postReplyIfMissing(input, result.replyBody);
+      const replyRecordId = d.idFactory();
+      d.prReviewRepo.insertReply({
+        id: replyRecordId,
+        runId: input.runId,
+        prNumber: input.prNumber,
+        commentId: comment.commentId,
+        body: result.replyBody,
+        postedAt: d.now(),
+        verified: true,
+      });
+
+      const replied = markReplied(comment, {
+        replyId: githubReplyId,
         outcome: 'no_fix',
-        attempts: comment.attempts + 1,
-        lastPoll: input.pollNumber,
-        updatedAt: d.now(),
-      };
+        poll: input.pollNumber,
+      });
       d.prReviewRepo.upsertComment(replied);
 
       const verification = await verifyComment(replied, d, {
@@ -188,15 +196,6 @@ export class PollTaskRunner {
       });
 
       if (verification.ok) {
-        d.prReviewRepo.insertReply({
-          id: d.idFactory(),
-          runId: input.runId,
-          prNumber: input.prNumber,
-          commentId: comment.commentId,
-          body: result.replyBody,
-          postedAt: d.now(),
-          verified: true,
-        });
         d.prReviewRepo.upsertComment(
           markProcessed(replied, {
             commitVerified: verification.commitVerified,
@@ -274,18 +273,25 @@ export class PollTaskRunner {
 
       await d.git.push({ cwd: input.cwd, branch: input.branch });
 
-      const replied: PrReviewComment = {
-        ...comment,
-        state: 'replied',
-        outcome: 'fixed',
-        attempts: comment.attempts + 1,
-        lastPoll: input.pollNumber,
-        updatedAt: d.now(),
-        commitSha: fixCommitSha,
-      };
-      d.prReviewRepo.upsertComment(replied);
+      const githubReplyId = await this.postReplyIfMissing(input, result.replyBody);
+      const replyRecordId = d.idFactory();
+      d.prReviewRepo.insertReply({
+        id: replyRecordId,
+        runId: input.runId,
+        prNumber: input.prNumber,
+        commentId: comment.commentId,
+        body: result.replyBody,
+        postedAt: d.now(),
+        verified: true,
+      });
 
-      await this.postReplyIfMissing(input, result.replyBody);
+      const replied = markReplied(comment, {
+        replyId: githubReplyId,
+        outcome: 'fixed',
+        commitSha: fixCommitSha,
+        poll: input.pollNumber,
+      });
+      d.prReviewRepo.upsertComment(replied);
 
       const verification = await verifyComment(replied, d, {
         cwd: input.cwd,
@@ -297,15 +303,6 @@ export class PollTaskRunner {
       });
 
       if (verification.ok) {
-        d.prReviewRepo.insertReply({
-          id: d.idFactory(),
-          runId: input.runId,
-          prNumber: input.prNumber,
-          commentId: comment.commentId,
-          body: result.replyBody,
-          postedAt: d.now(),
-          verified: true,
-        });
         d.prReviewRepo.upsertComment(
           markProcessed(replied, {
             commitVerified: verification.commitVerified,
@@ -347,19 +344,23 @@ export class PollTaskRunner {
     await this.deps.git.cleanUntracked(input.cwd);
   }
 
-  private async postReplyIfMissing(input: PollTaskInput, body: string): Promise<void> {
+  private async postReplyIfMissing(input: PollTaskInput, body: string): Promise<number> {
     const repliesBefore = await this.deps.github.listReviewComments(
       input.repoFullName,
       input.prNumber,
     );
-    const alreadyReplied = repliesBefore.some((c) => c.inReplyToId === input.comment.commentId);
-    if (!alreadyReplied) {
-      await this.deps.github.replyToReviewComment(
-        input.repoFullName,
-        input.prNumber,
-        input.comment.commentId,
-        body,
-      );
+    const existingReply = repliesBefore.find((c) => c.inReplyToId === input.comment.commentId);
+    if (existingReply) {
+      return existingReply.id;
     }
+
+    const newReply = await this.deps.github.replyToReviewComment(
+      input.repoFullName,
+      input.prNumber,
+      input.comment.commentId,
+      body,
+    );
+
+    return newReply.id;
   }
 }

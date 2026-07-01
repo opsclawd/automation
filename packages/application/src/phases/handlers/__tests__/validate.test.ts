@@ -259,6 +259,14 @@ describe('ValidateHandler', () => {
       const parsed = JSON.parse(content);
       expect(parsed.phase).toBe('validate');
       expect(parsed.message).toContain('validation command(s) failed');
+      expect(parsed.kind).toBe('validation_failed');
+      expect(parsed.canRetry).toBe(true);
+      expect(parsed.runUuid).toBe('550e8400-e29b-41d4-a716-446655440000');
+      expect(parsed.artifacts).toEqual([
+        'validate/0-build.stdout.log',
+        'validate/0-build.stderr.log',
+        'validate/validation-result.json',
+      ]);
     });
 
     it('does not write failure.json on validation pass', async () => {

@@ -71,11 +71,11 @@ export class FakeGitHubPort implements GitHubPort {
     prNumber: number,
     commentId: number,
     body: string,
-  ): Promise<void> {
+  ): Promise<GitHubReviewComment> {
     this.repliesPosted.push({ repoFullName, prNumber, commentId, body });
     const key = `${repoFullName}/${prNumber}`;
     const existing = this.comments.get(key) ?? [];
-    existing.push({
+    const newComment: GitHubReviewComment = {
       id: existing.length + 9000,
       prNumber,
       path: '',
@@ -84,8 +84,10 @@ export class FakeGitHubPort implements GitHubPort {
       body,
       createdAt: new Date(),
       inReplyToId: commentId,
-    });
+    };
+    existing.push(newComment);
     this.comments.set(key, existing);
+    return newComment;
   }
 
   async resolveReviewThread(

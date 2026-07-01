@@ -5,7 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { spawn, execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildProgram, findRepoRoot } from '../cli.js';
+import { buildProgram as originalBuildProgram, findRepoRoot } from '../cli.js';
+function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
+  return originalBuildProgram({
+    isCliTestSuite: true,
+    bypassPlanValidation: true,
+    ...opts,
+  });
+}
 import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
 import { RunExecutor, ResumeRun, RetryFailedPhase } from '@ai-sdlc/application';
 import {
@@ -25,7 +32,12 @@ const cliPath = join(apiRoot, 'src', 'cli.ts');
 function spawnOrchestrator(args: string[], cwd: string, envOverrides?: Record<string, string>) {
   return spawn('node', ['--conditions=development', '--import', tsxEsmPath, cliPath, ...args], {
     cwd,
-    env: { ...process.env, NODE_NO_WARNINGS: '1', ...envOverrides },
+    env: {
+      ...process.env,
+      NODE_NO_WARNINGS: '1',
+      AI_CLI_TEST_SUITE: 'true',
+      ...envOverrides,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 }

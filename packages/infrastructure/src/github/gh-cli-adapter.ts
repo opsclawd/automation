@@ -215,15 +215,33 @@ export class GhCliAdapter implements GitHubPort {
     prNumber: number,
     commentId: number,
     body: string,
-  ): Promise<void> {
-    await this.run([
+  ): Promise<GitHubReviewComment> {
+    const endpoint = `repos/${repoFullName}/pulls/${prNumber}/comments/${commentId}/replies`;
+    const out = await this.run([
       'api',
-      `repos/${repoFullName}/pulls/${prNumber}/comments/${commentId}/replies`,
+      endpoint,
       '--method',
       'POST',
       '--raw-field',
       `body=${body}`,
     ]);
+    const command = `gh api ${endpoint} --method POST`;
+    const parsed = this.safeJsonParse<RestComment>(out, command);
+    return {
+      id: parsed.id,
+      prNumber,
+      path: parsed.path,
+      line: parsed.line ?? null,
+      reviewer: parsed.user?.login ?? 'ghost',
+      body: parsed.body,
+      createdAt: new Date(parsed.created_at),
+      ...(parsed.in_reply_to_id !== null && parsed.in_reply_to_id !== undefined
+        ? { inReplyToId: parsed.in_reply_to_id }
+        : {}),
+      ...(parsed.pull_request_review_id !== undefined
+        ? { reviewId: parsed.pull_request_review_id }
+        : {}),
+    };
   }
 
   async resolveReviewThread(
