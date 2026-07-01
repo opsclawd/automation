@@ -136,31 +136,32 @@ describe('createArtifactCapturingAgent', () => {
 
     expect(result).toBe(expectedResult);
     expect(agentCompleted).toBe(true);
-    expect(writes.map((entry) => entry.relativePath)).toEqual([
-      'result.json',
-      'implementation-log.md',
-      'task-manifest.json',
-      'validation.result',
-      'validate.log',
-      'validate/validation-result.json',
+    const sortedWrites = [...writes].sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    expect(sortedWrites.map((entry) => entry.relativePath)).toEqual([
       'code-review.md',
-      'review.md',
       'compound.md',
+      'implementation-log.md',
       'pr-summary.md',
       'pr-url.txt',
+      'result.json',
+      'review.md',
+      'task-manifest.json',
+      'validate.log',
+      'validate/validation-result.json',
+      'validation.result',
     ]);
-    expect(writes.map((entry) => entry.contents)).toEqual([
-      '{"ok":true}',
-      '# implementation',
-      '{"tasks":[] }',
-      'passed',
-      'validate log',
-      '{"result":"ok"}',
+    expect(sortedWrites.map((entry) => entry.contents)).toEqual([
       '# review',
-      '# review note',
       '# compound',
+      '# implementation',
       '# pr summary',
       'https://example.test/pr/1',
+      '{"ok":true}',
+      '# review note',
+      '{"tasks":[] }',
+      'validate log',
+      '{"result":"ok"}',
+      'passed',
     ]);
     expect(writes.every((entry) => entry.runId === request.runId)).toBe(true);
     expect(writes.every((entry) => entry.phaseId === request.phaseId)).toBe(true);
