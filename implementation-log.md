@@ -1,26 +1,29 @@
-# Task 5 Implementation Log
+# Task 6 Implementation Log
 
 ## Status
 DONE
 
 ## What Was Implemented
-- Created migration `0016-add-repo-id-to-runs.ts` (version 16) adding nullable `repo_id TEXT` and composite index `idx_runs_repo_issue_status` on `(repo_id, issue_number, status)` to the `runs` table.
-- Registered migration 16 in `packages/infrastructure/src/sqlite/migrations.ts`.
-- Added `repo_id: string | null` to the internal `RunRow` schema.
-- Updated database queries in `RunRepository` (`insert`, `insertIfNoActive`, `findByIssueNumber`, `updateStatusByIssueNumber`) to filter/save by repository identity.
-- Updated `toRecord` to resolve and map `repoId: RepositoryId(row.repo_id ?? 'unknown')`.
-- Updated all existing unit tests in `packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts` to supply `repoId`.
-- Added unit tests verifying active run conflict constraint is repo-scoped (uniqueness on same repo conflicts, but allowed across different repositories).
-- Added unit tests verifying query filters (`findByIssueNumber` and `updateStatusByIssueNumber`) enforce strict repository boundaries.
+- Updated `installSignalHandlers()` in `apps/api/src/cli.ts` to accept `repoId` and scope its `findByIssueNumber()` and `updateStatusByIssueNumber()` queries to the repository of the run.
+- Updated all `installSignalHandlers()` callers in `apps/api/src/cli.ts` (the TS executor run path, execute command path, and resume command path) to pass the appropriate `repoId` for the run being protected.
+- Required `c.repoFullName` in the Bash executor run path before invoking `StartIssueRun.execute()`, resolving `repoId: RepositoryId(c.repoFullName)` and passing it to both `installSignalHandlers()` and `StartIssueRun.execute()`.
+- Updated `runs cancel --issue` in `apps/api/src/cli.ts` to resolve `RepositoryId(c.repoFullName)` before issue lookup and call `findByIssueNumber(repoId, issueNumber)`.
+- Verified that `compose.ts` does not pass `findRepoId` to `new ResumeRun(...)` (already removed in Task 4).
+- Updated integration/API test databases in `cli.test.ts` and `runs-recovery-routes.test.ts` to seed runs with `repo_id` (so repository lookups and signal handlers locate them properly).
+- Updated `compose.test.ts` to pass `repoId: RepositoryId('owner/repo')` to all `c.startIssueRun.execute()` calls.
 
-## Files Modified/Created
-- `packages/infrastructure/src/sqlite/migrations/0016-add-repo-id-to-runs.ts` (Created)
-- `packages/infrastructure/src/sqlite/migrations.ts` (Modified)
-- `packages/infrastructure/src/sqlite/run-repository.ts` (Modified)
-- `packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts` (Modified)
-- `implementation-log.md` (Modified)
+## Files Modified
+- `apps/api/src/cli.ts`
+- `apps/api/src/__tests__/cli.test.ts`
+- `apps/api/src/__tests__/runs-recovery-routes.test.ts`
+- `apps/api/src/__tests__/compose.test.ts`
+- `implementation-log.md`
 
 ## Verification Results
-- RunRepository tests: `pnpm vitest run packages/infrastructure/src/sqlite/__tests__/run-repository.test.ts -t "RunRepository"`: 18/18 tests passed.
-- Compile packages/infrastructure: `pnpm exec tsc -p packages/infrastructure/tsconfig.json --noEmit`: Completed successfully with no errors.
-- Full workspace typecheck: `pnpm typecheck`: Passed with 0 errors, confirming the backwards-compatible signatures in `RunRepository` resolve all compile-time errors in `apps/api/src/cli.ts` without modifying out-of-scope files.
+- All 49 CLI tests passed: `pnpm vitest run apps/api/src/__tests__/cli.test.ts`
+- All 5 CLI runs resume confirmation tests passed: `pnpm vitest run apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
+- All 12 recovery routes tests passed: `pnpm vitest run apps/api/src/__tests__/runs-recovery-routes.test.ts`
+- All 41 compose tests passed: `pnpm vitest run apps/api/src/__tests__/compose.test.ts -t "composeRoot"`
+- API typescript compiler output: `pnpm exec tsc -p apps/api/tsconfig.json --noEmit` completed successfully with 0 errors.
+- Linter verification: `pnpm lint` passed with no warnings or errors.
+- Layer boundaries verification: `pnpm depcruise` completed with 0 errors.

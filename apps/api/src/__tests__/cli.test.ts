@@ -199,11 +199,12 @@ describe('CLI runs cancel command', () => {
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at, pid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       'cancel-test-uuid',
       'issue-50-20260519-000000',
+      'owner/repo',
       50,
       'issue_to_pr',
       'running',
@@ -225,7 +226,7 @@ describe('CLI runs cancel command', () => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
         consoleErrs.push(String(msg));
       });
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['cancel', '--issue', '50'], { from: 'user' });
@@ -859,11 +860,12 @@ describe('CLI runs execute command', () => {
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
       'issue-79-20260622-000000',
+      'opsclawd/automation',
       79,
       'issue_to_pr',
       'queued',
@@ -968,11 +970,12 @@ describe('CLI runs execute command', () => {
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
       'issue-80-20260622-000000',
+      'opsclawd/automation',
       80,
       'issue_to_pr',
       'queued',
@@ -3469,11 +3472,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'resume-transition-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
       'issue-130-20260625-000000',
+      'owner/repo',
       130,
       'issue_to_pr',
       'failed',
@@ -3610,11 +3614,12 @@ describe('CLI runs resume command', () => {
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
       'issue-81-20260622-000000',
+      'opsclawd/automation',
       81,
       'issue_to_pr',
       'failed',
@@ -3720,11 +3725,12 @@ describe('CLI runs resume command', () => {
     const db = openDatabase(dbPath);
     applyMigrations(db);
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, skipped_phases, started_at, current_phase)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       runUuid,
       'issue-82-20260622-000000',
+      'opsclawd/automation',
       82,
       'issue_to_pr',
       'failed',

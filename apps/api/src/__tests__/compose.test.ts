@@ -72,7 +72,10 @@ describe('composeRoot', () => {
     expect(container.runsDir).toBe(path.join(root, '.ai-runs'));
     expect(container.buildPhaseHandlerContext).toBeDefined();
 
-    const out = await container.startIssueRun.execute({ issueNumber: 1 });
+    const out = await container.startIssueRun.execute({
+      issueNumber: 1,
+      repoId: RepositoryId('owner/repo'),
+    });
     expect(out.status).toBe('passed');
     expect(out.exitCode).toBe(0);
     expect(out.uuid).toBeTruthy();
@@ -156,7 +159,10 @@ describe('composeRoot', () => {
       agentCli: 'codex',
     });
 
-    const out = await container.startIssueRun.execute({ issueNumber: 2 });
+    const out = await container.startIssueRun.execute({
+      issueNumber: 2,
+      repoId: RepositoryId('owner/repo'),
+    });
     expect(out.status).toBe('passed');
   });
 
@@ -180,7 +186,10 @@ exit 1
       scriptPath,
     });
 
-    const out = await container.startIssueRun.execute({ issueNumber: 42 });
+    const out = await container.startIssueRun.execute({
+      issueNumber: 42,
+      repoId: RepositoryId('owner/repo'),
+    });
     expect(out.status).toBe('failed');
     expect(out.exitCode).toBe(1);
 
@@ -255,7 +264,10 @@ exit 1
     delete process.env.TMPDIR;
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
-      const out = await container.startIssueRun.execute({ issueNumber: 1 });
+      const out = await container.startIssueRun.execute({
+        issueNumber: 1,
+        repoId: RepositoryId('owner/repo'),
+      });
       const runDir = path.join(container.runsDir, out.displayId);
       const combined = readFileSync(path.join(runDir, 'combined.log'), 'utf8');
       expect(combined).toContain('TMPDIR=');
@@ -279,7 +291,10 @@ exit 1
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
       expect(container.baseTmpDir).toBe(path.join(customTmp, '.ai-tmp'));
-      const out = await container.startIssueRun.execute({ issueNumber: 2 });
+      const out = await container.startIssueRun.execute({
+        issueNumber: 2,
+        repoId: RepositoryId('owner/repo'),
+      });
       const runDir = path.join(container.runsDir, out.displayId);
       const combined = readFileSync(path.join(runDir, 'combined.log'), 'utf8');
       expect(combined).toContain(`TMPDIR=${path.join(customTmp, '.ai-tmp', out.uuid)}`);
@@ -416,7 +431,10 @@ exit 1
     delete process.env.TMPDIR;
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
-      const out = await container.startIssueRun.execute({ issueNumber: 3 });
+      const out = await container.startIssueRun.execute({
+        issueNumber: 3,
+        repoId: RepositoryId('owner/repo'),
+      });
       const tmpRunDir = path.join(container.baseTmpDir, out.uuid);
       expect(existsSync(tmpRunDir)).toBe(false);
     } finally {
@@ -662,7 +680,10 @@ exit 1
     delete process.env.TMPDIR;
     try {
       const container = composeRoot({ repoRoot: root, scriptPath });
-      const out = await container.startIssueRun.execute({ issueNumber: 4 });
+      const out = await container.startIssueRun.execute({
+        issueNumber: 4,
+        repoId: RepositoryId('owner/repo'),
+      });
       const tmpRunDir = path.join(container.baseTmpDir, out.uuid);
       expect(out.status).toBe('failed');
       expect(existsSync(tmpRunDir)).toBe(false);
