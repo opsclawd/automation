@@ -1942,21 +1942,36 @@ export function composeRoot(opts: ComposeOptions): Container {
           console.error('[implement setup] pnpm install failed:', msg, stderr);
           return { ok: false, error: `pnpm install failed: ${msg}${stderr}` };
         }
+
+        // Skip build if the feature branch already has WIP commits — they will
+        // have been built (and any errors surfaced) by the per-step runTypecheck
+        // gate. Install still runs to guard against node_modules drift.
+        let hasWip = false;
         try {
-          execFileSync('pnpm', ['-r', 'build'], {
-            cwd,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            encoding: 'utf-8',
-            timeout: 180_000,
-          });
-        } catch (err) {
-          const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
-            ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
-            : '';
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error('[implement setup] pnpm -r build failed:', msg, stderr);
-          return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
+          const wipCommits = await gitAdapter.logBetween(cwd, resolvedDefaultBranch, 'HEAD');
+          hasWip = wipCommits.length > 0;
+        } catch {
+          hasWip = false;
         }
+
+        if (!hasWip) {
+          try {
+            execFileSync('pnpm', ['-r', 'build'], {
+              cwd,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              encoding: 'utf-8',
+              timeout: 180_000,
+            });
+          } catch (err) {
+            const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+              : '';
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error('[implement setup] pnpm -r build failed:', msg, stderr);
+            return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
+          }
+        }
+
         return { ok: true };
       };
 

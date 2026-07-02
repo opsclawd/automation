@@ -1020,6 +1020,26 @@ exit 1
     expect(fnSrc).toMatch(/catch[^{]*\{[^}]*\/\/ Non-fatal/);
   });
 
+  it('worktreeSetup skips pnpm -r build when feature branch has WIP commits', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const setupFnMatch = composeSrc.match(
+      /const worktreeSetup[\s\S]*?return \{ ok: true \};[\s\S]*?\};/,
+    );
+    expect(setupFnMatch).toBeTruthy();
+    const fnSrc = setupFnMatch![0];
+    expect(fnSrc).toContain('logBetween');
+    expect(fnSrc).toContain('resolvedDefaultBranch');
+    const logBetweenIdx = fnSrc.indexOf('logBetween');
+    const buildIdx = fnSrc.indexOf("'-r', 'build'");
+    expect(logBetweenIdx).toBeGreaterThan(-1);
+    expect(buildIdx).toBeGreaterThan(-1);
+    expect(logBetweenIdx).toBeLessThan(buildIdx);
+    expect(fnSrc).toContain("'install'");
+  });
+
   describe('captureExecOutput', () => {
     it('returns stdout+stderr from execFileSync error with both streams', () => {
       const err = new Error('Command failed') as NodeJS.ErrnoException & {
