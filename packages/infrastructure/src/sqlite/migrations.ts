@@ -15,6 +15,7 @@ import * as addWorkerLeases from './migrations/0013-add-worker-leases.js';
 import * as addSteps from './migrations/0014-add-steps.js';
 import * as addJobs from './migrations/0015-add-jobs.js';
 import * as addRepoId from './migrations/0016-add-repo-id-to-runs.js';
+import * as addWorkers from './migrations/0017-add-workers.js';
 
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -33,6 +34,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addSteps.version, sql: addSteps.sql },
   { version: addJobs.version, sql: addJobs.sql },
   { version: addRepoId.version, sql: addRepoId.sql },
+  { version: addWorkers.version, sql: addWorkers.sql },
 ];
 
 export function applyMigrations(db: Db): void {
