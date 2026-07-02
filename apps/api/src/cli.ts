@@ -291,7 +291,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const handleSignal = (signal: string, exitCode: number) => {
               abortController.abort();
               const currentJob = c.jobQueue.findById(jobId);
-              if (currentJob && !['succeeded', 'failed', 'cancelled'].includes(currentJob.status)) {
+              if (currentJob && currentJob.status === 'running') {
                 c.jobQueue.markCancelled(jobId, new Date());
               }
               const currentRun = c.runRepository.findByUuid(run.uuid);
@@ -325,8 +325,24 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
 
-            const finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
             const finalJob = c.jobQueue.findById(jobId);
+            let finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
+
+            // If the job reached a terminal failed/cancelled state but the run
+            // record is still 'running' (e.g. workerLoop failed before
+            // RunExecutor could persist a terminal status), finalize it now so
+            // insertIfNoActive doesn't reject the next attempt for this repo/issue.
+            if (
+              finalRun.status === 'running' &&
+              (finalJob?.status === 'failed' || finalJob?.status === 'cancelled')
+            ) {
+              c.runRepository.update(run.uuid, {
+                status: 'failed',
+                completedAt: new Date(),
+                failureReason: 'worker loop terminated without finalizing run',
+              });
+              finalRun = c.runRepository.findByUuid(run.uuid) ?? finalRun;
+            }
 
             if (finalRun.status === 'passed') {
               const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
