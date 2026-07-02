@@ -13,7 +13,79 @@ import type {
   ImplementStepLoopResult,
   SpecReviewResult,
   StepLoopContext,
+  TypecheckResult,
+  TypescriptError,
 } from './types.js';
+
+function normalizeMessage(message: string): string {
+  return message.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Decide what to pass into the implement agent's retry prompt given the raw
+// typecheck output and any structured errors the parser extracted. The
+// parser only handles canonical `file(line,col): error TSxxxx: ...` lines;
+// standalone `error TSxxxx: ...` and wrapped build-mode lines are
+// intentionally not parsed. When the raw output contains non-blank lines
+// that the parser did NOT capture, fall back to the raw string so the
+// implement agent sees those unparsed diagnostics too. Otherwise prefer
+// the structured list for the cleaner grouped rendering.
+function pickTypecheckPayload(tcResult: TypecheckResult): string | unknown[] | undefined {
+  const structured = tcResult.structuredErrors;
+  const raw = tcResult.output;
+  if (structured !== undefined && structured.length > 0) {
+    // Count non-blank, trimmed lines in raw output that the parser did not
+    // absorb into structured errors. If any exist, the raw output carries
+    // information the structured list would silently drop.
+    const rawNonBlankLines = raw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    // Filter out volatile TSC summary lines that are not diagnostics.
+    const diagnosticLikeLines = rawNonBlankLines.filter(
+      (l) =>
+        !/^Found \d+ errors?\.?$/i.test(l) &&
+        !/^in \d+\.?\d*(ms|s)\s*$/i.test(l) &&
+        !/^>/.test(l), // command-echo lines like "> tsc --noEmit"
+    );
+    if (diagnosticLikeLines.length > structured.length && raw.length > 0) {
+      return raw.slice(0, 2000);
+    }
+    return structured;
+  }
+  if (raw.length > 0) {
+    return raw.slice(0, 2000);
+  }
+  return undefined;
+}
+
+// Shared default for `maxTypeCheckRetries` used by the programmatic API when
+// the field is omitted from ImplementStepLoopInput. The config schema defaults
+// to 5 when read via configuration; the programmatic fallback here is 2 to
+// avoid surprising in-process callers with long retry sequences. Keep in sync
+// with the documented behavior in `packages/shared/src/config/schema.ts`.
+export const DEFAULT_MAX_TYPE_CHECK_RETRIES = 2;
+
+// Stall detection horizon: keep a small history of recent fingerprints so
+// cyclic regressions (A → B → A → B) don't escape detection. Tunable for tests.
+const DEFAULT_STALL_HISTORY_SIZE = 2;
+
+// Strip volatile parts of TSC/build output so unchanged errors produce the
+// same fingerprint across retries. TSC output routinely contains:
+//   - trailing summary lines like `Found N errors.` whose N changes
+//   - working-directory prefixes from `--build` mode
+//   - timestamps and timings
+// We discard those and collapse whitespace.
+function normalizeTypecheckOutput(output: string): string {
+  return output
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => !/^Found \d+ errors?\.?$/i.test(l))
+    .filter((l) => !/^in \d+\.?\d*(ms|s)\s*$/i.test(l))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
 
 export class ImplementStepLoop {
   constructor(private readonly deps: ImplementStepLoopDeps) {}
@@ -68,10 +140,65 @@ export class ImplementStepLoop {
 
     // --- PRE-LOOP: TYPECHECK GATE ---
     let tcResult = await deps.runTypecheck(baseCtx);
-    const maxTypeCheckRetries = input.maxTypeCheckRetries ?? 2;
+    const maxTypeCheckRetries = input.maxTypeCheckRetries ?? DEFAULT_MAX_TYPE_CHECK_RETRIES;
     let typecheckRetryCount = 0;
+    const stallHistory: string[] = [];
 
     while (tcResult.outcome === 'fail' && typecheckRetryCount < maxTypeCheckRetries) {
+      // Iteration index for events: pre-loop implement is iteration 1, first
+      // typecheck retry is iteration 2, etc. This lines up loop.iteration.* events
+      // with the actual step state observed downstream.
+      const iterationIndex = typecheckRetryCount + 2;
+
+      // Stall detection: trigger if the current fingerprint matches ANY of the
+      // last `stallHistorySize` fingerprints, not just the immediately previous
+      // one. This catches cyclic regressions (A → B → A → B → ...) where the
+      // error set oscillates but no forward progress is made.
+      const currFingerprint = this.fingerprintTypecheck(tcResult);
+      const stallHistorySize = deps.stallHistorySize ?? DEFAULT_STALL_HISTORY_SIZE;
+      const stalled =
+        stallHistory.length > 0 && stallHistory.slice(-stallHistorySize).includes(currFingerprint);
+      if (stalled) {
+        this.emit(
+          input,
+          'step.typecheck.stalled',
+          'error',
+          `step ${input.stepIndex} typecheck stalled — same errors as previous attempt; escalating`,
+          {
+            index: input.stepIndex,
+            attempt: typecheckRetryCount,
+            fingerprint: currFingerprint.slice(0, 500),
+            stallHistorySize,
+          },
+        );
+        this.emit(
+          input,
+          'step.typecheck.failed',
+          'error',
+          `step ${input.stepIndex} failed typecheck gate (stalled)`,
+          {
+            index: input.stepIndex,
+            output: tcResult.output.slice(0, 2000),
+            stalled: true,
+          },
+        );
+        this.emit(input, 'loop.iteration.started', 'info', 'typecheck stalled', {
+          index: iterationIndex,
+        });
+        loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(loop);
+        this.emit(input, 'loop.iteration.completed', 'info', 'step stalled at typecheck gate', {
+          index: iterationIndex,
+          outcome: 'failed',
+        });
+        return { outcome: 'failed', loop };
+      }
+      stallHistory.push(currFingerprint);
+      if (stallHistory.length > stallHistorySize) {
+        stallHistory.shift();
+      }
+
       typecheckRetryCount += 1;
       this.emit(
         input,
@@ -87,12 +214,14 @@ export class ImplementStepLoop {
       );
 
       const retryImplementResult = await deps.runImplement(baseCtx, {
-        typecheckErrors: tcResult.output.slice(0, 2000),
+        ...(pickTypecheckPayload(tcResult) !== undefined
+          ? { typecheckErrors: pickTypecheckPayload(tcResult) as string | TypescriptError[] }
+          : {}),
       });
 
       if (retryImplementResult.agentOutcome !== 'success') {
         this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
-          index: 1,
+          index: iterationIndex,
         });
         loop = startIteration(loop, {
           reviewInvocationId: '',
@@ -101,7 +230,7 @@ export class ImplementStepLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emit(input, 'loop.iteration.completed', 'info', 'implement step failed', {
-          index: 1,
+          index: iterationIndex,
           outcome: 'failed',
         });
         return { outcome: 'failed', loop };
@@ -121,12 +250,15 @@ export class ImplementStepLoop {
           output: tcResult.output.slice(0, 2000),
         },
       );
-      this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', { index: 1 });
+      const finalIterationIndex = typecheckRetryCount + 1;
+      this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', {
+        index: finalIterationIndex,
+      });
       loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
       loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
       deps.loops.update(loop);
       this.emit(input, 'loop.iteration.completed', 'info', 'step failed typecheck gate', {
-        index: 1,
+        index: finalIterationIndex,
         outcome: 'failed',
       });
       return { outcome: 'failed', loop };
@@ -495,5 +627,25 @@ export class ImplementStepLoop {
       triggerReason,
       triggerOwner: 'use_case',
     });
+  }
+
+  private fingerprintTypecheck(tcResult: TypecheckResult): string {
+    const errors = tcResult.structuredErrors;
+    if (errors !== undefined && errors.length > 0) {
+      return [...errors]
+        .sort((a, b) =>
+          `${a.file}:${a.line}:${a.col}:${a.code}`.localeCompare(
+            `${b.file}:${b.line}:${b.col}:${b.code}`,
+          ),
+        )
+        .map((e) => `${e.file}:${e.line}:${e.col}:${e.code}:${normalizeMessage(e.message)}`)
+        .join('\n');
+    }
+    // Fallback when structured errors aren't available: normalize the raw
+    // output to strip volatile parts (Found N errors, timings, etc.) so an
+    // unchanged error set produces the same fingerprint across retries.
+    // Without this, TSC's per-run noise (line numbers, error counts, summary
+    // lines) defeats stall detection entirely.
+    return normalizeTypecheckOutput(tcResult.output);
   }
 }

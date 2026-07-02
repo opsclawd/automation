@@ -93,9 +93,12 @@ import {
   type FixStepOptions,
   type ImplementStepOptions,
   type TypecheckResult,
+  type TypescriptError,
   type ResolveRefShaFn,
   extractTaskBody,
   parseTaskManifest,
+  parseTypescriptErrors,
+  renderStructuredTypecheckErrors,
   type TaskManifest,
   PHASE_DEFINITIONS,
 } from '@ai-sdlc/application';
@@ -199,11 +202,14 @@ export function buildImplementPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string; repoId: string },
   taskText: string,
   branchName: string,
-  typecheckErrors?: string,
+  typecheckErrors?: TypescriptError[] | string,
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
   const description = taskText || `See plan.md Task ${taskN} for details.`;
+
+  const structuredErrors: TypescriptError[] | undefined =
+    typeof typecheckErrors === 'string' ? parseTypescriptErrors(typecheckErrors) : typecheckErrors;
 
   return [
     `You are implementing Task ${taskN}: ${taskTitle}`,
@@ -243,18 +249,20 @@ export function buildImplementPrompt(
     'You may READ files associated with later tasks for context, but you must',
     'not write, modify, stage, or commit them in this run.',
     '',
-    ...(typecheckErrors
-      ? [
-          '## Typecheck Errors From Previous Attempt',
-          'Your previous implementation failed the typecheck gate. Fix ALL of the',
-          'following errors before committing — do not skip any:',
-          '',
-          '```',
-          typecheckErrors,
-          '```',
-          '',
-        ]
-      : []),
+    ...(structuredErrors !== undefined && structuredErrors.length > 0
+      ? renderStructuredTypecheckErrors(structuredErrors)
+      : typeof typecheckErrors === 'string' && typecheckErrors.length > 0
+        ? [
+            '## Typecheck Errors From Previous Attempt (unparsed output)',
+            '',
+            'Fix ALL of the following errors before committing — do not skip any:',
+            '',
+            '```',
+            typecheckErrors,
+            '```',
+            '',
+          ]
+        : []),
     '## Your Job',
     '',
     `1. Read issue.md, design.md, and plan.md for context. Identify the`,
@@ -1641,7 +1649,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             encoding: 'utf-8',
           });
           if (buildError) {
-            return { outcome: 'fail', output: buildError };
+            return {
+              outcome: 'fail',
+              output: buildError,
+              structuredErrors: parseTypescriptErrors(buildError),
+            };
           }
           return { outcome: 'pass', output: '' };
         } catch (err) {
@@ -1654,6 +1666,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           return {
             outcome: 'fail',
             output: truncated.slice(0, 3000),
+            structuredErrors: parseTypescriptErrors(truncated.slice(0, 3000)),
           };
         }
       };
@@ -1875,6 +1888,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           stepIndex: sctx.stepIndex,
           stepTitle: sctx.stepTitle,
           maxIterations: config.phases.implement.maxIterations,
+          maxTypeCheckRetries: config.phases.implement.maxTypeCheckRetries,
         });
         return { outcome: result.outcome };
       };
@@ -1900,21 +1914,38 @@ export function composeRoot(opts: ComposeOptions): Container {
           console.error('[implement setup] pnpm install failed:', msg, stderr);
           return { ok: false, error: `pnpm install failed: ${msg}${stderr}` };
         }
+
+        // Skip build if the feature branch already has WIP commits — they will
+        // have been built (and any errors surfaced) by the per-step runTypecheck
+        // gate. Install still runs to guard against node_modules drift.
+        let hasWip = false;
         try {
-          execFileSync('pnpm', ['-r', 'build'], {
-            cwd,
-            stdio: ['ignore', 'pipe', 'pipe'],
-            encoding: 'utf-8',
-            timeout: 180_000,
-          });
+          const wipCommits = await gitAdapter.logBetween(cwd, resolvedDefaultBranch, 'HEAD');
+          hasWip = wipCommits.length > 0;
         } catch (err) {
-          const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
-            ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
-            : '';
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('[implement setup] pnpm -r build failed:', msg, stderr);
-          return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
+          console.warn(`[implement setup] logBetween failed; defaulting to fresh build: ${msg}`);
+          hasWip = false;
         }
+
+        if (!hasWip) {
+          try {
+            execFileSync('pnpm', ['-r', 'build'], {
+              cwd,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              encoding: 'utf-8',
+              timeout: 180_000,
+            });
+          } catch (err) {
+            const stderr = (err as NodeJS.ErrnoException & { stderr?: string }).stderr
+              ? `\nstderr: ${(err as NodeJS.ErrnoException & { stderr?: string }).stderr}`
+              : '';
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error('[implement setup] pnpm -r build failed:', msg, stderr);
+            return { ok: false, error: `pnpm -r build failed: ${msg}${stderr}` };
+          }
+        }
+
         return { ok: true };
       };
 

@@ -434,3 +434,57 @@ describe('loadConfig role normalization', () => {
     expect(cfg.agent!.phaseProfiles['review'].profile).toBe('junior');
   });
 });
+
+describe('phases.implement.maxTypeCheckRetries', () => {
+  it('parses maxTypeCheckRetries when provided', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5, maxTypeCheckRetries: 7 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(dir);
+    expect(cfg.phases.implement.maxTypeCheckRetries).toBe(7);
+  });
+
+  it('maxTypeCheckRetries defaults to 5 when omitted', () => {
+    const dir = makeRepo(BASE_CONFIG);
+    const cfg = loadConfig(dir);
+    expect(cfg.phases.implement.maxTypeCheckRetries).toBe(5);
+  });
+
+  it('rejects non-integer maxTypeCheckRetries', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5, maxTypeCheckRetries: 1.5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    expect(() => loadConfig(dir)).toThrow(/maxTypeCheckRetries/);
+  });
+
+  it('rejects maxTypeCheckRetries of 0 (must be positive to retain observability)', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5, maxTypeCheckRetries: 0 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    expect(() => loadConfig(dir)).toThrow(/maxTypeCheckRetries/);
+  });
+});
