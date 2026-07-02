@@ -414,6 +414,12 @@ export interface Container {
 
 export interface ComposeOptions {
   repoRoot: string;
+  /**
+   * Target repository root for worktrees, DB, and git/gh cwd operations.
+   * Defaults to `repoRoot` when unset. Prompts, config, and scripts
+   * always come from `repoRoot` regardless of this value.
+   */
+  targetRepoRoot?: string;
   scriptPath: string;
   baseBranch?: string;
   model?: string;
@@ -674,7 +680,16 @@ export function captureExecOutput(err: unknown): string {
 const DEFAULT_LEASE_TTL_MS = 120_000;
 
 export function composeRoot(opts: ComposeOptions): Container {
-  const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
+  // `targetRoot` is the directory the orchestrator operates ON
+  // (worktrees, DB, git/gh cwd). It is normally the same as the
+  // orchestrator repo, but may be overridden via `opts.targetRepoRoot`
+  // for cross-repo orchestration.
+  //
+  // IMPORTANT: `opts.repoRoot` (not `targetRoot`) is still the source of
+  // truth for prompts, config, and scripts — those always come from the
+  // automation repo, not the target.
+  const targetRoot = opts.targetRepoRoot ?? opts.repoRoot;
+  const runsDir = opts.runsDir ?? join(targetRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
   const baseTmpDir =
     opts.baseTmpDir ?? (envTmpdir ? join(envTmpdir, '.ai-tmp') : join(dirname(runsDir), '.ai-tmp'));
