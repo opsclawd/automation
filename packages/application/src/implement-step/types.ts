@@ -21,12 +21,21 @@ export interface ImplementResult {
 }
 
 export interface ImplementStepOptions {
-  typecheckErrors?: string;
+  typecheckErrors?: TypescriptError[] | string;
+}
+
+export interface TypescriptError {
+  file: string;
+  line: number;
+  col: number;
+  code: string;
+  message: string;
 }
 
 export interface TypecheckResult {
   outcome: 'pass' | 'fail';
   output: string;
+  structuredErrors?: TypescriptError[];
 }
 
 export interface SpecReviewResult {
@@ -73,6 +82,13 @@ export interface ImplementStepLoopDeps {
   events: EventBusPort;
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
+  /**
+   * Stall detection horizon: number of recent fingerprints compared against
+   * the current one when deciding whether to escalate. Larger values catch
+   * longer cyclic regressions but increase the time to detection. Defaults
+   * to 2 in `ImplementStepLoop` when omitted.
+   */
+  stallHistorySize?: number;
   now: () => Date;
   idFactory: () => string;
 }
