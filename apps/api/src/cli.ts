@@ -243,6 +243,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         if (opts.baseBranch !== undefined) options.baseBranch = opts.baseBranch;
         if (opts.model !== undefined) options.model = opts.model;
         if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
+        if (opts.targetRepoRoot !== undefined) options.targetRepoRoot = opts.targetRepoRoot;
         const c = composeRoot(options);
 
         // --- executor validation ---
