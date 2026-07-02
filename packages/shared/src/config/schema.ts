@@ -25,8 +25,10 @@ const phasesSchema = z.object({
     /**
      * The maximum number of typecheck retries during the implement phase.
      * Must be a positive integer (>= 1) to retain proper observability and error logging.
-     * Defaults to 5 when read via configuration.
-     * Programmatic API falls back to 2 when omitted.
+     * Defaults to 5 when read via configuration. Programmatic API (consumers of
+     * `ImplementStepLoopInput` that omit the field) falls back to
+     * `DEFAULT_MAX_TYPE_CHECK_RETRIES` exported from
+     * `@ai-sdlc/application/implement-step-loop`.
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
   }),

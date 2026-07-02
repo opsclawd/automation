@@ -20,6 +20,35 @@ function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+// Shared default for `maxTypeCheckRetries` used by the programmatic API when
+// the field is omitted from ImplementStepLoopInput. The config schema defaults
+// to 5 when read via configuration; the programmatic fallback here is 2 to
+// avoid surprising in-process callers with long retry sequences. Keep in sync
+// with the documented behavior in `packages/shared/src/config/schema.ts`.
+export const DEFAULT_MAX_TYPE_CHECK_RETRIES = 2;
+
+// Stall detection horizon: keep a small history of recent fingerprints so
+// cyclic regressions (A → B → A → B) don't escape detection. Tunable for tests.
+const DEFAULT_STALL_HISTORY_SIZE = 2;
+
+// Strip volatile parts of TSC/build output so unchanged errors produce the
+// same fingerprint across retries. TSC output routinely contains:
+//   - trailing summary lines like `Found N errors.` whose N changes
+//   - working-directory prefixes from `--build` mode
+//   - timestamps and timings
+// We discard those and collapse whitespace.
+function normalizeTypecheckOutput(output: string): string {
+  return output
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => !/^Found \d+ errors?\.?$/i.test(l))
+    .filter((l) => !/^in \d+\.?\d*(ms|s)\s*$/i.test(l))
+    .join('\n')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
 export class ImplementStepLoop {
   constructor(private readonly deps: ImplementStepLoopDeps) {}
 
@@ -73,14 +102,25 @@ export class ImplementStepLoop {
 
     // --- PRE-LOOP: TYPECHECK GATE ---
     let tcResult = await deps.runTypecheck(baseCtx);
-    const maxTypeCheckRetries = input.maxTypeCheckRetries ?? 2;
+    const maxTypeCheckRetries = input.maxTypeCheckRetries ?? DEFAULT_MAX_TYPE_CHECK_RETRIES;
     let typecheckRetryCount = 0;
-    let prevFingerprint: string | null = null;
+    const stallHistory: string[] = [];
 
     while (tcResult.outcome === 'fail' && typecheckRetryCount < maxTypeCheckRetries) {
-      // Stall detection: if same fingerprint as previous attempt, escalate immediately
+      // Iteration index for events: pre-loop implement is iteration 1, first
+      // typecheck retry is iteration 2, etc. This lines up loop.iteration.* events
+      // with the actual step state observed downstream.
+      const iterationIndex = typecheckRetryCount + 2;
+
+      // Stall detection: trigger if the current fingerprint matches ANY of the
+      // last `stallHistorySize` fingerprints, not just the immediately previous
+      // one. This catches cyclic regressions (A → B → A → B → ...) where the
+      // error set oscillates but no forward progress is made.
       const currFingerprint = this.fingerprintTypecheck(tcResult);
-      if (prevFingerprint !== null && currFingerprint === prevFingerprint) {
+      const stallHistorySize = deps.stallHistorySize ?? DEFAULT_STALL_HISTORY_SIZE;
+      const stalled =
+        stallHistory.length > 0 && stallHistory.slice(-stallHistorySize).includes(currFingerprint);
+      if (stalled) {
         this.emit(
           input,
           'step.typecheck.stalled',
@@ -90,6 +130,7 @@ export class ImplementStepLoop {
             index: input.stepIndex,
             attempt: typecheckRetryCount,
             fingerprint: currFingerprint.slice(0, 500),
+            stallHistorySize,
           },
         );
         this.emit(
@@ -103,17 +144,22 @@ export class ImplementStepLoop {
             stalled: true,
           },
         );
-        this.emit(input, 'loop.iteration.started', 'info', 'typecheck stalled', { index: 1 });
+        this.emit(input, 'loop.iteration.started', 'info', 'typecheck stalled', {
+          index: iterationIndex,
+        });
         loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emit(input, 'loop.iteration.completed', 'info', 'step stalled at typecheck gate', {
-          index: 1,
+          index: iterationIndex,
           outcome: 'failed',
         });
         return { outcome: 'failed', loop };
       }
-      prevFingerprint = currFingerprint;
+      stallHistory.push(currFingerprint);
+      if (stallHistory.length > stallHistorySize) {
+        stallHistory.shift();
+      }
 
       typecheckRetryCount += 1;
       this.emit(
@@ -139,7 +185,7 @@ export class ImplementStepLoop {
 
       if (retryImplementResult.agentOutcome !== 'success') {
         this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
-          index: 1,
+          index: iterationIndex,
         });
         loop = startIteration(loop, {
           reviewInvocationId: '',
@@ -148,7 +194,7 @@ export class ImplementStepLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emit(input, 'loop.iteration.completed', 'info', 'implement step failed', {
-          index: 1,
+          index: iterationIndex,
           outcome: 'failed',
         });
         return { outcome: 'failed', loop };
@@ -168,12 +214,15 @@ export class ImplementStepLoop {
           output: tcResult.output.slice(0, 2000),
         },
       );
-      this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', { index: 1 });
+      const finalIterationIndex = typecheckRetryCount + 1;
+      this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', {
+        index: finalIterationIndex,
+      });
       loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
       loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
       deps.loops.update(loop);
       this.emit(input, 'loop.iteration.completed', 'info', 'step failed typecheck gate', {
-        index: 1,
+        index: finalIterationIndex,
         outcome: 'failed',
       });
       return { outcome: 'failed', loop };
@@ -556,6 +605,11 @@ export class ImplementStepLoop {
         .map((e) => `${e.file}:${e.line}:${e.col}:${e.code}:${normalizeMessage(e.message)}`)
         .join('\n');
     }
-    return tcResult.output;
+    // Fallback when structured errors aren't available: normalize the raw
+    // output to strip volatile parts (Found N errors, timings, etc.) so an
+    // unchanged error set produces the same fingerprint across retries.
+    // Without this, TSC's per-run noise (line numbers, error counts, summary
+    // lines) defeats stall detection entirely.
+    return normalizeTypecheckOutput(tcResult.output);
   }
 }

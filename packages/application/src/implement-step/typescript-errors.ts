@@ -2,6 +2,20 @@ import type { TypescriptError } from './types.js';
 
 export type { TypescriptError };
 
+/**
+ * Parses TSC error output into structured records.
+ *
+ * Scope: only the canonical `tsc --noEmit` per-line format
+ *   `path/to/file.ts(line,col): error TSxxxx: message`
+ * is recognized. Output from `tsc -b` (`--build`) and IDE-mediated runs may
+ * emit additional shapes — most notably standalone `error TSxxxx: message`
+ * lines without a file(line,col) prefix (e.g. global "unused" diagnostics)
+ * and multi-project `error: path/to/file.ts(line,col): error TSxxxx:` wrappers.
+ * Those shapes are intentionally NOT parsed here: callers should fall back to
+ * `tcResult.output` for those messages. The stall-detection fingerprint
+ * normalizes the raw output before comparing so an unchanged underlying error
+ * set still produces the same fingerprint across retries.
+ */
 export function parseTypescriptErrors(output: string): TypescriptError[] {
   const pattern = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)$/;
   const results: TypescriptError[] = [];

@@ -991,6 +991,76 @@ describe('ImplementStepLoop', () => {
       expect(out.outcome).toBe('failed');
       expect(implementCalls).toBe(2); // stalled after 1 retry
     });
+
+    it('normalizes output before fingerprinting: stalls when volatile lines change but errors are identical', async () => {
+      // TSC emits `Found N errors.` summaries that change each retry even when
+      // the underlying error set is identical. The fingerprint must normalize
+      // these volatile parts so stall detection still fires.
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runImplement: async () => {
+          implementCalls += 1;
+          return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return {
+            outcome: 'fail',
+            output: `Build failed: fatal error\nFound ${typecheckCalls} error.\nin ${typecheckCalls}00ms`,
+            structuredErrors: [],
+          };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 5,
+      });
+
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(2); // stalled after 1 retry (volatile noise stripped)
+    });
+
+    it('detects cyclic regressions (A → B → A → B → A) using the stall history buffer', async () => {
+      // With stallHistorySize=2, a regression that oscillates between two
+      // distinct error sets should still stall because the current fingerprint
+      // matches one of the previous ones in the ring buffer.
+      let typecheckCalls = 0;
+      let implementCalls = 0;
+      const deps = makeDeps({
+        runImplement: async () => {
+          implementCalls += 1;
+          return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          // Alternating error messages → with single-prev comparison this would
+          // never stall; with a 2-entry history it stalls as soon as one of the
+          // previous fingerprints recurs.
+          const message = typecheckCalls % 2 === 1 ? 'error A' : 'error B';
+          return {
+            outcome: 'fail',
+            output: `build error: ${message}`,
+            structuredErrors: [],
+          };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 5,
+      });
+
+      expect(out.outcome).toBe('failed');
+      // Trace:
+      //   pre-loop implement: impl #1
+      //   typecheck #1 (A)  — history=[]   — push to [A]   — retry → impl #2
+      //   typecheck #2 (B)  — history=[A] — push to [A,B] — retry → impl #3
+      //   typecheck #3 (A)  — A ∈ [A,B]   — STALL
+      expect(typecheckCalls).toBe(3);
+      expect(implementCalls).toBe(3);
+    });
   });
 
   describe('parity[#403]: typecheck injection into reviewer prompts', () => {

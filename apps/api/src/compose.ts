@@ -1922,7 +1922,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         try {
           const wipCommits = await gitAdapter.logBetween(cwd, resolvedDefaultBranch, 'HEAD');
           hasWip = wipCommits.length > 0;
-        } catch {
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[implement setup] logBetween failed; defaulting to fresh build: ${msg}`);
           hasWip = false;
         }
 

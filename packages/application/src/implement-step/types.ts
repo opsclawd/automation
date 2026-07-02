@@ -82,6 +82,13 @@ export interface ImplementStepLoopDeps {
   events: EventBusPort;
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
+  /**
+   * Stall detection horizon: number of recent fingerprints compared against
+   * the current one when deciding whether to escalate. Larger values catch
+   * longer cyclic regressions but increase the time to detection. Defaults
+   * to 2 in `ImplementStepLoop` when omitted.
+   */
+  stallHistorySize?: number;
   now: () => Date;
   idFactory: () => string;
 }

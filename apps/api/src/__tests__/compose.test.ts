@@ -1108,8 +1108,7 @@ exit 1
 
       const logBetweenSpy = vi
         .spyOn(GitWorktreeAdapter.prototype, 'logBetween')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .mockResolvedValue([{ sha: '123', message: 'wip' }] as any);
+        .mockResolvedValue(['wip']);
       const execSpy = vi.mocked(childProcess.execFileSync);
       execSpy.mockImplementation(() => '');
 
@@ -1127,6 +1126,49 @@ exit 1
 
       logBetweenSpy.mockRestore();
       execSpy.mockRestore();
+    });
+
+    it('falls back to a fresh build (and logs a warning) when logBetween throws', async () => {
+      const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+      writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(fakeAgentConfig));
+      const scriptPath = fakeScript(0);
+      const container = composeRoot({ repoRoot: root, scriptPath });
+
+      const implementHandler = container.phaseRegistry.get(PhaseName('implement')) as unknown as {
+        opts: {
+          setup: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
+        };
+      };
+      const setup = implementHandler.opts.setup;
+      expect(setup).toBeDefined();
+
+      const logBetweenSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'logBetween')
+        .mockRejectedValue(new Error('fatal git error: broken repo'));
+      const execSpy = vi.mocked(childProcess.execFileSync);
+      execSpy.mockImplementation(() => '');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      const res = await setup('/some/cwd');
+      expect(res).toEqual({ ok: true });
+
+      // pnpm install always runs
+      expect(execSpy).toHaveBeenCalledWith(
+        'pnpm',
+        ['install', '--frozen-lockfile'],
+        expect.any(Object),
+      );
+      // pnpm -r build ALSO runs because logBetween threw — hasWip defaults to false
+      expect(execSpy).toHaveBeenCalledWith('pnpm', ['-r', 'build'], expect.any(Object));
+      // The swallowed error is logged at warn level so operators can diagnose
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[implement setup] logBetween failed'),
+      );
+      expect(warnSpy.mock.calls[0]?.[0]).toContain('fatal git error: broken repo');
+
+      logBetweenSpy.mockRestore();
+      execSpy.mockRestore();
+      warnSpy.mockRestore();
     });
   });
 
