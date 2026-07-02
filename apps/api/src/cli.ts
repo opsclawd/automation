@@ -1,7 +1,8 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import {
@@ -198,6 +199,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     )
     .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
       try {
+        // Validate --target-repo-root early so composeRoot never sees a
+        // bad path. Relative paths are resolved against process.cwd().
+        let targetRepoRoot: string | undefined;
+        if (opts.targetRepoRoot !== undefined) {
+          targetRepoRoot = resolve(process.cwd(), opts.targetRepoRoot);
+          if (!existsSync(targetRepoRoot) || !statSync(targetRepoRoot).isDirectory()) {
+            console.error(
+              `Error: --target-repo-root is not an existing directory: ${targetRepoRoot}`,
+            );
+            process.exit(EXIT_USER_ERROR);
+          }
+          try {
+            execFileSync('git', ['-C', targetRepoRoot, 'rev-parse', '--git-dir'], {
+              stdio: 'pipe',
+            });
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT') {
+              console.error(`Error: git CLI not found; cannot validate --target-repo-root.`);
+            } else {
+              console.error(
+                `Error: --target-repo-root is not inside a git working tree: ${targetRepoRoot}`,
+              );
+            }
+            process.exit(EXIT_USER_ERROR);
+          }
+        }
+
         const repoRoot = findRepoRoot(process.cwd());
         const scriptPath = opts.script
           ? isAbsolute(opts.script)
