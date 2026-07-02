@@ -10,7 +10,6 @@ import {
   writeFileSync,
   copyFileSync,
 } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   openDatabase,
@@ -36,6 +35,7 @@ import {
   GitWorktreeAdapter,
   WorkerLeaseRepository,
   JobQueueRepository,
+  createFilesystemArtifactStore,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -68,7 +68,6 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
-  type Artifact,
   ArtifactNotFoundError,
   type ArtifactStore,
   type StartIssueRunDeps,
@@ -98,6 +97,7 @@ import {
   extractTaskBody,
   parseTaskManifest,
   type TaskManifest,
+  PHASE_DEFINITIONS,
 } from '@ai-sdlc/application';
 import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
 import {
@@ -117,6 +117,7 @@ import {
   ClaudeCodeAgentAdapter,
   CodexAgentAdapter,
 } from '@ai-sdlc/infrastructure';
+import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
@@ -865,6 +866,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   }
 
   let agentRuntime: AgentRuntimeRouter | undefined;
+  let capturingAgent: import('@ai-sdlc/application').AgentPort | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   let reviewFixLoop: ReviewFixLoop | undefined;
   let validateFixLoop: ValidateFixLoop | undefined;
@@ -925,6 +927,42 @@ export function composeRoot(opts: ComposeOptions): Container {
       resolveProfileForPhaseBound = resolveProfileBound;
 
       const router = agentRuntime;
+      if (!router) {
+        throw new ConfigError('agent runtime router was not initialized');
+      }
+      const phaseOutputs: Record<string, string[]> = Object.fromEntries(
+        Object.entries(PHASE_DEFINITIONS).map(([phaseName, definition]) => [
+          phaseName,
+          definition.outputs,
+        ]),
+      );
+      const optionalOrchestratorArtifacts = [
+        'task-manifest.json',
+        'validation.result',
+        'validate.log',
+        'validate/validation-result.json',
+        'code-review.md',
+        'review.md',
+        'result.json',
+        'compound.md',
+        'pr-summary.md',
+        'pr-url.txt',
+      ];
+      const artifactStoreForRun = (runUuid: string, worktreeRoot: string): ArtifactStore => {
+        const runRecord = runRepository.findByUuid(runUuid);
+        const durableRunId = runRecord?.displayId ?? runUuid;
+        return createFilesystemArtifactStore({
+          durableRoot: join(runsDir, durableRunId, 'phase-artifacts'),
+          worktreeRoot,
+        });
+      };
+      capturingAgent = createArtifactCapturingAgent({
+        agent: router,
+        artifactStoreForRequest: (request) => artifactStoreForRun(request.runId, request.cwd),
+        phaseOutputs,
+        optionalArtifacts: optionalOrchestratorArtifacts,
+      });
+      const artifactAgent = capturingAgent ?? router;
       const reviewProfileName: string =
         config.agent.phaseProfiles['whole-pr-review']?.profile ?? 'opencode-frontier';
       const fixProfileName: string =
@@ -964,7 +1002,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         })
           .toString()
           .trim();
-        const result = await router.invoke({
+        const result = await artifactAgent.invoke({
           profile: AgentProfileName(reviewProfileName),
           promptPath,
           expectedArtifacts: ['result.json', 'code-review.md'],
@@ -976,15 +1014,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
-        const store: ArtifactStore = {
-          async read(_runId: string, relativePath: string): Promise<string> {
-            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
-          },
-          write: async () => {
-            throw new Error('not implemented');
-          },
-          list: async () => [],
-        };
+        const store = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         // External runtimes (antigravity etc.) do not populate resultJsonPath
         // on the invocation row even when result.json was written. Fall back
         // to the expected artifact name so readReviewVerdict can find it.
@@ -996,7 +1026,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = patchedInv
           ? await readReviewVerdict(
               patchedInv,
-              { artifacts: store, agent: router },
+              { artifacts: store, agent: artifactAgent },
               {
                 blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
               },
@@ -1082,7 +1112,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         })
           .toString()
           .trim();
-        const result = await router.invoke({
+        const result = await artifactAgent.invoke({
           profile: AgentProfileName(profile),
           promptPath,
           expectedArtifacts: ['result.json'],
@@ -1100,22 +1130,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
-        const store: ArtifactStore = {
-          async read(_runId: string, relativePath: string): Promise<string> {
-            return await readFile(join(ctx.cwd, relativePath), 'utf-8');
-          },
-          write: async () => {
-            throw new Error('not implemented');
-          },
-          list: async () => [],
-        };
+        const store = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const patchedFixInv = inv?.resultJsonPath
           ? inv
           : inv
             ? { ...inv, resultJsonPath: 'result.json' }
             : inv;
         const verdict = patchedFixInv
-          ? await readFixVerdict(patchedFixInv, { artifacts: store, agent: router })
+          ? await readFixVerdict(patchedFixInv, { artifacts: store, agent: artifactAgent })
           : { ok: false as const, detail: 'no invocation row' };
         // Reject done_with_fixes when git commit did not advance the HEAD SHA.
         // The fixer may have written result.json but failed to commit (e.g.
@@ -1195,7 +1217,12 @@ export function composeRoot(opts: ComposeOptions): Container {
         });
         const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
         if (vr.passed) {
-          writeFileSync(join(ctx.cwd, 'validation.result'), 'passed\n', 'utf-8');
+          await artifactStoreForRun(String(ctx.runId), ctx.cwd).write({
+            runId: String(ctx.runId),
+            phaseId: 'validate',
+            relativePath: 'validation.result',
+            contents: 'passed\n',
+          });
         }
         return {
           validationRunId: vr.validationRun.id,
@@ -1320,9 +1347,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         idFactory: () => randomUUID(),
         cleanArtifacts: async (ctx) => {
           if (typeof gitAdapter.cleanOrchestratorArtifacts === 'function') {
+            const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
             let savedValidationResult: string | undefined;
             try {
-              savedValidationResult = await readFile(join(ctx.cwd, 'validation.result'), 'utf-8');
+              savedValidationResult = await artifacts.read(String(ctx.runId), 'validation.result');
             } catch {
               // not present — nothing to restore
             }
@@ -1331,7 +1359,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               opts.baseBranch ?? resolvedDefaultBranch,
             );
             if (savedValidationResult !== undefined && savedValidationResult.trim() !== '') {
-              writeFileSync(join(ctx.cwd, 'validation.result'), savedValidationResult, 'utf-8');
+              await artifacts.write({
+                runId: String(ctx.runId),
+                phaseId: 'validate',
+                relativePath: 'validation.result',
+                contents: savedValidationResult,
+              });
             }
           }
         },
@@ -1410,49 +1443,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       const implFixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
 
-      const makeArtifactStore = (cwd: string): ArtifactStore => ({
-        async read(_runId: string, relativePath: string): Promise<string> {
-          try {
-            return await readFile(join(cwd, relativePath), 'utf-8');
-          } catch (e) {
-            if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
-              throw new ArtifactNotFoundError(_runId, relativePath);
-            }
-            throw e;
-          }
-        },
-        write: async (input): Promise<Artifact> => {
-          const absolutePath = join(cwd, input.relativePath);
-          mkdirSync(dirname(absolutePath), { recursive: true });
-          writeFileSync(absolutePath, input.contents, 'utf-8');
-          const stats = statSync(absolutePath);
-          return {
-            runId: input.runId,
-            ...(input.phaseId !== undefined ? { phaseId: input.phaseId } : {}),
-            relativePath: input.relativePath,
-            absolutePath,
-            bytes: stats.size,
-            createdAt: stats.mtime,
-          };
-        },
-        list: async (runId: string): Promise<Artifact[]> => {
-          const entries = readdirSync(cwd, { withFileTypes: true });
-          const results: Artifact[] = [];
-          for (const entry of entries) {
-            if (entry.isFile()) {
-              const stats = statSync(join(cwd, entry.name));
-              results.push({
-                runId,
-                relativePath: entry.name,
-                absolutePath: join(cwd, entry.name),
-                bytes: stats.size,
-                createdAt: stats.mtime,
-              });
-            }
-          }
-          return results;
-        },
-      });
+      const makeArtifactStore = (runUuid: string, cwd: string): ArtifactStore =>
+        artifactStoreForRun(runUuid, cwd);
 
       const buildContext = (run: Run): PhaseHandlerContext => {
         const cwd = join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
@@ -1464,10 +1456,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             repoFullName: resolvedRepoFullName ?? '',
             issueNumber: run.issueNumber,
             cwd,
-            artifacts: makeArtifactStore(cwd),
+            artifacts: makeArtifactStore(run.uuid, cwd),
             github: new GhCliAdapter(),
             git: gitAdapter,
-            agent: agentRuntime!,
+            agent: artifactAgent,
             events: eventBus,
             now: () => new Date(),
           },
@@ -1486,28 +1478,27 @@ export function composeRoot(opts: ComposeOptions): Container {
         const runDir = run?.displayId ?? String(ctx.runId);
         const issueNumber = run?.issueNumber ?? 0;
         const branchName = `ai/issue-${issueNumber}`;
-        const planPath = join(ctx.cwd, 'plan.md');
+        const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
         let manifest: TaskManifest | undefined;
-        const manifestPath = join(ctx.cwd, 'task-manifest.json');
-        if (existsSync(manifestPath)) {
-          try {
-            const manifestJson = readFileSync(manifestPath, 'utf-8');
-            const parsed = parseTaskManifest(manifestJson);
-            if (parsed.success) {
-              manifest = parsed.manifest;
-            } else {
-              persistingEventBusForLoop.publish(String(ctx.runId), {
-                runId: String(ctx.runId),
-                level: 'error',
-                type: 'agent.invoke_failed',
-                message: `Failed to parse task-manifest.json: ${parsed.error}`,
-                timestamp: new Date().toISOString(),
-                metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
-              });
-              return { invocationId: '', agentOutcome: 'failed' as const };
-            }
-          } catch (err) {
+        try {
+          const manifestJson = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+          const parsed = parseTaskManifest(manifestJson);
+          if (parsed.success) {
+            manifest = parsed.manifest;
+          } else {
+            persistingEventBusForLoop.publish(String(ctx.runId), {
+              runId: String(ctx.runId),
+              level: 'error',
+              type: 'agent.invoke_failed',
+              message: `Failed to parse task-manifest.json: ${parsed.error}`,
+              timestamp: new Date().toISOString(),
+              metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            });
+            return { invocationId: '', agentOutcome: 'failed' as const };
+          }
+        } catch (err) {
+          if (!(err instanceof ArtifactNotFoundError)) {
             const msg = err instanceof Error ? err.message : String(err);
             persistingEventBusForLoop.publish(String(ctx.runId), {
               runId: String(ctx.runId),
@@ -1521,21 +1512,46 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         }
 
-        const taskTextResult = extractTaskText(planPath, ctx.stepIndex, manifest);
-        if (!taskTextResult.ok) {
+        let planMd: string;
+        try {
+          planMd = await artifacts.read(String(ctx.runId), 'plan.md');
+        } catch (err) {
+          const msg =
+            err instanceof ArtifactNotFoundError
+              ? 'plan.md not found in artifact store'
+              : `Failed to read plan.md: ${err instanceof Error ? err.message : String(err)}`;
           persistingEventBusForLoop.publish(String(ctx.runId), {
             runId: String(ctx.runId),
             level: 'error',
             type: 'agent.invoke_failed',
-            message:
-              taskTextResult.error || `Task ${ctx.stepIndex} has no matching heading in plan.md`,
+            message: msg,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
 
-        const taskText = taskTextResult.text;
+        const task = manifest?.tasks.find((t) => t.n === ctx.stepIndex);
+        const taskTextResult = extractTaskBody(planMd, {
+          taskNumber: ctx.stepIndex,
+          ...(task?.title !== undefined ? { title: task.title } : {}),
+        });
+        if (!taskTextResult.ok) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'error',
+            type: 'agent.invoke_failed',
+            message:
+              taskTextResult.reason === 'missing_heading'
+                ? `Task ${ctx.stepIndex} has no matching heading in plan.md`
+                : `Task ${ctx.stepIndex} is only present inside a balanced code fence`,
+            timestamp: new Date().toISOString(),
+            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+          });
+          return { invocationId: '', agentOutcome: 'failed' as const };
+        }
+
+        const taskText = taskTextResult.body.trim();
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);
@@ -1549,7 +1565,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
-          result = await router.invoke({
+          result = await artifactAgent.invoke({
             profile: AgentProfileName(implementProfileName),
             promptPath,
             expectedArtifacts: ['implementation-log.md'],
@@ -1654,18 +1670,19 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? "## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nBUILD GREEN OVERRIDES THE PLAN'S LETTER: a plan-letter deviation that compiles is acceptable; do NOT return SPEC_FAIL for it."
             : `## TYPECHECK RESULT (do not re-run — read-only phase)\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors (last 100 lines):\n${tcResult.output}\n\nSurface the type errors; do NOT proceed to plan-letter checks until the type error is resolved.`;
 
+        const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         let implReport = '';
         try {
-          implReport = readFileSync(join(ctx.cwd, 'implementation-log.md'), 'utf-8');
+          implReport = await artifacts.read(String(ctx.runId), 'implementation-log.md');
         } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+          if (!(err instanceof ArtifactNotFoundError)) throw err;
         }
         const reviewPrompt = buildSpecReviewPrompt(ctx, typecheckSection, implReport);
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
-          result = await router.invoke({
+          result = await artifactAgent.invoke({
             profile: AgentProfileName(specReviewProfileName),
             promptPath,
             expectedArtifacts: ['result.json'],
@@ -1692,7 +1709,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
         const verdict = await readReviewVerdict(
           patched,
-          { artifacts: makeArtifactStore(ctx.cwd), agent: router },
+          { artifacts, agent: artifactAgent },
           { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
@@ -1720,7 +1737,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
-          result = await router.invoke({
+          result = await artifactAgent.invoke({
             profile: AgentProfileName(qualityReviewProfileName),
             promptPath,
             expectedArtifacts: ['result.json'],
@@ -1745,9 +1762,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const verdict = await readReviewVerdict(
           patched,
-          { artifacts: makeArtifactStore(ctx.cwd), agent: router },
+          { artifacts, agent: artifactAgent },
           { blockOnSeverity: config.phases.reviewFix.blockOnSeverity },
         );
         if (!verdict.ok) return { invocationId, agentOutcome: 'contract_violation' as const };
@@ -1783,7 +1801,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let invokeResult;
         try {
-          invokeResult = await router.invoke({
+          invokeResult = await artifactAgent.invoke({
             profile: AgentProfileName(profile),
             promptPath,
             expectedArtifacts: ['result.json'],
@@ -1814,9 +1832,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const fixVerdict = await readFixVerdict(patched, {
-          artifacts: makeArtifactStore(ctx.cwd),
-          agent: router,
+          artifacts,
+          agent: artifactAgent,
         });
         return {
           invocationId,
@@ -2101,12 +2120,16 @@ export function composeRoot(opts: ComposeOptions): Container {
         'agent config required for PR review poller; configure .ai-sdlc/config.yaml',
       );
     }
+    const prReviewAgent = capturingAgent ?? agentRuntime;
+    if (!prReviewAgent) {
+      throw new ConfigError('agent runtime router was not initialized');
+    }
     const ghAdapter = new GhCliAdapter({});
 
     const processor = new ProcessPrReviewComments({
       github: ghAdapter,
       git: gitAdapter,
-      agent: agentRuntime,
+      agent: prReviewAgent,
       prReviewRepo: prReviewRepository,
       renderTaskPrompt: async ({
         cwd,
@@ -2228,7 +2251,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       },
       verifyCodeChange: createVerifyCodeChange({
-        agent: agentRuntime,
+        agent: prReviewAgent,
         resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
         idFactory: () => randomUUID(),
         renderVerifyPrompt: async ({
