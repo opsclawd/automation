@@ -222,4 +222,13 @@ describe('WorkerScheduler', () => {
     expect(deps.recoverableRunIds.has(RunId('run-2'))).toBe(true);
     expect(deps.recoverableRunIds.has(RunId('run-3'))).toBe(false);
   });
+
+  it('throws error when a worker loop rejects', async () => {
+    const queue = makeQueue({});
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, queue, 0);
+    vi.mocked(workerLoop).mockRejectedValueOnce(new Error('worker loop failure'));
+    await expect(
+      scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
+    ).rejects.toThrow('worker loop failure');
+  });
 });

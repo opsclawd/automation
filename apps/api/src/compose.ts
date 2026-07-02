@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import {
   existsSync,
   mkdirSync,
@@ -2167,6 +2168,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           isWorkerAlive: (workerId) => {
             const w = workerRegistry.findById(workerId);
             if (!w) return false;
+            if (w.hostname !== os.hostname()) {
+              return true;
+            }
             return checkPid(w.processId);
           },
           findRun: (runId) => runRepository.findByUuid(runId) ?? undefined,

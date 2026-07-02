@@ -1716,12 +1716,11 @@ describe('CLI run --executor ts', () => {
     }
   });
 
-  it('exits 2 when insertIfNoActive throws (internal error, scheduler never started)', async () => {
+  it('exits 1 when insertIfNoActive throws (user error, scheduler never started)', async () => {
     // The new path calls c.runRepository.insertIfNoActive(run) before starting
     // the scheduler. If it throws (e.g. an active run already exists for the
-    // same repo+issue), the scheduler is never started. The throw escapes the
-    // inner try/catch and lands in the outer catch, which exits with
-    // EXIT_INTERNAL_ERROR (2).
+    // same repo+issue), the scheduler is never started. The throw is caught
+    // by the inner try/catch, which exits with EXIT_USER_ERROR (1).
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-insertfail-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     writeFileSync(
@@ -1788,8 +1787,8 @@ describe('CLI run --executor ts', () => {
       ]);
 
       // insertIfNoActive throws before the scheduler is started, so the throw
-      // escapes the inner try/catch and lands in the outer catch (exit 2).
-      expect(exitSpy.mock.calls[0]?.[0]).toBe(2);
+      // is caught by the inner try/catch (exit 1).
+      expect(exitSpy.mock.calls[0]?.[0]).toBe(1);
       expect(insertSpy).toHaveBeenCalledOnce();
 
       insertSpy.mockRestore();

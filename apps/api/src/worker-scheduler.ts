@@ -50,7 +50,12 @@ export class WorkerScheduler {
       const recoverableRunIds = buildRecoverableRunIds(this.queue, this.baseDeps.repos);
       const deps: WorkerLoopDeps = { ...this.baseDeps, recoverableRunIds };
 
-      await Promise.allSettled(this.workerIds.map((wid) => workerLoop(wid, deps)));
+      const results = await Promise.allSettled(this.workerIds.map((wid) => workerLoop(wid, deps)));
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          throw result.reason;
+        }
+      }
 
       const updated = this.queue.findById(jobId);
       if (!updated || isTerminal(updated.status)) return;

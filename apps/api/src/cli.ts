@@ -252,68 +252,78 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             startedAt,
           });
 
-          c.runRepository.insertIfNoActive(run);
-
           const jobId = JobId(randomUUID());
-          const job = createJob({
-            id: jobId,
-            runId: RunId(run.uuid),
-            repoId,
-            issueNumber: IssueNumber(opts.issue),
-            priority: 0,
-            createdAt: startedAt,
-          });
-          c.jobQueue.enqueue({ job });
-
           const workerId = WorkerId(`cli-${process.pid}`);
-          c.workerRegistry.register(
-            createWorker({
-              id: workerId,
-              hostname: os.hostname(),
-              processId: process.pid,
-              now: startedAt,
-            }),
-          );
-
           const abortController = new AbortController();
 
           let unsubscribe: (() => void) | undefined;
-          if (tee) {
-            unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
-              console.error(`[ts] ${event.message}`);
-            });
-          }
-
-          const handleSignal = (signal: string, exitCode: number) => {
-            abortController.abort();
-            const currentJob = c.jobQueue.findById(jobId);
-            if (currentJob && !['succeeded', 'failed', 'cancelled'].includes(currentJob.status)) {
-              c.jobQueue.markCancelled(jobId, new Date());
-            }
-            const currentRun = c.runRepository.findByUuid(run.uuid);
-            if (currentRun && currentRun.status === 'running') {
-              c.runRepository.update(run.uuid, {
-                status: 'cancelled',
-                completedAt: new Date(),
-                failureReason: `interrupted by ${signal}`,
-              });
-            }
-            unsubscribe?.();
-            process.exit(exitCode);
-          };
-
-          const sigintHandler = () => handleSignal('SIGINT', EXIT_SIGINT);
-          const sigtermHandler = () => handleSignal('SIGTERM', EXIT_SIGTERM);
-          process.once('SIGINT', sigintHandler);
-          process.once('SIGTERM', sigtermHandler);
-
-          const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps, c.jobQueue);
+          let sigintHandler: (() => void) | undefined;
+          let sigtermHandler: (() => void) | undefined;
 
           try {
+            c.runRepository.insertIfNoActive(run);
+
+            const job = createJob({
+              id: jobId,
+              runId: RunId(run.uuid),
+              repoId,
+              issueNumber: IssueNumber(opts.issue),
+              priority: 0,
+              createdAt: startedAt,
+            });
+            c.jobQueue.enqueue({ job });
+
+            c.workerRegistry.register(
+              createWorker({
+                id: workerId,
+                hostname: os.hostname(),
+                processId: process.pid,
+                now: startedAt,
+              }),
+            );
+
+            if (tee) {
+              unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
+                console.error(`[ts] ${event.message}`);
+              });
+            }
+
+            const handleSignal = (signal: string, exitCode: number) => {
+              abortController.abort();
+              const currentJob = c.jobQueue.findById(jobId);
+              if (currentJob && !['succeeded', 'failed', 'cancelled'].includes(currentJob.status)) {
+                c.jobQueue.markCancelled(jobId, new Date());
+              }
+              const currentRun = c.runRepository.findByUuid(run.uuid);
+              if (currentRun && currentRun.status === 'running') {
+                c.runRepository.update(run.uuid, {
+                  status: 'cancelled',
+                  completedAt: new Date(),
+                  failureReason: `interrupted by ${signal}`,
+                });
+              }
+              try {
+                c.workerLeaseRepository.release(repoId, workerId);
+              } catch (err) {
+                console.error(
+                  `Failed to release lease on exit: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              }
+              unsubscribe?.();
+              process.exit(exitCode);
+            };
+
+            sigintHandler = () => handleSignal('SIGINT', EXIT_SIGINT);
+            sigtermHandler = () => handleSignal('SIGTERM', EXIT_SIGTERM);
+            process.once('SIGINT', sigintHandler);
+            process.once('SIGTERM', sigtermHandler);
+
+            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps, c.jobQueue);
+
             await scheduler.runUntilComplete(jobId, abortController.signal);
 
-            process.off('SIGINT', sigintHandler);
-            process.off('SIGTERM', sigtermHandler);
+            if (sigintHandler) process.off('SIGINT', sigintHandler);
+            if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
 
             const finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
             const finalJob = c.jobQueue.findById(jobId);
@@ -341,8 +351,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               finalJob?.status === 'succeeded';
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
-            process.off('SIGINT', sigintHandler);
-            process.off('SIGTERM', sigtermHandler);
+            if (sigintHandler) process.off('SIGINT', sigintHandler);
+            if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
             unsubscribe?.();
             console.error(err instanceof Error ? err.message : String(err));
             process.exit(EXIT_USER_ERROR);
