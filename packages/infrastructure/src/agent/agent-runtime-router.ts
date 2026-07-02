@@ -29,6 +29,15 @@ export interface AgentRuntimeRouterOptions {
   env?: Record<string, string | undefined>;
 }
 
+interface TriggerClassification {
+  reason: string;
+  detail?: string;
+}
+
+function truncate(s: string, max = 200): string {
+  return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
 export class AgentRuntimeRouter implements AgentPort {
   private readonly clock: () => Date;
   private readonly idFactory: () => string;
@@ -285,7 +294,8 @@ export class AgentRuntimeRouter implements AgentPort {
         if (fallbackProfile) {
           const fallbackAdapter = this.opts.adapters[fallbackProfile.runtime];
           if (fallbackAdapter) {
-            const triggerReason = this.determineTriggerReason(result);
+            const { reason: triggerReason, detail: triggerDetail } =
+              this.determineTriggerReason(result);
 
             const { abortSignal: _abortSignal, ...rest } = request;
             const fallbackRequest: AgentInvocationRequest = {
@@ -301,6 +311,7 @@ export class AgentRuntimeRouter implements AgentPort {
               fallbackProfileName,
               triggerReason,
               'router',
+              triggerDetail,
             );
 
             const { provider: fbEffectiveProvider, model: fbEffectiveModel } =
@@ -367,10 +378,10 @@ export class AgentRuntimeRouter implements AgentPort {
           if (result.outcome === 'failed') return true;
           break;
         case 'token_limit_exceeded':
-          if (result.outcome === 'failed' && isTokenLimitError(result)) return true;
+          if (result.outcome === 'failed' && isTokenLimitError(result) != null) return true;
           break;
         case 'quota_exceeded':
-          if (result.outcome === 'failed' && isQuotaError(result)) return true;
+          if (result.outcome === 'failed' && isQuotaError(result) != null) return true;
           break;
         case 'provider_error':
           if (
@@ -396,32 +407,35 @@ export class AgentRuntimeRouter implements AgentPort {
    *  because this function returns trigger reasons unconditionally for
    *  `outcome='failed'` without checking whether the trigger is actually
    *  configured in the phase's `fallbackTriggers` set. */
-  private determineTriggerReason(result: AgentInvocationResult): string {
-    if (result.outcome === 'timeout') return 'timeout';
+  private determineTriggerReason(result: AgentInvocationResult): TriggerClassification {
+    if (result.outcome === 'timeout') return { reason: 'timeout' };
     if (result.outcome === 'contract_violation') {
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROMPT_BUDGET_EXCEEDED)) {
-        return 'prompt_budget_exceeded';
+        return { reason: 'prompt_budget_exceeded' };
       }
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)) {
-        return 'missing_required_artifact';
+        return { reason: 'missing_required_artifact' };
       }
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.INVALID_RESULT_JSON)) {
-        return 'invalid_result_json';
+        return { reason: 'invalid_result_json' };
       }
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.NO_OUTPUT)) {
-        return 'no_output';
+        return { reason: 'no_output' };
       }
-      return 'contract_violation';
+      return { reason: 'contract_violation' };
     }
     if (result.outcome === 'failed') {
-      if (isTokenLimitError(result)) return 'token_limit_exceeded';
-      if (isQuotaError(result)) return 'quota_exceeded';
+      const tokenDetail = isTokenLimitError(result);
+      if (tokenDetail != null)
+        return { reason: 'token_limit_exceeded', detail: truncate(tokenDetail) };
+      const quotaDetail = isQuotaError(result);
+      if (quotaDetail != null) return { reason: 'quota_exceeded', detail: truncate(quotaDetail) };
       if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
-        return 'provider_error';
+        return { reason: 'provider_error' };
       }
-      return 'runtime_error';
+      return { reason: 'runtime_error' };
     }
-    return 'unknown';
+    return { reason: 'unknown' };
   }
 
   private effectiveProfile(p: { provider: string; model: string; variant?: string | undefined }): {
@@ -443,19 +457,22 @@ export class AgentRuntimeRouter implements AgentPort {
     toProfile: string,
     triggerReason: string,
     triggerOwner: string,
+    triggerDetail?: string,
   ): void {
     if (!this.opts.eventBus) return;
+    const detail = triggerDetail ? ` — "${triggerDetail}"` : '';
     const event: OrchestratorEvent = {
       runId,
       level: 'warn',
       type: 'phase.fallback.escalated',
-      message: `Fallback from '${fromProfile}' to '${toProfile}' (reason: ${triggerReason}, owner: ${triggerOwner})`,
+      message: `Fallback from '${fromProfile}' to '${toProfile}' (reason: ${triggerReason}${detail}, owner: ${triggerOwner})`,
       timestamp: this.clock().toISOString(),
       metadata: {
         fromProfile,
         toProfile,
         triggerReason,
         triggerOwner,
+        ...(triggerDetail !== undefined ? { triggerDetail } : {}),
       },
     };
     this.opts.eventBus.publish(runId, event);
@@ -474,21 +491,21 @@ export function normalizeRoutingPhase(phaseId: string): string {
   return phaseId.replace(/(-task)?-\d+$/, '');
 }
 
-function isTokenLimitError(result: AgentInvocationResult): boolean {
+function isTokenLimitError(result: AgentInvocationResult): string | null {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
-    return testTokenLimitPatterns(stderr, { maxLines: 2000 }) !== null;
+    return testTokenLimitPatterns(stderr, { maxLines: 2000 });
   } catch {
-    return false;
+    return null;
   }
 }
 
-function isQuotaError(result: AgentInvocationResult): boolean {
+function isQuotaError(result: AgentInvocationResult): string | null {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
-    return testQuotaPatterns(stderr, { maxLines: 2000 }) !== null;
+    return testQuotaPatterns(stderr, { maxLines: 2000 });
   } catch {
-    return false;
+    return null;
   }
 }
 
