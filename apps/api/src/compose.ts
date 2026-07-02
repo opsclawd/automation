@@ -2359,7 +2359,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         },
         extractVerifyResult: async ({ resultJsonPath, resultDir }) => {
           try {
-            const absPath = resultJsonPath ?? join(resultDir, 'result.json');
+            const absPath = join(resultDir, resultJsonPath ?? 'result.json');
             const raw = readFileSync(absPath, 'utf-8');
             const parsed = JSON.parse(raw);
             if (typeof parsed.pass === 'boolean' && typeof parsed.reason === 'string') {
