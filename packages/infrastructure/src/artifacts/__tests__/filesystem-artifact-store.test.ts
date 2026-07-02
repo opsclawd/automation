@@ -82,7 +82,7 @@ describe('createFilesystemArtifactStore', () => {
     }
   });
 
-  it('lists durable and worktree artifacts recursively', async () => {
+  it('lists only durable artifacts, not worktree files', async () => {
     const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
     try {
       mkdirSync(join(durableRoot, 'validate'), { recursive: true });
@@ -92,13 +92,14 @@ describe('createFilesystemArtifactStore', () => {
         '{"passed":true}',
         'utf8',
       );
+      // worktree file should NOT appear in list() — walking the full worktree
+      // would enumerate source files and node_modules as artifacts
       writeFileSync(join(worktreeRoot, 'notes', 'todo.md'), 'todo', 'utf8');
 
       const store = createFilesystemArtifactStore({ durableRoot, worktreeRoot });
       const artifacts = await store.list('run-1');
 
       expect(artifacts.map((artifact) => artifact.relativePath)).toEqual([
-        'notes/todo.md',
         'validate/validation-result.json',
       ]);
     } finally {
@@ -106,7 +107,7 @@ describe('createFilesystemArtifactStore', () => {
     }
   });
 
-  it('prefers durable metadata when list finds the same relative path in both roots', async () => {
+  it('returns durable artifact when same path exists in both roots', async () => {
     const { baseDir, durableRoot, worktreeRoot } = createTempRoots();
     try {
       mkdirSync(durableRoot, { recursive: true });

@@ -79,23 +79,11 @@ export function createFilesystemArtifactStore(
     },
 
     async list(runId: string): Promise<Artifact[]> {
-      const artifacts = new Map<string, Artifact>();
-
-      const [durableArtifacts, worktreeArtifacts] = await Promise.all([
-        listRootArtifacts(durableRoot, runId),
-        listRootArtifacts(worktreeRoot, runId),
-      ]);
-
-      for (const artifact of durableArtifacts) {
-        artifacts.set(artifact.relativePath, artifact);
-      }
-      for (const artifact of worktreeArtifacts) {
-        if (!artifacts.has(artifact.relativePath)) {
-          artifacts.set(artifact.relativePath, artifact);
-        }
-      }
-
-      return [...artifacts.values()].sort((left, right) =>
+      // List only from the durable root — it contains only written artifacts.
+      // Walking worktreeRoot would enumerate the entire repo checkout (source
+      // files, node_modules, build outputs) and pollute artifact presence.
+      const artifacts = await listRootArtifacts(durableRoot, runId);
+      return artifacts.sort((left, right) =>
         left.relativePath < right.relativePath
           ? -1
           : left.relativePath > right.relativePath
