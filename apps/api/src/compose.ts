@@ -787,7 +787,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
-      return join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+      return join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
     },
     findStartCommitSha: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
@@ -804,7 +804,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const sha = execFileSync(
           'git',
           ['merge-base', branchName, `origin/${resolvedDefaultBranch}`],
-          { cwd: opts.repoRoot },
+          { cwd: targetRoot },
         )
           .toString()
           .trim();
@@ -886,13 +886,13 @@ export function composeRoot(opts: ComposeOptions): Container {
       const out = execFileSync(
         'gh',
         ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
-        { cwd: opts.repoRoot },
+        { cwd: targetRoot },
       )
         .toString()
         .trim();
       if (out) resolvedRepoFullName = out;
     } catch (err) {
-      console.error(`CancelRun: failed to resolve repo full name for ${opts.repoRoot}`, err);
+      console.error(`CancelRun: failed to resolve repo full name for ${targetRoot}`, err);
     }
   }
 
