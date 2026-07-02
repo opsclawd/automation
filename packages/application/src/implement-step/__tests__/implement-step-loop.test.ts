@@ -596,6 +596,48 @@ describe('ImplementStepLoop', () => {
       expect(retryOptions[1]?.typecheckErrors).toBe(rawOutput);
     });
 
+    it('passes raw typecheck output on retry when raw contains unparsed diagnostics alongside parsed ones', async () => {
+      // Repro for PR review #3510440855: when TSC emits a mix of file-prefixed
+      // errors (parsed into structuredErrors) AND standalone `error TSxxxx:`
+      // lines (NOT parsed by parseTypescriptErrors), the implement agent must
+      // still see the unparsed diagnostics. The raw output carries the
+      // information; dropping it would leave the typecheck gate red across
+      // retries with no signal to the implement agent.
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      let typecheckCalls = 0;
+      const mixedOutput = [
+        "src/foo.ts(10,5): error TS2339: Property 'repoId' does not exist",
+        "error TS6133: 'foo' is declared but its value is never read.",
+      ].join('\n');
+      const parsedSubset: TypescriptError[] = [
+        { file: 'src/foo.ts', line: 10, col: 5, code: 'TS2339', message: "Property 'repoId' does not exist" },
+      ];
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          retryOptions.push(opts);
+          return {
+            invocationId: `impl-${retryOptions.length}`,
+            agentOutcome: 'success' as const,
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return typecheckCalls === 1
+            ? { outcome: 'fail', output: mixedOutput, structuredErrors: parsedSubset }
+            : { outcome: 'pass', output: '' };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+
+      expect(out.outcome).toBe('success');
+      expect(retryOptions).toHaveLength(2);
+      // Raw output is preferred over the parsed subset so the standalone
+      // `error TS6133:` line (which the parser intentionally does not handle)
+      // is preserved in the retry prompt.
+      expect(retryOptions[1]?.typecheckErrors).toBe(mixedOutput);
+    });
+
     it('returns failed when typecheck fails, without calling spec or quality review', async () => {
       const specSpy = vi.fn<() => Promise<SpecReviewResult>>().mockResolvedValue({
         invocationId: 'sr-1',

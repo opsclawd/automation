@@ -14,10 +14,48 @@ import type {
   SpecReviewResult,
   StepLoopContext,
   TypecheckResult,
+  TypescriptError,
 } from './types.js';
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Decide what to pass into the implement agent's retry prompt given the raw
+// typecheck output and any structured errors the parser extracted. The
+// parser only handles canonical `file(line,col): error TSxxxx: ...` lines;
+// standalone `error TSxxxx: ...` and wrapped build-mode lines are
+// intentionally not parsed. When the raw output contains non-blank lines
+// that the parser did NOT capture, fall back to the raw string so the
+// implement agent sees those unparsed diagnostics too. Otherwise prefer
+// the structured list for the cleaner grouped rendering.
+function pickTypecheckPayload(tcResult: TypecheckResult): string | unknown[] | undefined {
+  const structured = tcResult.structuredErrors;
+  const raw = tcResult.output;
+  if (structured !== undefined && structured.length > 0) {
+    // Count non-blank, trimmed lines in raw output that the parser did not
+    // absorb into structured errors. If any exist, the raw output carries
+    // information the structured list would silently drop.
+    const rawNonBlankLines = raw
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    // Filter out volatile TSC summary lines that are not diagnostics.
+    const diagnosticLikeLines = rawNonBlankLines.filter(
+      (l) =>
+        !/^Found \d+ errors?\.?$/i.test(l) &&
+        !/^in \d+\.?\d*(ms|s)\s*$/i.test(l) &&
+        !/^>/.test(l), // command-echo lines like "> tsc --noEmit"
+    );
+    if (diagnosticLikeLines.length > structured.length && raw.length > 0) {
+      return raw.slice(0, 2000);
+    }
+    return structured;
+  }
+  if (raw.length > 0) {
+    return raw.slice(0, 2000);
+  }
+  return undefined;
 }
 
 // Shared default for `maxTypeCheckRetries` used by the programmatic API when
@@ -176,11 +214,9 @@ export class ImplementStepLoop {
       );
 
       const retryImplementResult = await deps.runImplement(baseCtx, {
-        ...(tcResult.structuredErrors !== undefined && tcResult.structuredErrors.length > 0
-          ? { typecheckErrors: tcResult.structuredErrors }
-          : tcResult.output.length > 0
-            ? { typecheckErrors: tcResult.output.slice(0, 2000) }
-            : {}),
+        ...(pickTypecheckPayload(tcResult) !== undefined
+          ? { typecheckErrors: pickTypecheckPayload(tcResult) as string | TypescriptError[] }
+          : {}),
       });
 
       if (retryImplementResult.agentOutcome !== 'success') {
