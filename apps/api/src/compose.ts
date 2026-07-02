@@ -2120,7 +2120,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         name: resolvedRepoFullName.split('/')[1]!,
         fullName: resolvedRepoFullName,
         defaultBranch: resolvedDefaultBranch,
-        localBasePath: opts.repoRoot,
+        localBasePath: targetRoot,
         enabled: true,
         maxConcurrentRuns: 1 as const,
         createdAt: new Date(),
@@ -2158,9 +2158,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           prepareWorktree: async ({ runId, signal: _signal }) => {
             const r = runRepository.findByUuid(runId);
             if (!r) throw new Error(`prepareWorktree: no run found for ${runId}`);
-            const worktreePath = join(opts.repoRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
             await gitAdapter.createWorktree({
-              repoLocalBasePath: opts.repoRoot,
+              repoLocalBasePath: targetRoot,
               worktreePath,
               branch: `ai/issue-${r.issueNumber}`,
               baseBranch: resolvedDefaultBranch,
@@ -2177,7 +2177,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!lease) return;
             const r = runRepository.findByUuid(lease.runId);
             if (!r) return;
-            const worktreePath = join(opts.repoRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
             gitAdapter.resetWorktreeIfClean(worktreePath, resolvedDefaultBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {
