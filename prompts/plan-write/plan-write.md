@@ -19,7 +19,7 @@ The plan MUST include:
 - goal
 - non-goals
 - affected files (full paths from repo root)
-- ordered implementation tasks (numbered, clear description per task) — each task MUST be an H2 heading starting at column 0, e.g. `## Task 1: Title` (never H3 `###` or deeper)
+- ordered implementation tasks (numbered, clear description per task) — each task MUST be an H2 heading starting at column 0, e.g. `## Task 1: Title` (never H3 `###` or deeper). Task numbers are always plain integers matching `tasks[].n` — NEVER use letter suffixes like `## Task 4a` or `## Task 4b`. If splitting a task, assign each part its own sequential integer (e.g., Task 4 and Task 5).
 - tests to add or update
 - validation commands (exact commands to verify correctness)
 - risk areas
@@ -85,4 +85,5 @@ If none exist, do NOT add the comment. Simple/mechanical plans (adapters, CRUD, 
 - Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `plan.md` and `task-manifest.json`.
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code. Real task headings start at column 0; anything indented is treated as an example. Violating this rule causes task extraction to misread the plan.
 - Do NOT create standalone "run validation suite" or "make CI green" tasks.
+- Task numbers in `plan.md` headings MUST be plain integers (e.g., `## Task 4`) matching `tasks[].n` in the manifest. Letter suffixes (`## Task 4a`) are forbidden and will cause validation to fail.
 - Write `plan.md` first, then `task-manifest.json`.
