@@ -214,11 +214,37 @@ export function parseTypescriptErrors(output: string): TypescriptError[] {
   return results;
 }
 
+function renderStructuredTypecheckErrors(errors: TypescriptError[]): string[] {
+  const byFile = new Map<string, TypescriptError[]>();
+  for (const e of errors) {
+    const list = byFile.get(e.file) ?? [];
+    list.push(e);
+    byFile.set(e.file, list);
+  }
+
+  const lines: string[] = [
+    `## Typecheck Errors From Previous Attempt (${errors.length} error${errors.length === 1 ? '' : 's'} in ${byFile.size} file${byFile.size === 1 ? '' : 's'})`,
+    '',
+    'Fix ALL of the following errors before committing — do not skip any:',
+    '',
+  ];
+
+  for (const [file, fileErrors] of byFile) {
+    lines.push(`### ${file} (${fileErrors.length} error${fileErrors.length === 1 ? '' : 's'})`);
+    for (const e of fileErrors) {
+      lines.push(`- Line ${e.line}: ${e.code}: ${e.message}`);
+    }
+    lines.push('');
+  }
+
+  return lines;
+}
+
 export function buildImplementPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string; repoId: string },
   taskText: string,
   branchName: string,
-  typecheckErrors?: string,
+  typecheckErrors?: TypescriptError[],
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
@@ -262,17 +288,8 @@ export function buildImplementPrompt(
     'You may READ files associated with later tasks for context, but you must',
     'not write, modify, stage, or commit them in this run.',
     '',
-    ...(typecheckErrors
-      ? [
-          '## Typecheck Errors From Previous Attempt',
-          'Your previous implementation failed the typecheck gate. Fix ALL of the',
-          'following errors before committing — do not skip any:',
-          '',
-          '```',
-          typecheckErrors,
-          '```',
-          '',
-        ]
+    ...(typecheckErrors !== undefined && typecheckErrors.length > 0
+      ? renderStructuredTypecheckErrors(typecheckErrors)
       : []),
     '## Your Job',
     '',

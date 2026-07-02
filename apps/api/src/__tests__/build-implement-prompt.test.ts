@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { TypescriptError } from '@ai-sdlc/application';
 import { buildImplementPrompt } from '../compose.js';
 
 const ctx = {
@@ -89,15 +90,60 @@ describe('buildImplementPrompt', () => {
     expect(prompt).toContain('implementation-log.md');
   });
 
-  it('includes typecheck errors section when typecheckErrors provided', () => {
-    const errors = 'src/foo.ts(10,5): error TS2345: Argument of type string not assignable';
-    const prompt = buildImplementPrompt(ctx, taskText, branchName, errors);
-    expect(prompt).toContain('Typecheck Errors From Previous Attempt');
-    expect(prompt).toContain(errors);
+  it('renders structured typecheck errors grouped by file', () => {
+    const errors: TypescriptError[] = [
+      {
+        file: 'src/domain/run.ts',
+        line: 45,
+        col: 10,
+        code: 'TS2339',
+        message: "Property 'repoId' does not exist on type 'Run'",
+      },
+      {
+        file: 'src/domain/run.ts',
+        line: 78,
+        col: 3,
+        code: 'TS2345',
+        message: 'Argument of type string is not assignable',
+      },
+      {
+        file: 'src/application/start-run.ts',
+        line: 12,
+        col: 7,
+        code: 'TS2339',
+        message: "Property 'repoId' does not exist",
+      },
+    ];
+    const prompt = buildImplementPrompt(
+      { stepIndex: 1, stepTitle: 'Add repoId', cwd: '/cwd', repoId: 'org/repo' },
+      'task body',
+      'ai/issue-1',
+      errors,
+    );
+    expect(prompt).toContain('## Typecheck Errors From Previous Attempt (3 errors in 2 files)');
+    expect(prompt).toContain('### src/domain/run.ts (2 errors)');
+    expect(prompt).toContain('- Line 45: TS2339:');
+    expect(prompt).toContain('### src/application/start-run.ts (1 error)');
+    expect(prompt).toContain('- Line 12: TS2339:');
   });
 
-  it('omits typecheck errors section when not provided', () => {
-    const prompt = buildImplementPrompt(ctx, taskText, branchName);
+  it('omits typecheck errors section when typecheckErrors is undefined', () => {
+    const prompt = buildImplementPrompt(
+      { stepIndex: 1, stepTitle: 'T', cwd: '/c', repoId: 'r' },
+      '',
+      'branch',
+      undefined,
+    );
+    expect(prompt).not.toContain('Typecheck Errors From Previous Attempt');
+  });
+
+  it('omits typecheck errors section when typecheckErrors is empty array', () => {
+    const prompt = buildImplementPrompt(
+      { stepIndex: 1, stepTitle: 'T', cwd: '/c', repoId: 'r' },
+      '',
+      'branch',
+      [],
+    );
     expect(prompt).not.toContain('Typecheck Errors From Previous Attempt');
   });
 });

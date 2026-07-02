@@ -21,7 +21,7 @@ export interface ImplementResult {
 }
 
 export interface ImplementStepOptions {
-  typecheckErrors?: string;
+  typecheckErrors?: TypescriptError[];
 }
 
 export interface TypescriptError {

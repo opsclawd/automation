@@ -87,7 +87,9 @@ export class ImplementStepLoop {
       );
 
       const retryImplementResult = await deps.runImplement(baseCtx, {
-        typecheckErrors: tcResult.output.slice(0, 2000),
+        ...(tcResult.structuredErrors !== undefined && tcResult.structuredErrors.length > 0
+          ? { typecheckErrors: tcResult.structuredErrors }
+          : {}),
       });
 
       if (retryImplementResult.agentOutcome !== 'success') {

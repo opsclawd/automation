@@ -13,6 +13,7 @@ import type {
   StepLoopContext,
   TypecheckResult,
   ArbiterResult,
+  TypescriptError,
 } from '../types.js';
 import type { FixStepOptions } from '../../review-fix/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -526,6 +527,15 @@ describe('ImplementStepLoop', () => {
     it('passes typecheck errors to implement agent on retry', async () => {
       const retryOptions: Array<ImplementStepOptions | undefined> = [];
       let typecheckCalls = 0;
+      const fakeErrors: TypescriptError[] = [
+        {
+          file: 'src/foo.ts',
+          line: 10,
+          col: 5,
+          code: 'TS2322',
+          message: 'string is not assignable to number',
+        },
+      ];
       const deps = makeDeps({
         runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
           retryOptions.push(opts);
@@ -537,7 +547,11 @@ describe('ImplementStepLoop', () => {
         runTypecheck: async (): Promise<TypecheckResult> => {
           typecheckCalls += 1;
           return typecheckCalls === 1
-            ? { outcome: 'fail', output: 'error TS2322: string is not assignable to number' }
+            ? {
+                outcome: 'fail',
+                output: 'src/foo.ts(10,5): error TS2322: string is not assignable to number',
+                structuredErrors: fakeErrors,
+              }
             : { outcome: 'pass', output: '' };
         },
       });
@@ -547,7 +561,7 @@ describe('ImplementStepLoop', () => {
       expect(out.outcome).toBe('success');
       expect(retryOptions).toHaveLength(2);
       expect(retryOptions[0]).toBeUndefined();
-      expect(retryOptions[1]?.typecheckErrors).toContain('error TS2322');
+      expect(retryOptions[1]?.typecheckErrors).toEqual(fakeErrors);
     });
 
     it('returns failed when typecheck fails, without calling spec or quality review', async () => {
