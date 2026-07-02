@@ -1092,20 +1092,16 @@ describe('CLI run command signal handlers', () => {
 
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
-    // Wait for the run row to appear (up to 15s)
+    // Wait for the job row to appear (up to 15s). In the scheduler path, leases
+    // are acquired inside workerLoop, not at the CLI level — the run-only row
+    // exists before the lease does, and the run-only row may be cancelled
+    // before any lease row ever appears. So we poll the jobs table instead.
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('timed out waiting for run row')), 15_000);
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for job row')), 15_000);
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db
-            .prepare(
-              `SELECT runs.uuid, worker_leases.repo_id
-               FROM runs
-               JOIN worker_leases ON worker_leases.run_id = runs.uuid
-               WHERE runs.issue_number = 77`,
-            )
-            .get();
+          const row = db.prepare(`SELECT * FROM jobs WHERE status != 'succeeded'`).get() as unknown;
           db.close();
           if (row) {
             clearTimeout(timeout);
@@ -1130,8 +1126,6 @@ describe('CLI run command signal handlers', () => {
     const run = db
       .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 77')
       .get() as { status: string; failure_reason: string | null };
-    const lease = db.prepare('SELECT repo_id FROM worker_leases').get();
-    expect(lease).toBeUndefined();
     db.close();
 
     expect(run.status).toBe('cancelled');
@@ -1188,18 +1182,11 @@ describe('CLI run command signal handlers', () => {
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
 
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('timed out waiting for run row')), 15_000);
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for job row')), 15_000);
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db
-            .prepare(
-              `SELECT runs.uuid, worker_leases.repo_id
-               FROM runs
-               JOIN worker_leases ON worker_leases.run_id = runs.uuid
-               WHERE runs.issue_number = 78`,
-            )
-            .get();
+          const row = db.prepare(`SELECT * FROM jobs WHERE status != 'succeeded'`).get() as unknown;
           db.close();
           if (row) {
             clearTimeout(timeout);
@@ -1224,8 +1211,6 @@ describe('CLI run command signal handlers', () => {
     const run = db
       .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 78')
       .get() as { status: string; failure_reason: string | null };
-    const lease = db.prepare('SELECT repo_id FROM worker_leases').get();
-    expect(lease).toBeUndefined();
     db.close();
 
     expect(run.status).toBe('cancelled');
@@ -1816,8 +1801,8 @@ describe('CLI run --executor ts', () => {
       process.chdir(savedCwd);
     }
   });
-  it('releases lease when execute throws', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-execfail-')));
+  it('exits 1 when scheduler rejects', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-sched-err-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     writeFileSync(
       join(root, '.ai-orchestrator.json'),
@@ -1846,21 +1831,11 @@ describe('CLI run --executor ts', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
-      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
-        repoId: RepositoryId('owner/repo'),
-        workerId: WorkerId(`cli-${process.pid}`),
-        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
-        acquiredAt: new Date(),
-        heartbeatAt: new Date(),
-        expiresAt: new Date(Date.now() + 120_000),
-      });
-      const releaseSpy = vi
-        .spyOn(WorkerLeaseRepository.prototype, 'release')
-        .mockReturnValue(undefined);
-      const executeSpy = vi
-        .spyOn(RunExecutor.prototype, 'execute')
-        .mockRejectedValue(new Error('execution error'));
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockRejectedValue(
+        new Error('scheduler exploded'),
+      );
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
         chunk: string | Uint8Array,
         cbOrEnc?: unknown,
@@ -1871,7 +1846,13 @@ describe('CLI run --executor ts', () => {
         return true;
       }) as never);
 
-      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -1884,155 +1865,19 @@ describe('CLI run --executor ts', () => {
         '/dev/null',
       ]);
 
-      expect(releaseSpy).toHaveBeenCalled();
-      expect(exitSpy).toHaveBeenCalledWith(2);
+      expect(exitSpy.mock.calls[0]?.[0]).toBe(1);
 
-      acquireSpy.mockRestore();
-      releaseSpy.mockRestore();
-      executeSpy.mockRestore();
       exitSpy.mockRestore();
+      errSpy.mockRestore();
       writeSpy.mockRestore();
+      vi.restoreAllMocks();
     } finally {
       process.chdir(savedCwd);
     }
   });
 
-  it('creates worktree before execute and captures startCommitSha on the run record', async () => {
-    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-worktree-')));
-    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
-    writeFileSync(
-      join(root, '.ai-orchestrator.json'),
-      JSON.stringify({
-        validation: { commands: ['echo ok'], timeout: 60 },
-        phases: {
-          skip: [],
-          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
-          implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
-        },
-        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
-        agent: {
-          defaultProfile: 'test',
-          profiles: {
-            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
-          },
-          phaseProfiles: {
-            'whole-pr-review': { profile: 'test' },
-            'fix-review': { profile: 'test' },
-          },
-        },
-      }),
-    );
-
-    const savedCwd = process.cwd();
-    process.chdir(root);
-    try {
-      const callOrder: string[] = [];
-
-      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
-        repoId: RepositoryId('owner/repo'),
-        workerId: WorkerId(`cli-pid-${process.pid}`),
-        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
-        acquiredAt: new Date(),
-        heartbeatAt: new Date(),
-        expiresAt: new Date(Date.now() + 120_000),
-      });
-      const heartbeatSpy = vi
-        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
-        .mockReturnValue(undefined);
-      const releaseSpy = vi
-        .spyOn(WorkerLeaseRepository.prototype, 'release')
-        .mockReturnValue(undefined);
-      const createWorktreeSpy = vi
-        .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
-        .mockImplementation(async () => {
-          callOrder.push('createWorktree');
-        });
-      const seedArtifactExcludesSpy = vi
-        .spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes')
-        .mockImplementation(async () => {
-          callOrder.push('seedArtifactExcludes');
-        });
-      const headCommitShaSpy = vi
-        .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
-        .mockResolvedValue('deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
-      const removeWorktreeSpy = vi
-        .spyOn(GitWorktreeAdapter.prototype, 'removeWorktree')
-        .mockResolvedValue(undefined);
-      const updateSpy = vi.spyOn(RunRepository.prototype, 'update');
-      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockImplementation(async () => {
-        callOrder.push('execute');
-        return {
-          run: {
-            uuid: 'mock-run-uuid',
-            status: 'passed' as const,
-            displayId: 'issue-61-20260622-000000',
-            issueNumber: 61,
-            type: 'issue_to_pr' as const,
-            completedPhases: ['read-issue'],
-            skippedPhases: [],
-            startedAt: new Date(),
-          },
-          phases: [{ phase: 'read-issue', status: 'passed' }],
-        };
-      });
-
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
-        chunk: string | Uint8Array,
-        cbOrEnc?: unknown,
-        cb2?: unknown,
-      ) => {
-        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
-        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
-        return true;
-      }) as never);
-
-      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
-      await program.parseAsync([
-        'node',
-        'orchestrator',
-        'run',
-        '--issue',
-        '61',
-        '--executor',
-        'ts',
-        '--script',
-        '/dev/null',
-      ]);
-
-      // createWorktree must happen before seedArtifactExcludes, which must happen before execute
-      expect(callOrder).toEqual(['createWorktree', 'seedArtifactExcludes', 'execute']);
-      // branch name must be ai/issue-<N>
-      expect(createWorktreeSpy.mock.calls[0][0]).toMatchObject({ branch: 'ai/issue-61' });
-      // startCommitSha must be set on the run record via update()
-      const updateCalls = updateSpy.mock.calls;
-      const shaUpdate = updateCalls.find(
-        (c) => c[1] && (c[1] as Record<string, unknown>).startCommitSha,
-      );
-      expect(shaUpdate).toBeDefined();
-      expect((shaUpdate![1] as Record<string, unknown>).startCommitSha).toBe(
-        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-      );
-      // worktree removed because run passed
-      expect(removeWorktreeSpy).toHaveBeenCalledOnce();
-      expect(exitSpy).toHaveBeenCalledWith(0);
-
-      acquireSpy.mockRestore();
-      heartbeatSpy.mockRestore();
-      releaseSpy.mockRestore();
-      createWorktreeSpy.mockRestore();
-      seedArtifactExcludesSpy.mockRestore();
-      headCommitShaSpy.mockRestore();
-      removeWorktreeSpy.mockRestore();
-      updateSpy.mockRestore();
-      executeSpy.mockRestore();
-      exitSpy.mockRestore();
-      writeSpy.mockRestore();
-    } finally {
-      process.chdir(savedCwd);
-    }
-  });
+  // Worktree creation moved into workerLoopDeps.prepareWorktree (compose.ts).
+  // See compose.test.ts: 'workerLoopDeps.prepareWorktree calls git.createWorktree and updates startCommitSha'.
 
   it('does not remove the worktree when the run fails', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-noremove-')));
@@ -2064,43 +1909,23 @@ describe('CLI run --executor ts', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
-      const acquireSpy = vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
-        repoId: RepositoryId('owner/repo'),
-        workerId: WorkerId(`cli-pid-${process.pid}`),
-        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
-        acquiredAt: new Date(),
-        heartbeatAt: new Date(),
-        expiresAt: new Date(Date.now() + 120_000),
-      });
-      const heartbeatSpy = vi
-        .spyOn(WorkerLeaseRepository.prototype, 'heartbeat')
-        .mockReturnValue(undefined);
-      const releaseSpy = vi
-        .spyOn(WorkerLeaseRepository.prototype, 'release')
-        .mockReturnValue(undefined);
-      const createWorktreeSpy = vi
-        .spyOn(GitWorktreeAdapter.prototype, 'createWorktree')
-        .mockResolvedValue(undefined);
-      const headCommitShaSpy = vi
-        .spyOn(GitWorktreeAdapter.prototype, 'headCommitSha')
-        .mockResolvedValue('deadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
       const removeWorktreeSpy = vi
         .spyOn(GitWorktreeAdapter.prototype, 'removeWorktree')
         .mockResolvedValue(undefined);
-      const executeSpy = vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
-        run: {
-          uuid: 'mock-run-uuid',
-          status: 'failed' as const,
-          displayId: 'issue-62-20260622-000000',
-          issueNumber: 62,
-          type: 'issue_to_pr' as const,
-          completedPhases: [],
-          skippedPhases: [],
-          startedAt: new Date(),
-        },
-        phases: [],
+      // Run row was inserted by the CLI; mock findByUuid so the CLI sees status='failed'
+      vi.spyOn(RunRepository.prototype, 'findByUuid').mockReturnValue({
+        uuid: 'mock-failed-uuid',
+        status: 'failed',
+        displayId: 'issue-62-20260622-000000',
+        issueNumber: 62,
+        type: 'issue_to_pr',
+        completedPhases: [],
+        skippedPhases: [],
+        startedAt: new Date(),
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(((
         chunk: string | Uint8Array,
         cbOrEnc?: unknown,
@@ -2111,7 +1936,13 @@ describe('CLI run --executor ts', () => {
         return true;
       }) as never);
 
-      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -2124,20 +1955,14 @@ describe('CLI run --executor ts', () => {
         '/dev/null',
       ]);
 
-      expect(createWorktreeSpy).toHaveBeenCalledOnce();
       // worktree must NOT be removed when run fails
       expect(removeWorktreeSpy).not.toHaveBeenCalled();
-      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(exitSpy.mock.calls[0]?.[0]).toBe(1);
 
-      acquireSpy.mockRestore();
-      heartbeatSpy.mockRestore();
-      releaseSpy.mockRestore();
-      createWorktreeSpy.mockRestore();
-      headCommitShaSpy.mockRestore();
-      removeWorktreeSpy.mockRestore();
-      executeSpy.mockRestore();
       exitSpy.mockRestore();
+      errSpy.mockRestore();
       writeSpy.mockRestore();
+      vi.restoreAllMocks();
     } finally {
       process.chdir(savedCwd);
     }
@@ -2173,39 +1998,9 @@ describe('CLI run --executor ts', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
       const subscribeSpy = vi.spyOn(InMemoryEventBus.prototype, 'subscribe');
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
-        repoId: RepositoryId('owner/repo'),
-        workerId: WorkerId(`cli-pid-${process.pid}`),
-        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
-        acquiredAt: new Date(),
-        heartbeatAt: new Date(),
-        expiresAt: new Date(Date.now() + 120_000),
-      });
-      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
-      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
-      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
-      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
-        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-      );
-      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
-      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
-
-      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
-        run: {
-          uuid: 'mock-run-uuid',
-          status: 'passed' as const,
-          displayId: 'issue-70-20260622-000000',
-          issueNumber: 70,
-          type: 'issue_to_pr' as const,
-          completedPhases: ['read-issue'],
-          skippedPhases: [],
-          startedAt: new Date(),
-        },
-        phases: [{ phase: 'read-issue', status: 'passed' }],
-      });
 
       vi.spyOn(process.stdout, 'write').mockImplementation(((
         chunk: string | Uint8Array,
@@ -2218,7 +2013,13 @@ describe('CLI run --executor ts', () => {
       }) as never);
       vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
 
-      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -2288,37 +2089,9 @@ describe('CLI run --executor ts', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
       const subscribeSpy = vi.spyOn(InMemoryEventBus.prototype, 'subscribe');
 
-      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
-        repoId: RepositoryId('owner/repo'),
-        workerId: WorkerId(`cli-pid-${process.pid}`),
-        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
-        acquiredAt: new Date(),
-        heartbeatAt: new Date(),
-        expiresAt: new Date(Date.now() + 120_000),
-      });
-      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
-      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
-      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
-      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
-        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-      );
-      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
-      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
-      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
-        run: {
-          uuid: 'mock-run-uuid',
-          status: 'passed' as const,
-          displayId: 'issue-71-20260622-000000',
-          issueNumber: 71,
-          type: 'issue_to_pr' as const,
-          completedPhases: [],
-          skippedPhases: [],
-          startedAt: new Date(),
-        },
-        phases: [],
-      });
       vi.spyOn(process.stdout, 'write').mockImplementation(((
         chunk: string | Uint8Array,
         cbOrEnc?: unknown,
@@ -2330,7 +2103,13 @@ describe('CLI run --executor ts', () => {
       }) as never);
       vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
 
-      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -2384,34 +2163,17 @@ describe('CLI run --executor ts', () => {
     const savedCwd = process.cwd();
     process.chdir(root);
     try {
-      vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
-        repoId: RepositoryId('owner/repo'),
-        workerId: WorkerId(`cli-pid-${process.pid}`),
-        runId: 'mock-run-uuid' as unknown as ReturnType<typeof import('@ai-sdlc/domain').RunId>,
-        acquiredAt: new Date(),
-        heartbeatAt: new Date(),
-        expiresAt: new Date(Date.now() + 120_000),
-      });
-      vi.spyOn(WorkerLeaseRepository.prototype, 'heartbeat').mockReturnValue(undefined);
-      vi.spyOn(WorkerLeaseRepository.prototype, 'release').mockReturnValue(undefined);
-      vi.spyOn(GitWorktreeAdapter.prototype, 'createWorktree').mockResolvedValue(undefined);
-      vi.spyOn(GitWorktreeAdapter.prototype, 'headCommitSha').mockResolvedValue(
-        'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
-      );
-      vi.spyOn(GitWorktreeAdapter.prototype, 'removeWorktree').mockResolvedValue(undefined);
-      vi.spyOn(RunRepository.prototype, 'insertIfNoActive').mockReturnValue(undefined);
-      vi.spyOn(RunExecutor.prototype, 'execute').mockResolvedValue({
-        run: {
-          uuid: 'mock-run-uuid',
-          status: 'passed' as const,
-          displayId: 'issue-72-20260622-000000',
-          issueNumber: 72,
-          type: 'issue_to_pr' as const,
-          completedPhases: ['read-issue'],
-          skippedPhases: [],
-          startedAt: new Date(),
-        },
-        phases: [{ phase: 'read-issue', status: 'passed' }],
+      vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
+      // CLI will fetch the final run row to emit JSON. Provide a deterministic one.
+      vi.spyOn(RunRepository.prototype, 'findByUuid').mockReturnValue({
+        uuid: 'mock-verbose-json-uuid',
+        status: 'passed',
+        displayId: 'issue-72-20260622-000000',
+        issueNumber: 72,
+        type: 'issue_to_pr',
+        completedPhases: ['read-issue'],
+        skippedPhases: [],
+        startedAt: new Date(),
       });
 
       const stdoutChunks: string[] = [];
@@ -2427,7 +2189,13 @@ describe('CLI run --executor ts', () => {
       }) as never);
       vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
 
-      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -2443,7 +2211,7 @@ describe('CLI run --executor ts', () => {
 
       const output = JSON.parse(stdoutChunks.join(''));
       expect(output).toHaveProperty('run');
-      expect(output.run.uuid).toBe('mock-run-uuid');
+      expect(output.run.uuid).toBe('mock-verbose-json-uuid');
       expect(output.run.status).toBe('passed');
       expect(output).toHaveProperty('phases');
 
