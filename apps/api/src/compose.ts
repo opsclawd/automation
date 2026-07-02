@@ -2348,7 +2348,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             '',
             'Does the diff above actually address the review comment? Answer strictly.',
             '',
-            'Write `result.json` in the current directory:',
+            `Write \`result.json\` to this exact path (use the absolute path as given): ${join(promptDir, 'result.json')}`,
             '```json',
             '{ "pass": true | false, "reason": "<one sentence>" }',
             '```',
