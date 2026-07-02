@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { writeFileSync, mkdirSync, rmSync as rmSyncFs } from 'node:fs';
 import { AgentInvocationId, AgentProfileName, type AgentUsage } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import type { AgentPort, AgentUsagePort } from '@ai-sdlc/application/ports';
@@ -1041,5 +1042,307 @@ describe('variant suffix in effectiveProfile', () => {
     await router.invoke(req({ profile: AgentProfileName('basic') }));
     const row = inv.findById(AgentInvocationId('inv-no-variant'));
     expect(row?.model).toBe('claude-opus');
+  });
+});
+
+describe('fallback event triggerDetail', () => {
+  function cfgWithFallback(): AgentConfig {
+    return {
+      defaultProfile: 'primary',
+      profiles: {
+        primary: {
+          runtime: 'opencode',
+          provider: 'gemini',
+          model: 'gemini-pro',
+          timeoutMinutes: 1,
+        },
+        fallback: {
+          runtime: 'opencode',
+          provider: 'openai',
+          model: 'codex',
+          timeoutMinutes: 1,
+        },
+      },
+      phaseProfiles: {
+        'plan-design': {
+          profile: 'primary',
+          fallbackProfile: 'fallback',
+          fallbackTriggers: ['token_limit_exceeded', 'quota_exceeded', 'timeout'],
+        },
+      },
+    };
+  }
+
+  function makeStderrFile(dir: string, content: string): string {
+    const p = join(dir, 'stderr.log');
+    writeFileSync(p, content, 'utf-8');
+    return p;
+  }
+
+  it('includes matched token-limit line as triggerDetail in fallback event message and metadata', async () => {
+    const tmp = join(tmpdir(), `__tmp_detail_token_${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+    const stderrPath = makeStderrFile(tmp, 'context_length_exceeded: prompt is too long\n');
+
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+
+    const failAdapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'gemini',
+      model: 'gemini-pro',
+      exitCode: 1,
+      durationMs: 1,
+      stdoutPath: join(tmp, 'stdout.log'),
+      stderrPath,
+      contractViolations: [],
+      outcome: 'failed',
+    });
+    const successAdapter = new StubAdapter({
+      runtime: 'opencode',
+      provider: 'openai',
+      model: 'codex',
+      exitCode: 0,
+      durationMs: 1,
+      stdoutPath: join(tmp, 'stdout2.log'),
+      stderrPath: join(tmp, 'stderr2.log'),
+      contractViolations: [],
+      outcome: 'success',
+    });
+
+    let callCount = 0;
+    const switchingAdapter: AgentPort = {
+      async invoke(r: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        callCount += 1;
+        return callCount === 1 ? failAdapter.invoke(r) : successAdapter.invoke(r);
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfgWithFallback(),
+      adapters: { opencode: switchingAdapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => `inv-detail-${callCount}`,
+      readPromptChars: () => 0,
+    });
+
+    await router.invoke(req({ profile: AgentProfileName('primary') }));
+
+    rmSyncFs(tmp, { recursive: true, force: true });
+
+    const fallbackEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvents).toHaveLength(1);
+
+    const ev = fallbackEvents[0];
+    expect(ev.message).toMatch(/token_limit_exceeded/);
+    expect(ev.message).toMatch(/context_length_exceeded/);
+    expect(ev.message).toMatch(/—/); // em-dash separator
+    expect(ev.metadata.triggerReason).toBe('token_limit_exceeded');
+    expect(ev.metadata.triggerDetail).toBe('context_length_exceeded: prompt is too long');
+  });
+
+  it('includes matched quota line as triggerDetail in fallback event', async () => {
+    const tmp = join(tmpdir(), `__tmp_detail_quota_${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+    const stderrPath = makeStderrFile(tmp, 'Usage limit reached for today\n');
+
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+
+    let callCount = 0;
+    const switchingAdapter: AgentPort = {
+      async invoke(_r: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            runtime: 'opencode',
+            provider: 'gemini',
+            model: 'gemini-pro',
+            exitCode: 1,
+            durationMs: 1,
+            stdoutPath: join(tmp, 'stdout.log'),
+            stderrPath,
+            contractViolations: [],
+            outcome: 'failed',
+          };
+        }
+        return {
+          runtime: 'opencode',
+          provider: 'openai',
+          model: 'codex',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: join(tmp, 'stdout2.log'),
+          stderrPath: join(tmp, 'stderr2.log'),
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfgWithFallback(),
+      adapters: { opencode: switchingAdapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => `inv-quota-${callCount}`,
+      readPromptChars: () => 0,
+    });
+
+    await router.invoke(req({ profile: AgentProfileName('primary') }));
+
+    rmSyncFs(tmp, { recursive: true, force: true });
+
+    const fallbackEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvents).toHaveLength(1);
+
+    const ev = fallbackEvents[0];
+    expect(ev.message).toMatch(/quota_exceeded/);
+    expect(ev.message).toMatch(/Usage limit reached/);
+    expect(ev.metadata.triggerReason).toBe('quota_exceeded');
+    expect(ev.metadata.triggerDetail).toBe('Usage limit reached for today');
+  });
+
+  it('omits triggerDetail when outcome is timeout (no stderr match)', async () => {
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+
+    let callCount = 0;
+    const switchingAdapter: AgentPort = {
+      async invoke(_r: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            runtime: 'opencode',
+            provider: 'gemini',
+            model: 'gemini-pro',
+            exitCode: 1,
+            durationMs: 1,
+            stdoutPath: '/s',
+            stderrPath: '/e',
+            contractViolations: [],
+            outcome: 'timeout',
+          };
+        }
+        return {
+          runtime: 'opencode',
+          provider: 'openai',
+          model: 'codex',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: '/s2',
+          stderrPath: '/e2',
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfgWithFallback(),
+      adapters: { opencode: switchingAdapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => `inv-timeout-${callCount}`,
+      readPromptChars: () => 0,
+    });
+
+    await router.invoke(req({ profile: AgentProfileName('primary') }));
+
+    const fallbackEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvents).toHaveLength(1);
+
+    const ev = fallbackEvents[0];
+    expect(ev.metadata.triggerReason).toBe('timeout');
+    expect(ev.metadata.triggerDetail).toBeUndefined();
+    // Message must NOT contain em-dash
+    expect(ev.message).not.toMatch(/—/);
+  });
+
+  it('truncates triggerDetail to 200 chars with ellipsis when matched line is very long', async () => {
+    const tmp = join(tmpdir(), `__tmp_detail_trunc_${Date.now()}`);
+    mkdirSync(tmp, { recursive: true });
+    const longMsg = 'context_length_exceeded: ' + 'x'.repeat(300);
+    const stderrPath = makeStderrFile(tmp, longMsg + '\n');
+
+    const events: OrchestratorEvent[] = [];
+    const eventBus = {
+      subscribe: () => () => {},
+      publish: (_runId: string, event: OrchestratorEvent) => {
+        events.push(event);
+      },
+    };
+
+    let callCount = 0;
+    const switchingAdapter: AgentPort = {
+      async invoke(_r: AgentInvocationRequest): Promise<AgentInvocationResult> {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            runtime: 'opencode',
+            provider: 'gemini',
+            model: 'gemini-pro',
+            exitCode: 1,
+            durationMs: 1,
+            stdoutPath: join(tmp, 'stdout.log'),
+            stderrPath,
+            contractViolations: [],
+            outcome: 'failed',
+          };
+        }
+        return {
+          runtime: 'opencode',
+          provider: 'openai',
+          model: 'codex',
+          exitCode: 0,
+          durationMs: 1,
+          stdoutPath: join(tmp, 'stdout2.log'),
+          stderrPath: join(tmp, 'stderr2.log'),
+          contractViolations: [],
+          outcome: 'success',
+        };
+      },
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: cfgWithFallback(),
+      adapters: { opencode: switchingAdapter },
+      invocationRepository: new FakeAgentInvocationPort(),
+      eventBus,
+      clock: () => FIXED_NOW,
+      idFactory: () => `inv-trunc-${callCount}`,
+      readPromptChars: () => 0,
+    });
+
+    await router.invoke(req({ profile: AgentProfileName('primary') }));
+
+    rmSyncFs(tmp, { recursive: true, force: true });
+
+    const fallbackEvents = events.filter((e) => e.type === 'phase.fallback.escalated');
+    expect(fallbackEvents).toHaveLength(1);
+
+    const ev = fallbackEvents[0];
+    const detail = ev.metadata.triggerDetail as string;
+    expect(detail.length).toBe(201); // 200 chars + '…' (1 char)
+    expect(detail.endsWith('…')).toBe(true);
   });
 });
