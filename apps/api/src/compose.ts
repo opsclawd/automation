@@ -1478,7 +1478,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         artifactStoreForRun(runUuid, cwd);
 
       const buildContext = (run: Run): PhaseHandlerContext => {
-        const cwd = join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+        const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
         const startCommitSha = runRepository.findByUuid(run.uuid)?.startCommitSha;
         return composeBuildPhaseHandlerContext(
           {
