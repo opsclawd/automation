@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseTypescriptErrors } from '../compose.js';
+import { parseTypescriptErrors } from '@ai-sdlc/application';
 
 describe('parseTypescriptErrors', () => {
   it('parses a single TS error line with file, line, col, code, and message', () => {
@@ -50,5 +50,16 @@ describe('parseTypescriptErrors', () => {
     expect(result[0]!.line).toBe(3);
     expect(result[0]!.col).toBe(1);
     expect(result[0]!.code).toBe('TS2304');
+  });
+
+  it('does NOT parse standalone "error TSxxxx: ..." lines without a file(line,col) prefix', () => {
+    // Real TSC outputs (e.g., `tsc -b` and IDE-mediated runs) sometimes emit
+    // standalone `error TSxxxx: ...` lines for "unused" global errors. These
+    // are intentionally NOT parsed: callers should rely on `tcResult.output`
+    // for unparsed messages and on `tcResult.structuredErrors` for the
+    // well-formed `file(line,col):` cases.
+    const output = "error TS6133: 'foo' is declared but its value is never read.";
+    const result = parseTypescriptErrors(output);
+    expect(result).toEqual([]);
   });
 });

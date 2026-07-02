@@ -16,6 +16,10 @@ import type {
   TypecheckResult,
 } from './types.js';
 
+function normalizeMessage(message: string): string {
+  return message.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export class ImplementStepLoop {
   constructor(private readonly deps: ImplementStepLoopDeps) {}
 
@@ -88,6 +92,17 @@ export class ImplementStepLoop {
             fingerprint: currFingerprint.slice(0, 500),
           },
         );
+        this.emit(
+          input,
+          'step.typecheck.failed',
+          'error',
+          `step ${input.stepIndex} failed typecheck gate (stalled)`,
+          {
+            index: input.stepIndex,
+            output: tcResult.output.slice(0, 2000),
+            stalled: true,
+          },
+        );
         this.emit(input, 'loop.iteration.started', 'info', 'typecheck stalled', { index: 1 });
         loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
@@ -117,7 +132,9 @@ export class ImplementStepLoop {
       const retryImplementResult = await deps.runImplement(baseCtx, {
         ...(tcResult.structuredErrors !== undefined && tcResult.structuredErrors.length > 0
           ? { typecheckErrors: tcResult.structuredErrors }
-          : {}),
+          : tcResult.output.length > 0
+            ? { typecheckErrors: tcResult.output.slice(0, 2000) }
+            : {}),
       });
 
       if (retryImplementResult.agentOutcome !== 'success') {
@@ -532,9 +549,11 @@ export class ImplementStepLoop {
     if (errors !== undefined && errors.length > 0) {
       return [...errors]
         .sort((a, b) =>
-          `${a.file}:${a.line}:${a.code}`.localeCompare(`${b.file}:${b.line}:${b.code}`),
+          `${a.file}:${a.line}:${a.col}:${a.code}`.localeCompare(
+            `${b.file}:${b.line}:${b.col}:${b.code}`,
+          ),
         )
-        .map((e) => `${e.file}:${e.line}:${e.code}`)
+        .map((e) => `${e.file}:${e.line}:${e.col}:${e.code}:${normalizeMessage(e.message)}`)
         .join('\n');
     }
     return tcResult.output;

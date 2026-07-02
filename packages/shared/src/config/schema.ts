@@ -22,7 +22,13 @@ const phasesSchema = z.object({
   // The implement phase runs each task once sequentially — no retry loop exists.
   implement: z.object({
     maxIterations: z.number().int().positive(),
-    maxTypeCheckRetries: z.number().int().nonnegative().default(5),
+    /**
+     * The maximum number of typecheck retries during the implement phase.
+     * Must be a positive integer (>= 1) to retain proper observability and error logging.
+     * Defaults to 5 when read via configuration.
+     * Programmatic API falls back to 2 when omitted.
+     */
+    maxTypeCheckRetries: z.number().int().positive().default(5),
   }),
   wholePrFix: z.object({ maxIterations: z.number().int().positive() }).optional(),
   fixValidate: z

@@ -10,7 +10,8 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import * as childProcess from 'node:child_process';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { composeRoot, captureExecOutput } from '../compose.js';
 import { openDatabase, applyMigrations, GitWorktreeAdapter } from '@ai-sdlc/infrastructure';
 import { RunId, RepositoryId, PhaseName, AgentProfileName, Step } from '@ai-sdlc/domain';
@@ -30,6 +31,20 @@ import {
 import { FakeLoopRepository } from '@ai-sdlc/application/test-doubles';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type { PrReviewPollerDeps, PostFixGateResult } from '@ai-sdlc/application';
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFileSync: vi.fn(
+      (
+        file: Parameters<typeof actual.execFileSync>[0],
+        args: Parameters<typeof actual.execFileSync>[1],
+        options: Parameters<typeof actual.execFileSync>[2],
+      ) => actual.execFileSync(file, args, options),
+    ),
+  };
+});
 
 const tempDirs: string[] = [];
 
@@ -1020,24 +1035,99 @@ exit 1
     expect(fnSrc).toMatch(/catch[^{]*\{[^}]*\/\/ Non-fatal/);
   });
 
-  it('worktreeSetup skips pnpm -r build when feature branch has WIP commits', () => {
-    const composeSrc = readFileSync(
-      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
-      'utf-8',
-    );
-    const setupFnMatch = composeSrc.match(
-      /const worktreeSetup[\s\S]*?return \{ ok: true \};[\s\S]*?\};/,
-    );
-    expect(setupFnMatch).toBeTruthy();
-    const fnSrc = setupFnMatch![0];
-    expect(fnSrc).toContain('logBetween');
-    expect(fnSrc).toContain('resolvedDefaultBranch');
-    const logBetweenIdx = fnSrc.indexOf('logBetween');
-    const buildIdx = fnSrc.indexOf("'-r', 'build'");
-    expect(logBetweenIdx).toBeGreaterThan(-1);
-    expect(buildIdx).toBeGreaterThan(-1);
-    expect(logBetweenIdx).toBeLessThan(buildIdx);
-    expect(fnSrc).toContain("'install'");
+  describe('worktreeSetup behavior', () => {
+    const fakeAgentConfig = {
+      validation: { commands: ['echo ok'], timeout: 60 },
+      phases: {
+        skip: [],
+        reviewFix: { maxIterations: 3 },
+        implement: { maxIterations: 3 },
+      },
+      timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      agent: {
+        defaultProfile: 'test',
+        profiles: {
+          test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+        },
+        phaseProfiles: {
+          'whole-pr-review': { profile: 'test' },
+          'fix-review': { profile: 'test' },
+        },
+      },
+    };
+
+    it('runs pnpm install and pnpm -r build when feature branch has no WIP commits', async () => {
+      const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+      writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(fakeAgentConfig));
+      const scriptPath = fakeScript(0);
+      const container = composeRoot({ repoRoot: root, scriptPath });
+
+      const implementHandler = container.phaseRegistry.get(PhaseName('implement')) as unknown as {
+        opts: {
+          setup: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
+        };
+      };
+      const setup = implementHandler.opts.setup;
+      expect(setup).toBeDefined();
+
+      const logBetweenSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'logBetween')
+        .mockResolvedValue([]);
+      const execSpy = vi.mocked(childProcess.execFileSync);
+      execSpy.mockImplementation(() => '');
+
+      const res = await setup('/some/cwd');
+      expect(res).toEqual({ ok: true });
+
+      // pnpm install always runs
+      expect(execSpy).toHaveBeenCalledWith(
+        'pnpm',
+        ['install', '--frozen-lockfile'],
+        expect.any(Object),
+      );
+      // pnpm -r build runs because there are no WIP commits
+      expect(execSpy).toHaveBeenCalledWith('pnpm', ['-r', 'build'], expect.any(Object));
+
+      logBetweenSpy.mockRestore();
+      execSpy.mockRestore();
+    });
+
+    it('runs pnpm install but skips pnpm -r build when feature branch has WIP commits', async () => {
+      const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+      writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(fakeAgentConfig));
+      const scriptPath = fakeScript(0);
+      const container = composeRoot({ repoRoot: root, scriptPath });
+
+      const implementHandler = container.phaseRegistry.get(PhaseName('implement')) as unknown as {
+        opts: {
+          setup: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
+        };
+      };
+      const setup = implementHandler.opts.setup;
+      expect(setup).toBeDefined();
+
+      const logBetweenSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'logBetween')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .mockResolvedValue([{ sha: '123', message: 'wip' }] as any);
+      const execSpy = vi.mocked(childProcess.execFileSync);
+      execSpy.mockImplementation(() => '');
+
+      const res = await setup('/some/cwd');
+      expect(res).toEqual({ ok: true });
+
+      // pnpm install always runs
+      expect(execSpy).toHaveBeenCalledWith(
+        'pnpm',
+        ['install', '--frozen-lockfile'],
+        expect.any(Object),
+      );
+      // pnpm -r build is skipped because logBetween returned a commit
+      expect(execSpy).not.toHaveBeenCalledWith('pnpm', ['-r', 'build'], expect.any(Object));
+
+      logBetweenSpy.mockRestore();
+      execSpy.mockRestore();
+    });
   });
 
   describe('captureExecOutput', () => {

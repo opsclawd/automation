@@ -97,6 +97,8 @@ import {
   type ResolveRefShaFn,
   extractTaskBody,
   parseTaskManifest,
+  parseTypescriptErrors,
+  renderStructuredTypecheckErrors,
   type TaskManifest,
   PHASE_DEFINITIONS,
 } from '@ai-sdlc/application';
@@ -196,59 +198,18 @@ export function extractTaskText(
   };
 }
 
-export function parseTypescriptErrors(output: string): TypescriptError[] {
-  const pattern = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)$/;
-  const results: TypescriptError[] = [];
-  for (const line of output.split('\n')) {
-    const m = pattern.exec(line.trim());
-    if (m) {
-      results.push({
-        file: m[1]!,
-        line: parseInt(m[2]!, 10),
-        col: parseInt(m[3]!, 10),
-        code: m[4]!,
-        message: m[5]!,
-      });
-    }
-  }
-  return results;
-}
-
-function renderStructuredTypecheckErrors(errors: TypescriptError[]): string[] {
-  const byFile = new Map<string, TypescriptError[]>();
-  for (const e of errors) {
-    const list = byFile.get(e.file) ?? [];
-    list.push(e);
-    byFile.set(e.file, list);
-  }
-
-  const lines: string[] = [
-    `## Typecheck Errors From Previous Attempt (${errors.length} error${errors.length === 1 ? '' : 's'} in ${byFile.size} file${byFile.size === 1 ? '' : 's'})`,
-    '',
-    'Fix ALL of the following errors before committing — do not skip any:',
-    '',
-  ];
-
-  for (const [file, fileErrors] of byFile) {
-    lines.push(`### ${file} (${fileErrors.length} error${fileErrors.length === 1 ? '' : 's'})`);
-    for (const e of fileErrors) {
-      lines.push(`- Line ${e.line}: ${e.code}: ${e.message}`);
-    }
-    lines.push('');
-  }
-
-  return lines;
-}
-
 export function buildImplementPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string; repoId: string },
   taskText: string,
   branchName: string,
-  typecheckErrors?: TypescriptError[],
+  typecheckErrors?: TypescriptError[] | string,
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
   const description = taskText || `See plan.md Task ${taskN} for details.`;
+
+  const structuredErrors: TypescriptError[] | undefined =
+    typeof typecheckErrors === 'string' ? parseTypescriptErrors(typecheckErrors) : typecheckErrors;
 
   return [
     `You are implementing Task ${taskN}: ${taskTitle}`,
@@ -288,9 +249,20 @@ export function buildImplementPrompt(
     'You may READ files associated with later tasks for context, but you must',
     'not write, modify, stage, or commit them in this run.',
     '',
-    ...(typecheckErrors !== undefined && typecheckErrors.length > 0
-      ? renderStructuredTypecheckErrors(typecheckErrors)
-      : []),
+    ...(structuredErrors !== undefined && structuredErrors.length > 0
+      ? renderStructuredTypecheckErrors(structuredErrors)
+      : typeof typecheckErrors === 'string' && typecheckErrors.length > 0
+        ? [
+            '## Typecheck Errors From Previous Attempt (unparsed output)',
+            '',
+            'Fix ALL of the following errors before committing — do not skip any:',
+            '',
+            '```',
+            typecheckErrors,
+            '```',
+            '',
+          ]
+        : []),
     '## Your Job',
     '',
     `1. Read issue.md, design.md, and plan.md for context. Identify the`,
@@ -1691,11 +1663,10 @@ export function composeRoot(opts: ComposeOptions): Container {
               : String(err);
           const lines = raw.split('\n');
           const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : raw;
-          const sliced = truncated.slice(0, 3000);
           return {
             outcome: 'fail',
-            output: sliced,
-            structuredErrors: parseTypescriptErrors(sliced),
+            output: truncated.slice(0, 3000),
+            structuredErrors: parseTypescriptErrors(truncated.slice(0, 3000)),
           };
         }
       };

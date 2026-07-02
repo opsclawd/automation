@@ -472,4 +472,19 @@ describe('phases.implement.maxTypeCheckRetries', () => {
     );
     expect(() => loadConfig(dir)).toThrow(/maxTypeCheckRetries/);
   });
+
+  it('rejects maxTypeCheckRetries of 0 (must be positive to retain observability)', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5, maxTypeCheckRetries: 0 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    expect(() => loadConfig(dir)).toThrow(/maxTypeCheckRetries/);
+  });
 });

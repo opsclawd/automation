@@ -564,6 +564,38 @@ describe('ImplementStepLoop', () => {
       expect(retryOptions[1]?.typecheckErrors).toEqual(fakeErrors);
     });
 
+    it('passes raw typecheck output to implement agent on retry when structuredErrors is empty', async () => {
+      const retryOptions: Array<ImplementStepOptions | undefined> = [];
+      let typecheckCalls = 0;
+      const rawOutput = 'Some unparseable build failure output';
+      const deps = makeDeps({
+        runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+          retryOptions.push(opts);
+          return {
+            invocationId: `impl-${retryOptions.length}`,
+            agentOutcome: 'success' as const,
+          };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return typecheckCalls === 1
+            ? {
+                outcome: 'fail',
+                output: rawOutput,
+                structuredErrors: [],
+              }
+            : { outcome: 'pass', output: '' };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+
+      expect(out.outcome).toBe('success');
+      expect(retryOptions).toHaveLength(2);
+      expect(retryOptions[0]).toBeUndefined();
+      expect(retryOptions[1]?.typecheckErrors).toBe(rawOutput);
+    });
+
     it('returns failed when typecheck fails, without calling spec or quality review', async () => {
       const specSpy = vi.fn<() => Promise<SpecReviewResult>>().mockResolvedValue({
         invocationId: 'sr-1',
@@ -901,6 +933,11 @@ describe('ImplementStepLoop', () => {
       const stalledEvent = events.find((e) => e.type === 'step.typecheck.stalled');
       expect(stalledEvent).toBeDefined();
       expect(stalledEvent!.level).toBe('error');
+      // Stall path also emits step.typecheck.failed with stalled=true (so the
+      // "retries exhausted" contract is satisfied for downstream automation).
+      const failedEvent = events.find((e) => e.type === 'step.typecheck.failed');
+      expect(failedEvent).toBeDefined();
+      expect(failedEvent!.metadata.stalled).toBe(true);
     });
 
     it('falls back to comparing output string when structuredErrors is empty', async () => {

@@ -146,4 +146,30 @@ describe('buildImplementPrompt', () => {
     );
     expect(prompt).not.toContain('Typecheck Errors From Previous Attempt');
   });
+
+  it('renders unparsed string typecheck output as a code block when adapter did not produce structured errors', () => {
+    const raw = 'Build failed: some generic syntax error';
+    const prompt = buildImplementPrompt(
+      { stepIndex: 1, stepTitle: 'T', cwd: '/c', repoId: 'r' },
+      '',
+      'branch',
+      raw,
+    );
+    expect(prompt).toContain('## Typecheck Errors From Previous Attempt (unparsed output)');
+    expect(prompt).toContain('```');
+    expect(prompt).toContain(raw);
+  });
+
+  it('parses a string of TSC output into structured errors when given as a string', () => {
+    const raw = "src/foo.ts(1,2): error TS2339: Property 'x' does not exist on type 'Y'";
+    const prompt = buildImplementPrompt(
+      { stepIndex: 1, stepTitle: 'T', cwd: '/c', repoId: 'r' },
+      '',
+      'branch',
+      raw,
+    );
+    expect(prompt).toContain('## Typecheck Errors From Previous Attempt (1 error in 1 file)');
+    expect(prompt).toContain('### src/foo.ts (1 error)');
+    expect(prompt).toContain('- Line 1: TS2339:');
+  });
 });
