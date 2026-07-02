@@ -1,7 +1,9 @@
 import { existsSync, realpathSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { Command } from 'commander';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 import {
   RunId,
   RunStatus,
@@ -9,10 +11,15 @@ import {
   WorkerId,
   RepositoryId,
   WorkerLeaseConflictError,
+  JobId,
+  IssueNumber,
+  createJob,
+  createWorker,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
-import { type ArtifactGuardPort, planRunRecoveryAction } from '@ai-sdlc/application';
+import { planRunRecoveryAction } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';
+import { WorkerScheduler } from './worker-scheduler.js';
 
 export interface LeaseConfig {
   ttlMs: number;
@@ -227,10 +234,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.exit(EXIT_USER_ERROR);
           }
 
-          const workerId = WorkerId(`cli-${process.pid}`);
-          const repoId = RepositoryId(c.repoFullName);
+          if (!c.workerRegistry || !c.workerLoopDeps) {
+            console.error(
+              'Error: worker registry not available. Ensure agent config is present in .ai-orchestrator.json.',
+            );
+            process.exit(EXIT_USER_ERROR);
+          }
+
           const startedAt = new Date();
           const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
+          const repoId = RepositoryId(c.repoFullName);
           const run = createRun({
             uuid: ids.uuid,
             displayId: ids.displayId,
@@ -239,153 +252,101 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             startedAt,
           });
 
-          const leaseTtlMs = buildOpts?.lease?.ttlMs ?? DEFAULT_LEASE_TTL_MS;
-          const heartbeatIntervalMs =
-            buildOpts?.lease?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+          c.runRepository.insertIfNoActive(run);
 
-          try {
-            c.workerLeaseRepository.acquire({
-              repoId,
-              workerId,
-              runId: RunId(run.uuid),
+          const jobId = JobId(randomUUID());
+          const job = createJob({
+            id: jobId,
+            runId: RunId(run.uuid),
+            repoId,
+            issueNumber: IssueNumber(opts.issue),
+            priority: 0,
+            createdAt: startedAt,
+          });
+          c.jobQueue.enqueue({ job });
+
+          const workerId = WorkerId(`cli-${process.pid}`);
+          c.workerRegistry.register(
+            createWorker({
+              id: workerId,
+              hostname: os.hostname(),
+              processId: process.pid,
               now: startedAt,
-              ttlMs: leaseTtlMs,
-            });
-          } catch (err) {
-            if (err instanceof WorkerLeaseConflictError) {
-              console.error(
-                `Error: repository ${repoId} already has an active lease. Another run is in progress.`,
-              );
-              process.exit(EXIT_USER_ERROR);
-            }
-            throw new Error(`Failed to acquire worker lease: ${(err as Error).message}`);
-          }
+            }),
+          );
+
+          const abortController = new AbortController();
 
           let unsubscribe: (() => void) | undefined;
-          let signalHandlers: { remove: () => void } | undefined;
-          let lease: { stop: () => void } | undefined;
-          const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
           if (tee) {
             unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
               console.error(`[ts] ${event.message}`);
             });
           }
-          const releaseLeaseOnSignal = () => {
-            try {
-              c.workerLeaseRepository.release(repoId, workerId);
-            } catch (err) {
-              console.error(
-                `Failed to release lease on exit: ${(err as Error)?.message ?? String(err)}`,
-              );
-            }
-          };
-          try {
-            signalHandlers = installSignalHandlers(
-              c.runRepository,
-              repoId,
-              opts.issue,
-              releaseLeaseOnSignal,
-            );
-            lease = startLeaseHeartbeat(
-              c.workerLeaseRepository,
-              repoId,
-              workerId,
-              leaseTtlMs,
-              heartbeatIntervalMs,
-            );
 
-            c.runRepository.insertIfNoActive(run);
-            await c.git.createWorktree({
-              repoLocalBasePath: repoRoot,
-              worktreePath,
-              branch: `ai/issue-${opts.issue}`,
-              baseBranch: c.defaultBranch,
-            });
-            if (
-              'seedArtifactExcludes' in c.git &&
-              typeof c.git.seedArtifactExcludes === 'function'
-            ) {
-              await (c.git as unknown as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
+          const handleSignal = (signal: string, exitCode: number) => {
+            abortController.abort();
+            const currentJob = c.jobQueue.findById(jobId);
+            if (currentJob && !['succeeded', 'failed', 'cancelled'].includes(currentJob.status)) {
+              c.jobQueue.markCancelled(jobId, new Date());
             }
-            const sha = await c.git.headCommitSha(worktreePath);
-            c.runRepository.update(run.uuid, { startCommitSha: sha });
-            const result = await c.runExecutor.execute({
-              run,
-              skip: [],
-              presentArtifacts: [],
-            });
-            if (result.run.status === 'passed') {
+            const currentRun = c.runRepository.findByUuid(run.uuid);
+            if (currentRun && currentRun.status === 'running') {
+              c.runRepository.update(run.uuid, {
+                status: 'cancelled',
+                completedAt: new Date(),
+                failureReason: `interrupted by ${signal}`,
+              });
+            }
+            unsubscribe?.();
+            process.exit(exitCode);
+          };
+
+          const sigintHandler = () => handleSignal('SIGINT', EXIT_SIGINT);
+          const sigtermHandler = () => handleSignal('SIGTERM', EXIT_SIGTERM);
+          process.once('SIGINT', sigintHandler);
+          process.once('SIGTERM', sigtermHandler);
+
+          const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps, c.jobQueue);
+
+          try {
+            await scheduler.runUntilComplete(jobId, abortController.signal);
+
+            process.off('SIGINT', sigintHandler);
+            process.off('SIGTERM', sigtermHandler);
+
+            const finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
+            const finalJob = c.jobQueue.findById(jobId);
+
+            if (finalRun.status === 'passed') {
+              const worktreePath = join(repoRoot, '.ai-worktrees', `issue-${opts.issue}`);
               try {
                 await c.git.removeWorktree(worktreePath);
               } catch {
-                // best-effort: leave worktree intact on cleanup failure
+                // best-effort
               }
             }
+
             await new Promise<void>((resolve, reject) =>
-              process.stdout.write(
-                JSON.stringify({ run: result.run, phases: result.phases }) + '\n',
-                (err) => (err ? reject(err) : resolve()),
+              process.stdout.write(JSON.stringify({ run: finalRun, phases: [] }) + '\n', (err) =>
+                err ? reject(err) : resolve(),
               ),
             );
-            // Release the lease BEFORE process.exit — process.exit() does not run
-            // the finally block, so relying on it leaks the lease on every
-            // completed run. With no worker-loop to reclaim expired leases on the
-            // Option-A direct path, a leaked lease locks the repo after one run.
+
             unsubscribe?.();
-            signalHandlers?.remove();
-            lease?.stop();
-            // Re-read the persisted run status: post-pr-review sets run status
-            // to 'cancelled' in the DB before returning 'resting', but the
-            // executor's resting branch returns the stale in-memory run
-            // (still 'running'). Without this re-read, a cancelled or timed-out
-            // review would be indistinguishable from a healthy resting pause.
-            const persistedStatus =
-              c.runRepository.findByUuid(result.run.uuid)?.status ?? result.run.status;
-            const isResting =
-              result.phases.some((p) => p.status === 'resting') && persistedStatus === 'running';
+            const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
             const isSuccess =
-              persistedStatus === 'passed' || pausedStatuses.includes(persistedStatus) || isResting;
+              finalRun.status === 'passed' ||
+              pausedStatuses.includes(finalRun.status) ||
+              finalJob?.status === 'succeeded';
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
+            process.off('SIGINT', sigintHandler);
+            process.off('SIGTERM', sigtermHandler);
             unsubscribe?.();
-            signalHandlers?.remove();
-            lease?.stop();
-            try {
-              // Only mark failed if the run is still 'running'. runExecutor.execute()
-              // persists its own terminal status (passed / blocked / cancelled /
-              // needs_human_review / failed) before returning, so a throw AFTER it
-              // returns — e.g. process.stdout.write rejecting (EPIPE) or lease.stop
-              // throwing — must NOT overwrite that status with 'failed'. The
-              // conditional update is a no-op unless the run is still 'running'
-              // (i.e. execute() itself threw before finalizing a status).
-              c.runRepository.atomicUpdateByUuid(
-                run.uuid,
-                {
-                  status: 'failed',
-                  completedAt: new Date(),
-                  // Clear currentPhase on failure, matching the domain failRun()
-                  // transition (run.ts) and CancelRun's terminal update.
-                  currentPhase: null,
-                  failureReason: err instanceof Error ? err.message : String(err),
-                },
-                'running',
-              );
-            } catch {
-              // best-effort: DB write may fail
-            }
-            try {
-              await c.git.removeWorktree(worktreePath);
-            } catch {
-              // best-effort: may not exist or already removed
-            }
-            console.error(
-              `Run ${run.uuid} (issue #${run.issueNumber}) failed: ${err instanceof Error ? err.message : String(err)}`,
-            );
-            process.exit(EXIT_INTERNAL_ERROR);
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
           }
-          // No finally: process.exit() bypasses it. Both the success and catch
-          // paths above release the lease (signalHandlers.remove + lease.stop)
-          // immediately before exiting, so the lease is released exactly once.
         } else {
           // --- Bash executor path ---
           if (!c.repoFullName) {
