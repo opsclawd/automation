@@ -164,6 +164,7 @@ export interface RunCliOptions {
   model?: string;
   agentCli?: string;
   executor?: string;
+  targetRepoRoot?: string;
 }
 
 export function buildProgram(buildOpts?: BuildProgramOptions): Command {
@@ -190,6 +191,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       '--executor <executor>',
       'Execution engine: ts (default, TypeScript RunExecutor) or bash (legacy, emergency use only)',
       'ts',
+    )
+    .option(
+      '--target-repo-root <path>',
+      'Target repository root for worktrees and DB (default: orchestrator repo)',
     )
     .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
       try {
