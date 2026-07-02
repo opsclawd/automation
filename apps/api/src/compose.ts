@@ -35,6 +35,7 @@ import {
   GitWorktreeAdapter,
   WorkerLeaseRepository,
   JobQueueRepository,
+  WorkerRegistryRepository,
   createFilesystemArtifactStore,
 } from '@ai-sdlc/infrastructure';
 import {
@@ -68,6 +69,7 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
+  type WorkerLoopDeps,
   ArtifactNotFoundError,
   type ArtifactStore,
   type StartIssueRunDeps,
@@ -83,6 +85,7 @@ import {
   type ReviewStepResult,
   type FixStepResult,
   type GitPort,
+  type ArtifactGuardPort,
   type RevalidationResult,
   type PostFixGateResult,
   type ReviewStepOptions,
@@ -356,6 +359,8 @@ export interface Container {
   loopRepository: LoopRepository;
   workerLeaseRepository: WorkerLeaseRepository;
   jobQueue: JobQueuePort;
+  workerRegistry?: WorkerRegistryRepository;
+  workerLoopDeps?: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   /** Exposed for worktree lifecycle management in CLI and tests. */
   git: GitPort;
   /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
@@ -664,6 +669,8 @@ export function captureExecOutput(err: unknown): string {
   }
   return String(err);
 }
+
+const DEFAULT_LEASE_TTL_MS = 120_000;
 
 export function composeRoot(opts: ComposeOptions): Container {
   const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
@@ -2118,6 +2125,61 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const jobQueue = new JobQueueRepository(db, singleRepo);
 
+  const workerRegistry = new WorkerRegistryRepository(db);
+
+  const workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'> | undefined =
+    runExecutor !== undefined
+      ? {
+          registry: workerRegistry,
+          queue: jobQueue,
+          leases: workerLeaseRepository,
+          repos: singleRepo,
+          executeRun: async ({ run, signal: _signal }) => {
+            runRepository.update(run.uuid, { pid: process.pid });
+            const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
+            return { ok: result.run.status === 'passed' };
+          },
+          prepareWorktree: async ({ runId, signal: _signal }) => {
+            const r = runRepository.findByUuid(runId);
+            if (!r) throw new Error(`prepareWorktree: no run found for ${runId}`);
+            const worktreePath = join(opts.repoRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            await gitAdapter.createWorktree({
+              repoLocalBasePath: opts.repoRoot,
+              worktreePath,
+              branch: `ai/issue-${r.issueNumber}`,
+              baseBranch: resolvedDefaultBranch,
+            });
+            if ('seedArtifactExcludes' in gitAdapter) {
+              await (gitAdapter as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
+            }
+            const sha = await gitAdapter.headCommitSha(worktreePath);
+            runRepository.update(r.uuid, { startCommitSha: sha });
+            return { cwd: worktreePath };
+          },
+          resetWorktree: (repoId) => {
+            const lease = workerLeaseRepository.current(repoId);
+            if (!lease) return;
+            const r = runRepository.findByUuid(lease.runId);
+            if (!r) return;
+            const worktreePath = join(opts.repoRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            gitAdapter.resetWorktreeIfClean(worktreePath, resolvedDefaultBranch).catch(() => {});
+          },
+          isWorkerAlive: (workerId) => {
+            const w = workerRegistry.findById(workerId);
+            if (!w) return false;
+            return checkPid(w.processId);
+          },
+          findRun: (runId) => runRepository.findByUuid(runId) ?? undefined,
+          now: () => new Date(),
+          ttlMs: DEFAULT_LEASE_TTL_MS,
+          onLeaseReclaimed: (info) => {
+            logger.error(
+              `Lease reclaimed: repo=${info.repoId} prev=${info.previousWorkerId} by=${info.reclaimedByWorkerId}: ${info.reason}`,
+            );
+          },
+        }
+      : undefined;
+
   const resumeRun = new ResumeRun({
     runRepository,
     repos: singleRepo,
@@ -2509,6 +2571,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     loopRepository,
     workerLeaseRepository,
     jobQueue,
+    workerRegistry,
+    ...(workerLoopDeps !== undefined ? { workerLoopDeps } : {}),
     git: gitAdapter,
     ...(resolvedRepoFullName !== undefined ? { repoFullName: resolvedRepoFullName } : {}),
     runValidation,

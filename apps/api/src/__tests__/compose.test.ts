@@ -941,6 +941,43 @@ exit 1
     expect(c.git).toBeInstanceOf(GitWorktreeAdapter);
   });
 
+  it('exposes workerRegistry and workerLoopDeps on the container when agent config is present', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'compose-wreg-')));
+    const dbPath = path.join(root, 'test.db');
+    writeFileSync(
+      path.join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const container = composeRoot({
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      dbPath,
+      repoFullName: 'owner/repo',
+      runStartupSweeps: false,
+    });
+    expect(container.workerRegistry).toBeDefined();
+    expect(container.workerLoopDeps).toBeDefined();
+  });
+
   it('buildRunContext populates promptsRoot and expectedBranch from repoRoot and issueNumber', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     writeFileSync(
