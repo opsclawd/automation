@@ -20,7 +20,10 @@ const phasesSchema = z.object({
   }),
   // implement.maxIterations is validated but not consumed by any shell loop.
   // The implement phase runs each task once sequentially — no retry loop exists.
-  implement: z.object({ maxIterations: z.number().int().positive() }),
+  implement: z.object({
+    maxIterations: z.number().int().positive(),
+    maxTypeCheckRetries: z.number().int().nonnegative().default(5),
+  }),
   wholePrFix: z.object({ maxIterations: z.number().int().positive() }).optional(),
   fixValidate: z
     .object({

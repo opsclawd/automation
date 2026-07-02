@@ -1917,6 +1917,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           stepIndex: sctx.stepIndex,
           stepTitle: sctx.stepTitle,
           maxIterations: config.phases.implement.maxIterations,
+          maxTypeCheckRetries: config.phases.implement.maxTypeCheckRetries,
         });
         return { outcome: result.outcome };
       };
