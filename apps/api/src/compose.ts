@@ -2201,12 +2201,14 @@ export function composeRoot(opts: ComposeOptions): Container {
             return { passed: true };
           }
           const buildCheckId = `pr-review-build-check-${randomUUID()}`;
-          const logDir = join(runsDir, buildCheckId);
+          const runDir = runRepository.findByUuid(runId)?.displayId ?? runId;
+          const logDir = join(runsDir, runDir, buildCheckId);
           const result = await runValidation.execute({
             runId: RunId(runId),
             phaseId: PhaseName('post-pr-review'),
             cwd,
             logDir,
+            logPathPrefix: buildCheckId,
             commands: config.validation.commands,
             timeoutSeconds: config.validation.timeout,
           });
