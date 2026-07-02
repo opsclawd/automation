@@ -653,11 +653,14 @@ describe('ImplementStepLoop', () => {
 
     it('emits step.typecheck.failed event when typecheck fails', async () => {
       const { events, bus } = collectEvents();
+      let tcCall = 0;
       const deps = makeDeps({
-        runTypecheck: async (): Promise<TypecheckResult> => ({
-          outcome: 'fail',
-          output: 'error TS9999: kaboom',
-        }),
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          tcCall += 1;
+          // Vary output per call so stall detection does NOT trigger; this test
+          // asserts that `step.typecheck.failed` fires when retries exhaust.
+          return { outcome: 'fail', output: `error TS9999: kaboom ${tcCall}` };
+        },
       });
       const depsWithBus = { ...deps, events: bus };
       await new ImplementStepLoop(depsWithBus).execute(baseInput());
@@ -806,6 +809,150 @@ describe('ImplementStepLoop', () => {
         index: 1,
         output: 'error TS4444: retry event 2',
       });
+    });
+  });
+
+  describe('typecheck stall detection', () => {
+    it('stalls and fails immediately when error fingerprint does not change between retries', async () => {
+      const stalledErrors: TypescriptError[] = [
+        { file: 'src/foo.ts', line: 10, col: 5, code: 'TS2339', message: 'Property missing' },
+      ];
+      let implementCalls = 0;
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runImplement: async () => {
+          implementCalls += 1;
+          return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          // Same errors every time — stall should trigger
+          return {
+            outcome: 'fail',
+            output: 'src/foo.ts(10,5): error TS2339: Property missing',
+            structuredErrors: stalledErrors,
+          };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 5,
+      });
+
+      expect(out.outcome).toBe('failed');
+      // Should stall after 1 retry (2 implement calls total): initial + 1 retry
+      expect(implementCalls).toBe(2);
+      expect(typecheckCalls).toBe(2);
+    });
+
+    it('does NOT stall when error fingerprint changes between retries', async () => {
+      let typecheckCalls = 0;
+      const deps = makeDeps({
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          if (typecheckCalls === 1) {
+            return {
+              outcome: 'fail',
+              output: 'src/foo.ts(10,5): error TS2339: first error',
+              structuredErrors: [
+                { file: 'src/foo.ts', line: 10, col: 5, code: 'TS2339', message: 'first error' },
+              ],
+            };
+          }
+          if (typecheckCalls === 2) {
+            return {
+              outcome: 'fail',
+              output: 'src/foo.ts(20,3): error TS2339: second error',
+              structuredErrors: [
+                { file: 'src/foo.ts', line: 20, col: 3, code: 'TS2339', message: 'second error' },
+              ],
+            };
+          }
+          return { outcome: 'pass', output: '' };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 5,
+      });
+
+      expect(out.outcome).toBe('success');
+      expect(typecheckCalls).toBe(3);
+    });
+
+    it('emits step.typecheck.stalled event when stall is detected', async () => {
+      const { events, bus } = collectEvents();
+      const stalledErrors: TypescriptError[] = [
+        { file: 'src/bar.ts', line: 5, col: 1, code: 'TS1005', message: "';' expected" },
+      ];
+      const deps = makeDeps({
+        events: bus,
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: "src/bar.ts(5,1): error TS1005: ';' expected",
+          structuredErrors: stalledErrors,
+        }),
+      });
+
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxTypeCheckRetries: 3 });
+
+      const stalledEvent = events.find((e) => e.type === 'step.typecheck.stalled');
+      expect(stalledEvent).toBeDefined();
+      expect(stalledEvent!.level).toBe('error');
+    });
+
+    it('falls back to comparing output string when structuredErrors is empty', async () => {
+      let typecheckCalls = 0;
+      let implementCalls = 0;
+      const deps = makeDeps({
+        runImplement: async () => {
+          implementCalls += 1;
+          return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          // Unparseable output that changes each call — should NOT stall
+          return {
+            outcome: 'fail',
+            output: `Build failed with error code ${typecheckCalls}`,
+            structuredErrors: [],
+          };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 2,
+      });
+
+      // All retries exhausted (not stalled), because output changes each call
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(3); // initial + 2 retries
+    });
+
+    it('stalls when empty structuredErrors and identical output across retries', async () => {
+      let implementCalls = 0;
+      const deps = makeDeps({
+        runImplement: async () => {
+          implementCalls += 1;
+          return { invocationId: `impl-${implementCalls}`, agentOutcome: 'success' as const };
+        },
+        runTypecheck: async (): Promise<TypecheckResult> => ({
+          outcome: 'fail',
+          output: 'Build failed: fatal error',
+          structuredErrors: [],
+        }),
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxTypeCheckRetries: 5,
+      });
+
+      expect(out.outcome).toBe('failed');
+      expect(implementCalls).toBe(2); // stalled after 1 retry
     });
   });
 

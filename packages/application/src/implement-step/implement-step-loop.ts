@@ -13,6 +13,7 @@ import type {
   ImplementStepLoopResult,
   SpecReviewResult,
   StepLoopContext,
+  TypecheckResult,
 } from './types.js';
 
 export class ImplementStepLoop {
@@ -70,8 +71,35 @@ export class ImplementStepLoop {
     let tcResult = await deps.runTypecheck(baseCtx);
     const maxTypeCheckRetries = input.maxTypeCheckRetries ?? 2;
     let typecheckRetryCount = 0;
+    let prevFingerprint: string | null = null;
 
     while (tcResult.outcome === 'fail' && typecheckRetryCount < maxTypeCheckRetries) {
+      // Stall detection: if same fingerprint as previous attempt, escalate immediately
+      const currFingerprint = this.fingerprintTypecheck(tcResult);
+      if (prevFingerprint !== null && currFingerprint === prevFingerprint) {
+        this.emit(
+          input,
+          'step.typecheck.stalled',
+          'error',
+          `step ${input.stepIndex} typecheck stalled — same errors as previous attempt; escalating`,
+          {
+            index: input.stepIndex,
+            attempt: typecheckRetryCount,
+            fingerprint: currFingerprint.slice(0, 500),
+          },
+        );
+        this.emit(input, 'loop.iteration.started', 'info', 'typecheck stalled', { index: 1 });
+        loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(loop);
+        this.emit(input, 'loop.iteration.completed', 'info', 'step stalled at typecheck gate', {
+          index: 1,
+          outcome: 'failed',
+        });
+        return { outcome: 'failed', loop };
+      }
+      prevFingerprint = currFingerprint;
+
       typecheckRetryCount += 1;
       this.emit(
         input,
@@ -497,5 +525,18 @@ export class ImplementStepLoop {
       triggerReason,
       triggerOwner: 'use_case',
     });
+  }
+
+  private fingerprintTypecheck(tcResult: TypecheckResult): string {
+    const errors = tcResult.structuredErrors;
+    if (errors !== undefined && errors.length > 0) {
+      return [...errors]
+        .sort((a, b) =>
+          `${a.file}:${a.line}:${a.code}`.localeCompare(`${b.file}:${b.line}:${b.code}`),
+        )
+        .map((e) => `${e.file}:${e.line}:${e.code}`)
+        .join('\n');
+    }
+    return tcResult.output;
   }
 }
