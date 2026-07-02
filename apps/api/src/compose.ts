@@ -93,6 +93,7 @@ import {
   type FixStepOptions,
   type ImplementStepOptions,
   type TypecheckResult,
+  type TypescriptError,
   type ResolveRefShaFn,
   extractTaskBody,
   parseTaskManifest,
@@ -193,6 +194,24 @@ export function extractTaskText(
     error: `Task ${taskIndex} has no matching heading in plan.md`,
     reason: result.reason,
   };
+}
+
+export function parseTypescriptErrors(output: string): TypescriptError[] {
+  const pattern = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)$/;
+  const results: TypescriptError[] = [];
+  for (const line of output.split('\n')) {
+    const m = pattern.exec(line.trim());
+    if (m) {
+      results.push({
+        file: m[1]!,
+        line: parseInt(m[2]!, 10),
+        col: parseInt(m[3]!, 10),
+        code: m[4]!,
+        message: m[5]!,
+      });
+    }
+  }
+  return results;
 }
 
 export function buildImplementPrompt(
@@ -1641,7 +1660,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             encoding: 'utf-8',
           });
           if (buildError) {
-            return { outcome: 'fail', output: buildError };
+            return {
+              outcome: 'fail',
+              output: buildError,
+              structuredErrors: parseTypescriptErrors(buildError),
+            };
           }
           return { outcome: 'pass', output: '' };
         } catch (err) {
@@ -1651,9 +1674,11 @@ export function composeRoot(opts: ComposeOptions): Container {
               : String(err);
           const lines = raw.split('\n');
           const truncated = lines.length > 100 ? lines.slice(-100).join('\n') : raw;
+          const sliced = truncated.slice(0, 3000);
           return {
             outcome: 'fail',
-            output: truncated.slice(0, 3000),
+            output: sliced,
+            structuredErrors: parseTypescriptErrors(sliced),
           };
         }
       };

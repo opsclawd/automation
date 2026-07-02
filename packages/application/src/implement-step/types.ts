@@ -24,9 +24,18 @@ export interface ImplementStepOptions {
   typecheckErrors?: string;
 }
 
+export interface TypescriptError {
+  file: string;
+  line: number;
+  col: number;
+  code: string;
+  message: string;
+}
+
 export interface TypecheckResult {
   outcome: 'pass' | 'fail';
   output: string;
+  structuredErrors?: TypescriptError[];
 }
 
 export interface SpecReviewResult {

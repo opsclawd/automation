@@ -36,6 +36,7 @@ export type {
   ImplementStepOptions,
   FixResult,
   TypecheckResult,
+  TypescriptError,
   ImplementStepLoopDeps,
   ImplementStepLoopInput,
   ImplementStepLoopResult,
