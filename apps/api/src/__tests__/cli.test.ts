@@ -1626,10 +1626,10 @@ describe('CLI run --executor ts', () => {
   it('exits 1 when stdout write rejects (no terminal clobber on non-passed run)', async () => {
     // When process.stdout.write rejects (e.g. EPIPE on a closed pipe), the
     // outer try/catch in the TS executor path logs the error and exits 1.
-    // The CLI must NOT clobber the run record with 'failed' — its terminal
-    // status was already set by workerLoop/executeRun before stdout was
-    // written. We verify here that neither update() nor atomicUpdateByUuid()
-    // is called with status: 'failed' from this path.
+    // The catch block calls atomicUpdateByUuid with expectedStatus='running' as
+    // a safe CAS to finalize any stuck run — it is a no-op if the run was
+    // already finalized by workerLoop. The unconditional update() must NOT be
+    // called with status:'failed' (that would clobber an already-terminal run).
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-term-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
     writeFileSync(
@@ -1696,15 +1696,16 @@ describe('CLI run --executor ts', () => {
         '/dev/null',
       ]);
 
-      // The CLI exits with EXIT_USER_ERROR (1) but does NOT touch the run record
-      // with status: 'failed' — the run's terminal status was already set by
-      // workerLoop/executeRun.
+      // The CLI exits with EXIT_USER_ERROR (1). The catch block calls
+      // atomicUpdateByUuid(..., { status: 'failed' }, 'running') as a safe CAS
+      // to finalize a stale 'running' run. The unconditional update() must not
+      // be called with status:'failed' (that path would clobber a terminal run).
       expect(process.exit).toHaveBeenCalledWith(1);
       expect(updateSpy).not.toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ status: 'failed' }),
       );
-      expect(atomicSpy).not.toHaveBeenCalledWith(
+      expect(atomicSpy).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({ status: 'failed' }),
         'running',

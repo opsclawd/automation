@@ -370,6 +370,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
             unsubscribe?.();
+            // Finalize a stale 'running' run so insertIfNoActive doesn't block
+            // the next attempt. atomicUpdateByUuid is a no-op if the run was
+            // never inserted or was already finalized by workerLoop.
+            c.runRepository.atomicUpdateByUuid(
+              run.uuid,
+              {
+                status: 'failed',
+                completedAt: new Date(),
+                failureReason: err instanceof Error ? err.message : String(err),
+              },
+              'running',
+            );
             console.error(err instanceof Error ? err.message : String(err));
             process.exit(EXIT_USER_ERROR);
           }

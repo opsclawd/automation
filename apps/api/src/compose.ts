@@ -2169,7 +2169,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             const w = workerRegistry.findById(workerId);
             if (!w) return false;
             if (w.hostname !== os.hostname()) {
-              return true;
+              // Cannot check PID on a remote host — treat stale heartbeat as dead.
+              return Date.now() - w.heartbeatAt.getTime() < DEFAULT_LEASE_TTL_MS;
             }
             return checkPid(w.processId);
           },
