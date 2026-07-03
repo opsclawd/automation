@@ -49,36 +49,43 @@ export class WorkerScheduler {
       this.baseDeps.queue.reclaimStaleClaims(reclaimCutoff);
 
       const recoverableRunIds = buildRecoverableRunIds(this.baseDeps.queue, this.baseDeps.repos);
-      const deps: WorkerLoopDeps = { ...this.baseDeps, recoverableRunIds, outerSignal: signal };
 
       // workerLoop runs the real executor (prepareWorktree/executeRun), which can
       // legitimately take minutes, so this timeout guards only against a truly
       // hung worker and must not be tied to the (much shorter) tick interval.
       const timeoutMs = this.workerTimeoutMs;
       const results = await Promise.allSettled(
-        this.workerIds.map((wid) =>
-          Promise.race([
-            workerLoop(wid, deps),
+        this.workerIds.map((wid) => {
+          let t: NodeJS.Timeout | undefined;
+          return Promise.race([
+            workerLoop(wid, {
+              ...this.baseDeps,
+              recoverableRunIds,
+              outerSignal: signal,
+              onProgress: () => t?.refresh(),
+            }),
             new Promise<never>((_, reject) => {
               if (signal.aborted) {
                 reject(new Error(`aborted before tick`));
                 return;
               }
-              const t = setTimeout(
+              t = setTimeout(
                 () => reject(new Error(`workerLoop ${wid} timed out after ${timeoutMs}ms`)),
                 timeoutMs,
               );
               signal.addEventListener(
                 'abort',
                 () => {
-                  clearTimeout(t);
+                  if (t) clearTimeout(t);
                   reject(new Error(`aborted during tick`));
                 },
                 { once: true },
               );
             }),
-          ]),
-        ),
+          ]).finally(() => {
+            if (t) clearTimeout(t);
+          });
+        }),
       );
       for (const result of results) {
         if (result.status === 'rejected') {

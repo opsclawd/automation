@@ -37,6 +37,7 @@ export interface WorkerLoopDeps {
     reclaimedByWorkerId: WorkerId;
     reason: string;
   }) => void;
+  onProgress?: () => void;
   outerSignal?: AbortSignal;
 }
 
@@ -71,6 +72,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   const skippedJobIds = new Set<JobId>();
 
   while (true) {
+    deps.onProgress?.();
     const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds, ttlMs: deps.ttlMs });
     if (!job) {
       return;
@@ -98,6 +100,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
           try {
             const now = deps.now();
             leases.heartbeat(job.repoId, workerId, now, new Date(now.getTime() + deps.ttlMs));
+            deps.onProgress?.();
           } catch {
             clearInterval(heartbeatInterval);
             abortController.abort();
