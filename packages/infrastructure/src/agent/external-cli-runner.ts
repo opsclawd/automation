@@ -8,6 +8,7 @@ import {
   readdirSync,
   copyFileSync,
   unlinkSync,
+  statSync,
 } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, basename, resolve, relative } from 'node:path';
@@ -351,8 +352,24 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         )
         .map((e) => e.name);
 
-      if (stemMatches.length !== 1) continue;
-      const srcName = stemMatches[0]!;
+      if (stemMatches.length === 0) continue;
+      // Filter to candidates written during THIS invocation. Stale leftovers from
+      // prior runs/attempts must not be silently promoted to "remediated artifact":
+      // doing so would clear MISSING_REQUIRED_ARTIFACT and mark the run successful
+      // using a file the current agent never produced. Stat failures are treated
+      // as stale (mtimeMs = 0) so they cannot masquerade as fresh.
+      const freshCandidates = stemMatches.flatMap((name) => {
+        let mtimeMs = 0;
+        try {
+          mtimeMs = statSync(join(input.cwd, name)).mtimeMs;
+        } catch {
+          // Race with concurrent delete: treat as stale so a fresh sibling wins.
+        }
+        return mtimeMs >= start ? [{ name, mtimeMs }] : [];
+      });
+      if (freshCandidates.length === 0) continue;
+      freshCandidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      const srcName = freshCandidates[0]!.name;
       const destPath = join(input.cwd, artifact);
       try {
         mkdirSync(dirname(destPath), { recursive: true });

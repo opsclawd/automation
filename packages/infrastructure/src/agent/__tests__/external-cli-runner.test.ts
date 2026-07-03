@@ -8,6 +8,7 @@ import {
   rmSync,
   renameSync,
   readdirSync,
+  utimesSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -732,6 +733,164 @@ describe('runExternalCli', () => {
         expect(result.remediatedArtifacts).toBeUndefined();
       } finally {
         vi.restoreAllMocks();
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('remediates stem-prefix match when multiple untracked candidates exist (picks newest by mtime)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // Two wrong-named files; older has content "old", newer has "new".
+        writeFileSync(join(cwd, 'implementation-log-task-1.md'), 'old');
+        writeFileSync(join(cwd, 'implementation-log-task-9.md'), 'new');
+        // Force deterministic mtime ordering (older first, newer second). Use
+        // Date.now() so both files are unambiguously fresh relative to the
+        // invocation's `start = Date.now()` capture inside runExternalCli.
+        const oldPath = join(cwd, 'implementation-log-task-1.md');
+        const newPath = join(cwd, 'implementation-log-task-9.md');
+        const baseTime = Date.now() / 1000;
+        utimesSync(oldPath, baseTime, baseTime);
+        utimesSync(newPath, baseTime + 60, baseTime + 60);
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['implementation-log.md'],
+        });
+
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'implementation-log.md'), 'utf-8')).toBe('new');
+        expect(result.remediatedArtifacts).toEqual([
+          { src: 'implementation-log-task-9.md', artifact: 'implementation-log.md' },
+        ]);
+        expect(result.contractViolations).not.toContain('missing_required_artifact');
+        expect(result.contractViolations).toContain('misplaced_artifact');
+        // The untracked chosen source is cleaned up; the older untracked source remains.
+        expect(existsSync(newPath)).toBe(false);
+        expect(existsSync(oldPath)).toBe(true);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('remediates stem-prefix match when multiple tracked candidates exist (picks newest by mtime)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // Write and commit both wrong-named candidates so neither gets unlinked.
+        writeFileSync(join(cwd, 'implementation-log-task-1.md'), 'old');
+        writeFileSync(join(cwd, 'implementation-log-task-9.md'), 'new');
+        execSync('git add implementation-log-task-1.md implementation-log-task-9.md', {
+          cwd,
+          stdio: 'pipe',
+        });
+        execSync('git commit -m "add wrong-named logs"', { cwd, stdio: 'pipe' });
+        // Force deterministic mtime ordering, fresh relative to invocation start.
+        const oldPath = join(cwd, 'implementation-log-task-1.md');
+        const newPath = join(cwd, 'implementation-log-task-9.md');
+        const baseTime = Date.now() / 1000;
+        utimesSync(oldPath, baseTime, baseTime);
+        utimesSync(newPath, baseTime + 60, baseTime + 60);
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['implementation-log.md'],
+        });
+
+        expect(result.outcome).toBe('success');
+        expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(true);
+        expect(readFileSync(join(cwd, 'implementation-log.md'), 'utf-8')).toBe('new');
+        expect(result.remediatedArtifacts).toEqual([
+          { src: 'implementation-log-task-9.md', artifact: 'implementation-log.md' },
+        ]);
+        // Both tracked sources remain in git after the copy.
+        expect(existsSync(oldPath)).toBe(true);
+        expect(existsSync(newPath)).toBe(true);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not remediate stem-prefix when only stale candidates exist (mtime before invocation start)', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // Two wrong-named files with mtimes pinned well before invocation start,
+        // simulating stale leftovers from prior runs. The newest-by-mtime rule
+        // alone would silently pick the newer stale file; the freshness filter
+        // must reject both and leave the violation intact.
+        const oldPath = join(cwd, 'implementation-log-task-1.md');
+        const newPath = join(cwd, 'implementation-log-task-9.md');
+        writeFileSync(oldPath, 'old');
+        writeFileSync(newPath, 'new');
+        const staleBase = new Date('2026-07-03T00:00:00Z').getTime() / 1000;
+        utimesSync(oldPath, staleBase, staleBase);
+        utimesSync(newPath, staleBase + 60, staleBase + 60);
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['implementation-log.md'],
+        });
+
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(result.remediatedArtifacts).toBeUndefined();
+        expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(false);
+        // Neither stale source should be copied or removed.
+        expect(existsSync(oldPath)).toBe(true);
+        expect(existsSync(newPath)).toBe(true);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+        rmSync(artifactsDir, { recursive: true, force: true });
+      }
+    });
+
+    it('does not remediate stem-prefix when zero matches', async () => {
+      const cwd = makeTmpDir();
+      const artifactsDir = makeTmpDir();
+      try {
+        makeGitRepo(cwd);
+        // Files that do NOT match the implementation-log stem filter.
+        writeFileSync(join(cwd, 'other.md'), '# Other');
+        writeFileSync(join(cwd, 'implementation-notes.md'), '# Notes');
+
+        const result = await runExternalCli({
+          runtime: 'opencode',
+          bin: 'true',
+          args: [],
+          cwd,
+          artifactsDir,
+          model: 'test',
+          expectedArtifacts: ['implementation-log.md'],
+        });
+
+        expect(result.outcome).toBe('contract_violation');
+        expect(result.contractViolations).toContain('missing_required_artifact');
+        expect(result.remediatedArtifacts).toBeUndefined();
+        expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(false);
+      } finally {
         rmSync(cwd, { recursive: true, force: true });
         rmSync(artifactsDir, { recursive: true, force: true });
       }
