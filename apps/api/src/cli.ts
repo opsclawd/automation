@@ -353,29 +353,49 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             }
 
             const handleSignal = (signal: string, exitCode: number) => {
-              abortController.abort();
-              workerHeartbeat?.stop();
-              const currentJob = c.jobQueue.findById(jobId);
-              if (currentJob && currentJob.status === 'running') {
-                c.jobQueue.markCancelled(jobId, new Date());
-              }
-              const currentRun = c.runRepository.findByUuid(run.uuid);
-              if (currentRun && currentRun.status === 'running') {
-                c.runRepository.update(run.uuid, {
-                  status: 'cancelled',
-                  completedAt: new Date(),
-                  failureReason: `interrupted by ${signal}`,
-                });
-              }
               try {
-                c.workerLeaseRepository.release(repoId, workerId);
-              } catch (err) {
-                console.error(
-                  `Failed to release lease on exit: ${err instanceof Error ? err.message : String(err)}`,
-                );
+                abortController.abort();
+                const currentJob = c.jobQueue.findById(jobId);
+                if (currentJob) {
+                  if (currentJob.status === 'claimed') {
+                    try {
+                      c.jobQueue.releaseClaim(jobId);
+                    } catch (err) {
+                      console.error(
+                        `releaseClaim on signal failed: ${err instanceof Error ? err.message : String(err)}`,
+                      );
+                    }
+                  } else if (currentJob.status === 'running') {
+                    try {
+                      c.jobQueue.markCancelled(jobId, new Date());
+                    } catch (err) {
+                      console.error(
+                        `markCancelled on signal failed: ${err instanceof Error ? err.message : String(err)}`,
+                      );
+                    }
+                  }
+                  // 'queued' is a no-op: the workerLoop's first tick will reclaim naturally.
+                }
+                workerHeartbeat?.stop();
+                const currentRun = c.runRepository.findByUuid(run.uuid);
+                if (currentRun && currentRun.status === 'running') {
+                  c.runRepository.update(run.uuid, {
+                    status: 'cancelled',
+                    completedAt: new Date(),
+                    failureReason: `interrupted by ${signal}`,
+                  });
+                }
+                try {
+                  c.workerLeaseRepository.release(repoId, workerId);
+                } catch (err) {
+                  console.error(
+                    `Failed to release lease on exit: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+                unsubscribe?.();
+              } finally {
+                process.exit(exitCode);
               }
-              unsubscribe?.();
-              process.exit(exitCode);
             };
 
             sigintHandler = () => handleSignal('SIGINT', EXIT_SIGINT);
@@ -386,6 +406,27 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps);
 
             await scheduler.runUntilComplete(jobId, abortController.signal);
+
+            if (abortController.signal.aborted) {
+              const finalJobAfterAbort = c.jobQueue.findById(jobId);
+              const finalRunAfterAbort = c.runRepository.findByUuid(run.uuid);
+              if (
+                finalRunAfterAbort &&
+                finalRunAfterAbort.status === 'running' &&
+                finalJobAfterAbort &&
+                !['succeeded', 'failed', 'cancelled'].includes(finalJobAfterAbort.status)
+              ) {
+                c.runRepository.atomicUpdateByUuid(
+                  run.uuid,
+                  {
+                    status: 'cancelled',
+                    completedAt: new Date(),
+                    failureReason: 'aborted during scheduler run',
+                  },
+                  'running',
+                );
+              }
+            }
 
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
