@@ -12,6 +12,7 @@ import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
+import { remediateMissingArtifacts } from './artifact-remediation.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -278,46 +279,11 @@ export class OpenCodeAgentAdapter implements AgentPort {
         stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
       }
     }
+    let remediatedArtifacts: { src: string; artifact: string }[] | undefined;
     if (outcome === 'success' && request.expectedArtifacts?.length) {
       for (const artifact of request.expectedArtifacts) {
         const artifactPath = join(request.cwd, artifact);
-        if (existsSync(artifactPath)) {
-          continue;
-        }
-        // Defense-in-depth: scan known stray locations for artifacts stranded by
-        // opencode session-directory drift (#311). If found, copy to the expected
-        // path so the orchestrator can consume it.
-        let recovered = false;
-        const strayLocations = ['apps/cli'];
-        for (const stray of strayLocations) {
-          const worktreePath = join(request.cwd, stray, artifact);
-          if (existsSync(worktreePath)) {
-            try {
-              const artifactPath = join(request.cwd, artifact);
-              writeFileSync(artifactPath, readFileSync(worktreePath));
-              recovered = true;
-              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from worktree ${stray}/${artifact}\n${stderrForLog}`;
-            } catch (err) {
-              stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from worktree ${stray}/${artifact}: ${err}\n${stderrForLog}`;
-            }
-            break;
-          }
-          if (this.opts.repoRoot) {
-            const repoPath = join(this.opts.repoRoot, stray, artifact);
-            if (existsSync(repoPath)) {
-              try {
-                const artifactPath = join(request.cwd, artifact);
-                writeFileSync(artifactPath, readFileSync(repoPath));
-                recovered = true;
-                stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot ${stray}/${artifact}\n${stderrForLog}`;
-              } catch (err) {
-                stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from repoRoot ${stray}/${artifact}: ${err}\n${stderrForLog}`;
-              }
-              break;
-            }
-          }
-        }
-        if (!recovered) {
+        if (!existsSync(artifactPath)) {
           outcome = 'contract_violation';
           contractViolations = [
             ...contractViolations,
@@ -325,6 +291,26 @@ export class OpenCodeAgentAdapter implements AgentPort {
           ];
           stderrForLog = `MISSING_REQUIRED_ARTIFACT: ${artifact}\n${stderrForLog}`;
           break;
+        }
+      }
+      if (
+        outcome === 'contract_violation' &&
+        contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+      ) {
+        const result = remediateMissingArtifacts({
+          cwd: request.cwd,
+          startMs: start,
+          expectedArtifacts: request.expectedArtifacts,
+          stderrForLog,
+        });
+        if (result.remediatedArtifacts.length > 0) {
+          remediatedArtifacts = result.remediatedArtifacts;
+          if (result.missingArtifacts.length === 0) {
+            outcome = 'success';
+            contractViolations = contractViolations
+              .filter((v) => v !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+              .concat(CONTRACT_VIOLATION_CODES.MISPLACED_ARTIFACT);
+          }
         }
       }
     }
@@ -356,6 +342,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
     if (request.stepId) ret.stepId = request.stepId;
+    if (remediatedArtifacts) ret.remediatedArtifacts = remediatedArtifacts;
     // Set resultJsonPath so downstream extraction uses the explicit path rather
     // than falling back to a hardcoded 'result.json' (#311).
     if (ret.outcome === 'success' && request.expectedArtifacts.includes('result.json')) {
