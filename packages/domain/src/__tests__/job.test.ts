@@ -33,6 +33,17 @@ describe('Job lifecycle', () => {
     expect(j.attempts).toBe(1);
   });
 
+  it('claimJob sets claimExpiresAt when ttlMs is provided', () => {
+    const now = new Date('2026-01-01T00:00:00Z');
+    const j = claimJob(createJob(base), WorkerId('w1'), now, 5_000);
+    expect(j.claimExpiresAt).toEqual(new Date('2026-01-01T00:00:05Z'));
+  });
+
+  it('claimJob omits claimExpiresAt when ttlMs is not provided', () => {
+    const j = claimJob(createJob(base), WorkerId('w1'), new Date());
+    expect(j.claimExpiresAt).toBeUndefined();
+  });
+
   it('claimJob refuses to claim a non-queued job', () => {
     const claimed = claimJob(createJob(base), WorkerId('w1'), new Date());
     expect(() => claimJob(claimed, WorkerId('w2'), new Date())).toThrow(JobStateError);
