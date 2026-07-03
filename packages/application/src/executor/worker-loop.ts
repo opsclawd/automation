@@ -207,7 +207,15 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         return;
       }
       if (started) {
-        queue.markFailed(job.id, deps.now());
+        if (deps.outerSignal?.aborted) {
+          try {
+            queue.markCancelled(job.id, deps.now());
+          } catch {
+            /* already terminal */
+          }
+        } else {
+          queue.markFailed(job.id, deps.now());
+        }
       } else {
         queue.releaseClaim(job.id);
       }
