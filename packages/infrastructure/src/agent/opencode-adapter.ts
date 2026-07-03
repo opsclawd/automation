@@ -297,6 +297,24 @@ export class OpenCodeAgentAdapter implements AgentPort {
         outcome === 'contract_violation' &&
         contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
       ) {
+        // Also scan repoRoot/apps/cli/ for artifacts that drifted outside the
+        // worktree (#311). Pre-launch cleanup (lines 158-167) removes stale
+        // artifacts before the agent starts, so anything found here was written
+        // during the current invocation.
+        if (this.opts.repoRoot) {
+          for (const artifact of request.expectedArtifacts) {
+            const artifactPath = join(request.cwd, artifact);
+            if (existsSync(artifactPath)) continue;
+            const strayPath = join(this.opts.repoRoot, 'apps', 'cli', artifact);
+            if (existsSync(strayPath)) {
+              writeFileSync(artifactPath, readFileSync(strayPath));
+              rmSync(strayPath);
+              const entry = { src: `apps/cli/${artifact}`, artifact };
+              remediatedArtifacts = [...(remediatedArtifacts ?? []), entry];
+              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot apps/cli/\n${stderrForLog}`;
+            }
+          }
+        }
         const remediateOpts = {
           cwd: request.cwd,
           startMs: start,
@@ -305,14 +323,18 @@ export class OpenCodeAgentAdapter implements AgentPort {
         };
         const result = remediateMissingArtifacts(remediateOpts);
         stderrForLog = remediateOpts.stderrForLog;
-        if (result.remediatedArtifacts.length > 0) {
-          remediatedArtifacts = result.remediatedArtifacts;
+        const allRemediated = [
+          ...(result.remediatedArtifacts ?? []),
+          ...(remediatedArtifacts ?? []),
+        ];
+        if (allRemediated.length > 0) {
+          remediatedArtifacts = allRemediated;
           if (result.missingArtifacts.length === 0) {
             outcome = 'success';
             contractViolations = contractViolations
               .filter((v) => v !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
               .concat(CONTRACT_VIOLATION_CODES.MISPLACED_ARTIFACT);
-            const remediatedList = result.remediatedArtifacts
+            const remediatedList = allRemediated
               .map((r) => `${r.src} → ${r.artifact}`)
               .join(', ');
             stderrForLog = `MISPLACED_ARTIFACT: auto-remediated ${remediatedList}\n${stderrForLog}`;
