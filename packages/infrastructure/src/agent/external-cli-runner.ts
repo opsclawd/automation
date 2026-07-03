@@ -8,6 +8,7 @@ import {
   readdirSync,
   copyFileSync,
   unlinkSync,
+  statSync,
 } from 'node:fs';
 import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, basename, resolve, relative } from 'node:path';
@@ -351,8 +352,21 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         )
         .map((e) => e.name);
 
-      if (stemMatches.length !== 1) continue;
-      const srcName = stemMatches[0]!;
+      if (stemMatches.length === 0) continue;
+      const stemMatchesSorted = stemMatches
+        .map((name) => {
+          let mtimeMs = 0;
+          try {
+            mtimeMs = statSync(join(input.cwd, name)).mtimeMs;
+          } catch {
+            // If we can't stat (race with delete), treat as oldest so a stat-able
+            // sibling wins. Fall through with mtimeMs = 0.
+          }
+          return { name, mtimeMs };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+      const srcName = stemMatchesSorted[0]!.name;
       const destPath = join(input.cwd, artifact);
       try {
         mkdirSync(dirname(destPath), { recursive: true });
