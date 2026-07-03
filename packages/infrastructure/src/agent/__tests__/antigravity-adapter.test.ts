@@ -880,4 +880,47 @@ exit 0
     // Since we sort the found matches by file mtime descending as well, it should pick the most recent one (run-new-0)
     expect(readFileSync(join(cwd, 'compound.md'), 'utf-8')).toBe('# New learnings 0\n');
   });
+
+  it('passes --model with the resolved label when request.model is a known slug', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: 'gemini-3.5-flash-high' }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('--model');
+      expect(args).toContain('Gemini 3.5 Flash (High)');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('inserts --model between --print-timeout and --print', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: 'gemini-3.5-flash-low' }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      // fake-agy-args-logger.sh writes `$@` (space-joined) — find the indices.
+      // Use a leading space on '--print' so we don't match the '--print' inside '--print-timeout'.
+      const timeoutIdx = args.indexOf('--print-timeout');
+      const modelIdx = args.indexOf('--model');
+      const printIdx = args.indexOf(' --print ');
+      expect(timeoutIdx).toBeGreaterThanOrEqual(0);
+      expect(modelIdx).toBeGreaterThan(timeoutIdx);
+      expect(printIdx).toBeGreaterThan(modelIdx);
+      expect(args).toContain('Gemini 3.5 Flash (Low)');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
 });
