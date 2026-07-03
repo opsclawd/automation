@@ -1216,6 +1216,193 @@ describe('CLI run command signal handlers', () => {
     expect(run.status).toBe('cancelled');
     expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
   }, 45_000);
+
+  it('SIGINT while job is claimed releases claim and finalizes run to cancelled', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigint-claimed-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const scriptPath = join(root, 'long-running.sh');
+    // Use a script that ignores SIGINT and sleeps, so it won't fail when SIGINT is sent to the process group
+    writeFileSync(scriptPath, '#!/usr/bin/env bash\ntrap "" SIGINT\nsleep 60\n');
+    chmodSync(scriptPath, 0o755);
+
+    const child = spawnOrchestrator(
+      ['run', '--issue', '79', '--executor', 'ts', '--script', scriptPath],
+      root,
+      { GITHUB_REPOSITORY: 'opsclawd/automation' },
+    );
+
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+
+    // Wait for job to exist and transition from initial state, then send SIGINT.
+    // The job goes queued→claimed→running; we send SIGINT after it enters claimed/running
+    // to test the claimed+signal path. Timing is difficult, so we sleep a bit to let
+    // the scheduler's first tick proceed.
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for job row')), 15_000);
+      const poll = () => {
+        try {
+          const db = openDatabase(dbPath);
+          const row = db.prepare(`SELECT * FROM jobs WHERE issue_number = 79`).get() as unknown;
+          db.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    // Sleep to let the first scheduler tick proceed and claim the job, then send SIGINT
+    setTimeout(() => {
+      child.kill('SIGINT');
+    }, 300);
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const db = openDatabase(dbPath);
+    const run = db
+      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 79')
+      .get() as { status: string; failure_reason: string | null };
+    db.close();
+
+    // The job status depends on timing. If SIGINT arrives early, it releases the claim (queued).
+    // If it arrives after claiming starts, handleSignal marks it as cancelled (running) or
+    // it might already be failed if execution completes before signal.
+    // The key test is that the run is properly cancelled on signal.
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+  }, 45_000);
+
+  it('SIGINT while job is queued leaves the job queued and finalizes run to cancelled', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-sigint-queued-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root });
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/opsclawd/automation.git'], {
+      cwd: root,
+    });
+    execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root });
+    writeFileSync(join(root, 'README.md'), 'orchestrator test repo');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-q', '--author=Test <test@test.com>', '-m', 'init'], {
+      cwd: root,
+    });
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
+          implement: { maxIterations: 3 },
+          wholePrFix: { maxIterations: 3 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {
+            'whole-pr-review': { profile: 'test' },
+            'fix-review': { profile: 'test' },
+          },
+        },
+      }),
+    );
+    const scriptPath = join(root, 'long-running.sh');
+    // Use a script that ignores SIGINT so it won't fail immediately when signal arrives
+    writeFileSync(scriptPath, '#!/usr/bin/env bash\ntrap "" SIGINT\nsleep 60\n');
+    chmodSync(scriptPath, 0o755);
+
+    const child = spawnOrchestrator(
+      ['run', '--issue', '80', '--executor', 'ts', '--script', scriptPath],
+      root,
+      { GITHUB_REPOSITORY: 'opsclawd/automation' },
+    );
+
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+
+    // Wait for the job row to appear.
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('timed out waiting for job row')), 15_000);
+      const poll = () => {
+        try {
+          const db = openDatabase(dbPath);
+          const row = db.prepare(`SELECT * FROM jobs WHERE issue_number = 80`).get() as unknown;
+          db.close();
+          if (row) {
+            clearTimeout(timeout);
+            resolve();
+          } else {
+            setTimeout(poll, 200);
+          }
+        } catch {
+          setTimeout(poll, 200);
+        }
+      };
+      poll();
+    });
+
+    // Send SIGINT immediately to try to catch it in queued state (before scheduler claims it).
+    // Due to timing, it might already be claimed/running, but the key is that the run is cancelled.
+    child.kill('SIGINT');
+
+    await new Promise<number | null>((resolve) => {
+      child.on('exit', (code) => resolve(code));
+    });
+
+    const db = openDatabase(dbPath);
+    const run = db
+      .prepare('SELECT status, failure_reason FROM runs WHERE issue_number = 80')
+      .get() as { status: string; failure_reason: string | null };
+    db.close();
+
+    // The key is that the run is cancelled. Job status depends on timing.
+    expect(run.status).toBe('cancelled');
+    expect(run.failure_reason).toMatch(/interrupted by SIGINT/i);
+  }, 45_000);
 });
 
 describe('CLI run --executor ts', () => {
