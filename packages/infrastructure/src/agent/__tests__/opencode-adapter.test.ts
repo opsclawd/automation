@@ -1192,6 +1192,37 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
     expect(r.resultJsonPath).toBeUndefined();
   });
+
+  it('recovers design.md from a subdirectory (depth ≥ 2)', async () => {
+    const cwd = makeWorktree();
+    const subdir = join(cwd, 'docs', 'superpowers', 'specs');
+    mkdirSync(subdir, { recursive: true });
+    const originalContent = '# Design Document\n\nThis is a test design document.';
+    writeFileSync(join(subdir, 'design.md'), originalContent);
+    // Confirm it is NOT at the expected worktree-root path
+    expect(existsSync(join(cwd, 'design.md'))).toBe(false);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['design.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(r.remediatedArtifacts).toEqual([
+      { src: 'docs/superpowers/specs/design.md', artifact: 'design.md' },
+    ]);
+    expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe(originalContent);
+  });
 });
 
 describe('parseSessionLogUsage', () => {
