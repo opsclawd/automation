@@ -71,7 +71,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   const skippedJobIds = new Set<JobId>();
 
   while (true) {
-    const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds });
+    const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds, ttlMs: deps.ttlMs });
     if (!job) {
       return;
     }

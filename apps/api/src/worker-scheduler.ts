@@ -36,6 +36,7 @@ export class WorkerScheduler {
     private readonly workerIds: WorkerId[],
     private readonly baseDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'>,
     private readonly tickIntervalMs = 2_000,
+    private readonly workerTimeoutMs = 15 * 60_000,
   ) {}
 
   async runUntilComplete(jobId: JobId, signal: AbortSignal): Promise<void> {
@@ -50,7 +51,10 @@ export class WorkerScheduler {
       const recoverableRunIds = buildRecoverableRunIds(this.baseDeps.queue, this.baseDeps.repos);
       const deps: WorkerLoopDeps = { ...this.baseDeps, recoverableRunIds, outerSignal: signal };
 
-      const timeoutMs = this.tickIntervalMs * 6;
+      // workerLoop runs the real executor (prepareWorktree/executeRun), which can
+      // legitimately take minutes, so this timeout guards only against a truly
+      // hung worker and must not be tied to the (much shorter) tick interval.
+      const timeoutMs = this.workerTimeoutMs;
       const results = await Promise.allSettled(
         this.workerIds.map((wid) =>
           Promise.race([

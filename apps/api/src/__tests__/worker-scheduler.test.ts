@@ -311,12 +311,32 @@ describe('WorkerScheduler', () => {
   it('throws within the per-worker timeout window when workerLoop never resolves', async () => {
     const queue = makeQueue({});
     vi.mocked(workerLoop).mockReturnValueOnce(new Promise(() => {}));
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 50);
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 50, 100);
     const start = Date.now();
     await expect(
       scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
     ).rejects.toThrow(/timed out/);
     const elapsed = Date.now() - start;
     expect(elapsed).toBeLessThan(1_000);
+  });
+
+  it('does not time out a workerLoop that outlives several tick intervals', async () => {
+    let callCount = 0;
+    const queue: JobQueuePort = {
+      ...makeQueue({}),
+      findById: vi.fn(() => {
+        callCount++;
+        return makeJob('job-1', callCount === 1 ? 'queued' : 'succeeded');
+      }),
+    };
+    vi.mocked(workerLoop).mockImplementationOnce(
+      () => new Promise((resolve) => setTimeout(resolve, 60)),
+    );
+    // tickIntervalMs=5 means the old `tickIntervalMs * 6` timeout (30ms) would have
+    // fired well before this 60ms workerLoop call resolves.
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 5, 1_000);
+    await expect(
+      scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
+    ).resolves.toBeUndefined();
   });
 });
