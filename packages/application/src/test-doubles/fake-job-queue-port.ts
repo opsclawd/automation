@@ -3,7 +3,6 @@ import {
   type JobId,
   type RepositoryId,
   type RunId,
-  type WorkerId,
   claimJob,
   unclaimJob,
   resetJobToQueued,
@@ -14,7 +13,11 @@ import {
   RepositoryNotApprovedError,
   DuplicateJobIdError,
 } from '@ai-sdlc/domain';
-import type { JobQueuePort, EnqueueJobInput } from '../ports/job-queue-port.js';
+import type {
+  JobQueuePort,
+  EnqueueJobInput,
+  ClaimNextInput,
+} from '../ports/job-queue-port.js';
 import type { RepositoryPort } from '../ports.js';
 
 export class FakeJobQueuePort implements JobQueuePort {
@@ -32,7 +35,7 @@ export class FakeJobQueuePort implements JobQueuePort {
     this.jobs.set(input.job.id, input.job);
   }
 
-  claimNext(input: { workerId: WorkerId; skipJobIds?: Set<JobId> }): Job | undefined {
+  claimNext(input: ClaimNextInput): Job | undefined {
     const queued = [...this.jobs.values()]
       .filter((j) => j.status === 'queued' && !input.skipJobIds?.has(j.id))
       .sort(
@@ -43,7 +46,7 @@ export class FakeJobQueuePort implements JobQueuePort {
       );
     const next = queued[0];
     if (!next) return undefined;
-    const claimed = claimJob(next, input.workerId, new Date());
+    const claimed = claimJob(next, input.workerId, new Date(), input.ttlMs);
     this.jobs.set(claimed.id, claimed);
     return claimed;
   }
@@ -77,6 +80,27 @@ export class FakeJobQueuePort implements JobQueuePort {
   }
   findById(jobId: JobId): Job | undefined {
     return this.jobs.get(jobId);
+  }
+
+  findExpiredClaims(cutoff: Date): Job[] {
+    return [...this.jobs.values()].filter(
+      (j) =>
+        j.status === 'claimed' &&
+        j.claimExpiresAt !== undefined &&
+        j.claimExpiresAt.getTime() < cutoff.getTime(),
+    );
+  }
+
+  reclaimStaleClaims(cutoff: Date): number {
+    const expired = this.findExpiredClaims(cutoff);
+    for (const j of expired) {
+      const { claimedBy, claimedAt, claimExpiresAt: _ce, ...rest } = j;
+      void claimedBy;
+      void claimedAt;
+      void _ce;
+      this.jobs.set(j.id, { ...rest, status: 'queued' });
+    }
+    return expired.length;
   }
 
   private update(jobId: JobId, fn: (j: Job) => Job): void {
