@@ -360,6 +360,23 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         remediatedArtifacts = [...(remediatedArtifacts ?? []), { src: srcName, artifact }];
         stderrForLog = `STEM_PREFIX_REMEDIATED: ${srcName} → ${artifact}\n${stderrForLog}`;
         writeFileSync(stderrPath, stderrForLog);
+        // Delete the source if untracked so wrong-named files don't accumulate
+        // across steps and break the "exactly 1 match" guard on future retries.
+        // Tracked files are left in place — they're already in git history.
+        try {
+          execFileSync('git', ['ls-files', '--error-unmatch', '--', srcName], {
+            cwd: input.cwd,
+            stdio: 'pipe',
+          });
+        } catch (gitErr) {
+          if ((gitErr as { status?: number }).status === 1) {
+            try {
+              unlinkSync(join(input.cwd, srcName));
+            } catch {
+              // best-effort
+            }
+          }
+        }
       } catch (e) {
         console.warn('stem-prefix remediation failed:', e);
       }
