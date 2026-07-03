@@ -223,8 +223,11 @@ export function remediateArtifacts(
     }
   }
 
-  return {
-    remediatedArtifacts: remediatedArtifacts.length > 0 ? remediatedArtifacts : undefined,
+  const res: RemediationResult = {
     logMessages,
   };
+  if (remediatedArtifacts.length > 0) {
+    res.remediatedArtifacts = remediatedArtifacts;
+  }
+  return res;
 }

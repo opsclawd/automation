@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
 import { remediateArtifacts } from './artifact-remediation.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
@@ -376,7 +376,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stderrPath,
       contractViolations,
       outcome,
-      remediatedArtifacts,
+      ...(remediatedArtifacts ? { remediatedArtifacts } : {}),
       ...(usage ? { usage: { ...usage } } : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;
