@@ -344,16 +344,21 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
             e.isFile() &&
             e.name !== artifactBasename &&
             e.name.startsWith(stem) &&
+            // require a separator (-/_) immediately after the stem so that
+            // e.g. `planning.md` is not matched when the stem is `plan`
+            (e.name[stem.length] === '-' || e.name[stem.length] === '_') &&
             (ext === '' || e.name.endsWith(ext)),
         )
         .map((e) => e.name);
 
       if (stemMatches.length !== 1) continue;
       const srcName = stemMatches[0]!;
+      const destPath = join(input.cwd, artifact);
       try {
-        copyFileSync(join(input.cwd, srcName), join(input.cwd, artifactBasename));
+        mkdirSync(dirname(destPath), { recursive: true });
+        copyFileSync(join(input.cwd, srcName), destPath);
         remediatedArtifacts = [...(remediatedArtifacts ?? []), { src: srcName, artifact }];
-        stderrForLog = `STEM_PREFIX_REMEDIATED: ${srcName} → ${artifactBasename}\n${stderrForLog}`;
+        stderrForLog = `STEM_PREFIX_REMEDIATED: ${srcName} → ${artifact}\n${stderrForLog}`;
         writeFileSync(stderrPath, stderrForLog);
       } catch (e) {
         console.warn('stem-prefix remediation failed:', e);
