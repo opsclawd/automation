@@ -319,6 +319,52 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
         console.warn('moveMisplacedArtifact failed:', e);
       }
     }
+    // Second-pass stem-prefix remediation: catch agents that write
+    // `<stem>-suffix.md` instead of `<stem>.md` (e.g. `implementation-log-task-5.md`
+    // instead of `implementation-log.md`).  Searches the worktree root only and
+    // accepts tracked files since the agent may have already committed the wrong name.
+    // Copies rather than renames so the source stays in git if already tracked.
+    for (const artifact of input.expectedArtifacts) {
+      if (existsSync(join(input.cwd, artifact))) continue;
+      const artifactBasename = basename(artifact);
+      const dotIdx = artifactBasename.lastIndexOf('.');
+      const stem = dotIdx > 0 ? artifactBasename.slice(0, dotIdx) : artifactBasename;
+      const ext = dotIdx > 0 ? artifactBasename.slice(dotIdx) : '';
+
+      let rootEntries: import('node:fs').Dirent[];
+      try {
+        rootEntries = readdirSync(input.cwd, { withFileTypes: true }) as import('node:fs').Dirent[];
+      } catch {
+        continue;
+      }
+
+      const stemMatches = rootEntries
+        .filter(
+          (e) =>
+            e.isFile() &&
+            e.name !== artifactBasename &&
+            e.name.startsWith(stem) &&
+            // require a separator (-/_) immediately after the stem so that
+            // e.g. `planning.md` is not matched when the stem is `plan`
+            (e.name[stem.length] === '-' || e.name[stem.length] === '_') &&
+            (ext === '' || e.name.endsWith(ext)),
+        )
+        .map((e) => e.name);
+
+      if (stemMatches.length !== 1) continue;
+      const srcName = stemMatches[0]!;
+      const destPath = join(input.cwd, artifact);
+      try {
+        mkdirSync(dirname(destPath), { recursive: true });
+        copyFileSync(join(input.cwd, srcName), destPath);
+        remediatedArtifacts = [...(remediatedArtifacts ?? []), { src: srcName, artifact }];
+        stderrForLog = `STEM_PREFIX_REMEDIATED: ${srcName} → ${artifact}\n${stderrForLog}`;
+        writeFileSync(stderrPath, stderrForLog);
+      } catch (e) {
+        console.warn('stem-prefix remediation failed:', e);
+      }
+    }
+
     // If all expected artifacts are now present, swap violation codes and restore outcome.
     if (remediatedArtifacts?.length) {
       const allPresent = input.expectedArtifacts.every((a) => existsSync(join(input.cwd, a)));
