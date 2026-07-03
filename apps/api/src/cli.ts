@@ -439,15 +439,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // record is still 'running' (e.g. workerLoop failed before
             // RunExecutor could persist a terminal status), finalize it now so
             // insertIfNoActive doesn't reject the next attempt for this repo/issue.
+            // atomicUpdateByUuid guards against a concurrent cancel webhook
+            // overwriting a just-set 'cancelled' status.
             if (
               finalRun.status === 'running' &&
               (finalJob?.status === 'failed' || finalJob?.status === 'cancelled')
             ) {
-              c.runRepository.update(run.uuid, {
-                status: 'failed',
-                completedAt: new Date(),
-                failureReason: 'worker loop terminated without finalizing run',
-              });
+              c.runRepository.atomicUpdateByUuid(
+                run.uuid,
+                {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  failureReason: 'worker loop terminated without finalizing run',
+                },
+                'running',
+              );
               finalRun = c.runRepository.findByUuid(run.uuid) ?? finalRun;
             }
 
@@ -460,9 +466,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               }
             }
 
+            const phases = c.phaseRepository.listByRun(run.uuid);
             await new Promise<void>((resolve, reject) =>
-              process.stdout.write(JSON.stringify({ run: finalRun, phases: [] }) + '\n', (err) =>
-                err ? reject(err) : resolve(),
+              process.stdout.write(
+                JSON.stringify({ jobId, workerId, run: finalRun, phases }) + '\n',
+                (err) => (err ? reject(err) : resolve()),
               ),
             );
 
