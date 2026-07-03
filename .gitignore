@@ -42,6 +42,7 @@ test-results/
 cache/
 .ai-orchestrator.local.json
 .ai-orchestrator.db
+.openclaw.db
 /orchestrator.sqlite
 /result.json
 task-*-complete.md
