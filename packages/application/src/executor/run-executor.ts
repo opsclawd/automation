@@ -541,7 +541,7 @@ export class RunExecutor {
     this.deps.failureRepository.insert(failure);
     this.deps.runRepository.update(run.uuid, {
       status: 'needs_human_review',
-      currentPhase: null,
+      currentPhase: run.currentPhase ?? null,
       completedAt: at,
       failureReason: failure.message,
     });

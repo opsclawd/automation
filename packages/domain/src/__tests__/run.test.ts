@@ -105,14 +105,14 @@ describe('Run state machine', () => {
     expect(r.failureReason).toBe('boom');
   });
 
-  it('marks run needs_human_review with reason, clears currentPhase', () => {
+  it('marks run needs_human_review with reason, preserves currentPhase', () => {
     let r = createRun(base);
     r = startPhase(r, 'implement');
     r = markRunNeedsHumanReview(r, 'step 2 needs human review');
     expect(r.status).toBe('needs_human_review');
     expect(r.failureReason).toBe('step 2 needs human review');
     expect(r.completedAt).toBeDefined();
-    expect(r.currentPhase).toBeUndefined();
+    expect(r.currentPhase).toBe('implement');
   });
 
   it('markRunNeedsHumanReview rejects terminal runs', () => {
@@ -143,6 +143,11 @@ describe('Run state machine', () => {
 
     it('returns true for blocked runs', () => {
       const r = blockRun(createRun(base), 'blocked');
+      expect(canResume(r)).toBe(true);
+    });
+
+    it('returns true for needs_human_review runs', () => {
+      const r = markRunNeedsHumanReview(createRun(base), 'needs review');
       expect(canResume(r)).toBe(true);
     });
 
@@ -224,6 +229,12 @@ describe('Run state machine', () => {
 
     it('transitions blocked → running', () => {
       const r = blockRun(createRun(base), 'blocked');
+      const resumed = resumeRun(r);
+      expect(resumed.status).toBe('running');
+    });
+
+    it('transitions needs_human_review → running', () => {
+      const r = markRunNeedsHumanReview(createRun(base), 'review');
       const resumed = resumeRun(r);
       expect(resumed.status).toBe('running');
     });

@@ -48,8 +48,8 @@ describe('planRunRecoveryAction', () => {
   });
 
   describe('retry action', () => {
-    it('allows failed and blocked runs', () => {
-      for (const status of ['failed', 'blocked'] as const) {
+    it('allows failed, blocked, and needs_human_review runs', () => {
+      for (const status of ['failed', 'blocked', 'needs_human_review'] as const) {
         const run = makeRun({ status, currentPhase: 'validate' });
         const plan = planRunRecoveryAction({ action: 'retry', run, phases: [] });
         expect(plan.allowed).toBe(true);
@@ -61,7 +61,7 @@ describe('planRunRecoveryAction', () => {
       const plan = planRunRecoveryAction({ action: 'retry', run, phases: [] });
       expect(plan.allowed).toBe(false);
       expect(plan.statusCodeOnDenied).toBe(409);
-      expect(plan.denialReason).toContain('failed or blocked');
+      expect(plan.denialReason).toContain('failed, blocked, or needs_human_review');
     });
 
     it('retry target prefers run.currentPhase', () => {
@@ -169,8 +169,8 @@ describe('planRunRecoveryAction', () => {
   });
 
   describe('resume action', () => {
-    it('allows failed and blocked runs', () => {
-      for (const status of ['failed', 'blocked'] as const) {
+    it('allows failed, blocked, and needs_human_review runs', () => {
+      for (const status of ['failed', 'blocked', 'needs_human_review'] as const) {
         const run = makeRun({ status, currentPhase: 'validate' });
         const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
         expect(plan.allowed).toBe(true);
@@ -182,7 +182,7 @@ describe('planRunRecoveryAction', () => {
       const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
       expect(plan.allowed).toBe(false);
       expect(plan.statusCodeOnDenied).toBe(409);
-      expect(plan.denialReason).toContain('failed or blocked');
+      expect(plan.denialReason).toContain('failed, blocked, or needs_human_review');
     });
 
     it('resume with fromPhase validates unknown phases and reads retry safety', () => {

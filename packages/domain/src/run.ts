@@ -153,7 +153,6 @@ export function markRunNeedsHumanReview(run: Run, reason: string, at: Date = new
     completedAt: at,
     failureReason: reason,
   };
-  delete next.currentPhase;
   return next;
 }
 
@@ -203,7 +202,7 @@ export function reactivate(run: Run): Run {
 }
 
 export function canResume(run: Run): boolean {
-  return run.status === 'failed' || run.status === 'blocked';
+  return run.status === 'failed' || run.status === 'blocked' || run.status === 'needs_human_review';
 }
 
 /**
@@ -217,7 +216,7 @@ export function canResume(run: Run): boolean {
 export function resumeRun(run: Run, phase?: string): Run {
   if (!canResume(run)) {
     throw new RunStateError(
-      `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed' or 'blocked'`,
+      `cannot resume run ${run.displayId}: status is '${run.status}', expected 'failed', 'blocked', or 'needs_human_review'`,
     );
   }
   const {
