@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+  mkdirSync,
+  utimesSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -1222,6 +1230,42 @@ describe('OpenCodeAgentAdapter', () => {
       { src: 'docs/superpowers/specs/design.md', artifact: 'design.md' },
     ]);
     expect(readFileSync(join(cwd, 'design.md'), 'utf-8')).toBe(originalContent);
+  });
+
+  it('recovers implementation-log.md from implementation-log-task-1.md', async () => {
+    const cwd = makeWorktree();
+    const originalContent = '# Task 1 Implementation Log\nStep 1 done.';
+    writeFileSync(join(cwd, 'implementation-log-task-1.md'), originalContent);
+    // Pin the file's mtime to slightly in the future so the stem-prefix
+    // freshness filter (mtimeMs >= startMs) accepts it.
+    const futureSecs = Date.now() / 1000 + 2;
+    utimesSync(join(cwd, 'implementation-log-task-1.md'), futureSecs, futureSecs);
+    expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(false);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['implementation-log.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement-task-1',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(r.remediatedArtifacts).toEqual([
+      { src: 'implementation-log-task-1.md', artifact: 'implementation-log.md' },
+    ]);
+    expect(existsSync(join(cwd, 'implementation-log-task-1.md'))).toBe(false);
+    expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'implementation-log.md'), 'utf-8')).toBe(originalContent);
+    const stderrLog = readFileSync(r.stderrPath, 'utf-8');
+    expect(stderrLog).toContain('STEM_PREFIX_REMEDIATED:');
   });
 });
 
