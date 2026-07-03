@@ -297,12 +297,14 @@ export class OpenCodeAgentAdapter implements AgentPort {
         outcome === 'contract_violation' &&
         contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
       ) {
-        const result = remediateMissingArtifacts({
+        const remediateOpts = {
           cwd: request.cwd,
           startMs: start,
           expectedArtifacts: request.expectedArtifacts,
           stderrForLog,
-        });
+        };
+        const result = remediateMissingArtifacts(remediateOpts);
+        stderrForLog = remediateOpts.stderrForLog;
         if (result.remediatedArtifacts.length > 0) {
           remediatedArtifacts = result.remediatedArtifacts;
           if (result.missingArtifacts.length === 0) {
