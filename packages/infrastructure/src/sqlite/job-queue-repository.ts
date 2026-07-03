@@ -20,7 +20,12 @@ import {
   RunId as mkRunId,
   WorkerId as mkWorkerId,
 } from '@ai-sdlc/domain';
-import type { JobQueuePort, RepositoryPort, EnqueueJobInput } from '@ai-sdlc/application/ports';
+import type {
+  JobQueuePort,
+  RepositoryPort,
+  EnqueueJobInput,
+  ClaimNextInput,
+} from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
 interface JobRow {
@@ -36,6 +41,7 @@ interface JobRow {
   claimed_at: string | null;
   started_at: string | null;
   completed_at: string | null;
+  claim_expires_at: string | null;
 }
 
 function toJob(row: JobRow): Job {
@@ -61,18 +67,29 @@ function toJob(row: JobRow): Job {
   if (row.completed_at !== null) {
     job.completedAt = new Date(row.completed_at);
   }
+  if (row.claim_expires_at !== null) {
+    job.claimExpiresAt = new Date(row.claim_expires_at);
+  }
   return job;
 }
 
 export class JobQueueRepository implements JobQueuePort {
-  private readonly claimTx: (workerId: WorkerId, skipJobIds?: Set<JobId>) => Job | undefined;
+  private readonly claimTx: (
+    workerId: WorkerId,
+    skipJobIds: Set<JobId> | undefined,
+    ttlMs: number | undefined,
+  ) => Job | undefined;
 
   constructor(
     private readonly db: Db,
     private readonly repos: RepositoryPort,
   ) {
     this.claimTx = this.db.transaction(
-      (workerId: WorkerId, skipJobIds?: Set<JobId>): Job | undefined => {
+      (
+        workerId: WorkerId,
+        skipJobIds: Set<JobId> | undefined,
+        ttlMs: number | undefined,
+      ): Job | undefined => {
         const rows = this.db
           .prepare(
             `SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority DESC, created_at ASC, id ASC`,
@@ -83,18 +100,23 @@ export class JobQueueRepository implements JobQueuePort {
         if (!nextRow) return undefined;
 
         const job = toJob(nextRow);
-        const claimedJob = claimJob(job, workerId, new Date());
+        const claimedJob = claimJob(job, workerId, new Date(), ttlMs);
 
         this.db
           .prepare(
             `UPDATE jobs
-         SET status = @status, claimed_by = @claimed_by, claimed_at = @claimed_at, attempts = @attempts
+         SET status = @status,
+             claimed_by = @claimed_by,
+             claimed_at = @claimed_at,
+             claim_expires_at = @claim_expires_at,
+             attempts = @attempts
          WHERE id = @id`,
           )
           .run({
             status: claimedJob.status,
             claimed_by: claimedJob.claimedBy ?? null,
             claimed_at: claimedJob.claimedAt?.toISOString() ?? null,
+            claim_expires_at: claimedJob.claimExpiresAt?.toISOString() ?? null,
             attempts: claimedJob.attempts,
             id: claimedJob.id,
           });
@@ -117,8 +139,8 @@ export class JobQueueRepository implements JobQueuePort {
 
     this.db
       .prepare(
-        `INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, created_at, claimed_at, started_at, completed_at)
-       VALUES (@id, @run_id, @repo_id, @issue_number, @status, @priority, @attempts, @claimed_by, @created_at, @claimed_at, @started_at, @completed_at)`,
+        `INSERT INTO jobs (id, run_id, repo_id, issue_number, status, priority, attempts, claimed_by, created_at, claimed_at, started_at, completed_at, claim_expires_at)
+       VALUES (@id, @run_id, @repo_id, @issue_number, @status, @priority, @attempts, @claimed_by, @created_at, @claimed_at, @started_at, @completed_at, @claim_expires_at)`,
       )
       .run({
         id: input.job.id,
@@ -133,11 +155,12 @@ export class JobQueueRepository implements JobQueuePort {
         claimed_at: input.job.claimedAt?.toISOString() ?? null,
         started_at: input.job.startedAt?.toISOString() ?? null,
         completed_at: input.job.completedAt?.toISOString() ?? null,
+        claim_expires_at: input.job.claimExpiresAt?.toISOString() ?? null,
       });
   }
 
-  claimNext(input: { workerId: WorkerId; skipJobIds?: Set<JobId> }): Job | undefined {
-    return this.claimTx(input.workerId, input.skipJobIds);
+  claimNext(input: ClaimNextInput): Job | undefined {
+    return this.claimTx(input.workerId, input.skipJobIds, input.ttlMs);
   }
 
   releaseClaim(jobId: JobId): void {
@@ -179,6 +202,49 @@ export class JobQueueRepository implements JobQueuePort {
     return row ? toJob(row) : undefined;
   }
 
+  findExpiredClaims(cutoff: Date): Job[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM jobs
+       WHERE status = 'claimed'
+         AND claim_expires_at IS NOT NULL
+         AND claim_expires_at < @cutoff`,
+      )
+      .all({ cutoff: cutoff.toISOString() }) as JobRow[];
+    return rows.map(toJob);
+  }
+
+  reclaimStaleClaims(cutoff: Date): number {
+    const reclaimTx = this.db.transaction((cutoffIso: string): number => {
+      const expired = this.db
+        .prepare(
+          `SELECT id FROM jobs
+         WHERE status = 'claimed'
+           AND claim_expires_at IS NOT NULL
+           AND claim_expires_at < @cutoff`,
+        )
+        .all({ cutoff: cutoffIso }) as Array<{ id: string }>;
+
+      if (expired.length === 0) return 0;
+
+      this.db
+        .prepare(
+          `UPDATE jobs
+         SET status = 'queued',
+             claimed_by = NULL,
+             claimed_at = NULL,
+             claim_expires_at = NULL
+         WHERE status = 'claimed'
+           AND claim_expires_at IS NOT NULL
+           AND claim_expires_at < @cutoff`,
+        )
+        .run({ cutoff: cutoffIso });
+
+      return expired.length;
+    });
+    return reclaimTx(cutoff.toISOString());
+  }
+
   private updateJob(jobId: JobId, transition: (job: Job) => Job): void {
     const tx = this.db.transaction(() => {
       const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as
@@ -197,7 +263,8 @@ export class JobQueueRepository implements JobQueuePort {
              claimed_by = @claimed_by,
              claimed_at = @claimed_at,
              started_at = @started_at,
-             completed_at = @completed_at
+             completed_at = @completed_at,
+             claim_expires_at = @claim_expires_at
          WHERE id = @id`,
         )
         .run({
@@ -207,6 +274,7 @@ export class JobQueueRepository implements JobQueuePort {
           claimed_at: updated.claimedAt?.toISOString() ?? null,
           started_at: updated.startedAt?.toISOString() ?? null,
           completed_at: updated.completedAt?.toISOString() ?? null,
+          claim_expires_at: updated.claimExpiresAt?.toISOString() ?? null,
           id: updated.id,
         });
     });

@@ -4,12 +4,14 @@ import type {
   FailureRepositoryPort,
   AgentInvocationPort,
   RunBashScriptFn,
+  WorkerRegistryPort,
 } from '@ai-sdlc/application';
 import type {
   RunRepository,
   EventRepository,
   FailureRepository,
   AgentInvocationRepository,
+  WorkerRegistryRepository,
 } from '@ai-sdlc/infrastructure';
 import type { runBashScript } from '@ai-sdlc/infrastructure';
 
@@ -23,3 +25,4 @@ const _eventRepository: EventRepositoryPort = null as unknown as EventRepository
 const _failureRepository: FailureRepositoryPort = null as unknown as FailureRepository;
 const _runBashScript: RunBashScriptFn = null as unknown as typeof runBashScript;
 const _agentInvocationRepo: AgentInvocationPort = null as unknown as AgentInvocationRepository;
+const _workerRegistry: WorkerRegistryPort = null as unknown as WorkerRegistryRepository;

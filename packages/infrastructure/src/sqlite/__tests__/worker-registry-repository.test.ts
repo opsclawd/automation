@@ -98,4 +98,37 @@ describe('WorkerRegistryRepository', () => {
     const repo = freshRepo();
     expect(() => repo.markBusy(WorkerId('ghost'))).toThrow(/unknown worker/);
   });
+
+  it('re-registering with same id updates the row in place (ON CONFLICT semantics)', () => {
+    const repo = freshRepo();
+    const w1 = createWorker({ id: WorkerId('w1'), hostname: 'h1', processId: 1, now: now0 });
+    repo.register(w1);
+    const w2 = createWorker({
+      id: WorkerId('w1'),
+      hostname: 'h2',
+      processId: 2,
+      now: now0,
+    });
+    repo.register(w2);
+    expect(repo.list()).toHaveLength(1);
+    expect(repo.findById(WorkerId('w1'))?.hostname).toBe('h2');
+    expect(repo.findById(WorkerId('w1'))?.processId).toBe(2);
+  });
+
+  it('heartbeat throws on unknown worker', () => {
+    const repo = freshRepo();
+    expect(() => repo.heartbeat(WorkerId('ghost'), new Date())).toThrow(/unknown worker/);
+  });
+
+  it('findById throws on corrupted status row', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai-wrr-bad-'));
+    const db = openDatabase(join(dir, 'orch.sqlite'));
+    applyMigrations(db);
+    db.prepare(
+      `INSERT INTO workers (id, hostname, process_id, status, heartbeat_at) VALUES (?, ?, ?, ?, ?)`,
+    ).run('w1', 'h1', 1, 'unknown-status-value', now0.toISOString());
+    const repo = new WorkerRegistryRepository(db);
+    expect(() => repo.findById(WorkerId('w1'))).toThrow(/unknown worker status/);
+    db.close();
+  });
 });

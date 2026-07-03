@@ -37,6 +37,7 @@ export interface WorkerLoopDeps {
     reclaimedByWorkerId: WorkerId;
     reason: string;
   }) => void;
+  outerSignal?: AbortSignal;
 }
 
 function isRunnable(status: string): boolean {
@@ -70,7 +71,7 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   const skippedJobIds = new Set<JobId>();
 
   while (true) {
-    const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds });
+    const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds, ttlMs: deps.ttlMs });
     if (!job) {
       return;
     }
@@ -206,7 +207,15 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
         return;
       }
       if (started) {
-        queue.markFailed(job.id, deps.now());
+        if (deps.outerSignal?.aborted) {
+          try {
+            queue.markCancelled(job.id, deps.now());
+          } catch {
+            /* already terminal */
+          }
+        } else {
+          queue.markFailed(job.id, deps.now());
+        }
       } else {
         queue.releaseClaim(job.id);
       }

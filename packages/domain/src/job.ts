@@ -15,6 +15,7 @@ export interface Job {
   claimedAt?: Date;
   startedAt?: Date;
   completedAt?: Date;
+  claimExpiresAt?: Date;
 }
 
 export interface CreateJobInput {
@@ -55,7 +56,7 @@ export function createJob(input: CreateJobInput): Job {
   };
 }
 
-export function claimJob(job: Job, workerId: WorkerId, now: Date): Job {
+export function claimJob(job: Job, workerId: WorkerId, now: Date, ttlMs?: number): Job {
   if (job.status !== 'queued') {
     throw new JobStateError(
       `cannot claim job ${job.id}: status is '${job.status}', expected 'queued'`,
@@ -67,6 +68,7 @@ export function claimJob(job: Job, workerId: WorkerId, now: Date): Job {
     claimedBy: workerId,
     claimedAt: now,
     attempts: job.attempts + 1,
+    ...(ttlMs !== undefined ? { claimExpiresAt: new Date(now.getTime() + ttlMs) } : {}),
   };
 }
 

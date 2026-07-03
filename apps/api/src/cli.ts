@@ -82,6 +82,27 @@ function startLeaseHeartbeat(
   };
 }
 
+const DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS = 30_000;
+
+function startWorkerRegistryHeartbeat(
+  registry: { heartbeat(id: WorkerId, now: Date): void },
+  workerId: WorkerId,
+  intervalMs: number,
+): { stop: () => void } {
+  const timer = setInterval(() => {
+    try {
+      registry.heartbeat(workerId, new Date());
+    } catch (err) {
+      console.error(
+        `worker-registry heartbeat failed for ${workerId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }, intervalMs);
+  return { stop: () => clearInterval(timer) };
+}
+
 function installSignalHandlers(
   runRepository: {
     findByIssueNumber(repoId: RepositoryId, n: number): { pid?: number | null } | undefined;
@@ -294,6 +315,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           let unsubscribe: (() => void) | undefined;
           let sigintHandler: (() => void) | undefined;
           let sigtermHandler: (() => void) | undefined;
+          let workerHeartbeat: { stop: () => void } | undefined;
 
           try {
             c.runRepository.insertIfNoActive(run);
@@ -317,6 +339,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               }),
             );
 
+            workerHeartbeat = startWorkerRegistryHeartbeat(
+              c.workerRegistry,
+              workerId,
+              buildOpts?.lease?.heartbeatIntervalMs ??
+                DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS,
+            );
+
             if (tee) {
               unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
                 console.error(`[ts] ${event.message}`);
@@ -324,28 +353,49 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             }
 
             const handleSignal = (signal: string, exitCode: number) => {
-              abortController.abort();
-              const currentJob = c.jobQueue.findById(jobId);
-              if (currentJob && currentJob.status === 'running') {
-                c.jobQueue.markCancelled(jobId, new Date());
-              }
-              const currentRun = c.runRepository.findByUuid(run.uuid);
-              if (currentRun && currentRun.status === 'running') {
-                c.runRepository.update(run.uuid, {
-                  status: 'cancelled',
-                  completedAt: new Date(),
-                  failureReason: `interrupted by ${signal}`,
-                });
-              }
               try {
-                c.workerLeaseRepository.release(repoId, workerId);
-              } catch (err) {
-                console.error(
-                  `Failed to release lease on exit: ${err instanceof Error ? err.message : String(err)}`,
-                );
+                abortController.abort();
+                const currentJob = c.jobQueue.findById(jobId);
+                if (currentJob) {
+                  if (currentJob.status === 'claimed') {
+                    try {
+                      c.jobQueue.releaseClaim(jobId);
+                    } catch (err) {
+                      console.error(
+                        `releaseClaim on signal failed: ${err instanceof Error ? err.message : String(err)}`,
+                      );
+                    }
+                  } else if (currentJob.status === 'running') {
+                    try {
+                      c.jobQueue.markCancelled(jobId, new Date());
+                    } catch (err) {
+                      console.error(
+                        `markCancelled on signal failed: ${err instanceof Error ? err.message : String(err)}`,
+                      );
+                    }
+                  }
+                  // 'queued' is a no-op: the workerLoop's first tick will reclaim naturally.
+                }
+                workerHeartbeat?.stop();
+                const currentRun = c.runRepository.findByUuid(run.uuid);
+                if (currentRun && currentRun.status === 'running') {
+                  c.runRepository.update(run.uuid, {
+                    status: 'cancelled',
+                    completedAt: new Date(),
+                    failureReason: `interrupted by ${signal}`,
+                  });
+                }
+                try {
+                  c.workerLeaseRepository.release(repoId, workerId);
+                } catch (err) {
+                  console.error(
+                    `Failed to release lease on exit: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+                unsubscribe?.();
+              } finally {
+                process.exit(exitCode);
               }
-              unsubscribe?.();
-              process.exit(exitCode);
             };
 
             sigintHandler = () => handleSignal('SIGINT', EXIT_SIGINT);
@@ -353,12 +403,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.once('SIGINT', sigintHandler);
             process.once('SIGTERM', sigtermHandler);
 
-            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps, c.jobQueue);
+            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps);
 
             await scheduler.runUntilComplete(jobId, abortController.signal);
 
+            if (abortController.signal.aborted) {
+              const finalJobAfterAbort = c.jobQueue.findById(jobId);
+              const finalRunAfterAbort = c.runRepository.findByUuid(run.uuid);
+              if (
+                finalRunAfterAbort &&
+                finalRunAfterAbort.status === 'running' &&
+                finalJobAfterAbort &&
+                !['succeeded', 'failed', 'cancelled'].includes(finalJobAfterAbort.status)
+              ) {
+                c.runRepository.atomicUpdateByUuid(
+                  run.uuid,
+                  {
+                    status: 'cancelled',
+                    completedAt: new Date(),
+                    failureReason: 'aborted during scheduler run',
+                  },
+                  'running',
+                );
+              }
+            }
+
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
+            workerHeartbeat?.stop();
 
             const finalJob = c.jobQueue.findById(jobId);
             let finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
@@ -367,15 +439,21 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // record is still 'running' (e.g. workerLoop failed before
             // RunExecutor could persist a terminal status), finalize it now so
             // insertIfNoActive doesn't reject the next attempt for this repo/issue.
+            // atomicUpdateByUuid guards against a concurrent cancel webhook
+            // overwriting a just-set 'cancelled' status.
             if (
               finalRun.status === 'running' &&
               (finalJob?.status === 'failed' || finalJob?.status === 'cancelled')
             ) {
-              c.runRepository.update(run.uuid, {
-                status: 'failed',
-                completedAt: new Date(),
-                failureReason: 'worker loop terminated without finalizing run',
-              });
+              c.runRepository.atomicUpdateByUuid(
+                run.uuid,
+                {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  failureReason: 'worker loop terminated without finalizing run',
+                },
+                'running',
+              );
               finalRun = c.runRepository.findByUuid(run.uuid) ?? finalRun;
             }
 
@@ -388,9 +466,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               }
             }
 
+            const phases = c.phaseRepository.listByRun(run.uuid);
             await new Promise<void>((resolve, reject) =>
-              process.stdout.write(JSON.stringify({ run: finalRun, phases: [] }) + '\n', (err) =>
-                err ? reject(err) : resolve(),
+              process.stdout.write(
+                JSON.stringify({ jobId, workerId, run: finalRun, phases }) + '\n',
+                (err) => (err ? reject(err) : resolve()),
               ),
             );
 
@@ -404,6 +484,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           } catch (err) {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
+            workerHeartbeat?.stop();
             unsubscribe?.();
             // Finalize a stale 'running' run so insertIfNoActive doesn't block
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
