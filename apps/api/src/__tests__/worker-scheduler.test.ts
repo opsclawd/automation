@@ -11,21 +11,27 @@ vi.mock('@ai-sdlc/application', async (importOriginal) => {
   return { ...actual, workerLoop: vi.fn().mockResolvedValue(undefined) };
 });
 
+function makeJob(
+  id: string,
+  status: string,
+  overrides: Partial<ReturnType<JobQueuePort['findById']>> = {},
+): ReturnType<JobQueuePort['findById']> {
+  return {
+    id: JobId(id),
+    status,
+    runId: RunId('run-1'),
+    repoId: RepositoryId('owner/repo'),
+    issueNumber: IssueNumber(1),
+    priority: 0,
+    attempts: 0,
+    createdAt: new Date(),
+    ...overrides,
+  } as unknown as ReturnType<JobQueuePort['findById']>;
+}
+
 function makeQueue(statuses: Record<string, string>): JobQueuePort {
   return {
-    findById: vi.fn((jobId: JobId) => {
-      const status = statuses[jobId] ?? 'queued';
-      return {
-        id: jobId,
-        status,
-        runId: RunId('run-1'),
-        repoId: RepositoryId('owner/repo'),
-        issueNumber: IssueNumber(1),
-        priority: 0,
-        attempts: 0,
-        createdAt: new Date(),
-      } as unknown as ReturnType<JobQueuePort['findById']>;
-    }),
+    findById: vi.fn((jobId: JobId) => makeJob(jobId as string, statuses[jobId] ?? 'queued')),
     listForRepo: vi.fn(() => []),
     listForRun: vi.fn(() => []),
     enqueue: vi.fn(),
@@ -36,6 +42,8 @@ function makeQueue(statuses: Record<string, string>): JobQueuePort {
     markSucceeded: vi.fn(),
     markFailed: vi.fn(),
     markCancelled: vi.fn(),
+    findExpiredClaims: vi.fn(() => []),
+    reclaimStaleClaims: vi.fn(() => 0),
   };
 }
 
@@ -79,14 +87,14 @@ describe('WorkerScheduler', () => {
 
   it('returns immediately when job is already in terminal state (succeeded)', async () => {
     const queue = makeQueue({ 'job-1': 'succeeded' });
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, queue, 0);
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
     expect(vi.mocked(workerLoop)).not.toHaveBeenCalled();
   });
 
   it('returns immediately when job is already failed', async () => {
     const queue = makeQueue({ 'job-1': 'failed' });
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, queue, 0);
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
     expect(vi.mocked(workerLoop)).not.toHaveBeenCalled();
   });
@@ -113,7 +121,6 @@ describe('WorkerScheduler', () => {
     const scheduler = new WorkerScheduler(
       [WorkerId('w1'), WorkerId('w2')],
       { ...makeBaseDeps(), queue },
-      queue,
       0,
     );
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
@@ -150,7 +157,7 @@ describe('WorkerScheduler', () => {
     vi.mocked(workerLoop).mockImplementation(async () => {
       controller.abort();
     });
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, queue, 0);
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), controller.signal);
     expect(vi.mocked(workerLoop)).toHaveBeenCalledTimes(1);
   });
@@ -161,7 +168,7 @@ describe('WorkerScheduler', () => {
       findById: vi.fn(() => undefined),
       listForRepo: vi.fn(() => []),
     };
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, queue, 0);
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await expect(
       scheduler.runUntilComplete(JobId('missing'), new AbortController().signal),
     ).rejects.toThrow(/not found/);
@@ -214,8 +221,10 @@ describe('WorkerScheduler', () => {
       markFailed: vi.fn(),
       markCancelled: vi.fn(),
       listForRun: vi.fn(() => []),
+      findExpiredClaims: vi.fn(() => []),
+      reclaimStaleClaims: vi.fn(() => 0),
     };
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, queue, 0);
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
     const callArgs = vi.mocked(workerLoop).mock.calls[0];
     const deps = callArgs?.[1] as WorkerLoopDeps;
@@ -225,10 +234,26 @@ describe('WorkerScheduler', () => {
 
   it('throws error when a worker loop rejects', async () => {
     const queue = makeQueue({});
-    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, queue, 0);
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     vi.mocked(workerLoop).mockRejectedValueOnce(new Error('worker loop failure'));
     await expect(
       scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
     ).rejects.toThrow('worker loop failure');
+  });
+
+  it('returns immediately when job is already cancelled', async () => {
+    const queue = makeQueue({ 'job-1': 'cancelled' });
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
+    await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
+    expect(vi.mocked(workerLoop)).not.toHaveBeenCalled();
+  });
+
+  it('normalizes non-Error rejection to Error before throwing', async () => {
+    const queue = makeQueue({});
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
+    vi.mocked(workerLoop).mockRejectedValueOnce('plain string' as unknown as Error);
+    await expect(
+      scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
+    ).rejects.toThrow(/plain string/);
   });
 });
