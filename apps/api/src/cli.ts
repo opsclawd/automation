@@ -82,6 +82,27 @@ function startLeaseHeartbeat(
   };
 }
 
+const DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS = 30_000;
+
+function startWorkerRegistryHeartbeat(
+  registry: { heartbeat(id: WorkerId, now: Date): void },
+  workerId: WorkerId,
+  intervalMs: number,
+): { stop: () => void } {
+  const timer = setInterval(() => {
+    try {
+      registry.heartbeat(workerId, new Date());
+    } catch (err) {
+      console.error(
+        `worker-registry heartbeat failed for ${workerId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }, intervalMs);
+  return { stop: () => clearInterval(timer) };
+}
+
 function installSignalHandlers(
   runRepository: {
     findByIssueNumber(repoId: RepositoryId, n: number): { pid?: number | null } | undefined;
@@ -294,6 +315,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           let unsubscribe: (() => void) | undefined;
           let sigintHandler: (() => void) | undefined;
           let sigtermHandler: (() => void) | undefined;
+          let workerHeartbeat: { stop: () => void } | undefined;
 
           try {
             c.runRepository.insertIfNoActive(run);
@@ -317,6 +339,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               }),
             );
 
+            workerHeartbeat = startWorkerRegistryHeartbeat(
+              c.workerRegistry,
+              workerId,
+              buildOpts?.lease?.heartbeatIntervalMs ??
+                DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS,
+            );
+
             if (tee) {
               unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
                 console.error(`[ts] ${event.message}`);
@@ -325,6 +354,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             const handleSignal = (signal: string, exitCode: number) => {
               abortController.abort();
+              workerHeartbeat?.stop();
               const currentJob = c.jobQueue.findById(jobId);
               if (currentJob && currentJob.status === 'running') {
                 c.jobQueue.markCancelled(jobId, new Date());
@@ -359,6 +389,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
+            workerHeartbeat?.stop();
 
             const finalJob = c.jobQueue.findById(jobId);
             let finalRun = c.runRepository.findByUuid(run.uuid) ?? run;
@@ -404,6 +435,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           } catch (err) {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
+            workerHeartbeat?.stop();
             unsubscribe?.();
             // Finalize a stale 'running' run so insertIfNoActive doesn't block
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
