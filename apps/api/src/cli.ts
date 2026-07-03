@@ -1031,7 +1031,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               if (latestInvocation.stdoutPath) {
                 tailer = new FileTailer({
                   path: latestInvocation.stdoutPath,
-                  onData: (data) => process.stdout.write(data),
+                  onData: (data: string) => process.stdout.write(data),
                   // If it's the very first invocation we start tailing, honor --lines.
                   // For subsequent invocations in the same run, start from the beginning.
                   ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),

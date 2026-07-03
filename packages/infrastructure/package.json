@@ -10,6 +10,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./artifacts/file-tailer.js": {
+      "development": "./src/artifacts/file-tailer.ts",
+      "types": "./dist/artifacts/file-tailer.d.ts",
+      "import": "./dist/artifacts/file-tailer.js"
     }
   },
   "files": [
