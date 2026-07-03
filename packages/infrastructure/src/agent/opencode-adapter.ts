@@ -310,6 +310,10 @@ export class OpenCodeAgentAdapter implements AgentPort {
             contractViolations = contractViolations
               .filter((v) => v !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
               .concat(CONTRACT_VIOLATION_CODES.MISPLACED_ARTIFACT);
+            const remediatedList = result.remediatedArtifacts
+              .map((r) => `${r.src} → ${r.artifact}`)
+              .join(', ');
+            stderrForLog = `MISPLACED_ARTIFACT: auto-remediated ${remediatedList}\n${stderrForLog}`;
           }
         }
       }

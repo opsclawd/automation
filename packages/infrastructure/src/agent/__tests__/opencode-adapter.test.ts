@@ -1065,7 +1065,7 @@ describe('OpenCodeAgentAdapter', () => {
     if (existsSync(envLogFile)) rmSync(envLogFile);
   });
 
-  it('recovers result.json from known stray location (apps/cli/) and emits DRIFT_WARNING', async () => {
+  it('recovers result.json from apps/cli stray location and surfaces remediatedArtifacts', async () => {
     const cwd = makeWorktree();
     const strayDir = join(cwd, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
@@ -1095,9 +1095,11 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.resultJsonPath).toBe('result.json');
     expect(existsSync(join(cwd, 'result.json'))).toBe(true);
     expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toContain('"commentId":1');
+    expect(r.remediatedArtifacts).toEqual([
+      { src: 'apps/cli/result.json', artifact: 'result.json' },
+    ]);
     const stderrLog = readFileSync(r.stderrPath, 'utf-8');
-    expect(stderrLog).toContain('DRIFT_WARNING');
-    expect(stderrLog).toContain('apps/cli/result.json');
+    expect(stderrLog).toMatch(/MISPLACED_ARTIFACT|STEM_PREFIX_REMEDIATED/);
   });
 
   it('resultJsonPath is set on success when result.json exists at the expected path', async () => {
@@ -1121,9 +1123,9 @@ describe('OpenCodeAgentAdapter', () => {
 
     expect(r.outcome).toBe('success');
     expect(r.resultJsonPath).toBe('result.json');
-    // No DRIFT_WARNING when artifact is at the expected location
+    expect(r.remediatedArtifacts).toBeUndefined();
     const stderrLog = readFileSync(r.stderrPath, 'utf-8');
-    expect(stderrLog).not.toContain('DRIFT_WARNING');
+    expect(stderrLog).not.toMatch(/MISPLACED_ARTIFACT|STEM_PREFIX_REMEDIATED/);
   });
 
   it('resultJsonPath is absent on contract_violation when artifact is missing', async () => {
