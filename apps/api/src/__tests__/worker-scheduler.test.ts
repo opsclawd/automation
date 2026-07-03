@@ -256,4 +256,67 @@ describe('WorkerScheduler', () => {
       scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
     ).rejects.toThrow(/plain string/);
   });
+
+  it('calls reclaimStaleClaims with a cutoff of now - 6*tick before each tick', async () => {
+    const reclaimSpy = vi.fn(() => 0);
+    let callCount = 0;
+    const queue: JobQueuePort = {
+      ...makeQueue({}),
+      findById: vi.fn(() => {
+        callCount++;
+        return makeJob('job-1', callCount === 1 ? 'queued' : 'succeeded');
+      }),
+      reclaimStaleClaims: reclaimSpy,
+    };
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 100);
+    await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
+    expect(reclaimSpy).toHaveBeenCalled();
+    const cutoff = reclaimSpy.mock.calls[0]?.[0] as Date;
+    const expected = Date.now() - 600;
+    expect(Math.abs(cutoff.getTime() - expected)).toBeLessThan(200);
+  });
+
+  it('releases claim when signal aborts while job is claimed', async () => {
+    const releaseSpy = vi.fn();
+    const queue: JobQueuePort = {
+      ...makeQueue({}),
+      findById: vi.fn(() => makeJob('job-1', 'claimed')),
+      releaseClaim: releaseSpy,
+    };
+    const controller = new AbortController();
+    vi.mocked(workerLoop).mockImplementation(async () => {
+      controller.abort();
+    });
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
+    await scheduler.runUntilComplete(JobId('job-1'), controller.signal);
+    expect(releaseSpy).toHaveBeenCalledWith(JobId('job-1'));
+  });
+
+  it('marks cancelled when signal aborts while job is running', async () => {
+    const markCancelledSpy = vi.fn();
+    const queue: JobQueuePort = {
+      ...makeQueue({}),
+      findById: vi.fn(() => makeJob('job-1', 'running')),
+      markCancelled: markCancelledSpy,
+    };
+    const controller = new AbortController();
+    vi.mocked(workerLoop).mockImplementation(async () => {
+      controller.abort();
+    });
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
+    await scheduler.runUntilComplete(JobId('job-1'), controller.signal);
+    expect(markCancelledSpy).toHaveBeenCalledWith(JobId('job-1'), expect.any(Date));
+  });
+
+  it('throws within the per-worker timeout window when workerLoop never resolves', async () => {
+    const queue = makeQueue({});
+    vi.mocked(workerLoop).mockReturnValueOnce(new Promise(() => {}));
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 50);
+    const start = Date.now();
+    await expect(
+      scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
+    ).rejects.toThrow(/timed out/);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(1_000);
+  });
 });
