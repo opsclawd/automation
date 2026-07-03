@@ -71,6 +71,7 @@ import {
   PhaseHandlerRegistry,
   RunExecutor,
   type WorkerLoopDeps,
+  type WorkerRegistryPort,
   ArtifactNotFoundError,
   type ArtifactStore,
   type StartIssueRunDeps,
@@ -360,7 +361,7 @@ export interface Container {
   loopRepository: LoopRepository;
   workerLeaseRepository: WorkerLeaseRepository;
   jobQueue: JobQueuePort;
-  workerRegistry?: WorkerRegistryRepository;
+  workerRegistry?: WorkerRegistryPort;
   workerLoopDeps?: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
   /** Exposed for worktree lifecycle management in CLI and tests. */
   git: GitPort;
