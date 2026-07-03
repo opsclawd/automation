@@ -192,6 +192,17 @@ async function findArtifactInBrainDir(
   return matches[0]!.path;
 }
 
+const SLUG_TO_LABEL: Record<string, string> = {
+  'gemini-3.5-flash-medium': 'Gemini 3.5 Flash (Medium)',
+  'gemini-3.5-flash-high': 'Gemini 3.5 Flash (High)',
+  'gemini-3.5-flash-low': 'Gemini 3.5 Flash (Low)',
+  'gemini-3.1-pro-low': 'Gemini 3.1 Pro (Low)',
+  'gemini-3.1-pro-high': 'Gemini 3.1 Pro (High)',
+  'claude-sonnet-4.6-thinking': 'Claude Sonnet 4.6 (Thinking)',
+  'claude-opus-4.6-thinking': 'Claude Opus 4.6 (Thinking)',
+  'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
+};
+
 export class AntigravityAgentAdapter implements AgentPort {
   constructor(private readonly opts: AntigravityAdapterOptions) {}
 
@@ -226,9 +237,13 @@ export class AntigravityAgentAdapter implements AgentPort {
       request.cwd,
       '--print-timeout',
       `${printTimeoutMins}m`,
-      '--print',
-      '-',
     ];
+
+    if (request.model && SLUG_TO_LABEL[request.model]) {
+      args.push('--model', SLUG_TO_LABEL[request.model]!);
+    }
+
+    args.push('--print', '-');
     const result = await runExternalCli({
       runtime: 'antigravity',
       bin,
