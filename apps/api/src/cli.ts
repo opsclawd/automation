@@ -18,7 +18,7 @@ import {
   createJob,
   createWorker,
 } from '@ai-sdlc/domain';
-import { FileTailer } from '@ai-sdlc/infrastructure';
+import { FileTailer } from '@ai-sdlc/infrastructure/artifacts/file-tailer.js';
 import { newRunId } from '@ai-sdlc/shared';
 import { planRunRecoveryAction } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';

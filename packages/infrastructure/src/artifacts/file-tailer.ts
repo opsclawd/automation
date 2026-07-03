@@ -1,14 +1,7 @@
 import { promises as fs } from 'node:fs';
+import type { FileTailerOptions, FileTailerPort } from '@ai-sdlc/application/ports';
 
-export interface FileTailerOptions {
-  path: string;
-  onData: (data: string) => void;
-  pollIntervalMs?: number;
-  initialLines?: number;
-  fromStart?: boolean;
-}
-
-export class FileTailer {
+export class FileTailer implements FileTailerPort {
   private readonly path: string;
   private readonly onData: (data: string) => void;
   private readonly pollIntervalMs: number;
