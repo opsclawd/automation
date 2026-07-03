@@ -284,4 +284,141 @@ describe('JobQueueRepository', () => {
 
     db.close();
   });
+
+  it('claimNext: persists claim_expires_at when ttlMs is provided', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    repo.enqueue({ job: defaultJob() });
+
+    const claimed = repo.claimNext({
+      workerId: mkWorkerId('worker-1'),
+      ttlMs: 5_000,
+    });
+    expect(claimed).toBeDefined();
+    expect(claimed?.claimExpiresAt).toBeInstanceOf(Date);
+
+    const reloaded = repo.findById(defaultJob().id);
+    expect(reloaded?.claimExpiresAt).toBeInstanceOf(Date);
+    expect(reloaded?.claimExpiresAt?.getTime()).toBe(claimed!.claimExpiresAt!.getTime());
+    db.close();
+  });
+
+  it('claimNext: leaves claim_expires_at undefined when ttlMs is not provided', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    repo.enqueue({ job: defaultJob() });
+
+    const claimed = repo.claimNext({ workerId: mkWorkerId('worker-1') });
+    expect(claimed?.claimExpiresAt).toBeUndefined();
+
+    const reloaded = repo.findById(defaultJob().id);
+    expect(reloaded?.claimExpiresAt).toBeUndefined();
+    db.close();
+  });
+
+  it('findExpiredClaims: returns claimed jobs whose claim_expires_at < cutoff', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    // Stale claim — ttlMs 1s, cutoff is well after
+    repo.enqueue({ job: defaultJob({ id: mkJobId('stale') }) });
+    const stale = repo.claimNext({
+      workerId: mkWorkerId('w-stale'),
+      ttlMs: 1_000,
+    });
+    expect(stale).toBeDefined();
+
+    // Fresh claim — claimExpiresAt far in future (effective non-expiring via direct SQL)
+    repo.enqueue({ job: defaultJob({ id: mkJobId('fresh') }) });
+    const fresh = repo.claimNext({
+      workerId: mkWorkerId('w-fresh'),
+      ttlMs: 60_000,
+    });
+    expect(fresh).toBeDefined();
+
+    const cutoff = new Date(Date.now() + 10_000);
+    const expired = repo.findExpiredClaims(cutoff);
+    expect(expired.map((j) => j.id)).toEqual(['stale']);
+    db.close();
+  });
+
+  it('findExpiredClaims: ignores jobs without claim_expires_at', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    repo.enqueue({ job: defaultJob() });
+    // Claim without ttlMs => no claim_expires_at
+    repo.claimNext({ workerId: mkWorkerId('worker-1') });
+
+    const expired = repo.findExpiredClaims(new Date(Date.now() + 1_000_000));
+    expect(expired).toEqual([]);
+    db.close();
+  });
+
+  it('findExpiredClaims: ignores non-claimed jobs even if they had a past claim_expires_at', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    repo.enqueue({ job: defaultJob() });
+    repo.claimNext({ workerId: mkWorkerId('worker-1'), ttlMs: 1_000 });
+    // Move to running — should no longer match
+    repo.markRunning(defaultJob().id, new Date());
+
+    const expired = repo.findExpiredClaims(new Date(Date.now() + 60_000));
+    expect(expired).toEqual([]);
+    db.close();
+  });
+
+  it('reclaimStaleClaims: resets expired claims to queued and returns count', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    repo.enqueue({ job: defaultJob({ id: mkJobId('expired-1') }) });
+    repo.enqueue({ job: defaultJob({ id: mkJobId('expired-2') }) });
+    repo.enqueue({ job: defaultJob({ id: mkJobId('fresh') }) });
+
+    repo.claimNext({ workerId: mkWorkerId('w1'), ttlMs: 1_000 });
+    repo.claimNext({ workerId: mkWorkerId('w2'), ttlMs: 1_000 });
+    repo.claimNext({ workerId: mkWorkerId('w3'), ttlMs: 60_000 });
+
+    const cutoff = new Date(Date.now() + 10_000);
+    const count = repo.reclaimStaleClaims(cutoff);
+    expect(count).toBe(2);
+
+    // expired jobs reset to queued with no claim fields
+    for (const id of ['expired-1', 'expired-2'] as const) {
+      const j = repo.findById(mkJobId(id));
+      expect(j?.status).toBe('queued');
+      expect(j?.claimedBy).toBeUndefined();
+      expect(j?.claimedAt).toBeUndefined();
+      expect(j?.claimExpiresAt).toBeUndefined();
+    }
+
+    // fresh claim survives
+    const fresh = repo.findById(mkJobId('fresh'));
+    expect(fresh?.status).toBe('claimed');
+    expect(fresh?.claimExpiresAt).toBeInstanceOf(Date);
+    db.close();
+  });
+
+  it('reclaimStaleClaims: returns 0 when nothing is expired', () => {
+    const db = freshDb();
+    const repos = mockRepos({ 'repo-1': true });
+    const repo = new JobQueueRepository(db, repos);
+
+    repo.enqueue({ job: defaultJob() });
+    repo.claimNext({ workerId: mkWorkerId('w1'), ttlMs: 60_000 });
+
+    const count = repo.reclaimStaleClaims(new Date(Date.now() - 60_000));
+    expect(count).toBe(0);
+    db.close();
+  });
 });
