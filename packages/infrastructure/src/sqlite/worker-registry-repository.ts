@@ -1,6 +1,7 @@
 import {
   type Worker,
   type WorkerId,
+  type WorkerStatus,
   WorkerId as mkWorkerId,
   markWorkerBusy,
   markWorkerIdle,
@@ -19,12 +20,28 @@ interface WorkerRow {
   heartbeat_at: string;
 }
 
+const WORKER_STATUS_VALUES: readonly WorkerStatus[] = ['idle', 'busy', 'stopping', 'unhealthy'];
+
+class WorkerStatusError extends Error {
+  constructor(value: string) {
+    super(`unknown worker status '${value}'`);
+    this.name = 'WorkerStatusError';
+  }
+}
+
+function toWorkerStatus(value: string): WorkerStatus {
+  if ((WORKER_STATUS_VALUES as readonly string[]).includes(value)) {
+    return value as WorkerStatus;
+  }
+  throw new WorkerStatusError(value);
+}
+
 function toWorker(row: WorkerRow): Worker {
   return {
     id: mkWorkerId(row.id),
     hostname: row.hostname,
     processId: row.process_id,
-    status: row.status as Worker['status'],
+    status: toWorkerStatus(row.status),
     heartbeatAt: new Date(row.heartbeat_at),
   };
 }
@@ -35,8 +52,13 @@ export class WorkerRegistryRepository implements WorkerRegistryPort {
   register(w: Worker): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO workers (id, hostname, process_id, status, heartbeat_at)
-         VALUES (@id, @hostname, @process_id, @status, @heartbeat_at)`,
+        `INSERT INTO workers (id, hostname, process_id, status, heartbeat_at)
+         VALUES (@id, @hostname, @process_id, @status, @heartbeat_at)
+         ON CONFLICT(id) DO UPDATE SET
+           hostname = excluded.hostname,
+           process_id = excluded.process_id,
+           status = excluded.status,
+           heartbeat_at = excluded.heartbeat_at`,
       )
       .run({
         id: w.id,
