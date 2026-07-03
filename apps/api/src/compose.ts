@@ -414,6 +414,12 @@ export interface Container {
 
 export interface ComposeOptions {
   repoRoot: string;
+  /**
+   * Target repository root for worktrees, DB, and git/gh cwd operations.
+   * Defaults to `repoRoot` when unset. Prompts, config, and scripts
+   * always come from `repoRoot` regardless of this value.
+   */
+  targetRepoRoot?: string;
   scriptPath: string;
   baseBranch?: string;
   model?: string;
@@ -674,7 +680,16 @@ export function captureExecOutput(err: unknown): string {
 const DEFAULT_LEASE_TTL_MS = 120_000;
 
 export function composeRoot(opts: ComposeOptions): Container {
-  const runsDir = opts.runsDir ?? join(opts.repoRoot, '.ai-runs');
+  // `targetRoot` is the directory the orchestrator operates ON
+  // (worktrees, DB, git/gh cwd). It is normally the same as the
+  // orchestrator repo, but may be overridden via `opts.targetRepoRoot`
+  // for cross-repo orchestration.
+  //
+  // IMPORTANT: `opts.repoRoot` (not `targetRoot`) is still the source of
+  // truth for prompts, config, and scripts — those always come from the
+  // automation repo, not the target.
+  const targetRoot = opts.targetRepoRoot ?? opts.repoRoot;
+  const runsDir = opts.runsDir ?? join(targetRoot, '.ai-runs');
   const envTmpdir = process.env.TMPDIR?.trim();
   const baseTmpDir =
     opts.baseTmpDir ?? (envTmpdir ? join(envTmpdir, '.ai-tmp') : join(dirname(runsDir), '.ai-tmp'));
@@ -772,7 +787,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
-      return join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+      return join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
     },
     findStartCommitSha: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
@@ -789,7 +804,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const sha = execFileSync(
           'git',
           ['merge-base', branchName, `origin/${resolvedDefaultBranch}`],
-          { cwd: opts.repoRoot },
+          { cwd: targetRoot },
         )
           .toString()
           .trim();
@@ -871,13 +886,13 @@ export function composeRoot(opts: ComposeOptions): Container {
       const out = execFileSync(
         'gh',
         ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
-        { cwd: opts.repoRoot },
+        { cwd: targetRoot },
       )
         .toString()
         .trim();
       if (out) resolvedRepoFullName = out;
     } catch (err) {
-      console.error(`CancelRun: failed to resolve repo full name for ${opts.repoRoot}`, err);
+      console.error(`CancelRun: failed to resolve repo full name for ${targetRoot}`, err);
     }
   }
 
@@ -1463,7 +1478,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         artifactStoreForRun(runUuid, cwd);
 
       const buildContext = (run: Run): PhaseHandlerContext => {
-        const cwd = join(opts.repoRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+        const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
         const startCommitSha = runRepository.findByUuid(run.uuid)?.startCommitSha;
         return composeBuildPhaseHandlerContext(
           {
@@ -2105,7 +2120,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         name: resolvedRepoFullName.split('/')[1]!,
         fullName: resolvedRepoFullName,
         defaultBranch: resolvedDefaultBranch,
-        localBasePath: opts.repoRoot,
+        localBasePath: targetRoot,
         enabled: true,
         maxConcurrentRuns: 1 as const,
         createdAt: new Date(),
@@ -2143,9 +2158,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           prepareWorktree: async ({ runId, signal: _signal }) => {
             const r = runRepository.findByUuid(runId);
             if (!r) throw new Error(`prepareWorktree: no run found for ${runId}`);
-            const worktreePath = join(opts.repoRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
             await gitAdapter.createWorktree({
-              repoLocalBasePath: opts.repoRoot,
+              repoLocalBasePath: targetRoot,
               worktreePath,
               branch: `ai/issue-${r.issueNumber}`,
               baseBranch: resolvedDefaultBranch,
@@ -2162,7 +2177,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!lease) return;
             const r = runRepository.findByUuid(lease.runId);
             if (!r) return;
-            const worktreePath = join(opts.repoRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
             gitAdapter.resetWorktreeIfClean(worktreePath, resolvedDefaultBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {

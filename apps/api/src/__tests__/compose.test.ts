@@ -1332,4 +1332,21 @@ exit 1
       expect(captureExecOutput(err)).toBe('Error: generic error');
     });
   });
+
+  describe('targetRepoRoot', () => {
+    it('derives runsDir from targetRepoRoot when set', () => {
+      const repoRoot = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-target-')));
+      const target = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-target-other-')));
+      const scriptPath = fakeScript(0);
+      const container = composeRoot({ repoRoot, scriptPath, targetRepoRoot: target });
+      expect(container.runsDir).toBe(path.join(target, '.ai-runs'));
+    });
+
+    it('falls back to repoRoot when targetRepoRoot is unset', () => {
+      const repoRoot = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-target-fb-')));
+      const scriptPath = fakeScript(0);
+      const container = composeRoot({ repoRoot, scriptPath });
+      expect(container.runsDir).toBe(path.join(repoRoot, '.ai-runs'));
+    });
+  });
 });
