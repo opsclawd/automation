@@ -37,6 +37,7 @@ export interface WorkerLoopDeps {
     reclaimedByWorkerId: WorkerId;
     reason: string;
   }) => void;
+  outerSignal?: AbortSignal;
 }
 
 function isRunnable(status: string): boolean {

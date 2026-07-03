@@ -353,7 +353,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.once('SIGINT', sigintHandler);
             process.once('SIGTERM', sigtermHandler);
 
-            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps, c.jobQueue);
+            const scheduler = new WorkerScheduler([workerId], c.workerLoopDeps);
 
             await scheduler.runUntilComplete(jobId, abortController.signal);
 
