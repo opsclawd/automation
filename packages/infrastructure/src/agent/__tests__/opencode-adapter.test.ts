@@ -1267,6 +1267,71 @@ describe('OpenCodeAgentAdapter', () => {
     const stderrLog = readFileSync(r.stderrPath, 'utf-8');
     expect(stderrLog).toContain('STEM_PREFIX_REMEDIATED:');
   });
+
+  it('picks newest stem-prefix candidate when multiple fresh files exist', async () => {
+    const cwd = makeWorktree();
+    const content1 = '# Task 1 log\nFirst attempt.';
+    const content2 = '# Task 2 log\nRevised version.';
+    writeFileSync(join(cwd, 'implementation-log-task-1.md'), content1);
+    const futureSecs1 = Date.now() / 1000 + 2;
+    utimesSync(join(cwd, 'implementation-log-task-1.md'), futureSecs1, futureSecs1);
+    await sleep(50);
+    writeFileSync(join(cwd, 'implementation-log-task-2.md'), content2);
+    const futureSecs2 = Date.now() / 1000 + 2;
+    utimesSync(join(cwd, 'implementation-log-task-2.md'), futureSecs2, futureSecs2);
+    expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(false);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['implementation-log.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement-task-2',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(r.remediatedArtifacts).toEqual([
+      { src: 'implementation-log-task-2.md', artifact: 'implementation-log.md' },
+    ]);
+    expect(readFileSync(join(cwd, 'implementation-log.md'), 'utf-8')).toBe(content2);
+  });
+
+  it('does not remediate when only stale stem-prefix candidates exist (mtime before invocation start)', async () => {
+    const cwd = makeWorktree();
+    const staleContent = '# Old log\nFrom a previous run.';
+    writeFileSync(join(cwd, 'implementation-log-task-1.md'), staleContent);
+    // Pin mtime to 5 seconds in the past so it predates the adapter's startMs.
+    const pastSecs = Date.now() / 1000 - 5;
+    utimesSync(join(cwd, 'implementation-log-task-1.md'), pastSecs, pastSecs);
+    expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(false);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['implementation-log.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement-task-1',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('contract_violation');
+    expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
+    expect(r.remediatedArtifacts).toBeUndefined();
+    expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(false);
+  });
 });
 
 describe('parseSessionLogUsage', () => {
