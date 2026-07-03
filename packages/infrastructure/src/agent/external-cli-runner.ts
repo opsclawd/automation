@@ -1,124 +1,12 @@
 import { execa } from 'execa';
-import {
-  existsSync,
-  mkdirSync,
-  writeFileSync,
-  renameSync,
-  rmdirSync,
-  readdirSync,
-  copyFileSync,
-  unlinkSync,
-  statSync,
-} from 'node:fs';
-import { execSync, execFileSync } from 'node:child_process';
-import { join, dirname, basename, resolve, relative } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { join, dirname } from 'node:path';
 import { type AgentRuntimeKind } from '@ai-sdlc/domain';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { testProviderErrorPatterns, testQuotaPatterns } from './error-patterns.js';
-
-const NOISE_DIRS = new Set([
-  'node_modules',
-  '.next',
-  '.cache',
-  '.git',
-  'dist',
-  'build',
-  '.turbo',
-  '.nuxt',
-  'coverage',
-  '__pycache__',
-  '.venv',
-  'vendor',
-  '.pytest_cache',
-  '.mypy_cache',
-  'target',
-  'out',
-  '.gradle',
-]);
-
-function findMisplacedCandidate(
-  cwd: string,
-  artifactBasename: string,
-  excludePaths?: Set<string>,
-): string | null {
-  try {
-    const candidates: string[] = [];
-    function scan(dir: string, depth: number) {
-      if (depth > 5) return;
-      let entries;
-      try {
-        entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return; // Skip this unreadable directory and continue
-      }
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          if (NOISE_DIRS.has(entry.name)) continue;
-          scan(join(dir, entry.name), depth + 1);
-        } else if (entry.isFile()) {
-          if (depth >= 2 && entry.name === artifactBasename) {
-            const relativePath = relative(cwd, join(dir, entry.name));
-            const normalizedRelativePath = relativePath.replace(/\\/g, '/');
-            if (excludePaths?.has(normalizedRelativePath)) {
-              continue;
-            }
-            // skip git-tracked files (only untracked/ignored files are candidates)
-            try {
-              const gitPath = relativePath.replace(/\\/g, '/');
-              execFileSync('git', ['ls-files', '--error-unmatch', '--', gitPath], {
-                cwd,
-                stdio: 'pipe',
-              });
-              // exit 0 means tracked → skip
-              continue;
-            } catch (err) {
-              const errorWithStatus = err as { status?: number };
-              if (errorWithStatus && errorWithStatus.status === 1) {
-                // status 1 means command ran but file is not tracked → valid candidate
-              } else {
-                // any other error (ENOENT, exit code 128, etc.) → do not treat as untracked
-                continue;
-              }
-            }
-            candidates.push(relativePath);
-          }
-        }
-      }
-    }
-
-    scan(cwd, 1);
-    return candidates.length === 1 ? candidates[0]! : null;
-  } catch {
-    return null;
-  }
-}
-
-function moveMisplacedArtifact(cwd: string, srcRelative: string, destRelative: string): void {
-  const src = join(cwd, srcRelative);
-  const dest = join(cwd, destRelative);
-  mkdirSync(dirname(dest), { recursive: true });
-  try {
-    renameSync(src, dest);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'EXDEV') {
-      copyFileSync(src, dest);
-      unlinkSync(src);
-    } else {
-      throw e;
-    }
-  }
-  // Clean up empty ancestor directories up to (but not including) cwd
-  let dir = dirname(src);
-  while (resolve(dir) !== resolve(cwd) && dir !== dirname(dir)) {
-    try {
-      rmdirSync(dir);
-      dir = dirname(dir);
-    } catch {
-      break;
-    }
-  }
-}
+import { remediateArtifacts } from './artifact-remediation.js';
 
 export interface ExternalCliRunInput {
   runtime: AgentRuntimeKind;
@@ -294,113 +182,20 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
   }
 
   // Post-check remediation: if MISSING_REQUIRED_ARTIFACT was set, try to find
-  // each missing artifact anywhere in the worktree by exact basename match.
+  // each missing artifact anywhere in the worktree by exact basename match or stem-prefix.
   if (
     outcome === 'contract_violation' &&
     contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT) &&
     input.expectedArtifacts?.length
   ) {
-    const excludePaths = new Set<string>();
-    for (const artifact of input.expectedArtifacts) {
-      if (existsSync(join(input.cwd, artifact))) {
-        excludePaths.add(artifact.replace(/\\/g, '/'));
-      }
+    const remediation = remediateArtifacts(input.cwd, input.expectedArtifacts, start);
+    remediatedArtifacts = remediation.remediatedArtifacts;
+    for (const msg of remediation.logMessages) {
+      stderrForLog = `${msg}\n${stderrForLog}`;
     }
 
-    for (const artifact of input.expectedArtifacts) {
-      if (existsSync(join(input.cwd, artifact))) continue;
-      const artifactBasename = basename(artifact);
-      const candidate = findMisplacedCandidate(input.cwd, artifactBasename, excludePaths);
-      if (!candidate) continue;
-      try {
-        moveMisplacedArtifact(input.cwd, candidate, artifact);
-        remediatedArtifacts = [...(remediatedArtifacts ?? []), { src: candidate, artifact }];
-        excludePaths.add(artifact.replace(/\\/g, '/'));
-      } catch (e) {
-        console.warn('moveMisplacedArtifact failed:', e);
-      }
-    }
-    // Second-pass stem-prefix remediation: catch agents that write
-    // `<stem>-suffix.md` instead of `<stem>.md` (e.g. `implementation-log-task-5.md`
-    // instead of `implementation-log.md`).  Searches the worktree root only and
-    // accepts tracked files since the agent may have already committed the wrong name.
-    // Copies rather than renames so the source stays in git if already tracked.
-    for (const artifact of input.expectedArtifacts) {
-      if (existsSync(join(input.cwd, artifact))) continue;
-      const artifactBasename = basename(artifact);
-      const dotIdx = artifactBasename.lastIndexOf('.');
-      const stem = dotIdx > 0 ? artifactBasename.slice(0, dotIdx) : artifactBasename;
-      const ext = dotIdx > 0 ? artifactBasename.slice(dotIdx) : '';
-
-      let rootEntries: import('node:fs').Dirent[];
-      try {
-        rootEntries = readdirSync(input.cwd, { withFileTypes: true }) as import('node:fs').Dirent[];
-      } catch {
-        continue;
-      }
-
-      const stemMatches = rootEntries
-        .filter(
-          (e) =>
-            e.isFile() &&
-            e.name !== artifactBasename &&
-            e.name.startsWith(stem) &&
-            // require a separator (-/_) immediately after the stem so that
-            // e.g. `planning.md` is not matched when the stem is `plan`
-            (e.name[stem.length] === '-' || e.name[stem.length] === '_') &&
-            (ext === '' || e.name.endsWith(ext)),
-        )
-        .map((e) => e.name);
-
-      if (stemMatches.length === 0) continue;
-      // Filter to candidates written during THIS invocation. Stale leftovers from
-      // prior runs/attempts must not be silently promoted to "remediated artifact":
-      // doing so would clear MISSING_REQUIRED_ARTIFACT and mark the run successful
-      // using a file the current agent never produced. Stat failures are treated
-      // as stale (mtimeMs = 0) so they cannot masquerade as fresh.
-      const freshCandidates = stemMatches.flatMap((name) => {
-        let mtimeMs = 0;
-        try {
-          mtimeMs = statSync(join(input.cwd, name)).mtimeMs;
-        } catch {
-          // Race with concurrent delete: treat as stale so a fresh sibling wins.
-        }
-        return mtimeMs >= start ? [{ name, mtimeMs }] : [];
-      });
-      if (freshCandidates.length === 0) continue;
-      freshCandidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-      const srcName = freshCandidates[0]!.name;
-      const destPath = join(input.cwd, artifact);
-      try {
-        mkdirSync(dirname(destPath), { recursive: true });
-        copyFileSync(join(input.cwd, srcName), destPath);
-        remediatedArtifacts = [...(remediatedArtifacts ?? []), { src: srcName, artifact }];
-        stderrForLog = `STEM_PREFIX_REMEDIATED: ${srcName} → ${artifact}\n${stderrForLog}`;
-        writeFileSync(stderrPath, stderrForLog);
-        // Delete the source if untracked so wrong-named files don't accumulate
-        // across steps and break the "exactly 1 match" guard on future retries.
-        // Tracked files are left in place — they're already in git history.
-        try {
-          execFileSync('git', ['ls-files', '--error-unmatch', '--', srcName], {
-            cwd: input.cwd,
-            stdio: 'pipe',
-          });
-        } catch (gitErr) {
-          if ((gitErr as { status?: number }).status === 1) {
-            try {
-              unlinkSync(join(input.cwd, srcName));
-            } catch {
-              // best-effort
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('stem-prefix remediation failed:', e);
-      }
-    }
-
-    // If all expected artifacts are now present, swap violation codes and restore outcome.
-    if (remediatedArtifacts?.length) {
+    if (remediatedArtifacts && remediatedArtifacts.length) {
+      // If all expected artifacts are now present, swap violation codes and restore outcome.
       const allPresent = input.expectedArtifacts.every((a) => existsSync(join(input.cwd, a)));
       if (allPresent) {
         outcome = 'success';

@@ -12,6 +12,7 @@ import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { testQuotaPatterns, testProviderErrorPatterns } from './error-patterns.js';
+import { remediateArtifacts } from './artifact-remediation.js';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
@@ -278,46 +279,11 @@ export class OpenCodeAgentAdapter implements AgentPort {
         stderrForLog = `NO_OUTPUT: agent exited 0 with empty stdout and no git changes\n${stderrForLog}`;
       }
     }
+    let remediatedArtifacts: { src: string; artifact: string }[] | undefined;
     if (outcome === 'success' && request.expectedArtifacts?.length) {
       for (const artifact of request.expectedArtifacts) {
         const artifactPath = join(request.cwd, artifact);
-        if (existsSync(artifactPath)) {
-          continue;
-        }
-        // Defense-in-depth: scan known stray locations for artifacts stranded by
-        // opencode session-directory drift (#311). If found, copy to the expected
-        // path so the orchestrator can consume it.
-        let recovered = false;
-        const strayLocations = ['apps/cli'];
-        for (const stray of strayLocations) {
-          const worktreePath = join(request.cwd, stray, artifact);
-          if (existsSync(worktreePath)) {
-            try {
-              const artifactPath = join(request.cwd, artifact);
-              writeFileSync(artifactPath, readFileSync(worktreePath));
-              recovered = true;
-              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from worktree ${stray}/${artifact}\n${stderrForLog}`;
-            } catch (err) {
-              stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from worktree ${stray}/${artifact}: ${err}\n${stderrForLog}`;
-            }
-            break;
-          }
-          if (this.opts.repoRoot) {
-            const repoPath = join(this.opts.repoRoot, stray, artifact);
-            if (existsSync(repoPath)) {
-              try {
-                const artifactPath = join(request.cwd, artifact);
-                writeFileSync(artifactPath, readFileSync(repoPath));
-                recovered = true;
-                stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot ${stray}/${artifact}\n${stderrForLog}`;
-              } catch (err) {
-                stderrForLog = `DRIFT_RECOVERY_FAILED: ${artifact} from repoRoot ${stray}/${artifact}: ${err}\n${stderrForLog}`;
-              }
-              break;
-            }
-          }
-        }
-        if (!recovered) {
+        if (!existsSync(artifactPath)) {
           outcome = 'contract_violation';
           contractViolations = [
             ...contractViolations,
@@ -325,6 +291,64 @@ export class OpenCodeAgentAdapter implements AgentPort {
           ];
           stderrForLog = `MISSING_REQUIRED_ARTIFACT: ${artifact}\n${stderrForLog}`;
           break;
+        }
+      }
+    }
+
+    if (
+      outcome === 'contract_violation' &&
+      contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT) &&
+      request.expectedArtifacts?.length
+    ) {
+      // 1. Primary remediation: Recursive scan in request.cwd
+      const remediation = remediateArtifacts(request.cwd, request.expectedArtifacts, start);
+      remediatedArtifacts = remediation.remediatedArtifacts;
+      for (const msg of remediation.logMessages) {
+        stderrForLog = `${msg}\n${stderrForLog}`;
+      }
+
+      // 2. Secondary remediation: Recursive scan in repoRoot (if set) to catch DRIFT.
+      // Uses dryRun=true to avoid modifying the shared repoRoot; files are copied to cwd.
+      if (this.opts.repoRoot && this.opts.repoRoot !== request.cwd) {
+        const repoRemediation = remediateArtifacts(
+          this.opts.repoRoot,
+          request.expectedArtifacts,
+          start,
+          { dryRun: true },
+        );
+        for (const item of repoRemediation.remediatedArtifacts ?? []) {
+          if (!existsSync(join(request.cwd, item.artifact))) {
+            try {
+              const src = join(this.opts.repoRoot, item.src);
+              const dest = join(request.cwd, item.artifact);
+              mkdirSync(dirname(dest), { recursive: true });
+              writeFileSync(dest, readFileSync(src));
+              remediatedArtifacts = [
+                ...(remediatedArtifacts ?? []),
+                { src: `repoRoot:${item.src}`, artifact: item.artifact },
+              ];
+              stderrForLog = `DRIFT_WARNING: repoRoot:${item.src} → ${item.artifact} recovered from repoRoot recursive scan\n${stderrForLog}`;
+            } catch (err) {
+              stderrForLog = `DRIFT_RECOVERY_FAILED: ${item.artifact} from repoRoot: ${err}\n${stderrForLog}`;
+            }
+          }
+        }
+      }
+
+      if (remediatedArtifacts?.length) {
+        // If all expected artifacts are now present, swap violation codes and restore outcome.
+        const allPresent = request.expectedArtifacts.every((a) =>
+          existsSync(join(request.cwd, a)),
+        );
+        if (allPresent) {
+          outcome = 'success';
+          contractViolations = contractViolations
+            .filter((v) => v !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
+            .concat(CONTRACT_VIOLATION_CODES.MISPLACED_ARTIFACT);
+          const remediatedList = remediatedArtifacts
+            .map((r) => `${r.src} → ${r.artifact}`)
+            .join(', ');
+          stderrForLog = `MISPLACED_ARTIFACT: auto-remediated ${remediatedList}\n${stderrForLog}`;
         }
       }
     }
@@ -352,6 +376,7 @@ export class OpenCodeAgentAdapter implements AgentPort {
       stderrPath,
       contractViolations,
       outcome,
+      remediatedArtifacts,
       ...(usage ? { usage: { ...usage } } : {}),
     };
     if (endCommitSha) ret.endCommitSha = endCommitSha;

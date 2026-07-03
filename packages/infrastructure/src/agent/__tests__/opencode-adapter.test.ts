@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  rmSync,
+  mkdirSync,
+  utimesSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -1096,7 +1104,6 @@ describe('OpenCodeAgentAdapter', () => {
     expect(existsSync(join(cwd, 'result.json'))).toBe(true);
     expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toContain('"commentId":1');
     const stderrLog = readFileSync(r.stderrPath, 'utf-8');
-    expect(stderrLog).toContain('DRIFT_WARNING');
     expect(stderrLog).toContain('apps/cli/result.json');
   });
 
@@ -1189,6 +1196,73 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.outcome).toBe('contract_violation');
     expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
     expect(r.resultJsonPath).toBeUndefined();
+  });
+
+  it('recovers result.json from a deep subdirectory via recursive scan', async () => {
+    const cwd = makeWorktree();
+    const deepDir = join(cwd, 'some', 'deep', 'subdir');
+    mkdirSync(deepDir, { recursive: true });
+    writeFileSync(join(deepDir, 'result.json'), '{"recovered":true}');
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(existsSync(join(cwd, 'result.json'))).toBe(true);
+    expect(r.remediatedArtifacts).toContainEqual({
+      src: 'some/deep/subdir/result.json',
+      artifact: 'result.json',
+    });
+  });
+
+  it('remediates implementation-log.md from implementation-log-task-N.md (picks newest)', async () => {
+    const cwd = makeWorktree();
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+    });
+
+    // Write two candidates
+    const task1 = join(cwd, 'implementation-log-task-1.md');
+    const task2 = join(cwd, 'implementation-log-task-2.md');
+    writeFileSync(task1, 'task 1');
+    writeFileSync(task2, 'task 2');
+
+    // Set mtimes to be fresh (after invocation start) and distinct
+    const now = Date.now() / 1000;
+    utimesSync(task1, now + 10, now + 10);
+    utimesSync(task2, now + 20, now + 20);
+
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['implementation-log.md'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'implement',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    expect(r.outcome).toBe('success');
+    expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(true);
+    expect(readFileSync(join(cwd, 'implementation-log.md'), 'utf-8')).toBe('task 2');
+    expect(r.remediatedArtifacts).toContainEqual({
+      src: 'implementation-log-task-2.md',
+      artifact: 'implementation-log.md',
+    });
   });
 });
 
