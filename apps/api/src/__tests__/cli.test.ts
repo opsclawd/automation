@@ -3451,7 +3451,16 @@ describe('CLI runs resume command', () => {
       `INSERT INTO pr_review_comments (run_uuid, pr_number, comment_id, path, line, reviewer, body, state, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      runUuid, 99, 1, 'a.ts', 1, 'r', 'P1 fix this', 'pending', new Date().toISOString(), new Date().toISOString()
+      runUuid,
+      99,
+      1,
+      'a.ts',
+      1,
+      'r',
+      'P1 fix this',
+      'pending',
+      new Date().toISOString(),
+      new Date().toISOString(),
     );
     db.close();
 
@@ -3477,6 +3486,42 @@ describe('CLI runs resume command', () => {
       expect(output.isReady).toBe(false);
       expect(exitSpy).toHaveBeenCalledWith(1);
       expect(consoleErrs.join('')).toMatch(/PR is not ready for merge/i);
+
+      writeSpy.mockRestore();
+      exitSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('runs check-merge-ready fails for an unknown run UUID', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-cmr-unknown-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
+    const db = openDatabase(dbPath);
+    applyMigrations(db);
+    db.close();
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const stdoutChunks: string[] = [];
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+      const consoleErrs: string[] = [];
+      vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram();
+      const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
+      runsCmd.exitOverride();
+      await runsCmd.parseAsync(['check-merge-ready', '--uuid', 'no-such-uuid'], { from: 'user' });
+
+      expect(consoleErrs.join('')).toMatch(/No run found for uuid no-such-uuid/);
+      expect(exitSpy).toHaveBeenCalledWith(1);
 
       writeSpy.mockRestore();
       exitSpy.mockRestore();

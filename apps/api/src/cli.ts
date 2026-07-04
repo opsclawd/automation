@@ -679,6 +679,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
+            // An unknown UUID must fail, not report ready: listComments on a
+            // nonexistent run returns no rows, which would green-light the merge.
+            const run = c.runRepository.findByUuid(opts.uuid);
+            if (!run) {
+              console.error(`No run found for uuid ${opts.uuid}`);
+              process.exit(EXIT_USER_ERROR);
+            }
             const result = await c.checkMergeReadiness.execute(RunId(opts.uuid));
             process.stdout.write(JSON.stringify(result, null, 2) + '\n');
             if (!result.isReady) {
