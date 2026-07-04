@@ -2,10 +2,6 @@ import { PhaseName } from '@ai-sdlc/domain';
 import type { FailureKind } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
 import type { StepRepositoryPort } from '../../ports/step-repository-port.js';
-import type {
-  ImplementArtifactGuardPort,
-  ImplementArtifactGuardInput,
-} from '../../ports/implement-artifact-guard-port.js';
 import type { Step, RunId } from '@ai-sdlc/domain';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
@@ -41,20 +37,6 @@ export interface ImplementHandlerOpts {
   runStep: (sctx: StepRunContext) => Promise<StepRunResult>;
   setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   lintTaskSize?: (cwd: string, manifest: TaskManifest) => Promise<LintTaskSizeResult>;
-  implementArtifactGuard?: ImplementArtifactGuardPort;
-  resolveInvocation?: (input: { runId: string; stepIndex: number }) => Promise<
-    | {
-        startCommitSha: string;
-        endCommitSha?: string;
-        durationMs: number;
-        outcome: 'success' | 'failed' | 'timeout' | 'contract_violation';
-        stdoutTail: string;
-        stderrTail: string;
-        resultJsonPath?: string;
-        expectedArtifacts: readonly string[];
-      }
-    | undefined
-  >;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -225,17 +207,12 @@ export class ImplementHandler implements PhaseHandler {
           `step ${d.index} (${d.title}) needs human review`,
         );
       } else {
-        const synthesizeOutcome = await this.maybeSynthesizeArtifact({
-          stepIndex: d.index,
-          stepTitle: d.title,
-          ctx,
-          emit,
-        });
-        if (synthesizeOutcome === 'recovered') {
-          this.opts.steps.upsert({ ...step, status: 'success', completedAt: ctx.now() });
-          emit('step.completed', 'info', `step ${d.index} recovered via guard`, { index: d.index });
-          continue;
-        }
+        // No-op re-verification recovery (synthesizing a missing
+        // implementation-log.md when the agent declared the step already
+        // done) happens inside runStep/runImplement itself, before the
+        // typecheck/spec-review/quality-review gates run — see #610. If
+        // runStep still reports a non-success outcome here, the step
+        // genuinely failed and there is nothing further to recover.
         this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
         emit('step.failed', 'error', `step ${d.index} failed`, { index: d.index });
         return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);
@@ -264,108 +241,6 @@ export class ImplementHandler implements PhaseHandler {
         message,
       );
     }
-  }
-
-  private async maybeSynthesizeArtifact(input: {
-    stepIndex: number;
-    stepTitle: string;
-    ctx: PhaseHandlerContext;
-    emit: EventEmitter;
-  }): Promise<'recovered' | 'not-recovered' | 'skipped'> {
-    const { stepIndex, ctx, emit } = input;
-    const guard = this.opts.implementArtifactGuard;
-    const resolve = this.opts.resolveInvocation;
-    if (!guard || !resolve) return 'skipped';
-
-    const invocation = await resolve({ runId: ctx.runUuid, stepIndex });
-    if (!invocation) return 'skipped';
-    if (invocation.outcome !== 'contract_violation') return 'skipped';
-
-    const missing = await this.collectContractViolations(ctx, invocation);
-    if (!missing.includes('implementation-log.md')) {
-      return 'not-recovered';
-    }
-
-    const guardInput: ImplementArtifactGuardInput = {
-      runId: ctx.runUuid,
-      cwd: ctx.cwd,
-      phaseId: this.phase,
-      stepIndex,
-      expectedArtifacts: invocation.expectedArtifacts,
-      invocationEnd: {
-        startCommitSha: invocation.startCommitSha,
-        ...(invocation.endCommitSha !== undefined ? { endCommitSha: invocation.endCommitSha } : {}),
-        durationMs: invocation.durationMs,
-        outcome: invocation.outcome,
-      },
-      invocationTranscript: {
-        stdoutTail: invocation.stdoutTail,
-        stderrTail: invocation.stderrTail,
-        ...(invocation.resultJsonPath !== undefined
-          ? { resultJsonPath: invocation.resultJsonPath }
-          : {}),
-      },
-    };
-
-    let outcome: Awaited<
-      ReturnType<ImplementArtifactGuardPort['synthesizeMissingArtifactsIfDoneDeclared']>
-    >;
-    try {
-      outcome = await guard.synthesizeMissingArtifactsIfDoneDeclared(guardInput);
-    } catch (e) {
-      emit(
-        'step.artifact.synthesized',
-        'warn',
-        `guard threw: ${e instanceof Error ? e.message : String(e)}`,
-        {
-          index: stepIndex,
-          artifact: 'implementation-log.md',
-          reason: 'guard_threw',
-        },
-      );
-      return 'not-recovered';
-    }
-
-    const actualRecovered = outcome.synthesized.filter(
-      (s) => s.reason === 'no_op_reverification_done_declared' || s.reason === 'already_present',
-    );
-    if (actualRecovered.length === 0) {
-      emit(
-        'step.artifact.not_synthesized',
-        'info',
-        'guard policy not satisfied on no-op re-verification',
-        { index: stepIndex, artifact: 'implementation-log.md' },
-      );
-      return 'not-recovered';
-    }
-
-    for (const s of outcome.synthesized) {
-      emit('step.artifact.synthesized', 'warn', `synthesized ${s.artifact}`, {
-        index: stepIndex,
-        artifact: s.artifact,
-        reason: s.reason,
-      });
-    }
-
-    return 'recovered';
-  }
-
-  private async collectContractViolations(
-    ctx: PhaseHandlerContext,
-    invocation: NonNullable<
-      Awaited<ReturnType<NonNullable<ImplementHandlerOpts['resolveInvocation']>>>
-    >,
-  ): Promise<string[]> {
-    const present: string[] = [];
-    for (const path of invocation.expectedArtifacts) {
-      try {
-        const content = await ctx.artifacts.read(ctx.runUuid, path);
-        if (content && content.trim().length > 0) present.push(path);
-      } catch {
-        // not present
-      }
-    }
-    return invocation.expectedArtifacts.filter((a) => !present.includes(a));
   }
 
   private fail(

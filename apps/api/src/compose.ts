@@ -101,6 +101,7 @@ import {
   type TypecheckResult,
   type TypescriptError,
   type ResolveRefShaFn,
+  type ImplementArtifactGuardInput,
   extractTaskBody,
   parseTaskManifest,
   parseTypescriptErrors,
@@ -1674,9 +1675,108 @@ export function composeRoot(opts: ComposeOptions): Container {
             });
           }
         }
+
+        // No-op re-verification safety net (#610): if the only reason this
+        // invocation is a contract violation is the missing
+        // implementation-log.md, and the agent declared the step already
+        // done with no new work to do, synthesize a minimal log from
+        // verifiable state (git + transcript) instead of failing the step.
+        // This MUST happen here, inside runImplement, and return 'success'
+        // so ImplementStepLoop proceeds through the typecheck/spec-review/
+        // quality-review gates below exactly as if the agent had written the
+        // log itself — recovering the artifact must never let unreviewed or
+        // untypechecked work skip those gates.
+        let agentOutcome = result.outcome;
+        if (result.outcome === 'contract_violation') {
+          const expectedArtifacts = ['implementation-log.md'];
+          const missing = expectedArtifacts.filter((a) => !existsSync(join(ctx.cwd, a)));
+          if (missing.includes('implementation-log.md')) {
+            const stdoutTail = await readTail(result.stdoutPath);
+            const stderrTail = await readTail(result.stderrPath);
+            const guardInput: ImplementArtifactGuardInput = {
+              runId: String(ctx.runId),
+              cwd: ctx.cwd,
+              phaseId: 'implement',
+              stepIndex: ctx.stepIndex,
+              expectedArtifacts,
+              invocationEnd: {
+                startCommitSha,
+                ...(result.endCommitSha !== undefined ? { endCommitSha: result.endCommitSha } : {}),
+                durationMs: result.durationMs,
+                outcome: result.outcome,
+              },
+              invocationTranscript: {
+                stdoutTail,
+                stderrTail,
+                ...(result.resultJsonPath !== undefined
+                  ? { resultJsonPath: result.resultJsonPath }
+                  : {}),
+              },
+            };
+            try {
+              const guardOutcome =
+                await implementArtifactGuard.synthesizeMissingArtifactsIfDoneDeclared(guardInput);
+              const actuallyRecovered = guardOutcome.synthesized.filter(
+                (s) =>
+                  s.reason === 'no_op_reverification_done_declared' ||
+                  s.reason === 'already_present',
+              );
+              if (actuallyRecovered.length > 0) {
+                agentOutcome = 'success';
+                agentInvocationRepository.update(AgentInvocationId(invocationId), {
+                  outcome: 'success',
+                  contractViolations: [],
+                });
+                for (const s of guardOutcome.synthesized) {
+                  persistingEventBusForLoop.publish(String(ctx.runId), {
+                    runId: String(ctx.runId),
+                    level: 'warn',
+                    type: 'step.artifact.synthesized',
+                    message: `synthesized ${s.artifact}`,
+                    timestamp: new Date().toISOString(),
+                    metadata: {
+                      phaseId: 'implement',
+                      stepIndex: ctx.stepIndex,
+                      artifact: s.artifact,
+                      reason: s.reason,
+                    },
+                  });
+                }
+              } else {
+                persistingEventBusForLoop.publish(String(ctx.runId), {
+                  runId: String(ctx.runId),
+                  level: 'info',
+                  type: 'step.artifact.not_synthesized',
+                  message: 'guard policy not satisfied on no-op re-verification',
+                  timestamp: new Date().toISOString(),
+                  metadata: {
+                    phaseId: 'implement',
+                    stepIndex: ctx.stepIndex,
+                    artifact: 'implementation-log.md',
+                  },
+                });
+              }
+            } catch (e) {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'warn',
+                type: 'step.artifact.synthesized',
+                message: `guard threw: ${e instanceof Error ? e.message : String(e)}`,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  phaseId: 'implement',
+                  stepIndex: ctx.stepIndex,
+                  artifact: 'implementation-log.md',
+                  reason: 'guard_threw',
+                },
+              });
+            }
+          }
+        }
+
         return {
           invocationId,
-          agentOutcome: result.outcome,
+          agentOutcome,
         };
       };
 
@@ -2021,35 +2121,6 @@ export function composeRoot(opts: ComposeOptions): Container {
           runStep,
           setup: worktreeSetup,
           lintTaskSize: lintTaskSizeDep,
-          implementArtifactGuard,
-          resolveInvocation: async (input: { runId: string; stepIndex: number }) => {
-            const invocations = agentInvocationRepository.listByRun(RunId(input.runId));
-            const filtered = invocations.filter((inv) => {
-              if (inv.phaseId !== 'implement') return false;
-              const expectedSuffix = `implement-${input.runId}-${input.stepIndex}.md`;
-              return inv.promptPath.endsWith(expectedSuffix);
-            });
-            const inv = filtered[filtered.length - 1];
-            if (!inv) return undefined;
-
-            const stdoutTail = await readTail(inv.stdoutPath);
-            const stderrTail = await readTail(inv.stderrPath);
-
-            return {
-              startCommitSha: inv.startCommitSha,
-              ...(inv.endCommitSha !== undefined && inv.endCommitSha !== null
-                ? { endCommitSha: inv.endCommitSha }
-                : {}),
-              durationMs: inv.durationMs ?? 0,
-              outcome: inv.outcome ?? 'failed',
-              stdoutTail,
-              stderrTail,
-              ...(inv.resultJsonPath !== undefined && inv.resultJsonPath !== null
-                ? { resultJsonPath: inv.resultJsonPath }
-                : {}),
-              expectedArtifacts: ['implementation-log.md'],
-            };
-          },
         }),
       );
 

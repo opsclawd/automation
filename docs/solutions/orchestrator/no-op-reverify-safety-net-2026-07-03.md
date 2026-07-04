@@ -29,9 +29,22 @@ already on disk.
 
 2. **Orchestrator safety net.** A new port
    `ImplementArtifactGuardPort` (`packages/application/src/ports/implement-artifact-guard-port.ts`)
-   runs inside `ImplementHandler` when the agent returns
-   `contract_violation` with `MISSING_REQUIRED_ARTIFACT` as the sole
-   violation. The guard fires only when:
+   runs inside `runImplement` (`apps/api/src/compose.ts`) — the same
+   function that invokes the agent for a step — immediately after the
+   invocation returns `contract_violation` with `MISSING_REQUIRED_ARTIFACT`.
+   This placement matters: `runImplement` is called by
+   `ImplementStepLoop.execute` *before* the typecheck/spec-review/
+   quality-review gates run for that step. If the guard recovers here,
+   `runImplement` reports `agentOutcome: 'success'` and the step loop
+   proceeds through those gates exactly as if the agent had written the
+   log itself. An earlier version of this fix ran the guard from
+   `ImplementHandler`, *after* the whole step loop had already returned
+   — which let a recovered step be marked successful without ever
+   running the gates against whatever was actually committed. Do not
+   move this back to `ImplementHandler`; recovery must happen inside
+   `runImplement`/the loop, not after it returns.
+
+   The guard fires only when:
    - The expected artifact is `implementation-log.md`.
    - The transcript tail (or a `result.json`) declares DONE.
    - `headCommitSha(cwd) == startCommitSha` (no new commit).
@@ -46,12 +59,16 @@ already on disk.
 
 ## Why this is safer than adapter-level prose fallback
 
-The fix lives in the implement handler (single call site), not in every
+The fix lives in a single call site (`runImplement`), not in every
 adapter. The synthesized content carries no factual claims beyond what
 the orchestrator can derive from the DB and git. A genuine-failure case
 (agent did work but forgot the artifact, leaving a non-clean tree or a
 new commit) still fails the contract and triggers the fallback path —
-the prior semantics are preserved.
+the prior semantics are preserved. Recovering *before* the gates run
+(rather than after the step loop already returned) means a recovered
+step is still validated exactly like a normal successful step — it
+cannot skip typecheck/spec-review/quality-review just because the
+proof-of-work file was synthesized instead of agent-written.
 
 ## Operational signals
 
@@ -65,10 +82,11 @@ the prior semantics are preserved.
 ## Layer-boundary notes
 
 The guard is a port-and-injectable: interface in `application/ports.ts`,
-fake in `application/test-doubles/`, production impl in
-`infrastructure/agent/implement-artifact-guard.ts`. The
-`ImplementHandler` holds the guard as an optional injectable; no new
-infra→application imports. `pnpm depcruise` continues to pass.
+production impl in `infrastructure/agent/implement-artifact-guard.ts`.
+It's instantiated and invoked in `apps/api/src/compose.ts` (the
+composition root), inside the `runImplement` closure passed to
+`ImplementStepLoop`; `ImplementHandler` no longer references it at all.
+No new infra→application imports. `pnpm depcruise` continues to pass.
 
 ## When to revisit
 
