@@ -152,19 +152,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
         PWD: request.cwd,
         INIT_CWD: undefined,
       };
-      // Pre-launch cleanup: remove any pre-existing result.json from known stray
-      // locations in repoRoot to prevent recovery of stale artifacts from previous
-      // invocations (#311, PR#312 review feedback).
-      if (this.opts.repoRoot && request.expectedArtifacts?.length) {
-        for (const artifact of request.expectedArtifacts) {
-          for (const stray of ['apps/cli']) {
-            const strayPath = join(this.opts.repoRoot, stray, artifact);
-            if (existsSync(strayPath)) {
-              rmSync(strayPath);
-            }
-          }
-        }
-      }
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
