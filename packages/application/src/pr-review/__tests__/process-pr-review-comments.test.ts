@@ -2102,3 +2102,125 @@ describe('ProcessPrReviewComments - codeVerified retry behavior', () => {
     expect(git.pushes).toHaveLength(0);
   });
 });
+
+
+describe("ProcessPrReviewComments — verification of final retry", () => {
+  it("blocks with informative reason when final attempt fails code verification", async () => {
+    let verifyCodeChangeCalled = false;
+    const agent = new FakeAgentPort({
+      "post-pr-review-profile": [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
+
+    let buildChecks = 0;
+    const { deps, repo } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => {
+        buildChecks++;
+        return { passed: false, error: `build failed attempt ${buildChecks}` };
+      },
+      verifyCodeChange: async () => {
+        verifyCodeChangeCalled = true;
+        return { pass: false, reason: "final attempt was actually wrong" };
+      },
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9001, action: "fixed", replyBody: "attempted fix" },
+      }),
+    });
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: "o/r",
+      prNumber: 5,
+      cwd: "/work/tree",
+      phaseId: PhaseName("post-pr-review"),
+      pollNumber: 1,
+    });
+
+    expect(out.blocked).toBe(1);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe("blocked");
+    expect(verifyCodeChangeCalled).toBe(true);
+    expect(comment?.blockedReason).toContain("verified incorrect: final attempt was actually wrong");
+  });
+
+  it("marks processed when final attempt fails build but passes code verification", async () => {
+    let verifyCodeChangeCalled = false;
+    const agent = new FakeAgentPort({
+      "post-pr-review-profile": [
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+        makeSuccessAgentResult(),
+      ],
+    });
+
+    let buildChecks = 0;
+    const { deps, github, repo, git } = makeDeps({
+      agent,
+      verifyBuildPasses: async () => {
+        buildChecks++;
+        return { passed: false, error: `build failed attempt ${buildChecks}` };
+      },
+      verifyCodeChange: async () => {
+        verifyCodeChangeCalled = true;
+        return { pass: true, reason: "final attempt is correct despite build failure" };
+      },
+      extractTaskResult: async () => ({
+        ok: true,
+        result: { commentId: 9001, action: "fixed", replyBody: "fixed" },
+      }),
+    });
+
+    let shaCounter = 0;
+    git.headCommitSha = async () => {
+      shaCounter++;
+      if (shaCounter > 20) return "sha-final"; // Safety
+      return "sha-start";
+    };
+
+    // We need to bypass headCommitSha in the task loop to set runningStartSha
+    // and then have it return sha-final when taskRunner calls it.
+
+    const originalHeadCommitSha = git.headCommitSha.bind(git);
+    let taskLoopStarted = false;
+    git.headCommitSha = async (cwd) => {
+        if (!taskLoopStarted) {
+            taskLoopStarted = true;
+            return "sha-start";
+        }
+        // inside the task loop
+        shaCounter++;
+        if (shaCounter === 6) return "sha-final"; // 3rd attempt check
+        return "sha-start";
+    }
+
+    git.remoteRefs.set("origin/feat-x", "sha-final");
+    git.ancestorResults.set("sha-final|sha-final", true);
+    git.logBetweenResults.set("sha-start|sha-final", ["sha-final"]);
+    git.logBetweenResults.set("sha-final|sha-final", ["sha-final"]);
+
+    const uc = new ProcessPrReviewComments(deps);
+    const out = await uc.execute({
+      runId,
+      repoId,
+      repoFullName: "o/r",
+      prNumber: 5,
+      cwd: "/work/tree",
+      phaseId: PhaseName("post-pr-review"),
+      pollNumber: 1,
+    });
+
+    expect(out.processed).toBe(1);
+    expect(out.blocked).toBe(0);
+    const comment = repo.getComment(runId, 9001);
+    expect(comment?.state).toBe("processed");
+    expect(verifyCodeChangeCalled).toBe(true);
+    expect(github.repliesPosted).toHaveLength(1);
+  });
+});

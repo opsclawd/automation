@@ -108,6 +108,7 @@ export async function verifyComment(
     repoFullName: string;
     startCommitSha: string | undefined;
     repoId?: string;
+    allowBuildFailure?: boolean;
   },
 ): Promise<VerificationResult> {
   const replyVerified = await verifyReplyPosted(deps, context, comment.commentId);
@@ -163,7 +164,7 @@ export async function verifyComment(
     remote.isNewerThanStart &&
     remote.commitVerified &&
     replyVerified &&
-    buildVerified;
+    (buildVerified || context.allowBuildFailure === true);
 
   if (mechanicalOk && deps.verifyCodeChange && comment.commitSha) {
     const codeResult = await deps.verifyCodeChange({

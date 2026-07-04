@@ -60,6 +60,7 @@ export interface PollTaskInput {
   unresolvedCommentCount: number;
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
+  isLastAttempt?: boolean;
 }
 
 export interface PollTaskOutput {
@@ -193,6 +194,7 @@ export class PollTaskRunner {
         repoFullName: input.repoFullName,
         startCommitSha: input.startCommitSha,
         repoId: String(input.repoId),
+        allowBuildFailure: input.isLastAttempt,
       });
 
       if (verification.ok) {
@@ -237,19 +239,10 @@ export class PollTaskRunner {
         cwd: input.cwd,
         runId: String(input.runId),
       });
-      if (!buildResult.passed) {
-        await this.resetToStart(input);
-        return {
-          commentId: comment.commentId,
-          action: 'fixed',
-          processed: false,
-          blocked: false,
-          ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
-        };
-      }
 
-      if (d.verifyCodeChange) {
-        const codeResult = await d.verifyCodeChange({
+      let codeResult: { pass: boolean; reason: string } | undefined;
+      if (d.verifyCodeChange && (buildResult.passed || input.isLastAttempt)) {
+        codeResult = await d.verifyCodeChange({
           commentBody: comment.body,
           path: comment.path,
           line: comment.line,
@@ -259,16 +252,26 @@ export class PollTaskRunner {
           runId: String(input.runId),
           repoId: String(input.repoId),
         });
-        if (!codeResult.pass) {
-          await this.resetToStart(input);
-          return {
-            commentId: comment.commentId,
-            action: 'fixed',
-            processed: false,
-            blocked: false,
-            codeVerifyReason: codeResult.reason,
-          };
-        }
+      }
+
+      const buildVerified = buildResult.passed;
+      const codeVerified = codeResult ? codeResult.pass : true;
+
+      // Proceed if both pass, or if it's the last attempt and code verification passes
+      // (allowing a build failure on the very last attempt if the code change is verified correct).
+      const canProceed =
+        (buildVerified && codeVerified) || (input.isLastAttempt && codeResult?.pass === true);
+
+      if (!canProceed) {
+        await this.resetToStart(input);
+        return {
+          commentId: comment.commentId,
+          action: 'fixed',
+          processed: false,
+          blocked: false,
+          ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
+          ...(codeResult && !codeResult.pass ? { codeVerifyReason: codeResult.reason } : {}),
+        };
       }
 
       await d.git.push({ cwd: input.cwd, branch: input.branch });
@@ -300,6 +303,7 @@ export class PollTaskRunner {
         repoFullName: input.repoFullName,
         startCommitSha: input.startCommitSha,
         repoId: String(input.repoId),
+        allowBuildFailure: input.isLastAttempt,
       });
 
       if (verification.ok) {

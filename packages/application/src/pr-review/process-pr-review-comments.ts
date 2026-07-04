@@ -196,6 +196,7 @@ export class ProcessPrReviewComments {
             branch: pr.headRefName,
             startCommitSha: runningStartSha,
             unresolvedCommentCount: unresolved.length,
+            isLastAttempt: attempt === ESCALATION_BUDGET,
             ...(previousBuildError !== undefined ? { previousBuildError } : {}),
             ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
           });
@@ -235,9 +236,15 @@ export class ProcessPrReviewComments {
               String(input.runId),
             );
           }
-          d.prReviewRepo.upsertComment(
-            blockComment(currentComment, `task failed after ${ESCALATION_BUDGET} attempts`),
-          );
+
+          let blockedReason = `task failed after ${ESCALATION_BUDGET} attempts`;
+          if (lastOutput.codeVerifyReason) {
+            blockedReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
+          } else if (lastOutput.buildError) {
+            blockedReason = `build failed: ${lastOutput.buildError}`;
+          }
+
+          d.prReviewRepo.upsertComment(blockComment(currentComment, blockedReason));
           lastOutput = {
             commentId: task.commentId,
             action: 'failed',
