@@ -52,4 +52,10 @@ export type { PhaseRepositoryPort } from './phase-repository-port.js';
 // Re-exported here so infrastructure can depend on it via the `ports/` barrel
 // — the only application path infra may import (depcruise rule
 // `infrastructure-may-only-import-application-ports`).
-export type { RunRepositoryPort, RunRepositoryUpdatePatch, RunRecord } from '../ports.js';
+export type {
+  RunRepositoryPort,
+  RunRepositoryUpdatePatch,
+  RunRecord,
+  FileTailerOptions,
+  FileTailerPort,
+} from '../ports.js';

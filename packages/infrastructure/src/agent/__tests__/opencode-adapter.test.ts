@@ -1078,10 +1078,7 @@ describe('OpenCodeAgentAdapter', () => {
     const strayDir = join(cwd, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
     const strayFile = join(strayDir, 'result.json');
-    writeFileSync(
-      strayFile,
-      '{"commentId":1,"action":"fixed","replyBody":"ok"}',
-    );
+    writeFileSync(strayFile, '{"commentId":1,"action":"fixed","replyBody":"ok"}');
     const futureSec = Date.now() / 1000 + 10;
     utimesSync(strayFile, futureSec, futureSec);
     // Confirm it is NOT at the expected worktree-root path
@@ -1175,10 +1172,7 @@ describe('OpenCodeAgentAdapter', () => {
     const strayDir = join(repoRoot, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
     const strayFile = join(strayDir, 'result.json');
-    writeFileSync(
-      strayFile,
-      '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}',
-    );
+    writeFileSync(strayFile, '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}');
     const pastSec = Date.now() / 1000 - 10;
     utimesSync(strayFile, pastSec, pastSec);
     expect(existsSync(strayFile)).toBe(true);
@@ -1438,10 +1432,7 @@ describe('OpenCodeAgentAdapter', () => {
     const strayDir = join(repoRoot, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
     const strayFile = join(strayDir, 'result.json');
-    writeFileSync(
-      strayFile,
-      '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}',
-    );
+    writeFileSync(strayFile, '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}');
     const pastSec = Date.now() / 1000 - 10;
     utimesSync(strayFile, pastSec, pastSec);
     expect(existsSync(strayFile)).toBe(true);

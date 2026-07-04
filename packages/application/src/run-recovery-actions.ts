@@ -16,8 +16,16 @@ export interface RecoveryPlan {
   requiresConfirmation: boolean;
 }
 
-const RECOVERABLE_RUN_STATUSES = new Set<RunRecord['status']>(['failed', 'blocked', 'needs_human_review']);
-const RECOVERABLE_PHASE_STATUSES = new Set<Phase['status']>(['failed', 'blocked', 'needs_human_review']);
+const RECOVERABLE_RUN_STATUSES = new Set<RunRecord['status']>([
+  'failed',
+  'blocked',
+  'needs_human_review',
+]);
+const RECOVERABLE_PHASE_STATUSES = new Set<Phase['status']>([
+  'failed',
+  'blocked',
+  'needs_human_review',
+]);
 
 function isRecoverableRunStatus(status: RunRecord['status']): boolean {
   return RECOVERABLE_RUN_STATUSES.has(status);

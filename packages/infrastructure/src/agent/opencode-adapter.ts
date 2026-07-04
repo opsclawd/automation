@@ -1,12 +1,5 @@
 import { execa } from 'execa';
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

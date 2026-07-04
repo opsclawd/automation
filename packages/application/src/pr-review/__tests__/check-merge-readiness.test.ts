@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { RunId, createPrReviewComment, blockComment, markReplied, markProcessed } from '@ai-sdlc/domain';
+import {
+  RunId,
+  createPrReviewComment,
+  blockComment,
+  markReplied,
+  markProcessed,
+} from '@ai-sdlc/domain';
 import { FakePrReviewRepository } from '../../test-doubles/fake-pr-review-repository.js';
 import { CheckMergeReadiness } from '../check-merge-readiness.js';
 
@@ -34,10 +40,18 @@ describe('CheckMergeReadiness', () => {
     const c2 = baseComment(2, 'just a note');
 
     const r1 = markReplied(c1, { replyId: 101, outcome: 'fixed', poll: 1 });
-    const p1 = markProcessed(r1, { commitVerified: true, replyVerified: true, buildVerified: true });
+    const p1 = markProcessed(r1, {
+      commitVerified: true,
+      replyVerified: true,
+      buildVerified: true,
+    });
 
     const r2 = markReplied(c2, { replyId: 102, outcome: 'no_fix', poll: 1 });
-    const p2 = markProcessed(r2, { commitVerified: false, replyVerified: true, buildVerified: false });
+    const p2 = markProcessed(r2, {
+      commitVerified: false,
+      replyVerified: true,
+      buildVerified: false,
+    });
 
     prReviewRepo.upsertComment(p1);
     prReviewRepo.upsertComment(p2);

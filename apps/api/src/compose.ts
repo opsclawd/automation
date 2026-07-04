@@ -39,6 +39,7 @@ import {
   JobQueueRepository,
   WorkerRegistryRepository,
   createFilesystemArtifactStore,
+  FileTailer,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -445,6 +446,9 @@ export interface Container {
     phaseStartedAt: Date;
     baseBranch?: string;
   }) => PrReviewPoller;
+  createFileTailer: (
+    opts: import('@ai-sdlc/application/ports').FileTailerOptions,
+  ) => import('@ai-sdlc/application/ports').FileTailerPort;
 }
 
 export interface ComposeOptions {
@@ -2755,6 +2759,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     ...(implementStepLoop !== undefined ? { implementStepLoop } : {}),
     ...(runStep !== undefined ? { runStep } : {}),
     buildPhaseHandlerContext: composeBuildPhaseHandlerContext,
+    createFileTailer: (opts: import('@ai-sdlc/application/ports').FileTailerOptions) =>
+      new FileTailer(opts),
   };
 }
 

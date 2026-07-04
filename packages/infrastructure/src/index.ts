@@ -25,3 +25,4 @@ export * from './github/gh-cli-adapter.js';
 export * from './github/errors.js';
 export * from './git/git-worktree-adapter.js';
 export * from './artifacts/filesystem-artifact-store.js';
+export * from './artifacts/file-tailer.js';

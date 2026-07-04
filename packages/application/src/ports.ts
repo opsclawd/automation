@@ -175,6 +175,19 @@ export interface FailureRepositoryPort {
   findLatestByRun(runUuid: string): Failure | undefined;
 }
 
+export interface FileTailerOptions {
+  path: string;
+  onData: (data: string) => void;
+  pollIntervalMs?: number;
+  initialLines?: number;
+  fromStart?: boolean;
+}
+
+export interface FileTailerPort {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
+
 export interface EventRepositoryPort {
   insert(event: {
     runUuid: string;

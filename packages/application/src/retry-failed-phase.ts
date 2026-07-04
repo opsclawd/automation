@@ -15,7 +15,11 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
   async execute(input: { runId: RunId; workerId: WorkerId }): Promise<void> {
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
-    if (run.status !== 'failed' && run.status !== 'blocked' && run.status !== 'needs_human_review') {
+    if (
+      run.status !== 'failed' &&
+      run.status !== 'blocked' &&
+      run.status !== 'needs_human_review'
+    ) {
       throw new Error(
         `Cannot retry phase for run ${input.runId}: status is '${run.status}', expected 'failed', 'blocked', or 'needs_human_review'`,
       );
