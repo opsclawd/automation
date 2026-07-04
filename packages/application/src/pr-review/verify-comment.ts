@@ -2,6 +2,7 @@ import type { PrReviewComment } from '@ai-sdlc/domain';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
+import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
 
 export interface VerificationResult {
   ok: boolean;
@@ -100,6 +101,7 @@ export async function verifyComment(
       runId: string;
     }) => Promise<{ passed: boolean; error?: string }>;
     verifyCodeChange?: VerifyCodeChangeFn;
+    fixDiffInspector?: FixDiffInspectorPort;
   },
   context: {
     cwd: string;
@@ -164,6 +166,43 @@ export async function verifyComment(
     remote.commitVerified &&
     replyVerified &&
     buildVerified;
+
+  if (mechanicalOk && deps.fixDiffInspector && comment.commitSha) {
+    const inspection = await deps.fixDiffInspector({
+      cwd: context.cwd,
+      originalStartCommitSha: context.startCommitSha ?? '',
+      runningStartSha: context.startCommitSha ?? '',
+      fixCommitSha: comment.commitSha,
+      path: comment.path,
+      line: comment.line,
+    });
+    if (!inspection.touchesPath) {
+      return {
+        ok: false,
+        replyVerified,
+        commitVerified: remote.commitVerified,
+        buildVerified,
+        codeVerified: false,
+        reason: `fix commit does not touch ${comment.path}`,
+        ...(codeVerifyReason !== undefined ? { codeVerifyReason } : {}),
+        ...(buildError !== undefined ? { buildError } : {}),
+        ...(inspection.reason ? { codeVerifyReason: inspection.reason } : {}),
+      };
+    }
+    if (inspection.nearLine === false) {
+      return {
+        ok: false,
+        replyVerified,
+        commitVerified: remote.commitVerified,
+        buildVerified,
+        codeVerified: false,
+        reason: `code verification failed: ${inspection.reason}`,
+        ...(inspection.reason ? { codeVerifyReason: inspection.reason } : {}),
+        ...(buildError !== undefined ? { buildError } : {}),
+      };
+    }
+    // nearLine === true | 'skipped' → continue to verifyCodeChange.
+  }
 
   if (mechanicalOk && deps.verifyCodeChange && comment.commitSha) {
     const codeResult = await deps.verifyCodeChange({
