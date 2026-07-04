@@ -84,8 +84,9 @@ function startLeaseHeartbeat(
 
 const DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS = 30_000;
 
-function printRunFailureSummary(uuid: string): void {
-  console.error(`Run failed.`);
+function printRunFailureSummary(uuid: string, reason?: string): void {
+  const prefix = reason ? `Run failed: ${reason}` : 'Run failed.';
+  console.error(prefix);
   console.error(`Run UUID: ${uuid}`);
   console.error(`Resume with: orchestrator runs resume --uuid ${uuid} --confirm`);
 }
@@ -487,7 +488,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               pausedStatuses.includes(finalRun.status) ||
               finalJob?.status === 'succeeded';
             if (!isSuccess) {
-              printRunFailureSummary(finalRun.uuid);
+              printRunFailureSummary(finalRun.uuid, finalRun.failureReason);
             }
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
@@ -498,17 +499,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // Finalize a stale 'running' run so insertIfNoActive doesn't block
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
             // never inserted or was already finalized by workerLoop.
+            const failureReason = err instanceof Error ? err.message : String(err);
             c.runRepository.atomicUpdateByUuid(
               run.uuid,
               {
                 status: 'failed',
                 completedAt: new Date(),
-                failureReason: err instanceof Error ? err.message : String(err),
+                failureReason,
               },
               'running',
             );
-            console.error(err instanceof Error ? err.message : String(err));
-            printRunFailureSummary(run.uuid);
+            printRunFailureSummary(run.uuid, failureReason);
             process.exit(EXIT_USER_ERROR);
           }
         } else {
@@ -544,7 +545,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const isSuccess =
               out.status === 'passed' || pausedStatuses.includes(out.status as RunStatus);
             if (!isSuccess) {
-              printRunFailureSummary(out.uuid);
+              const finalRun = c.runRepository.findByUuid(out.uuid);
+              printRunFailureSummary(out.uuid, finalRun?.failureReason);
             }
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } finally {
