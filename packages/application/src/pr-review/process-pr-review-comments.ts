@@ -12,6 +12,7 @@ import {
 } from '@ai-sdlc/domain';
 import { verifyComment } from './verify-comment.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
+import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
 import type { AgentPort } from '../ports/agent-port.js';
@@ -51,6 +52,9 @@ export interface ProcessPrReviewDeps {
     runId: string;
   }) => Promise<{ passed: boolean; error?: string }>;
   verifyCodeChange?: VerifyCodeChangeFn;
+  fixDiffInspector?: FixDiffInspectorPort;
+  /** SHA the poll started against; used for shift translation in the structural check. */
+  originalStartCommitSha?: string;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -156,6 +160,8 @@ export class ProcessPrReviewComments {
 
     const diff = await d.git.diff(input.cwd, 'origin/HEAD');
     const startCommitSha = await d.git.headCommitSha(input.cwd);
+    d.originalStartCommitSha ??= startCommitSha;
+    const originalStart = d.originalStartCommitSha ?? startCommitSha;
 
     const mainShaBefore = d.baseBranch
       ? await d.git.remoteRef({ cwd: input.cwd, remote: 'origin', ref: d.baseBranch })
@@ -214,12 +220,69 @@ export class ProcessPrReviewComments {
         if (lastOutput.codeVerifyReason !== undefined) {
           previousCodeVerifyReason = lastOutput.codeVerifyReason;
         }
+        const isFinalAttempt = attempt === ESCALATION_BUDGET;
+        const willVerifyFinal =
+          isFinalAttempt && lastOutput && !lastOutput.processed && !lastOutput.blocked;
+
+        if (willVerifyFinal && lastOutput) {
+          const currentComment = d.prReviewRepo.getComment(input.runId, task.commentId);
+          if (currentComment && currentComment.state === 'replied') {
+            const verification = await verifyComment(currentComment, d, {
+              cwd: input.cwd,
+              branch: pr.headRefName,
+              prNumber: input.prNumber,
+              repoFullName: input.repoFullName,
+              startCommitSha: d.originalStartCommitSha ?? runningStartSha,
+              ...(input.runId ? { repoId: String(input.runId) } : {}),
+            });
+            if (verification.ok) {
+              d.prReviewRepo.upsertComment(
+                markProcessed(currentComment, {
+                  commitVerified: verification.commitVerified,
+                  replyVerified: verification.replyVerified,
+                  buildVerified: verification.buildVerified,
+                }),
+              );
+              await d.github.resolveReviewThread(
+                input.repoFullName,
+                input.prNumber,
+                currentComment.commentId,
+              );
+              lastOutput = {
+                commentId: task.commentId,
+                action: 'fixed',
+                processed: true,
+                blocked: false,
+              };
+            } else {
+              const reason = this.translateBlockReason(
+                verification,
+                currentComment,
+                ESCALATION_BUDGET,
+              );
+              d.prReviewRepo.upsertComment(blockComment(currentComment, reason));
+              if (verification.codeVerified) {
+                // Code is OK but build failing — undo the work so a future poll
+                // can attempt with a clean tree.
+                await d.rollbackFix?.({ cwd: input.cwd, branch: pr.headRefName }, runningStartSha);
+              }
+              lastOutput = {
+                commentId: task.commentId,
+                action: 'failed',
+                processed: false,
+                blocked: true,
+              };
+            }
+          }
+        }
         if (
           attempt === ESCALATION_BUDGET &&
           lastOutput &&
           !lastOutput.processed &&
           !lastOutput.blocked
         ) {
+          // No verifier produced a result (e.g. agent crashed, no commit to
+          // anchor against). Keep the original generic-fallback behavior.
           const rollbackOk = await d.rollbackFix?.(
             { cwd: input.cwd, branch: pr.headRefName },
             runningStartSha,
@@ -236,7 +299,7 @@ export class ProcessPrReviewComments {
             );
           }
           d.prReviewRepo.upsertComment(
-            blockComment(currentComment, `task failed after ${ESCALATION_BUDGET} attempts`),
+            blockComment(currentComment!, `task failed after ${ESCALATION_BUDGET} attempts`),
           );
           lastOutput = {
             commentId: task.commentId,
@@ -293,7 +356,7 @@ export class ProcessPrReviewComments {
       if (tr.blocked) blocked++;
     }
 
-    const orphanResult = await this.verifyOrphaned(input, startCommitSha);
+    const orphanResult = await this.verifyOrphaned(input, originalStart);
     blocked += orphanResult.blocked;
     processed += orphanResult.newlyProcessed;
 
@@ -374,6 +437,27 @@ export class ProcessPrReviewComments {
       }
     }
     return { blocked, newlyProcessed };
+  }
+
+  private translateBlockReason(
+    v: {
+      ok: boolean;
+      codeVerified: boolean;
+      buildVerified: boolean;
+      codeVerifyReason?: string;
+      buildError?: string;
+      reason: string;
+    },
+    _comment: PrReviewComment,
+    budget: number,
+  ): string {
+    if (v.codeVerified && !v.buildVerified) {
+      return `code verified correct but build failing: ${v.buildError ?? 'unknown build error'}`;
+    }
+    if (!v.codeVerified && v.codeVerifyReason) {
+      return `verified incorrect: ${v.codeVerifyReason}`;
+    }
+    return `verification failed: ${v.reason ?? `task failed after ${budget} attempts`}`;
   }
 
   private generateManifest(

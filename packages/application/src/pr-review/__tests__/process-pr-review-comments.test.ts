@@ -1474,7 +1474,7 @@ describe('ProcessPrReviewComments — verifyCommitPushed anchors to fixCommitSha
       pollNumber: 1,
     });
 
-    expect(verifyCalls.length).toBe(1);
+    expect(verifyCalls.length).toBe(2);
     expect(verifyCalls[0]!.commitSha).toBe(agentACommit);
     expect(verifyCalls[0]!.startCommitSha).toBe(sharedStart);
 
