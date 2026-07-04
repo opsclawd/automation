@@ -128,6 +128,50 @@ describe('ImplementArtifactGuard policy', () => {
     expect(result.synthesized[0]?.reason).toBe('no_op_reverification_done_declared');
   });
 
+  it('detects DONE with case-insensitivity and punctuation in tail line', async () => {
+    const result1 = await guard.synthesizeMissingArtifactsIfDoneDeclared(
+      makeInput({
+        invocationTranscript: {
+          stdoutTail: '... reasoning ...\nStatus: Done.\n',
+          stderrTail: '',
+        },
+      }),
+    );
+    expect(result1.synthesized[0]?.reason).toBe('no_op_reverification_done_declared');
+
+    // Reset store for next guard run
+    artifacts = new FakeArtifactStore();
+    const result2 = await guard.synthesizeMissingArtifactsIfDoneDeclared(
+      makeInput({
+        invocationTranscript: {
+          stdoutTail: 'done',
+          stderrTail: '',
+        },
+      }),
+    );
+    expect(result2.synthesized[0]?.reason).toBe('no_op_reverification_done_declared');
+  });
+
+  it('prioritizes result.json and does not fall back to log tail if result.json is non-DONE', async () => {
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      phaseId: 'implement',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'failed' }),
+    });
+
+    const result = await guard.synthesizeMissingArtifactsIfDoneDeclared(
+      makeInput({
+        invocationTranscript: {
+          stdoutTail: 'Status: DONE', // Log tail says DONE, but result.json says failed!
+          stderrTail: '',
+          resultJsonPath: 'result.json',
+        },
+      }),
+    );
+    expect(result.synthesized[0]?.reason).toBe('policy_not_satisfied');
+  });
+
   it('returns empty when expectedArtifacts does not include implementation-log.md', async () => {
     const result = await guard.synthesizeMissingArtifactsIfDoneDeclared(
       makeInput({ expectedArtifacts: ['some-other-artifact.md'] }),

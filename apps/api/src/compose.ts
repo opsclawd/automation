@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { open as fsOpen, stat as fsStat, access as fsAccess } from 'node:fs/promises';
 import os from 'node:os';
 import {
   existsSync,
@@ -10,9 +11,6 @@ import {
   statSync,
   writeFileSync,
   copyFileSync,
-  openSync,
-  readSync,
-  closeSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
@@ -134,22 +132,27 @@ import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
 
-function readTail(filePath: string, maxBytes: number = 65536): string {
+async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
   try {
-    if (!filePath || !existsSync(filePath)) {
+    if (!filePath) {
       return '';
     }
-    const stat = statSync(filePath);
+    try {
+      await fsAccess(filePath);
+    } catch {
+      return '';
+    }
+    const stat = await fsStat(filePath);
     if (stat.size === 0) {
       return '';
     }
     const bytesToRead = Math.min(stat.size, maxBytes);
     const buffer = Buffer.alloc(bytesToRead);
-    const fd = openSync(filePath, 'r');
+    const fd = await fsOpen(filePath, 'r');
     try {
-      readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
+      await fd.read(buffer, 0, bytesToRead, stat.size - bytesToRead);
     } finally {
-      closeSync(fd);
+      await fd.close();
     }
     return buffer.toString('utf-8');
   } catch (err) {
@@ -2029,8 +2032,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             const inv = filtered[filtered.length - 1];
             if (!inv) return undefined;
 
-            const stdoutTail = readTail(inv.stdoutPath);
-            const stderrTail = readTail(inv.stderrPath);
+            const stdoutTail = await readTail(inv.stdoutPath);
+            const stderrTail = await readTail(inv.stderrPath);
 
             return {
               startCommitSha: inv.startCommitSha,

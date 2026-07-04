@@ -7,7 +7,7 @@ import type {
 } from '@ai-sdlc/application/ports';
 import { ArtifactNotFoundError } from '@ai-sdlc/application/ports';
 
-const STATUS_REGEX = /^\s*(?:Status:\s*)?(DONE|DONE_WITH_CONCERNS)\s*$/;
+const STATUS_REGEX = /^\s*(?:Status:\s*)?(DONE|DONE_WITH_CONCERNS)[.\s]*$/i;
 
 const REQUIRED_ARTIFACT = 'implementation-log.md';
 
@@ -85,9 +85,6 @@ export class ImplementArtifactGuard implements ImplementArtifactGuardPort {
     input: ImplementArtifactGuardInput,
     artifacts: ArtifactStore,
   ): Promise<boolean> {
-    const tail = `${input.invocationTranscript.stdoutTail}\n${input.invocationTranscript.stderrTail}`;
-    const tailLines = tail.split(/\r?\n/).slice(-40);
-    if (tailLines.some((line) => STATUS_REGEX.test(line))) return true;
     if (input.invocationTranscript.resultJsonPath) {
       try {
         const content = await artifacts.read(
@@ -102,7 +99,11 @@ export class ImplementArtifactGuard implements ImplementArtifactGuardPort {
       } catch {
         return false;
       }
+      return false;
     }
-    return false;
+
+    const tail = `${input.invocationTranscript.stdoutTail}\n${input.invocationTranscript.stderrTail}`;
+    const tailLines = tail.split(/\r?\n/).slice(-40);
+    return tailLines.some((line) => STATUS_REGEX.test(line));
   }
 }

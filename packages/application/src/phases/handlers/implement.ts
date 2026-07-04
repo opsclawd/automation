@@ -326,7 +326,10 @@ export class ImplementHandler implements PhaseHandler {
       return 'not-recovered';
     }
 
-    if (outcome.synthesized.length === 0) {
+    const actualRecovered = outcome.synthesized.filter(
+      (s) => s.reason === 'no_op_reverification_done_declared' || s.reason === 'already_present',
+    );
+    if (actualRecovered.length === 0) {
       emit(
         'step.artifact.not_synthesized',
         'info',
