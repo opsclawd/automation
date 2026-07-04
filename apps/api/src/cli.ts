@@ -18,7 +18,6 @@ import {
   createJob,
   createWorker,
 } from '@ai-sdlc/domain';
-import { FileTailer } from '@ai-sdlc/infrastructure/artifacts/file-tailer.js';
 import { newRunId } from '@ai-sdlc/shared';
 import { planRunRecoveryAction } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';
@@ -993,7 +992,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
           let currentInvocationId: string | undefined;
-          let tailer: FileTailer | undefined;
+          let tailer: import('@ai-sdlc/application/ports').FileTailerPort | undefined;
           let currentPhase: string | undefined;
 
           const stopTailer = async () => {
@@ -1029,7 +1028,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               currentInvocationId = latestInvocation.id;
 
               if (latestInvocation.stdoutPath) {
-                tailer = new FileTailer({
+                tailer = c.createFileTailer({
                   path: latestInvocation.stdoutPath,
                   onData: (data: string) => process.stdout.write(data),
                   // If it's the very first invocation we start tailing, honor --lines.
