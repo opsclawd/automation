@@ -62,6 +62,12 @@ function makeGitRepo(dir: string): string {
 }
 
 describe('runExternalCli', () => {
+  const writeFreshFile = (path: string, content: string) => {
+    writeFileSync(path, content);
+    const futureSec = Date.now() / 1000 + 10;
+    utimesSync(path, futureSec, futureSec);
+  };
+
   describe('artifact enforcement', () => {
     it('sets outcome to contract_violation when expected artifact is missing', async () => {
       const cwd = makeTmpDir();
@@ -206,7 +212,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'docs', 'superpowers', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, 'design.md'), '# Design');
+        writeFreshFile(join(specDir, 'design.md'), '# Design');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -317,7 +323,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'docs', 'superpowers', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, 'design.md'), '# Design');
+        writeFreshFile(join(specDir, 'design.md'), '# Design');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -344,7 +350,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const planDir = join(cwd, 'docs', 'plans');
         mkdirSync(planDir, { recursive: true });
-        writeFileSync(join(planDir, 'plan.md'), '# Plan');
+        writeFreshFile(join(planDir, 'plan.md'), '# Plan');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -373,7 +379,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const solutionDir = join(cwd, 'docs', 'solutions', 'performance');
         mkdirSync(solutionDir, { recursive: true });
-        writeFileSync(join(solutionDir, 'compound.md'), '# Solution');
+        writeFreshFile(join(solutionDir, 'compound.md'), '# Solution');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -408,7 +414,7 @@ describe('runExternalCli', () => {
         });
         const planDir = join(cwd, 'docs', 'plans');
         mkdirSync(planDir, { recursive: true });
-        writeFileSync(join(planDir, 'plan.md'), '# Ignored Plan');
+        writeFreshFile(join(planDir, 'plan.md'), '# Ignored Plan');
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',
@@ -437,7 +443,7 @@ describe('runExternalCli', () => {
         // design.md is misplaced — recoverable
         const specDir = join(cwd, 'docs', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, 'design.md'), '# Design');
+        writeFreshFile(join(specDir, 'design.md'), '# Design');
         // plan.md is truly absent — not recoverable
         const result = await runExternalCli({
           runtime: 'opencode',
@@ -465,7 +471,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'docs', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, 'design.md'), '# Design EXDEV');
+        writeFreshFile(join(specDir, 'design.md'), '# Design EXDEV');
 
         // Patch renameSync to throw EXDEV on the first call, then restore
         const { renameSync: originalRename } =
@@ -508,7 +514,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const injectionDir = join(cwd, 'docs; touch injection-test.txt');
         mkdirSync(injectionDir, { recursive: true });
-        writeFileSync(join(injectionDir, 'design.md'), '# Safe');
+        writeFreshFile(join(injectionDir, 'design.md'), '# Safe');
 
         const result = await runExternalCli({
           runtime: 'opencode',
@@ -538,7 +544,7 @@ describe('runExternalCli', () => {
         const goodDir = join(cwd, 'docs', 'readable');
         mkdirSync(badDir, { recursive: true });
         mkdirSync(goodDir, { recursive: true });
-        writeFileSync(join(goodDir, 'design.md'), '# Design');
+        writeFreshFile(join(goodDir, 'design.md'), '# Design');
 
         const { readdirSync: originalReaddir } =
           await vi.importActual<typeof import('node:fs')>('node:fs');
@@ -581,7 +587,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'temp_docs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, 'plan.md'), '# Nested Plan');
+        writeFreshFile(join(specDir, 'plan.md'), '# Nested Plan');
 
         const result = await runExternalCli({
           runtime: 'opencode',
@@ -705,7 +711,7 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         const specDir = join(cwd, 'docs', 'specs');
         mkdirSync(specDir, { recursive: true });
-        writeFileSync(join(specDir, 'design.md'), '# Design');
+        writeFreshFile(join(specDir, 'design.md'), '# Design');
 
         vi.mocked(execFileSync).mockImplementation((file, args, options) => {
           if (file === 'git' && Array.isArray(args) && args.includes('ls-files')) {
