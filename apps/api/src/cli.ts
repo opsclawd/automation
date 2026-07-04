@@ -1023,14 +1023,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const latestInvocation = invocations[invocations.length - 1];
 
             if (latestInvocation && latestInvocation.id !== currentInvocationId) {
-              const isFirstTailer = currentInvocationId === undefined;
-              await stopTailer();
-              currentInvocationId = latestInvocation.id;
-
+              // Delay advancing currentInvocationId until we have a path to tail,
+              // or handle the case where the same ID eventually gets a path.
               if (latestInvocation.stdoutPath) {
+                const isFirstTailer = currentInvocationId === undefined;
+                await stopTailer();
+                currentInvocationId = latestInvocation.id;
+
                 tailer = c.createFileTailer({
                   path: latestInvocation.stdoutPath,
-                  onData: (data: string) => process.stdout.write(data),
+                  onData: (data: string) => {
+                    process.stdout.write(data);
+                  },
                   // If it's the very first invocation we start tailing, honor --lines.
                   // For subsequent invocations in the same run, start from the beginning.
                   ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),

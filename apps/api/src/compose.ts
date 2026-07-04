@@ -2617,7 +2617,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     ...(implementStepLoop !== undefined ? { implementStepLoop } : {}),
     ...(runStep !== undefined ? { runStep } : {}),
     buildPhaseHandlerContext: composeBuildPhaseHandlerContext,
-    createFileTailer: (opts) => new FileTailer(opts),
+    createFileTailer: (opts: import('@ai-sdlc/application/ports').FileTailerOptions) =>
+      new FileTailer(opts),
   };
 }
 
