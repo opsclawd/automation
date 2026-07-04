@@ -21,3 +21,4 @@ export { runExternalCli, type ExternalCliRunInput } from './external-cli-runner.
 export { AntigravityAgentAdapter, type AntigravityAdapterOptions } from './antigravity-adapter.js';
 export { ClaudeCodeAgentAdapter, type ClaudeCodeAdapterOptions } from './claude-code-adapter.js';
 export { CodexAgentAdapter, type CodexAdapterOptions } from './codex-adapter.js';
+export { ImplementArtifactGuard } from './implement-artifact-guard.js';

@@ -42,6 +42,12 @@ export interface GitPort {
   cleanUntracked(cwd: string): Promise<void>;
   headCommitShaOf(cwd: string): Promise<string | undefined>;
   /**
+   * Return `git status --porcelain` output for `cwd`. Empty string means the
+   * working tree is clean (no staged/unstaged changes, no untracked files).
+   * Used by the implement-artifact-guard to verify the no-op invariant.
+   */
+  status(cwd: string): Promise<string>;
+  /**
    * Check for tracked-file modifications (untracked files are tolerated) and,
    * when clean, perform a hard reset to `baseBranch`.
    *

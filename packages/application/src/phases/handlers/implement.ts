@@ -207,6 +207,12 @@ export class ImplementHandler implements PhaseHandler {
           `step ${d.index} (${d.title}) needs human review`,
         );
       } else {
+        // No-op re-verification recovery (synthesizing a missing
+        // implementation-log.md when the agent declared the step already
+        // done) happens inside runStep/runImplement itself, before the
+        // typecheck/spec-review/quality-review gates run — see #610. If
+        // runStep still reports a non-success outcome here, the step
+        // genuinely failed and there is nothing further to recover.
         this.opts.steps.upsert({ ...step, status: 'failed', completedAt: ctx.now() });
         emit('step.failed', 'error', `step ${d.index} failed`, { index: d.index });
         return this.fail(ctx, emit, 'agent_incomplete', `step ${d.index} (${d.title}) failed`);

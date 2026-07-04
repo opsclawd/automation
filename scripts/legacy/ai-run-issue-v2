@@ -2045,15 +2045,27 @@ Report back with:
 - Self-review findings
 - Any questions or concerns
 
-## MANDATORY RESULT FILE
-After reporting, write EXACTLY ONE of these values to ./implement-task-${task_n}.result:
-- DONE
-- DONE_WITH_CONCERNS
-- BLOCKED
-- NEEDS_CONTEXT
-No other content in the file — just the status word.
+# --- FINAL ACTION (Step N) — unconditional ---
+# Run this BEFORE you stop, regardless of whether you committed any code.
+# Skipping this step fails the orchestrator's contract validation even if
+# your task is fully done.
+cat > implementation-log.md <<'IMPL_LOG_EOF'
+Status: DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT
 
-Stop after writing the result file.
+(1-3 lines describing what changed, or \"no changes — task already complete at <sha>\" for a re-verification step)
+
+Files changed:
+  <path-1>
+  <path-2>
+  (or \"none\" for a no-op re-verification)
+IMPL_LOG_EOF
+
+# --- MANDATORY RESULT FILE (Step N+1) — narrow status only ---
+# Only runs after the FINAL ACTION above is complete.
+cat > implement-task-${task_n}.result <<'RESULT_EOF'
+DONE
+RESULT_EOF
+# STOP after writing the result file.
 
 CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch). All work must stay on branch ${BRANCH}."
 

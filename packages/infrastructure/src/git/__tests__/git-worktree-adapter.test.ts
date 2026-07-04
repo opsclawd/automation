@@ -582,3 +582,26 @@ describe('Artifact Guarding & Cleanup', () => {
     });
   });
 });
+
+describe('status()', () => {
+  it('returns empty string when worktree is clean', async () => {
+    const repo = await makeTempRepo();
+    const result = await adapter.status(repo);
+    expect(result).toBe('');
+  });
+
+  it('returns porcelain line for an untracked file', async () => {
+    const repo = await makeTempRepo();
+    await writeFile(join(repo, 'untracked.txt'), 'new\n');
+    const result = await adapter.status(repo);
+    expect(result).toContain('?? untracked.txt');
+  });
+
+  it('returns modified marker for a staged tracked-file change', async () => {
+    const repo = await makeTempRepo();
+    await writeFile(join(repo, 'README.md'), 'modified\n');
+    await git(repo, ['add', 'README.md']);
+    const result = await adapter.status(repo);
+    expect(result).toContain('M  README.md');
+  });
+});

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { open as fsOpen, stat as fsStat, access as fsAccess } from 'node:fs/promises';
 import os from 'node:os';
 import {
   existsSync,
@@ -100,6 +101,7 @@ import {
   type TypecheckResult,
   type TypescriptError,
   type ResolveRefShaFn,
+  type ImplementArtifactGuardInput,
   extractTaskBody,
   parseTaskManifest,
   parseTypescriptErrors,
@@ -124,11 +126,41 @@ import {
   AntigravityAgentAdapter,
   ClaudeCodeAgentAdapter,
   CodexAgentAdapter,
+  ImplementArtifactGuard,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
+
+async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
+  try {
+    if (!filePath) {
+      return '';
+    }
+    try {
+      await fsAccess(filePath);
+    } catch {
+      return '';
+    }
+    const stat = await fsStat(filePath);
+    if (stat.size === 0) {
+      return '';
+    }
+    const bytesToRead = Math.min(stat.size, maxBytes);
+    const buffer = Buffer.alloc(bytesToRead);
+    const fd = await fsOpen(filePath, 'r');
+    try {
+      await fd.read(buffer, 0, bytesToRead, stat.size - bytesToRead);
+    } finally {
+      await fd.close();
+    }
+    return buffer.toString('utf-8');
+  } catch (err) {
+    console.warn(`[resolveInvocation] failed to read tail of ${filePath}:`, err);
+    return '';
+  }
+}
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -1643,9 +1675,108 @@ export function composeRoot(opts: ComposeOptions): Container {
             });
           }
         }
+
+        // No-op re-verification safety net (#610): if the only reason this
+        // invocation is a contract violation is the missing
+        // implementation-log.md, and the agent declared the step already
+        // done with no new work to do, synthesize a minimal log from
+        // verifiable state (git + transcript) instead of failing the step.
+        // This MUST happen here, inside runImplement, and return 'success'
+        // so ImplementStepLoop proceeds through the typecheck/spec-review/
+        // quality-review gates below exactly as if the agent had written the
+        // log itself — recovering the artifact must never let unreviewed or
+        // untypechecked work skip those gates.
+        let agentOutcome = result.outcome;
+        if (result.outcome === 'contract_violation') {
+          const expectedArtifacts = ['implementation-log.md'];
+          const missing = expectedArtifacts.filter((a) => !existsSync(join(ctx.cwd, a)));
+          if (missing.includes('implementation-log.md')) {
+            const stdoutTail = await readTail(result.stdoutPath);
+            const stderrTail = await readTail(result.stderrPath);
+            const guardInput: ImplementArtifactGuardInput = {
+              runId: String(ctx.runId),
+              cwd: ctx.cwd,
+              phaseId: 'implement',
+              stepIndex: ctx.stepIndex,
+              expectedArtifacts,
+              invocationEnd: {
+                startCommitSha,
+                ...(result.endCommitSha !== undefined ? { endCommitSha: result.endCommitSha } : {}),
+                durationMs: result.durationMs,
+                outcome: result.outcome,
+              },
+              invocationTranscript: {
+                stdoutTail,
+                stderrTail,
+                ...(result.resultJsonPath !== undefined
+                  ? { resultJsonPath: result.resultJsonPath }
+                  : {}),
+              },
+            };
+            try {
+              const guardOutcome =
+                await implementArtifactGuard.synthesizeMissingArtifactsIfDoneDeclared(guardInput);
+              const actuallyRecovered = guardOutcome.synthesized.filter(
+                (s) =>
+                  s.reason === 'no_op_reverification_done_declared' ||
+                  s.reason === 'already_present',
+              );
+              if (actuallyRecovered.length > 0) {
+                agentOutcome = 'success';
+                agentInvocationRepository.update(AgentInvocationId(invocationId), {
+                  outcome: 'success',
+                  contractViolations: [],
+                });
+                for (const s of guardOutcome.synthesized) {
+                  persistingEventBusForLoop.publish(String(ctx.runId), {
+                    runId: String(ctx.runId),
+                    level: 'warn',
+                    type: 'step.artifact.synthesized',
+                    message: `synthesized ${s.artifact}`,
+                    timestamp: new Date().toISOString(),
+                    metadata: {
+                      phaseId: 'implement',
+                      stepIndex: ctx.stepIndex,
+                      artifact: s.artifact,
+                      reason: s.reason,
+                    },
+                  });
+                }
+              } else {
+                persistingEventBusForLoop.publish(String(ctx.runId), {
+                  runId: String(ctx.runId),
+                  level: 'info',
+                  type: 'step.artifact.not_synthesized',
+                  message: 'guard policy not satisfied on no-op re-verification',
+                  timestamp: new Date().toISOString(),
+                  metadata: {
+                    phaseId: 'implement',
+                    stepIndex: ctx.stepIndex,
+                    artifact: 'implementation-log.md',
+                  },
+                });
+              }
+            } catch (e) {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'warn',
+                type: 'step.artifact.synthesized',
+                message: `guard threw: ${e instanceof Error ? e.message : String(e)}`,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  phaseId: 'implement',
+                  stepIndex: ctx.stepIndex,
+                  artifact: 'implementation-log.md',
+                  reason: 'guard_threw',
+                },
+              });
+            }
+          }
+        }
+
         return {
           invocationId,
-          agentOutcome: result.outcome,
+          agentOutcome,
         };
       };
 
@@ -1977,6 +2108,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         maxTestFileLines: config.taskSplitting.maxTestFileLines,
         maxTestCases: config.taskSplitting.maxTestCases,
         blockOversizedTasks: config.taskSplitting.blockOversizedTasks,
+      });
+
+      const implementArtifactGuard = new ImplementArtifactGuard({
+        artifacts: artifactStoreForRun,
+        git: gitAdapter,
       });
 
       phaseRegistry.register(

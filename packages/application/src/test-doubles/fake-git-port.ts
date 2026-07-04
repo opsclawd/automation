@@ -13,6 +13,8 @@ export class FakeGitPort implements GitPort {
   cleanUntrackedCalls: string[] = [];
   headCommitShaOfResults = new Map<string, string | undefined>();
   resetWorktreeIfCleanCalls: Array<{ cwd: string; baseBranch: string }> = [];
+  statusByCwd = new Map<string, string>();
+  statusCalls: string[] = [];
   resetWorktreeIfCleanShouldThrow = new Set<string>();
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
@@ -89,6 +91,11 @@ export class FakeGitPort implements GitPort {
 
   async headCommitShaOf(cwd: string): Promise<string | undefined> {
     return this.headCommitShaOfResults.get(cwd);
+  }
+
+  async status(cwd: string): Promise<string> {
+    this.statusCalls.push(cwd);
+    return this.statusByCwd.get(cwd) ?? '';
   }
 
   async resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void> {
