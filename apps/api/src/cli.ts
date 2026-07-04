@@ -690,6 +690,41 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         }),
     )
     .addCommand(
+      new Command('check-merge-ready')
+        .description('Verify that a run has no unverified or blocked review comments')
+        .requiredOption('--uuid <uuid>', 'Run UUID')
+        .action(async (opts: { uuid: string }) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+              runStartupSweeps: false,
+              ...buildOpts?.composeOverrides,
+            };
+            const c = composeRoot(options);
+            // An unknown UUID must fail, not report ready: listComments on a
+            // nonexistent run returns no rows, which would green-light the merge.
+            const run = c.runRepository.findByUuid(opts.uuid);
+            if (!run) {
+              console.error(`No run found for uuid ${opts.uuid}`);
+              process.exit(EXIT_USER_ERROR);
+            }
+            const result = await c.checkMergeReadiness.execute(RunId(opts.uuid));
+            process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+            if (!result.isReady) {
+              console.error(`Error: PR is not ready for merge: ${result.reason}`);
+              process.exit(EXIT_USER_ERROR);
+            }
+            console.error('Success: PR is ready for merge.');
+            process.exit(0);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
       new Command('execute')
         .description('Execute a queued run through the RunExecutor')
         .requiredOption('--uuid <uuid>', 'Run UUID to execute')

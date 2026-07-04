@@ -66,6 +66,7 @@ import {
   ReviewFixLoop,
   ValidateFixLoop,
   FixValidateHandler,
+  CheckMergeReadiness,
   ImplementStepLoop,
   readReviewVerdict,
   readFixVerdict,
@@ -403,6 +404,7 @@ export interface Container {
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
+  checkMergeReadiness: CheckMergeReadiness;
   stepRepository: StepRepositoryPort;
   resumeRun: {
     execute(input: {
@@ -804,6 +806,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     }
   }) satisfies ResolveRefShaFn;
   const startIssueRun = new StartIssueRun(deps);
+  const checkMergeReadiness = new CheckMergeReadiness({ prReviewRepo: prReviewRepository });
   const logger: { error: (message: string, ...args: unknown[]) => void } = {
     error: (msg, ...args) => console.error(msg, ...args),
   };
@@ -2735,6 +2738,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runValidation,
     startIssueRun,
     cancelRun,
+    checkMergeReadiness,
     stepRepository,
     resumeRun,
     retryFailedPhase,
