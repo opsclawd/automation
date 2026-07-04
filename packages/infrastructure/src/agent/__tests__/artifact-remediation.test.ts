@@ -48,8 +48,12 @@ describe('findMisplacedCandidate', () => {
     try {
       makeGitRepo(cwd);
       mkdirSync(join(cwd, 'docs', 'specs'), { recursive: true });
-      writeFileSync(join(cwd, 'docs', 'specs', 'design.md'), '# Design');
-      const result = findMisplacedCandidate(cwd, 'design.md');
+      const filePath = join(cwd, 'docs', 'specs', 'design.md');
+      writeFileSync(filePath, '# Design');
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(filePath, futureSec, futureSec);
+      const result = findMisplacedCandidate(cwd, 'design.md', startMs);
       expect(result).toBe('docs/specs/design.md');
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -62,9 +66,15 @@ describe('findMisplacedCandidate', () => {
       makeGitRepo(cwd);
       mkdirSync(join(cwd, 'docs', 'a'), { recursive: true });
       mkdirSync(join(cwd, 'docs', 'b'), { recursive: true });
-      writeFileSync(join(cwd, 'docs', 'a', 'design.md'), '# A');
-      writeFileSync(join(cwd, 'docs', 'b', 'design.md'), '# B');
-      const result = findMisplacedCandidate(cwd, 'design.md');
+      const fileA = join(cwd, 'docs', 'a', 'design.md');
+      const fileB = join(cwd, 'docs', 'b', 'design.md');
+      writeFileSync(fileA, '# A');
+      writeFileSync(fileB, '# B');
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(fileA, futureSec, futureSec);
+      utimesSync(fileB, futureSec, futureSec);
+      const result = findMisplacedCandidate(cwd, 'design.md', startMs);
       expect(result).toBeNull();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -76,10 +86,14 @@ describe('findMisplacedCandidate', () => {
     try {
       makeGitRepo(cwd);
       mkdirSync(join(cwd, 'docs', 'specs'), { recursive: true });
-      writeFileSync(join(cwd, 'docs', 'specs', 'design.md'), '# Tracked');
+      const filePath = join(cwd, 'docs', 'specs', 'design.md');
+      writeFileSync(filePath, '# Tracked');
       execSync('git add docs/specs/design.md', { cwd, stdio: 'pipe' });
       execSync('git commit -m "add tracked design"', { cwd, stdio: 'pipe' });
-      const result = findMisplacedCandidate(cwd, 'design.md');
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(filePath, futureSec, futureSec);
+      const result = findMisplacedCandidate(cwd, 'design.md', startMs);
       expect(result).toBeNull();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -91,8 +105,31 @@ describe('findMisplacedCandidate', () => {
     try {
       makeGitRepo(cwd);
       mkdirSync(join(cwd, 'node_modules', 'pkg'), { recursive: true });
-      writeFileSync(join(cwd, 'node_modules', 'pkg', 'design.md'), '# Noise');
-      const result = findMisplacedCandidate(cwd, 'design.md');
+      const filePath = join(cwd, 'node_modules', 'pkg', 'design.md');
+      writeFileSync(filePath, '# Noise');
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(filePath, futureSec, futureSec);
+      const result = findMisplacedCandidate(cwd, 'design.md', startMs);
+      expect(result).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('skips orchestration dirs so a concurrent run’s fresh artifact is never recovered', () => {
+    const cwd = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      for (const dir of ['.ai-worktrees', '.ai-runs', '.claude']) {
+        mkdirSync(join(cwd, dir, 'other-run'), { recursive: true });
+        const filePath = join(cwd, dir, 'other-run', 'result.json');
+        writeFileSync(filePath, '{}');
+        utimesSync(filePath, futureSec, futureSec);
+      }
+      const result = findMisplacedCandidate(cwd, 'result.json', startMs);
       expect(result).toBeNull();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -104,9 +141,32 @@ describe('findMisplacedCandidate', () => {
     try {
       makeGitRepo(cwd);
       mkdirSync(join(cwd, 'docs', 'specs'), { recursive: true });
-      writeFileSync(join(cwd, 'docs', 'specs', 'design.md'), '# Design');
+      const filePath = join(cwd, 'docs', 'specs', 'design.md');
+      writeFileSync(filePath, '# Design');
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(filePath, futureSec, futureSec);
       const excludePaths = new Set(['docs/specs/design.md']);
-      const result = findMisplacedCandidate(cwd, 'design.md', excludePaths);
+      const result = findMisplacedCandidate(cwd, 'design.md', startMs, excludePaths);
+      expect(result).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('ignores stale files (mtime < startMs)', () => {
+    const cwd = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      mkdirSync(join(cwd, 'docs', 'specs'), { recursive: true });
+      const filePath = join(cwd, 'docs', 'specs', 'design.md');
+      writeFileSync(filePath, '# Stale Design');
+
+      const startMs = Date.now();
+      const pastSec = (startMs - 5000) / 1000;
+      utimesSync(filePath, pastSec, pastSec);
+
+      const result = findMisplacedCandidate(cwd, 'design.md', startMs);
       expect(result).toBeNull();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
@@ -167,6 +227,77 @@ describe('moveMisplacedArtifact', () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  it('recovers from sourceDir with copyOnly: true', () => {
+    const cwd = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      makeGitRepo(sourceDir);
+      mkdirSync(join(sourceDir, 'apps', 'cli'), { recursive: true });
+      const strayPath = join(sourceDir, 'apps', 'cli', 'result.json');
+      writeFileSync(strayPath, '{"found":true}');
+
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(strayPath, futureSec, futureSec);
+
+      const result = remediateMissingArtifacts({
+        cwd,
+        startMs,
+        expectedArtifacts: ['result.json'],
+        stderrForLog: '',
+        sourceDir,
+        copyOnly: true,
+      });
+
+      expect(result.remediatedArtifacts).toEqual([
+        { src: 'apps/cli/result.json', artifact: 'result.json' },
+      ]);
+      expect(existsSync(join(cwd, 'result.json'))).toBe(true);
+      expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toBe('{"found":true}');
+      // copyOnly: true should NOT delete the source
+      expect(existsSync(strayPath)).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers stem-prefix from sourceDir with copyOnly: true', () => {
+    const cwd = makeTmpDir();
+    const sourceDir = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      makeGitRepo(sourceDir);
+      const strayPath = join(sourceDir, 'implementation-log-task-1.md');
+      writeFileSync(strayPath, '{"stem":true}');
+
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(strayPath, futureSec, futureSec);
+
+      const result = remediateMissingArtifacts({
+        cwd,
+        startMs,
+        expectedArtifacts: ['implementation-log.md'],
+        stderrForLog: '',
+        sourceDir,
+        copyOnly: true,
+      });
+
+      expect(result.remediatedArtifacts).toEqual([
+        { src: 'implementation-log-task-1.md', artifact: 'implementation-log.md' },
+      ]);
+      expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(true);
+      expect(readFileSync(join(cwd, 'implementation-log.md'), 'utf-8')).toBe('{"stem":true}');
+      // copyOnly: true should NOT delete the source
+      expect(existsSync(strayPath)).toBe(true);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+      rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('remediateMissingArtifacts', () => {
@@ -175,11 +306,16 @@ describe('remediateMissingArtifacts', () => {
     try {
       makeGitRepo(cwd);
       mkdirSync(join(cwd, 'docs', 'specs'), { recursive: true });
-      writeFileSync(join(cwd, 'docs', 'specs', 'design.md'), '# Design');
+      const filePath = join(cwd, 'docs', 'specs', 'design.md');
+      writeFileSync(filePath, '# Design');
+
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      utimesSync(filePath, futureSec, futureSec);
 
       const result = remediateMissingArtifacts({
         cwd,
-        startMs: Date.now(),
+        startMs,
         expectedArtifacts: ['design.md'],
         stderrForLog: '',
       });

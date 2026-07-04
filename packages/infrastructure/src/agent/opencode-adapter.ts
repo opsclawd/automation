@@ -4,7 +4,6 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
@@ -152,19 +151,6 @@ export class OpenCodeAgentAdapter implements AgentPort {
         PWD: request.cwd,
         INIT_CWD: undefined,
       };
-      // Pre-launch cleanup: remove any pre-existing result.json from known stray
-      // locations in repoRoot to prevent recovery of stale artifacts from previous
-      // invocations (#311, PR#312 review feedback).
-      if (this.opts.repoRoot && request.expectedArtifacts?.length) {
-        for (const artifact of request.expectedArtifacts) {
-          for (const stray of ['apps/cli']) {
-            const strayPath = join(this.opts.repoRoot, stray, artifact);
-            if (existsSync(strayPath)) {
-              rmSync(strayPath);
-            }
-          }
-        }
-      }
       const child = execa(bin, args, {
         cwd: request.cwd,
         reject: false,
@@ -297,44 +283,42 @@ export class OpenCodeAgentAdapter implements AgentPort {
         outcome === 'contract_violation' &&
         contractViolations.includes(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
       ) {
-        // Also scan repoRoot/apps/cli/ for artifacts that drifted outside the
-        // worktree (#311). Pre-launch cleanup (lines 158-167) removes stale
-        // artifacts before the agent starts, so anything found here was written
-        // during the current invocation.
-        if (this.opts.repoRoot) {
-          for (const artifact of request.expectedArtifacts) {
-            const artifactPath = join(request.cwd, artifact);
-            if (existsSync(artifactPath)) continue;
-            const strayPath = join(this.opts.repoRoot, 'apps', 'cli', artifact);
-            if (existsSync(strayPath)) {
-              writeFileSync(artifactPath, readFileSync(strayPath));
-              rmSync(strayPath);
-              const entry = { src: `apps/cli/${artifact}`, artifact };
-              remediatedArtifacts = [...(remediatedArtifacts ?? []), entry];
-              stderrForLog = `DRIFT_WARNING: ${artifact} recovered from repoRoot apps/cli/\n${stderrForLog}`;
-            }
-          }
-        }
         const remediateOpts = {
           cwd: request.cwd,
           startMs: start,
           expectedArtifacts: request.expectedArtifacts,
           stderrForLog,
         };
-        const result = remediateMissingArtifacts(remediateOpts);
+        const resultCwd = remediateMissingArtifacts(remediateOpts);
         stderrForLog = remediateOpts.stderrForLog;
-        const allRemediated = [
-          ...(result.remediatedArtifacts ?? []),
-          ...(remediatedArtifacts ?? []),
-        ];
-        if (allRemediated.length > 0) {
-          remediatedArtifacts = allRemediated;
-          if (result.missingArtifacts.length === 0) {
+        remediatedArtifacts = resultCwd.remediatedArtifacts;
+
+        let missing = resultCwd.missingArtifacts;
+        if (this.opts.repoRoot && missing.length > 0) {
+          // Also scan repoRoot for artifacts that drifted outside the worktree (#311).
+          // Uses copyOnly: true because repoRoot is shared across concurrent runs.
+          // Freshness is guaranteed by startMs check in remediateMissingArtifacts.
+          const repoOpts = {
+            cwd: request.cwd,
+            startMs: start,
+            expectedArtifacts: missing,
+            stderrForLog,
+            sourceDir: this.opts.repoRoot,
+            copyOnly: true,
+          };
+          const resultRepo = remediateMissingArtifacts(repoOpts);
+          stderrForLog = repoOpts.stderrForLog;
+          remediatedArtifacts = [...remediatedArtifacts, ...resultRepo.remediatedArtifacts];
+          missing = resultRepo.missingArtifacts;
+        }
+
+        if (remediatedArtifacts.length > 0) {
+          if (missing.length === 0) {
             outcome = 'success';
             contractViolations = contractViolations
               .filter((v) => v !== CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT)
               .concat(CONTRACT_VIOLATION_CODES.MISPLACED_ARTIFACT);
-            const remediatedList = allRemediated
+            const remediatedList = remediatedArtifacts
               .map((r) => `${r.src} → ${r.artifact}`)
               .join(', ');
             stderrForLog = `MISPLACED_ARTIFACT: auto-remediated ${remediatedList}\n${stderrForLog}`;

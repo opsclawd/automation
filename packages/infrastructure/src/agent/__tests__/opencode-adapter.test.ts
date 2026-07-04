@@ -1077,10 +1077,13 @@ describe('OpenCodeAgentAdapter', () => {
     const cwd = makeWorktree();
     const strayDir = join(cwd, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
+    const strayFile = join(strayDir, 'result.json');
     writeFileSync(
-      join(strayDir, 'result.json'),
+      strayFile,
       '{"commentId":1,"action":"fixed","replyBody":"ok"}',
     );
+    const futureSec = Date.now() / 1000 + 10;
+    utimesSync(strayFile, futureSec, futureSec);
     // Confirm it is NOT at the expected worktree-root path
     expect(existsSync(join(cwd, 'result.json'))).toBe(false);
 
@@ -1160,7 +1163,7 @@ describe('OpenCodeAgentAdapter', () => {
     expect(r.resultJsonPath).toBeUndefined();
   });
 
-  it('cleans stale result.json from repoRoot stray location pre-launch', async () => {
+  it('ignores stale result.json from repoRoot stray location (previously cleaned pre-launch)', async () => {
     const cwd = makeWorktree();
     const repoRoot = mkdtempSync(join(tmpdir(), 'opencode-repoRoot-'));
     execSync('git init -q', { cwd: repoRoot });
@@ -1171,11 +1174,14 @@ describe('OpenCodeAgentAdapter', () => {
     // Place a stale result.json at the repoRoot stray path (simulates previous run)
     const strayDir = join(repoRoot, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
+    const strayFile = join(strayDir, 'result.json');
     writeFileSync(
-      join(strayDir, 'result.json'),
+      strayFile,
       '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}',
     );
-    expect(existsSync(join(strayDir, 'result.json'))).toBe(true);
+    const pastSec = Date.now() / 1000 - 10;
+    utimesSync(strayFile, pastSec, pastSec);
+    expect(existsSync(strayFile)).toBe(true);
 
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
@@ -1193,12 +1199,64 @@ describe('OpenCodeAgentAdapter', () => {
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
     });
 
-    // Pre-launch cleanup removed the stale file, and fake-opencode-success.sh
-    // writes no fresh artifact, so the adapter reports contract_violation
-    expect(existsSync(join(strayDir, 'result.json'))).toBe(false);
+    // Stale file remains in repoRoot (non-destructive) but is NOT recovered
+    expect(existsSync(strayFile)).toBe(true);
     expect(r.outcome).toBe('contract_violation');
     expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
     expect(r.resultJsonPath).toBeUndefined();
+  });
+
+  it('recovers result.json from repoRoot (non-apps/cli) and ignores stale ones', async () => {
+    const cwd = makeWorktree();
+    const repoRoot = mkdtempSync(join(tmpdir(), 'opencode-repoRoot-freshness-'));
+    execSync('git init -q', { cwd: repoRoot });
+    execSync('git config user.email t@test', { cwd: repoRoot });
+    execSync('git config user.name t', { cwd: repoRoot });
+    writeFileSync(join(repoRoot, 'README.md'), 'x');
+    execSync('git add . && git commit -q -m init', { cwd: repoRoot });
+
+    // Place a fresh file in repoRoot but NOT in apps/cli
+    const freshDir = join(repoRoot, 'some', 'other', 'dir');
+    mkdirSync(freshDir, { recursive: true });
+    const freshPath = join(freshDir, 'result.json');
+    writeFileSync(freshPath, '{"status":"fresh"}');
+    const futureSec = Date.now() / 1000 + 10;
+    utimesSync(freshPath, futureSec, futureSec);
+
+    // Place a stale file in repoRoot apps/cli
+    const staleDir = join(repoRoot, 'apps', 'cli');
+    mkdirSync(staleDir, { recursive: true });
+    const stalePath = join(staleDir, 'result.json');
+    writeFileSync(stalePath, '{"status":"stale"}');
+    const pastSec = Date.now() / 1000 - 10;
+    utimesSync(stalePath, pastSec, pastSec);
+
+    const adapter = new OpenCodeAgentAdapter({
+      binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
+      artifactsDir: cwd,
+      repoRoot,
+    });
+    const r = await adapter.invoke({
+      profile: AgentProfileName('opencode-frontier'),
+      promptPath: '/dev/null',
+      expectedArtifacts: ['result.json'],
+      cwd,
+      runId: '00000000-0000-0000-0000-000000000001',
+      repoId: 'r',
+      phaseId: 'post-pr-review',
+      startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
+    });
+
+    // It should recover the fresh one, even if it's not in apps/cli.
+    // The stale one in apps/cli should be ignored by remediateMissingArtifacts
+    // (even if it survived pre-launch cleanup, which it wouldn't, but this tests the helper's robustness).
+    expect(r.outcome).toBe('success');
+    expect(readFileSync(join(cwd, 'result.json'), 'utf-8')).toContain('"fresh"');
+    expect(r.remediatedArtifacts).toEqual([
+      { src: 'some/other/dir/result.json', artifact: 'result.json' },
+    ]);
+
+    rmSync(repoRoot, { recursive: true, force: true });
   });
 
   it('recovers design.md from a subdirectory (depth ≥ 2)', async () => {
@@ -1206,7 +1264,10 @@ describe('OpenCodeAgentAdapter', () => {
     const subdir = join(cwd, 'docs', 'superpowers', 'specs');
     mkdirSync(subdir, { recursive: true });
     const originalContent = '# Design Document\n\nThis is a test design document.';
-    writeFileSync(join(subdir, 'design.md'), originalContent);
+    const filePath = join(subdir, 'design.md');
+    writeFileSync(filePath, originalContent);
+    const futureSec = Date.now() / 1000 + 10;
+    utimesSync(filePath, futureSec, futureSec);
     // Confirm it is NOT at the expected worktree-root path
     expect(existsSync(join(cwd, 'design.md'))).toBe(false);
 
@@ -1329,7 +1390,7 @@ describe('OpenCodeAgentAdapter', () => {
 
     expect(r.outcome).toBe('contract_violation');
     expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
-    expect(r.remediatedArtifacts).toBeUndefined();
+    expect(r.remediatedArtifacts).toEqual([]);
     expect(existsSync(join(cwd, 'implementation-log.md'))).toBe(false);
   });
 
@@ -1366,7 +1427,7 @@ describe('OpenCodeAgentAdapter', () => {
     expect(Object.keys(r.remediatedArtifacts![0])).toEqual(['src', 'artifact']);
   });
 
-  it('pre-launch cleanup of repoRoot/apps/cli/<artifact> still works alongside the shared helper', async () => {
+  it('freshness check correctly ignores stale repoRoot artifacts without destructive cleanup', async () => {
     const cwd = makeWorktree();
     const repoRoot = mkdtempSync(join(tmpdir(), 'opencode-repoRoot-'));
     execSync('git init -q', { cwd: repoRoot });
@@ -1376,11 +1437,14 @@ describe('OpenCodeAgentAdapter', () => {
     execSync('git add . && git commit -q -m init', { cwd: repoRoot });
     const strayDir = join(repoRoot, 'apps', 'cli');
     mkdirSync(strayDir, { recursive: true });
+    const strayFile = join(strayDir, 'result.json');
     writeFileSync(
-      join(strayDir, 'result.json'),
+      strayFile,
       '{"commentId":3,"action":"fixed","replyBody":"repoRoot"}',
     );
-    expect(existsSync(join(strayDir, 'result.json'))).toBe(true);
+    const pastSec = Date.now() / 1000 - 10;
+    utimesSync(strayFile, pastSec, pastSec);
+    expect(existsSync(strayFile)).toBe(true);
 
     const adapter = new OpenCodeAgentAdapter({
       binaryPath: join(__dirname, '..', '__fixtures__', 'fake-opencode-success.sh'),
@@ -1398,7 +1462,7 @@ describe('OpenCodeAgentAdapter', () => {
       startCommitSha: execSync('git rev-parse HEAD', { cwd }).toString().trim(),
     });
 
-    expect(existsSync(join(strayDir, 'result.json'))).toBe(false);
+    expect(existsSync(strayFile)).toBe(true);
     expect(r.outcome).toBe('contract_violation');
     expect(r.contractViolations).toContain(CONTRACT_VIOLATION_CODES.MISSING_REQUIRED_ARTIFACT);
     expect(r.resultJsonPath).toBeUndefined();

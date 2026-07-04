@@ -46,6 +46,12 @@ const NOISE_DIRS = new Set([
   'target',
   'out',
   '.gradle',
+  // Orchestration dirs: when scanning repoRoot (shared across concurrent
+  // runs), these hold other runs' worktrees and agent artifacts — a fresh
+  // basename match in there belongs to a different run, not this one.
+  '.ai-worktrees',
+  '.ai-runs',
+  '.claude',
 ]);
 
 export interface RemediateOptions {
@@ -53,6 +59,8 @@ export interface RemediateOptions {
   startMs: number;
   expectedArtifacts: string[];
   stderrForLog: string;
+  sourceDir?: string;
+  copyOnly?: boolean;
 }
 
 export interface RemediateResult {
@@ -61,8 +69,9 @@ export interface RemediateResult {
 }
 
 export function findMisplacedCandidate(
-  cwd: string,
+  searchRoot: string,
   artifactBasename: string,
+  startMs: number,
   excludePaths?: Set<string>,
 ): string | null {
   try {
@@ -76,12 +85,21 @@ export function findMisplacedCandidate(
         return; // Skip this unreadable directory and continue
       }
       for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
           if (NOISE_DIRS.has(entry.name)) continue;
-          scan(join(dir, entry.name), depth + 1);
+          scan(fullPath, depth + 1);
         } else if (entry.isFile()) {
           if (depth >= 2 && entry.name === artifactBasename) {
-            const relativePath = relative(cwd, join(dir, entry.name));
+            let mtimeMs = 0;
+            try {
+              mtimeMs = statSync(fullPath).mtimeMs;
+            } catch {
+              // treat as stale
+            }
+            if (mtimeMs < startMs) continue;
+
+            const relativePath = relative(searchRoot, fullPath);
             const normalizedRelativePath = relativePath.replace(/\\/g, '/');
             if (excludePaths?.has(normalizedRelativePath)) {
               continue;
@@ -90,7 +108,7 @@ export function findMisplacedCandidate(
             try {
               const gitPath = relativePath.replace(/\\/g, '/');
               execFileSync('git', ['ls-files', '--error-unmatch', '--', gitPath], {
-                cwd,
+                cwd: searchRoot,
                 stdio: 'pipe',
               });
               // exit 0 means tracked → skip
@@ -110,7 +128,7 @@ export function findMisplacedCandidate(
       }
     }
 
-    scan(cwd, 1);
+    scan(searchRoot, 1);
     return candidates.length === 1 ? candidates[0]! : null;
   } catch {
     return null;
@@ -148,7 +166,8 @@ export function moveMisplacedArtifact(
 }
 
 export function remediateMissingArtifacts(opts: RemediateOptions): RemediateResult {
-  const { cwd, startMs, expectedArtifacts } = opts;
+  const { cwd, startMs, expectedArtifacts, sourceDir, copyOnly } = opts;
+  const searchRoot = sourceDir ?? cwd;
   let stderrForLog = opts.stderrForLog;
 
   const remediatedArtifacts: { src: string; artifact: string }[] = [];
@@ -164,18 +183,26 @@ export function remediateMissingArtifacts(opts: RemediateOptions): RemediateResu
   for (const artifact of expectedArtifacts) {
     if (existsSync(join(cwd, artifact))) continue;
     const artifactBasename = basename(artifact);
-    const candidate = findMisplacedCandidate(cwd, artifactBasename, excludePaths);
+    const candidate = findMisplacedCandidate(searchRoot, artifactBasename, startMs, excludePaths);
     if (!candidate) continue;
     try {
-      moveMisplacedArtifact(cwd, candidate, artifact);
+      if (copyOnly) {
+        const dest = join(cwd, artifact);
+        mkdirSync(dirname(dest), { recursive: true });
+        copyFileSync(join(searchRoot, candidate), dest);
+      } else {
+        // moveMisplacedArtifact cleans up searchRoot; it assumes dest is relative to searchRoot.
+        // This is only correct when searchRoot === cwd.
+        moveMisplacedArtifact(searchRoot, candidate, artifact);
+      }
       remediatedArtifacts.push({ src: candidate, artifact });
       excludePaths.add(artifact.replace(/\\/g, '/'));
     } catch (e) {
-      console.warn('moveMisplacedArtifact failed:', e);
+      console.warn('move/copy misplaced artifact failed:', e);
     }
   }
 
-  // Pass 2: stem-prefix recovery (cwd-root-only, mtime-disambiguated pick-newest).
+  // Pass 2: stem-prefix recovery (root-only, mtime-disambiguated pick-newest).
   for (const artifact of expectedArtifacts) {
     if (existsSync(join(cwd, artifact))) continue;
     const artifactBasename = basename(artifact);
@@ -185,7 +212,7 @@ export function remediateMissingArtifacts(opts: RemediateOptions): RemediateResu
 
     let rootEntries: import('node:fs').Dirent[];
     try {
-      rootEntries = readdirSync(cwd, { withFileTypes: true }) as import('node:fs').Dirent[];
+      rootEntries = readdirSync(searchRoot, { withFileTypes: true }) as import('node:fs').Dirent[];
     } catch {
       continue;
     }
@@ -212,7 +239,7 @@ export function remediateMissingArtifacts(opts: RemediateOptions): RemediateResu
     const freshCandidates = stemMatches.flatMap((name) => {
       let mtimeMs = 0;
       try {
-        mtimeMs = statSync(join(cwd, name)).mtimeMs;
+        mtimeMs = statSync(join(searchRoot, name)).mtimeMs;
       } catch {
         // Race with concurrent delete: treat as stale so a fresh sibling wins.
       }
@@ -224,23 +251,25 @@ export function remediateMissingArtifacts(opts: RemediateOptions): RemediateResu
     const destPath = join(cwd, artifact);
     try {
       mkdirSync(dirname(destPath), { recursive: true });
-      copyFileSync(join(cwd, srcName), destPath);
+      copyFileSync(join(searchRoot, srcName), destPath);
       remediatedArtifacts.push({ src: srcName, artifact });
       stderrForLog = `STEM_PREFIX_REMEDIATED: ${srcName} → ${artifact}\n${stderrForLog}`;
       // Delete the source if untracked so wrong-named files don't accumulate
       // across steps and break the "exactly 1 match" guard on future retries.
       // Tracked files are left in place — they're already in git history.
-      try {
-        execFileSync('git', ['ls-files', '--error-unmatch', '--', srcName], {
-          cwd,
-          stdio: 'pipe',
-        });
-      } catch (gitErr) {
-        if ((gitErr as { status?: number }).status === 1) {
-          try {
-            unlinkSync(join(cwd, srcName));
-          } catch {
-            // best-effort
+      if (!copyOnly) {
+        try {
+          execFileSync('git', ['ls-files', '--error-unmatch', '--', srcName], {
+            cwd: searchRoot,
+            stdio: 'pipe',
+          });
+        } catch (gitErr) {
+          if ((gitErr as { status?: number }).status === 1) {
+            try {
+              unlinkSync(join(searchRoot, srcName));
+            } catch {
+              // best-effort
+            }
           }
         }
       }
