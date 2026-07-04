@@ -2,6 +2,7 @@ import type { RunId } from './ids.js';
 
 export type CommentState = 'pending' | 'replied' | 'processed' | 'blocked';
 export type CommentOutcome = 'fixed' | 'no_fix';
+export type CommentSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 export interface PrReviewComment {
   runId: RunId;
@@ -12,6 +13,7 @@ export interface PrReviewComment {
   reviewer: string;
   body: string;
   state: CommentState;
+  severity?: CommentSeverity | undefined;
   attempts: number;
   outcome?: CommentOutcome;
   replyId?: number;
@@ -44,6 +46,14 @@ export interface CreatePrReviewCommentInput {
   now: Date;
 }
 
+export function parseSeverity(body: string): CommentSeverity | undefined {
+  if (/\b(P0|critical)\b/i.test(body)) return 'critical';
+  if (/\b(P1|high)\b/i.test(body)) return 'high';
+  if (/\b(P2|medium)\b/i.test(body)) return 'medium';
+  if (/\b(P3|low)\b/i.test(body)) return 'low';
+  return undefined;
+}
+
 export function createPrReviewComment(input: CreatePrReviewCommentInput): PrReviewComment {
   return {
     runId: input.runId,
@@ -54,6 +64,7 @@ export function createPrReviewComment(input: CreatePrReviewCommentInput): PrRevi
     reviewer: input.reviewer,
     body: input.body,
     state: 'pending',
+    severity: parseSeverity(input.body),
     attempts: 0,
     commitVerified: false,
     replyVerified: false,
@@ -128,6 +139,7 @@ function stripOptionalFields(c: PrReviewComment): PrReviewComment {
     reviewer: c.reviewer,
     body: c.body,
     state: c.state,
+    severity: c.severity,
     attempts: c.attempts,
     commitVerified: c.commitVerified,
     replyVerified: c.replyVerified,

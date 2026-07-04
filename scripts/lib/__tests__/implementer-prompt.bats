@@ -33,3 +33,20 @@ setup() {
   run grep -nF '"$PRE_HEAD"' "$SCRIPT"
   [ "$status" -ne 0 ]
 }
+
+@test "implement prompt splits FINAL ACTION before MANDATORY RESULT FILE" {
+  prompt="$(sed -n '/FINAL ACTION/,/IMPL_LOG_EOF/p' "$SCRIPT")"
+  echo "$prompt" | grep -q "cat > implementation-log.md"
+  result_block="$(sed -n '/MANDATORY RESULT FILE (Step N+1)/,/RESULT_EOF/p' "$SCRIPT")"
+  echo "$result_block" | grep -q "cat > implement-task"
+
+  final_action_line="$(grep -n 'FINAL ACTION' "$SCRIPT" | head -1 | cut -d: -f1)"
+  result_file_line="$(grep -n 'MANDATORY RESULT FILE' "$SCRIPT" | head -1 | cut -d: -f1)"
+  [ "$final_action_line" -lt "$result_file_line" ]
+}
+
+@test "implement prompt writes implementation-log.md not implementation-log-task-N.md" {
+  grep -q "cat > implementation-log.md " "$SCRIPT"
+  ! grep -q "implementation-log-task-\${task_n}" "$SCRIPT" || \
+    grep -q "implementation-log.md\b" "$SCRIPT"
+}

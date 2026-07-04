@@ -17,6 +17,7 @@ import * as addJobs from './migrations/0015-add-jobs.js';
 import * as addRepoId from './migrations/0016-add-repo-id-to-runs.js';
 import * as addWorkers from './migrations/0017-add-workers.js';
 import * as addClaimTtl from './migrations/0018-claimed-at-ttl.js';
+import * as addCommentSeverity from './migrations/0019-add-comment-severity.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -37,6 +38,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addRepoId.version, sql: addRepoId.sql },
   { version: addWorkers.version, sql: addWorkers.sql },
   { version: addClaimTtl.version, sql: addClaimTtl.sql },
+  { version: addCommentSeverity.version, sql: addCommentSeverity.sql },
 ];
 
 export function applyMigrations(db: Db): void {

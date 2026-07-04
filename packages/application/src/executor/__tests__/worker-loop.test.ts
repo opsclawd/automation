@@ -735,4 +735,44 @@ describe('workerLoop', () => {
     expect(s.queue.findById(JobId('j1'))!.status).toBe('failed');
     expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
   }, 10_000);
+
+  it('calls onProgress during lease heartbeat', async () => {
+    const s = setup();
+    s.queue.enqueue({
+      job: createJob({
+        id: JobId('j1'),
+        runId: RunId('run-1'),
+        repoId: RepositoryId('r1'),
+        issueNumber: IssueNumber(1),
+        createdAt: s.now,
+      }),
+    });
+
+    const onProgress = vi.fn();
+
+    await workerLoop(WorkerId('w1'), {
+      registry: s.registry,
+      queue: s.queue,
+      leases: s.leases,
+      repos: s.repos,
+      executeRun: async () => {
+        // Wait for heartbeat to fire
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return { ok: true };
+      },
+      prepareWorktree: prepareOk,
+      resetWorktree: (_repoId) => {},
+      isWorkerAlive: (_workerId) => true,
+      recoverableRunIds: new Set([RunId('run-1')]),
+      now: () => new Date(),
+      ttlMs: 100,
+      heartbeatIntervalMs: 50,
+      findRun: (runId) => makeRun(runId as string),
+      onProgress,
+    });
+
+    expect(onProgress).toHaveBeenCalled();
+    // 1 call at start of loop + at least 1 call during heartbeat
+    expect(onProgress.mock.calls.length).toBeGreaterThanOrEqual(2);
+  }, 10_000);
 });

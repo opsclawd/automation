@@ -78,7 +78,7 @@ describe('RetryFailedPhase', () => {
       resumeRun,
     });
     await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
-      /expected 'failed' or 'blocked'/i,
+      /expected 'failed', 'blocked', or 'needs_human_review'/i,
     );
     expect(resumeRun.calls).toHaveLength(0);
   });
@@ -93,6 +93,27 @@ describe('RetryFailedPhase', () => {
       runUuid: 'run-rp-1',
       name: 'implement',
       status: 'failed',
+      attempt: 1,
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      completedAt: new Date('2026-06-01T01:00:00Z'),
+    });
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.fromPhase).toBe('implement');
+    expect(resumeRun.calls[0]!.attempt).toBe(2);
+  });
+
+  it('derives phase from needs_human_review phase records when run.currentPhase is undefined', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ status: 'needs_human_review', currentPhase: undefined }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    phaseRepo.insert({
+      id: 'implement',
+      runUuid: 'run-rp-1',
+      name: 'implement',
+      status: 'needs_human_review',
       attempt: 1,
       startedAt: new Date('2026-06-01T00:00:00Z'),
       completedAt: new Date('2026-06-01T01:00:00Z'),

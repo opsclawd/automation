@@ -85,6 +85,16 @@ function startLeaseHeartbeat(
 
 const DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS = 30_000;
 
+function printRunFailureSummary(uuid: string, reason?: string): void {
+  const prefix = reason ? `Run failed: ${reason}` : 'Run failed.';
+  console.error(prefix);
+  console.error(`Run UUID: ${uuid}`);
+  // No --confirm in the hint: `runs resume` intentionally stops and warns
+  // when the failed phase is unsafe to retry, and pre-confirming would skip
+  // that guard for anyone who copy-pastes the command.
+  console.error(`Resume with: orchestrator runs resume --uuid ${uuid}`);
+}
+
 function startWorkerRegistryHeartbeat(
   registry: { heartbeat(id: WorkerId, now: Date): void },
   workerId: WorkerId,
@@ -481,6 +491,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               finalRun.status === 'passed' ||
               pausedStatuses.includes(finalRun.status) ||
               finalJob?.status === 'succeeded';
+            if (!isSuccess) {
+              printRunFailureSummary(finalRun.uuid, finalRun.failureReason);
+            }
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
@@ -490,16 +503,23 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // Finalize a stale 'running' run so insertIfNoActive doesn't block
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
             // never inserted or was already finalized by workerLoop.
+            const failureReason = err instanceof Error ? err.message : String(err);
             c.runRepository.atomicUpdateByUuid(
               run.uuid,
               {
                 status: 'failed',
                 completedAt: new Date(),
-                failureReason: err instanceof Error ? err.message : String(err),
+                failureReason,
               },
               'running',
             );
-            console.error(err instanceof Error ? err.message : String(err));
+            // Only suggest resuming if the run row actually exists —
+            // insertIfNoActive may have thrown before inserting it.
+            if (c.runRepository.findByUuid(run.uuid)) {
+              printRunFailureSummary(run.uuid, failureReason);
+            } else {
+              console.error(`Run failed: ${failureReason}`);
+            }
             process.exit(EXIT_USER_ERROR);
           }
         } else {
@@ -534,6 +554,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             signalHandlers.remove();
             const isSuccess =
               out.status === 'passed' || pausedStatuses.includes(out.status as RunStatus);
+            if (!isSuccess) {
+              const finalRun = c.runRepository.findByUuid(out.uuid);
+              printRunFailureSummary(out.uuid, finalRun?.failureReason);
+            }
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } finally {
             signalHandlers.remove();
@@ -660,6 +684,41 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               ...(opts.reason ? { reason: opts.reason } : {}),
             });
             process.stdout.write('Run cancelled successfully\n');
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('check-merge-ready')
+        .description('Verify that a run has no unverified or blocked review comments')
+        .requiredOption('--uuid <uuid>', 'Run UUID')
+        .action(async (opts: { uuid: string }) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+              runStartupSweeps: false,
+              ...buildOpts?.composeOverrides,
+            };
+            const c = composeRoot(options);
+            // An unknown UUID must fail, not report ready: listComments on a
+            // nonexistent run returns no rows, which would green-light the merge.
+            const run = c.runRepository.findByUuid(opts.uuid);
+            if (!run) {
+              console.error(`No run found for uuid ${opts.uuid}`);
+              process.exit(EXIT_USER_ERROR);
+            }
+            const result = await c.checkMergeReadiness.execute(RunId(opts.uuid));
+            process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+            if (!result.isReady) {
+              console.error(`Error: PR is not ready for merge: ${result.reason}`);
+              process.exit(EXIT_USER_ERROR);
+            }
+            console.error('Success: PR is ready for merge.');
+            process.exit(0);
           } catch (err) {
             console.error(err instanceof Error ? err.message : String(err));
             process.exit(EXIT_USER_ERROR);
@@ -957,114 +1016,118 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             }
           },
         ),
-  )
-  .addCommand(
-    new Command('logs')
-      .description('Tail active run output')
-      .requiredOption('--issue <number>', 'Issue number', (v) => {
-        if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
-        const n = parseInt(v, 10);
-        if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
-        return n;
-      })
-      .option('--follow', 'Follow new invocations as they start', true)
-      .option('--no-follow', 'Do not follow new invocations')
-      .option('--lines <number>', 'Initial lines to show', (v) => parseInt(v, 10), 50)
-      .action(async (opts: { issue: number; follow: boolean; lines: number }) => {
-        try {
-          const repoRoot = findRepoRoot(process.cwd());
-          const options: ComposeOptions = {
-            repoRoot,
-            scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-            ...buildOpts?.composeOverrides,
-          };
-          const c = composeRoot(options);
-          if (!c.repoFullName) {
-            console.error('Error: could not determine repository name.');
-            process.exit(EXIT_USER_ERROR);
-          }
-          const repoId = RepositoryId(c.repoFullName);
-          let run = c.runRepository.findByIssueNumber(repoId, opts.issue);
-          if (!run) {
-            console.error(`No run found for issue ${opts.issue}`);
-            process.exit(EXIT_USER_ERROR);
-          }
-
-          const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
-          let currentInvocationId: string | undefined;
-          let tailer: import('@ai-sdlc/application/ports').FileTailerPort | undefined;
-          let currentPhase: string | undefined;
-
-          const stopTailer = async () => {
-            if (tailer) {
-              await tailer.stop();
-              tailer = undefined;
+    )
+    .addCommand(
+      new Command('logs')
+        .description('Tail active run output')
+        .requiredOption('--issue <number>', 'Issue number', (v) => {
+          if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
+          const n = parseInt(v, 10);
+          if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
+          return n;
+        })
+        .option('--follow', 'Follow new invocations as they start', true)
+        .option('--no-follow', 'Do not follow new invocations')
+        .option('--lines <number>', 'Initial lines to show', (v) => parseInt(v, 10), 50)
+        .action(async (opts: { issue: number; follow: boolean; lines: number }) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+              ...buildOpts?.composeOverrides,
+            };
+            const c = composeRoot(options);
+            if (!c.repoFullName) {
+              console.error('Error: could not determine repository name.');
+              process.exit(EXIT_USER_ERROR);
             }
-          };
-
-          process.on('SIGINT', async () => {
-            await stopTailer();
-            process.exit(0);
-          });
-
-          for (;;) {
-            // Refresh run record to check status and current phase
-            const updatedRun = c.runRepository.findByUuid(run.uuid);
-            if (updatedRun) {
-              run = updatedRun;
+            const repoId = RepositoryId(c.repoFullName);
+            let run = c.runRepository.findByIssueNumber(repoId, opts.issue);
+            if (!run) {
+              console.error(`No run found for issue ${opts.issue}`);
+              process.exit(EXIT_USER_ERROR);
             }
 
-            if (run.currentPhase !== currentPhase) {
-              currentPhase = run.currentPhase;
-              process.stdout.write(`\n--- Run ${run.displayId} | Phase: ${currentPhase ?? 'starting'} ---\n`);
-            }
+            const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
+            let currentInvocationId: string | undefined;
+            let tailer: import('@ai-sdlc/application/ports').FileTailerPort | undefined;
+            let currentPhase: string | undefined;
 
-            const invocations = c.agentInvocationRepository.listByRun(RunId(run.uuid));
-            const latestInvocation = invocations[invocations.length - 1];
-
-            if (latestInvocation && latestInvocation.id !== currentInvocationId) {
-              // Delay advancing currentInvocationId until we have a path to tail,
-              // or handle the case where the same ID eventually gets a path.
-              if (latestInvocation.stdoutPath) {
-                const isFirstTailer = currentInvocationId === undefined;
-                await stopTailer();
-                currentInvocationId = latestInvocation.id;
-
-                tailer = c.createFileTailer({
-                  path: latestInvocation.stdoutPath,
-                  onData: (data: string) => {
-                    process.stdout.write(data);
-                  },
-                  // If it's the very first invocation we start tailing, honor --lines.
-                  // For subsequent invocations in the same run, start from the beginning.
-                  ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),
-                });
-                await tailer.start();
+            const stopTailer = async () => {
+              if (tailer) {
+                await tailer.stop();
+                tailer = undefined;
               }
-            }
+            };
 
-            if (terminalStatuses.includes(run.status)) {
-              // Wait a bit to ensure the tailer has drained everything
+            process.on('SIGINT', async () => {
+              await stopTailer();
+              process.exit(0);
+            });
+
+            for (;;) {
+              // Refresh run record to check status and current phase
+              const updatedRun = c.runRepository.findByUuid(run.uuid);
+              if (updatedRun) {
+                run = updatedRun;
+              }
+
+              if (run.currentPhase !== currentPhase) {
+                currentPhase = run.currentPhase;
+                process.stdout.write(
+                  `\n--- Run ${run.displayId} | Phase: ${currentPhase ?? 'starting'} ---\n`,
+                );
+              }
+
+              const invocations = c.agentInvocationRepository.listByRun(RunId(run.uuid));
+              const latestInvocation = invocations[invocations.length - 1];
+
+              if (latestInvocation && latestInvocation.id !== currentInvocationId) {
+                // Delay advancing currentInvocationId until we have a path to tail,
+                // or handle the case where the same ID eventually gets a path.
+                if (latestInvocation.stdoutPath) {
+                  const isFirstTailer = currentInvocationId === undefined;
+                  await stopTailer();
+                  currentInvocationId = latestInvocation.id;
+
+                  tailer = c.createFileTailer({
+                    path: latestInvocation.stdoutPath,
+                    onData: (data: string) => {
+                      process.stdout.write(data);
+                    },
+                    // If it's the very first invocation we start tailing, honor --lines.
+                    // For subsequent invocations in the same run, start from the beginning.
+                    ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),
+                  });
+                  await tailer.start();
+                }
+              }
+
+              if (terminalStatuses.includes(run.status)) {
+                // Wait a bit to ensure the tailer has drained everything
+                await sleep(1000);
+                await stopTailer();
+                process.stdout.write(
+                  `\n--- Run ${run.displayId} finished with status: ${run.status} ---\n`,
+                );
+                break;
+              }
+
+              if (!opts.follow && latestInvocation) {
+                // If not following, we just show what we have and exit
+                await sleep(500); // Give it a moment to read
+                await stopTailer();
+                break;
+              }
+
               await sleep(1000);
-              await stopTailer();
-              process.stdout.write(`\n--- Run ${run.displayId} finished with status: ${run.status} ---\n`);
-              break;
             }
-
-            if (!opts.follow && latestInvocation) {
-              // If not following, we just show what we have and exit
-              await sleep(500); // Give it a moment to read
-              await stopTailer();
-              break;
-            }
-
-            await sleep(1000);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
           }
-        } catch (err) {
-          console.error(err instanceof Error ? err.message : String(err));
-          process.exit(EXIT_USER_ERROR);
-        }
-      }),
+        }),
     );
 
   return program;

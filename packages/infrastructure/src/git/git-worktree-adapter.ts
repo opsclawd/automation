@@ -165,6 +165,10 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     await git(cwd, ['clean', '-fdx', '-e', 'node_modules']);
   }
 
+  async status(cwd: string): Promise<string> {
+    return git(cwd, ['status', '--porcelain']);
+  }
+
   async resetWorktreeIfClean(cwd: string, baseBranch: string): Promise<void> {
     const status = await git(cwd, ['status', '--porcelain']);
     const driftedFiles = status

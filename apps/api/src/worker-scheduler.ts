@@ -49,36 +49,48 @@ export class WorkerScheduler {
       this.baseDeps.queue.reclaimStaleClaims(reclaimCutoff);
 
       const recoverableRunIds = buildRecoverableRunIds(this.baseDeps.queue, this.baseDeps.repos);
-      const deps: WorkerLoopDeps = { ...this.baseDeps, recoverableRunIds, outerSignal: signal };
 
       // workerLoop runs the real executor (prepareWorktree/executeRun), which can
       // legitimately take minutes, so this timeout guards only against a truly
       // hung worker and must not be tied to the (much shorter) tick interval.
       const timeoutMs = this.workerTimeoutMs;
       const results = await Promise.allSettled(
-        this.workerIds.map((wid) =>
-          Promise.race([
-            workerLoop(wid, deps),
-            new Promise<never>((_, reject) => {
-              if (signal.aborted) {
-                reject(new Error(`aborted before tick`));
-                return;
-              }
-              const t = setTimeout(
-                () => reject(new Error(`workerLoop ${wid} timed out after ${timeoutMs}ms`)),
-                timeoutMs,
-              );
-              signal.addEventListener(
-                'abort',
-                () => {
-                  clearTimeout(t);
-                  reject(new Error(`aborted during tick`));
-                },
-                { once: true },
-              );
+        this.workerIds.map((wid) => {
+          let t: NodeJS.Timeout | undefined;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            if (signal.aborted) {
+              reject(new Error(`aborted before tick`));
+              return;
+            }
+            t = setTimeout(
+              () => reject(new Error(`workerLoop ${wid} timed out after ${timeoutMs}ms`)),
+              timeoutMs,
+            );
+            signal.addEventListener(
+              'abort',
+              () => {
+                if (t) clearTimeout(t);
+                reject(new Error(`aborted during tick`));
+              },
+              { once: true },
+            );
+          });
+
+          return Promise.race([
+            workerLoop(wid, {
+              ...this.baseDeps,
+              recoverableRunIds,
+              outerSignal: signal,
+              // The worker loop calls onProgress during its lease heartbeat.
+              // We refresh the watchdog timer to allow the run to continue
+              // as long as heartbeats are being maintained.
+              onProgress: () => t?.refresh(),
             }),
-          ]),
-        ),
+            timeoutPromise,
+          ]).finally(() => {
+            if (t) clearTimeout(t);
+          });
+        }),
       );
       for (const result of results) {
         if (result.status === 'rejected') {

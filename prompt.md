@@ -19,15 +19,15 @@ The plan MUST include:
 - goal
 - non-goals
 - affected files (full paths from repo root)
-- ordered implementation tasks (numbered, clear description per task) — each task MUST be an H2 heading starting at column 0, e.g. `## Task 1: Title` (never H3 `###` or deeper)
+- ordered implementation tasks (numbered, clear description per task) — each task MUST be an H2 heading starting at column 0, e.g. `## Task 1: Title` (never H3 `###` or deeper). Task numbers are always plain integers matching `tasks[].n` — NEVER use letter suffixes like `## Task 4a` or `## Task 4b`. If splitting a task, assign each part its own sequential integer (e.g., Task 4 and Task 5).
 - tests to add or update
 - validation commands (exact commands to verify correctness)
 - risk areas
 - stop conditions (what would cause you to abort instead of continue)
 - Verification commands must be scoped to the files/paths explicitly changed by each task. Do NOT use whole-file grep/rg on files where the task only changes a subset — scope to specific line ranges or file sections.
+- HARD RULE — PORT/INTERFACE CHANGES: When a task adds new methods to a port/interface, ALL adapter/implementation changes for those methods MUST be in the same task. Never split the port change from its adapter updates across separate tasks. After every implementation step the implement loop runs `pnpm -r typecheck` workspace-wide as an automatic gate — a port-only step will always fail this gate because downstream adapters haven't been updated yet, and no change to the task's validation command can bypass it. If the combined port + adapters task is too large, split by method (one new method per task, port + all its adapters together) — never split by layer.
 - Prefer making verification an acceptance criterion of implementing tasks rather than a standalone "Full verification" task. If a standalone verification task is necessary, its verification commands must reference only files/paths explicitly in scope for that task.
 - HARD RULE: DO NOT create standalone tasks whose purpose is "run the validation suite", "make CI green", "fix failing tests", "run full validation", or any variant thereof. Validation runs automatically after ALL implement tasks complete (dedicated validate phase). If a test file needs updating, that is its own implementation task with the test file explicitly in scope — NOT a validation task.
-- PARITY COVERAGE: If a task modifies a _watched legacy path_ — `scripts/ai-run-issue-v2`, `scripts/ai-pr-review-poll`, anything under `scripts/lib/` (except `__tests__/`), `apps/cli/src/run-agent.ts`, `apps/cli/src/run-pr-poll.ts`, or anything under `packages/infrastructure/src/agent/` (matching is recursive: any file at or below those prefixes) — that SAME task MUST also add or extend a parity[#<issue>] characterization test in `scripts/lib/__tests__/legacy-parity.bats` pinning the behavioral invariant the change establishes. List `scripts/lib/__tests__/legacy-parity.bats` in that task's files, and describe the invariant to pin (what runtime behavior must survive the TypeScript cutover — see issue #210). EXCEPTION: a purely non-behavioral edit (comments, log/wording, formatting) has no invariant to pin — do NOT add a tautological test.
 - SPLIT OVERSIZED TEST-UPDATE TASKS: If a task's primary purpose is updating an existing test file (modifying tests in a `*.test.ts`, `*.test.tsx`, `*.spec.ts`, or `*.bats` file), and that test file exceeds ~500 lines or ~10 test cases (`describe`/`it`/`test` blocks), you MUST split the task into multiple smaller tasks. Each split task should target a subset of describe-blocks or test cases. Each split task must be independently committable (one commit, all tests pass for that subset). Non-test tasks (implementation code, configuration, new files) are unaffected by this heuristic.
 
 ## TASK MANIFEST SCHEMA
@@ -86,4 +86,5 @@ If none exist, do NOT add the comment. Simple/mechanical plans (adapters, CRUD, 
 - Do NOT edit any source files (`*.ts`, `*.js`, `*.sh`, `*.py`, etc.). Your ONLY output is `plan.md` and `task-manifest.json`.
 - When a plan needs to show example task headers (e.g., in validation instructions or test fixtures), indent them by at least 2 spaces or wrap in inline code. Real task headings start at column 0; anything indented is treated as an example. Violating this rule causes task extraction to misread the plan.
 - Do NOT create standalone "run validation suite" or "make CI green" tasks.
+- Task numbers in `plan.md` headings MUST be plain integers (e.g., `## Task 4`) matching `tasks[].n` in the manifest. Letter suffixes (`## Task 4a`) are forbidden and will cause validation to fail.
 - Write `plan.md` first, then `task-manifest.json`.

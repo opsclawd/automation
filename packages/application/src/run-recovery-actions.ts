@@ -16,8 +16,16 @@ export interface RecoveryPlan {
   requiresConfirmation: boolean;
 }
 
-const RECOVERABLE_RUN_STATUSES = new Set<RunRecord['status']>(['failed', 'blocked']);
-const RECOVERABLE_PHASE_STATUSES = new Set<Phase['status']>(['failed', 'blocked']);
+const RECOVERABLE_RUN_STATUSES = new Set<RunRecord['status']>([
+  'failed',
+  'blocked',
+  'needs_human_review',
+]);
+const RECOVERABLE_PHASE_STATUSES = new Set<Phase['status']>([
+  'failed',
+  'blocked',
+  'needs_human_review',
+]);
 
 function isRecoverableRunStatus(status: RunRecord['status']): boolean {
   return RECOVERABLE_RUN_STATUSES.has(status);
@@ -72,7 +80,7 @@ export function planRunRecoveryAction(input: {
         action: 'retry',
         allowed: false,
         statusCodeOnDenied: 409,
-        denialReason: `Cannot retry a run that is not in failed or blocked state (status is '${run.status}')`,
+        denialReason: `Cannot retry a run that is not in failed, blocked, or needs_human_review state (status is '${run.status}')`,
         requiresConfirmation: false,
       };
     }
@@ -112,7 +120,7 @@ export function planRunRecoveryAction(input: {
         action: 'resume',
         allowed: false,
         statusCodeOnDenied: 409,
-        denialReason: `Cannot resume a run that is not in failed or blocked state (status is '${run.status}')`,
+        denialReason: `Cannot resume a run that is not in failed, blocked, or needs_human_review state (status is '${run.status}')`,
         requiresConfirmation: false,
       };
     }

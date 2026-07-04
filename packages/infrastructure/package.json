@@ -15,6 +15,11 @@
       "development": "./src/artifacts/file-tailer.ts",
       "types": "./dist/artifacts/file-tailer.d.ts",
       "import": "./dist/artifacts/file-tailer.js"
+    },
+    "./agent/implement-artifact-guard": {
+      "development": "./src/agent/implement-artifact-guard.ts",
+      "types": "./dist/agent/implement-artifact-guard.d.ts",
+      "import": "./dist/agent/implement-artifact-guard.js"
     }
   },
   "files": [
