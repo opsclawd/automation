@@ -42,19 +42,19 @@ export interface ImplementHandlerOpts {
   setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   lintTaskSize?: (cwd: string, manifest: TaskManifest) => Promise<LintTaskSizeResult>;
   implementArtifactGuard?: ImplementArtifactGuardPort;
-  resolveInvocation?: (input: {
-    runId: string;
-    stepIndex: number;
-  }) => Promise<{
-    startCommitSha: string;
-    endCommitSha?: string;
-    durationMs: number;
-    outcome: 'success' | 'failed' | 'timeout' | 'contract_violation';
-    stdoutTail: string;
-    stderrTail: string;
-    resultJsonPath?: string;
-    expectedArtifacts: readonly string[];
-  }>;
+  resolveInvocation?: (input: { runId: string; stepIndex: number }) => Promise<
+    | {
+        startCommitSha: string;
+        endCommitSha?: string;
+        durationMs: number;
+        outcome: 'success' | 'failed' | 'timeout' | 'contract_violation';
+        stdoutTail: string;
+        stderrTail: string;
+        resultJsonPath?: string;
+        expectedArtifacts: readonly string[];
+      }
+    | undefined
+  >;
 }
 
 export class ImplementHandler implements PhaseHandler {
@@ -171,15 +171,12 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
-    const startCommitShaByStep = new Map<number, string>();
-
     for (const d of derived) {
       if (doneIdx.has(d.index)) {
         emit('step.skipped', 'info', `step ${d.index} already complete`, { index: d.index });
         continue;
       }
 
-      startCommitShaByStep.set(d.index, ctx.startCommitSha ?? '');
       const startedAt = ctx.now();
       const step: Step = {
         id: ctx.idFactory?.() ?? `${ctx.runUuid}:implement:${d.index}`,
@@ -284,8 +281,8 @@ export class ImplementHandler implements PhaseHandler {
     if (!invocation) return 'skipped';
     if (invocation.outcome !== 'contract_violation') return 'skipped';
 
-    const violations = await this.collectContractViolations(ctx, invocation);
-    if (violations.length !== 1 || violations[0] !== 'MISSING_REQUIRED_ARTIFACT') {
+    const missing = await this.collectContractViolations(ctx, invocation);
+    if (!missing.includes('implementation-log.md')) {
       return 'not-recovered';
     }
 
@@ -304,19 +301,28 @@ export class ImplementHandler implements PhaseHandler {
       invocationTranscript: {
         stdoutTail: invocation.stdoutTail,
         stderrTail: invocation.stderrTail,
-        ...(invocation.resultJsonPath !== undefined ? { resultJsonPath: invocation.resultJsonPath } : {}),
+        ...(invocation.resultJsonPath !== undefined
+          ? { resultJsonPath: invocation.resultJsonPath }
+          : {}),
       },
     };
 
-    let outcome: Awaited<ReturnType<ImplementArtifactGuardPort['synthesizeMissingArtifactsIfDoneDeclared']>>;
+    let outcome: Awaited<
+      ReturnType<ImplementArtifactGuardPort['synthesizeMissingArtifactsIfDoneDeclared']>
+    >;
     try {
       outcome = await guard.synthesizeMissingArtifactsIfDoneDeclared(guardInput);
     } catch (e) {
-      emit('step.artifact.synthesized', 'warn', `guard threw: ${e instanceof Error ? e.message : String(e)}`, {
-        index: stepIndex,
-        artifact: 'implementation-log.md',
-        reason: 'guard_threw',
-      });
+      emit(
+        'step.artifact.synthesized',
+        'warn',
+        `guard threw: ${e instanceof Error ? e.message : String(e)}`,
+        {
+          index: stepIndex,
+          artifact: 'implementation-log.md',
+          reason: 'guard_threw',
+        },
+      );
       return 'not-recovered';
     }
 
@@ -343,7 +349,9 @@ export class ImplementHandler implements PhaseHandler {
 
   private async collectContractViolations(
     ctx: PhaseHandlerContext,
-    invocation: NonNullable<Awaited<ReturnType<NonNullable<ImplementHandlerOpts['resolveInvocation']>>>>,
+    invocation: NonNullable<
+      Awaited<ReturnType<NonNullable<ImplementHandlerOpts['resolveInvocation']>>>
+    >,
   ): Promise<string[]> {
     const present: string[] = [];
     for (const path of invocation.expectedArtifacts) {
@@ -354,8 +362,7 @@ export class ImplementHandler implements PhaseHandler {
         // not present
       }
     }
-    const missing = invocation.expectedArtifacts.filter((a) => !present.includes(a));
-    return missing.map(() => 'MISSING_REQUIRED_ARTIFACT');
+    return invocation.expectedArtifacts.filter((a) => !present.includes(a));
   }
 
   private fail(

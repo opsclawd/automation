@@ -10,6 +10,9 @@ import {
   statSync,
   writeFileSync,
   copyFileSync,
+  openSync,
+  readSync,
+  closeSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
@@ -130,6 +133,30 @@ import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
+
+function readTail(filePath: string, maxBytes: number = 65536): string {
+  try {
+    if (!filePath || !existsSync(filePath)) {
+      return '';
+    }
+    const stat = statSync(filePath);
+    if (stat.size === 0) {
+      return '';
+    }
+    const bytesToRead = Math.min(stat.size, maxBytes);
+    const buffer = Buffer.alloc(bytesToRead);
+    const fd = openSync(filePath, 'r');
+    try {
+      readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
+    } finally {
+      closeSync(fd);
+    }
+    return buffer.toString('utf-8');
+  } catch (err) {
+    console.warn(`[resolveInvocation] failed to read tail of ${filePath}:`, err);
+    return '';
+  }
+}
 
 const classifyExitAdapter = (
   agentInvocationRepository: AgentInvocationRepository,
@@ -1992,6 +2019,34 @@ export function composeRoot(opts: ComposeOptions): Container {
           setup: worktreeSetup,
           lintTaskSize: lintTaskSizeDep,
           implementArtifactGuard,
+          resolveInvocation: async (input: { runId: string; stepIndex: number }) => {
+            const invocations = agentInvocationRepository.listByRun(RunId(input.runId));
+            const filtered = invocations.filter((inv) => {
+              if (inv.phaseId !== 'implement') return false;
+              const expectedSuffix = `implement-${input.runId}-${input.stepIndex}.md`;
+              return inv.promptPath.endsWith(expectedSuffix);
+            });
+            const inv = filtered[filtered.length - 1];
+            if (!inv) return undefined;
+
+            const stdoutTail = readTail(inv.stdoutPath);
+            const stderrTail = readTail(inv.stderrPath);
+
+            return {
+              startCommitSha: inv.startCommitSha,
+              ...(inv.endCommitSha !== undefined && inv.endCommitSha !== null
+                ? { endCommitSha: inv.endCommitSha }
+                : {}),
+              durationMs: inv.durationMs ?? 0,
+              outcome: inv.outcome ?? 'failed',
+              stdoutTail,
+              stderrTail,
+              ...(inv.resultJsonPath !== undefined && inv.resultJsonPath !== null
+                ? { resultJsonPath: inv.resultJsonPath }
+                : {}),
+              expectedArtifacts: ['implementation-log.md'],
+            };
+          },
         }),
       );
 

@@ -108,6 +108,26 @@ describe('ImplementArtifactGuard policy', () => {
     expect(result.synthesized[0]?.reason).toBe('no_op_reverification_done_declared');
   });
 
+  it('detects DONE in result.json instead of console tails', async () => {
+    await artifacts.write({
+      runId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      phaseId: 'implement',
+      relativePath: 'result.json',
+      contents: JSON.stringify({ result: 'DONE' }),
+    });
+
+    const result = await guard.synthesizeMissingArtifactsIfDoneDeclared(
+      makeInput({
+        invocationTranscript: {
+          stdoutTail: 'some text without done',
+          stderrTail: '',
+          resultJsonPath: 'result.json',
+        },
+      }),
+    );
+    expect(result.synthesized[0]?.reason).toBe('no_op_reverification_done_declared');
+  });
+
   it('returns empty when expectedArtifacts does not include implementation-log.md', async () => {
     const result = await guard.synthesizeMissingArtifactsIfDoneDeclared(
       makeInput({ expectedArtifacts: ['some-other-artifact.md'] }),

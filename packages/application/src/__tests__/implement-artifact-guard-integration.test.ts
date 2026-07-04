@@ -94,6 +94,44 @@ describe('ImplementHandler × ImplementArtifactGuard', () => {
     expect(step?.status).toBe('success');
   });
 
+  it('recovers via guard when multiple expected artifacts are missing (e.g., log and result file)', async () => {
+    const { ctx, events } = makeCtx(artifacts);
+    const runStep = vi.fn().mockResolvedValue({ outcome: 'failed' });
+    guard.nextResult = {
+      synthesized: [
+        { artifact: 'implementation-log.md', reason: 'no_op_reverification_done_declared' },
+      ],
+    };
+
+    const resolveInvocation = vi.fn().mockResolvedValue({
+      startCommitSha: 'abc123',
+      endCommitSha: 'abc123',
+      durationMs: 1000,
+      outcome: 'contract_violation' as const,
+      stdoutTail: 'Status: DONE\n',
+      stderrTail: '',
+      resultJsonPath: undefined,
+      expectedArtifacts: ['implementation-log.md', 'implement-task-1.result'],
+    });
+
+    const result = await new ImplementHandler({
+      steps,
+      runStep: runStep as unknown as (s: StepRunContext) => Promise<StepRunResult>,
+      implementArtifactGuard: guard,
+      resolveInvocation,
+    }).run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(guard.calls).toHaveLength(1);
+    expect(events.some((e) => e.type === 'step.artifact.synthesized')).toBe(true);
+    const step = steps.findByIndex(
+      'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' as never,
+      'implement' as never,
+      1,
+    );
+    expect(step?.status).toBe('success');
+  });
+
   it('does NOT recover when guard returns empty synthesized list', async () => {
     const { ctx, events } = makeCtx(artifacts);
     const runStep = vi.fn().mockResolvedValue({ outcome: 'failed' });

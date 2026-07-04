@@ -42,7 +42,7 @@ export class ImplementArtifactGuard implements ImplementArtifactGuardPort {
       return { synthesized: [{ artifact: REQUIRED_ARTIFACT, reason: 'already_present' }] };
     }
 
-    if (!this.declaredDone(input)) {
+    if (!(await this.declaredDone(input, artifacts))) {
       return { synthesized: [{ artifact: REQUIRED_ARTIFACT, reason: 'policy_not_satisfied' }] };
     }
 
@@ -81,14 +81,27 @@ export class ImplementArtifactGuard implements ImplementArtifactGuardPort {
     };
   }
 
-  private declaredDone(input: ImplementArtifactGuardInput): boolean {
+  private async declaredDone(
+    input: ImplementArtifactGuardInput,
+    artifacts: ArtifactStore,
+  ): Promise<boolean> {
     const tail = `${input.invocationTranscript.stdoutTail}\n${input.invocationTranscript.stderrTail}`;
     const tailLines = tail.split(/\r?\n/).slice(-40);
     if (tailLines.some((line) => STATUS_REGEX.test(line))) return true;
     if (input.invocationTranscript.resultJsonPath) {
-      return /\b(DONE|DONE_WITH_CONCERNS)\b/.test(
-        `${input.invocationTranscript.stdoutTail}\n${input.invocationTranscript.stderrTail}`,
-      );
+      try {
+        const content = await artifacts.read(
+          input.runId,
+          input.invocationTranscript.resultJsonPath,
+        );
+        const parsed = JSON.parse(content);
+        if (parsed && typeof parsed.result === 'string') {
+          const res = parsed.result.toUpperCase();
+          return res === 'DONE' || res === 'DONE_WITH_CONCERNS';
+        }
+      } catch {
+        return false;
+      }
     }
     return false;
   }
