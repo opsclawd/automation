@@ -12,10 +12,35 @@ import {
 } from 'node:fs';
 import { resolve, join, dirname, basename, relative, isAbsolute } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
+import { ConfigError } from '@ai-sdlc/shared';
 import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentPort } from '@ai-sdlc/application/ports';
 import type { AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import { runExternalCli } from './external-cli-runner.js';
+
+const AGY_MODEL_SLUG_TO_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  'gemini-3.1-pro-low': 'Gemini 3.1 Pro (Low)',
+  'gemini-3.1-pro-high': 'Gemini 3.1 Pro (High)',
+  'gemini-3.5-flash-low': 'Gemini 3.5 Flash (Low)',
+  'gemini-3.5-flash-medium': 'Gemini 3.5 Flash (Medium)',
+  'gemini-3.5-flash-high': 'Gemini 3.5 Flash (High)',
+  'claude-sonnet-4.6-thinking': 'Claude Sonnet 4.6 (Thinking)',
+  'claude-opus-4.6-thinking': 'Claude Opus 4.6 (Thinking)',
+  'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
+});
+
+function resolveAgyModelLabel(slug: string | undefined): string | null {
+  if (slug === undefined || slug === '' || slug === 'default') return null;
+  const label = AGY_MODEL_SLUG_TO_LABEL[slug];
+  if (label === undefined) {
+    throw new ConfigError(
+      `antigravity profile configured with unknown model '${slug}'. ` +
+        `Known slugs: ${Object.keys(AGY_MODEL_SLUG_TO_LABEL).join(', ')}. ` +
+        `Update the slug-to-label table or pick a known slug.`,
+    );
+  }
+  return label;
+}
 
 export interface AntigravityAdapterOptions {
   binaryPath?: string;
@@ -192,17 +217,6 @@ async function findArtifactInBrainDir(
   return matches[0]!.path;
 }
 
-const SLUG_TO_LABEL: Record<string, string> = {
-  'gemini-3.5-flash-medium': 'Gemini 3.5 Flash (Medium)',
-  'gemini-3.5-flash-high': 'Gemini 3.5 Flash (High)',
-  'gemini-3.5-flash-low': 'Gemini 3.5 Flash (Low)',
-  'gemini-3.1-pro-low': 'Gemini 3.1 Pro (Low)',
-  'gemini-3.1-pro-high': 'Gemini 3.1 Pro (High)',
-  'claude-sonnet-4.6-thinking': 'Claude Sonnet 4.6 (Thinking)',
-  'claude-opus-4.6-thinking': 'Claude Opus 4.6 (Thinking)',
-  'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
-};
-
 export class AntigravityAgentAdapter implements AgentPort {
   constructor(private readonly opts: AntigravityAdapterOptions) {}
 
@@ -231,19 +245,17 @@ export class AntigravityAgentAdapter implements AgentPort {
     // actual orchestrator budget regardless of profile or caller overrides.
     const printTimeoutMs = request.timeoutMs ?? this.opts.timeoutMsDefault ?? 30 * 60 * 1000;
     const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
+    const modelLabel = resolveAgyModelLabel(request.model);
     const args = [
       '--dangerously-skip-permissions',
       '--add-dir',
       request.cwd,
       '--print-timeout',
       `${printTimeoutMins}m`,
+      ...(modelLabel !== null ? ['--model', modelLabel] : []),
+      '--print',
+      '-',
     ];
-
-    if (request.model && SLUG_TO_LABEL[request.model]) {
-      args.push('--model', SLUG_TO_LABEL[request.model]!);
-    }
-
-    args.push('--print', '-');
     const result = await runExternalCli({
       runtime: 'antigravity',
       bin,

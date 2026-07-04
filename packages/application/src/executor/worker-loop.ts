@@ -37,7 +37,9 @@ export interface WorkerLoopDeps {
     reclaimedByWorkerId: WorkerId;
     reason: string;
   }) => void;
+  onProgress?: () => void;
   outerSignal?: AbortSignal;
+  heartbeatIntervalMs?: number;
 }
 
 function isRunnable(status: string): boolean {
@@ -71,6 +73,8 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   const skippedJobIds = new Set<JobId>();
 
   while (true) {
+    // Reset the scheduler's watchdog timer at the start of each job claim cycle.
+    deps.onProgress?.();
     const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds, ttlMs: deps.ttlMs });
     if (!job) {
       return;
@@ -98,12 +102,15 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
           try {
             const now = deps.now();
             leases.heartbeat(job.repoId, workerId, now, new Date(now.getTime() + deps.ttlMs));
+            // Signal progress to the scheduler's watchdog on every successful lease heartbeat.
+            // As long as the worker can heartbeat its lease, the run is making progress.
+            deps.onProgress?.();
           } catch {
             clearInterval(heartbeatInterval);
             abortController.abort();
           }
         },
-        Math.max(Math.floor(deps.ttlMs / 2), 1_000),
+        Math.max(Math.floor(deps.ttlMs / 2), deps.heartbeatIntervalMs ?? 1_000),
       );
 
       try {

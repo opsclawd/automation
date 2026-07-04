@@ -30,6 +30,7 @@ export interface ResumeRunDeps {
 }
 
 export interface ResumeTransitionState {
+  savedStatus: RunStatus;
   savedCompletedAt: Date | null;
   savedFailureReason: string | null;
   savedCurrentPhase: string | null;
@@ -66,6 +67,7 @@ export class ResumeRun implements ResumeRunUseCase {
       throw new Error(`Cannot resume run ${input.runId}: repo '${repo.fullName}' is disabled`);
     }
 
+    const savedStatus = run.status;
     const savedCompletedAt = run.completedAt;
     const savedFailureReason = run.failureReason;
     const savedCurrentPhase = run.currentPhase || null;
@@ -121,7 +123,7 @@ export class ResumeRun implements ResumeRunUseCase {
       const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
         input.runId,
         {
-          status: 'failed' as RunStatus,
+          status: savedStatus,
           completedAt: savedCompletedAt ?? null,
           failureReason: savedFailureReason ?? null,
           currentPhase: savedCurrentPhase ?? null,
@@ -145,6 +147,7 @@ export class ResumeRun implements ResumeRunUseCase {
     }
 
     return {
+      savedStatus,
       savedCompletedAt: savedCompletedAt ?? null,
       savedFailureReason: savedFailureReason ?? null,
       savedCurrentPhase: savedCurrentPhase ?? null,
@@ -213,7 +216,7 @@ export class ResumeRun implements ResumeRunUseCase {
         const rollbackOk = this.deps.runRepository.atomicUpdateByUuid(
           input.runId,
           {
-            status: 'failed' as RunStatus,
+            status: transitionState.savedStatus,
             completedAt: transitionState.savedCompletedAt ?? null,
             failureReason: transitionState.savedFailureReason ?? null,
             currentPhase: transitionState.savedCurrentPhase ?? null,
