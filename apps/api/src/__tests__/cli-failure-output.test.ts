@@ -56,8 +56,10 @@ describe('CLI failure output', () => {
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
           defaultProfile: 'test',
-          profiles: { test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 } },
-          phaseProfiles: { 'read_issue': { profile: 'test' } },
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: { read_issue: { profile: 'test' } },
         },
       }),
     );
@@ -98,14 +100,22 @@ describe('CLI failure output', () => {
       });
 
       await program.parseAsync([
-        'node', 'orchestrator', 'run', '--issue', '1', '--executor', 'ts', '--script', '/dev/null'
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '1',
+        '--executor',
+        'ts',
+        '--script',
+        '/dev/null',
       ]);
 
-      const output = consoleErrorSpy.mock.calls.map(call => String(call[0])).join('\n');
+      const output = consoleErrorSpy.mock.calls.map((call) => String(call[0])).join('\n');
       expect(output).toContain('Run failed: worker loop terminated without finalizing run');
       expect(output).toContain('Run UUID:');
       expect(output).toContain('Resume with: orchestrator runs resume --uuid');
-      expect(output).toContain('--confirm');
+      expect(output).not.toContain('--confirm');
     } finally {
       process.chdir(savedCwd);
     }
@@ -140,14 +150,22 @@ describe('CLI failure output', () => {
       });
 
       await program.parseAsync([
-        'node', 'orchestrator', 'run', '--issue', '1', '--executor', 'bash', '--script', scriptPath
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '1',
+        '--executor',
+        'bash',
+        '--script',
+        scriptPath,
       ]);
 
-      const output = consoleErrorSpy.mock.calls.map(call => String(call[0])).join('\n');
+      const output = consoleErrorSpy.mock.calls.map((call) => String(call[0])).join('\n');
       expect(output).toContain('Run failed:');
       expect(output).toContain('Run UUID:');
       expect(output).toContain('Resume with: orchestrator runs resume --uuid');
-      expect(output).toContain('--confirm');
+      expect(output).not.toContain('--confirm');
     } finally {
       process.chdir(savedCwd);
     }

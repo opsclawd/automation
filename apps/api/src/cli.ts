@@ -88,7 +88,10 @@ function printRunFailureSummary(uuid: string, reason?: string): void {
   const prefix = reason ? `Run failed: ${reason}` : 'Run failed.';
   console.error(prefix);
   console.error(`Run UUID: ${uuid}`);
-  console.error(`Resume with: orchestrator runs resume --uuid ${uuid} --confirm`);
+  // No --confirm in the hint: `runs resume` intentionally stops and warns
+  // when the failed phase is unsafe to retry, and pre-confirming would skip
+  // that guard for anyone who copy-pastes the command.
+  console.error(`Resume with: orchestrator runs resume --uuid ${uuid}`);
 }
 
 function startWorkerRegistryHeartbeat(
@@ -509,7 +512,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               },
               'running',
             );
-            printRunFailureSummary(run.uuid, failureReason);
+            // Only suggest resuming if the run row actually exists —
+            // insertIfNoActive may have thrown before inserting it.
+            if (c.runRepository.findByUuid(run.uuid)) {
+              printRunFailureSummary(run.uuid, failureReason);
+            } else {
+              console.error(`Run failed: ${failureReason}`);
+            }
             process.exit(EXIT_USER_ERROR);
           }
         } else {
