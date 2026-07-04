@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram as originalBuildProgram } from '../cli.js';
 import { WorkerScheduler } from '../worker-scheduler.js';
 import { JobQueueRepository } from '@ai-sdlc/infrastructure';
+import { JobId, RepositoryId, RunId, IssueNumber } from '@ai-sdlc/domain';
 
 function buildProgram(opts?: Parameters<typeof originalBuildProgram>[0]) {
   return originalBuildProgram({
@@ -66,15 +67,27 @@ describe('CLI failure output', () => {
     try {
       vi.spyOn(WorkerScheduler.prototype, 'runUntilComplete').mockResolvedValue(undefined);
       vi.spyOn(JobQueueRepository.prototype, 'findById').mockReturnValue({
+        id: JobId('mock-job'),
+        runId: RunId('mock-run-uuid'),
+        repoId: RepositoryId('owner/repo'),
+        issueNumber: IssueNumber(1),
         status: 'failed',
-      } as any);
+        priority: 0,
+        attempts: 1,
+        createdAt: new Date(),
+      });
 
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: any, cb: any) => {
-        if (typeof cb === 'function') cb();
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
         return true;
-      }) as any);
+      }) as never);
 
       const program = buildProgram({
         composeOverrides: {
@@ -108,10 +121,15 @@ describe('CLI failure output', () => {
     try {
       const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: any, cb: any) => {
-        if (typeof cb === 'function') cb();
+      vi.spyOn(process.stdout, 'write').mockImplementation(((
+        chunk: string | Uint8Array,
+        cbOrEnc?: unknown,
+        cb2?: unknown,
+      ) => {
+        const cb = typeof cbOrEnc === 'function' ? cbOrEnc : cb2;
+        if (typeof cb === 'function') (cb as (e?: Error | null) => void)(null);
         return true;
-      }) as any);
+      }) as never);
 
       const program = buildProgram({
         composeOverrides: {
