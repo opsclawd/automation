@@ -339,4 +339,32 @@ describe('WorkerScheduler', () => {
       scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
     ).resolves.toBeUndefined();
   });
+
+  it('resets the watchdog when onProgress is called', async () => {
+    let callCount = 0;
+    const queue: JobQueuePort = {
+      ...makeQueue({}),
+      findById: vi.fn(() => {
+        callCount++;
+        return makeJob('job-1', callCount === 1 ? 'queued' : 'succeeded');
+      }),
+    };
+
+    vi.mocked(workerLoop).mockImplementationOnce(async (_wid, deps) => {
+      // Wait for more than the timeout (100ms), but signal progress in between
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      deps.onProgress?.();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      deps.onProgress?.();
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    });
+
+    const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 5, 100);
+    const start = Date.now();
+    await expect(
+      scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
+    ).resolves.toBeUndefined();
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeGreaterThanOrEqual(180);
+  });
 });
