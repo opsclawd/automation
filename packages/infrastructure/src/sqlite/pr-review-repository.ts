@@ -6,6 +6,7 @@ import {
   type PollAttempt,
   type CommentState,
   type CommentOutcome,
+  type CommentSeverity,
   type PollStatus,
 } from '@ai-sdlc/domain';
 import type { PrReviewRepositoryPort } from '@ai-sdlc/application/ports';
@@ -19,6 +20,7 @@ interface CommentRow {
   reviewer: string;
   body: string;
   state: string;
+  severity: string | null;
   attempts: number;
   outcome: string | null;
   reply_id: number | null;
@@ -42,6 +44,7 @@ function rowToComment(r: CommentRow): PrReviewComment {
     reviewer: r.reviewer,
     body: r.body,
     state: r.state as CommentState,
+    ...(r.severity !== null ? { severity: r.severity as CommentSeverity } : {}),
     attempts: r.attempts,
     ...(r.outcome !== null ? { outcome: r.outcome as CommentOutcome } : {}),
     ...(r.reply_id !== null ? { replyId: r.reply_id } : {}),
@@ -100,17 +103,17 @@ export class PrReviewRepository implements PrReviewRepositoryPort {
     this.db
       .prepare(
         `INSERT INTO pr_review_comments
-          (run_uuid, pr_number, comment_id, path, line, reviewer, body, state, attempts,
+          (run_uuid, pr_number, comment_id, path, line, reviewer, body, state, severity, attempts,
            outcome, reply_id, commit_sha, commit_verified, reply_verified, build_verified,
            blocked_reason, last_poll, created_at, updated_at)
          VALUES
-          (@runUuid, @prNumber, @commentId, @path, @line, @reviewer, @body, @state, @attempts,
+          (@runUuid, @prNumber, @commentId, @path, @line, @reviewer, @body, @state, @severity, @attempts,
            @outcome, @replyId, @commitSha, @commitVerified, @replyVerified, @buildVerified,
            @blockedReason, @lastPoll, @createdAt, @updatedAt)
          ON CONFLICT(run_uuid, comment_id) DO UPDATE SET
            pr_number=excluded.pr_number, path=excluded.path, line=excluded.line,
            reviewer=excluded.reviewer, body=excluded.body,
-           state=excluded.state, attempts=excluded.attempts, outcome=excluded.outcome,
+           state=excluded.state, severity=excluded.severity, attempts=excluded.attempts, outcome=excluded.outcome,
            reply_id=excluded.reply_id, commit_sha=excluded.commit_sha,
            commit_verified=excluded.commit_verified, reply_verified=excluded.reply_verified,
            build_verified=excluded.build_verified, blocked_reason=excluded.blocked_reason,
@@ -125,6 +128,7 @@ export class PrReviewRepository implements PrReviewRepositoryPort {
         reviewer: c.reviewer,
         body: c.body,
         state: c.state,
+        severity: c.severity ?? null,
         attempts: c.attempts,
         outcome: c.outcome ?? null,
         replyId: c.replyId ?? null,

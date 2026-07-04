@@ -7,6 +7,7 @@ import {
   resetForRetry,
   blockComment,
   isUnresolved,
+  parseSeverity,
   CommentStateError,
 } from '../pr-review.js';
 
@@ -21,6 +22,48 @@ const base = () =>
     body: 'please fix',
     now: new Date('2026-06-04T00:00:00Z'),
   });
+
+describe('pr-review domain helpers', () => {
+  describe('parseSeverity', () => {
+    it('detects critical severity', () => {
+      expect(parseSeverity('this is critical')).toBe('critical');
+      expect(parseSeverity('P0 issue')).toBe('critical');
+    });
+
+    it('detects high severity', () => {
+      expect(parseSeverity('high priority')).toBe('high');
+      expect(parseSeverity('P1 finding')).toBe('high');
+    });
+
+    it('detects medium severity', () => {
+      expect(parseSeverity('medium severity')).toBe('medium');
+      expect(parseSeverity('P2 note')).toBe('medium');
+    });
+
+    it('detects low severity', () => {
+      expect(parseSeverity('low impact')).toBe('low');
+      expect(parseSeverity('P3 nit')).toBe('low');
+    });
+
+    it('returns undefined for unknown body', () => {
+      expect(parseSeverity('just a comment')).toBeUndefined();
+    });
+  });
+
+  it('populates severity from body in createPrReviewComment', () => {
+    const c = createPrReviewComment({
+      runId: RunId('11111111-1111-1111-1111-111111111111'),
+      prNumber: 1,
+      commentId: 1,
+      path: 'a.ts',
+      line: 1,
+      reviewer: 'r',
+      body: 'this is critical',
+      now: new Date(),
+    });
+    expect(c.severity).toBe('critical');
+  });
+});
 
 describe('PrReviewComment state machine', () => {
   it('starts pending with zero attempts', () => {
