@@ -124,6 +124,7 @@ import {
   AntigravityAgentAdapter,
   ClaudeCodeAgentAdapter,
   CodexAgentAdapter,
+  ImplementArtifactGuard,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
@@ -1979,12 +1980,18 @@ export function composeRoot(opts: ComposeOptions): Container {
         blockOversizedTasks: config.taskSplitting.blockOversizedTasks,
       });
 
+      const implementArtifactGuard = new ImplementArtifactGuard({
+        artifacts: artifactStoreForRun,
+        git: gitAdapter,
+      });
+
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
           runStep,
           setup: worktreeSetup,
           lintTaskSize: lintTaskSizeDep,
+          implementArtifactGuard,
         }),
       );
 

@@ -10,6 +10,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./agent/implement-artifact-guard": {
+      "development": "./src/agent/implement-artifact-guard.ts",
+      "types": "./dist/agent/implement-artifact-guard.d.ts",
+      "import": "./dist/agent/implement-artifact-guard.js"
     }
   },
   "files": [

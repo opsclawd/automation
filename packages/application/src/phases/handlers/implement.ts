@@ -2,6 +2,7 @@ import { PhaseName } from '@ai-sdlc/domain';
 import type { FailureKind } from '@ai-sdlc/domain';
 import type { PhaseHandler, PhaseHandlerContext, PhaseResult, EventEmitter } from '../handler.js';
 import type { StepRepositoryPort } from '../../ports/step-repository-port.js';
+import type { ImplementArtifactGuardPort } from '../../ports/implement-artifact-guard-port.js';
 import type { Step, RunId } from '@ai-sdlc/domain';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
@@ -37,6 +38,7 @@ export interface ImplementHandlerOpts {
   runStep: (sctx: StepRunContext) => Promise<StepRunResult>;
   setup?: (cwd: string) => Promise<{ ok: boolean; error?: string }>;
   lintTaskSize?: (cwd: string, manifest: TaskManifest) => Promise<LintTaskSizeResult>;
+  implementArtifactGuard?: ImplementArtifactGuardPort;
 }
 
 export class ImplementHandler implements PhaseHandler {
