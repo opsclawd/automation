@@ -224,4 +224,29 @@ describe('PrReviewComment state machine', () => {
     expect(err).toBeInstanceOf(CommentStateError);
     expect(err.name).toBe('CommentStateError');
   });
+
+  it('markProcessed throws CommentStateError when buildVerified is false on a fixed outcome (#621 trap)', () => {
+    const replied = markReplied(base(), {
+      replyId: 555,
+      outcome: 'fixed',
+      commitSha: 'abc',
+      poll: 1,
+    });
+    let caught: unknown;
+    try {
+      markProcessed(replied, {
+        commitVerified: true,
+        replyVerified: true,
+        buildVerified: false,
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(CommentStateError);
+    expect(String(caught)).toMatch(/build.*false|verification incomplete/);
+    // Side-effect guard: the original comment object must NOT be mutated
+    // by a failed markProcessed call.
+    expect(replied.state).toBe('replied');
+    expect(replied.buildVerified).toBe(false);
+  });
 });
