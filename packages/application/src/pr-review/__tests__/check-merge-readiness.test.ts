@@ -76,7 +76,7 @@ describe('CheckMergeReadiness', () => {
     const c1 = baseComment(1, 'this is critical');
     // Simulate legacy record without severity field by stripping it
     const { severity: _, ...legacyComment } = c1;
-    prReviewRepo.upsertComment(legacyComment as any);
+    prReviewRepo.upsertComment(legacyComment as import('@ai-sdlc/domain').PrReviewComment);
 
     const useCase = new CheckMergeReadiness({ prReviewRepo });
     const result = await useCase.execute(runId);
