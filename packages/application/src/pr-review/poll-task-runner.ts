@@ -9,6 +9,7 @@ import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import { verifyComment } from './verify-comment.js';
+import { isDiffNearLine } from './diff-utils.js';
 
 export interface PollTaskRunnerDeps {
   github: GitHubPort;
@@ -245,6 +246,27 @@ export class PollTaskRunner {
           processed: false,
           blocked: false,
           ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
+        };
+      }
+
+      // 4. Structural Verification (#610): check if the diff actually touches
+      // the requested file and region before spending a full LLM pass.
+      const diffForFile = await d.git.diff(input.cwd, input.startCommitSha, fixCommitSha, {
+        path: comment.path,
+        unified: 0,
+      });
+
+      if (!isDiffNearLine(diffForFile, comment.line)) {
+        await this.resetToStart(input);
+        const reason = !diffForFile.trim()
+          ? `fix did not modify ${comment.path}`
+          : `fix modified ${comment.path} but not near line ${comment.line}`;
+        return {
+          commentId: comment.commentId,
+          action: 'fixed',
+          processed: false,
+          blocked: false,
+          codeVerifyReason: `structural verification failed: ${reason}`,
         };
       }
 

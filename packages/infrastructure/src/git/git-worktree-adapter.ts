@@ -101,8 +101,24 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     await git(cwd, ['reset', '--hard', commitSha]);
   }
 
-  async diff(cwd: string, base: string, head?: string): Promise<string> {
-    return head ? git(cwd, ['diff', base, head]) : git(cwd, ['diff', base]);
+  async diff(
+    cwd: string,
+    base: string,
+    head?: string,
+    options?: { path?: string; unified?: number },
+  ): Promise<string> {
+    const args = ['diff'];
+    if (options?.unified !== undefined) {
+      args.push(`--unified=${options.unified}`);
+    }
+    args.push(base);
+    if (head) {
+      args.push(head);
+    }
+    if (options?.path) {
+      args.push('--', options.path);
+    }
+    return git(cwd, args);
   }
 
   async diffStat(cwd: string, base: string, head?: string): Promise<string> {

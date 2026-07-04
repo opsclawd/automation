@@ -154,6 +154,56 @@ describe('PollTaskRunner — happy path', () => {
     );
   });
 
+  it('rejects a fixed comment when diff does not touch the requested file', async () => {
+    const { deps, git, agent } = makeDeps();
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'def456');
+      return makeSuccessAgentResult();
+    });
+    // Return empty diff for the file
+    git.diffResults.set('/work/tree|abc123|def456|a.ts', '');
+
+    const runner = new PollTaskRunner(deps);
+    const out = await runner.execute(makeInput());
+
+    expect(out).toEqual({
+      commentId: 9001,
+      action: 'fixed',
+      processed: false,
+      blocked: false,
+      codeVerifyReason: 'structural verification failed: fix did not modify a.ts',
+    });
+    expect(git.pushes).toHaveLength(0);
+    expect(git.headByCwd.get('/work/tree')).toBe('abc123'); // rolled back
+  });
+
+  it('rejects a fixed comment when diff touches the file but not the requested line', async () => {
+    const { deps, git, agent } = makeDeps();
+    agent.clearQueue('post-pr-review-profile');
+    agent.enqueue('post-pr-review-profile', () => {
+      git.headByCwd.set('/work/tree', 'def456');
+      return makeSuccessAgentResult();
+    });
+    // Diff at line 100, while comment is at line 3
+    git.diffResults.set(
+      '/work/tree|abc123|def456|a.ts',
+      '@@ -100,1 +100,1 @@\n-old\n+new',
+    );
+
+    const runner = new PollTaskRunner(deps);
+    const out = await runner.execute(makeInput());
+
+    expect(out).toEqual({
+      commentId: 9001,
+      action: 'fixed',
+      processed: false,
+      blocked: false,
+      codeVerifyReason: 'structural verification failed: fix modified a.ts but not near line 3',
+    });
+    expect(git.pushes).toHaveLength(0);
+  });
+
   it('processes a no_fix comment', async () => {
     const { deps, github, git } = makeDeps({
       extractTaskResult: async () => ({

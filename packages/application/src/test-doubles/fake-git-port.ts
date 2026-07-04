@@ -42,7 +42,24 @@ export class FakeGitPort implements GitPort {
     this.headByCwd.set(cwd, commitSha);
   }
 
-  async diff(cwd: string, base: string, head?: string): Promise<string> {
+  diffResults = new Map<string, string>();
+
+  async diff(
+    cwd: string,
+    base: string,
+    head?: string,
+    options?: { path?: string; unified?: number },
+  ): Promise<string> {
+    const key = `${cwd}|${base}|${head ?? 'HEAD'}|${options?.path ?? '*'}`;
+    const result = this.diffResults.get(key);
+    if (result !== undefined) return result;
+
+    if (options?.path) {
+      // Default to a diff that matches any line to avoid breaking existing tests
+      // that don't care about structural verification.
+      return `@@ -1,1000 +1,1000 @@\n modification in ${options.path}`;
+    }
+
     return `diff for ${cwd} ${base}..${head ?? 'HEAD'}`;
   }
 
