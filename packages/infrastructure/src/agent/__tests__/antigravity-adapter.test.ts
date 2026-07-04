@@ -892,7 +892,8 @@ exit 0
       });
       await adapter.invoke(req(cwd, { model: 'gemini-3.5-flash-high' }));
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
-      expect(args).toContain('--model');
+      const tokens = args.split(' ');
+      expect(tokens).toContain('--model');
       expect(args).toContain('Gemini 3.5 Flash (High)');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
@@ -912,13 +913,79 @@ exit 0
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       // fake-agy-args-logger.sh writes `$@` (space-joined) — find the indices.
       // Use a leading space on '--print' so we don't match the '--print' inside '--print-timeout'.
-      const timeoutIdx = args.indexOf('--print-timeout');
-      const modelIdx = args.indexOf('--model');
-      const printIdx = args.indexOf(' --print ');
+      const tokens = args.split(' ');
+      const timeoutIdx = tokens.indexOf('--print-timeout');
+      const modelIdx = tokens.indexOf('--model');
+      const printIdx = tokens.indexOf('--print');
       expect(timeoutIdx).toBeGreaterThanOrEqual(0);
       expect(modelIdx).toBeGreaterThan(timeoutIdx);
       expect(printIdx).toBeGreaterThan(modelIdx);
       expect(args).toContain('Gemini 3.5 Flash (Low)');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws ConfigError for unknown model slug', async () => {
+    const cwd = makeWorktree();
+    const adapter = new AntigravityAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+      artifactsDir: cwd,
+    });
+    await expect(adapter.invoke(req(cwd, { model: 'nonexistent-model' }))).rejects.toThrow(
+      /unknown model 'nonexistent-model'/,
+    );
+  });
+
+  it('omits --model when model is default', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: 'default' }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      const tokens = args.split(' ');
+      expect(tokens).not.toContain('--model');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits --model when model is undefined', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: undefined }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      const tokens = args.split(' ');
+      expect(tokens).not.toContain('--model');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('omits --model when model is empty string', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd, { model: '' }));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      const tokens = args.split(' ');
+      expect(tokens).not.toContain('--model');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }

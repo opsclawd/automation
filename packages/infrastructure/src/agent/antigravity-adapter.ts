@@ -29,12 +29,17 @@ const AGY_MODEL_SLUG_TO_LABEL: Readonly<Record<string, string>> = Object.freeze(
   'gpt-oss-120b-medium': 'GPT-OSS 120B (Medium)',
 });
 
-function resolveAgyModelLabel(
-  slug: string | undefined,
-  known: Readonly<Record<string, string>> = AGY_MODEL_SLUG_TO_LABEL,
-): string | null {
+function resolveAgyModelLabel(slug: string | undefined): string | null {
   if (slug === undefined || slug === '' || slug === 'default') return null;
-  return known[slug] ?? null;
+  const label = AGY_MODEL_SLUG_TO_LABEL[slug];
+  if (label === undefined) {
+    throw new ConfigError(
+      `antigravity profile configured with unknown model '${slug}'. ` +
+        `Known slugs: ${Object.keys(AGY_MODEL_SLUG_TO_LABEL).join(', ')}. ` +
+        `Update the slug-to-label table or pick a known slug.`,
+    );
+  }
+  return label;
 }
 
 export interface AntigravityAdapterOptions {
@@ -240,20 +245,7 @@ export class AntigravityAgentAdapter implements AgentPort {
     // actual orchestrator budget regardless of profile or caller overrides.
     const printTimeoutMs = request.timeoutMs ?? this.opts.timeoutMsDefault ?? 30 * 60 * 1000;
     const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
-    const modelSlug = request.model;
-    const modelLabel = resolveAgyModelLabel(modelSlug);
-    if (
-      modelSlug !== undefined &&
-      modelSlug !== '' &&
-      modelSlug !== 'default' &&
-      modelLabel === null
-    ) {
-      throw new ConfigError(
-        `antigravity profile configured with unknown model '${modelSlug}'. ` +
-          `Known slugs: ${Object.keys(AGY_MODEL_SLUG_TO_LABEL).join(', ')}. ` +
-          `Update the slug-to-label table or pick a known slug.`,
-      );
-    }
+    const modelLabel = resolveAgyModelLabel(request.model);
     const args = [
       '--dangerously-skip-permissions',
       '--add-dir',
