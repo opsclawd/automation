@@ -104,33 +104,17 @@ describe('findMisplacedCandidate', () => {
     const cwd = makeTmpDir();
     try {
       makeGitRepo(cwd);
-      mkdirSync(join(cwd, 'node_modules', 'pkg'), { recursive: true });
-      const filePath = join(cwd, 'node_modules', 'pkg', 'design.md');
-      writeFileSync(filePath, '# Noise');
-      const startMs = Date.now();
-      const futureSec = (startMs + 2000) / 1000;
-      utimesSync(filePath, futureSec, futureSec);
-      const result = findMisplacedCandidate(cwd, 'design.md', startMs);
-      expect(result).toBeNull();
-    } finally {
-      rmSync(cwd, { recursive: true, force: true });
-    }
-  });
 
-  it('skips orchestration dirs so a concurrent run’s fresh artifact is never recovered', () => {
-    const cwd = makeTmpDir();
-    try {
-      makeGitRepo(cwd);
-      const startMs = Date.now();
-      const futureSec = (startMs + 2000) / 1000;
-      for (const dir of ['.ai-worktrees', '.ai-runs', '.claude']) {
-        mkdirSync(join(cwd, dir, 'other-run'), { recursive: true });
-        const filePath = join(cwd, dir, 'other-run', 'result.json');
-        writeFileSync(filePath, '{}');
+      for (const noise of ['node_modules', '.ai-worktrees', '.ai-runs', '.claude']) {
+        mkdirSync(join(cwd, noise, 'pkg'), { recursive: true });
+        const filePath = join(cwd, noise, 'pkg', 'design.md');
+        writeFileSync(filePath, `# Noise in ${noise}`);
+        const startMs = Date.now();
+        const futureSec = (startMs + 2000) / 1000;
         utimesSync(filePath, futureSec, futureSec);
+        const result = findMisplacedCandidate(cwd, 'design.md', startMs);
+        expect(result, `Should skip ${noise}`).toBeNull();
       }
-      const result = findMisplacedCandidate(cwd, 'result.json', startMs);
-      expect(result).toBeNull();
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
