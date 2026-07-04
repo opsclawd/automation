@@ -15,9 +15,9 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
   async execute(input: { runId: RunId; workerId: WorkerId }): Promise<void> {
     const run = this.deps.runRepository.findByUuid(input.runId);
     if (!run) throw new Error(`No run found for ${input.runId}`);
-    if (run.status !== 'failed' && run.status !== 'blocked') {
+    if (run.status !== 'failed' && run.status !== 'blocked' && run.status !== 'needs_human_review') {
       throw new Error(
-        `Cannot retry phase for run ${input.runId}: status is '${run.status}', expected 'failed' or 'blocked'`,
+        `Cannot retry phase for run ${input.runId}: status is '${run.status}', expected 'failed', 'blocked', or 'needs_human_review'`,
       );
     }
     const phases = this.deps.phaseRepo.listByRun(input.runId);
@@ -26,7 +26,11 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
       throw new Error(`Cannot retry phase for run ${input.runId}: no current phase to retry`);
     }
     const recoverablePhaseAttempts = phases
-      .filter((p) => p.name === phaseName && (p.status === 'failed' || p.status === 'blocked'))
+      .filter(
+        (p) =>
+          p.name === phaseName &&
+          (p.status === 'failed' || p.status === 'blocked' || p.status === 'needs_human_review'),
+      )
       .map((p) => p.attempt ?? 0);
     const maxAttempt =
       recoverablePhaseAttempts.length > 0 ? Math.max(...recoverablePhaseAttempts) : 0;
@@ -41,7 +45,9 @@ export class RetryFailedPhase implements RetryFailedPhaseUseCase {
 
 function latestRecoverablePhaseName(phases: Phase[]): string | undefined {
   const recoverable = phases
-    .filter((p) => p.status === 'failed' || p.status === 'blocked')
+    .filter(
+      (p) => p.status === 'failed' || p.status === 'blocked' || p.status === 'needs_human_review',
+    )
     .slice()
     .sort((a, b) => (b.completedAt?.getTime() ?? 0) - (a.completedAt?.getTime() ?? 0));
   return recoverable[0]?.name;

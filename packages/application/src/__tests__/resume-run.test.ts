@@ -400,9 +400,12 @@ describe('ResumeRun', () => {
     await expect(
       usecase.execute({ runId: rid('run-1'), workerId: wid('w-1'), fromPhase: 'test-phase' }),
     ).rejects.toThrow(/queue unavailable/);
+
+    // Verify rollback through recorded updates
+    const lastUpdate = runRepo.updates[runRepo.updates.length - 1]!;
+    expect(lastUpdate.patch.status).toBe('failed');
+    expect(lastUpdate.patch.completedAt).toEqual(completedAt);
     const run = runRepo.findByUuid('run-1')!;
-    expect(run.status).toBe('failed');
-    expect(run.completedAt).toEqual(completedAt);
     expect(run.failureReason).toBe('lint failed');
     const steps = stepRepo.listForRun(rid('run-1'));
     expect(steps).toHaveLength(1);
@@ -412,6 +415,44 @@ describe('ResumeRun', () => {
     const phases = phaseRepo.listByRun(rid('run-1'));
     expect(phases).toHaveLength(1);
     expect(phases[0]!.status).toBe('failed');
+    expect(leases.current(repoid('run-1'))).toBeUndefined();
+  });
+
+  it('reverts status on enqueue failure for needs_human_review, restores failure metadata', async () => {
+    class FakeQueueWithThrow extends FakeJobQueuePort {
+      override enqueue(): void {
+        throw new Error('queue unavailable');
+      }
+    }
+    const runRepo = new FakeRunRepository();
+    const completedAt = new Date('2026-06-01T12:00:00Z');
+    const runStatus = 'needs_human_review';
+    runRepo.addRun(makeRun({ status: runStatus, completedAt, failureReason: 'review needed' }));
+    const registry = new FakeWorkerRegistryPort();
+    registry.register({ workerId: wid('w-1'), status: 'healthy' });
+    const leases = new FakeWorkerLeasePort(registry);
+    const repos = new FakeRepositoryPort([seededRepo]);
+    const queue = new FakeQueueWithThrow(repos);
+    const stepRepo = new FakeStepRepository();
+    const usecase = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo: new FakePhaseRepository(),
+      now: fixedNow,
+    });
+    await expect(
+      usecase.execute({ runId: rid('run-1'), workerId: wid('w-1'), fromPhase: 'test-phase' }),
+    ).rejects.toThrow(/queue unavailable/);
+
+    // Verify rollback through recorded updates
+    const lastUpdate = runRepo.updates[runRepo.updates.length - 1]!;
+    expect(lastUpdate.patch.status).toBe(runStatus);
+    expect(lastUpdate.patch.completedAt).toEqual(completedAt);
+    const run = runRepo.findByUuid('run-1')!;
+    expect(run.failureReason).toBe('review needed');
     expect(leases.current(repoid('run-1'))).toBeUndefined();
   });
 
