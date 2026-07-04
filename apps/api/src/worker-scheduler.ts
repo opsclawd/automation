@@ -57,31 +57,36 @@ export class WorkerScheduler {
       const results = await Promise.allSettled(
         this.workerIds.map((wid) => {
           let t: NodeJS.Timeout | undefined;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            if (signal.aborted) {
+              reject(new Error(`aborted before tick`));
+              return;
+            }
+            t = setTimeout(
+              () => reject(new Error(`workerLoop ${wid} timed out after ${timeoutMs}ms`)),
+              timeoutMs,
+            );
+            signal.addEventListener(
+              'abort',
+              () => {
+                if (t) clearTimeout(t);
+                reject(new Error(`aborted during tick`));
+              },
+              { once: true },
+            );
+          });
+
           return Promise.race([
             workerLoop(wid, {
               ...this.baseDeps,
               recoverableRunIds,
               outerSignal: signal,
+              // The worker loop calls onProgress during its lease heartbeat.
+              // We refresh the watchdog timer to allow the run to continue
+              // as long as heartbeats are being maintained.
               onProgress: () => t?.refresh(),
             }),
-            new Promise<never>((_, reject) => {
-              if (signal.aborted) {
-                reject(new Error(`aborted before tick`));
-                return;
-              }
-              t = setTimeout(
-                () => reject(new Error(`workerLoop ${wid} timed out after ${timeoutMs}ms`)),
-                timeoutMs,
-              );
-              signal.addEventListener(
-                'abort',
-                () => {
-                  if (t) clearTimeout(t);
-                  reject(new Error(`aborted during tick`));
-                },
-                { once: true },
-              );
-            }),
+            timeoutPromise,
           ]).finally(() => {
             if (t) clearTimeout(t);
           });
