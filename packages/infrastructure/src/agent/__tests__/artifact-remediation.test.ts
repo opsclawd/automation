@@ -117,6 +117,25 @@ describe('findMisplacedCandidate', () => {
     }
   });
 
+  it('skips orchestration dirs so a concurrent run’s fresh artifact is never recovered', () => {
+    const cwd = makeTmpDir();
+    try {
+      makeGitRepo(cwd);
+      const startMs = Date.now();
+      const futureSec = (startMs + 2000) / 1000;
+      for (const dir of ['.ai-worktrees', '.ai-runs', '.claude']) {
+        mkdirSync(join(cwd, dir, 'other-run'), { recursive: true });
+        const filePath = join(cwd, dir, 'other-run', 'result.json');
+        writeFileSync(filePath, '{}');
+        utimesSync(filePath, futureSec, futureSec);
+      }
+      const result = findMisplacedCandidate(cwd, 'result.json', startMs);
+      expect(result).toBeNull();
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('honors excludePaths', () => {
     const cwd = makeTmpDir();
     try {

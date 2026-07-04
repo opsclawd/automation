@@ -46,6 +46,12 @@ const NOISE_DIRS = new Set([
   'target',
   'out',
   '.gradle',
+  // Orchestration dirs: when scanning repoRoot (shared across concurrent
+  // runs), these hold other runs' worktrees and agent artifacts — a fresh
+  // basename match in there belongs to a different run, not this one.
+  '.ai-worktrees',
+  '.ai-runs',
+  '.claude',
 ]);
 
 export interface RemediateOptions {
