@@ -101,6 +101,7 @@ async function accumulatedLineDelta(
   original: string,
   running: string,
   path: string,
+  targetLine: number,
 ): Promise<ParsedAccumulated> {
   let added = 0;
   let removed = 0;
@@ -115,9 +116,11 @@ async function accumulatedLineDelta(
     ]);
     const hunks = parseUnifiedDiff(out);
     for (const h of hunks) {
-      for (const body of h.bodyLines) {
-        if (body.startsWith('+') && !body.startsWith('+++')) added++;
-        else if (body.startsWith('-') && !body.startsWith('---')) removed++;
+      if (h.oldStart < targetLine) {
+        for (const body of h.bodyLines) {
+          if (body.startsWith('+') && !body.startsWith('+++')) added++;
+          else if (body.startsWith('-') && !body.startsWith('---')) removed++;
+        }
       }
     }
   } catch {
@@ -190,6 +193,7 @@ export function createFixDiffInspector(
         input.originalStartCommitSha,
         input.runningStartSha,
         input.path,
+        targetLine,
       );
       if (acc.removed !== acc.added) {
         // Linear, unambiguous translation when the net delta is constant.

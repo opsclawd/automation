@@ -184,7 +184,6 @@ export async function verifyComment(
         buildVerified,
         codeVerified: false,
         reason: `fix commit does not touch ${comment.path}`,
-        ...(codeVerifyReason !== undefined ? { codeVerifyReason } : {}),
         ...(buildError !== undefined ? { buildError } : {}),
         ...(inspection.reason ? { codeVerifyReason: inspection.reason } : {}),
       };

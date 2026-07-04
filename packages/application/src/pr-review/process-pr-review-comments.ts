@@ -53,8 +53,6 @@ export interface ProcessPrReviewDeps {
   }) => Promise<{ passed: boolean; error?: string }>;
   verifyCodeChange?: VerifyCodeChangeFn;
   fixDiffInspector?: FixDiffInspectorPort;
-  /** SHA the poll started against; used for shift translation in the structural check. */
-  originalStartCommitSha?: string;
   resolveProfileForPhase: (phaseName: string) => AgentProfileName;
   idFactory: () => string;
   now: () => Date;
@@ -160,8 +158,8 @@ export class ProcessPrReviewComments {
 
     const diff = await d.git.diff(input.cwd, 'origin/HEAD');
     const startCommitSha = await d.git.headCommitSha(input.cwd);
-    d.originalStartCommitSha ??= startCommitSha;
-    const originalStart = d.originalStartCommitSha ?? startCommitSha;
+    const originalStartCommitSha = startCommitSha;
+    const originalStart = originalStartCommitSha;
 
     const mainShaBefore = d.baseBranch
       ? await d.git.remoteRef({ cwd: input.cwd, remote: 'origin', ref: d.baseBranch })
@@ -232,7 +230,7 @@ export class ProcessPrReviewComments {
               branch: pr.headRefName,
               prNumber: input.prNumber,
               repoFullName: input.repoFullName,
-              startCommitSha: d.originalStartCommitSha ?? runningStartSha,
+              startCommitSha: originalStartCommitSha,
               ...(input.runId ? { repoId: String(input.runId) } : {}),
             });
             if (verification.ok) {
