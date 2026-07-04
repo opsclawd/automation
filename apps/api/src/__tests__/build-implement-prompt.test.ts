@@ -85,9 +85,12 @@ describe('buildImplementPrompt', () => {
     expect(prompt).not.toContain('.result');
   });
 
-  it('instructs agent to write summary to implementation-log.md', () => {
+  it('instructs agent to write summary to implementation-log.md and emphasizes it is mandatory', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
     expect(prompt).toContain('implementation-log.md');
+    expect(prompt).toContain('MANDATORY REPORTING');
+    expect(prompt).toContain('MUST write implementation-log.md');
+    expect(prompt).toContain('even if you determine that Task 3 is already complete');
   });
 
   it('renders structured typecheck errors grouped by file', () => {
