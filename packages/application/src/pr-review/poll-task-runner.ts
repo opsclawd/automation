@@ -60,7 +60,7 @@ export interface PollTaskInput {
   unresolvedCommentCount: number;
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
-  isLastAttempt?: boolean;
+  isLastAttempt?: boolean | undefined;
 }
 
 export interface PollTaskOutput {
@@ -194,7 +194,7 @@ export class PollTaskRunner {
         repoFullName: input.repoFullName,
         startCommitSha: input.startCommitSha,
         repoId: String(input.repoId),
-        allowBuildFailure: input.isLastAttempt,
+        ...(input.isLastAttempt ? { allowBuildFailure: true } : {}),
       });
 
       if (verification.ok) {
@@ -303,7 +303,7 @@ export class PollTaskRunner {
         repoFullName: input.repoFullName,
         startCommitSha: input.startCommitSha,
         repoId: String(input.repoId),
-        allowBuildFailure: input.isLastAttempt,
+        ...(input.isLastAttempt ? { allowBuildFailure: true } : {}),
       });
 
       if (verification.ok) {
