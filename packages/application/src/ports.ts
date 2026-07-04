@@ -165,6 +165,11 @@ export type {
   ImplementArtifactGuardInput,
   SynthesizedArtifact,
 } from './ports/implement-artifact-guard-port.js';
+export type {
+  FixDiffInspectorPort,
+  FixDiffInspectorInput,
+  FixDiffInspectionResult,
+} from './ports/fix-diff-inspector-port.js';
 
 export type { ClassifyExitInput } from '@ai-sdlc/domain';
 
