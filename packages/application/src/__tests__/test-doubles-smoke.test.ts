@@ -9,6 +9,8 @@ import {
   FakeValidationPort,
   FakeArtifactStore,
   FakeAgentPort,
+  FakeFixDiffInspector,
+  makeFixDiffInspector,
 } from '../test-doubles/index.js';
 
 describe('test-doubles barrel', () => {
@@ -22,5 +24,7 @@ describe('test-doubles barrel', () => {
     expect(new FakeValidationPort()).toBeDefined();
     expect(new FakeArtifactStore()).toBeDefined();
     expect(new FakeAgentPort()).toBeDefined();
+    expect(new FakeFixDiffInspector()).toBeDefined();
+    expect(makeFixDiffInspector(new FakeFixDiffInspector())).toBeDefined();
   });
 });

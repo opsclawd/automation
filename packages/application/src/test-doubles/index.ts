@@ -17,3 +17,4 @@ export * from './fake-phase-repository.js';
 export * from './fake-resume-run.js';
 export * from './fake-run-repository.js';
 export * from './fake-event-bus.js';
+export * from './fake-fix-diff-inspector.js';
