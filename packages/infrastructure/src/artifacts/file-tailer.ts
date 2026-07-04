@@ -50,24 +50,35 @@ export class FileTailer implements FileTailerPort {
       return;
     }
 
-    // Heuristic: assume average line length is 1000 chars to be safe.
-    const bytesToRead = Math.min(fileSize, (this.initialLines ?? 0) * 1000);
-    const startPos = fileSize - bytesToRead;
-
+    const wanted = this.initialLines ?? 0;
     const fh = await fs.open(this.path, 'r');
     try {
-      const buf = Buffer.alloc(bytesToRead);
-      const { bytesRead } = await fh.read(buf, 0, bytesToRead, startPos);
-      const content = buf.toString('utf8', 0, bytesRead);
-      let lines = content.split('\n');
+      // Read backward in doubling chunks until we've captured `wanted` newlines
+      // or reached the start of the file. A fixed-size guess (e.g. "assume
+      // 1000 chars/line") silently truncates mid-line whenever any single line
+      // exceeds that guess, which is common for verbose agent transcripts.
+      let chunkSize = Math.min(fileSize, 4096);
+      let content = '';
+      for (;;) {
+        const startPos = fileSize - chunkSize;
+        const buf = Buffer.alloc(chunkSize);
+        const { bytesRead } = await fh.read(buf, 0, chunkSize, startPos);
+        content = buf.toString('utf8', 0, bytesRead);
 
-      // If the file ends with a newline, the last element is empty.
-      // We want N lines before that.
+        const newlineCount = (content.match(/\n/g) ?? []).length;
+        // A trailing newline delimits the last line rather than starting a new
+        // one, so it doesn't count toward "lines captured so far".
+        const effectiveNewlines = content.endsWith('\n') ? newlineCount - 1 : newlineCount;
+        if (effectiveNewlines >= wanted || startPos <= 0) break;
+        chunkSize = Math.min(fileSize, chunkSize * 2);
+      }
+
+      let lines = content.split('\n');
       if (content.endsWith('\n')) {
         lines = lines.slice(0, -1);
       }
 
-      const lastLines = lines.slice(-(this.initialLines ?? 0));
+      const lastLines = lines.slice(-wanted);
       const tailContent = lastLines.join('\n');
       if (tailContent) {
         this.onData(tailContent + '\n');
