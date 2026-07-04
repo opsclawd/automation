@@ -84,6 +84,12 @@ function startLeaseHeartbeat(
 
 const DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS = 30_000;
 
+function printRunFailureSummary(uuid: string): void {
+  console.error(`Run failed.`);
+  console.error(`Run UUID: ${uuid}`);
+  console.error(`Resume with: orchestrator runs resume --uuid ${uuid} --confirm`);
+}
+
 function startWorkerRegistryHeartbeat(
   registry: { heartbeat(id: WorkerId, now: Date): void },
   workerId: WorkerId,
@@ -480,6 +486,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               finalRun.status === 'passed' ||
               pausedStatuses.includes(finalRun.status) ||
               finalJob?.status === 'succeeded';
+            if (!isSuccess) {
+              printRunFailureSummary(finalRun.uuid);
+            }
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } catch (err) {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
@@ -499,6 +508,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               'running',
             );
             console.error(err instanceof Error ? err.message : String(err));
+            printRunFailureSummary(run.uuid);
             process.exit(EXIT_USER_ERROR);
           }
         } else {
@@ -533,6 +543,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             signalHandlers.remove();
             const isSuccess =
               out.status === 'passed' || pausedStatuses.includes(out.status as RunStatus);
+            if (!isSuccess) {
+              printRunFailureSummary(out.uuid);
+            }
             process.exit(isSuccess ? 0 : EXIT_USER_ERROR);
           } finally {
             signalHandlers.remove();
