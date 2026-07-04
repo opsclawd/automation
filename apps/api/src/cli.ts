@@ -88,9 +88,6 @@ function printRunFailureSummary(uuid: string, reason?: string): void {
   const prefix = reason ? `Run failed: ${reason}` : 'Run failed.';
   console.error(prefix);
   console.error(`Run UUID: ${uuid}`);
-  // No --confirm in the hint: `runs resume` intentionally stops and warns
-  // when the failed phase is unsafe to retry, and pre-confirming would skip
-  // that guard for anyone who copy-pastes the command.
   console.error(`Resume with: orchestrator runs resume --uuid ${uuid}`);
 }
 
@@ -326,9 +323,11 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           let sigintHandler: (() => void) | undefined;
           let sigtermHandler: (() => void) | undefined;
           let workerHeartbeat: { stop: () => void } | undefined;
+          let runInserted = false;
 
           try {
             c.runRepository.insertIfNoActive(run);
+            runInserted = true;
 
             const job = createJob({
               id: jobId,
@@ -503,18 +502,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
             // never inserted or was already finalized by workerLoop.
             const failureReason = err instanceof Error ? err.message : String(err);
-            c.runRepository.atomicUpdateByUuid(
-              run.uuid,
-              {
-                status: 'failed',
-                completedAt: new Date(),
-                failureReason,
-              },
-              'running',
-            );
-            // Only suggest resuming if the run row actually exists —
-            // insertIfNoActive may have thrown before inserting it.
-            if (c.runRepository.findByUuid(run.uuid)) {
+            if (runInserted) {
+              c.runRepository.atomicUpdateByUuid(
+                run.uuid,
+                {
+                  status: 'failed',
+                  completedAt: new Date(),
+                  failureReason,
+                },
+                'running',
+              );
               printRunFailureSummary(run.uuid, failureReason);
             } else {
               console.error(`Run failed: ${failureReason}`);
