@@ -52,6 +52,15 @@ const phasesSchema = z.object({
     .object({
       maxPolls: z.number().int().positive(),
       pollIntervalSeconds: z.number().int().positive(),
+      /**
+       * Maximum seconds the poller will keep polling an empty PR (zero
+       * comments) before treating the absence of review activity as a quiet
+       * signal. After this window elapses with no reviewer ever commenting,
+       * normal quiet-poll accounting takes over and the run may go to
+       * `waiting`. Defaults to 1800 (30 min) — exceeds observed reviewer
+       * bot latency (~15–20 min) on this repo.
+       */
+      firstReviewGraceWindowSeconds: z.number().int().positive().optional(),
     })
     .optional(),
 });
@@ -298,6 +307,14 @@ export const orchestratorConfigSchema = z
       }
     }
   });
+
+/**
+ * Default grace window (in seconds) the poller keeps polling an empty PR
+ * before allowing the quiet-poll counter to advance. Must remain an
+ * integer-seconds value so the bash orchestrator (which uses jq/awk math)
+ * can mirror it if/when ported.
+ */
+export const DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS = 1800;
 
 export type OrchestratorConfig = z.infer<typeof orchestratorConfigSchema>;
 export type AgentConfig = NonNullable<OrchestratorConfig['agent']>;
