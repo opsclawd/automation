@@ -788,13 +788,23 @@ export function composeRoot(opts: ComposeOptions): Container {
     // runs whose PRs were closed/merged while the orchestrator was
     // offline. Best-effort: a single broken run does not abort the sweep.
     const ghAdapterForSweep = new GhCliAdapter({});
+    // Load config to get readyMaxDays for SweepWaitingRuns
+    let readyMaxDays = 7;
+    try {
+      const config = loadConfig(opts.repoRoot);
+      readyMaxDays = config.timeouts.readyMaxDays;
+    } catch {
+      // Fallback to default 7 days. The main config loader below will throw
+      // the error if the config file exists but is invalid.
+    }
+
     const waitingSweep = new SweepWaitingRuns({
       runRepository,
       prReviewRepo: prReviewRepository,
       github: ghAdapterForSweep,
       eventBus,
       now: () => new Date(),
-      readyMaxDays: 7,
+      readyMaxDays,
       applyReactivation: (run: RunRecord, decision: { action: string; reason: string }) => {
         applyReactivation(run as never, decision as never, {
           runRepository,
