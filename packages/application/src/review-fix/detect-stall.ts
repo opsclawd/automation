@@ -54,7 +54,20 @@ export function detectUnfoundedPingPong(
 ): boolean {
   if (history.length < windowSize) return false;
   const window = history.slice(history.length - windowSize);
-  return window.every((e) => e.findings.size > 0 && e.fixerVerdict === 'done_no_fixes_needed');
+
+  const allRebutted = window.every(
+    (e) => e.findings.size > 0 && e.fixerVerdict === 'done_no_fixes_needed',
+  );
+  if (!allRebutted) return false;
+
+  const first = window[0]!.findings;
+  for (const finding of first) {
+    if (window.every((e) => e.findings.has(finding))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

@@ -142,7 +142,9 @@ export class ReviewFixLoop {
       }
 
       // --- STRUCTURAL EVIDENCE CHECK (rebuttal-aware convergence) ---
-      const unfoundedCount = await this.checkReviewerEvidence(input, review, iterationIndex);
+      const unfoundedList = await this.checkReviewerEvidence(input, review, iterationIndex);
+      const unfoundedCount = unfoundedList.length;
+      const unfoundedFingerprints = fingerprintFindings(unfoundedList);
 
       // --- OSCILLATION / STALL DETECTION ---
       const normalizedFindings = fingerprintFindings(review.offendingFindings ?? []);
@@ -202,7 +204,7 @@ export class ReviewFixLoop {
         // Record fixer verdict in unfounded-history even on fix failure so
         // the ping-pong detector can see it.
         unfoundedHistory.push({
-          findings: normalizedFindings,
+          findings: unfoundedFingerprints,
           ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
         });
         await this.runCleanArtifacts(ctx);
@@ -238,7 +240,7 @@ export class ReviewFixLoop {
       // Update the unfounded-history after we know the fixer's verdict so
       // `detectUnfoundedPingPong` can see it.
       unfoundedHistory.push({
-        findings: normalizedFindings,
+        findings: unfoundedFingerprints,
         ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
       });
 
@@ -295,12 +297,9 @@ export class ReviewFixLoop {
       if (isRebutted) {
         // Append the rebuttal to code-review.md for human/PR-review visibility.
         if (this.deps.artifactStore) {
-          const unfoundedList = (review.offendingFindings ?? []).map((f) => ({
-            severity: f.severity,
-            summary: f.summary,
-          }));
           const append = await appendRebuttalToCodeReview(this.deps.artifactStore, {
             runId: String(input.runId),
+            phaseId: String(input.phaseId),
             iterationIndex,
             rebuttal: fix.rebuttal ?? '(no rebuttal text provided)',
             unfoundedFindings: unfoundedList,
@@ -538,10 +537,16 @@ export class ReviewFixLoop {
     input: ReviewFixLoopInput,
     review: ReviewStepResult,
     iterationIndex: number,
-  ): Promise<number> {
-    if (!this.deps.findingEvidenceInspector) return 0;
+  ): Promise<
+    Array<{
+      severity: string;
+      summary: string;
+      evidence?: { path: string; line?: number; snippet?: string };
+    }>
+  > {
+    if (!this.deps.findingEvidenceInspector) return [];
     const findings = review.offendingFindings ?? [];
-    if (findings.length === 0) return 0;
+    if (findings.length === 0) return [];
 
     // Read code-review.md from the artifact store when available; fall back
     // to the worktree path otherwise. The artifact store is the source of
@@ -615,6 +620,6 @@ export class ReviewFixLoop {
       );
     }
 
-    return unfounded.length;
+    return unfounded;
   }
 }

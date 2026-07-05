@@ -4,6 +4,7 @@ import type { FindingEvidence } from '../ports/finding-evidence-inspector-port.j
 
 export interface AppendRebuttalInput {
   readonly runId: string;
+  readonly phaseId: string;
   readonly iterationIndex: number;
   readonly rebuttal: string;
   readonly unfoundedFindings: ReadonlyArray<{
@@ -56,7 +57,7 @@ export async function appendRebuttalToCodeReview(
   try {
     await artifactStore.write({
       runId: input.runId,
-      ...(input.iterationIndex !== undefined ? { phaseId: 'whole-pr-review' } : {}),
+      ...(input.phaseId !== undefined ? { phaseId: input.phaseId } : {}),
       relativePath: path,
       contents: updated,
     });
