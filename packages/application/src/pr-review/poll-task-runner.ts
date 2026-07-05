@@ -57,6 +57,7 @@ export interface PollTaskInput {
   diff: string;
   branch: string;
   startCommitSha: string;
+  originalStartCommitSha: string;
   unresolvedCommentCount: number;
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
@@ -191,7 +192,8 @@ export class PollTaskRunner {
         branch: input.branch,
         prNumber: input.prNumber,
         repoFullName: input.repoFullName,
-        startCommitSha: input.startCommitSha,
+        originalStartCommitSha: input.originalStartCommitSha,
+        runningStartSha: input.startCommitSha,
         repoId: String(input.repoId),
       });
 
@@ -298,7 +300,8 @@ export class PollTaskRunner {
         branch: input.branch,
         prNumber: input.prNumber,
         repoFullName: input.repoFullName,
-        startCommitSha: input.startCommitSha,
+        originalStartCommitSha: input.originalStartCommitSha,
+        runningStartSha: input.startCommitSha,
         repoId: String(input.repoId),
       });
 

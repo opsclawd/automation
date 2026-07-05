@@ -44,6 +44,11 @@ export type {
   ImplementArtifactGuardInput,
   SynthesizedArtifact,
 } from './implement-artifact-guard-port.js';
+export type {
+  FixDiffInspectorPort,
+  FixDiffInspectorInput,
+  FixDiffInspectionResult,
+} from './fix-diff-inspector-port.js';
 export type { LoopRepositoryPort } from './loop-repository-port.js';
 export type { StepRepositoryPort } from './step-repository-port.js';
 export type { PhaseRepositoryPort } from './phase-repository-port.js';

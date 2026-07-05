@@ -40,6 +40,7 @@ import {
   WorkerRegistryRepository,
   createFilesystemArtifactStore,
   FileTailer,
+  createFixDiffInspector,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -2382,12 +2383,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       throw new ConfigError('agent runtime router was not initialized');
     }
     const ghAdapter = new GhCliAdapter({});
+    const fixDiffInspector = createFixDiffInspector();
 
     const processor = new ProcessPrReviewComments({
       github: ghAdapter,
       git: gitAdapter,
       agent: prReviewAgent,
       prReviewRepo: prReviewRepository,
+      fixDiffInspector,
       renderTaskPrompt: async ({
         cwd,
         comment,
