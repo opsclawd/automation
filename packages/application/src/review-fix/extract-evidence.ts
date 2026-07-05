@@ -25,7 +25,7 @@ export function extractEvidence(markdown: string): FindingEvidence[] {
     const line = lines[i]!;
 
     // Match bold path line: **some/path.ts**
-    const boldMatch = /^\s*\*\*([^*]+\.[a-zA-Z0-9]+)\*\*\s*:?\s*$/.exec(line);
+    const boldMatch = /^\s*\*\*([^\s*]+)\*\*\s*:?\s*$/.exec(line);
     if (boldMatch) {
       currentBoldPath = boldMatch[1];
       i++;
@@ -45,7 +45,6 @@ export function extractEvidence(markdown: string): FindingEvidence[] {
       if (codeLines.length > 0) {
         results.push({
           path: currentBoldPath ?? '',
-          ...(currentBoldPath ? {} : { path: '' }),
           snippet: codeLines.join('\n'),
         });
       }
@@ -53,7 +52,7 @@ export function extractEvidence(markdown: string): FindingEvidence[] {
     }
 
     // Match inline backtick path:line reference: `some/path.ts:NN`
-    const inlineRe = /`([^`]+\.[a-zA-Z0-9]+):(\d+)`/g;
+    const inlineRe = /`([^`:]+):(\d+)`/g;
     let m: RegExpExecArray | null;
     while ((m = inlineRe.exec(line)) !== null) {
       const path = m[1]!;

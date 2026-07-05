@@ -20,7 +20,11 @@ function normalizeSnippet(s: string): string {
  */
 async function readFileAtRef(cwd: string, ref: string, path: string): Promise<string | undefined> {
   try {
-    const out = await git(cwd, ['show', `${ref}:${path}`]);
+    const typeOut = await git(cwd, ['cat-file', '-t', `${ref}:${path}`]);
+    if (typeOut.trim() !== 'blob') {
+      return undefined;
+    }
+    const out = await git(cwd, ['cat-file', '-p', `${ref}:${path}`]);
     return out;
   } catch {
     return undefined;
@@ -58,6 +62,13 @@ function snippetNearLine(
 
 export function createFindingEvidenceInspector(): FindingEvidenceInspectorPort {
   return async (input: FindingEvidenceCheckInput): Promise<FindingEvidenceCheckResult> => {
+    if (!input.evidence.path || input.evidence.path.endsWith('/')) {
+      return {
+        evidenceConfirmed: false,
+        reason: `path '${input.evidence.path}' is empty or invalid`,
+      };
+    }
+
     // Step 1: file existence check.
     const fileContents = await readFileAtRef(input.cwd, input.ref, input.evidence.path);
     if (fileContents === undefined) {

@@ -249,7 +249,7 @@ export class ReviewFixLoop {
       // `done_no_fixes_needed`, accept the rebuttal and converge.
       const findings = review.offendingFindings ?? [];
       const allUnfounded = unfoundedCount === findings.length && findings.length > 0;
-      const isRebutted = allUnfounded && fix.verdict === 'done_no_fixes_needed';
+      const isRebutted = allUnfounded && fix.verdict === 'done_no_fixes_needed' && reval.passed;
 
       if (isRebutted) {
         // Append the rebuttal to code-review.md for human/PR-review visibility.
