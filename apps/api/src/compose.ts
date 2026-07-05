@@ -1344,6 +1344,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           agentOutcome: result.outcome,
           ...(effectiveVerdict !== undefined ? { verdict: effectiveVerdict } : {}),
           ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
+          ...(verdict.ok && verdict.rebuttal !== undefined ? { rebuttal: verdict.rebuttal } : {}),
         };
       };
 
