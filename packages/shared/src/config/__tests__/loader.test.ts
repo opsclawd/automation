@@ -265,6 +265,69 @@ describe('phases.postPrReview', () => {
   });
 });
 
+describe('phases.postPrReview.firstReviewGraceWindowSeconds', () => {
+  it('parses the field when provided', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          postPrReview: {
+            maxPolls: 10,
+            pollIntervalSeconds: 60,
+            firstReviewGraceWindowSeconds: 2400,
+          },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const config = loadConfig(dir);
+    expect(config.phases.postPrReview?.firstReviewGraceWindowSeconds).toBe(2400);
+  });
+
+  it('is undefined when omitted (consumers must fall back to DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS)', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          postPrReview: { maxPolls: 10, pollIntervalSeconds: 60 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const config = loadConfig(dir);
+    expect(config.phases.postPrReview?.firstReviewGraceWindowSeconds).toBeUndefined();
+  });
+
+  it('rejects a non-positive value', () => {
+    const dir = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          postPrReview: { maxPolls: 10, pollIntervalSeconds: 60, firstReviewGraceWindowSeconds: 0 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    expect(() => loadConfig(dir)).toThrow(/firstReviewGraceWindowSeconds/);
+  });
+});
+
+describe('DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS', () => {
+  it('is 1800', async () => {
+    const mod = await import('../schema.js');
+    expect(mod.DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS).toBe(1800);
+  });
+});
+
 describe('phases.reviewFix.blockOnSeverity', () => {
   it('defaults to "high" when omitted', () => {
     const dir = makeRepo(

@@ -48,6 +48,7 @@ import {
   ResumeRun,
   RetryFailedPhase,
   SweepOrphanedRuns,
+  SweepWaitingRuns,
   checkPid,
   RunValidation,
   ReadIssueHandler,
@@ -82,6 +83,7 @@ import {
   type ClassifyExitFn,
   type EventTailerFactory,
   type EventBusPort,
+  type RunRecord,
   type RunRepositoryPort,
   type TmpDirectoryFactory,
   type StepContext,
@@ -112,7 +114,13 @@ import {
   type TaskManifest,
   PHASE_DEFINITIONS,
 } from '@ai-sdlc/application';
-import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
+import {
+  ConfigError,
+  DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS,
+  loadConfig,
+  PHASE_FALLBACKS,
+  type AgentConfig,
+} from '@ai-sdlc/shared';
 import {
   AgentProfileName,
   AgentInvocationId,
@@ -446,6 +454,8 @@ export interface Container {
     readyMaxDays: number;
     phaseStartedAt: Date;
     baseBranch?: string;
+    repoRoot?: string;
+    firstReviewGraceWindowSeconds?: number;
   }) => PrReviewPoller;
   createFileTailer: (
     opts: import('@ai-sdlc/application/ports').FileTailerOptions,
@@ -737,6 +747,26 @@ export function composeRoot(opts: ComposeOptions): Container {
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);
+  const artifactRepository = new ArtifactRepository(db);
+  const prReviewRepository = new PrReviewRepository(db);
+  const eventBus = new InMemoryEventBus();
+
+  const resolvePrContextForRun = async (
+    run: RunRecord,
+  ): Promise<{ repoFullName: string; prNumber: number } | undefined> => {
+    const artifactRoot = run.displayId ?? run.uuid;
+    try {
+      const prUrl = readFileSync(
+        join(runsDir, artifactRoot, 'phase-artifacts', 'pr-url.txt'),
+        'utf8',
+      ).trim();
+      const match = prUrl.match(/\/pull\/(\d+)/);
+      if (!match) return undefined;
+      return { repoFullName: run.repoId, prNumber: parseInt(match[1]!, 10) };
+    } catch {
+      return undefined;
+    }
+  };
 
   if (opts.runStartupSweeps !== false) {
     // Sweep orphaned runs before any new run starts
@@ -752,15 +782,63 @@ export function composeRoot(opts: ComposeOptions): Container {
     // Sweep orphaned tmp dirs: remove .ai-tmp/<runId>/ where the runId
     // has no active or recent run, or the run is in a terminal state.
     sweepOrphanedTmpDirs(baseTmpDir, runRepository);
+
+    // Sweep waiting runs: reactivate any run parked in `waiting` whose PR
+    // has new review activity since the last poll attempt, or finalize
+    // runs whose PRs were closed/merged while the orchestrator was
+    // offline. Best-effort: a single broken run does not abort the sweep.
+    const ghAdapterForSweep = new GhCliAdapter({});
+    // Load config to get readyMaxDays for SweepWaitingRuns
+    let readyMaxDays = 7;
+    try {
+      const config = loadConfig(opts.repoRoot);
+      readyMaxDays = config.timeouts.readyMaxDays;
+    } catch {
+      // Fallback to default 7 days. The main config loader below will throw
+      // the error if the config file exists but is invalid.
+    }
+
+    const waitingSweep = new SweepWaitingRuns({
+      runRepository,
+      prReviewRepo: prReviewRepository,
+      github: ghAdapterForSweep,
+      eventBus,
+      now: () => new Date(),
+      readyMaxDays,
+      applyReactivation: (run: RunRecord, decision: { action: string; reason: string }) => {
+        applyReactivation(run as never, decision as never, {
+          runRepository,
+          eventBus,
+          now: () => new Date(),
+        });
+      },
+      resolvePrContext: async (run: RunRecord) => resolvePrContextForRun(run),
+    });
+    waitingSweep.execute().then(
+      (waitingResult) => {
+        if (
+          waitingResult.reactivated > 0 ||
+          waitingResult.timedOut > 0 ||
+          waitingResult.passedOnMergedPr > 0 ||
+          waitingResult.cancelledOnClosedPr > 0 ||
+          waitingResult.errors.length > 0
+        ) {
+          console.error(
+            `Reactivation sweep: ${waitingResult.reactivated} reactivated, ${waitingResult.timedOut} timed out, ${waitingResult.passedOnMergedPr} passed (merged PR), ${waitingResult.cancelledOnClosedPr} cancelled (closed PR), ${waitingResult.stayedReady} stayed ready, ${waitingResult.skipped} skipped, ${waitingResult.errors.length} errors`,
+          );
+        }
+      },
+      (err) => {
+        console.error('Reactivation sweep error:', err);
+      },
+    );
   }
 
   const phaseRepository = new PhaseRepository(db);
   const eventRepository = new EventRepository(db);
-  const artifactRepository = new ArtifactRepository(db);
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
-  const prReviewRepository = new PrReviewRepository(db);
   const agentUsageRepository = new AgentUsageRepository(db);
   const loopRepository = new LoopRepository(db);
   const workerLeaseRepository = new WorkerLeaseRepository(db);
@@ -771,7 +849,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     idFactory: () => randomUUID(),
     now: () => new Date(),
   });
-  const eventBus = new InMemoryEventBus();
   const createEventTailer: EventTailerFactory = (input) => new EventTailer(input);
 
   const tmpDirectoryFactory: TmpDirectoryFactory = ({ baseTmpDir: base, runId }) => {
@@ -2225,6 +2302,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               readyMaxDays: config.timeouts.readyMaxDays,
               phaseStartedAt: ctx.now(),
               baseBranch: resolvedDefaultBranch,
+              ...(config.phases.postPrReview?.firstReviewGraceWindowSeconds !== undefined
+                ? {
+                    firstReviewGraceWindowSeconds:
+                      config.phases.postPrReview.firstReviewGraceWindowSeconds,
+                  }
+                : {}),
             });
             const result = await poller.run({
               runId: RunId(ctx.runUuid),
@@ -2372,6 +2455,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     phaseStartedAt: Date;
     baseBranch?: string;
     repoRoot?: string;
+    firstReviewGraceWindowSeconds?: number;
   }): PrReviewPoller {
     if (!agentRuntime) {
       throw new ConfigError(
@@ -2710,6 +2794,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       revertRunStatus: async (runId) => {
         runRepository.update(String(runId), { status: 'waiting' });
       },
+      firstReviewGraceWindowMs:
+        (opts.firstReviewGraceWindowSeconds ?? DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS) * 1000,
       maxReactivations: 100,
     });
   }
