@@ -199,6 +199,7 @@ export class ProcessPrReviewComments {
             diff: currentDiff,
             branch: pr.headRefName,
             startCommitSha: runningStartSha,
+            originalStartCommitSha: originalStartCommitSha,
             unresolvedCommentCount: unresolved.length,
             ...(previousBuildError !== undefined ? { previousBuildError } : {}),
             ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
@@ -230,7 +231,8 @@ export class ProcessPrReviewComments {
               branch: pr.headRefName,
               prNumber: input.prNumber,
               repoFullName: input.repoFullName,
-              startCommitSha: originalStartCommitSha,
+              originalStartCommitSha,
+              runningStartSha,
               ...(input.runId ? { repoId: String(input.runId) } : {}),
             });
             if (verification.ok) {
@@ -414,7 +416,8 @@ export class ProcessPrReviewComments {
         branch: pr.headRefName,
         prNumber: input.prNumber,
         repoFullName: input.repoFullName,
-        startCommitSha,
+        originalStartCommitSha: startCommitSha,
+        runningStartSha: startCommitSha,
       });
 
       if (verification.ok) {

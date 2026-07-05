@@ -29,7 +29,8 @@ function makeContext(
     branch: string;
     prNumber: number;
     repoFullName: string;
-    startCommitSha: string;
+    originalStartCommitSha: string | undefined;
+    runningStartSha: string | undefined;
   }> = {},
 ) {
   return {
@@ -37,7 +38,8 @@ function makeContext(
     branch: 'feat-x',
     prNumber: 5,
     repoFullName: 'o/r',
-    startCommitSha: 'startSha',
+    originalStartCommitSha: 'startSha',
+    runningStartSha: 'startSha',
     ...overrides,
   };
 }
@@ -67,7 +69,7 @@ function makeDeps(
 describe('verifyComment — fixed outcome', () => {
   it('returns ok=true when all checks pass for a fixed comment', async () => {
     const { deps, github, git } = makeDeps();
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -120,7 +122,7 @@ describe('verifyComment — fixed outcome', () => {
 
   it('returns ok=false when commitSha matches startCommitSha (no new commit)', async () => {
     const { deps, github, git } = makeDeps();
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -134,7 +136,7 @@ describe('verifyComment — fixed outcome', () => {
       }),
       state: 'replied' as const,
       outcome: 'fixed' as const,
-      commitSha: 'startSha',
+      commitSha: 'fixSha',
       replyId: 9002,
       attempts: 1,
     };
@@ -171,7 +173,7 @@ describe('verifyComment — fixed outcome', () => {
 
   it('returns ok=false when fix commit is not an ancestor of the remote branch tip', async () => {
     const { deps, github, git } = makeDeps();
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -221,7 +223,7 @@ describe('verifyComment — fixed outcome', () => {
 
   it('returns ok=false when reply is missing on GitHub', async () => {
     const { deps, github, git } = makeDeps();
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -264,7 +266,7 @@ describe('verifyComment — fixed outcome', () => {
     const { deps, github, git } = makeDeps({
       verifyCommitPushed: async () => false,
     });
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -318,7 +320,7 @@ describe('verifyComment — fixed outcome', () => {
     const { deps, github, git } = makeDeps({
       verifyBuildPasses: async () => ({ passed: false }),
     });
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -370,7 +372,7 @@ describe('verifyComment — fixed outcome', () => {
 
   it('returns ok=false when logBetween returns empty (commit not newer than start)', async () => {
     const { deps, github, git } = makeDeps();
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -421,7 +423,7 @@ describe('verifyComment — fixed outcome', () => {
 
   it('returns ok=false and reason when remote ref is missing', async () => {
     const { deps, github } = makeDeps();
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -475,7 +477,7 @@ describe('verifyComment — fixed outcome', () => {
     git.remoteRefs.set('origin/feat-x', 'fixSha');
     git.ancestorResults.set('fixSha|fixSha', true);
     git.logBetweenResults.set('startSha|fixSha', ['fixSha']);
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -524,8 +526,7 @@ describe('verifyComment — fixed outcome', () => {
   describe('verifyRemoteFixCommit helper', () => {
     it('returns false/error when commitSha is undefined', async () => {
       const { deps } = makeDeps();
-      const ctx = makeContext();
-      const result = await verifyRemoteFixCommit(deps, ctx, undefined);
+      const result = await verifyRemoteFixCommit(deps, { cwd: '/work/tree', branch: 'feat-x', startCommitSha: 'startSha' }, undefined);
       expect(result.commitVerified).toBe(false);
       expect(result.fixCommitOnRemote).toBe(false);
       expect(result.reason).toBe('commit not pushed to remote');
@@ -533,10 +534,9 @@ describe('verifyComment — fixed outcome', () => {
 
     it('returns true when startCommitSha is undefined', async () => {
       const { deps, git } = makeDeps();
-      const ctx = makeContext({ startCommitSha: undefined });
       git.remoteRefs.set('origin/feat-x', 'tipSha');
       git.ancestorResults.set('fixSha|tipSha', true);
-      const result = await verifyRemoteFixCommit(deps, ctx, 'fixSha');
+      const result = await verifyRemoteFixCommit(deps, { cwd: '/work/tree', branch: 'feat-x', startCommitSha: undefined }, 'fixSha');
       expect(result.commitVerified).toBe(true);
       expect(result.fixCommitOnRemote).toBe(true);
       expect(result.isNewerThanStart).toBe(true);
@@ -683,7 +683,7 @@ describe('verifyComment — codeVerified check', () => {
   it('sets codeVerified:true when verifyCodeChange returns pass:true', async () => {
     const { deps, github, git } = makeDeps();
     const verifyCodeChange: VerifyCodeChangeFn = async () => ({ pass: true, reason: 'ok' });
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -738,7 +738,7 @@ describe('verifyComment — codeVerified check', () => {
       pass: false,
       reason: 'variable still mutable',
     });
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,
@@ -843,7 +843,7 @@ describe('verifyComment — codeVerified check', () => {
 
   it('defaults codeVerified:true when verifyCodeChange dep is absent', async () => {
     const { deps, github, git } = makeDeps(); // no verifyCodeChange
-    const ctx = makeContext({ startCommitSha: 'startSha' });
+    const ctx = makeContext();
     const comment = {
       ...createPrReviewComment({
         runId,

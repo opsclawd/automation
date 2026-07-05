@@ -108,7 +108,8 @@ export async function verifyComment(
     branch: string;
     prNumber: number;
     repoFullName: string;
-    startCommitSha: string | undefined;
+    originalStartCommitSha: string | undefined;
+    runningStartSha: string | undefined;
     repoId?: string;
   },
 ): Promise<VerificationResult> {
@@ -126,7 +127,7 @@ export async function verifyComment(
   }
 
   const commitShaChanged =
-    comment.commitSha !== undefined && comment.commitSha !== context.startCommitSha;
+    comment.commitSha !== undefined && comment.commitSha !== context.runningStartSha;
   if (!commitShaChanged) {
     return {
       ok: false,
@@ -145,7 +146,11 @@ export async function verifyComment(
   const buildVerified = buildResult.passed;
   const buildError = buildResult.error;
 
-  const remote = await verifyRemoteFixCommit(deps, context, comment.commitSha);
+  const remote = await verifyRemoteFixCommit(
+    deps,
+    { cwd: context.cwd, branch: context.branch, startCommitSha: context.runningStartSha },
+    comment.commitSha,
+  );
 
   let failReason = '';
   if (!replyVerified) failReason = 'reply not found on GitHub';
@@ -167,11 +172,11 @@ export async function verifyComment(
     replyVerified &&
     buildVerified;
 
-  if (mechanicalOk && deps.fixDiffInspector && comment.commitSha && context.startCommitSha) {
+  if (mechanicalOk && deps.fixDiffInspector && comment.commitSha && context.originalStartCommitSha) {
     const inspection = await deps.fixDiffInspector({
       cwd: context.cwd,
-      originalStartCommitSha: context.startCommitSha ?? '',
-      runningStartSha: context.startCommitSha ?? '',
+      originalStartCommitSha: context.originalStartCommitSha ?? '',
+      runningStartSha: context.runningStartSha ?? '',
       fixCommitSha: comment.commitSha,
       path: comment.path,
       line: comment.line,
@@ -209,7 +214,7 @@ export async function verifyComment(
       path: comment.path,
       line: comment.line,
       cwd: context.cwd,
-      startCommitSha: context.startCommitSha ?? '',
+      startCommitSha: context.runningStartSha ?? '',
       fixCommitSha: comment.commitSha,
       runId: String(comment.runId),
       repoId: context.repoId ?? String(comment.runId),

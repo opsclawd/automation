@@ -341,7 +341,8 @@ describe('ProcessPrReviewComments — multi-comment line-shift', () => {
 
     await uc.execute(baseInput);
     expect(captured).toBeDefined();
-    expect(captured!.originalStartCommitSha).toBe(captured!.runningStartSha);
+    expect(captured!.originalStartCommitSha).toBe('sha-1');
+    expect(captured!.runningStartSha).toBe('sha-2');
   });
 
   it('passes the poll-start SHA and the runningStartSha into the inspector across two comments', async () => {

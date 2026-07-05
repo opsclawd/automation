@@ -17,7 +17,8 @@ function makeContext() {
     branch: 'feat-x',
     prNumber: 5,
     repoFullName: 'o/r',
-    startCommitSha: 'startSha',
+    originalStartCommitSha: 'startSha',
+    runningStartSha: 'startSha',
   };
 }
 
