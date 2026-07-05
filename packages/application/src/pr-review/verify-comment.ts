@@ -172,7 +172,12 @@ export async function verifyComment(
     replyVerified &&
     buildVerified;
 
-  if (mechanicalOk && deps.fixDiffInspector && comment.commitSha && context.originalStartCommitSha) {
+  if (
+    mechanicalOk &&
+    deps.fixDiffInspector &&
+    comment.commitSha &&
+    context.originalStartCommitSha
+  ) {
     const inspection = await deps.fixDiffInspector({
       cwd: context.cwd,
       originalStartCommitSha: context.originalStartCommitSha ?? '',
@@ -182,18 +187,11 @@ export async function verifyComment(
       line: comment.line,
     });
     if (!inspection.touchesPath) {
-      return {
-        ok: false,
-        replyVerified,
-        commitVerified: remote.commitVerified,
-        buildVerified,
-        codeVerified: false,
-        reason: `fix commit does not touch ${comment.path}`,
-        ...(buildError !== undefined ? { buildError } : {}),
-        ...(inspection.reason ? { codeVerifyReason: inspection.reason } : {}),
-      };
-    }
-    if (inspection.nearLine === false) {
+      // A fix that does not modify the anchored file may still be legitimate —
+      // the correct change often lives in another file (#629). Fall through to
+      // the LLM pass (whose prompt carries the full fix diff) instead of
+      // rejecting here; only in-file line-proximity failures short-circuit.
+    } else if (inspection.nearLine === false) {
       return {
         ok: false,
         replyVerified,

@@ -298,9 +298,17 @@ export class ProcessPrReviewComments {
               String(input.runId),
             );
           }
-          d.prReviewRepo.upsertComment(
-            blockComment(currentComment!, `task failed after ${ESCALATION_BUDGET} attempts`),
-          );
+          // Prefer the last attempt's concrete verification failure over the
+          // generic reason — pre-push verify failures never reach 'replied'
+          // state, so the final verifyComment pass above is skipped and this
+          // branch is where their outcome must be surfaced (#629).
+          let fallbackReason = `task failed after ${ESCALATION_BUDGET} attempts`;
+          if (lastOutput.codeVerifyReason !== undefined) {
+            fallbackReason = `verified incorrect: ${lastOutput.codeVerifyReason}`;
+          } else if (lastOutput.buildError !== undefined) {
+            fallbackReason = `build failed: ${lastOutput.buildError}`;
+          }
+          d.prReviewRepo.upsertComment(blockComment(currentComment!, fallbackReason));
           lastOutput = {
             commentId: task.commentId,
             action: 'failed',
