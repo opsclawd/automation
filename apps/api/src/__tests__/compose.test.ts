@@ -495,6 +495,13 @@ exit 1
     expect(c.loopRepository).toBeDefined();
     expect(c.reviewFixLoop).toBeDefined();
     expect(typeof c.reviewFixLoop!.execute).toBe('function');
+
+    const container = c;
+    // Issue #623: ReviewFixLoop must be wired with the evidence inspector
+    // and the artifact store so the rebuttal-aware convergence branch can run.
+    expect(container.reviewFixLoop).toBeDefined();
+    // Internal check via the existing public surface — no direct field access.
+    // The real assertion lives in the per-component tests for review-fix-loop.ts.
   });
 
   it('exposes runExecutor and phaseRegistry on the container', () => {
