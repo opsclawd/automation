@@ -167,7 +167,7 @@ export async function verifyComment(
     replyVerified &&
     buildVerified;
 
-  if (mechanicalOk && deps.fixDiffInspector && comment.commitSha) {
+  if (mechanicalOk && deps.fixDiffInspector && comment.commitSha && context.startCommitSha) {
     const inspection = await deps.fixDiffInspector({
       cwd: context.cwd,
       originalStartCommitSha: context.startCommitSha ?? '',
