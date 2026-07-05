@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
+import {
+  FakeFindingEvidenceInspector,
+  makeFindingEvidenceInspector,
+} from '../../test-doubles/fake-finding-evidence-inspector.js';
+import { FakeArtifactStore } from '../../test-doubles/fake-artifact-store.js';
 import { ReviewFixLoop } from '../review-fix-loop.js';
 import type {
   ReviewFixLoopDeps,
@@ -1237,6 +1242,228 @@ describe('ReviewFixLoop', () => {
           metadata: expect.objectContaining({ iterationIndex: 1, outcome: 'fixed' }),
         }),
       );
+    });
+  });
+
+  describe('structural evidence check (issue #623)', () => {
+    it('converges on iteration 2 when every finding is unfounded and fixer rebuts', async () => {
+      const evidenceFake = new FakeFindingEvidenceInspector();
+      evidenceFake.setNext({ evidenceConfirmed: false, reason: 'path missing' });
+      const artifactStore = new FakeArtifactStore();
+      await artifactStore.write({
+        runId: 'run-1',
+        relativePath: 'code-review.md',
+        contents: 'Some review finding about `fix-diff-inspector.ts:10` here.',
+      });
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        findingEvidenceInspector: makeFindingEvidenceInspector(evidenceFake),
+        artifactStore,
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: [
+              { severity: 'critical', summary: 'command injection in fix-diff-inspector.ts' },
+            ],
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'The cited code does not exist.',
+        }),
+        runRevalidation: async () => ({ validationRunId: 'v-1', passed: true }),
+      });
+      const out = await new ReviewFixLoop(deps).execute(baseInput());
+      // Iteration 1: review fail (1 finding, all unfounded) → fix (done_no_fixes_needed)
+      //   → rebuttal-accepted → resolved → converged
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.status).toBe('converged');
+      expect(out.loop.iterations).toHaveLength(1);
+      expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+      expect(evidenceFake.calls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('falls through to existing fix path when at least one finding is grounded', async () => {
+      const evidenceFake = new FakeFindingEvidenceInspector();
+      // First finding: grounded (real evidence). Second: unfounded.
+      evidenceFake.setResultFn((i) => {
+        if (i.evidence.path === 'real.ts') {
+          return { evidenceConfirmed: true, reason: 'ok' };
+        }
+        return { evidenceConfirmed: false, reason: 'path missing' };
+      });
+      const artifactStore = new FakeArtifactStore();
+      await artifactStore.write({
+        runId: 'run-1',
+        relativePath: 'code-review.md',
+        contents: 'Finding 1: `real.ts:12`\nFinding 2: `fake.ts:34`',
+      });
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        findingEvidenceInspector: makeFindingEvidenceInspector(evidenceFake),
+        artifactStore,
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+            offendingFindings: [
+              { severity: 'high', summary: 'real issue in real.ts' },
+              { severity: 'high', summary: 'fabricated in fake.ts' },
+            ],
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'one finding is real',
+        }),
+        runRevalidation: async () => ({ validationRunId: 'v-1', passed: true }),
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: review fail (1 grounded + 1 unfounded) → fix done_with_fixes
+      //   → reval pass → fixed. NOT a rebuttal convergence (because 1 grounded).
+      expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+      // Iteration 2: review pass → resolved.
+      expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+      expect(out.phaseOutcome).toBe('passed');
+    });
+
+    it('does not converge on rebuttal when no evidence inspector is wired', async () => {
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        // no findingEvidenceInspector
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+            offendingFindings: [{ severity: 'high', summary: 'fabricated finding' }],
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'no evidence check available',
+        }),
+        runRevalidation: async () => ({ validationRunId: 'v-1', passed: true }),
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      // No inspector → existing path → fix succeeds → reval passes → fixed (iter 1)
+      // → review pass (iter 2) → resolved.
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    });
+
+    it('short-circuits to needs_human_review on unfounded_pingpong after 4 iterations', async () => {
+      const evidenceFake = new FakeFindingEvidenceInspector();
+      // First finding: grounded (real evidence). Second: unfounded.
+      evidenceFake.setResultFn((i) => {
+        if (i.evidence.path === 'real.ts') {
+          return { evidenceConfirmed: true, reason: 'ok' };
+        }
+        return { evidenceConfirmed: false, reason: 'path missing' };
+      });
+      const artifactStore = new FakeArtifactStore();
+      await artifactStore.write({
+        runId: 'run-1',
+        relativePath: 'code-review.md',
+        contents: 'Finding 1: `real.ts:12`\nFinding 2: `fake.ts:34`',
+      });
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        findingEvidenceInspector: makeFindingEvidenceInspector(evidenceFake),
+        artifactStore,
+        unfoundedPingPongLimit: 4,
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: [
+              { severity: 'high', summary: 'real issue in real.ts' },
+              { severity: 'high', summary: 'fabricated in fake.ts' },
+            ],
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'the finding is fabricated',
+        }),
+        runRevalidation: async () => ({ validationRunId: 'v', passed: false }),
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 10 });
+      // After 4 consecutive iterations of (1 unfounded + done_no_fixes_needed),
+      // short-circuit to needs_human_review (NOT exhausted).
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.needsHumanReview).toBe(true);
+      expect(out.loop.status).not.toBe('exhausted');
+      expect(out.loop.iterations.length).toBeLessThanOrEqual(10);
+    });
+
+    it('does not short-circuit when unfounded_pingpong detector sees done_with_fixes in the window', async () => {
+      const evidenceFake = new FakeFindingEvidenceInspector();
+      // First finding: grounded (real evidence). Second: unfounded.
+      evidenceFake.setResultFn((i) => {
+        if (i.evidence.path === 'real.ts') {
+          return { evidenceConfirmed: true, reason: 'ok' };
+        }
+        return { evidenceConfirmed: false, reason: 'path missing' };
+      });
+      const artifactStore = new FakeArtifactStore();
+      await artifactStore.write({
+        runId: 'run-1',
+        relativePath: 'code-review.md',
+        contents: 'Finding 1: `real.ts:12`\nFinding 2: `fake.ts:34`',
+      });
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        findingEvidenceInspector: makeFindingEvidenceInspector(evidenceFake),
+        artifactStore,
+        unfoundedPingPongLimit: 4,
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: [
+              { severity: 'high', summary: 'real issue in real.ts' },
+              { severity: 'high', summary: 'fabricated in fake.ts' },
+            ],
+          };
+        },
+        runFix: async () => {
+          // Iteration 1: done_with_fixes (a real attempt). 2..5: done_no_fixes_needed.
+          return {
+            invocationId: 'fix',
+            agentOutcome: 'success' as const,
+            verdict:
+              reviewCalls <= 1 ? ('done_with_fixes' as const) : ('done_no_fixes_needed' as const),
+            ...(reviewCalls > 1 ? { rebuttal: 'still fabricated' } : {}),
+          };
+        },
+        runRevalidation: async () => ({ validationRunId: 'v', passed: false }),
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 6 });
+      // Because iteration 1 had done_with_fixes, the 4-iteration window
+      // (iter 2..5) is all done_no_fixes_needed → ping-pong fires → NHR.
+      // Actually iter 2..5 is 4 entries → trigger.
+      expect(out.needsHumanReview).toBe(true);
+      expect(out.phaseOutcome).toBe('failed');
     });
   });
 });

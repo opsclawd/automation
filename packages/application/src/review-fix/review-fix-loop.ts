@@ -235,15 +235,6 @@ export class ReviewFixLoop {
         lastFailingCategory = reval.category;
       }
 
-      loop = completeIteration(loop, {
-        outcome: reval.passed ? 'fixed' : 'unresolved',
-        fixInvocationId: fix.invocationId,
-        revalidationId: reval.validationRunId,
-        now: deps.now(),
-      });
-      deps.loops.update(loop);
-      this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
-
       // Update the unfounded-history after we know the fixer's verdict so
       // `detectUnfoundedPingPong` can see it.
       unfoundedHistory.push({
@@ -255,13 +246,16 @@ export class ReviewFixLoop {
       // unfounded findings AND the fixer rebutted every time. Escalate to
       // `needs_human_review` rather than burning the budget.
       const pingPongLimit = this.deps.unfoundedPingPongLimit ?? 4;
-      if (
+      const isPingPong =
         unfoundedCount > 0 &&
         fix.verdict === 'done_no_fixes_needed' &&
-        detectUnfoundedPingPong(unfoundedHistory, pingPongLimit)
-      ) {
+        detectUnfoundedPingPong(unfoundedHistory, pingPongLimit);
+
+      if (isPingPong) {
         loop = completeIteration(loop, {
           outcome: 'failed',
+          fixInvocationId: fix.invocationId,
+          revalidationId: reval.validationRunId,
           now: this.deps.now(),
         });
         this.deps.loops.update(loop);
@@ -291,21 +285,14 @@ export class ReviewFixLoop {
         };
       }
 
-      await this.appendHistoryEntry(
-        ctx,
-        review,
-        fix,
-        reval,
-        reval.passed ? 'fixed' : 'unresolved',
-        input,
-      );
-
       // --- REBUTTAL-AWARE CONVERGENCE ---
       // If every finding was unfounded AND the fixer returned
       // `done_no_fixes_needed`, accept the rebuttal and converge.
       const findings = review.offendingFindings ?? [];
       const allUnfounded = unfoundedCount === findings.length && findings.length > 0;
-      if (allUnfounded && fix.verdict === 'done_no_fixes_needed') {
+      const isRebutted = allUnfounded && fix.verdict === 'done_no_fixes_needed';
+
+      if (isRebutted) {
         // Append the rebuttal to code-review.md for human/PR-review visibility.
         if (this.deps.artifactStore) {
           const unfoundedList = (review.offendingFindings ?? []).map((f) => ({
@@ -343,6 +330,8 @@ export class ReviewFixLoop {
         );
         loop = completeIteration(loop, {
           outcome: 'resolved',
+          fixInvocationId: fix.invocationId,
+          revalidationId: reval.validationRunId,
           now: this.deps.now(),
         });
         this.deps.loops.update(loop);
@@ -354,6 +343,25 @@ export class ReviewFixLoop {
           loopStatus: 'converged',
         };
       }
+
+      // Default path: complete the iteration as fixed or unresolved.
+      loop = completeIteration(loop, {
+        outcome: reval.passed ? 'fixed' : 'unresolved',
+        fixInvocationId: fix.invocationId,
+        revalidationId: reval.validationRunId,
+        now: deps.now(),
+      });
+      deps.loops.update(loop);
+      this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
+
+      await this.appendHistoryEntry(
+        ctx,
+        review,
+        fix,
+        reval,
+        reval.passed ? 'fixed' : 'unresolved',
+        input,
+      );
     }
 
     if (loop.status === 'converged') {
