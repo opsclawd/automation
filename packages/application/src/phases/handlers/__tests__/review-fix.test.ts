@@ -51,7 +51,29 @@ describe('ReviewFixHandler', () => {
       expect(result.failure.message).toBe('review/fix loop exhausted without converging');
       expect(result.failure.phase).toBe('review-fix');
       expect(result.failure.canRetry).toBe(true);
-      expect(result.failure.artifacts).toEqual(['review.md']);
+      expect(result.failure.artifacts).toEqual(['review.md', 'code-review.md']);
+      expect(result.failure.runUuid).toBe('550e8400-e29b-41d4-a716-446655440000');
+    }
+  });
+
+  it('returns failed with needs_human_review when the loop requires human review', async () => {
+    const runLoop = async () => ({
+      phaseOutcome: 'failed' as const,
+      loopStatus: 'failed' as const,
+      needsHumanReview: true,
+    });
+    const { ctx } = makeCtx();
+    const result = await new ReviewFixHandler({ runLoop }).run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('needs_human_review');
+      expect(result.failure.message).toBe(
+        'review/fix loop short-circuited to needs_human_review (unfounded reviewer findings)',
+      );
+      expect(result.failure.phase).toBe('review-fix');
+      expect(result.failure.canRetry).toBe(true);
+      expect(result.failure.artifacts).toEqual(['review.md', 'code-review.md']);
       expect(result.failure.runUuid).toBe('550e8400-e29b-41d4-a716-446655440000');
     }
   });
@@ -133,6 +155,28 @@ describe('ReviewFixHandler', () => {
       const failed = events.filter((e) => e.type === 'review_fix.failed');
       expect(failed).toHaveLength(1);
       expect(failed[0].message).toBe('review-fix loop failed');
+    });
+
+    it('emits phase.started and phase.failed on needs_human_review', async () => {
+      const runLoop = async () => ({
+        phaseOutcome: 'failed' as const,
+        loopStatus: 'failed' as const,
+        needsHumanReview: true,
+      });
+      const { ctx, events } = makeCtx();
+      await new ReviewFixHandler({ runLoop }).run(ctx);
+
+      const started = events.filter((e) => e.type === 'review_fix.started');
+      expect(started).toHaveLength(1);
+      expect(started[0].phase).toBe('review-fix');
+
+      const failed = events.filter((e) => e.type === 'review_fix.failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0].runId).toBe('human-readable-run');
+      expect(failed[0].timestamp).toBe('2026-06-16T00:00:00.000Z');
+      expect(failed[0].level).toBe('error');
+      expect(failed[0].phase).toBe('review-fix');
+      expect(failed[0].message).toBe('review-fix loop needs human review');
     });
 
     it('returns a failure when runLoop throws', async () => {

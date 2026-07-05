@@ -9,6 +9,8 @@ export interface ReviewFixHandlerOpts {
   runLoop: (ctx: PhaseHandlerContext) => Promise<{
     phaseOutcome: 'passed' | 'failed';
     loopStatus: 'converged' | 'failed' | 'exhausted';
+    /** True when the loop short-circuited via the unfounded_pingpong path. */
+    needsHumanReview?: boolean;
   }>;
 }
 
@@ -22,8 +24,9 @@ export class ReviewFixHandler implements PhaseHandler {
 
     let phaseOutcome: 'passed' | 'failed';
     let loopStatus: 'converged' | 'failed' | 'exhausted';
+    let result: Awaited<ReturnType<ReviewFixHandlerOpts['runLoop']>>;
     try {
-      const result = await this.opts.runLoop(ctx);
+      result = await this.opts.runLoop(ctx);
       phaseOutcome = result.phaseOutcome;
       loopStatus = result.loopStatus;
     } catch (e) {
@@ -49,24 +52,30 @@ export class ReviewFixHandler implements PhaseHandler {
     }
     const terminalStatus: 'exhausted' | 'failed' =
       loopStatus === 'exhausted' ? 'exhausted' : 'failed';
-    const verboseMessage =
-      terminalStatus === 'exhausted'
+    const isHumanReview = result.needsHumanReview === true;
+    const verboseMessage = isHumanReview
+      ? 'review/fix loop short-circuited to needs_human_review (unfounded reviewer findings)'
+      : terminalStatus === 'exhausted'
         ? 'review/fix loop exhausted without converging'
         : 'review/fix loop failed';
-    const eventMessage =
-      terminalStatus === 'exhausted' ? 'review-fix loop exhausted' : 'review-fix loop failed';
+    const eventMessage = isHumanReview
+      ? 'review-fix loop needs human review'
+      : terminalStatus === 'exhausted'
+        ? 'review-fix loop exhausted'
+        : 'review-fix loop failed';
     emit('review_fix.failed', 'error', eventMessage);
     return {
       outcome: 'failed',
       failure: {
         runUuid: ctx.runUuid,
         phase: 'review-fix',
-        kind: 'validation_failed',
+        kind: isHumanReview ? 'needs_human_review' : 'validation_failed',
         message: verboseMessage,
         canRetry: true,
-        suggestedAction:
-          'Inspect the latest review.md and loop iterations, then resume or intervene.',
-        artifacts: ['review.md'],
+        suggestedAction: isHumanReview
+          ? 'Inspect code-review.md (rebuttal appended) and the latest review.md, then resume or intervene.'
+          : 'Inspect the latest review.md and loop iterations, then resume or intervene.',
+        artifacts: ['review.md', 'code-review.md'],
         detectedAt: ctx.now(),
       },
     };
