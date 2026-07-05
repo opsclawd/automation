@@ -1,6 +1,7 @@
 import type { RunId, RepositoryId, PhaseName, PollAttempt } from '@ai-sdlc/domain';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.js';
+import { DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS } from '@ai-sdlc/shared';
 
 export interface PollPassResult {
   outcome: string;
@@ -34,6 +35,14 @@ export interface PrReviewPollerDeps {
     nextPollAt?: Date,
   ) => Promise<void>;
   quietPollsThreshold?: number; // default 3; consecutive quiet polls before early exit
+  /**
+   * Maximum ms the poller keeps polling an empty PR (zero comments ever
+   * observed for this run) before allowing the quiet-poll counter to
+   * advance. Defaults to DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS * 1000
+   * (30 min). Only applies when no reviewer has yet commented; once any
+   * comment is observed, normal quiet-poll accounting takes over.
+   */
+  firstReviewGraceWindowMs?: number;
   /** Called when a poll resolves all comments (or only blocked remain with nothing in-flight).
    *  Receives the poller input for context. Returns the reactivation action.
    *  Defaults to undefined → returns all_resolved immediately (backward compat). */
@@ -78,6 +87,9 @@ export class PrReviewPoller {
     const DAY_MS = 24 * 60 * 60 * 1000;
     const deadline = new Date(d.phaseStartedAt.getTime() + d.readyMaxDays * DAY_MS);
     const existingAttempts = d.prReviewRepo.listPollAttempts(input.runId);
+    const graceWindowMs =
+      d.firstReviewGraceWindowMs ?? DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS * 1000;
+    const firstReviewDeadline = new Date(d.phaseStartedAt.getTime() + graceWindowMs);
     const meaningfulAttempts = existingAttempts.filter((a) => a.status !== 'rate_limited');
     let pollsRun = meaningfulAttempts.length;
     let lastAttempt: PollAttempt | undefined =
@@ -154,11 +166,18 @@ export class PrReviewPoller {
       });
 
       if (pass.allResolved) {
-        if (!allResolvedEmitted) {
-          allResolvedEmitted = true;
-          this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
+        const hasEverHadComments = d.prReviewRepo.listComments(input.runId).length > 0;
+        const pastGraceWindow = d.now() >= firstReviewDeadline;
+        if (!hasEverHadComments && !pastGraceWindow) {
+          // intentional no-op — the run is still in the initial grace
+          // period; we want to keep polling without parking.
+        } else {
+          if (!allResolvedEmitted) {
+            allResolvedEmitted = true;
+            this.emit(input, 'post-pr-review.poll.all_resolved', 'info', { pollsRun });
+          }
+          consecutiveQuietPolls++;
         }
-        consecutiveQuietPolls++;
       } else {
         consecutiveQuietPolls = 0;
       }

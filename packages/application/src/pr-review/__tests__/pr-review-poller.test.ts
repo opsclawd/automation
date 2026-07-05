@@ -47,6 +47,7 @@ function makePoller(passes: PollPassResult[], overrides: Partial<PrReviewPollerD
     recordTerminalState: async (_attempt, state) => {
       terminalStates.push({ runId: String(runId), state });
     },
+    firstReviewGraceWindowMs: 0,
     ...overrides,
   };
   return { poller: new PrReviewPoller(deps), repo, events, sleeps, terminalStates };
@@ -818,5 +819,84 @@ describe('PrReviewPoller — blocked enters READY (not terminal)', () => {
       phaseId: PhaseName('post-pr-review'),
     });
     expect(result.terminalState).toBe('all_resolved');
+  });
+});
+
+describe('PrReviewPoller — first review grace window', () => {
+  const prCreatedAt = new Date('2026-06-04T00:00:00Z');
+
+  it('keeps polling when all polls find no comments and now < firstReviewDeadline', async () => {
+    const { poller, events } = makePoller([resolved(), resolved(), resolved(), resolved()], {
+      maxPolls: 5,
+      firstReviewGraceWindowMs: 30 * 60 * 1000, // 30 min
+      phaseStartedAt: prCreatedAt,
+      now: () => new Date('2026-06-04T00:10:00Z'), // 10 min after phase start
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('max_polls_reached');
+    expect(result.pollsRun).toBe(5);
+    expect(
+      events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.all_resolved'),
+    ).toBe(false);
+  });
+
+  it('emits all_resolved after the grace window elapses with no comments', async () => {
+    const { poller, events } = makePoller([resolved(), resolved(), resolved()], {
+      maxPolls: 5,
+      firstReviewGraceWindowMs: 30 * 60 * 1000,
+      phaseStartedAt: prCreatedAt,
+      now: () => new Date('2026-06-04T00:35:00Z'), // 35 min — past grace
+    });
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(
+      events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.all_resolved'),
+    ).toBe(true);
+  });
+
+  it('does NOT honor the grace window once a comment has been observed (normal quiet-poll logic resumes)', async () => {
+    const { poller, repo, events } = makePoller([resolved(), resolved(), resolved()], {
+      maxPolls: 5,
+      firstReviewGraceWindowMs: 30 * 60 * 1000,
+      phaseStartedAt: prCreatedAt,
+      now: () => new Date('2026-06-04T00:10:00Z'), // inside grace window
+    });
+    const c = createPrReviewComment({
+      runId,
+      prNumber: 5,
+      commentId: 9001,
+      path: 'a.ts',
+      line: 1,
+      reviewer: 'octocat',
+      body: 'looks good',
+      now: new Date(),
+    });
+    repo.upsertComment(c);
+    const result = await poller.run({
+      runId,
+      repoId,
+      repoFullName: 'o/r',
+      prNumber: 5,
+      cwd: '/w',
+      phaseId: PhaseName('post-pr-review'),
+    });
+    expect(result.terminalState).toBe('all_resolved');
+    expect(
+      events.some((e) => (e.event as { type: string }).type === 'post-pr-review.poll.all_resolved'),
+    ).toBe(true);
   });
 });
