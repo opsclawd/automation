@@ -65,7 +65,7 @@ export class ReviewFixHandler implements PhaseHandler {
         : 'review-fix loop failed';
     emit('review_fix.failed', 'error', eventMessage);
     return {
-      outcome: 'failed',
+      outcome: isHumanReview ? 'needs_human_review' : 'failed',
       failure: {
         runUuid: ctx.runUuid,
         phase: 'review-fix',

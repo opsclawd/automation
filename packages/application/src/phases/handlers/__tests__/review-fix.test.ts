@@ -65,8 +65,8 @@ describe('ReviewFixHandler', () => {
     const { ctx } = makeCtx();
     const result = await new ReviewFixHandler({ runLoop }).run(ctx);
 
-    expect(result.outcome).toBe('failed');
-    if (result.outcome === 'failed') {
+    expect(result.outcome).toBe('needs_human_review');
+    if (result.outcome === 'needs_human_review') {
       expect(result.failure.kind).toBe('needs_human_review');
       expect(result.failure.message).toBe(
         'review/fix loop short-circuited to needs_human_review (unfounded reviewer findings)',
