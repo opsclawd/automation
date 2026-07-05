@@ -806,7 +806,13 @@ export function composeRoot(opts: ComposeOptions): Container {
     });
     waitingSweep.execute().then(
       (waitingResult) => {
-        if (waitingResult.reactivated > 0 || waitingResult.timedOut > 0) {
+        if (
+          waitingResult.reactivated > 0 ||
+          waitingResult.timedOut > 0 ||
+          waitingResult.passedOnMergedPr > 0 ||
+          waitingResult.cancelledOnClosedPr > 0 ||
+          waitingResult.errors.length > 0
+        ) {
           console.error(
             `Reactivation sweep: ${waitingResult.reactivated} reactivated, ${waitingResult.timedOut} timed out, ${waitingResult.passedOnMergedPr} passed (merged PR), ${waitingResult.cancelledOnClosedPr} cancelled (closed PR), ${waitingResult.stayedReady} stayed ready, ${waitingResult.skipped} skipped, ${waitingResult.errors.length} errors`,
           );
