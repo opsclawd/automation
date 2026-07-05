@@ -1,44 +1,25 @@
-# Implementation Log — Task 6 (workerLoop outer-signal abort distinction)
+# Implementation Log — Task 6 (FindingEvidenceInspectorPort contract tests)
 
-Branch: `ai/issue-589`
-Date: 2026-07-02
-Scope: Task 6 only — `packages/application/src/executor/worker-loop.ts` catch block.
+Branch: `ai/issue-623`
+Date: 2026-07-05
+Scope: Task 6 only — Create `packages/application/src/review-fix/__tests__/finding-evidence-inspector.test.ts`
 
-## What was already in place from Task 5
+## Files created
 
-Task 5 (commit `25688b9c`) pre-staged `outerSignal?: AbortSignal;` on
-`WorkerLoopDeps` with an explicit scope note saying the workerLoop
-catch-block consumption belongs to Task 6. So Step 6.1 was already
-complete on entry to this run and required no further action.
+- `packages/application/src/review-fix/__tests__/finding-evidence-inspector.test.ts` — contains the unit tests for FakeFindingEvidenceInspector to verify contract implementation.
 
-## Files modified
+## Steps executed
 
-- `packages/application/src/executor/worker-loop.ts` — catch block now
-  distinguishes abort vs fail: if the run had `started` AND
-  `deps.outerSignal?.aborted`, the job is `markCancelled` (wrapped in
-  try/catch for the "already terminal" race); otherwise the existing
-  `markFailed` path runs. The pre-start `releaseClaim` branch is
-  unchanged.
+- **Step 6.1** — Created the port contract test file `packages/application/src/review-fix/__tests__/finding-evidence-inspector.test.ts` mirroring the structure of `tests/verify-comment-structural.test.ts`.
+- **Step 6.2** — Ran the tests with `pnpm -C packages/application test -- finding-evidence-inspector` and confirmed all 4 tests passed successfully.
 
-## Verification
+## Verification results
 
-- `pnpm -C packages/application test -- executor` — 52/52 pass
-  (4 test files, including the 15 worker-loop tests covering heartbeat
-  failure during prepareWorktree / executeRun / grace / never-settles).
-  The new `outerSignal` is optional, so existing tests that omit it
-  follow the `markFailed` branch — verified by the unchanged
-  `heartbeat failure during executeRun fails the job immediately`
-  test, which asserts the job ends up failed (not cancelled) when no
-  outer abort is set.
-- `pnpm -C packages/application typecheck` — PASS.
+- `pnpm -C packages/application test -- finding-evidence-inspector` → 4 passed.
+- `pnpm typecheck` → PASS.
+- `pnpm lint` → PASS.
 
-## Scope check
+## Self-review
 
-`git diff --stat HEAD`:
-```
- packages/application/src/executor/worker-loop.ts | 10 +++++++++-
- 1 file changed, 9 insertions(+), 1 deletion(-)
-```
-
-Only one file touched, only the catch-block diff specified in Step
-6.2. No work pre-staged for Tasks 7+.
+- **Scope:** Only `packages/application/src/review-fix/__tests__/finding-evidence-inspector.test.ts` and `implementation-log-task-6.md` are modified/created. No other files were touched. No later-task work has been pre-staged.
+- **Commit integrity:** Verified that typecheck, lint, and tests all pass perfectly.
