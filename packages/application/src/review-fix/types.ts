@@ -2,6 +2,8 @@ import type { RunId, PhaseName, AgentProfileName, Loop } from '@ai-sdlc/domain';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
+import type { FindingEvidenceInspectorPort } from '../ports/finding-evidence-inspector-port.js';
+import type { ArtifactStore } from '../ports.js';
 
 export interface StepContext {
   loopId: string;
@@ -27,6 +29,12 @@ export interface FixStepResult {
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
   headBeforeFix?: string; // commit SHA before the fix, for rollback on revalidation failure
   summary?: string;
+  /**
+   * Required (non-empty) when verdict === 'done_no_fixes_needed' by the
+   * fix-review schema. Carried so the loop can append it to `code-review.md`
+   * when the rebuttal is accepted.
+   */
+  rebuttal?: string;
 }
 
 export interface RevalidationResult {
@@ -73,6 +81,25 @@ export interface ReviewFixLoopDeps {
   rollbackFix?: (ctx: StepContext, targetSha: string) => Promise<boolean>;
   cleanArtifacts?: (ctx: StepContext) => Promise<void>;
   loopHistory?: ReviewLoopHistoryPort;
+  /**
+   * Mechanically validates reviewer evidence against the working tree at the
+   * iteration's head. Required for the rebuttal-aware convergence branch.
+   * If absent, the loop falls back to the existing pre-#623 behavior.
+   */
+  findingEvidenceInspector?: FindingEvidenceInspectorPort;
+  /**
+   * Used to append an accepted rebuttal to `code-review.md` so the human /
+   * PR-review stage sees what was disputed. If absent, the rebuttal is
+   * dropped silently (with a `review.rebuttal.append_skipped` event).
+   */
+  artifactStore?: ArtifactStore;
+  /**
+   * Threshold for `unfounded_pingpong` short-circuit. When the last
+   * `unfoundedPingPongLimit` iterations all have unfounded findings AND
+   * the fixer returned `done_no_fixes_needed`, return `needsHumanReview`.
+   * Defaults to 4 when omitted.
+   */
+  unfoundedPingPongLimit?: number;
 }
 
 export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';
@@ -126,4 +153,12 @@ export interface ReviewFixLoopInput {
 export interface ReviewFixLoopResult {
   loop: Loop;
   phaseOutcome: 'passed' | 'failed';
+  loopStatus?: 'converged' | 'failed' | 'exhausted';
+  /**
+   * True iff the loop short-circuited via the `unfounded_pingpong` path
+   * or another `needs_human_review` branch. Mapped by the handler to
+   * `Failure { kind: 'needs_human_review' }` so the run lifecycle reaches
+   * `RUN_STATUS.needs_human_review`.
+   */
+  needsHumanReview?: boolean;
 }
