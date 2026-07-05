@@ -244,49 +244,6 @@ export class ReviewFixLoop {
         ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
       });
 
-      // Short-circuit on `unfounded_pingpong`: every recent iteration had
-      // unfounded findings AND the fixer rebutted every time. Escalate to
-      // `needs_human_review` rather than burning the budget.
-      const pingPongLimit = this.deps.unfoundedPingPongLimit ?? 4;
-      const isPingPong =
-        unfoundedCount > 0 &&
-        fix.verdict === 'done_no_fixes_needed' &&
-        detectUnfoundedPingPong(unfoundedHistory, pingPongLimit);
-
-      if (isPingPong) {
-        loop = completeIteration(loop, {
-          outcome: 'failed',
-          fixInvocationId: fix.invocationId,
-          revalidationId: reval.validationRunId,
-          now: this.deps.now(),
-        });
-        this.deps.loops.update(loop);
-        this.emitIterationCompleted(input, iterationIndex, 'failed');
-        await this.appendHistoryEntry(ctx, review, fix, reval, 'failed', input);
-        this.emit(
-          input,
-          'review.evidence.pingpong',
-          'warn',
-          `unfounded-pingpong detected: ${pingPongLimit} consecutive unfounded iterations`,
-          {
-            iterationIndex,
-            unfoundedCount,
-            limit: pingPongLimit,
-          },
-        );
-        return {
-          loop,
-          phaseOutcome: 'failed',
-          loopStatus:
-            loop.status === 'converged'
-              ? 'converged'
-              : loop.status === 'failed'
-                ? 'failed'
-                : 'exhausted',
-          needsHumanReview: true,
-        };
-      }
-
       // --- REBUTTAL-AWARE CONVERGENCE ---
       // If every finding was unfounded AND the fixer returned
       // `done_no_fixes_needed`, accept the rebuttal and converge.
@@ -340,6 +297,49 @@ export class ReviewFixLoop {
           loop,
           phaseOutcome: 'passed',
           loopStatus: 'converged',
+        };
+      }
+
+      // Short-circuit on `unfounded_pingpong`: every recent iteration had
+      // unfounded findings AND the fixer rebutted every time. Escalate to
+      // `needs_human_review` rather than burning the budget.
+      const pingPongLimit = this.deps.unfoundedPingPongLimit ?? 4;
+      const isPingPong =
+        unfoundedCount > 0 &&
+        fix.verdict === 'done_no_fixes_needed' &&
+        detectUnfoundedPingPong(unfoundedHistory, pingPongLimit);
+
+      if (isPingPong) {
+        loop = completeIteration(loop, {
+          outcome: 'failed',
+          fixInvocationId: fix.invocationId,
+          revalidationId: reval.validationRunId,
+          now: this.deps.now(),
+        });
+        this.deps.loops.update(loop);
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        await this.appendHistoryEntry(ctx, review, fix, reval, 'failed', input);
+        this.emit(
+          input,
+          'review.evidence.pingpong',
+          'warn',
+          `unfounded-pingpong detected: ${pingPongLimit} consecutive unfounded iterations`,
+          {
+            iterationIndex,
+            unfoundedCount,
+            limit: pingPongLimit,
+          },
+        );
+        return {
+          loop,
+          phaseOutcome: 'failed',
+          loopStatus:
+            loop.status === 'converged'
+              ? 'converged'
+              : loop.status === 'failed'
+                ? 'failed'
+                : 'exhausted',
+          needsHumanReview: true,
         };
       }
 
@@ -573,7 +573,9 @@ export class ReviewFixLoop {
       const matched = evidence.filter((e) => {
         const summaryLc = f.summary.toLowerCase();
         // Heuristic: match evidence whose path appears in the summary.
-        return e.path !== undefined && e.path !== '' && summaryLc.includes(e.path.toLowerCase());
+        if (!e.path) return false;
+        const basename = e.path.split('/').pop()?.toLowerCase();
+        return basename !== undefined && summaryLc.includes(basename);
       });
       if (matched.length === 0) {
         unfounded.push({ severity: f.severity, summary: f.summary });
