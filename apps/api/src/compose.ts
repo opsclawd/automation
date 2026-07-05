@@ -114,7 +114,13 @@ import {
   type TaskManifest,
   PHASE_DEFINITIONS,
 } from '@ai-sdlc/application';
-import { ConfigError, loadConfig, PHASE_FALLBACKS, type AgentConfig } from '@ai-sdlc/shared';
+import {
+  ConfigError,
+  DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS,
+  loadConfig,
+  PHASE_FALLBACKS,
+  type AgentConfig,
+} from '@ai-sdlc/shared';
 import {
   AgentProfileName,
   AgentInvocationId,
@@ -448,6 +454,8 @@ export interface Container {
     readyMaxDays: number;
     phaseStartedAt: Date;
     baseBranch?: string;
+    repoRoot?: string;
+    firstReviewGraceWindowSeconds?: number;
   }) => PrReviewPoller;
   createFileTailer: (
     opts: import('@ai-sdlc/application/ports').FileTailerOptions,
@@ -2278,6 +2286,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               readyMaxDays: config.timeouts.readyMaxDays,
               phaseStartedAt: ctx.now(),
               baseBranch: resolvedDefaultBranch,
+              ...(config.phases.postPrReview?.firstReviewGraceWindowSeconds !== undefined
+                ? {
+                    firstReviewGraceWindowSeconds:
+                      config.phases.postPrReview.firstReviewGraceWindowSeconds,
+                  }
+                : {}),
             });
             const result = await poller.run({
               runId: RunId(ctx.runUuid),
@@ -2425,6 +2439,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     phaseStartedAt: Date;
     baseBranch?: string;
     repoRoot?: string;
+    firstReviewGraceWindowSeconds?: number;
   }): PrReviewPoller {
     if (!agentRuntime) {
       throw new ConfigError(
@@ -2763,6 +2778,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       revertRunStatus: async (runId) => {
         runRepository.update(String(runId), { status: 'waiting' });
       },
+      firstReviewGraceWindowMs:
+        (opts.firstReviewGraceWindowSeconds ?? DEFAULT_FIRST_REVIEW_GRACE_WINDOW_SECONDS) * 1000,
       maxReactivations: 100,
     });
   }
