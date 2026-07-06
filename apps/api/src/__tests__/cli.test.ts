@@ -100,7 +100,7 @@ describe('CLI run command', () => {
       return true;
     }) as never);
 
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     await program.parseAsync([
       'node',
       'orchestrator',
@@ -138,7 +138,7 @@ describe('CLI run command', () => {
       return true;
     }) as never);
 
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     await program.parseAsync([
       'node',
       'orchestrator',
@@ -161,7 +161,7 @@ describe('CLI run command', () => {
   });
 
   it('missing required --issue causes Commander error mentioning --issue', async () => {
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     const runCmd = program.commands.find((c) => c.name() === 'run')!;
     runCmd.exitOverride();
     const errs: string[] = [];
@@ -173,7 +173,7 @@ describe('CLI run command', () => {
 
   it('rejects malformed --issue values', async () => {
     for (const bad of ['123abc', '12.5', '-5', 'abc']) {
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       program.exitOverride();
       await expect(
         program.parseAsync(['node', 'orchestrator', 'run', '--issue', bad]),
@@ -182,7 +182,7 @@ describe('CLI run command', () => {
   });
 
   it('rejects zero as --issue', async () => {
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     program.exitOverride();
     await expect(
       program.parseAsync(['node', 'orchestrator', 'run', '--issue', '0']),
@@ -241,14 +241,16 @@ describe('CLI runs cancel command', () => {
   });
 
   it('rejects cancel without --issue or --uuid', async () => {
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
     runsCmd.exitOverride();
     const consoleErrs: string[] = [];
     const spy = vi.spyOn(console, 'error').mockImplementation((msg) => {
       consoleErrs.push(String(msg));
     });
-    await expect(runsCmd.parseAsync(['cancel'], { from: 'user' })).rejects.toThrow();
+    const exitSpy2 = vi.spyOn(process, 'exit').mockImplementation(((code: number) => { throw new Error(`EXIT ${code}`); }) as never);
+    await expect(runsCmd.parseAsync(['cancel'], { from: 'user' })).rejects.toThrow(/EXIT 1/);
+    exitSpy2.mockRestore();
     expect(consoleErrs.join('')).toMatch(/specify --issue or --uuid/i);
     spy.mockRestore();
   });
@@ -261,12 +263,8 @@ describe('CLI runs cancel command', () => {
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
     const db = openDatabase(dbPath);
     applyMigrations(db);
-    db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'cancel-uuid-test',
-      'issue-60-20260519-000000',
+    db.prepare(`INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at, pid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('cancel-uuid-test', 'issue-60-20260519-000000', 'owner/repo',
       60,
       'issue_to_pr',
       'running',
@@ -288,7 +286,7 @@ describe('CLI runs cancel command', () => {
       const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
         consoleErrs.push(String(msg));
       });
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['cancel', '--uuid', 'cancel-uuid-test'], { from: 'user' });
@@ -307,12 +305,8 @@ describe('CLI runs cancel command', () => {
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
     const db = openDatabase(dbPath);
     applyMigrations(db);
-    db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at, pid)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'terminal-uuid',
-      'issue-61-20260519-000000',
+    db.prepare(`INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at, pid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('terminal-uuid', 'issue-61-20260519-000000', 'owner/repo',
       61,
       'issue_to_pr',
       'passed',
@@ -373,7 +367,7 @@ describe('CLI runs cancel command', () => {
 
 describe('CLI runs execute command', () => {
   it('runs execute exits 1 when --uuid is missing', async () => {
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
     const executeCmd = runsCmd.commands.find((c) => c.name() === 'execute')!;
     executeCmd.exitOverride();
@@ -470,11 +464,12 @@ describe('CLI runs execute command', () => {
     applyMigrations(db);
     const runUuid = 'test-exec-running-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-99-20260622-000000',
+      'owner/repo',
       99,
       'issue_to_pr',
       'running',
@@ -569,11 +564,12 @@ describe('CLI runs execute command', () => {
     applyMigrations(db);
     const runUuid = 'test-exec-ok-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-99-20260520-000000',
+      'owner/repo',
       99,
       'issue_to_pr',
       'queued',
@@ -672,11 +668,12 @@ describe('CLI runs execute command', () => {
     applyMigrations(db);
     const runUuid = 'test-exec-conflict-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-100-20260622-000000',
+      'owner/repo',
       100,
       'issue_to_pr',
       'queued',
@@ -747,11 +744,12 @@ describe('CLI runs execute command', () => {
     applyMigrations(db);
     const runUuid = 'test-exec-hb-fail-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-99-20260622-000000',
+      'owner/repo',
       99,
       'issue_to_pr',
       'queued',
@@ -1419,7 +1417,7 @@ describe('CLI run --executor ts', () => {
         consoleErrs.push(String(msg));
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       await program.parseAsync([
         'node',
         'orchestrator',
@@ -2668,7 +2666,7 @@ describe('CLI run --executor ts', () => {
 
 describe('CLI runs resume command', () => {
   it('exits 1 when --uuid is missing', async () => {
-    const program = buildProgram();
+    const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
     const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
     const resumeCmd = runsCmd.commands.find((c) => c.name() === 'resume')!;
     resumeCmd.exitOverride();
@@ -2692,7 +2690,7 @@ describe('CLI runs resume command', () => {
         consoleErrs.push(String(msg));
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['resume', '--uuid', 'any-uuid'], { from: 'user' });
@@ -2745,7 +2743,7 @@ describe('CLI runs resume command', () => {
         consoleErrs.push(String(msg));
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['resume', '--uuid', 'nonexistent-uuid'], { from: 'user' });
@@ -2791,11 +2789,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'resume-nofp-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-110-20260622-000000',
+      'owner/repo',
       110,
       'issue_to_pr',
       'failed',
@@ -2906,11 +2905,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'resume-fp-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-111-20260622-000000',
+      'owner/repo',
       111,
       'issue_to_pr',
       'failed',
@@ -3024,11 +3024,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'resume-json-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-112-20260622-000000',
+      'owner/repo',
       112,
       'issue_to_pr',
       'failed',
@@ -3134,11 +3135,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'resume-verbose-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-113-20260622-000000',
+      'owner/repo',
       113,
       'issue_to_pr',
       'failed',
@@ -3246,11 +3248,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'resume-noverbose-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-114-20260622-000000',
+      'owner/repo',
       114,
       'issue_to_pr',
       'failed',
@@ -3341,12 +3344,8 @@ describe('CLI runs resume command', () => {
     const dbPath = join(root, '.ai-runs', 'orchestrator.sqlite');
     const db = openDatabase(dbPath);
     applyMigrations(db);
-    db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      'resume-norepo-uuid',
-      'issue-101-20260622-000000',
+    db.prepare(`INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('resume-norepo-uuid', 'issue-101-20260622-000000', 'owner/repo',
       101,
       'issue_to_pr',
       'failed',
@@ -3389,11 +3388,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'cmr-ok-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-99-20260625-000000',
+      'owner/repo',
       99,
       'issue_to_pr',
       'waiting',
@@ -3412,7 +3412,7 @@ describe('CLI runs resume command', () => {
         return true;
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['check-merge-ready', '--uuid', runUuid], { from: 'user' });
@@ -3436,11 +3436,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'cmr-fail-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-99-20260625-000001',
+      'owner/repo',
       99,
       'issue_to_pr',
       'waiting',
@@ -3477,7 +3478,7 @@ describe('CLI runs resume command', () => {
         consoleErrs.push(String(msg));
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['check-merge-ready', '--uuid', runUuid], { from: 'user' });
@@ -3515,7 +3516,7 @@ describe('CLI runs resume command', () => {
         consoleErrs.push(String(msg));
       });
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
-      const program = buildProgram();
+      const program = buildProgram({ composeOverrides: { repoFullName: 'owner/repo' } });
       const runsCmd = program.commands.find((c) => c.name() === 'runs')!;
       runsCmd.exitOverride();
       await runsCmd.parseAsync(['check-merge-ready', '--uuid', 'no-such-uuid'], { from: 'user' });
@@ -3561,11 +3562,12 @@ describe('CLI runs resume command', () => {
     applyMigrations(db);
     const runUuid = 'resume-lease-conflict-uuid';
     db.prepare(
-      `INSERT INTO runs (uuid, display_id, issue_number, type, status, completed_phases, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, completed_phases, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       runUuid,
       'issue-131-20260625-000000',
+      'owner/repo',
       131,
       'issue_to_pr',
       'failed',
