@@ -25,6 +25,30 @@ const phasesSchema = z.object({
      * omitted; set higher to be more tolerant of bursty reviewer models.
      */
     unfoundedPingPongLimit: z.number().int().positive().optional().default(4),
+    /**
+     * When true (default), the budget grants one trailing post-fix re-review
+     * whenever the last iteration ended with `outcome: 'fixed'`. Set to
+     * false to restore pre-#627 behavior bit-for-bit (#627).
+     */
+    endOnReview: z.boolean().default(true),
+    /**
+     * When true (default), iteration >= 2 scopes the reviewer to the diff
+     * since the previously reviewed commit. Set to false to disable (#627).
+     */
+    deltaScopedReReview: z.boolean().default(true),
+    /**
+     * Trend-aware exit (#627). When enabled (default true, strict mode,
+     * window 3), budget exhaustion with a converging severity-weighted
+     * finding trend exits as `converged_with_notes` (with
+     * `needsHumanReview: true`) instead of failing the run.
+     */
+    trendAwareExit: z
+      .object({
+        enabled: z.boolean().default(true),
+        mode: z.enum(['strict', 'lenient']).default('strict'),
+        window: z.number().int().min(2).max(10).default(3),
+      })
+      .default({}),
   }),
   // implement.maxIterations is validated but not consumed by any shell loop.
   // The implement phase runs each task once sequentially — no retry loop exists.
