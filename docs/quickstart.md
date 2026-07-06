@@ -70,6 +70,24 @@ CLI flags for the `run` command:
 | `--agent-cli <cli>`      | Sets `AI_RUNTIME`                                 |
 | `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only) |
 
+## Managing a targeted run
+
+When you start a run against a different repository using `--target-repo-root <path>`, every follow-up command must point at the same target — otherwise it will read the orchestrator's own database and artifact directories. Pass `--target-repo-root` to each follow-up command:
+
+```bash
+# Start a run against /path/to/target-repo
+pnpm --filter @ai-sdlc/api dev run --issue 123 --target-repo-root /path/to/target-repo
+
+# Operate on that run from the orchestrator repo
+pnpm --filter @ai-sdlc/api dev runs logs --issue 123 --target-repo-root /path/to/target-repo
+pnpm --filter @ai-sdlc/api dev runs check-merge-ready --uuid <uuid> --target-repo-root /path/to/target-repo
+pnpm --filter @ai-sdlc/api dev runs execute --uuid <uuid> --target-repo-root /path/to/target-repo
+pnpm --filter @ai-sdlc/api dev runs resume --uuid <uuid> --target-repo-root /path/to/target-repo
+pnpm --filter @ai-sdlc/api dev runs cancel --uuid <uuid> --target-repo-root /path/to/target-repo
+```
+
+The path must point at an existing directory that is inside a git working tree. Omitting the flag preserves the existing single-repo behavior (the orchestrator repo is used).
+
 ## Troubleshooting
 
 **Run row stuck in `running`**

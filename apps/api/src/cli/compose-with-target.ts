@@ -1,11 +1,12 @@
 import { isAbsolute, join, resolve } from 'node:path';
 import { composeRoot, type ComposeOptions } from '../compose.js';
 import type { Container } from '../compose.js';
-import { findRepoRoot } from '../cli.js';
-import type { BuildProgramOptions } from '../cli.js';
+import { findRepoRoot } from './target-repo-root.js';
 
 export interface ComposeWithTargetOptions {
-  buildOpts?: BuildProgramOptions;
+  buildOpts?: {
+    composeOverrides?: Partial<ComposeOptions>;
+  };
   scriptPath?: string;
   /** Override `runStartupSweeps` (default: false — matches the current
    *  behavior of every management command). Pass `true` from `run`. */

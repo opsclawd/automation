@@ -1,7 +1,7 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Command } from 'commander';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
@@ -20,7 +20,7 @@ import {
 import { newRunId } from '@ai-sdlc/shared';
 import { planRunRecoveryAction } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';
-import { resolveTargetRepoRootOrExit } from './cli/target-repo-root.js';
+import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
 import { composeWithTarget } from './cli/compose-with-target.js';
 import { WorkerScheduler } from './worker-scheduler.js';
 
@@ -174,22 +174,7 @@ function installSignalHandlers(
   };
 }
 
-export function findRepoRoot(
-  startDir: string,
-  exists: (p: string) => boolean = existsSync,
-): string {
-  let dir = startDir;
-  for (;;) {
-    if (exists(join(dir, 'pnpm-workspace.yaml'))) {
-      return dir;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) {
-      return startDir;
-    }
-    dir = parent;
-  }
-}
+export { findRepoRoot };
 
 export interface RunCliOptions {
   issue: number;

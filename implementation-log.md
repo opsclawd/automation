@@ -1,27 +1,21 @@
-# Implementation Log — Task 9 (Add integration test apps/api/src/__tests__/cli-runs-target.test.ts)
+# Implementation Log - Task 10
 
-Branch: `ai/issue-632`
-Date: 2026-07-06
-Scope: Task 9 only — Add integration test `apps/api/src/__tests__/cli-runs-target.test.ts` to verify cross-repo run management commands (`cancel`, `check-merge-ready`, `execute`, `resume`, and `logs`).
+## Status: DONE
 
-## Files created
+## What was implemented
+- Appended a new section "Managing a targeted run" to `docs/quickstart.md` after the `## Configuration` block and before `## Troubleshooting`.
+- The new section demonstrates how to pass `--target-repo-root <path>` to follow-up commands (`logs`, `check-merge-ready`, `execute`, `resume`, `cancel`) when starting a run against a different repository.
 
-- `apps/api/src/__tests__/cli-runs-target.test.ts` — Added integration tests covering happy paths (target repository correctly specified) and cross-repo misses (wrong repository root specified), plus non-git repository rejection error paths.
+## What was tested and results
+- Verified that the new heading is present in `docs/quickstart.md` using grep.
+- Ran the workspace-wide typecheck (`pnpm --filter @ai-sdlc/api typecheck`): passed with 0 errors.
+- Ran the unit and integration test suites:
+  - `cli-target-repo-root.test.ts`: 11/11 tests passed.
+  - `cli-compose-with-target.test.ts`: 7/7 tests passed.
+  - `cli-runs-target.test.ts`: 6/6 tests passed.
+  - `cli.test.ts`: 54/54 tests passed.
+  - `cli-runs-resume-confirmation.test.ts`: 5/5 tests passed.
 
-## Steps executed
-
-- **Step 9.1** — Created the integration test file with the exact requested content.
-- **Step 9.2** — Ran the newly added integration test to verify it passes successfully.
-- **Step 9.3** — Ran the full CLI test suite to confirm no regression.
-- **Step 9.4** — Verified that `@ai-sdlc/api` typechecks with 0 errors.
-
-## Verification results
-
-- `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli-runs-target.test.ts` → PASS (All 6 cases pass).
-- `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli.test.ts src/__tests__/cli-runs-resume-confirmation.test.ts src/__tests__/cli-runs-target.test.ts src/__tests__/cli-failure-output.test.ts` → PASS (All 67 tests across all 4 files pass).
-- `pnpm --filter @ai-sdlc/api typecheck` → PASS (0 errors).
-
-## Self-review
-
-- **Scope:** Created only `apps/api/src/__tests__/cli-runs-target.test.ts` and updated `implementation-log.md`.
-- **Commit integrity:** Git status shows a clean workspace after committing.
+## Files changed
+- [docs/quickstart.md](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-632/docs/quickstart.md)
+- [implementation-log.md](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-632/implementation-log.md)

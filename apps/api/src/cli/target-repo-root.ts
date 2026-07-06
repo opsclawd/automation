@@ -1,5 +1,5 @@
 import { existsSync, statSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, resolve, dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -68,4 +68,21 @@ export function resolveTargetRepoRootOrExit(
     return onError(result.message);
   }
   return result.resolved.absolute;
+}
+
+export function findRepoRoot(
+  startDir: string,
+  exists: (p: string) => boolean = existsSync,
+): string {
+  let dir = startDir;
+  for (;;) {
+    if (exists(join(dir, 'pnpm-workspace.yaml'))) {
+      return dir;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return startDir;
+    }
+    dir = parent;
+  }
 }
