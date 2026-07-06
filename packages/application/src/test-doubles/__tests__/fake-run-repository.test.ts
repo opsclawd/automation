@@ -148,4 +148,29 @@ describe('FakeRunRepository', () => {
     expect(secondUpdate).toBe(false);
     expect(repo.runs.get('uuid-1')?.status).toBe('passed');
   });
+
+  it('propagates and persists baseBranch through insertIfNoActive, update, and atomicUpdateByUuid', () => {
+    const repo = new FakeRunRepository();
+    const run = createRun({
+      uuid: 'uuid-1',
+      displayId: 'run-1',
+      repoId: repoA,
+      issueNumber: 42,
+      startedAt: new Date('2026-07-01T00:00:00Z'),
+      baseBranch: 'main',
+    });
+
+    // 1. insertIfNoActive
+    repo.insertIfNoActive(run);
+    expect(repo.runs.get('uuid-1')?.baseBranch).toBe('main');
+
+    // 2. update
+    repo.update('uuid-1', { baseBranch: 'feature-branch' });
+    expect(repo.runs.get('uuid-1')?.baseBranch).toBe('feature-branch');
+
+    // 3. atomicUpdateByUuid
+    const success = repo.atomicUpdateByUuid('uuid-1', { baseBranch: 'next-branch' }, 'running');
+    expect(success).toBe(true);
+    expect(repo.runs.get('uuid-1')?.baseBranch).toBe('next-branch');
+  });
 });
