@@ -2306,6 +2306,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             return {
               phaseOutcome: result.phaseOutcome,
               loopStatus: result.loopStatus,
+              ...(result.needsHumanReview !== undefined ? { needsHumanReview: result.needsHumanReview } : {}),
             };
           },
         }),
