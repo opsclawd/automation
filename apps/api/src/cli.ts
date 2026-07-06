@@ -553,31 +553,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         runsDir?: string;
         targetRepoRoot?: string;
       }) => {
-        let targetRepoRoot: string | undefined;
-        if (opts.targetRepoRoot !== undefined) {
-          targetRepoRoot = resolve(process.cwd(), opts.targetRepoRoot);
-          if (!existsSync(targetRepoRoot) || !statSync(targetRepoRoot).isDirectory()) {
-            console.error(
-              `Error: --target-repo-root is not an existing directory: ${targetRepoRoot}`,
-            );
-            process.exit(EXIT_USER_ERROR);
-          }
-          try {
-            execFileSync('git', ['-C', targetRepoRoot, 'rev-parse', '--git-dir'], {
-              stdio: 'pipe',
-            });
-          } catch (err) {
-            const code = (err as NodeJS.ErrnoException).code;
-            if (code === 'ENOENT') {
-              console.error(`Error: git CLI not found; cannot validate --target-repo-root.`);
-            } else {
-              console.error(
-                `Error: --target-repo-root is not inside a git working tree: ${targetRepoRoot}`,
-              );
-            }
-            process.exit(EXIT_USER_ERROR);
-          }
-        }
+        const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+          console.error(`Error: ${msg}`);
+          process.exit(EXIT_USER_ERROR);
+        });
 
         const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
         const scriptPath = opts.script

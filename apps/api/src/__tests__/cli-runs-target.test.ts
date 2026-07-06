@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildProgram } from '../cli.js';
-import { openDatabase, applyMigrations } from '@ai-sdlc/infrastructure';
+import { openDatabase, applyMigrations, RepositoryMetadataResolver } from '@ai-sdlc/infrastructure';
 import { RunExecutor as RunExecutorApp, ResumeRun, RetryFailedPhase } from '@ai-sdlc/application';
 import { WorkerLeaseRepository } from '@ai-sdlc/infrastructure';
 import { WorkerId, RepositoryId, RunId } from '@ai-sdlc/domain';
@@ -74,6 +74,14 @@ function insertRun(
 
 describe('Cross-repo run management', () => {
   beforeEach(() => {
+    vi.spyOn(RepositoryMetadataResolver.prototype, 'resolve').mockImplementation((targetPath) => {
+      return {
+        rootPath: targetPath,
+        nameWithOwner: 'owner/repo',
+        defaultBranch: 'main',
+        remoteUrl: 'https://github.com/owner/repo.git',
+      };
+    });
     vi.spyOn(WorkerLeaseRepository.prototype, 'acquire').mockReturnValue({
       repoId: RepositoryId('owner/repo'),
       workerId: WorkerId(`cli-${process.pid}`),
