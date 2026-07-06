@@ -70,3 +70,10 @@ export type {
   FileTailerOptions,
   FileTailerPort,
 } from '../ports.js';
+
+export type {
+  SynthesizeFromTranscriptPort,
+  SynthesizeFromTranscriptInput,
+  SynthesizeFromTranscriptResult,
+  SynthesizeFromTranscriptOutcome,
+} from './synthesize-from-transcript-port.js';
