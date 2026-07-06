@@ -32,13 +32,6 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     `Working directory: ${input.cwd}`,
     `Repository: ${input.repoId}`,
     '',
-    '## SCOPE',
-    'You are reviewing code changes within an automated review/fix loop.',
-    'Code outside the diff below is OUT OF SCOPE unless a new finding',
-    'requires referencing prior context. Do NOT re-flag findings that',
-    'a prior iteration already addressed — see "Disposition of',
-    'Previously Open Findings" below.',
-    '',
     '## TASK',
     input.prevReviewedCommitSha
       ? `Run: git diff ${input.prevReviewedCommitSha}..HEAD`
@@ -86,19 +79,28 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     sections.push(input.historyContext);
   }
 
-  sections.push(
-    '',
-    '## DISPOSITION GUIDANCE',
-    'For each prior finding, the history section will mark it as either',
-    '"Disposition: addressed by fix" or "Disposition: rebutted by fixer".',
-    '- Addressed findings: confirm the fix actually resolved the issue',
-    '  against the current diff. Do NOT re-flag the same finding unless',
-    '  the fix is incomplete.',
-    '- Rebutted findings: the fixer asserted no change was needed. Confirm',
-    '  this against the current code. Re-flag ONLY if you find new',
-    '  evidence in the current diff that supports the original concern.',
-    '',
-  );
+  if (input.prevReviewedCommitSha) {
+    sections.push(
+      '',
+      '## SCOPE',
+      'You are reviewing code changes within an automated review/fix loop.',
+      'Code outside the diff below is OUT OF SCOPE unless a new finding',
+      'requires referencing prior context. Do NOT re-flag findings that',
+      'a prior iteration already addressed — see "Disposition of',
+      'Previously Open Findings" below.',
+      '',
+      '## DISPOSITION GUIDANCE',
+      'For each prior finding, the history section will mark it as either',
+      '"Disposition: addressed by fix" or "Disposition: rebutted by fixer".',
+      '- Addressed findings: confirm the fix actually resolved the issue',
+      '  against the current diff. Do NOT re-flag the same finding unless',
+      '  the fix is incomplete.',
+      '- Rebutted findings: the fixer asserted no change was needed. Confirm',
+      '  this against the current code. Re-flag ONLY if you find new',
+      '  evidence in the current diff that supports the original concern.',
+      '',
+    );
+  }
 
   sections.push(
     '## CRITICAL RULES',
