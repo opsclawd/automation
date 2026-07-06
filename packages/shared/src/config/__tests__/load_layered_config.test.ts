@@ -148,6 +148,91 @@ describe('loadLayeredConfig', () => {
     expect(result.sources[2].path).toContain(automationRoot);
     expect(result.config.validation.commands).toEqual(['a', 'b']);
   });
+
+  it('replaces agent.phaseProfiles wholesale (not key-by-key)', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        agent: {
+          defaultProfile: 'implementer',
+          profiles: {
+            implementer: {
+              runtime: 'opencode',
+              provider: 'openai',
+              model: 'gpt-4',
+              timeoutMinutes: 10,
+            },
+            'target-implementer': {
+              runtime: 'opencode',
+              provider: 'openai',
+              model: 'gpt-4',
+              timeoutMinutes: 10,
+            },
+          },
+          phaseProfiles: {
+            implement: { profile: 'implementer', role: 'implementer-role' },
+          },
+        },
+      }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({
+        agent: {
+          phaseProfiles: {
+            implement: { profile: 'target-implementer' },
+          },
+        },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.agent.phaseProfiles.implement).toEqual({
+      profile: 'target-implementer',
+    });
+  });
+
+  it('merges phases.skip arrays index-by-index (jq * semantics)', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({ phases: { skip: ['a', 'b'] } }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({ phases: { skip: ['c'] } }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.phases.skip).toEqual(['c', 'b']);
+  });
+
+  it('names every contributing source path in ConfigError when merged schema fails', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({ validation: { commands: [123] } }),
+    });
+
+    expect(() => loadLayeredConfig({ automationRoot })).toThrow(/commands/);
+  });
+
+  it('throws ConfigError naming target path when target base JSON is malformed', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({ validation: { commands: ['a'] } }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': '{not json',
+    });
+
+    expect(() => loadLayeredConfig({ automationRoot, targetRoot })).toThrow(
+      /Invalid JSON in .*\.ai-orchestrator\.json/,
+    );
+  });
+
+  it('throws ConfigError naming local path when local JSON is malformed', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({ validation: { commands: ['a'] } }),
+      '.ai-orchestrator.local.json': '{not json',
+    });
+
+    expect(() => loadLayeredConfig({ automationRoot })).toThrow(/Invalid JSON in .*\.local\.json/);
+  });
 });
 
 describe('loadConfig (back-compat wrapper)', () => {
