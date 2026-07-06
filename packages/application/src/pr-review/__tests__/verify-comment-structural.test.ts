@@ -102,6 +102,34 @@ describe('verifyComment — structural pre-check', () => {
     expect(result.codeVerified).toBe(true);
   });
 
+  it('keeps rejecting touchesPath:false when no semantic verifier is wired (Codex P2 on #630)', async () => {
+    const github = new FakeGitHubPort();
+    const git = new FakeGitPort();
+    setupMechanicalOk(github, git);
+    const inspector = new FakeFixDiffInspector();
+    inspector.setNext({
+      touchesPath: false,
+      nearLine: 'skipped',
+      reason: 'fix commit abcdef0 does not touch a.ts',
+    });
+    const result = await verifyComment(
+      makeReplied(),
+      {
+        git,
+        github,
+        verifyCommitPushed: async () => true,
+        verifyBuildPasses: async () => ({ passed: true }),
+        // no verifyCodeChange: nothing can evaluate a cross-file diff
+        fixDiffInspector: makeFixDiffInspector(inspector),
+      },
+      makeContext(),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.codeVerified).toBe(false);
+    expect(result.reason).toContain('does not touch a.ts');
+    expect(result.codeVerifyReason).toContain('does not touch a.ts');
+  });
+
   it('still fails via the LLM pass when a cross-file fix does not actually address the comment', async () => {
     const github = new FakeGitHubPort();
     const git = new FakeGitPort();
