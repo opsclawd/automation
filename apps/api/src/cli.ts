@@ -750,16 +750,19 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       new Command('execute')
         .description('Execute a queued run through the RunExecutor')
         .requiredOption('--uuid <uuid>', 'Run UUID to execute')
-        .action(async (opts: { uuid: string }) => {
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(async (opts: { uuid: string; targetRepoRoot?: string }) => {
           try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              runStartupSweeps: false,
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
+            const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+              console.error(`Error: ${msg}`);
+              process.exit(EXIT_USER_ERROR);
+            });
+            const { c } = composeWithTarget(targetRepoRoot, {
+              ...(buildOpts !== undefined ? { buildOpts } : {}),
+            });
             if (!c.runExecutor) {
               console.error(
                 'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
