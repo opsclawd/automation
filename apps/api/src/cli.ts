@@ -636,66 +636,77 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         })
         .option('--uuid <uuid>', 'Run UUID')
         .option('--reason <string>', 'Cancellation reason')
-        .action(async (opts: { issue?: number; uuid?: string; reason?: string }) => {
-          if (!opts.issue && !opts.uuid) {
-            console.error('Error: specify --issue or --uuid');
-            process.exit(EXIT_USER_ERROR);
-          }
-          if (opts.issue && opts.uuid) {
-            console.error('Error: specify --issue or --uuid, not both');
-            process.exit(EXIT_USER_ERROR);
-          }
-          try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
-            let uuid: string;
-            if (opts.uuid) {
-              uuid = opts.uuid;
-            } else {
-              if (!c.repoFullName) {
-                console.error('Error: could not determine repository name.');
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(
+          async (opts: {
+            issue?: number;
+            uuid?: string;
+            reason?: string;
+            targetRepoRoot?: string;
+          }) => {
+            if (!opts.issue && !opts.uuid) {
+              console.error('Error: specify --issue or --uuid');
+              process.exit(EXIT_USER_ERROR);
+            }
+            if (opts.issue && opts.uuid) {
+              console.error('Error: specify --issue or --uuid, not both');
+              process.exit(EXIT_USER_ERROR);
+            }
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
                 process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+              });
+              let uuid: string;
+              if (opts.uuid) {
+                uuid = opts.uuid;
+              } else {
+                if (!c.repoFullName) {
+                  console.error('Error: could not determine repository name.');
+                  process.exit(EXIT_USER_ERROR);
+                }
+                const repoId = RepositoryId(c.repoFullName);
+                const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
+                if (!run) {
+                  console.error(`No run found for issue ${opts.issue}`);
+                  process.exit(EXIT_USER_ERROR);
+                }
+                uuid = run.uuid;
               }
-              const repoId = RepositoryId(c.repoFullName);
-              const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
+              const run = c.runRepository.findByUuid(uuid);
               if (!run) {
-                console.error(`No run found for issue ${opts.issue}`);
-                process.exit(EXIT_USER_ERROR);
+                throw new Error(`No run found for uuid ${uuid}`);
               }
-              uuid = run.uuid;
-            }
-            const run = c.runRepository.findByUuid(uuid);
-            if (!run) {
-              throw new Error(`No run found for uuid ${uuid}`);
-            }
-            const pid = run.pid;
-            if (pid !== undefined && pid !== null && pid !== process.pid) {
-              try {
-                process.kill(pid, 'SIGTERM');
-              } catch (killErr: unknown) {
-                const code = (killErr as NodeJS.ErrnoException).code;
-                if (code === 'EPERM') {
-                  console.error(
-                    `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
-                  );
+              const pid = run.pid;
+              if (pid !== undefined && pid !== null && pid !== process.pid) {
+                try {
+                  process.kill(pid, 'SIGTERM');
+                } catch (killErr: unknown) {
+                  const code = (killErr as NodeJS.ErrnoException).code;
+                  if (code === 'EPERM') {
+                    console.error(
+                      `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
+                    );
+                  }
                 }
               }
+              await c.cancelRun.execute({
+                runId: RunId(uuid),
+                ...(opts.reason ? { reason: opts.reason } : {}),
+              });
+              process.stdout.write('Run cancelled successfully\n');
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              process.exit(EXIT_USER_ERROR);
             }
-            await c.cancelRun.execute({
-              runId: RunId(uuid),
-              ...(opts.reason ? { reason: opts.reason } : {}),
-            });
-            process.stdout.write('Run cancelled successfully\n');
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(EXIT_USER_ERROR);
-          }
-        }),
+          },
+        ),
     )
     .addCommand(
       new Command('check-merge-ready')
