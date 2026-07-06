@@ -1911,7 +1911,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         // contract_violation / MISSING_REQUIRED_ARTIFACT outcome stays and
         // the router fallback fires unchanged.
         if (agentOutcome === 'contract_violation' && !recoveredByExistingGuard) {
-          const expectedSynthesisArtifacts = ['implementation-log.md', 'compound.md'];
+          const expectedSynthesisArtifacts = ['implementation-log.md'];
           const missingProse = expectedSynthesisArtifacts.filter(
             (a) => !existsSync(join(ctx.cwd, a)),
           );
