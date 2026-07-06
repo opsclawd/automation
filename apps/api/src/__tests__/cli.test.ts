@@ -47,6 +47,7 @@ const tempDirs: string[] = [];
 
 beforeEach(() => {
   vi.spyOn(GitWorktreeAdapter.prototype, 'seedArtifactExcludes').mockResolvedValue(undefined);
+  vi.spyOn(GitWorktreeAdapter.prototype, 'remoteRef').mockResolvedValue('mock-sha');
 });
 
 afterEach(() => {
@@ -1406,6 +1407,111 @@ describe('CLI run command signal handlers', () => {
 });
 
 describe('CLI run --executor ts', () => {
+  it('exits 1 and rejects --model or --agent-cli for ts executor', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-flags-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '55',
+        '--executor',
+        'ts',
+        '--model',
+        'gpt-4',
+        '--script',
+        '/dev/null',
+      ]);
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+      expect(exitCode).toBe(1);
+      expect(consoleErrs.join('')).toContain('only apply to --executor bash');
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('exits 1 when base branch is not found on remote origin', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-base-branch-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    writeFileSync(
+      join(root, '.ai-orchestrator.json'),
+      JSON.stringify({
+        validation: { commands: ['echo ok'], timeout: 60 },
+        phases: { skip: [], reviewFix: { maxIterations: 3 }, implement: { maxIterations: 3 } },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+        agent: {
+          defaultProfile: 'test',
+          profiles: {
+            test: { runtime: 'opencode', provider: 'test', model: 'test', timeoutMinutes: 1 },
+          },
+          phaseProfiles: {},
+        },
+      }),
+    );
+
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const consoleErrs: string[] = [];
+      const errSpy = vi.spyOn(console, 'error').mockImplementation((msg) => {
+        consoleErrs.push(String(msg));
+      });
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+      const remoteRefSpy = vi
+        .spyOn(GitWorktreeAdapter.prototype, 'remoteRef')
+        .mockResolvedValue(undefined);
+
+      const program = buildProgram({
+        composeOverrides: {
+          repoRoot: root,
+          repoFullName: 'owner/repo',
+          runStartupSweeps: false,
+        },
+      });
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '55',
+        '--executor',
+        'ts',
+        '--base-branch',
+        'non-existent-branch',
+        '--script',
+        '/dev/null',
+      ]);
+      const exitCode = exitSpy.mock.calls[0]?.[0];
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+      remoteRefSpy.mockRestore();
+
+      expect(exitCode).toBe(1);
+      expect(consoleErrs.join('')).toContain('was not found on origin of');
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
   it('exits 1 when RunExecutor is not available (no agent config)', async () => {
     const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-ts-noexec-')));
     writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');

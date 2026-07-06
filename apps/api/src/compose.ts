@@ -440,6 +440,7 @@ export interface Container {
   runsDir: string;
   baseTmpDir: string;
   defaultBranch: string;
+  repoDefaultBranch: string;
   eventBus: EventBusPort;
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
@@ -2989,6 +2990,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runsDir,
     baseTmpDir,
     defaultBranch: resolvedDefaultBranch,
+    repoDefaultBranch: resolvedDefaultBranch,
     eventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
     ...(buildRunContext !== undefined ? { buildRunContext } : {}),
