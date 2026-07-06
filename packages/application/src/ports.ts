@@ -20,29 +20,29 @@ import type { OrchestratorEvent } from '@ai-sdlc/shared';
  * If a new field is added to one, add it to the other as well.
  */
 export interface RunRecord extends Run {
-  exitCode?: number;
-  durationMs?: number;
-  pid?: number;
-  startCommitSha?: string;
-  baseBranch?: string;
-  modelOverride?: string;
-  runtimeOverride?: string;
+  exitCode?: number | undefined;
+  durationMs?: number | undefined;
+  pid?: number | undefined;
+  startCommitSha?: string | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: string | undefined;
 }
 
 export interface RunRepositoryUpdatePatch {
-  status?: RunStatus;
-  currentPhase?: string | null;
-  completedPhases?: string[];
-  skippedPhases?: string[];
-  completedAt?: Date | null;
-  failureReason?: string | null;
-  exitCode?: number;
-  durationMs?: number;
-  pid?: number;
-  startCommitSha?: string;
-  baseBranch?: string;
-  modelOverride?: string;
-  runtimeOverride?: string;
+  status?: RunStatus | undefined;
+  currentPhase?: string | null | undefined;
+  completedPhases?: string[] | undefined;
+  skippedPhases?: string[] | undefined;
+  completedAt?: Date | null | undefined;
+  failureReason?: string | null | undefined;
+  exitCode?: number | undefined;
+  durationMs?: number | undefined;
+  pid?: number | undefined;
+  startCommitSha?: string | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: string | undefined;
 }
 
 export interface RunRepositoryPort {

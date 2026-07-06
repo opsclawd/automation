@@ -24,10 +24,10 @@ export interface Run {
   skippedPhases: string[];
   startedAt: Date;
   completedAt?: Date;
-  failureReason?: string;
-  baseBranch?: string;
-  modelOverride?: string;
-  runtimeOverride?: string;
+  failureReason?: string | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: string | undefined;
 }
 
 export interface CreateRunInput {
@@ -36,10 +36,10 @@ export interface CreateRunInput {
   repoId: RepositoryId;
   issueNumber: number;
   startedAt: Date;
-  type?: 'issue_to_pr' | 'pr_review' | 'consolidate';
-  baseBranch?: string;
-  modelOverride?: string;
-  runtimeOverride?: string;
+  type?: 'issue_to_pr' | 'pr_review' | 'consolidate' | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: string | undefined;
 }
 
 export class RunStateError extends Error {

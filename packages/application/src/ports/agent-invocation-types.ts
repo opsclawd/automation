@@ -14,15 +14,15 @@ export interface AgentInvocationRequest {
   cwd: string;
   runId: string;
   repoId: string;
-  workerId?: string;
+  workerId?: string | undefined;
   phaseId: string;
-  stepId?: string;
+  stepId?: string | undefined;
   startCommitSha: string;
-  abortSignal?: AbortSignal;
-  runtime?: AgentRuntimeKind;
-  provider?: string;
-  model?: string;
-  promptBudgetTokens?: number;
+  abortSignal?: AbortSignal | undefined;
+  runtime?: AgentRuntimeKind | undefined;
+  provider?: string | undefined;
+  model?: string | undefined;
+  promptBudgetTokens?: number | undefined;
   runtimeHints?: {
     contextLimitTokens?: number;
     outputBudgetTokens?: number;
@@ -41,11 +41,11 @@ export interface AgentInvocationResult {
   durationMs: number;
   stdoutPath: string;
   stderrPath: string;
-  resultJsonPath?: string;
+  resultJsonPath?: string | undefined;
   contractViolations: string[];
   outcome: AgentInvocationOutcome;
-  endCommitSha?: string;
-  stepId?: string;
+  endCommitSha?: string | undefined;
+  stepId?: string | undefined;
   usage?: {
     inputTokens: number;
     outputTokens: number;

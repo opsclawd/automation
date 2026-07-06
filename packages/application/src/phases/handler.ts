@@ -27,14 +27,14 @@ export interface PhaseHandlerContext {
    * Populated via buildPhaseHandlerContext() by the compose root.
    * Handlers that require these should assert at run() entry.
    */
-  promptsRoot?: string;
-  startCommitSha?: string;
-  expectedBranch?: string;
-  baseBranch?: string;
-  modelOverride?: string;
-  runtimeOverride?: AgentRuntimeKind;
-  resolveProfile?: (phase: string) => AgentProfileName;
-  idFactory?: () => string;
+  promptsRoot?: string | undefined;
+  startCommitSha?: string | undefined;
+  expectedBranch?: string | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: AgentRuntimeKind | undefined;
+  resolveProfile?: ((phase: string) => AgentProfileName) | undefined;
+  idFactory?: (() => string) | undefined;
 }
 
 export type PhaseOutcome =

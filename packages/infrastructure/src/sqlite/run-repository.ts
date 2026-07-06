@@ -35,10 +35,13 @@ interface RunRow {
  * infrastructure per AGENTS.md layer boundary rules.
  */
 export interface RunRecord extends Run {
-  exitCode?: number;
-  durationMs?: number;
-  pid?: number;
-  startCommitSha?: string;
+  exitCode?: number | undefined;
+  durationMs?: number | undefined;
+  pid?: number | undefined;
+  startCommitSha?: string | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: string | undefined;
 }
 
 /** Implements RunRepositoryPort (@ai-sdlc/application). */

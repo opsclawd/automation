@@ -116,7 +116,7 @@ function startWorkerRegistryHeartbeat(
 
 function installSignalHandlers(
   runRepository: {
-    findByIssueNumber(repoId: RepositoryId, n: number): { pid?: number | null } | undefined;
+    findByIssueNumber(repoId: RepositoryId, n: number): { pid?: number | null | undefined } | undefined;
     updateStatusByIssueNumber(
       repoId: RepositoryId,
       issueNumber: number,
