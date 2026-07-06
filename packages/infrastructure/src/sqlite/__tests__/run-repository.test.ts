@@ -494,4 +494,35 @@ describe('RunRepository', () => {
 
     db.close();
   });
+
+  it('persists and reads baseBranch on runs', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u-bb',
+      displayId: 'issue-100-bb',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 100,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+      baseBranch: 'main-branch',
+    });
+
+    const found = repo.findByUuid('u-bb');
+    expect(found?.baseBranch).toBe('main-branch');
+
+    // Test update
+    repo.update('u-bb', { baseBranch: 'another-branch' });
+    const updated = repo.findByUuid('u-bb');
+    expect(updated?.baseBranch).toBe('another-branch');
+
+    // Test atomicUpdateByUuid
+    repo.atomicUpdateByUuid('u-bb', { baseBranch: 'atomic-branch' }, 'running');
+    const atomic = repo.findByUuid('u-bb');
+    expect(atomic?.baseBranch).toBe('atomic-branch');
+
+    db.close();
+  });
 });

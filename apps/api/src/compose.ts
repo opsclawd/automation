@@ -440,6 +440,7 @@ export interface Container {
   runsDir: string;
   baseTmpDir: string;
   defaultBranch: string;
+  repoDefaultBranch: string;
   eventBus: EventBusPort;
   /** @deprecated Use `resolveProfileForPhase()` instead */
   agentRuntime?: AgentRuntimeRouter;
@@ -1652,7 +1653,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           {
             promptsRoot: join(opts.repoRoot, 'prompts'),
             expectedBranch: `ai/issue-${run.issueNumber}`,
-            baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
+            baseBranch: run.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
           },
         );
@@ -2381,7 +2382,6 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       phaseRegistry.register(
         new CreatePrHandler({
-          baseBranch: resolvedDefaultBranch,
           headBranch: (ctx) => `ai/issue-${ctx.issueNumber}`,
         }),
       );
@@ -2411,12 +2411,17 @@ export function composeRoot(opts: ComposeOptions): Container {
               // Non-fatal — fall through to the poller which will handle it.
             }
 
+            // Resolve the per-run base branch at poll time so it follows the
+            // value the run was started with (CLI --base-branch or default).
+            const runRecord = runRepository.findByUuid(ctx.runUuid);
+            const baseBranch = runRecord?.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch;
+
             const poller = buildPrReviewPoller({
               maxPolls: config.phases.postPrReview?.maxPolls ?? 10,
               pollIntervalMs: (config.phases.postPrReview?.pollIntervalSeconds ?? 60) * 1000,
               readyMaxDays: config.timeouts.readyMaxDays,
               phaseStartedAt: ctx.now(),
-              baseBranch: resolvedDefaultBranch,
+              baseBranch,
               ...(config.phases.postPrReview?.firstReviewGraceWindowSeconds !== undefined
                 ? {
                     firstReviewGraceWindowSeconds:
@@ -2504,11 +2509,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             const r = runRepository.findByUuid(runId);
             if (!r) throw new Error(`prepareWorktree: no run found for ${runId}`);
             const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const baseBranch = r.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch;
             await gitAdapter.createWorktree({
               repoLocalBasePath: targetRoot,
               worktreePath,
               branch: `ai/issue-${r.issueNumber}`,
-              baseBranch: resolvedDefaultBranch,
+              baseBranch,
             });
             if ('seedArtifactExcludes' in gitAdapter) {
               await (gitAdapter as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
@@ -2523,7 +2529,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             const r = runRepository.findByUuid(lease.runId);
             if (!r) return;
             const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
-            gitAdapter.resetWorktreeIfClean(worktreePath, resolvedDefaultBranch).catch(() => {});
+            const baseBranch = r.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch;
+            gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {
             const w = workerRegistry.findById(workerId);
@@ -2862,6 +2869,11 @@ export function composeRoot(opts: ComposeOptions): Container {
     return new PrReviewPoller({
       prReviewRepo: prReviewRepository,
       processOnePass: async (input) => {
+        const runRecord = runRepository.findByUuid(String(input.runId));
+        const perRunBase = runRecord?.baseBranch;
+        if (perRunBase) {
+          processor['deps'].baseBranch = perRunBase;  
+        }
         const output = await processor.execute(input);
         const attempts = prReviewRepository.listPollAttempts(input.runId);
         const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : undefined;
@@ -2989,6 +3001,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runsDir,
     baseTmpDir,
     defaultBranch: resolvedDefaultBranch,
+    repoDefaultBranch: resolvedDefaultBranch,
     eventBus,
     ...(agentRuntime ? { agentRuntime } : {}),
     ...(buildRunContext !== undefined ? { buildRunContext } : {}),

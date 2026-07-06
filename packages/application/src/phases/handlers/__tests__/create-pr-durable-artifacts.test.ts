@@ -97,7 +97,7 @@ async function build() {
   return { artifacts, github, git, ctx };
 }
 
-const HANDLER = new CreatePrHandler({ baseBranch: 'main', headBranch: () => 'feat/issue-7' });
+const HANDLER = new CreatePrHandler({ headBranch: () => 'feat/issue-7' });
 
 describe('CreatePrHandler durable artifacts', () => {
   it('assembles the PR summary from durable artifacts even after worktree cleanup', async () => {
@@ -107,7 +107,7 @@ describe('CreatePrHandler durable artifacts', () => {
     const result = await HANDLER.run(ctx);
 
     expect(result.outcome).toBe('passed');
-    expect(cleanupSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
+    expect(cleanupSpy).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch ?? 'main');
     expect(git.pushes).toHaveLength(1);
     expect(github.createdPrInputs).toHaveLength(1);
 

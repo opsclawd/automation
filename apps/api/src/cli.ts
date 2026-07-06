@@ -200,9 +200,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
       return n;
     })
-    .option('--base-branch <branch>', 'Base branch (legacy default: main)')
-    .option('--model <model>', 'AI_AGENT_MODEL env var')
-    .option('--agent-cli <cli>', 'AI_RUNTIME env var')
+    .option(
+      '--base-branch <branch>',
+      'Base branch (default: target repository default branch). Used for worktree creation, PR target, and PR-review polling.',
+    )
+    .option(
+      '--model <model>',
+      'AI_AGENT_MODEL env var (Bash executor only). Rejected for --executor ts.',
+    )
+    .option(
+      '--agent-cli <cli>',
+      'AI_RUNTIME env var (Bash executor only). Rejected for --executor ts.',
+    )
     .option('--script <path>', 'Path to Bash script to wrap')
     .option('--verbose', 'Stream script stdout/stderr to terminal (default: auto when TTY)')
     .option('--no-verbose', 'Suppress streaming script output to terminal')
@@ -244,6 +253,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           process.exit(EXIT_USER_ERROR);
         }
 
+        // --- flag-combination validation ---
+        if (opts.executor === 'ts' && (opts.model !== undefined || opts.agentCli !== undefined)) {
+          const conflicting = [
+            ...(opts.model !== undefined ? ['--model'] : []),
+            ...(opts.agentCli !== undefined ? ['--agent-cli'] : []),
+          ];
+          console.error(
+            `Error: ${conflicting.join(' and ')} only apply to --executor bash. ` +
+              `The TypeScript executor selects model and runtime from configured phase profiles. ` +
+              `Re-run without ${conflicting.join(' and ')}, or pass --executor bash to use the legacy path.`,
+          );
+          process.exit(EXIT_USER_ERROR);
+        }
+
         const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
 
         // --- TS executor path ---
@@ -271,12 +294,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           const startedAt = new Date();
           const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
           const repoId = RepositoryId(c.repoFullName);
+
+          // Resolve the effective base branch and validate it exists on the
+          // target repo's remote before creating any worktree/job/run state.
+          // resolvedDefaultBranch comes from composeWithTarget's gh-based
+          // resolution; opts.baseBranch, when provided, wins.
+          const effectiveBaseBranch = opts.baseBranch ?? c.repoDefaultBranch ?? '';
+          if (effectiveBaseBranch) {
+            const exists = await c.git.remoteRef({
+              cwd: repoRoot,
+              remote: 'origin',
+              ref: effectiveBaseBranch,
+            });
+            if (exists === undefined) {
+              console.error(
+                `Error: --base-branch "${effectiveBaseBranch}" was not found on origin of ${repoRoot}. ` +
+                  `Check the branch name, fetch from origin, or omit --base-branch to use the repository's default branch.`,
+              );
+              process.exit(EXIT_USER_ERROR);
+            }
+          }
+
           const run = createRun({
             uuid: ids.uuid,
             displayId: ids.displayId,
             repoId,
             issueNumber: opts.issue,
             startedAt,
+            ...(effectiveBaseBranch ? { baseBranch: effectiveBaseBranch } : {}),
           });
 
           const jobId = JobId(randomUUID());
@@ -290,6 +335,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           try {
             c.runRepository.insertIfNoActive(run);
+
+            c.eventBus.publish(run.uuid, {
+              runId: run.displayId,
+              level: 'info',
+              type: 'run.config',
+              message: `run.config: executor=ts baseBranch=${effectiveBaseBranch || '(default)'}`,
+              timestamp: startedAt.toISOString(),
+              metadata: {
+                executor: 'ts',
+                baseBranch: effectiveBaseBranch || null,
+              },
+            });
 
             const job = createJob({
               id: jobId,
