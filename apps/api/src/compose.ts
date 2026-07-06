@@ -2636,14 +2636,46 @@ export function composeRoot(opts: ComposeOptions): Container {
           mkdirSync(promptDir, { recursive: true });
           const promptPath = join(promptDir, 'verify-prompt.md');
 
+          // The verifier must see the FULL fix diff, not just the hunks in the
+          // comment's anchored file — legitimate fixes often land in other
+          // files, and a path-scoped diff renders as empty and gets rejected
+          // as "no changes" (#629).
+          const MAX_DIFF_CHARS = 60_000;
           let diffOutput = '';
+          let scopedDiff = '';
           try {
-            diffOutput = execFileSync('git', ['diff', startCommitSha, fixCommitSha, '--', path], {
+            diffOutput = execFileSync('git', ['diff', startCommitSha, fixCommitSha], {
+              cwd,
+              encoding: 'utf-8',
+            });
+            scopedDiff = execFileSync('git', ['diff', startCommitSha, fixCommitSha, '--', path], {
               cwd,
               encoding: 'utf-8',
             });
           } catch {
             diffOutput = '(could not produce diff)';
+          }
+          let diffNote = '';
+          if (diffOutput.trim() !== '' && scopedDiff.trim() === '') {
+            diffNote =
+              `Note: the fix does not modify \`${path}\` directly — it changes other files. ` +
+              'Judge whether those changes address the comment.';
+          }
+          if (diffOutput.length > MAX_DIFF_CHARS) {
+            let diffStat = '';
+            try {
+              diffStat = execFileSync('git', ['diff', '--stat', startCommitSha, fixCommitSha], {
+                cwd,
+                encoding: 'utf-8',
+              });
+            } catch {
+              /* stat is best-effort */
+            }
+            // Prefer the anchored file's hunks when truncating; fall back to a
+            // prefix of the full diff when the anchored file was not touched.
+            const kept =
+              scopedDiff.trim() !== '' ? scopedDiff : diffOutput.slice(0, MAX_DIFF_CHARS);
+            diffOutput = `${kept}\n... (diff truncated; full change summary below)\n${diffStat}`;
           }
 
           let codeWindow = '';
@@ -2675,8 +2707,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             codeWindow,
             '```',
             '',
-            '## Diff Applied',
+            '## Diff Applied (full fix commit)',
             '',
+            ...(diffNote !== '' ? [diffNote, ''] : []),
             '```diff',
             diffOutput,
             '```',

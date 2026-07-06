@@ -185,8 +185,38 @@ describe('ProcessPrReviewComments — final-attempt verification', () => {
     expect(repo.getComment(runId, 9001)?.blockedReason).toContain('variable still mutable');
   });
 
-  it('blocks with "fix commit does not touch" reason from the structural pre-check', async () => {
-    const { deps, repo } = makeDeps();
+  it('resolves a cross-file fix: touchesPath:false falls through to the LLM verifier (#629)', async () => {
+    const { deps, repo } = makeDeps({
+      verifyCodeChange: async () => ({
+        pass: true,
+        reason: 'fix addresses the comment via another file',
+      }),
+    });
+    const inspector = new FakeFixDiffInspector();
+    inspector.setNext({
+      touchesPath: false,
+      nearLine: 'skipped',
+      reason: 'fix commit abcdef0 does not touch a.ts',
+    });
+    const uc = new ProcessPrReviewComments({
+      ...deps,
+      fixDiffInspector: makeFixDiffInspector(inspector),
+    });
+
+    const out = await uc.execute(baseInput);
+
+    expect(out.processed).toBe(1);
+    expect(out.blocked).toBe(0);
+    expect(repo.getComment(runId, 9001)?.state).toBe('processed');
+  });
+
+  it('blocks a cross-file fix only when the LLM verifier rejects it', async () => {
+    const { deps, repo } = makeDeps({
+      verifyCodeChange: async () => ({
+        pass: false,
+        reason: 'changes elsewhere do not address the comment',
+      }),
+    });
     const inspector = new FakeFixDiffInspector();
     inspector.setNext({
       touchesPath: false,
@@ -201,7 +231,7 @@ describe('ProcessPrReviewComments — final-attempt verification', () => {
     const out = await uc.execute(baseInput);
 
     expect(out.blocked).toBe(1);
-    expect(repo.getComment(runId, 9001)?.blockedReason).toMatch(/does not touch a\.ts/);
+    expect(repo.getComment(runId, 9001)?.blockedReason).toMatch(/do not address the comment/);
   });
 
   it('does NOT call rollbackFix when the final attempt is verified (build path included)', async () => {

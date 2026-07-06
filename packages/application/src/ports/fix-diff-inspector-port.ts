@@ -46,8 +46,10 @@ export interface FixDiffInspectionResult {
 
 /**
  * Cheap, non-LLM structural cross-check. Runs before any
- * `verifyCodeChange` LLM pass and short-circuits on `touchesPath:
- * false` or `nearLine: false`.
+ * `verifyCodeChange` LLM pass and short-circuits on `nearLine: false`.
+ * `touchesPath: false` is advisory only — cross-file fixes are
+ * legitimate (#629), so the caller falls through to the LLM pass
+ * (whose prompt carries the full fix diff) instead of rejecting.
  *
  * Implementation contract:
  *  - Always runs the file-touched check.
