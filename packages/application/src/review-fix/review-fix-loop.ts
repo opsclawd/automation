@@ -464,6 +464,9 @@ export class ReviewFixLoop {
           await this.appendResidualFindings(input, residualFindings, trend.severityWeighted);
         }
 
+        loop = { ...loop, status: 'converged_with_notes' };
+        this.deps.loops.update(loop);
+
         this.emit(
           input,
           'loop.exhausted.with_notes',

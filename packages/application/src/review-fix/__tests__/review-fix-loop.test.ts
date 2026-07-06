@@ -1624,6 +1624,7 @@ describe('ReviewFixLoop', () => {
       const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
       expect(out.phaseOutcome).toBe('passed');
       expect(out.loopStatus).toBe('converged_with_notes');
+      expect(out.loop.status).toBe('converged_with_notes');
       expect(out.needsHumanReview).toBe(true);
     });
 
@@ -1723,6 +1724,7 @@ describe('ReviewFixLoop', () => {
       });
       const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
       expect(out.loopStatus).toBe('converged_with_notes');
+      expect(out.loop.status).toBe('converged_with_notes');
       expect(out.needsHumanReview).toBe(true);
     });
 
