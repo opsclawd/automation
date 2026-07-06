@@ -126,3 +126,60 @@ pnpm --filter @ai-sdlc/api dev run --issue 123 --executor bash
 ```
 
 This path is not the default and is not maintained going forward. See `docs/adr/ADR-0002-typescript-cutover.md` for the cutover history.
+
+## Cross-repository configuration
+
+A single installation of the orchestrator can drive runs against multiple
+target repositories. Each target may ship its own
+`.ai-orchestrator.json` and `.ai-orchestrator.local.json`. The precedence
+is deterministic:
+
+1. `automation/.ai-orchestrator.json` (committed, automation repo)
+2. `automation/.ai-orchestrator.local.json` (gitignored)
+3. `target/.ai-orchestrator.json` (committed, target repo)
+4. `target/.ai-orchestrator.local.json` (gitignored, target repo)
+5. Explicit supported CLI overrides (`--base-branch`, `--model`,
+   `--agent-cli`)
+
+Important merge semantics:
+
+- Plain objects are deep-merged.
+- Arrays (`validation.commands`, `phases.skip`) are deep-merged by index.
+  When the override array is longer, extras append — this means target
+  `validation.commands` *extend* the automation list, not replace it.
+- `agent.phaseProfiles` and any future phase-route maps are replaced
+  wholesale, not key-by-key, because individual entries contain
+  mutually exclusive fields.
+
+Run metadata records both the **effective configuration fingerprint**
+(sha256 of the merged config) and the **source files used** (paths only,
+never file contents). Local files are never copied into run artifacts.
+
+Example: two projects with different test runners:
+
+```jsonc
+// automation/.ai-orchestrator.json
+{
+  "validation": { "commands": ["echo base-validation"], "timeouts": { "build": 60 } },
+  "agent": { "model": "shared-default-model" }
+}
+```
+
+```jsonc
+// /srv/repos/frontend/.ai-orchestrator.json
+{
+  "validation": { "commands": ["pnpm test"] }
+}
+```
+
+```jsonc
+// /srv/repos/backend/.ai-orchestrator.json
+{
+  "validation": { "commands": ["make test"], "timeouts": { "build": 180 } },
+  "agent": { "model": "backend-finetuned" }
+}
+```
+
+When run against `frontend`: commands are `["echo base-validation", "pnpm test"]`, model is `shared-default-model`.
+
+When run against `backend`: commands are `["echo base-validation", "make test"]`, timeouts override build to `180`, model is `backend-finetuned`.
