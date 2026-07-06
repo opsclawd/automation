@@ -634,7 +634,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const localPath = resolve(process.cwd(), path);
             const repo = await c.registerRepository.execute({
               localBasePath: localPath,
-              id: opts.id,
+              ...(opts.id ? { id: opts.id } : {}),
               enabled: !opts.disabled,
             });
             process.stdout.write(`Registered repository: ${repo.fullName} (ID: ${repo.id})\n`);

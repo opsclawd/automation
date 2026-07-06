@@ -1,4 +1,4 @@
-export type { RepositoryPort } from './repository-port.js';
+export type { RepositoryPort, RepositoryRegistryPort } from './repository-port.js';
 export type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from './job-queue-port.js';
 export type { WorkerRegistryPort } from './worker-registry-port.js';
 export type {
@@ -8,6 +8,7 @@ export type {
 } from './worker-lease-port.js';
 export type {
   GitHubPort,
+  GitHubRepo,
   GitHubIssue,
   PullRequest,
   PullRequestDetail,

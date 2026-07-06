@@ -400,6 +400,13 @@ export function resolveProfileForPhase(agent: AgentConfig, phaseName: string): A
 
 export interface Container {
   runRepository: RunRepository;
+  repositoryRegistry: RepositoryRepository;
+  registerRepository: RegisterRepository;
+  listRepositories: ListRepositories;
+  getRepository: GetRepository;
+  updateRepository: UpdateRepository;
+  removeRepository: RemoveRepository;
+  refreshRepository: RefreshRepository;
   phaseRepository: PhaseRepository;
   phaseRegistry: PhaseHandlerRegistry;
   runExecutor?: RunExecutor;
@@ -521,21 +528,6 @@ class AbortRegistry {
   }
 }
 
-class SingleRepoAdapter implements RepositoryPort {
-  constructor(private readonly repo: Repository) {}
-
-  findById(id: RepositoryId): Repository | undefined {
-    return this.repo.id === id ? this.repo : undefined;
-  }
-
-  findByFullName(fullName: string): Repository | undefined {
-    return this.repo.fullName === fullName ? this.repo : undefined;
-  }
-
-  listEnabled(): Repository[] {
-    return this.repo.enabled ? [this.repo] : [];
-  }
-}
 
 export function buildSpecReviewPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string },

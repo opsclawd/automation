@@ -72,18 +72,6 @@ export class RegisterRepository {
         const [owner, name] = fullName.split('/');
         if (!owner || !name) throw new Error(`Invalid full name: ${fullName}`);
 
-        // Use a simple gh call to verify access and get default branch
-        // We can use getPr or similar if we don't have a generic "getRepo" in GitHubPort
-        // But let's assume we might need to add it or use an existing one.
-        // For now, let's try to get a non-existent issue or something to verify access.
-        // Actually, let's see what GitHubPort has.
-
-        // Looking at gh-cli-adapter.ts, it doesn't have getRepo.
-        // I should probably add it or use something else.
-        // Let's use getIssue(fullName, 1) as a proxy for access check? No, that might fail if no issues.
-
-        // I'll assume I should add getRepo to GitHubPort.
-
         const repoInfo = await this.github.getRepo(fullName);
 
         return {
