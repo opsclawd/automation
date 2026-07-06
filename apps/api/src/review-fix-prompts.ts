@@ -6,6 +6,13 @@ export interface BuildReviewPromptInput {
   defaultBranch: string;
   gateFailureOutput?: string | undefined;
   historyContext?: string | undefined;
+  /**
+   * When provided AND iterationIndex >= 2, the reviewer's `git diff`
+   * command is constrained to `git diff <prevReviewedCommitSha>..HEAD`
+   * so the review surface shrinks monotonically instead of re-litigating
+   * settled code (#627).
+   */
+  prevReviewedCommitSha?: string | undefined;
 }
 
 export interface BuildFixPromptInput {
@@ -25,8 +32,17 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     `Working directory: ${input.cwd}`,
     `Repository: ${input.repoId}`,
     '',
+    '## SCOPE',
+    'You are reviewing code changes within an automated review/fix loop.',
+    'Code outside the diff below is OUT OF SCOPE unless a new finding',
+    'requires referencing prior context. Do NOT re-flag findings that',
+    'a prior iteration already addressed — see "Disposition of',
+    'Previously Open Findings" below.',
+    '',
     '## TASK',
-    `Run: git diff origin/${input.defaultBranch}...HEAD`,
+    input.prevReviewedCommitSha
+      ? `Run: git diff ${input.prevReviewedCommitSha}..HEAD`
+      : `Run: git diff origin/${input.defaultBranch}...HEAD`,
     'Read the diff carefully.',
     '',
     'Write a code review to ./code-review.md.',
@@ -69,6 +85,20 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
   if (input.historyContext) {
     sections.push(input.historyContext);
   }
+
+  sections.push(
+    '',
+    '## DISPOSITION GUIDANCE',
+    'For each prior finding, the history section will mark it as either',
+    '"Disposition: addressed by fix" or "Disposition: rebutted by fixer".',
+    '- Addressed findings: confirm the fix actually resolved the issue',
+    '  against the current diff. Do NOT re-flag the same finding unless',
+    '  the fix is incomplete.',
+    '- Rebutted findings: the fixer asserted no change was needed. Confirm',
+    '  this against the current code. Re-flag ONLY if you find new',
+    '  evidence in the current diff that supports the original concern.',
+    '',
+  );
 
   sections.push(
     '## CRITICAL RULES',
