@@ -78,6 +78,7 @@ export class JobQueueRepository implements JobQueuePort {
     workerId: WorkerId,
     skipJobIds: Set<JobId> | undefined,
     ttlMs: number | undefined,
+    repoId?: RepositoryId,
   ) => Job | undefined;
 
   constructor(
@@ -89,12 +90,17 @@ export class JobQueueRepository implements JobQueuePort {
         workerId: WorkerId,
         skipJobIds: Set<JobId> | undefined,
         ttlMs: number | undefined,
+        repoId?: RepositoryId,
       ): Job | undefined => {
-        const rows = this.db
-          .prepare(
-            `SELECT * FROM jobs WHERE status = 'queued' ORDER BY priority DESC, created_at ASC, id ASC`,
-          )
-          .all() as JobRow[];
+        let query = `SELECT * FROM jobs WHERE status = 'queued'`;
+        const params: any[] = [];
+        if (repoId) {
+          query += ` AND repo_id = ?`;
+          params.push(repoId);
+        }
+        query += ` ORDER BY priority DESC, created_at ASC, id ASC`;
+
+        const rows = this.db.prepare(query).all(...params) as JobRow[];
 
         const nextRow = rows.find((r) => !skipJobIds?.has(mkJobId(r.id)));
         if (!nextRow) return undefined;
@@ -160,7 +166,7 @@ export class JobQueueRepository implements JobQueuePort {
   }
 
   claimNext(input: ClaimNextInput): Job | undefined {
-    return this.claimTx(input.workerId, input.skipJobIds, input.ttlMs);
+    return this.claimTx(input.workerId, input.skipJobIds, input.ttlMs, input.repoId);
   }
 
   releaseClaim(jobId: JobId): void {
@@ -189,6 +195,13 @@ export class JobQueueRepository implements JobQueuePort {
 
   listForRepo(repoId: RepositoryId): Job[] {
     const rows = this.db.prepare('SELECT * FROM jobs WHERE repo_id = ?').all(repoId) as JobRow[];
+    return rows.map(toJob);
+  }
+
+  listActive(): Job[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM jobs WHERE status IN ('claimed', 'running')`)
+      .all() as JobRow[];
     return rows.map(toJob);
   }
 

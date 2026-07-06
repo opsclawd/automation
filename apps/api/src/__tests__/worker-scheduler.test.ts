@@ -33,6 +33,7 @@ function makeQueue(statuses: Record<string, string>): JobQueuePort {
   return {
     findById: vi.fn((jobId: JobId) => makeJob(jobId as string, statuses[jobId] ?? 'queued')),
     listForRepo: vi.fn(() => []),
+    listActive: vi.fn(() => []),
     listForRun: vi.fn(() => []),
     enqueue: vi.fn(),
     claimNext: vi.fn(),
@@ -117,6 +118,7 @@ describe('WorkerScheduler', () => {
         } as unknown as ReturnType<JobQueuePort['findById']>;
       }),
       listForRepo: vi.fn(() => []),
+      listActive: vi.fn(() => []),
     };
     const scheduler = new WorkerScheduler(
       [WorkerId('w1'), WorkerId('w2')],
@@ -152,6 +154,7 @@ describe('WorkerScheduler', () => {
           }) as unknown as ReturnType<JobQueuePort['findById']>,
       ),
       listForRepo: vi.fn(() => []),
+      listActive: vi.fn(() => []),
     };
     const controller = new AbortController();
     vi.mocked(workerLoop).mockImplementation(async () => {
@@ -167,6 +170,7 @@ describe('WorkerScheduler', () => {
       ...makeQueue({}),
       findById: vi.fn(() => undefined),
       listForRepo: vi.fn(() => []),
+      listActive: vi.fn(() => []),
     };
     const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 0);
     await expect(
@@ -190,7 +194,8 @@ describe('WorkerScheduler', () => {
             createdAt: new Date(),
           }) as unknown as ReturnType<JobQueuePort['findById']>,
       ),
-      listForRepo: vi.fn(() => [
+      listForRepo: vi.fn(() => []) as unknown as ReturnType<JobQueuePort['listForRepo']>,
+      listActive: vi.fn(() => [
         {
           id: JobId('j2'),
           runId: RunId('run-2'),
@@ -204,14 +209,14 @@ describe('WorkerScheduler', () => {
         {
           id: JobId('j3'),
           runId: RunId('run-3'),
-          status: 'succeeded',
+          status: 'running',
           repoId: RepositoryId('owner/repo'),
           issueNumber: IssueNumber(3),
           priority: 0,
           attempts: 0,
           createdAt: new Date(),
         },
-      ]) as unknown as ReturnType<JobQueuePort['listForRepo']>,
+      ]) as unknown as ReturnType<JobQueuePort['listActive']>,
       enqueue: vi.fn(),
       claimNext: vi.fn(),
       releaseClaim: vi.fn(),
@@ -229,7 +234,7 @@ describe('WorkerScheduler', () => {
     const callArgs = vi.mocked(workerLoop).mock.calls[0];
     const deps = callArgs?.[1] as WorkerLoopDeps;
     expect(deps.recoverableRunIds.has(RunId('run-2'))).toBe(true);
-    expect(deps.recoverableRunIds.has(RunId('run-3'))).toBe(false);
+    expect(deps.recoverableRunIds.has(RunId('run-3'))).toBe(true);
   });
 
   it('throws error when a worker loop rejects', async () => {
@@ -257,7 +262,7 @@ describe('WorkerScheduler', () => {
     ).rejects.toThrow(/plain string/);
   });
 
-  it('calls reclaimStaleClaims with a cutoff of now - 6*tick before each tick', async () => {
+  it('calls reclaimStaleClaims with a cutoff of now - 10m before each tick', async () => {
     const reclaimSpy = vi.fn(() => 0);
     let callCount = 0;
     const queue: JobQueuePort = {
@@ -272,7 +277,7 @@ describe('WorkerScheduler', () => {
     await scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal);
     expect(reclaimSpy).toHaveBeenCalled();
     const cutoff = reclaimSpy.mock.calls[0]?.[0] as Date;
-    const expected = Date.now() - 600;
+    const expected = Date.now() - 10 * 60_000;
     expect(Math.abs(cutoff.getTime() - expected)).toBeLessThan(200);
   });
 
@@ -282,6 +287,7 @@ describe('WorkerScheduler', () => {
       ...makeQueue({}),
       findById: vi.fn(() => makeJob('job-1', 'claimed')),
       releaseClaim: releaseSpy,
+      listActive: vi.fn(() => []),
     };
     const controller = new AbortController();
     vi.mocked(workerLoop).mockImplementation(async () => {
@@ -298,6 +304,7 @@ describe('WorkerScheduler', () => {
       ...makeQueue({}),
       findById: vi.fn(() => makeJob('job-1', 'running')),
       markCancelled: markCancelledSpy,
+      listActive: vi.fn(() => []),
     };
     const controller = new AbortController();
     vi.mocked(workerLoop).mockImplementation(async () => {
@@ -328,12 +335,11 @@ describe('WorkerScheduler', () => {
         callCount++;
         return makeJob('job-1', callCount === 1 ? 'queued' : 'succeeded');
       }),
+      listActive: vi.fn(() => []),
     };
     vi.mocked(workerLoop).mockImplementationOnce(
       () => new Promise((resolve) => setTimeout(resolve, 60)),
     );
-    // tickIntervalMs=5 means the old `tickIntervalMs * 6` timeout (30ms) would have
-    // fired well before this 60ms workerLoop call resolves.
     const scheduler = new WorkerScheduler([WorkerId('w1')], { ...makeBaseDeps(), queue }, 5, 1_000);
     await expect(
       scheduler.runUntilComplete(JobId('job-1'), new AbortController().signal),
@@ -348,6 +354,7 @@ describe('WorkerScheduler', () => {
         callCount++;
         return makeJob('job-1', callCount === 1 ? 'queued' : 'succeeded');
       }),
+      listActive: vi.fn(() => []),
     };
 
     vi.mocked(workerLoop).mockImplementationOnce(async (_wid, deps) => {

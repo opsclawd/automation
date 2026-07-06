@@ -1,12 +1,10 @@
 import { workerLoop, type WorkerLoopDeps } from '@ai-sdlc/application';
 import type { JobQueuePort, RepositoryPort } from '@ai-sdlc/application/ports';
-import type { Job, WorkerId, JobId, RunId } from '@ai-sdlc/domain';
+import { type Job, type WorkerId, type JobId, type RunId, RepositoryId } from '@ai-sdlc/domain';
 
-function buildRecoverableRunIds(queue: JobQueuePort, repos: RepositoryPort): ReadonlySet<RunId> {
-  const allJobs = repos.listEnabled().flatMap((r) => queue.listForRepo(r.id));
-  return new Set(
-    allJobs.filter((j) => j.status === 'claimed' || j.status === 'running').map((j) => j.runId),
-  );
+function buildRecoverableRunIds(queue: JobQueuePort): ReadonlySet<RunId> {
+  const activeJobs = queue.listActive();
+  return new Set(activeJobs.map((j) => j.runId));
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -39,8 +37,54 @@ export class WorkerScheduler {
     private readonly workerTimeoutMs = 15 * 60_000,
   ) {}
 
+  /**
+   * Starts the long-lived multi-repository scheduler loop.
+   * Continues until the signal is aborted.
+   */
+  async start(signal: AbortSignal): Promise<void> {
+    const { queue, repos, registry } = this.baseDeps;
+    let repoIndex = 0;
+
+    while (!signal.aborted) {
+      // Reclaim jobs that haven't heartbeated for a while.
+      // 10 minutes is a safer default given 30s heartbeats and 120s TTLs.
+      const reclaimCutoff = new Date(Date.now() - 10 * 60_000);
+      queue.reclaimStaleClaims(reclaimCutoff);
+
+      const enabledRepos = repos.listEnabled();
+      if (enabledRepos.length > 0) {
+        const recoverableRunIds = buildRecoverableRunIds(queue);
+
+        // Attempt to fill all idle workers in a single tick.
+        let idleWorkers = this.workerIds.filter((wid) => registry.findById(wid)?.status === 'idle');
+
+        for (let i = 0; i < enabledRepos.length && idleWorkers.length > 0; i++) {
+          const repo = enabledRepos[(repoIndex + i) % enabledRepos.length]!;
+
+          // Count truly active runs (not just queued jobs).
+          const activeJobs = queue.listForRepo(repo.id).filter((j) => j.status === 'running');
+
+          if (activeJobs.length < repo.maxConcurrentRuns) {
+            const workerId = idleWorkers.shift()!;
+            void workerLoop(workerId, {
+              ...this.baseDeps,
+              recoverableRunIds,
+              outerSignal: signal,
+              repoId: repo.id,
+            }).catch((err) => {
+              console.error(`workerLoop ${workerId} failed:`, err);
+            });
+          }
+        }
+        repoIndex = (repoIndex + 1) % enabledRepos.length;
+      }
+
+      await sleep(this.tickIntervalMs, signal);
+    }
+  }
+
   async runUntilComplete(jobId: JobId, signal: AbortSignal): Promise<void> {
-    const reclaimCutoff = new Date(Date.now() - this.tickIntervalMs * 6);
+    const reclaimCutoff = new Date(Date.now() - 10 * 60_000);
     while (!signal.aborted) {
       const job = this.baseDeps.queue.findById(jobId);
       if (!job) throw new Error(`Job ${jobId} not found`);
@@ -48,11 +92,8 @@ export class WorkerScheduler {
 
       this.baseDeps.queue.reclaimStaleClaims(reclaimCutoff);
 
-      const recoverableRunIds = buildRecoverableRunIds(this.baseDeps.queue, this.baseDeps.repos);
+      const recoverableRunIds = buildRecoverableRunIds(this.baseDeps.queue);
 
-      // workerLoop runs the real executor (prepareWorktree/executeRun), which can
-      // legitimately take minutes, so this timeout guards only against a truly
-      // hung worker and must not be tied to the (much shorter) tick interval.
       const timeoutMs = this.workerTimeoutMs;
       const results = await Promise.allSettled(
         this.workerIds.map((wid) => {
@@ -81,9 +122,6 @@ export class WorkerScheduler {
               ...this.baseDeps,
               recoverableRunIds,
               outerSignal: signal,
-              // The worker loop calls onProgress during its lease heartbeat.
-              // We refresh the watchdog timer to allow the run to continue
-              // as long as heartbeats are being maintained.
               onProgress: () => t?.refresh(),
             }),
             timeoutPromise,

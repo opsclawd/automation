@@ -8,6 +8,7 @@ export interface ClaimNextInput {
   workerId: WorkerId;
   skipJobIds?: Set<JobId>;
   ttlMs?: number;
+  repoId?: RepositoryId;
 }
 
 export interface JobQueuePort {
@@ -20,6 +21,7 @@ export interface JobQueuePort {
   markFailed(jobId: JobId, now: Date): void;
   markCancelled(jobId: JobId, now: Date): void;
   listForRepo(repoId: RepositoryId): Job[];
+  listActive(): Job[];
   listForRun(runId: RunId): Job[];
   findById(jobId: JobId): Job | undefined;
   /** Returns jobs whose status is 'claimed' AND claim_expires_at < cutoff. */

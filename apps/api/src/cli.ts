@@ -570,6 +570,72 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     });
 
   program
+    .command('worker')
+    .description('Manage orchestrator workers')
+    .addCommand(
+      new Command('start')
+        .description('Start the long-lived worker scheduler')
+        .option('--workers <number>', 'Number of concurrent workers', (v) => parseInt(v, 10), 1)
+        .option('--repo-root <path>', 'Repository root (default: auto-detect)')
+        .action(async (opts: { workers: number; repoRoot?: string }) => {
+          try {
+            const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
+            const options: ComposeOptions = {
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+              ...buildOpts?.composeOverrides,
+            };
+            const c = composeRoot(options);
+            if (!c.workerLoopDeps || !c.workerRegistry) {
+              console.error('Error: worker dependencies not available.');
+              process.exit(EXIT_USER_ERROR);
+            }
+
+            const workerIds = Array.from({ length: opts.workers }, (_, i) =>
+              WorkerId(`worker-${os.hostname()}-${process.pid}-${i}`),
+            );
+
+            for (const wid of workerIds) {
+              c.workerRegistry.register(
+                createWorker({
+                  id: wid,
+                  hostname: os.hostname(),
+                  processId: process.pid,
+                  now: new Date(),
+                }),
+              );
+            }
+
+            const abortController = new AbortController();
+            const heartbeats = workerIds.map((wid) =>
+              startWorkerRegistryHeartbeat(
+                c.workerRegistry!,
+                wid,
+                DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS,
+              ),
+            );
+
+            const shutdown = () => {
+              abortController.abort();
+              for (const hb of heartbeats) hb.stop();
+              console.error('Shutting down workers...');
+              setTimeout(() => process.exit(0), 1000);
+            };
+
+            process.on('SIGINT', shutdown);
+            process.on('SIGTERM', shutdown);
+
+            const scheduler = new WorkerScheduler(workerIds, c.workerLoopDeps);
+            console.error(`Starting ${opts.workers} workers across all enabled repositories...`);
+            await scheduler.start(abortController.signal);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_INTERNAL_ERROR);
+          }
+        }),
+    );
+
+  program
     .command('serve')
     .description('Start the orchestrator HTTP API')
     .option('--port <port>', 'Port to listen on', (v) => parseInt(v, 10), 4319)

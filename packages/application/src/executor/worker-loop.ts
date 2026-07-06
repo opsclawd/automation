@@ -40,6 +40,7 @@ export interface WorkerLoopDeps {
   onProgress?: () => void;
   outerSignal?: AbortSignal;
   heartbeatIntervalMs?: number;
+  repoId?: RepositoryId;
 }
 
 function isRunnable(status: string): boolean {
@@ -75,7 +76,12 @@ export async function workerLoop(workerId: WorkerId, deps: WorkerLoopDeps): Prom
   while (true) {
     // Reset the scheduler's watchdog timer at the start of each job claim cycle.
     deps.onProgress?.();
-    const job = queue.claimNext({ workerId, skipJobIds: skippedJobIds, ttlMs: deps.ttlMs });
+    const job = queue.claimNext({
+      workerId,
+      skipJobIds: skippedJobIds,
+      ttlMs: deps.ttlMs,
+      repoId: deps.repoId,
+    });
     if (!job) {
       return;
     }

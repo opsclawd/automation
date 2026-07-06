@@ -27,6 +27,7 @@ import {
   PrReviewRepository,
   AgentUsageRepository,
   SqliteStepRepository,
+  SqliteRepositoryRepository,
   RunDirectory,
   runBashScript,
   classifyExit,
@@ -514,22 +515,6 @@ class AbortRegistry {
   }
 }
 
-class SingleRepoAdapter implements RepositoryPort {
-  constructor(private readonly repo: Repository) {}
-
-  findById(id: RepositoryId): Repository | undefined {
-    return this.repo.id === id ? this.repo : undefined;
-  }
-
-  findByFullName(fullName: string): Repository | undefined {
-    return this.repo.fullName === fullName ? this.repo : undefined;
-  }
-
-  listEnabled(): Repository[] {
-    return this.repo.enabled ? [this.repo] : [];
-  }
-}
-
 export function buildSpecReviewPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string },
   typecheckSection: string,
@@ -840,6 +825,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const failureRepository = new FailureRepository(db);
   const agentInvocationRepository = new AgentInvocationRepository(db);
   const validationRunRepository = new ValidationRunRepository(db);
+  const repositoryRepository = new SqliteRepositoryRepository(db);
   const agentUsageRepository = new AgentUsageRepository(db);
   const loopRepository = new LoopRepository(db);
   const workerLeaseRepository = new WorkerLeaseRepository(db);
@@ -2365,8 +2351,10 @@ export function composeRoot(opts: ComposeOptions): Container {
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
   }
 
-  const singleRepo: RepositoryPort = resolvedRepoFullName
-    ? new SingleRepoAdapter({
+  if (resolvedRepoFullName) {
+    const existing = repositoryRepository.findByFullName(resolvedRepoFullName);
+    if (!existing) {
+      repositoryRepository.insert({
         id: RepositoryId(resolvedRepoFullName),
         owner: resolvedRepoFullName.split('/')[0]!,
         name: resolvedRepoFullName.split('/')[1]!,
@@ -2377,21 +2365,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         maxConcurrentRuns: 1 as const,
         createdAt: new Date(),
         updatedAt: new Date(),
-      })
-    : new SingleRepoAdapter({
-        id: '' as RepositoryId,
-        owner: '',
-        name: '',
-        fullName: '',
-        defaultBranch: '',
-        localBasePath: '',
-        enabled: false,
-        maxConcurrentRuns: 1 as const,
-        createdAt: new Date(),
-        updatedAt: new Date(),
       });
+    }
+  }
 
-  const jobQueue = new JobQueueRepository(db, singleRepo);
+  const jobQueue = new JobQueueRepository(db, repositoryRepository);
 
   const workerRegistry = new WorkerRegistryRepository(db);
 
@@ -2401,21 +2379,29 @@ export function composeRoot(opts: ComposeOptions): Container {
           registry: workerRegistry,
           queue: jobQueue,
           leases: workerLeaseRepository,
-          repos: singleRepo,
+          repos: repositoryRepository,
           executeRun: async ({ run, signal: _signal }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
             return { ok: result.run.status === 'passed' };
           },
-          prepareWorktree: async ({ runId, signal: _signal }) => {
+          prepareWorktree: async ({ repoId, runId, signal: _signal }) => {
             const r = runRepository.findByUuid(runId);
             if (!r) throw new Error(`prepareWorktree: no run found for ${runId}`);
-            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const repo = repositoryRepository.findById(repoId);
+            if (!repo) throw new Error(`prepareWorktree: no repo found for ${repoId}`);
+
+            const worktreePath = join(
+              targetRoot,
+              '.ai-worktrees',
+              repo.fullName,
+              `issue-${r.issueNumber}`,
+            );
             await gitAdapter.createWorktree({
-              repoLocalBasePath: targetRoot,
+              repoLocalBasePath: repo.localBasePath,
               worktreePath,
               branch: `ai/issue-${r.issueNumber}`,
-              baseBranch: resolvedDefaultBranch,
+              baseBranch: repo.defaultBranch,
             });
             if ('seedArtifactExcludes' in gitAdapter) {
               await (gitAdapter as ArtifactGuardPort).seedArtifactExcludes(worktreePath);
@@ -2429,8 +2415,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!lease) return;
             const r = runRepository.findByUuid(lease.runId);
             if (!r) return;
-            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
-            gitAdapter.resetWorktreeIfClean(worktreePath, resolvedDefaultBranch).catch(() => {});
+            const repo = repositoryRepository.findById(repoId);
+            if (!repo) return;
+            const worktreePath = join(
+              targetRoot,
+              '.ai-worktrees',
+              repo.fullName,
+              `issue-${r.issueNumber}`,
+            );
+            gitAdapter.resetWorktreeIfClean(worktreePath, repo.defaultBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {
             const w = workerRegistry.findById(workerId);
@@ -2454,7 +2447,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const resumeRun = new ResumeRun({
     runRepository,
-    repos: singleRepo,
+    repos: repositoryRepository,
     leases: workerLeaseRepository,
     queue: jobQueue,
     stepRepo: stepRepository,
