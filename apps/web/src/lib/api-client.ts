@@ -31,6 +31,18 @@ export interface FailureDto {
 // /api/* rewrite (see next.config.mjs) and avoids CORS issues.
 const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4319';
 
+export interface MetaDto {
+  repoFullName: string;
+  targetRepoRoot: string;
+}
+
+export async function getMeta(): Promise<MetaDto> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const r = await fetch(`${base}/api/meta`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to load meta: ${r.status}`);
+  return r.json() as Promise<MetaDto>;
+}
+
 export interface ListRunsResult {
   runs: RunDto[];
   total: number;

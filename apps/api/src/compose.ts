@@ -411,7 +411,8 @@ export interface Container {
   git: GitPort;
   /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
   buildRunContext?: (run: Run) => PhaseHandlerContext;
-  repoFullName?: string;
+  repoFullName: string;
+  targetRepoRoot: string;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
@@ -979,14 +980,11 @@ export function composeRoot(opts: ComposeOptions): Container {
   // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
   let resolvedDefaultBranch = 'main';
   try {
-    const out = execFileSync('gh', [
-      'repo',
-      'view',
-      '--json',
-      'defaultBranchRef',
-      '-q',
-      '.defaultBranchRef.name',
-    ])
+    const out = execFileSync(
+      'gh',
+      ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'],
+      { cwd: targetRoot },
+    )
       .toString()
       .trim();
     if (out) resolvedDefaultBranch = out;
@@ -998,7 +996,10 @@ export function composeRoot(opts: ComposeOptions): Container {
   let resolvedRepoFullName: string | undefined;
   if (opts.repoFullName) {
     resolvedRepoFullName = opts.repoFullName;
-  } else if (process.env.GITHUB_REPOSITORY) {
+  } else if (process.env.GITHUB_REPOSITORY && !opts.targetRepoRoot) {
+    // Only fall back to GITHUB_REPOSITORY if we are NOT in cross-repo mode.
+    // In cross-repo mode, GITHUB_REPOSITORY likely points to the automation
+    // repo, not the target.
     resolvedRepoFullName = process.env.GITHUB_REPOSITORY;
   } else {
     try {
@@ -2884,7 +2885,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     workerRegistry,
     ...(workerLoopDeps !== undefined ? { workerLoopDeps } : {}),
     git: gitAdapter,
-    ...(resolvedRepoFullName !== undefined ? { repoFullName: resolvedRepoFullName } : {}),
+    repoFullName: resolvedRepoFullName ?? '',
+    targetRepoRoot: targetRoot,
     runValidation,
     startIssueRun,
     cancelRun,
