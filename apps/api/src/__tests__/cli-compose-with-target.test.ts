@@ -96,7 +96,8 @@ describe('composeWithTarget', () => {
     });
     try {
       composeWithTarget(undefined, {
-        composeOverrides: { repoFullName: 'override/repo' },
+        buildOpts: { composeOverrides: { repoFullName: 'override/repo' } },
+        composeOverrides: { repoFullName: 'default/repo' },
       });
       const opts = composeSpy.mock.calls[0]?.[0] as composeMod.ComposeOptions;
       expect(opts.repoFullName).toBe('override/repo');

@@ -39,8 +39,8 @@ export function composeWithTarget(
     repoRoot,
     scriptPath,
     runStartupSweeps: runStartupSweeps ?? false,
-    ...buildOpts?.composeOverrides,
     ...composeOverrides,
+    ...buildOpts?.composeOverrides,
   };
   if (targetRepoRoot !== undefined) {
     composeOptions.targetRepoRoot = targetRepoRoot;
