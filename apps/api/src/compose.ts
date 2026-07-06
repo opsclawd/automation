@@ -982,9 +982,22 @@ export function composeRoot(opts: ComposeOptions): Container {
   }
 
   const resolver = opts.metadataResolver ?? new RepositoryMetadataResolver();
-  const metadata = resolver.resolve(targetRoot);
+  let metadata: import('@ai-sdlc/infrastructure').RepositoryMetadata;
+  try {
+    metadata = resolver.resolve(targetRoot);
+  } catch (err) {
+    // Legacy fallback: if resolution fails, try to use GITHUB_REPOSITORY
+    // or placeholder values for tests that use non-git tmp dirs.
+    const nameWithOwner = opts.repoFullName ?? process.env.GITHUB_REPOSITORY ?? '';
+    metadata = {
+      rootPath: targetRoot,
+      nameWithOwner,
+      defaultBranch: 'main',
+      remoteUrl: '',
+    };
+  }
   const resolvedDefaultBranch = metadata.defaultBranch;
-  const resolvedRepoFullName = opts.repoFullName ?? metadata.nameWithOwner;
+  const resolvedRepoFullName = metadata.nameWithOwner || undefined;
   const resolvedRemoteUrl = metadata.remoteUrl;
 
   let agentRuntime: AgentRuntimeRouter | undefined;

@@ -20,7 +20,7 @@ describe('RepositoryMetadataResolver', () => {
   it('successfully resolves metadata for a valid git repository', () => {
     const targetPath = '/path/to/repo';
     existsSyncMock.mockReturnValue(true);
-    statSyncMock.mockReturnValue({ isDirectory: () => true } as any);
+    statSyncMock.mockReturnValue({ isDirectory: () => true } as unknown as import('node:fs').Stats);
 
     execFileSyncMock.mockImplementation((cmd, args) => {
       if (cmd === 'git') {
@@ -58,7 +58,7 @@ describe('RepositoryMetadataResolver', () => {
 
   it('throws RepositoryResolutionError if path is not a git repository', () => {
     existsSyncMock.mockReturnValue(true);
-    statSyncMock.mockReturnValue({ isDirectory: () => true } as any);
+    statSyncMock.mockReturnValue({ isDirectory: () => true } as unknown as import('node:fs').Stats);
     execFileSyncMock.mockImplementation((cmd, args) => {
       if (cmd === 'git' && args?.includes('--show-toplevel')) {
         throw new Error('fatal: not a git repository');
@@ -72,7 +72,7 @@ describe('RepositoryMetadataResolver', () => {
 
   it('throws RepositoryResolutionError if gh resolution fails', () => {
     existsSyncMock.mockReturnValue(true);
-    statSyncMock.mockReturnValue({ isDirectory: () => true } as any);
+    statSyncMock.mockReturnValue({ isDirectory: () => true } as unknown as import('node:fs').Stats);
     execFileSyncMock.mockImplementation((cmd, args) => {
       if (cmd === 'git' && args?.includes('--show-toplevel')) return '/repo';
       if (cmd === 'gh' && args?.includes('nameWithOwner')) throw new Error('gh failed');
@@ -85,7 +85,7 @@ describe('RepositoryMetadataResolver', () => {
 
   it('falls back to "main" if gh default branch resolution fails', () => {
     existsSyncMock.mockReturnValue(true);
-    statSyncMock.mockReturnValue({ isDirectory: () => true } as any);
+    statSyncMock.mockReturnValue({ isDirectory: () => true } as unknown as import('node:fs').Stats);
     execFileSyncMock.mockImplementation((cmd, args) => {
       if (cmd === 'git' && args?.includes('--show-toplevel')) return '/repo';
       if (cmd === 'gh' && args?.includes('nameWithOwner')) return 'owner/repo';

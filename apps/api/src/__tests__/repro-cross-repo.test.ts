@@ -3,7 +3,7 @@ import * as childProcess from 'node:child_process';
 import { composeRoot } from '../compose.js';
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();

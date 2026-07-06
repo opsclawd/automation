@@ -35,7 +35,7 @@ export class RepositoryMetadataResolver {
         stdio: ['ignore', 'pipe', 'ignore'],
         encoding: 'utf-8',
       }).trim();
-    } catch (err) {
+    } catch {
       throw new RepositoryResolutionError(
         `Path is not inside a git working tree: ${absolutePath}`,
         absolutePath,
@@ -54,7 +54,7 @@ export class RepositoryMetadataResolver {
           encoding: 'utf-8',
         },
       ).trim();
-    } catch (err) {
+    } catch {
       throw new RepositoryResolutionError(
         `Failed to resolve repository identity via gh CLI in ${rootPath}. Ensure gh is authenticated and the repository has a GitHub remote.`,
         rootPath,
@@ -73,7 +73,7 @@ export class RepositoryMetadataResolver {
           encoding: 'utf-8',
         },
       ).trim();
-    } catch (err) {
+    } catch {
       // Fallback to a common default if gh fails for defaultBranch specifically
       // but only if we already succeeded in identifying the repo.
       defaultBranch = 'main';
@@ -87,7 +87,7 @@ export class RepositoryMetadataResolver {
         stdio: ['ignore', 'pipe', 'ignore'],
         encoding: 'utf-8',
       }).trim();
-    } catch (err) {
+    } catch {
       throw new RepositoryResolutionError(
         `Failed to resolve remote URL for 'origin' in ${rootPath}.`,
         rootPath,
