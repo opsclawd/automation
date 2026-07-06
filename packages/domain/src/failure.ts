@@ -13,6 +13,7 @@ export type FailureKind =
   | 'polling_failed'
   | 'handler_not_wired'
   | 'setup_failed'
+  | 'needs_human_review'
   | 'unknown';
 
 export interface Failure {

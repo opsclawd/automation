@@ -25,5 +25,6 @@ export * from './github/gh-cli-adapter.js';
 export * from './github/errors.js';
 export * from './git/git-worktree-adapter.js';
 export { createFixDiffInspector } from './git/fix-diff-inspector.js';
+export { createFindingEvidenceInspector } from './git/finding-evidence-inspector.js';
 export * from './artifacts/filesystem-artifact-store.js';
 export * from './artifacts/file-tailer.js';

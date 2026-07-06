@@ -17,6 +17,14 @@ const phasesSchema = z.object({
   reviewFix: z.object({
     maxIterations: z.number().int().positive(),
     blockOnSeverity: z.enum(['critical', 'high', 'medium', 'low']).optional().default('high'),
+    /**
+     * Threshold for the `unfounded_pingpong` short-circuit (#623). When the
+     * last N iterations all have findings whose evidence fails the
+     * mechanical check AND the fixer returned `done_no_fixes_needed`, the
+     * loop short-circuits to `needs_human_review`. Defaults to 4 when
+     * omitted; set higher to be more tolerant of bursty reviewer models.
+     */
+    unfoundedPingPongLimit: z.number().int().positive().optional().default(4),
   }),
   // implement.maxIterations is validated but not consumed by any shell loop.
   // The implement phase runs each task once sequentially — no retry loop exists.

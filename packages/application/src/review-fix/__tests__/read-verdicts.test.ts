@@ -66,6 +66,25 @@ describe('readFixVerdict', () => {
     const v = await readFixVerdict(invocation('fix-review', 'result.json'), { artifacts, agent });
     expect(v).toEqual({ ok: true, verdict: 'done_with_fixes' });
   });
+
+  it('carries the rebuttal text for done_no_fixes_needed (#628 P2)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'done_no_fixes_needed',
+        rebuttal: 'the cited code does not exist in this tree',
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readFixVerdict(invocation('fix-review', 'result.json'), { artifacts, agent });
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'done_no_fixes_needed',
+      rebuttal: 'the cited code does not exist in this tree',
+    });
+  });
 });
 
 describe('readReviewVerdict severity gate', () => {
@@ -246,7 +265,11 @@ describe('readReviewVerdict severity gate', () => {
       { artifacts, agent },
       { blockOnSeverity: 'high' },
     );
-    expect(v).toEqual({ ok: true, verdict: 'fail' });
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'high', summary: 'real bug' }],
+    });
   });
 
   it('agent fail with empty findings is not overridden (conservative)', async () => {
@@ -284,7 +307,11 @@ describe('readReviewVerdict severity gate', () => {
       { artifacts, agent },
       { blockOnSeverity: 'high' },
     );
-    expect(v).toEqual({ ok: true, verdict: 'fail' });
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'info', summary: 'note' }],
+    });
   });
 
   it('agent fail with mixed known and unknown severities keeps fail (conservative)', async () => {
@@ -307,6 +334,35 @@ describe('readReviewVerdict severity gate', () => {
       { blockOnSeverity: 'high' },
     );
     // low is below threshold, but info is unknown → conservative: keep fail
-    expect(v).toEqual({ ok: true, verdict: 'fail' });
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [
+        { severity: 'low', summary: 'cosmetic' },
+        { severity: 'info', summary: 'unparseable note' },
+      ],
+    });
+  });
+
+  it('agent fail without a severity gate carries all findings for evidence checks (#628 P1)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [{ severity: 'high', summary: 'command injection' }],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(invocation('whole-pr-review', 'result.json'), {
+      artifacts,
+      agent,
+    });
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'high', summary: 'command injection' }],
+    });
   });
 });

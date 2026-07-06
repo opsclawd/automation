@@ -49,6 +49,12 @@ export type {
   FixDiffInspectorInput,
   FixDiffInspectionResult,
 } from './fix-diff-inspector-port.js';
+export type {
+  FindingEvidence,
+  FindingEvidenceCheckInput,
+  FindingEvidenceCheckResult,
+  FindingEvidenceInspectorPort,
+} from './finding-evidence-inspector-port.js';
 export type { LoopRepositoryPort } from './loop-repository-port.js';
 export type { StepRepositoryPort } from './step-repository-port.js';
 export type { PhaseRepositoryPort } from './phase-repository-port.js';

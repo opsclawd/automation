@@ -41,6 +41,7 @@ export type VerdictOutcome<V> =
       verdict: V;
       overridden?: boolean;
       offendingFindings?: Array<{ severity: string; summary: string }>;
+      rebuttal?: string;
     }
   | { ok: false; detail: string };
 
@@ -65,7 +66,7 @@ export async function readReviewVerdict(
           offendingFindings,
         };
       }
-      return { ok: true, verdict: 'fail' };
+      return { ok: true, verdict: 'fail', offendingFindings };
     }
 
     const allBelow = allKnownSeveritiesBelowThreshold(result.findings, opts.blockOnSeverity);
@@ -80,6 +81,13 @@ export async function readReviewVerdict(
     }
   }
 
+  // Any fail verdict must carry its findings so downstream consumers
+  // (evidence check, rebuttal convergence, unfounded-pingpong detection)
+  // can inspect them — not just the severity-gate override paths above.
+  if (result.result === 'fail' && result.findings.length > 0) {
+    return { ok: true, verdict: 'fail', offendingFindings: result.findings };
+  }
+
   return { ok: true, verdict: result.result };
 }
 
@@ -89,5 +97,12 @@ export async function readFixVerdict(
 ): Promise<VerdictOutcome<FixReviewResult['result']>> {
   const r = await extractResult({ invocation, ports });
   if (!r.ok) return { ok: false, detail: r.detail };
-  return { ok: true, verdict: (r.result as FixReviewResult).result };
+  const fixResult = r.result as FixReviewResult;
+  return {
+    ok: true,
+    verdict: fixResult.result,
+    // The schema requires a non-empty rebuttal for done_no_fixes_needed;
+    // carry it so the loop can append it to code-review.md when accepted.
+    ...(fixResult.result === 'done_no_fixes_needed' ? { rebuttal: fixResult.rebuttal } : {}),
+  };
 }

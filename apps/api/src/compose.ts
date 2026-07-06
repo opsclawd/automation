@@ -41,6 +41,7 @@ import {
   createFilesystemArtifactStore,
   FileTailer,
   createFixDiffInspector,
+  createFindingEvidenceInspector,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -1343,6 +1344,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           agentOutcome: result.outcome,
           ...(effectiveVerdict !== undefined ? { verdict: effectiveVerdict } : {}),
           ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
+          ...(verdict.ok && verdict.rebuttal !== undefined ? { rebuttal: verdict.rebuttal } : {}),
         };
       };
 
@@ -1492,6 +1494,28 @@ export function composeRoot(opts: ComposeOptions): Container {
         loops: loopRepository,
         events: persistingEventBusForLoop,
         loopHistory,
+        findingEvidenceInspector: createFindingEvidenceInspector(),
+        unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
+        artifactStore: {
+          read: async (runId, relativePath) => {
+            const run = runRepository.findByUuid(runId);
+            if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+            const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+            return artifactStoreForRun(runId, cwd).read(runId, relativePath);
+          },
+          write: async (input) => {
+            const run = runRepository.findByUuid(input.runId);
+            if (!run) throw new Error(`ArtifactStore: no run found for ${input.runId}`);
+            const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+            return artifactStoreForRun(input.runId, cwd).write(input);
+          },
+          list: async (runId) => {
+            const run = runRepository.findByUuid(runId);
+            if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
+            const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+            return artifactStoreForRun(runId, cwd).list(runId);
+          },
+        },
         now: () => new Date(),
         idFactory: () => randomUUID(),
         cleanArtifacts: async (ctx) => {

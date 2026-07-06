@@ -119,6 +119,36 @@ describe('loadConfig', () => {
     expect(cfg.phases.skip).toEqual([]);
   });
 
+  it('defaults phases.reviewFix.unfoundedPingPongLimit to 4 when omitted', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.reviewFix.unfoundedPingPongLimit).toBe(4);
+  });
+
+  it('parses unfoundedPingPongLimit when provided', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          reviewFix: { maxIterations: 10, unfoundedPingPongLimit: 6 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.reviewFix.unfoundedPingPongLimit).toBe(6);
+  });
+
   it('parses planReview config when provided', () => {
     const repo = makeRepo(
       JSON.stringify({
