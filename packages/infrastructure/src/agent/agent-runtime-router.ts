@@ -102,7 +102,7 @@ export class AgentRuntimeRouter implements AgentPort {
       runId: RunId(request.runId),
       phaseId: PhaseName(request.phaseId),
       profile: request.profile,
-      runtime: profile.runtime,
+      runtime,
       provider: effectiveProvider,
       model: effectiveModel,
       promptPath: request.promptPath,

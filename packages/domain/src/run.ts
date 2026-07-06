@@ -50,7 +50,7 @@ export class RunStateError extends Error {
 }
 
 export function createRun(input: CreateRunInput): Run {
-  return {
+  const run: Run = {
     uuid: input.uuid,
     displayId: input.displayId,
     repoId: input.repoId,
@@ -60,10 +60,11 @@ export function createRun(input: CreateRunInput): Run {
     completedPhases: [],
     skippedPhases: [],
     startedAt: input.startedAt,
-    baseBranch: input.baseBranch,
-    modelOverride: input.modelOverride,
-    runtimeOverride: input.runtimeOverride,
   };
+  if (input.baseBranch !== undefined) run.baseBranch = input.baseBranch;
+  if (input.modelOverride !== undefined) run.modelOverride = input.modelOverride;
+  if (input.runtimeOverride !== undefined) run.runtimeOverride = input.runtimeOverride;
+  return run;
 }
 
 export function startPhase(run: Run, phase: string): Run {
