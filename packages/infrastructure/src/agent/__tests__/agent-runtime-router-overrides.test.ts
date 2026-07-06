@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AgentProfileName, AgentInvocationId, RunId } from '@ai-sdlc/domain';
+import { AgentProfileName, RunId } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import type { AgentPort, AgentInvocationRequest, AgentInvocationResult } from '@ai-sdlc/application/ports';
 import type { AgentConfig } from '@ai-sdlc/shared';
@@ -105,8 +105,12 @@ describe('AgentRuntimeRouter overrides', () => {
     const router = new AgentRuntimeRouter({
       agent: cfg(),
       adapters: {
-        opencode: { invoke: async () => { throw new Error('Should not be called'); } } as any,
-        pi: piAdapter
+        opencode: {
+          async invoke() {
+            throw new Error('Should not be called');
+          },
+        } as AgentPort,
+        pi: piAdapter,
       },
       invocationRepository: inv,
     });
