@@ -207,16 +207,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
   program
     .command('run')
-    .description('Start an issue-to-PR run by wrapping the legacy Bash script')
+    .description('Start an issue-to-PR run')
     .requiredOption('--issue <number>', 'GitHub issue number', (v) => {
       if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
       const n = parseInt(v, 10);
       if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
       return n;
     })
-    .option('--base-branch <branch>', 'Base branch (legacy default: main)')
+    .option('--base-branch <branch>', 'Base branch (default: main)')
     .option('--model <model>', 'AI_AGENT_MODEL env var')
-    .option('--agent-cli <cli>', 'AI_RUNTIME env var')
+    .option('--agent-cli <cli>', 'AI_RUNTIME override')
     .option('--script <path>', 'Path to Bash script to wrap')
     .option('--verbose', 'Stream script stdout/stderr to terminal (default: auto when TTY)')
     .option('--no-verbose', 'Suppress streaming script output to terminal')

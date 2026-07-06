@@ -122,35 +122,31 @@ These are product-level rules that should remain stable unless deliberately revi
 12. **Commercial optionality is secondary**  
     The first product must accelerate the owner across real repositories. Team, enterprise, hosted, RBAC, and multi-machine versions are future-only considerations.
 
-## Near-term product focus
+## Product focus (M1-M8 Implementation)
 
-The next product layer should make the existing automation easier to operate, debug, evolve, and trust.
+The system has matured from a Bash-based prototype into a robust TypeScript orchestrator. The core operational foundation is now complete:
 
-Priority order:
+1. **Structured Orchestration (RunExecutor)**
+   - The TypeScript `RunExecutor` drives the canonical phase pipeline with explicit state transitions and artifact capture.
+   - Pipeline configurations (prompts, model profiles, validation commands) are declarative and auditable.
 
-1. **Pipeline versioning**
-   - Record the exact phase sequence, prompts, skills, model profiles, validation commands, retry rules, and fallback settings used by each run.
-   - Changing prompts, skills, models, or phase order should produce a distinguishable pipeline version.
+2. **Durable Phase Attempts**
+   - Every phase execution is recorded as a durable attempt with detailed metadata, logs, and artifacts.
 
-2. **Durable phase attempts**
-   - Treat each phase/step execution as an attempt with inputs, outputs, logs, artifacts, exit status, failure type, model/runtime metadata, and retry relationship.
+3. **Repository Lease Scheduler**
+   - The orchestrator enforces one active worker per repository via a `WorkerLease`, preventing worktree contamination while allowing cross-repository concurrency.
 
-3. **Repository lease scheduler**
-   - Enforce one active worker per repository.
-   - Allow concurrent execution across different repositories.
-   - Detect stale leases and support dead-run recovery.
+4. **Review Gate Abstraction**
+   - Validation commands, internal review/fix loops, and external PR review comments are implemented as first-class gates.
 
-4. **Review gate abstraction**
-   - Treat PR review comments, review bot results, CI/check status, and validation output as gates that decide whether the pipeline can continue.
+5. **Failure Taxonomy**
+   - Failures are classified into actionable categories (e.g., `validation_failed`, `agent_contract_violation`, `timeout`), providing clear recovery guidance.
 
-5. **Failure taxonomy**
-   - Replace generic failure with categories such as `validation_failed`, `review_rejected`, `merge_conflict`, `agent_timeout`, `provider_error`, `ambiguous_issue`, `unsafe_change`, `no_progress`, `max_iterations`, and `blocked_external`.
+6. **Retry and Resume Controls**
+   - Precise controls exist for retrying failed phases, resuming from specific steps, and cancelling active runs safely.
 
-6. **Retry and resume controls**
-   - Support retry same phase, retry with fallback model, retry from previous phase, resume after external fix, skip with justification, cancel, and mark blocked.
-
-7. **Operations UI**
-   - Show runs, repo queues, leases, phases, attempts, logs, prompts, outputs, diffs, validation failures, review comments, retry controls, and terminal state.
+7. **Operations UI and CLI**
+   - A real-time dashboard and comprehensive CLI provide visibility into every aspect of the delivery pipeline.
 
 ## Model and runtime strategy
 

@@ -1,6 +1,9 @@
 # Product Requirements Document: AI Agent SDLC Orchestrator
 
-**Document status:** Draft  
+> [!IMPORTANT]
+> **HISTORICAL DOCUMENT:** This PRD describes the initial requirements and roadmap for the project. As of now, Milestones M1–M8 are complete and the system has fully transitioned to the TypeScript-based orchestrator.
+
+**Document status:** Historical / Completed
 **Generated:** 2026-05-13  
 **Owner:** Gary Poon Tip  
 **Initiative:** AI-agent SDLC orchestration, observability, and recovery platform

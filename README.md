@@ -2,11 +2,11 @@
 
 AI SDLC Orchestrator is a single-tenant AI software delivery control plane. A user explicitly enqueues an approved GitHub issue, then the orchestrator drives it through a configurable issue-to-reviewed-PR pipeline with phase-specific agent/model profiles, durable state, artifacts, logs, validation gates, review/fix loops, and retry/resume controls.
 
-It runs locally or on a VPS, executes multiple repositories concurrently while enforcing one active worker per repository, and supports interchangeable agent runtime adapters (initially OpenCode and Pi) behind a single `AgentPort` contract.
+It runs locally or on a VPS, executes multiple repositories concurrently while enforcing one active worker per repository, and supports interchangeable agent runtime adapters (OpenCode, Pi, Antigravity, Claude Code, and Codex) behind a single `AgentPort` contract.
 
 ## Status
 
-M1 (observable wrapper) and M2 (structured events) are **complete**. M3 (domain/application foundation — including the Repository / Job / Worker / WorkerLease seams and the runtime-agnostic agent abstraction) is next. The repo contains the TypeScript orchestrator alongside planning documents.
+Milestones **M1 through M8 are complete**. The system is a fully-functional TypeScript-based orchestrator that has superseded the original Bash-based prototype.
 
 ## What this project is
 
@@ -20,14 +20,16 @@ The target workflow is:
 
 ```text
 GitHub issue
-→ design
-→ implementation plan
-→ implementation
-→ validation
-→ internal review/fix loop
-→ compound learning/documentation
-→ PR creation
-→ PR review comment handling
+→ read_issue
+→ plan-design
+→ plan-write
+→ implement
+→ validate
+→ fix-validate
+→ review-fix
+→ compound
+→ create-pr
+→ post-pr-review
 → ready for merge
 ```
 
@@ -48,19 +50,9 @@ What can safely happen next?
 
 ## Why this exists
 
-The current automation flow is powerful but fragile. Bash scripts currently handle orchestration, GitHub operations, Git worktrees, prompt construction, agent invocation, validation, review loops, PR creation, and recovery behavior.
+The current automation flow is powerful but fragile. Bash scripts were used initially to handle orchestration, but they created operational problems: failures were hard to diagnose, state was implicit, and logs were scattered.
 
-That creates predictable operational problems:
-
-- failures are hard to diagnose;
-- run state is implicit or scattered across files;
-- logs and artifacts are difficult to correlate;
-- retry/resume behavior is unsafe or unclear;
-- agent contract violations are hard to distinguish from normal command failures;
-- post-PR review automation is not first-class orchestration state;
-- prompt, skill, phase, and model changes are hard to reason about without versioned pipeline state.
-
-This project formalizes that workflow into a single-tenant orchestrator with explicit state, artifacts, events, failures, recovery paths, review gates, and repo-scoped concurrency.
+This project formalized that workflow into a TypeScript orchestrator with explicit state, artifacts, events, failures, recovery paths, review gates, and repo-scoped concurrency.
 
 The product is not another coding agent. Agent runtimes execute work; the orchestrator governs the delivery lifecycle around them.
 
@@ -76,14 +68,14 @@ The product is not another coding agent. Agent runtimes execute work; the orches
 | Phase            | A named major stage inside a Run, such as `plan-design`, `implement`, or `validate`. |
 | Step             | An ordered sub-unit within a Phase.                                                  |
 | Attempt          | One execution of a Phase or Step, including inputs, outputs, artifacts, and result.  |
-| Loop             | A bounded repeated cycle, such as review/fix.                                        |
+| Loop             | A bounded repeated cycle, such as review/fix or fix-validate.                        |
 | Review Gate      | A validation, internal review, external review bot, or PR comment gate.              |
 | Agent Invocation | One call to an agent runtime with a prompt, expected artifacts, and a result.        |
 | Agent Profile    | A named runtime+model+budgets+timeout config that an invocation runs under.          |
 | Pipeline Version | The recorded phase sequence, prompts, skills, profiles, validation, and retry rules. |
 | Artifact         | A persisted file produced or captured during orchestration.                          |
 
-## Planned architecture
+## Architecture
 
 The system is designed as a single-tenant application using Clean Architecture and lightweight DDD. The same architecture runs locally on a developer machine or under systemd on a VPS — the only difference is the number of Worker processes.
 
@@ -98,14 +90,17 @@ Worker Pool (1..N processes)
   ↓
 Repository Lease
   ↓
-Run Executor
+Run Executor (TypeScript)
   ↓
 Ports
     ├─ AgentPort
     │    ├─ OpenCodeAgentAdapter
-    │    └─ PiAgentAdapter
-    ├─ GitHubPort
-    ├─ GitPort
+    │    ├─ PiAgentAdapter (Local Qwen)
+    │    ├─ AntigravityAdapter
+    │    ├─ ClaudeCodeAdapter
+    │    └─ CodexAdapter
+    ├─ GitHubPort (gh CLI)
+    ├─ GitPort (Worktrees)
     ├─ ValidationPort
     └─ ArtifactStore
   ↓
@@ -135,61 +130,32 @@ The local/VPS distinction is a deployment concern only. The orchestrator itself 
 - Repository registry: only approved repositories may host Runs.
 - Repo-scoped concurrency: multiple Repositories may execute concurrently, but only **one active Worker per Repository** at any moment (enforced by a `WorkerLease`).
 - One active Run per (Repository, Issue) pair.
-- SQLite (WAL mode) for structured orchestration state, including the job queue and worker-lease tables. Postgres is a future-only consideration triggered by multi-VPS, heavy write contention, or HA — not adopted now.
+- SQLite (WAL mode) for structured orchestration state, including the job queue and worker-lease tables.
 - Filesystem storage for prompts, logs, markdown artifacts, diffs, and result payloads. Repo caches and run artifacts are kept in separate directories.
 - Runtime-agnostic agent invocation behind a single `AgentPort`.
 - `OpenCodeAgentAdapter` is the frontier-model runtime — design, planning, high-context review, and PR-comment handling default to it.
-- `PiAgentAdapter` is the local small-model runtime (e.g. Qwen 3.6 27B with a 64k context limit) for bounded mechanical work; explicit fallback to OpenCode is configured per phase.
-- Runtime/model selection is config-driven (per phase profile), auditable, and fallback-capable — never inferred by opaque LLM judgment.
-- Pipeline definitions, prompts, skills, validation commands, retry rules, and phase-profile routing should be versioned and recorded per Run.
+- `PiAgentAdapter` is the local small-model runtime (e.g. Qwen 3.6 27B) for bounded mechanical work; explicit fallback to OpenCode is configured per phase.
+- Runtime/model selection is config-driven (per phase profile), auditable, and fallback-capable.
 - Git worktrees scoped per (Repository, Issue, Run). No shared mutable checkout across concurrent Runs.
 - Clean cancellation by terminating the agent process, resetting the worktree to the last known-good commit, and releasing the repo lease.
-- Multi-machine distributed workers, multi-user SaaS hosting, RBAC, automatic issue discovery, automatic merge, and generic workflow engines are explicit non-goals.
 
-## Planned lifecycle states
+## Lifecycle states
 
 ```text
-RUNNING   Active work in progress.
-READY     All reviews addressed; awaiting merge. Not terminal.
-SUCCESS   PR merged. Terminal.
-FAILED    Unrecoverable failure or loop exhaustion. Terminal.
-CANCELLED User-cancelled or timed out. Terminal.
+RUNNING             Active work in progress.
+WAITING (READY)     All reviews addressed; awaiting merge. Not terminal.
+NEEDS_HUMAN_REVIEW  Blocked by a human gate or unrecoverable error requiring manual fix.
+SUCCESS             PR merged. Terminal.
+FAILED              Unrecoverable failure or loop exhaustion. Terminal.
+CANCELLED           User-cancelled or timed out. Terminal.
 ```
 
-## Planned MVP
+## Cross-Repository Support
 
-The first practical implementation target is not a full rewrite. The MVP should wrap the existing Bash automation and make it observable.
+The orchestrator supports executing runs against repositories other than the one where the orchestrator itself is installed. This is achieved using the `--target-repo-root` flag.
 
-MVP capabilities:
-
-- start an issue-to-PR run;
-- create a unique run ID;
-- create a run directory;
-- invoke the existing Bash script;
-- capture stdout and stderr;
-- persist structured run metadata;
-- emit structured events;
-- show run list and run detail views;
-- display phase timeline;
-- expose logs and artifacts;
-- classify failures;
-- provide basic retry/resume guidance;
-- show PR review polling status when applicable.
-
-## Future direction
-
-After the observable wrapper exists, orchestration should migrate incrementally from Bash to TypeScript, with runtime interchangeability and VPS-ready worker concurrency introduced as controlled architecture seams — not new product directions. The intended order is observability first, clean seams second, runtime adapters third, full TypeScript orchestration last:
-
-1. Node wrapper around Bash. **(M1 complete)**
-2. Structured event emission. **(M2 complete)**
-3. Domain/application foundation: `Repository`, `Job`, `Worker`, `WorkerLease`, `Run`, `Phase`, `AgentProfile`, runtime-agnostic `AgentPort`. **(M3, next)**
-4. TypeScript agent runtime layer: `AgentRuntimeRouter`, `OpenCodeAgentAdapter`, `PiAgentAdapter`, prompt rendering, contract validation, result schemas, and phase-profile fallback.
-5. TypeScript validation runner.
-6. Managed PR review polling, running on the same worker/lease primitives.
-7. TypeScript review/fix loop.
-8. Full TypeScript phase orchestration, driven by Workers that claim Jobs, acquire repo leases, and call `AgentPort.invoke(...)`.
-9. Pipeline versioning for phase order, prompts, skills, model profiles, validation gates, retry policies, and fallback routing.
-10. Operations UI for queue state, repo leases, phase attempts, review gates, retry/resume controls, and failure recovery.
+- **Per-invocation targeting**: You can point a specific `run` at a different local checkout.
+- **Single-target server mode**: The current `serve` mode binds to a single repository context at startup. Centralized multi-repository control planes (managing many different remote repos from one dashboard without local checkouts) are currently out of scope.
 
 ## Quickstart
 
@@ -198,26 +164,23 @@ See [`docs/quickstart.md`](./docs/quickstart.md) for installation, starting the 
 ## Documentation
 
 - [`CONTEXT.md`](./CONTEXT.md) — project language, core domain model, relationships, outcome rules, and lifecycle states.
-- [`docs/product-direction.md`](./docs/product-direction.md) — product thesis, positioning, invariants, priorities, deferred ambitions, risks, and decision log.
-- [`docs/adr/0001-local-first-orchestrator-architecture.md`](./docs/adr/0001-local-first-orchestrator-architecture.md) — architecture decision record for local-first design, persistence, agent execution, cancellation, and distribution boundaries.
-- [`docs/prd.md`](./docs/prd.md) — full product requirements document.
-- [`docs/design-decisions-report.md`](./docs/design-decisions-report.md) — resolved design questions and implementation constraints.
+- [`docs/quickstart.md`](./docs/quickstart.md) — installation and operational guide.
+- [`docs/prd.md`](./docs/prd.md) — product requirements document (historical context).
+- [`docs/adr/`](./docs/adr/) — architecture decision records.
 
 ## Non-goals
 
-The initial system is not intended to:
+The system is not intended to:
 
 - replace GitHub;
 - become a general-purpose CI/CD platform;
 - become a generic workflow engine;
 - support enterprise multi-tenant SaaS hosting;
-- support distributed workers across multiple machines (a single VPS running multiple worker processes is supported; horizontal scale-out across many machines is not);
+- support distributed workers across multiple machines;
 - support multi-user RBAC;
 - automatically discover or open GitHub issues;
 - execute against arbitrary, unregistered GitHub repositories;
-- automatically merge PRs;
-- abstract over every possible AI agent runtime (we support a small, explicit, configured set — currently `opencode` and `pi`);
-- auto-select runtimes by opaque LLM judgment — routing is driven by declared phase profiles and explicit fallback rules.
+- automatically merge PRs.
 
 ## Repository layout
 
@@ -228,11 +191,8 @@ apps/
 packages/
   shared/     config schema, run identity, event schemas
   domain/     pure types: Run, Phase, Failure, Artifact
-  application/ use cases (StartIssueRun)
-  infrastructure/ SQLite repositories, RunDirectory, Bash wrapper, failure classifier
+  application/ use cases (StartIssueRun, RunExecutor)
+  infrastructure/ SQLite repositories, RunDirectory, adapters (gh, git, agent)
 scripts/
-  legacy/
-    ai-run-issue-v2     legacy Bash orchestrator (deprecated — emergency use only; TS executor is the default)
-    ai-pr-review-poll   legacy PR review poller (deprecated — emergency use only)
-  ai-consolidate-compound  milestone consolidation pass over `ai/issues/*/compound.md` and `ai/poll-pr-*/compound-*.md`. Run manually after a milestone closes. `--dry-run` to preview, `--since <ref>` or `--issues N,M` to scope.
+  legacy/     deprecated prototypes preserved for reference
 ```

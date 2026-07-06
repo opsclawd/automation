@@ -36,61 +36,92 @@ pnpm --filter @ai-sdlc/web dev           # http://127.0.0.1:4310
 pnpm --filter @ai-sdlc/api dev run --issue 123
 ```
 
-The default executor is the TypeScript `RunExecutor`. On success the CLI prints a JSON line:
+The default executor is the TypeScript `RunExecutor`. On success the CLI prints a JSON line containing the run and worker metadata.
 
-<!-- prettier-ignore -->
-```json
-{"uuid":"a1b2c3d4-…","displayId":"issue-123-20260516-143000","exitCode":0,"status":"passed"}
-```
+Exit code 0 means the run passed; exit code 1 means it failed or was blocked.
 
-Exit code 0 means the run passed; exit code 1 means it failed.
-
-## Where things live
-
-All run data is under `.ai-runs/` in the repo root.
-
-| Path                                           | Contents                    |
-| ---------------------------------------------- | --------------------------- |
-| `.ai-runs/orchestrator.sqlite`                 | SQLite database of all runs |
-| `.ai-runs/agent-artifacts/<inv-id>/stdout.log` | Agent stdout per invocation |
-| `.ai-runs/agent-artifacts/<inv-id>/stderr.log` | Agent stderr per invocation |
-
-Worktrees for active runs are under `.ai-worktrees/issue-<N>/`. Completed run artifacts (design.md, plan.md, reviews, PR metadata) are archived to `ai/issues/<N>/`.
-
-## Configuration
-
-`.ai-orchestrator.json` at the repo root defines validation commands, phase skip-list, agent profiles, and timeouts. See [`packages/shared/src/config/schema.ts`](../packages/shared/src/config/schema.ts) for the full schema.
-
-CLI flags for the `run` command:
+### CLI Options for `run`
 
 | Flag                     | Purpose                                           |
 | ------------------------ | ------------------------------------------------- |
+| `--issue <number>`       | GitHub issue number (required)                    |
 | `--base-branch <branch>` | Base branch (default: main)                       |
 | `--model <model>`        | Override the AI model for this run                |
 | `--agent-cli <cli>`      | Sets `AI_RUNTIME`                                 |
 | `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only) |
+| `--target-repo-root <p>` | Target repository for worktrees and DB            |
+| `--verbose`              | Stream progress to terminal                       |
+
+## Manage runs
+
+The `orchestrator runs` subcommand provides tools for managing active and completed runs.
+
+### Resume a failed run
+If a run fails or hits a human-review gate, you can resume it:
+```bash
+pnpm --filter @ai-sdlc/api dev runs resume --uuid <uuid>
+```
+Use `--from-phase <phase>` to override the auto-detected resume point.
+
+### Cancel a run
+```bash
+pnpm --filter @ai-sdlc/api dev runs cancel --uuid <uuid>
+```
+
+### Tail logs
+```bash
+pnpm --filter @ai-sdlc/api dev runs logs --issue 123
+```
+
+### Check merge readiness
+Verify that all review comments are addressed and verified:
+```bash
+pnpm --filter @ai-sdlc/api dev runs check-merge-ready --uuid <uuid>
+```
+
+## Where things live
+
+All run data is stored under the `.ai-runs/` directory in the repository root (or the target repo root if specified).
+
+| Path                                           | Contents                           |
+| ---------------------------------------------- | ---------------------------------- |
+| `.ai-runs/orchestrator.sqlite`                 | SQLite database of all runs        |
+| `.ai-runs/<displayId>/phase-artifacts/`        | Orchestration artifacts (MD, JSON) |
+| `.ai-runs/agent-artifacts/<inv-id>/stdout.log` | Agent stdout per invocation        |
+| `.ai-runs/agent-artifacts/<inv-id>/stderr.log` | Agent stderr per invocation        |
+
+Worktrees for active runs are created under `.ai-worktrees/issue-<N>/`.
+
+## Configuration
+
+`.ai-orchestrator.json` at the repo root defines validation commands, phase skip-list, agent profiles, and timeouts.
+
+### Agent Profiles and Routing
+You can configure which models are used for different phases in the `agent` section of the config:
+
+```json
+{
+  "agent": {
+    "profiles": {
+      "opencode-frontier": {
+        "runtime": "opencode",
+        "model": "claude-3-5-sonnet-latest"
+      }
+    },
+    "phaseProfiles": {
+      "implement": { "profile": "opencode-frontier" }
+    }
+  }
+}
+```
 
 ## Troubleshooting
 
-**Run row stuck in `running`**
-Update the row directly:
-
-```bash
-sqlite3 .ai-runs/orchestrator.sqlite "UPDATE runs SET status = 'failed' WHERE display_id = '<displayId>' AND status = 'running';"
-```
+**Run stuck in `running`**
+If a worker process crashed, the run might be stuck. You can use `runs cancel` or `runs resume` to recover.
 
 **`active run already exists for issue N`**
-A previous run for that issue is in a non-terminal state. Resume or fail it before starting a new one.
+A previous run for that issue is in a non-terminal state. Resume or cancel it before starting a new one.
 
 **Next.js shows `Failed to load runs: 500`**
 The API server is not running. Start it with `pnpm --filter @ai-sdlc/api dev serve` and refresh the dashboard.
-
-## Emergency: legacy Bash executor
-
-The legacy Bash orchestrator is preserved at `scripts/legacy/ai-run-issue-v2` for emergency use. To invoke it explicitly:
-
-```bash
-pnpm --filter @ai-sdlc/api dev run --issue 123 --executor bash
-```
-
-This path is not the default and is not maintained going forward. See `docs/adr/ADR-0002-typescript-cutover.md` for the cutover history.

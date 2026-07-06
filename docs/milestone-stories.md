@@ -1,6 +1,9 @@
 # AI SDLC Orchestrator — Milestone Stories
 
-**Status:** M1 and M2 complete. M3 next — introduces the Repository / Job / Worker / WorkerLease seams **and** the runtime-agnostic agent abstraction. M4+ are planned.
+> [!IMPORTANT]
+> **HISTORICAL ARCHIVE:** This document describes the original milestone plan (M1–M8) for the TypeScript orchestrator. As of now, **all milestones (M1–M8) are complete**. This file is preserved strictly for historical reference regarding the project's evolution and the original story definitions.
+
+**Status:** ALL MILESTONES (M1-M8) COMPLETE.
 **Generated:** 2026-05-13
 **Source PRD:** [`prd.md`](./prd.md) §29 Milestones
 **Companion docs:** [`design-decisions-report.md`](./design-decisions-report.md), [`adr/0001-local-first-orchestrator-architecture.md`](./adr/0001-local-first-orchestrator-architecture.md), [`adr/0008-single-tenant-vps-worker-and-agent-runtime-architecture.md`](./adr/0008-single-tenant-vps-worker-and-agent-runtime-architecture.md)

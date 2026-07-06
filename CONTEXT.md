@@ -79,7 +79,8 @@ _Avoid_: Output, result file
 ## Run lifecycle states
 
 - **RUNNING**: Active work in progress
-- **READY**: All reviews addressed, awaiting merge. Not terminal — new review activity reactivates into RUNNING. Subject to global timeout (→ CANCELLED).
+- **WAITING (READY)**: All reviews addressed, awaiting merge. Not terminal — new review activity reactivates into RUNNING. Subject to global timeout (→ CANCELLED).
+- **NEEDS_HUMAN_REVIEW**: Blocked by a human gate or unrecoverable error requiring manual fix.
 - **SUCCESS**: PR merged. Terminal.
 - **FAILED**: Unrecoverable failure or loop exhaustion. Terminal. Awaits user intervention.
 - **CANCELLED**: User-cancelled or timeout. Terminal.
