@@ -26,6 +26,7 @@ describe('run actions API client', () => {
     status: 'failed',
     currentPhase: 'create-pr',
     completedPhases: [],
+    repoId: 'owner/repo',
     startedAt: '2026-06-29',
     completedAt: null,
     exitCode: null,
