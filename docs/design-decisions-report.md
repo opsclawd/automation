@@ -257,3 +257,37 @@ Multi-machine distribution is explicitly out of scope. A single VPS running mult
 
 **Is the `.ai-orchestrator.json` shape complete for MVP?**
 Confirmed. See Q26 for the full shape including the M3+ `agent` section (and PRD §15.7 for the routing-policy and fallback-trigger details).
+
+## Q27 — `maxIterations` semantic shift (#627)
+
+**What does `maxIterations: 10` mean after #627?**
+
+`maxIterations` is now the upper bound on **review invocations**, not
+"loop iterations". Concretely:
+
+- The loop runs up to `maxIterations` review→fix→re-review cycles.
+- If the *last* cycle ended with `outcome: 'fixed'` (a fix commit was
+  produced), the loop grants one trailing re-review to verify the fix.
+  The trailing re-review does NOT count against `maxIterations`.
+- The escape hatch `phases.reviewFix.endOnReview: false` restores
+  pre-#627 behavior bit-for-bit.
+
+Operators do not need to change their configs to benefit; the default
+is `endOnReview: true`.
+
+## Q28 — `loopStatus: 'converged_with_notes'` exit (#627)
+
+**What is the new `loopStatus: 'converged_with_notes'` value?**
+
+A new trend-aware exit: when the loop exhausts its budget but the
+severity-weighted finding count is trending down AND the post-fix-gate
+passed (strict mode default), the loop returns
+`phaseOutcome: 'passed'`, `loopStatus: 'converged_with_notes'`,
+`needsHumanReview: true`. The handler routes this to the
+`needs_human_review` run status, and the loop appends the residual
+findings to `code-review.md` under a new heading so the post-pr-review
+stage (independent Codex review) can adjudicate. Operators see an amber
+"Converged (Notes)" badge in the web UI.
+
+The lenient mode (`phases.reviewFix.trendAwareExit.mode: 'lenient'`)
+fires the exit even when the post-fix-gate failed; this is opt-in.

@@ -2,12 +2,13 @@ import {
   createLoop,
   startIteration,
   completeIteration,
-  canIterate,
   exhaust,
   type AgentProfileName,
+  type Loop,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import {
+  detectConvergingTrend,
   detectStall,
   detectUnfoundedPingPong,
   fingerprintFindings,
@@ -48,10 +49,33 @@ export class ReviewFixLoop {
     let lastFailingCategory: string | undefined;
     let lastIterationHadFixCommit = false;
     let outstandingFailedRevalidation = false;
+    let lastPostFixGateFailed = false;
+    let lastOffendingFindings: Array<{ severity: string; summary: string }> = [];
+    let lastReviewedCommitSha: string | undefined;
     const findingHistory: Array<Set<string>> = [];
     const unfoundedHistory: FindingHistoryEntry[] = [];
 
-    while (canIterate(loop)) {
+    const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
+    const endOnReview = opts.endOnReview ?? true;
+    const originalMax = loop.maxIterations;
+
+    const canStartReviewCycle = (loop: typeof thisLoop): boolean => {
+      const reviewsStarted = loop.iterations.length;
+      if (reviewsStarted < originalMax) return true;
+      // Trailing post-fix re-review: only when the last iteration ended
+      // with `fixed` (a fix commit was produced).
+      if (!endOnReview) return false;
+      if (reviewsStarted > originalMax) return false;
+      const last = loop.iterations[loop.iterations.length - 1];
+      return last?.outcome === 'fixed';
+    };
+
+    let thisLoop: Loop = loop;
+    while (canStartReviewCycle(thisLoop)) {
+      if (thisLoop.iterations.length === originalMax) {
+        thisLoop = { ...thisLoop, maxIterations: thisLoop.iterations.length + 1 };
+      }
+      loop = thisLoop;
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepContext = {
         loopId: loop.id,
@@ -66,6 +90,7 @@ export class ReviewFixLoop {
       let gateResult: PostFixGateResult | undefined;
       if (iterationIndex > 1 && lastIterationHadFixCommit) {
         gateResult = await deps.runPostFixGate(ctx);
+        lastPostFixGateFailed = gateResult.outcome === 'fail';
       }
 
       // --- REVIEW ---
@@ -82,11 +107,18 @@ export class ReviewFixLoop {
       const reviewOptions = {
         ...(gateResult ? { gateResult } : {}),
         ...(historyContext ? { historyContext } : {}),
+        ...(iterationIndex >= 2 && lastReviewedCommitSha && (opts.deltaScopedReReview ?? true)
+          ? { prevReviewedCommitSha: lastReviewedCommitSha }
+          : {}),
       };
       const review = await deps.runReview(
         ctx,
         Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
       );
+      if (review.offendingFindings) {
+        lastOffendingFindings = review.offendingFindings;
+      }
+
       if (review.overridden) {
         const direction: 'upgrade' | 'downgrade' =
           review.verdict === 'fail' ? 'upgrade' : 'downgrade';
@@ -101,12 +133,15 @@ export class ReviewFixLoop {
           threshold: input.blockOnSeverity ?? 'high',
         });
       }
-      loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
-      deps.loops.update(loop);
+      thisLoop = startIteration(thisLoop, {
+        reviewInvocationId: review.invocationId,
+        now: deps.now(),
+      });
+      deps.loops.update(thisLoop);
 
       if (review.agentOutcome !== 'success' || review.verdict === undefined) {
-        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-        deps.loops.update(loop);
+        thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
         await this.runCleanArtifacts(ctx);
@@ -118,24 +153,24 @@ export class ReviewFixLoop {
           const reval = await deps.runRevalidation(ctx);
           outstandingFailedRevalidation = !reval.passed;
           if (reval.passed) {
-            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-            deps.loops.update(loop);
+            thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(thisLoop);
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
             await this.appendHistoryEntry(ctx, review, undefined, reval, 'resolved', input);
             break;
           }
-          loop = completeIteration(loop, {
+          thisLoop = completeIteration(thisLoop, {
             outcome: 'unresolved',
             revalidationId: reval.validationRunId,
             now: deps.now(),
           });
-          deps.loops.update(loop);
+          deps.loops.update(thisLoop);
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
           await this.appendHistoryEntry(ctx, review, undefined, reval, 'unresolved', input);
           continue;
         }
-        loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-        deps.loops.update(loop);
+        thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
+        deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
         await this.appendHistoryEntry(ctx, review, undefined, undefined, 'resolved', input);
         break;
@@ -174,6 +209,14 @@ export class ReviewFixLoop {
         );
       }
 
+      if (iterationIndex > originalMax) {
+        thisLoop = completeIteration(thisLoop, { outcome: 'unresolved', now: deps.now() });
+        deps.loops.update(thisLoop);
+        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'unresolved', input);
+        break;
+      }
+
       // --- FIX ---
       const fixerHistoryContext = await this.readHistoryContext(ctx, 'fixer', input);
       const fix = await deps.runFix(ctx, {
@@ -193,12 +236,12 @@ export class ReviewFixLoop {
       ) {
         consecutiveFixFailures += 1;
         lastIterationHadFixCommit = false;
-        loop = completeIteration(loop, {
+        thisLoop = completeIteration(thisLoop, {
           outcome: 'unresolved',
           fixInvocationId: fix.invocationId,
           now: deps.now(),
         });
-        deps.loops.update(loop);
+        deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
         await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input);
         // Record fixer verdict in unfounded-history even on fix failure so
@@ -212,6 +255,12 @@ export class ReviewFixLoop {
       }
       consecutiveFixFailures = 0;
       lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
+      if (lastIterationHadFixCommit) {
+        lastPostFixGateFailed = false;
+        if (review.reviewedCommitSha) {
+          lastReviewedCommitSha = review.reviewedCommitSha;
+        }
+      }
 
       // --- REVALIDATE ---
       const reval = await deps.runRevalidation(ctx);
@@ -284,17 +333,17 @@ export class ReviewFixLoop {
             unfoundedCount: unfoundedCount,
           },
         );
-        loop = completeIteration(loop, {
+        thisLoop = completeIteration(thisLoop, {
           outcome: 'resolved',
           fixInvocationId: fix.invocationId,
           revalidationId: reval.validationRunId,
           now: this.deps.now(),
         });
-        this.deps.loops.update(loop);
+        this.deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
         await this.appendHistoryEntry(ctx, review, fix, reval, 'resolved', input);
         return {
-          loop,
+          loop: thisLoop,
           phaseOutcome: 'passed',
           loopStatus: 'converged',
         };
@@ -310,13 +359,13 @@ export class ReviewFixLoop {
         detectUnfoundedPingPong(unfoundedHistory, pingPongLimit);
 
       if (isPingPong) {
-        loop = completeIteration(loop, {
+        thisLoop = completeIteration(thisLoop, {
           outcome: 'failed',
           fixInvocationId: fix.invocationId,
           revalidationId: reval.validationRunId,
           now: this.deps.now(),
         });
-        this.deps.loops.update(loop);
+        this.deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         await this.appendHistoryEntry(ctx, review, fix, reval, 'failed', input);
         this.emit(
@@ -331,26 +380,27 @@ export class ReviewFixLoop {
           },
         );
         return {
-          loop,
+          loop: thisLoop,
           phaseOutcome: 'failed',
           loopStatus:
-            loop.status === 'converged'
+            thisLoop.status === 'converged'
               ? 'converged'
-              : loop.status === 'failed'
+              : thisLoop.status === 'failed'
                 ? 'failed'
                 : 'exhausted',
           needsHumanReview: true,
+          residualFindingsCount: lastOffendingFindings.length,
         };
       }
 
       // Default path: complete the iteration as fixed or unresolved.
-      loop = completeIteration(loop, {
+      thisLoop = completeIteration(thisLoop, {
         outcome: reval.passed ? 'fixed' : 'unresolved',
         fixInvocationId: fix.invocationId,
         revalidationId: reval.validationRunId,
         now: deps.now(),
       });
-      deps.loops.update(loop);
+      deps.loops.update(thisLoop);
       this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
 
       await this.appendHistoryEntry(
@@ -363,6 +413,8 @@ export class ReviewFixLoop {
       );
     }
 
+    loop = thisLoop;
+
     if (loop.status === 'converged') {
       return { loop, phaseOutcome: 'passed', loopStatus: 'converged' };
     }
@@ -371,6 +423,73 @@ export class ReviewFixLoop {
     }
     loop = exhaust(loop, this.deps.now());
     this.deps.loops.update(loop);
+
+    // Trend-aware exit (#627): if the heuristic says findings are
+    // converging AND the post-fix-gate passed (strict mode), return as
+    // `converged_with_notes` with `needsHumanReview: true`. The handler
+    // routes this to the `needs_human_review` terminal status, and the
+    // residual findings get appended to `code-review.md` for the
+    // post-pr-review stage to adjudicate.
+    const trendOpts = opts.trendAwareExit ?? { enabled: true };
+    const trendEnabled = trendOpts.enabled ?? true;
+    const trendMode = trendOpts.mode ?? 'strict';
+    const trendWindow = trendOpts.window ?? 3;
+
+    if (trendEnabled) {
+      const history = this.deps.loopHistory
+        ? await this.deps.loopHistory.read({
+            loopId: loop.id,
+            runId: input.runId,
+            phaseId: input.phaseId,
+            repoId: input.repoId,
+            cwd: input.cwd,
+            iterationIndex: loop.iterations.length,
+          })
+        : [];
+
+      const trend = detectConvergingTrend(history, {
+        window: trendWindow,
+        mode: trendMode,
+        ...(trendMode === 'strict'
+          ? { lastRevalidationPassed: !outstandingFailedRevalidation && !lastPostFixGateFailed }
+          : {}),
+      });
+
+      if (trend.converging) {
+        const residualFindings =
+          history[history.length - 1]?.review !== undefined ? (lastOffendingFindings ?? []) : [];
+
+        // Append residual findings to code-review.md.
+        if (this.deps.artifactStore && residualFindings.length > 0) {
+          await this.appendResidualFindings(input, residualFindings, trend.severityWeighted);
+        }
+
+        loop = { ...loop, status: 'converged_with_notes' };
+        this.deps.loops.update(loop);
+
+        this.emit(
+          input,
+          'loop.exhausted.with_notes',
+          'warn',
+          `review/fix loop exhausted with converging trend (${residualFindings.length} residual findings)`,
+          {
+            iterations: loop.iterations.length,
+            maxIterations: loop.maxIterations,
+            residualCount: residualFindings.length,
+            severityWeighted: trend.severityWeighted,
+            trendMode,
+          },
+        );
+        return {
+          loop,
+          phaseOutcome: 'passed',
+          loopStatus: 'converged_with_notes',
+          needsHumanReview: true,
+          residualFindingsCount: residualFindings.length,
+        };
+      }
+    }
+
     this.emit(
       input,
       'loop.exhausted',
@@ -381,7 +500,12 @@ export class ReviewFixLoop {
         maxIterations: loop.maxIterations,
       },
     );
-    return { loop, phaseOutcome: 'failed', loopStatus: 'exhausted' };
+    return {
+      loop,
+      phaseOutcome: 'failed',
+      loopStatus: 'exhausted',
+      residualFindingsCount: lastOffendingFindings.length,
+    };
   }
 
   private emit(
@@ -483,6 +607,9 @@ export class ReviewFixLoop {
             ? { offendingFindings: review.offendingFindings }
             : {}),
           ...(review.excerpt !== undefined ? { excerpt: review.excerpt } : {}),
+          ...(review.reviewedCommitSha !== undefined
+            ? { reviewedCommitSha: review.reviewedCommitSha }
+            : {}),
         },
         ...(fix
           ? {
@@ -623,5 +750,34 @@ export class ReviewFixLoop {
     }
 
     return unfounded;
+  }
+
+  private async appendResidualFindings(
+    input: ReviewFixLoopInput,
+    findings: ReadonlyArray<{ severity: string; summary: string }>,
+    severityWeighted: number[],
+  ): Promise<void> {
+    if (!this.deps.artifactStore) return;
+    const heading = `## Residual findings (review-fix loop exhausted with converging trend)\n\nThe review-fix loop exhausted its budget but the severity-weighted finding count was trending down across the last iterations. These findings are appended for the post-pr-review stage to adjudicate.\n\n`;
+    const list = findings.map((f) => `- [${f.severity}] ${f.summary}`).join('\n');
+    const footer = `\n\n_Severity-weighted counts at exhaustion: [${severityWeighted.join(', ')}]_\n`;
+    try {
+      const existing = await this.deps.artifactStore
+        .read(String(input.runId), 'code-review.md')
+        .catch(() => '');
+      const separator = existing ? (existing.endsWith('\n') ? '\n' : '\n\n') : '';
+      await this.deps.artifactStore.write({
+        runId: String(input.runId),
+        phaseId: String(input.phaseId),
+        relativePath: 'code-review.md',
+        contents: existing + separator + heading + list + footer,
+      });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(input, 'review_loop.append_residual_findings_failed', 'warn', errorMsg, {
+        reason: 'append_residual_findings',
+        error: errorMsg,
+      });
+    }
   }
 }

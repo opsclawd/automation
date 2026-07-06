@@ -17,6 +17,7 @@ import type {
   StepContext,
   PostFixGateResult,
   ReviewStepOptions,
+  ReviewLoopHistoryEntry,
 } from '../types.js';
 
 function collectEvents() {
@@ -90,16 +91,17 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
         };
       },
     });
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('passed');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
-    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
-    expect(reviewCalls).toBe(2);
+    expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(3);
   });
 
   it('exhausts and fails when review never passes', async () => {
@@ -111,7 +113,7 @@ describe('ReviewFixLoop', () => {
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('failed');
     expect(out.loop.status).toBe('exhausted');
-    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations).toHaveLength(4);
     expect(events.filter((e) => e.type === 'loop.exhausted')).toHaveLength(1);
   });
 
@@ -403,7 +405,7 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
         };
       },
       runFix: async () => {
@@ -419,18 +421,14 @@ describe('ReviewFixLoop', () => {
       ...baseInput(),
       phaseId: PhaseName('fix-review'),
     });
-    // The review step returns fail (a whole-pr-review-shaped verdict).
-    // Despite phaseId being fix-review, the loop must proceed to the fix step.
-    // Before the fix, extractResult validated fail against fixReviewResultSchema
-    // which only accepts done_with_fixes/done_no_fixes_needed/cannot_fix,
-    // causing verdict to be undefined and the loop to hard-fail at iteration 1.
     expect(out.phaseOutcome).toBe('passed');
     expect(out.loop.status).toBe('converged');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
-    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
-    expect(reviewCalls).toBe(2);
-    expect(fixCalls).toBe(1);
+    expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(3);
+    expect(fixCalls).toBe(2);
   });
 
   it('does not converge when review returns overridden pass (severity gate forces fail)', async () => {
@@ -441,8 +439,8 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
-          ...(reviewCalls === 1
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          ...(reviewCalls < 3
             ? {
                 overridden: true,
                 offendingFindings: [{ severity: 'high', summary: 'unused export' }],
@@ -453,13 +451,15 @@ describe('ReviewFixLoop', () => {
     });
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     // Iteration 1: review verdict=overridden "fail" → fix → reval pass → fixed
-    // Iteration 2: review verdict=pass (no override) → resolved
+    // Iteration 2: review verdict=overridden "fail" → fix → reval pass → fixed
+    // Iteration 3: review verdict=pass (no override) → resolved
     expect(out.phaseOutcome).toBe('passed');
     expect(out.loop.status).toBe('converged');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
-    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
-    expect(reviewCalls).toBe(2);
+    expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(3);
   });
 
   it('emits review.verdict.overridden event when verdict is overridden', async () => {
@@ -527,7 +527,7 @@ describe('ReviewFixLoop', () => {
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('failed');
     expect(out.loop.status).toBe('exhausted');
-    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations).toHaveLength(4);
   });
 
   it('emits review.verdict.overridden with direction downgrade for fail→pass override', async () => {
@@ -1463,6 +1463,296 @@ describe('ReviewFixLoop', () => {
       // (iter 2..5) is all done_no_fixes_needed → ping-pong fires → NHR.
       // Actually iter 2..5 is 4 entries → trigger.
       expect(out.needsHumanReview).toBe(true);
+      expect(out.phaseOutcome).toBe('failed');
+    });
+  });
+
+  describe('endOnReview (#627)', () => {
+    it('grants one trailing post-fix re-review when the last iteration ended `fixed` and endOnReview=true (default)', async () => {
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: review fail → fix → reval pass → fixed
+      // Iteration 2: review fail → fix → reval pass → fixed
+      // Trailing re-review (iteration 3): review pass → resolved
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.status).toBe('converged');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+      expect(reviewCalls).toBe(3);
+    });
+
+    it('does not grant a trailing re-review when endOnReview=false', async () => {
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        options: { endOnReview: false },
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: review fail → fix → reval pass → fixed
+      // Iteration 2: review fail → fix → reval pass → fixed (budget exhausted)
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(2);
+      expect(reviewCalls).toBe(2);
+    });
+
+    it('does not grant a trailing re-review when the last iteration ended `unresolved`', async () => {
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-fail',
+          agentOutcome: 'success' as const,
+          verdict: 'cannot_fix' as const,
+        }),
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iterations 1 + 2: review fail → fix (cannot_fix) → unresolved each time
+      // No trailing re-review (cannot_fix is not `fixed`)
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(2);
+      expect(reviewCalls).toBe(2);
+    });
+  });
+
+  describe('deltaScopedReReview (#627)', () => {
+    it('passes prevReviewedCommitSha to runReview on iteration >= 2 by default', async () => {
+      const receivedOpts: Array<ReviewStepOptions | undefined> = [];
+      const deps = makeDeps({
+        runReview: async (_ctx, opts) => {
+          receivedOpts.push(opts);
+          return {
+            invocationId: `rev-${receivedOpts.length}`,
+            agentOutcome: 'success' as const,
+            verdict: receivedOpts.length === 1 ? ('fail' as const) : ('pass' as const),
+            reviewedCommitSha: `sha-${receivedOpts.length}`,
+          };
+        },
+      });
+      await new ReviewFixLoop(deps).execute(baseInput());
+      // Iteration 1: no prev SHA (first review)
+      expect(receivedOpts[0]?.prevReviewedCommitSha).toBeUndefined();
+      // Iteration 2: prev SHA = sha-1 from iteration 1
+      expect(receivedOpts[1]?.prevReviewedCommitSha).toBe('sha-1');
+    });
+
+    it('omits prevReviewedCommitSha when deltaScopedReReview=false', async () => {
+      const receivedOpts: Array<ReviewStepOptions | undefined> = [];
+      const deps = makeDeps({
+        options: { deltaScopedReReview: false },
+        runReview: async (_ctx, opts) => {
+          receivedOpts.push(opts);
+          return {
+            invocationId: `rev-${receivedOpts.length}`,
+            agentOutcome: 'success' as const,
+            verdict: receivedOpts.length === 1 ? ('fail' as const) : ('pass' as const),
+            reviewedCommitSha: `sha-${receivedOpts.length}`,
+          };
+        },
+      });
+      await new ReviewFixLoop(deps).execute(baseInput());
+      expect(receivedOpts[0]?.prevReviewedCommitSha).toBeUndefined();
+      expect(receivedOpts[1]?.prevReviewedCommitSha).toBeUndefined();
+    });
+  });
+
+  describe('trend-aware exit (#627)', () => {
+    function makeDepsWithHistory(over: Partial<ReviewFixLoopDeps>) {
+      const historyStore: ReviewLoopHistoryEntry[] = [];
+      return makeDeps({
+        loopHistory: {
+          read: async () => historyStore,
+          append: async (_ctx, entry) => {
+            historyStore.push(entry);
+          },
+          format: (_entries, audience) => `history for ${audience}`,
+        },
+        ...over,
+      });
+    }
+
+    it('exits as converged_with_notes when severity-weighted counts trend down in strict mode', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      // maxIterations: 3 → 3 reviews run → trend detected at exhaustion.
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loopStatus).toBe('converged_with_notes');
+      expect(out.loop.status).toBe('converged_with_notes');
+      expect(out.needsHumanReview).toBe(true);
+    });
+
+    it('does NOT exit as converged_with_notes when revalidation failed (strict mode)', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        runRevalidation: async () => ({ validationRunId: 'v', passed: false, category: 'build' }),
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loopStatus).toBe('exhausted');
+      expect(out.needsHumanReview).toBeUndefined();
+    });
+
+    it('does NOT exit as converged_with_notes when post-fix-gate failed on trailing re-review (strict mode)', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        runPostFixGate: async (ctx) => {
+          if (ctx.iterationIndex === 4) {
+            return { outcome: 'fail', output: 'lint error' };
+          }
+          return { outcome: 'pass', output: '' };
+        },
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loopStatus).toBe('exhausted');
+      expect(out.needsHumanReview).toBeUndefined();
+    });
+
+    it('honors lenient mode and exits even when post-fix-gate failed on trailing re-review', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        options: { trendAwareExit: { mode: 'lenient' } },
+        runPostFixGate: async (ctx) => {
+          if (ctx.iterationIndex === 4) {
+            return { outcome: 'fail', output: 'lint error' };
+          }
+          return { outcome: 'pass', output: '' };
+        },
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.loopStatus).toBe('converged_with_notes');
+      expect(out.loop.status).toBe('converged_with_notes');
+      expect(out.needsHumanReview).toBe(true);
+    });
+
+    it('does not exit as converged_with_notes when trendAwareExit.enabled=false', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        options: { trendAwareExit: { enabled: false } },
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.loopStatus).toBe('exhausted');
       expect(out.phaseOutcome).toBe('failed');
     });
   });

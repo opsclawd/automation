@@ -21,6 +21,17 @@ export interface ReviewStepResult {
   overridden?: boolean;
   offendingFindings?: Array<{ severity: string; summary: string }>;
   excerpt?: string;
+  /**
+   * The commit SHA at the start of this review's diff scope — captured by
+   * the adapter (apps/api/src/compose.ts::runReview) before the reviewer
+   * was invoked. On iteration N≥2, the reviewer prompt's `git diff`
+   * command is constrained to `git diff <prevReviewedSha>..HEAD`, so this
+   * field also serves as the "previously reviewed SHA" for the next
+   * iteration's delta scope.
+   *
+   * Undefined on iteration 1 (the reviewer sees the whole feature diff).
+   */
+  reviewedCommitSha?: string;
 }
 
 export interface FixStepResult {
@@ -69,6 +80,16 @@ export interface PostFixGateResult {
   output: string;
 }
 
+export interface ReviewFixLoopOptions {
+  endOnReview?: boolean;
+  deltaScopedReReview?: boolean;
+  trendAwareExit?: {
+    enabled?: boolean;
+    mode?: 'strict' | 'lenient';
+    window?: number;
+  };
+}
+
 export interface ReviewFixLoopDeps {
   runPostFixGate: (ctx: StepContext) => Promise<PostFixGateResult>;
   runReview: (ctx: StepContext, opts?: ReviewStepOptions) => Promise<ReviewStepResult>;
@@ -100,6 +121,24 @@ export interface ReviewFixLoopDeps {
    * Defaults to 4 when omitted.
    */
   unfoundedPingPongLimit?: number;
+  /**
+   * Convergence-on-large-diffs options (#627). All three default to ON —
+   * see `packages/shared/src/config/schema.ts` for the always-on defaults.
+   *
+   * - `endOnReview`: when true, the budget grants one trailing post-fix
+   *   re-review whenever the last iteration ended with `outcome: 'fixed'`.
+   *   The post-fix re-review does NOT count against `maxIterations`.
+   * - `deltaScopedReReview`: when true, iteration ≥2 scopes the reviewer
+   *   to `git diff <prevReviewedCommitSha>..HEAD` instead of the full
+   *   feature diff.
+   * - `trendAwareExit`: when enabled, the loop invokes
+   *   `detectConvergingTrend` at budget exhaustion and exits as
+   *   `converged_with_notes` (with `needsHumanReview: true`) when the
+   *   severity-weighted finding count is trending down.
+   *
+   * Set `endOnReview: false` to restore pre-#627 behavior bit-for-bit.
+   */
+  options?: ReviewFixLoopOptions;
 }
 
 export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';
@@ -111,6 +150,7 @@ export interface ReviewLoopHistoryEntry {
     invocationId?: string;
     offendingFindings?: Array<{ severity: string; summary: string }>;
     excerpt?: string;
+    reviewedCommitSha?: string;
   };
   fix?: {
     verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
@@ -135,6 +175,12 @@ export interface ReviewLoopHistoryPort {
 export interface ReviewStepOptions {
   gateResult?: PostFixGateResult;
   historyContext?: string;
+  /**
+   * The SHA the previous review was scoped to. When iterationIndex >= 2,
+   * the reviewer prompt's `git diff` command is constrained to
+   * `git diff <prevReviewedCommitSha>..HEAD`. Undefined on iteration 1.
+   */
+  prevReviewedCommitSha?: string;
 }
 
 export interface ReviewFixLoopInput {
@@ -148,12 +194,13 @@ export interface ReviewFixLoopInput {
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
   architectPlan?: ArchitectPlan;
+  options?: ReviewFixLoopOptions;
 }
 
 export interface ReviewFixLoopResult {
   loop: Loop;
   phaseOutcome: 'passed' | 'failed';
-  loopStatus?: 'converged' | 'failed' | 'exhausted';
+  loopStatus: 'converged' | 'converged_with_notes' | 'failed' | 'exhausted';
   /**
    * True iff the loop short-circuited via the `unfounded_pingpong` path
    * or another `needs_human_review` branch. Mapped by the handler to
@@ -161,4 +208,5 @@ export interface ReviewFixLoopResult {
    * `RUN_STATUS.needs_human_review`.
    */
   needsHumanReview?: boolean;
+  residualFindingsCount?: number;
 }

@@ -1130,10 +1130,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: StepContext,
         opts?: ReviewStepOptions | PostFixGateResult,
       ): Promise<ReviewStepResult> => {
+        const opts_ = opts;
         const gateResult: PostFixGateResult | undefined =
-          opts && 'outcome' in opts ? opts : opts?.gateResult;
+          opts_ && 'outcome' in opts_ ? opts_ : opts_?.gateResult;
         const historyContext: string | undefined =
-          opts && 'historyContext' in opts ? opts.historyContext : undefined;
+          opts_ && 'historyContext' in opts_ ? opts_.historyContext : undefined;
+        const prevReviewedCommitSha: string | undefined =
+          opts_ && 'prevReviewedCommitSha' in opts_ ? opts_.prevReviewedCommitSha : undefined;
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -1145,6 +1148,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           defaultBranch: resolvedDefaultBranch,
           gateFailureOutput: gateResult?.outcome === 'fail' ? gateResult.output : undefined,
           historyContext,
+          ...(prevReviewedCommitSha ? { prevReviewedCommitSha } : {}),
         });
         writeFileSync(promptPath, reviewPrompt, 'utf-8');
         const startCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -1217,6 +1221,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   : {}),
               }
             : {}),
+          reviewedCommitSha: startCommitSha,
         };
       };
 
@@ -1496,6 +1501,15 @@ export function composeRoot(opts: ComposeOptions): Container {
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
+        options: {
+          endOnReview: config.phases.reviewFix.endOnReview,
+          deltaScopedReReview: config.phases.reviewFix.deltaScopedReReview,
+          trendAwareExit: {
+            enabled: config.phases.reviewFix.trendAwareExit.enabled,
+            mode: config.phases.reviewFix.trendAwareExit.mode,
+            window: config.phases.reviewFix.trendAwareExit.window,
+          },
+        },
         artifactStore: {
           read: async (runId, relativePath) => {
             const run = runRepository.findByUuid(runId);
@@ -2279,10 +2293,20 @@ export function composeRoot(opts: ComposeOptions): Container {
               blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
               reviewProfile: AgentProfileName(reviewProfileName),
               fixProfile: AgentProfileName(resolveProfileBound('fix-review')),
+              options: {
+                endOnReview: config.phases.reviewFix.endOnReview,
+                deltaScopedReReview: config.phases.reviewFix.deltaScopedReReview,
+                trendAwareExit: {
+                  enabled: config.phases.reviewFix.trendAwareExit.enabled,
+                  mode: config.phases.reviewFix.trendAwareExit.mode,
+                  window: config.phases.reviewFix.trendAwareExit.window,
+                },
+              },
             });
             return {
               phaseOutcome: result.phaseOutcome,
-              loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
+              loopStatus: result.loopStatus,
+              ...(result.needsHumanReview !== undefined ? { needsHumanReview: result.needsHumanReview } : {}),
             };
           },
         }),

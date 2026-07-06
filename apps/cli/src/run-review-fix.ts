@@ -206,7 +206,7 @@ async function main() {
       appendEvent?.(event);
     });
 
-    const { phaseOutcome, loop } = await c.reviewFixLoop.execute({
+    const result = await c.reviewFixLoop.execute({
       runId: RunId(runId),
       phaseId: PhaseName(phaseId),
       repoId: values['repo-id']!,
@@ -220,9 +220,17 @@ async function main() {
         : {}),
       ...(architectPlan !== undefined ? { architectPlan } : {}),
     });
+    const { phaseOutcome, loop } = result;
     console.error(
       `review-fix: ${phaseOutcome.toUpperCase()} (${loop.iterations.length}/${loop.maxIterations} iterations, status=${loop.status})`,
     );
+    if (result.loopStatus === 'converged_with_notes') {
+      const residualCount = result.residualFindingsCount;
+      console.warn(
+        `[review-fix] loop converged with residual findings (${residualCount ?? '?'} findings) — see code-review.md`,
+      );
+      process.exit(0);
+    }
     process.exit(exitCodeForPhaseOutcome(phaseOutcome));
   } catch (e) {
     console.error(e);

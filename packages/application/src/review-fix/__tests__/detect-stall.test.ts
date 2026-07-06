@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { detectStall } from '../detect-stall.js';
+import { detectConvergingTrend, detectStall } from '../detect-stall.js';
 
 function sets(...entries: string[][]): Array<Set<string>> {
   return entries.map((e) => new Set(e));
@@ -53,4 +53,78 @@ describe('detectStall', () => {
 
   // Normalization (case/trim) is the caller's responsibility, handled in review-fix-loop.ts.
   // See review-fix-loop.ts lines 111-112 for the normalization call site.
+});
+
+describe('detectConvergingTrend (#627)', () => {
+  const makeEntry = (
+    findings: Array<{ severity: string; summary: string }>,
+    fixVerdict: 'done_with_fixes' | 'done_no_fixes_needed' = 'done_with_fixes',
+    revalPassed = true,
+  ) => ({
+    review: { offendingFindings: findings },
+    fix: { verdict: fixVerdict },
+    revalidation: { passed: revalPassed },
+    outcome: 'fixed' as const,
+  });
+
+  it('returns converging=true in strict mode when severity-weighted counts decrease and last reval passed', () => {
+    const history = [
+      makeEntry([
+        { severity: 'high', summary: 'a' },
+        { severity: 'high', summary: 'b' },
+      ]),
+      makeEntry([{ severity: 'high', summary: 'a' }]),
+      makeEntry([{ severity: 'high', summary: 'b' }]),
+    ];
+    const result = detectConvergingTrend(history, {
+      mode: 'strict',
+      lastRevalidationPassed: true,
+    });
+    expect(result.converging).toBe(true);
+    expect(result.severityWeighted).toEqual([4, 2, 2]);
+  });
+
+  it('returns converging=false in strict mode when last reval did not pass', () => {
+    const history = [
+      makeEntry([{ severity: 'high', summary: 'a' }]),
+      makeEntry([{ severity: 'high', summary: 'b' }]),
+      makeEntry([{ severity: 'medium', summary: 'c' }]),
+    ];
+    const result = detectConvergingTrend(history, {
+      mode: 'strict',
+      lastRevalidationPassed: false,
+    });
+    expect(result.converging).toBe(false);
+    expect(result.severityWeighted).toEqual([2, 2, 1]);
+  });
+
+  it('returns converging=true in lenient mode regardless of last reval', () => {
+    const history = [
+      makeEntry([{ severity: 'critical', summary: 'a' }]),
+      makeEntry([{ severity: 'high', summary: 'b' }]),
+      makeEntry([{ severity: 'medium', summary: 'c' }]),
+    ];
+    const result = detectConvergingTrend(history, {
+      mode: 'lenient',
+      lastRevalidationPassed: false,
+    });
+    expect(result.converging).toBe(true);
+    expect(result.severityWeighted).toEqual([4, 2, 1]);
+  });
+
+  it('returns converging=false when severity-weighted counts are flat (not strictly decreasing)', () => {
+    const history = [
+      makeEntry([{ severity: 'high', summary: 'a' }]),
+      makeEntry([{ severity: 'high', summary: 'a' }]),
+    ];
+    const result = detectConvergingTrend(history, { mode: 'lenient' });
+    expect(result.converging).toBe(false);
+  });
+
+  it('returns converging=false when there are fewer than `window` fix iterations', () => {
+    const history = [makeEntry([{ severity: 'high', summary: 'a' }])];
+    const result = detectConvergingTrend(history, { mode: 'lenient' });
+    expect(result.converging).toBe(false);
+    expect(result.severityWeighted).toEqual([]);
+  });
 });

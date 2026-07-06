@@ -129,3 +129,75 @@ describe('formatReviewLoopHistoryForPrompt', () => {
     expect(result.endsWith('\n')).toBe(true);
   });
 });
+
+describe('formatReviewLoopHistoryForPrompt — Disposition subsection (#627)', () => {
+  it('marks a finding "addressed by fix" when fix.verdict === done_with_fixes and outcome === fixed', () => {
+    const out = formatReviewLoopHistoryForPrompt(
+      [
+        {
+          iteration: 1,
+          review: {
+            verdict: 'fail',
+            offendingFindings: [{ severity: 'high', summary: 'missing guard' }],
+          },
+          fix: { verdict: 'done_with_fixes' },
+          revalidation: { passed: true },
+          outcome: 'fixed',
+        },
+      ],
+      'reviewer',
+    );
+    expect(out).toContain('Disposition: addressed by fix');
+  });
+
+  it('marks a finding "rebutted by fixer" when fix.verdict === done_no_fixes_needed', () => {
+    const out = formatReviewLoopHistoryForPrompt(
+      [
+        {
+          iteration: 1,
+          review: {
+            verdict: 'fail',
+            offendingFindings: [{ severity: 'high', summary: 'fabricated finding' }],
+          },
+          fix: { verdict: 'done_no_fixes_needed' },
+          revalidation: { passed: true },
+          outcome: 'fixed',
+        },
+      ],
+      'reviewer',
+    );
+    expect(out).toContain('Disposition: rebutted by fixer');
+  });
+
+  it('marks a finding "resolved before any fix was needed" when outcome === resolved', () => {
+    const out = formatReviewLoopHistoryForPrompt(
+      [
+        {
+          iteration: 1,
+          review: { verdict: 'pass' },
+          outcome: 'resolved',
+        },
+      ],
+      'reviewer',
+    );
+    expect(out).not.toContain('Disposition:');
+  });
+
+  it('does not include Disposition for the fixer audience', () => {
+    const out = formatReviewLoopHistoryForPrompt(
+      [
+        {
+          iteration: 1,
+          review: {
+            verdict: 'fail',
+            offendingFindings: [{ severity: 'high', summary: 'missing guard' }],
+          },
+          fix: { verdict: 'done_with_fixes' },
+          outcome: 'fixed',
+        },
+      ],
+      'fixer',
+    );
+    expect(out).not.toContain('Disposition:');
+  });
+});

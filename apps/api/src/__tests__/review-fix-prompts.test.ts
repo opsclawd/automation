@@ -81,3 +81,44 @@ describe('review-fix prompts builders', () => {
     });
   });
 });
+
+describe('buildReviewFixReviewPrompt — SCOPE block (#627)', () => {
+  const baseInput = {
+    cwd: '/wt',
+    repoId: 'owner/repo',
+    defaultBranch: 'main',
+  };
+
+  it('emits the full-feature diff command when prevReviewedCommitSha is omitted', () => {
+    const prompt = buildReviewFixReviewPrompt(baseInput);
+    expect(prompt).toContain('git diff origin/main...HEAD');
+    expect(prompt).not.toContain('## SCOPE');
+    expect(prompt).not.toContain('## DISPOSITION GUIDANCE');
+  });
+
+  it('emits the SCOPE block and delta diff command when prevReviewedCommitSha is provided', () => {
+    const prompt = buildReviewFixReviewPrompt({
+      ...baseInput,
+      prevReviewedCommitSha: 'abc1234',
+    });
+    expect(prompt).toContain('## SCOPE');
+    expect(prompt).toContain('git diff abc1234..HEAD');
+    expect(prompt).not.toContain('git diff origin/main...HEAD');
+  });
+
+  it('appends DISPOSITION GUIDANCE whenever prevReviewedCommitSha is set', () => {
+    const prompt = buildReviewFixReviewPrompt({
+      ...baseInput,
+      prevReviewedCommitSha: 'def5678',
+    });
+    expect(prompt).toContain('## DISPOSITION GUIDANCE');
+    expect(prompt).toContain('Addressed findings');
+    expect(prompt).toContain('Rebutted findings');
+  });
+
+  it('does not emit SCOPE when iterationIndex is effectively 1 (no prevReviewedCommitSha)', () => {
+    const prompt = buildReviewFixReviewPrompt({ ...baseInput });
+    expect(prompt).not.toContain('## SCOPE');
+    expect(prompt).not.toContain('## DISPOSITION GUIDANCE');
+  });
+});
