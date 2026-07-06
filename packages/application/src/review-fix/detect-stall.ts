@@ -79,3 +79,64 @@ export function fingerprintFindings(
 ): Set<string> {
   return new Set(findings.map((f) => (f.summary ?? '').trim().toLowerCase()));
 }
+
+export interface TrendDetectionOptions {
+  window?: number;
+  mode?: 'strict' | 'lenient';
+  lastRevalidationPassed?: boolean;
+  ceiling?: 'critical' | 'high' | 'medium' | 'low';
+}
+
+export interface TrendDetectionResult {
+  converging: boolean;
+  severityWeighted: number[];
+}
+
+const SEVERITY_MULTIPLIER: Record<string, number> = {
+  critical: 4,
+  high: 2,
+  medium: 1,
+  low: 0.5,
+};
+
+export function detectConvergingTrend(
+  history: ReadonlyArray<{
+    review?: { offendingFindings?: ReadonlyArray<{ severity: string }> };
+    fix?: { verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix' };
+    revalidation?: { passed: boolean };
+    outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed';
+  }>,
+  opts: TrendDetectionOptions = {},
+): TrendDetectionResult {
+  const window = Math.max(2, opts.window ?? 3);
+  const mode = opts.mode ?? 'strict';
+  const fixHistory = history.filter((h) => h.fix !== undefined);
+  if (fixHistory.length < window) {
+    return { converging: false, severityWeighted: [] };
+  }
+  const lateWindow = fixHistory.slice(-window);
+
+  const severityWeighted = lateWindow.map((entry) => {
+    const findings = entry.review?.offendingFindings ?? [];
+    return findings.reduce((acc, f) => {
+      const m = SEVERITY_MULTIPLIER[f.severity] ?? 0;
+      return acc + m;
+    }, 0);
+  });
+
+  let nonIncreasing = true;
+  for (let i = 1; i < severityWeighted.length; i += 1) {
+    if (severityWeighted[i]! > severityWeighted[i - 1]!) {
+      nonIncreasing = false;
+      break;
+    }
+  }
+
+  const lastIsLessThanFirst = severityWeighted[severityWeighted.length - 1]! < severityWeighted[0]!;
+
+  const baseStrict = nonIncreasing && lastIsLessThanFirst;
+  const converging =
+    mode === 'strict' ? baseStrict && (opts.lastRevalidationPassed ?? false) : baseStrict;
+
+  return { converging, severityWeighted };
+}
