@@ -1003,10 +1003,11 @@ export function composeRoot(opts: ComposeOptions): Container {
   }
 
   if (resolvedRepoFullName && repositoryRepository.list().length === 0) {
+    const parts = resolvedRepoFullName.split('/');
     repositoryRepository.upsert({
       id: RepositoryId(resolvedRepoFullName),
-      owner: resolvedRepoFullName.split('/')[0]!,
-      name: resolvedRepoFullName.split('/')[1]!,
+      owner: parts[0] || 'unknown',
+      name: parts[1] || parts[0] || 'unknown',
       fullName: resolvedRepoFullName,
       defaultBranch: resolvedDefaultBranch,
       localBasePath: targetRoot,
