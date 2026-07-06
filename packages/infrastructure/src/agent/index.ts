@@ -22,3 +22,4 @@ export { AntigravityAgentAdapter, type AntigravityAdapterOptions } from './antig
 export { ClaudeCodeAgentAdapter, type ClaudeCodeAdapterOptions } from './claude-code-adapter.js';
 export { CodexAgentAdapter, type CodexAdapterOptions } from './codex-adapter.js';
 export { ImplementArtifactGuard } from './implement-artifact-guard.js';
+export { SynthesizeFromTranscript } from './synthesize-from-transcript.js';

@@ -108,6 +108,8 @@ import {
   type TypescriptError,
   type ResolveRefShaFn,
   type ImplementArtifactGuardInput,
+  type SynthesizeFromTranscriptInput,
+  type SynthesizeFromTranscriptPort as _SynthesizeFromTranscriptPort,
   extractTaskBody,
   parseTaskManifest,
   parseTypescriptErrors,
@@ -139,6 +141,7 @@ import {
   ClaudeCodeAgentAdapter,
   CodexAgentAdapter,
   ImplementArtifactGuard,
+  SynthesizeFromTranscript,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
@@ -1809,6 +1812,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         // quality-review gates below exactly as if the agent had written the
         // log itself — recovering the artifact must never let unreviewed or
         // untypechecked work skip those gates.
+        let recoveredByExistingGuard = false;
         let agentOutcome = result.outcome;
         if (result.outcome === 'contract_violation') {
           const expectedArtifacts = ['implementation-log.md'];
@@ -1846,6 +1850,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               );
               if (actuallyRecovered.length > 0) {
                 agentOutcome = 'success';
+                recoveredByExistingGuard = true;
                 agentInvocationRepository.update(AgentInvocationId(invocationId), {
                   outcome: 'success',
                   contractViolations: [],
@@ -1890,6 +1895,63 @@ export function composeRoot(opts: ComposeOptions): Container {
                   phaseId: 'implement',
                   stepIndex: ctx.stepIndex,
                   artifact: 'implementation-log.md',
+                  reason: 'guard_threw',
+                },
+              });
+            }
+          }
+        }
+
+        // Prose-artifact synthesis (#640): if the existing no-op guard did NOT
+        // recover (D4.a) and the worktree still has an unsynthesized prose
+        // artifact (D4.c — HEAD advanced), try to lift the summary out of the
+        // transcript tail via a one-shot result-writer invocation. On success
+        // the primary row's outcome becomes 'success' and the synthesis row
+        // links back via fallbackOfInvocationId. On any failure, the original
+        // contract_violation / MISSING_REQUIRED_ARTIFACT outcome stays and
+        // the router fallback fires unchanged.
+        if (agentOutcome === 'contract_violation' && !recoveredByExistingGuard) {
+          const expectedSynthesisArtifacts = ['implementation-log.md', 'compound.md'];
+          const missingProse = expectedSynthesisArtifacts.filter(
+            (a) => !existsSync(join(ctx.cwd, a)),
+          );
+          if (missingProse.length === 1 && missingProse[0] !== undefined) {
+            const synthInput: SynthesizeFromTranscriptInput = {
+              runId: String(ctx.runId),
+              cwd: ctx.cwd,
+              phaseId: 'implement',
+              stepIndex: ctx.stepIndex,
+              primaryInvocation: {
+                id: AgentInvocationId(invocationId),
+                stdoutPath: result.stdoutPath,
+                stderrPath: result.stderrPath,
+              },
+              missingArtifact: missingProse[0],
+              startCommitSha,
+              endCommitSha: result.endCommitSha ?? startCommitSha,
+              primaryExitCode: result.exitCode,
+              workingTreeDirty: false,
+            };
+            try {
+              const synth = await synthesizeFromTranscript.synthesizeFromTranscript(synthInput);
+              if (synth.outcome === 'synthesized') {
+                agentOutcome = 'success';
+                agentInvocationRepository.update(AgentInvocationId(invocationId), {
+                  outcome: 'success',
+                  contractViolations: [],
+                });
+              }
+            } catch (e) {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'warn',
+                type: 'artifact.synthesis_failed',
+                message: `synthesis guard threw: ${e instanceof Error ? e.message : String(e)}`,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  phaseId: 'implement',
+                  stepIndex: ctx.stepIndex,
+                  artifact: missingProse[0],
                   reason: 'guard_threw',
                 },
               });
@@ -2238,6 +2300,13 @@ export function composeRoot(opts: ComposeOptions): Container {
         git: gitAdapter,
       });
 
+      const synthesizeFromTranscript = new SynthesizeFromTranscript({
+        artifacts: artifactStoreForRun,
+        git: gitAdapter,
+        agent: artifactAgent,
+        eventBus: persistingEventBusForLoop,
+      });
+
       phaseRegistry.register(
         new ImplementHandler({
           steps: stepRepository,
@@ -2306,7 +2375,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             return {
               phaseOutcome: result.phaseOutcome,
               loopStatus: result.loopStatus,
-              ...(result.needsHumanReview !== undefined ? { needsHumanReview: result.needsHumanReview } : {}),
+              ...(result.needsHumanReview !== undefined
+                ? { needsHumanReview: result.needsHumanReview }
+                : {}),
             };
           },
         }),
