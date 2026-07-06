@@ -1,27 +1,27 @@
-# Implementation Log — Task 8 (Add --target-repo-root <path> to runs logs)
+# Implementation Log — Task 9 (Add integration test apps/api/src/__tests__/cli-runs-target.test.ts)
 
 Branch: `ai/issue-632`
 Date: 2026-07-06
-Scope: Task 8 only — Add `--target-repo-root <path>` to `runs logs` and route through the helpers in `apps/api/src/cli.ts`.
+Scope: Task 9 only — Add integration test `apps/api/src/__tests__/cli-runs-target.test.ts` to verify cross-repo run management commands (`cancel`, `check-merge-ready`, `execute`, `resume`, and `logs`).
 
-## Files modified
+## Files created
 
-- `apps/api/src/cli.ts` — Updated the `logs` subcommand to accept `--target-repo-root <path>`, updated the options signature, and routed configuration through the `resolveTargetRepoRootOrExit` and `composeWithTarget` helper functions.
+- `apps/api/src/__tests__/cli-runs-target.test.ts` — Added integration tests covering happy paths (target repository correctly specified) and cross-repo misses (wrong repository root specified), plus non-git repository rejection error paths.
 
 ## Steps executed
 
-- **Step 8.1** — Added `--target-repo-root <path>` option to the `logs` command definition.
-- **Step 8.2** — Replaced the inline `findRepoRoot` and `composeRoot` logic with typecheck-safe invocation of `resolveTargetRepoRootOrExit` and `composeWithTarget`.
-- **Step 8.3** — Updated the `opts` parameter type signature of the subcommand action handler to include `targetRepoRoot?: string`.
-- **Step 8.4** — Ran the existing CLI test suite using Vitest and verified all tests pass.
-- **Step 8.5** — Verified that `@ai-sdlc/api` typechecks with 0 errors.
+- **Step 9.1** — Created the integration test file with the exact requested content.
+- **Step 9.2** — Ran the newly added integration test to verify it passes successfully.
+- **Step 9.3** — Ran the full CLI test suite to confirm no regression.
+- **Step 9.4** — Verified that `@ai-sdlc/api` typechecks with 0 errors.
 
 ## Verification results
 
-- `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli.test.ts` → PASS (All 54 tests pass).
+- `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli-runs-target.test.ts` → PASS (All 6 cases pass).
+- `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli.test.ts src/__tests__/cli-runs-resume-confirmation.test.ts src/__tests__/cli-runs-target.test.ts src/__tests__/cli-failure-output.test.ts` → PASS (All 67 tests across all 4 files pass).
 - `pnpm --filter @ai-sdlc/api typecheck` → PASS (0 errors).
 
 ## Self-review
 
-- **Scope:** Modifies only `apps/api/src/cli.ts`. No later tasks have been pre-staged.
-- **Commit integrity:** Verified typechecking passes and the tests succeed.
+- **Scope:** Created only `apps/api/src/__tests__/cli-runs-target.test.ts` and updated `implementation-log.md`.
+- **Commit integrity:** Git status shows a clean workspace after committing.
