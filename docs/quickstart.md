@@ -63,12 +63,12 @@ Worktrees for active runs are under `.ai-worktrees/issue-<N>/`. Completed run ar
 
 CLI flags for the `run` command:
 
-| Flag                     | Purpose                                           |
-| ------------------------ | ------------------------------------------------- |
-| `--base-branch <branch>` | Base branch (default: main)                       |
-| `--model <model>`        | Override the AI model for this run                |
-| `--agent-cli <cli>`      | Sets `AI_RUNTIME`                                 |
-| `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only) |
+| Flag                     | Purpose                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `--base-branch <branch>` | Base branch (default: target repository default branch). Used for worktree creation and PR base. |
+| `--model <model>`        | `AI_AGENT_MODEL` env var (Bash executor only). Rejected for `--executor ts`.                     |
+| `--agent-cli <cli>`      | `AI_RUNTIME` env var (Bash executor only). Rejected for `--executor ts`.                         |
+| `--executor <engine>`    | `ts` (default) or `bash` (legacy, emergency only)                                                |
 
 ## Managing a targeted run
 
