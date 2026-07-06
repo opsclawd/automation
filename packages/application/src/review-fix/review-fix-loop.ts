@@ -8,6 +8,7 @@ import {
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import {
+  detectConvergingTrend,
   detectStall,
   detectUnfoundedPingPong,
   fingerprintFindings,
@@ -48,6 +49,7 @@ export class ReviewFixLoop {
     let lastFailingCategory: string | undefined;
     let lastIterationHadFixCommit = false;
     let outstandingFailedRevalidation = false;
+    let lastOffendingFindings: Array<{ severity: string; summary: string }> = [];
     let lastReviewedCommitSha: string | undefined;
     const findingHistory: Array<Set<string>> = [];
     const unfoundedHistory: FindingHistoryEntry[] = [];
@@ -112,6 +114,9 @@ export class ReviewFixLoop {
         ctx,
         Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
       );
+      if (review.offendingFindings) {
+        lastOffendingFindings = review.offendingFindings;
+      }
       if (review.reviewedCommitSha) {
         lastReviewedCommitSha = review.reviewedCommitSha;
       }
@@ -404,6 +409,69 @@ export class ReviewFixLoop {
     }
     loop = exhaust(loop, this.deps.now());
     this.deps.loops.update(loop);
+
+    // Trend-aware exit (#627): if the heuristic says findings are
+    // converging AND the post-fix-gate passed (strict mode), return as
+    // `converged_with_notes` with `needsHumanReview: true`. The handler
+    // routes this to the `needs_human_review` terminal status, and the
+    // residual findings get appended to `code-review.md` for the
+    // post-pr-review stage to adjudicate.
+    const trendOpts = opts.trendAwareExit ?? { enabled: true };
+    const trendEnabled = trendOpts.enabled ?? true;
+    const trendMode = trendOpts.mode ?? 'strict';
+    const trendWindow = trendOpts.window ?? 3;
+
+    if (trendEnabled) {
+      const history = this.deps.loopHistory
+        ? await this.deps.loopHistory.read({
+            loopId: loop.id,
+            runId: input.runId,
+            phaseId: input.phaseId,
+            repoId: input.repoId,
+            cwd: input.cwd,
+            iterationIndex: loop.iterations.length,
+          })
+        : [];
+
+      const trend = detectConvergingTrend(history, {
+        window: trendWindow,
+        mode: trendMode,
+        ...(trendMode === 'strict'
+          ? { lastRevalidationPassed: !outstandingFailedRevalidation }
+          : {}),
+      });
+
+      if (trend.converging) {
+        const residualFindings =
+          history[history.length - 1]?.review !== undefined ? (lastOffendingFindings ?? []) : [];
+
+        // Append residual findings to code-review.md.
+        if (this.deps.artifactStore && residualFindings.length > 0) {
+          await this.appendResidualFindings(input, residualFindings, trend.severityWeighted);
+        }
+
+        this.emit(
+          input,
+          'loop.exhausted.with_notes',
+          'warn',
+          `review/fix loop exhausted with converging trend (${residualFindings.length} residual findings)`,
+          {
+            iterations: loop.iterations.length,
+            maxIterations: loop.maxIterations,
+            residualCount: residualFindings.length,
+            severityWeighted: trend.severityWeighted,
+            trendMode,
+          },
+        );
+        return {
+          loop,
+          phaseOutcome: 'passed',
+          loopStatus: 'converged_with_notes',
+          needsHumanReview: true,
+        };
+      }
+    }
+
     this.emit(
       input,
       'loop.exhausted',
@@ -659,5 +727,33 @@ export class ReviewFixLoop {
     }
 
     return unfounded;
+  }
+
+  private async appendResidualFindings(
+    input: ReviewFixLoopInput,
+    findings: ReadonlyArray<{ severity: string; summary: string }>,
+    severityWeighted: number[],
+  ): Promise<void> {
+    if (!this.deps.artifactStore) return;
+    const heading = `## Residual findings (review-fix loop exhausted with converging trend)\n\nThe review-fix loop exhausted its budget but the severity-weighted finding count was trending down across the last iterations. These findings are appended for the post-pr-review stage to adjudicate.\n\n`;
+    const list = findings.map((f) => `- [${f.severity}] ${f.summary}`).join('\n');
+    const footer = `\n\n_Severity-weighted counts at exhaustion: [${severityWeighted.join(', ')}]_\n`;
+    try {
+      const existing = await this.deps.artifactStore
+        .read(String(input.runId), 'code-review.md')
+        .catch(() => '');
+      await this.deps.artifactStore.write({
+        runId: String(input.runId),
+        phaseId: String(input.phaseId),
+        relativePath: 'code-review.md',
+        contents: existing + (existing.endsWith('\n') ? '\n' : '') + heading + list + footer,
+      });
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      this.emit(input, 'review_loop_history.append_failed', 'warn', errorMsg, {
+        reason: 'append_residual_findings',
+        error: errorMsg,
+      });
+    }
   }
 }
