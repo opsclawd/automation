@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadLayeredConfig } from '../loader.js';
+import { loadLayeredConfig, loadConfig } from '../loader.js';
 
 function makeRepo(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), 'layered-config-'));
@@ -71,5 +71,16 @@ describe('loadLayeredConfig', () => {
     expect(result.sources[1].path.endsWith('.ai-orchestrator.local.json')).toBe(true);
     expect(result.sources[2].path.endsWith('.ai-orchestrator.json')).toBe(true);
     expect(result.sources[3].path.endsWith('.ai-orchestrator.local.json')).toBe(true);
+  });
+});
+
+describe('loadConfig (back-compat wrapper)', () => {
+  it('returns OrchestratorConfig only (no sources/fingerprint)', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({ validation: { commands: ['pnpm test'] } }),
+    });
+
+    const config = loadConfig(automationRoot);
+    expect(config.validation.commands).toEqual(['pnpm test']);
   });
 });
