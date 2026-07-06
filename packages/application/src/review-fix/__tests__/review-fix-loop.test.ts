@@ -90,16 +90,17 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
         };
       },
     });
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('passed');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
-    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
-    expect(reviewCalls).toBe(2);
+    expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(3);
   });
 
   it('exhausts and fails when review never passes', async () => {
@@ -111,7 +112,7 @@ describe('ReviewFixLoop', () => {
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('failed');
     expect(out.loop.status).toBe('exhausted');
-    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations).toHaveLength(4);
     expect(events.filter((e) => e.type === 'loop.exhausted')).toHaveLength(1);
   });
 
@@ -403,7 +404,7 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
         };
       },
       runFix: async () => {
@@ -419,18 +420,14 @@ describe('ReviewFixLoop', () => {
       ...baseInput(),
       phaseId: PhaseName('fix-review'),
     });
-    // The review step returns fail (a whole-pr-review-shaped verdict).
-    // Despite phaseId being fix-review, the loop must proceed to the fix step.
-    // Before the fix, extractResult validated fail against fixReviewResultSchema
-    // which only accepts done_with_fixes/done_no_fixes_needed/cannot_fix,
-    // causing verdict to be undefined and the loop to hard-fail at iteration 1.
     expect(out.phaseOutcome).toBe('passed');
     expect(out.loop.status).toBe('converged');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
-    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
-    expect(reviewCalls).toBe(2);
-    expect(fixCalls).toBe(1);
+    expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(3);
+    expect(fixCalls).toBe(2);
   });
 
   it('does not converge when review returns overridden pass (severity gate forces fail)', async () => {
@@ -441,8 +438,8 @@ describe('ReviewFixLoop', () => {
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
-          verdict: reviewCalls === 1 ? ('fail' as const) : ('pass' as const),
-          ...(reviewCalls === 1
+          verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          ...(reviewCalls < 3
             ? {
                 overridden: true,
                 offendingFindings: [{ severity: 'high', summary: 'unused export' }],
@@ -453,13 +450,15 @@ describe('ReviewFixLoop', () => {
     });
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     // Iteration 1: review verdict=overridden "fail" → fix → reval pass → fixed
-    // Iteration 2: review verdict=pass (no override) → resolved
+    // Iteration 2: review verdict=overridden "fail" → fix → reval pass → fixed
+    // Iteration 3: review verdict=pass (no override) → resolved
     expect(out.phaseOutcome).toBe('passed');
     expect(out.loop.status).toBe('converged');
-    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
-    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
-    expect(reviewCalls).toBe(2);
+    expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewCalls).toBe(3);
   });
 
   it('emits review.verdict.overridden event when verdict is overridden', async () => {
@@ -527,7 +526,7 @@ describe('ReviewFixLoop', () => {
     const out = await new ReviewFixLoop(deps).execute(baseInput());
     expect(out.phaseOutcome).toBe('failed');
     expect(out.loop.status).toBe('exhausted');
-    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations).toHaveLength(4);
   });
 
   it('emits review.verdict.overridden with direction downgrade for fail→pass override', async () => {

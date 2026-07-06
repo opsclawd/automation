@@ -2,9 +2,9 @@ import {
   createLoop,
   startIteration,
   completeIteration,
-  canIterate,
   exhaust,
   type AgentProfileName,
+  type Loop,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import {
@@ -52,7 +52,28 @@ export class ReviewFixLoop {
     const findingHistory: Array<Set<string>> = [];
     const unfoundedHistory: FindingHistoryEntry[] = [];
 
-    while (canIterate(loop)) {
+    const opts = this.deps.options ?? {};
+    const endOnReview = opts.endOnReview ?? true;
+    const originalMax = loop.maxIterations;
+
+    const canStartReviewCycle = (loop: typeof thisLoop): boolean => {
+      const reviewsStarted = loop.iterations.length;
+      if (reviewsStarted < originalMax) return true;
+      // Trailing post-fix re-review: only when the last iteration ended
+      // with `fixed` (a fix commit was produced).
+      if (!endOnReview) return false;
+      if (reviewsStarted > originalMax) return false;
+      const last = loop.iterations[loop.iterations.length - 1];
+      const shouldRun = last?.outcome === 'fixed';
+      if (shouldRun) {
+        thisLoop = { ...thisLoop, maxIterations: reviewsStarted + 1 };
+      }
+      return shouldRun;
+    };
+
+    let thisLoop: Loop = loop;
+    while (canStartReviewCycle(thisLoop)) {
+      loop = thisLoop;
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepContext = {
         loopId: loop.id,
@@ -108,12 +129,15 @@ export class ReviewFixLoop {
           threshold: input.blockOnSeverity ?? 'high',
         });
       }
-      loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
-      deps.loops.update(loop);
+      thisLoop = startIteration(thisLoop, {
+        reviewInvocationId: review.invocationId,
+        now: deps.now(),
+      });
+      deps.loops.update(thisLoop);
 
       if (review.agentOutcome !== 'success' || review.verdict === undefined) {
-        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-        deps.loops.update(loop);
+        thisLoop = completeIteration(thisLoop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         await this.appendHistoryEntry(ctx, review, undefined, undefined, 'failed', input);
         await this.runCleanArtifacts(ctx);
@@ -125,24 +149,24 @@ export class ReviewFixLoop {
           const reval = await deps.runRevalidation(ctx);
           outstandingFailedRevalidation = !reval.passed;
           if (reval.passed) {
-            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-            deps.loops.update(loop);
+            thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(thisLoop);
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
             await this.appendHistoryEntry(ctx, review, undefined, reval, 'resolved', input);
             break;
           }
-          loop = completeIteration(loop, {
+          thisLoop = completeIteration(thisLoop, {
             outcome: 'unresolved',
             revalidationId: reval.validationRunId,
             now: deps.now(),
           });
-          deps.loops.update(loop);
+          deps.loops.update(thisLoop);
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
           await this.appendHistoryEntry(ctx, review, undefined, reval, 'unresolved', input);
           continue;
         }
-        loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-        deps.loops.update(loop);
+        thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
+        deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
         await this.appendHistoryEntry(ctx, review, undefined, undefined, 'resolved', input);
         break;
@@ -200,12 +224,12 @@ export class ReviewFixLoop {
       ) {
         consecutiveFixFailures += 1;
         lastIterationHadFixCommit = false;
-        loop = completeIteration(loop, {
+        thisLoop = completeIteration(thisLoop, {
           outcome: 'unresolved',
           fixInvocationId: fix.invocationId,
           now: deps.now(),
         });
-        deps.loops.update(loop);
+        deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
         await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input);
         // Record fixer verdict in unfounded-history even on fix failure so
@@ -291,17 +315,17 @@ export class ReviewFixLoop {
             unfoundedCount: unfoundedCount,
           },
         );
-        loop = completeIteration(loop, {
+        thisLoop = completeIteration(thisLoop, {
           outcome: 'resolved',
           fixInvocationId: fix.invocationId,
           revalidationId: reval.validationRunId,
           now: this.deps.now(),
         });
-        this.deps.loops.update(loop);
+        this.deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'resolved');
         await this.appendHistoryEntry(ctx, review, fix, reval, 'resolved', input);
         return {
-          loop,
+          loop: thisLoop,
           phaseOutcome: 'passed',
           loopStatus: 'converged',
         };
@@ -317,13 +341,13 @@ export class ReviewFixLoop {
         detectUnfoundedPingPong(unfoundedHistory, pingPongLimit);
 
       if (isPingPong) {
-        loop = completeIteration(loop, {
+        thisLoop = completeIteration(thisLoop, {
           outcome: 'failed',
           fixInvocationId: fix.invocationId,
           revalidationId: reval.validationRunId,
           now: this.deps.now(),
         });
-        this.deps.loops.update(loop);
+        this.deps.loops.update(thisLoop);
         this.emitIterationCompleted(input, iterationIndex, 'failed');
         await this.appendHistoryEntry(ctx, review, fix, reval, 'failed', input);
         this.emit(
@@ -338,12 +362,12 @@ export class ReviewFixLoop {
           },
         );
         return {
-          loop,
+          loop: thisLoop,
           phaseOutcome: 'failed',
           loopStatus:
-            loop.status === 'converged'
+            thisLoop.status === 'converged'
               ? 'converged'
-              : loop.status === 'failed'
+              : thisLoop.status === 'failed'
                 ? 'failed'
                 : 'exhausted',
           needsHumanReview: true,
@@ -351,13 +375,13 @@ export class ReviewFixLoop {
       }
 
       // Default path: complete the iteration as fixed or unresolved.
-      loop = completeIteration(loop, {
+      thisLoop = completeIteration(thisLoop, {
         outcome: reval.passed ? 'fixed' : 'unresolved',
         fixInvocationId: fix.invocationId,
         revalidationId: reval.validationRunId,
         now: deps.now(),
       });
-      deps.loops.update(loop);
+      deps.loops.update(thisLoop);
       this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
 
       await this.appendHistoryEntry(
@@ -369,6 +393,8 @@ export class ReviewFixLoop {
         input,
       );
     }
+
+    loop = thisLoop;
 
     if (loop.status === 'converged') {
       return { loop, phaseOutcome: 'passed', loopStatus: 'converged' };
