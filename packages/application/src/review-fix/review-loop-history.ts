@@ -39,9 +39,6 @@ export function formatReviewLoopHistoryForPrompt(
       }
       if (entry.review.offendingFindings && entry.review.offendingFindings.length > 0) {
         lines.push('  Offending Findings:');
-        for (const finding of entry.review.offendingFindings) {
-          lines.push(`    - [${finding.severity}] ${finding.summary}`);
-        }
         const disposition =
           entry.fix?.verdict === 'done_no_fixes_needed'
             ? 'rebutted by fixer'
@@ -50,7 +47,10 @@ export function formatReviewLoopHistoryForPrompt(
               : entry.outcome === 'resolved'
                 ? 'resolved before any fix was needed'
                 : 'still open';
-        lines.push(`  Disposition: ${disposition}`);
+        for (const finding of entry.review.offendingFindings) {
+          lines.push(`    - [${finding.severity}] ${finding.summary}`);
+          lines.push(`      Disposition: ${disposition}`);
+        }
       }
       if (entry.revalidation) {
         const status = entry.revalidation.passed ? 'passed' : 'failed';

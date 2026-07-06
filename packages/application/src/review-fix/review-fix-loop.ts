@@ -209,6 +209,14 @@ export class ReviewFixLoop {
         );
       }
 
+      if (iterationIndex > originalMax) {
+        thisLoop = completeIteration(thisLoop, { outcome: 'unresolved', now: deps.now() });
+        deps.loops.update(thisLoop);
+        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        await this.appendHistoryEntry(ctx, review, undefined, undefined, 'unresolved', input);
+        break;
+      }
+
       // --- FIX ---
       const fixerHistoryContext = await this.readHistoryContext(ctx, 'fixer', input);
       const fix = await deps.runFix(ctx, {
