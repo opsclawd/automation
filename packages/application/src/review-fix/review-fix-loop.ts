@@ -48,6 +48,7 @@ export class ReviewFixLoop {
     let lastFailingCategory: string | undefined;
     let lastIterationHadFixCommit = false;
     let outstandingFailedRevalidation = false;
+    let lastReviewedCommitSha: string | undefined;
     const findingHistory: Array<Set<string>> = [];
     const unfoundedHistory: FindingHistoryEntry[] = [];
 
@@ -82,11 +83,17 @@ export class ReviewFixLoop {
       const reviewOptions = {
         ...(gateResult ? { gateResult } : {}),
         ...(historyContext ? { historyContext } : {}),
+        ...(iterationIndex >= 2 && lastReviewedCommitSha
+          ? { prevReviewedCommitSha: lastReviewedCommitSha }
+          : {}),
       };
       const review = await deps.runReview(
         ctx,
         Object.keys(reviewOptions).length > 0 ? reviewOptions : undefined,
       );
+      if (review.reviewedCommitSha) {
+        lastReviewedCommitSha = review.reviewedCommitSha;
+      }
       if (review.overridden) {
         const direction: 'upgrade' | 'downgrade' =
           review.verdict === 'fail' ? 'upgrade' : 'downgrade';
@@ -483,6 +490,9 @@ export class ReviewFixLoop {
             ? { offendingFindings: review.offendingFindings }
             : {}),
           ...(review.excerpt !== undefined ? { excerpt: review.excerpt } : {}),
+          ...(review.reviewedCommitSha !== undefined
+            ? { reviewedCommitSha: review.reviewedCommitSha }
+            : {}),
         },
         ...(fix
           ? {
