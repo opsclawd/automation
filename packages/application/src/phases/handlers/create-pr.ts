@@ -5,7 +5,6 @@ import { ArtifactNotFoundError, type Artifact } from '../../ports/artifact-store
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
 
 export interface CreatePrHandlerOpts {
-  baseBranch: string;
   headBranch: (ctx: PhaseHandlerContext) => string;
 }
 
@@ -101,13 +100,14 @@ export class CreatePrHandler implements PhaseHandler {
     }
 
     // ── Stage 3: Branch hygiene before deterministic GitHub operations ──
+    const baseBranch = ctx.baseBranch ?? 'main';
 
     // Clean up orchestrator artifacts now that the PR body has been assembled.
     // Non-fatal: cleanup failure does not block the run outcome.
     try {
       const gitGuard = ctx.git as Partial<ArtifactGuardPort>;
       if (typeof gitGuard.cleanOrchestratorArtifacts === 'function') {
-        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, ctx.baseBranch);
+        await gitGuard.cleanOrchestratorArtifacts(ctx.cwd, baseBranch);
       }
     } catch {
       // ignore
@@ -134,7 +134,7 @@ export class CreatePrHandler implements PhaseHandler {
     try {
       const pr = await ctx.github.createPullRequest({
         repoFullName: ctx.repoFullName,
-        baseBranch: this.opts.baseBranch,
+        baseBranch,
         headBranch: this.opts.headBranch(ctx),
         title,
         body: summary,

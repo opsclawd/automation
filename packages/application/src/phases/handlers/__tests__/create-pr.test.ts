@@ -45,7 +45,7 @@ async function build(ctxOverrides?: Partial<PhaseHandlerContext>) {
   return { artifacts, github, git, events, ctx };
 }
 
-const HANDLER = new CreatePrHandler({ baseBranch: 'main', headBranch: () => 'feat/issue-7' });
+const HANDLER = new CreatePrHandler({ headBranch: () => 'feat/issue-7' });
 
 describe('CreatePrHandler — deterministic assembly', () => {
   it('assembles pr-summary.md from artifacts, opens PR, writes pr-url.txt, flips labels', async () => {
@@ -378,7 +378,10 @@ describe('CreatePrHandler — deterministic assembly', () => {
     const res = await HANDLER.run(ctx);
 
     expect(res.outcome).toBe('passed');
-    expect(gitAny.cleanOrchestratorArtifacts).toHaveBeenCalledWith(ctx.cwd, ctx.baseBranch);
+    expect(gitAny.cleanOrchestratorArtifacts).toHaveBeenCalledWith(
+      ctx.cwd,
+      ctx.baseBranch ?? 'main',
+    );
 
     expect(calls.indexOf('write-summary')).toBeGreaterThanOrEqual(0);
     expect(calls.indexOf('cleanup')).toBeGreaterThan(calls.indexOf('write-summary'));
