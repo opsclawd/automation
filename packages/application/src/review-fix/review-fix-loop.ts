@@ -49,6 +49,7 @@ export class ReviewFixLoop {
     let lastFailingCategory: string | undefined;
     let lastIterationHadFixCommit = false;
     let outstandingFailedRevalidation = false;
+    let lastPostFixGateFailed = false;
     let lastOffendingFindings: Array<{ severity: string; summary: string }> = [];
     let lastReviewedCommitSha: string | undefined;
     const findingHistory: Array<Set<string>> = [];
@@ -89,6 +90,7 @@ export class ReviewFixLoop {
       let gateResult: PostFixGateResult | undefined;
       if (iterationIndex > 1 && lastIterationHadFixCommit) {
         gateResult = await deps.runPostFixGate(ctx);
+        lastPostFixGateFailed = gateResult.outcome === 'fail';
       }
 
       // --- REVIEW ---
@@ -253,8 +255,11 @@ export class ReviewFixLoop {
       }
       consecutiveFixFailures = 0;
       lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
-      if (lastIterationHadFixCommit && review.reviewedCommitSha) {
-        lastReviewedCommitSha = review.reviewedCommitSha;
+      if (lastIterationHadFixCommit) {
+        lastPostFixGateFailed = false;
+        if (review.reviewedCommitSha) {
+          lastReviewedCommitSha = review.reviewedCommitSha;
+        }
       }
 
       // --- REVALIDATE ---
@@ -446,7 +451,7 @@ export class ReviewFixLoop {
         window: trendWindow,
         mode: trendMode,
         ...(trendMode === 'strict'
-          ? { lastRevalidationPassed: !outstandingFailedRevalidation }
+          ? { lastRevalidationPassed: !outstandingFailedRevalidation && !lastPostFixGateFailed }
           : {}),
       });
 

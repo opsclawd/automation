@@ -1627,7 +1627,7 @@ describe('ReviewFixLoop', () => {
       expect(out.needsHumanReview).toBe(true);
     });
 
-    it('does NOT exit as converged_with_notes when post-fix-gate failed (strict mode)', async () => {
+    it('does NOT exit as converged_with_notes when revalidation failed (strict mode)', async () => {
       let reviewCall = 0;
       const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
         [
@@ -1656,7 +1656,7 @@ describe('ReviewFixLoop', () => {
       expect(out.needsHumanReview).toBeUndefined();
     });
 
-    it('honors lenient mode and exits without requiring post-fix-gate pass', async () => {
+    it('does NOT exit as converged_with_notes when post-fix-gate failed on trailing re-review (strict mode)', async () => {
       let reviewCall = 0;
       const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
         [
@@ -1665,10 +1665,51 @@ describe('ReviewFixLoop', () => {
         ],
         [{ severity: 'high', summary: 'a' }],
         [{ severity: 'medium', summary: 'b' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        runPostFixGate: async (ctx) => {
+          if (ctx.iterationIndex === 4) {
+            return { outcome: 'fail', output: 'lint error' };
+          }
+          return { outcome: 'pass', output: '' };
+        },
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loopStatus).toBe('exhausted');
+      expect(out.needsHumanReview).toBeUndefined();
+    });
+
+    it('honors lenient mode and exits even when post-fix-gate failed on trailing re-review', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+        [{ severity: 'medium', summary: 'b' }],
       ];
       const deps = makeDepsWithHistory({
         options: { trendAwareExit: { mode: 'lenient' } },
-        runRevalidation: async () => ({ validationRunId: 'v', passed: false, category: 'build' }),
+        runPostFixGate: async (ctx) => {
+          if (ctx.iterationIndex === 4) {
+            return { outcome: 'fail', output: 'lint error' };
+          }
+          return { outcome: 'pass', output: '' };
+        },
         runReview: async () => {
           const i = reviewCall++;
           return {
