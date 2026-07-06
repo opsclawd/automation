@@ -1,6 +1,5 @@
 import {
   type Repository,
-  type RepositoryId,
   RepositoryId as mkRepositoryId,
   type RepositoryValidationResult,
 } from '@ai-sdlc/domain';
