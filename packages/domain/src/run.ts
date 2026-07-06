@@ -18,6 +18,7 @@ export interface Run {
   repoId: RepositoryId;
   issueNumber: number;
   type: 'issue_to_pr' | 'pr_review' | 'consolidate';
+  baseBranch?: string;
   status: RunStatus;
   currentPhase?: string;
   completedPhases: string[];
@@ -34,6 +35,7 @@ export interface CreateRunInput {
   issueNumber: number;
   startedAt: Date;
   type?: 'issue_to_pr' | 'pr_review' | 'consolidate';
+  baseBranch?: string;
 }
 
 export class RunStateError extends Error {
@@ -50,6 +52,7 @@ export function createRun(input: CreateRunInput): Run {
     repoId: input.repoId,
     issueNumber: input.issueNumber,
     type: input.type ?? 'issue_to_pr',
+    ...(input.baseBranch !== undefined ? { baseBranch: input.baseBranch } : {}),
     status: 'running',
     completedPhases: [],
     skippedPhases: [],
