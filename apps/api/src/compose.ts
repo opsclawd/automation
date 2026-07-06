@@ -38,6 +38,7 @@ import {
   WorkerLeaseRepository,
   JobQueueRepository,
   WorkerRegistryRepository,
+  RepositoryMetadataResolver,
   createFilesystemArtifactStore,
   FileTailer,
   createFixDiffInspector,
@@ -485,6 +486,10 @@ export interface ComposeOptions {
   runStartupSweeps?: boolean;
   /** Inject repo full name (for tests; skips gh CLI resolution) */
   repoFullName?: string;
+  /** Inject metadata resolver (for tests) */
+  metadataResolver?: {
+    resolve(path: string): import('@ai-sdlc/infrastructure').RepositoryMetadata;
+  };
 }
 
 class AbortRegistry {
@@ -976,44 +981,27 @@ export function composeRoot(opts: ComposeOptions): Container {
     });
   }
 
-  // Resolve the repo's default branch eagerly (L7). Falls back to 'main' on error.
-  let resolvedDefaultBranch = 'main';
+  const resolver = opts.metadataResolver ?? new RepositoryMetadataResolver();
+  let metadata: import('@ai-sdlc/infrastructure').RepositoryMetadata;
   try {
-    const out = execFileSync('gh', [
-      'repo',
-      'view',
-      '--json',
-      'defaultBranchRef',
-      '-q',
-      '.defaultBranchRef.name',
-    ])
-      .toString()
-      .trim();
-    if (out) resolvedDefaultBranch = out;
-  } catch {
-    // Best-effort: fall back to 'main'
-  }
-
-  // Resolve repo full name eagerly for findRepoId in cancel flow.
-  let resolvedRepoFullName: string | undefined;
-  if (opts.repoFullName) {
-    resolvedRepoFullName = opts.repoFullName;
-  } else if (process.env.GITHUB_REPOSITORY) {
-    resolvedRepoFullName = process.env.GITHUB_REPOSITORY;
-  } else {
-    try {
-      const out = execFileSync(
-        'gh',
-        ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
-        { cwd: targetRoot },
-      )
-        .toString()
-        .trim();
-      if (out) resolvedRepoFullName = out;
-    } catch (err) {
-      console.error(`CancelRun: failed to resolve repo full name for ${targetRoot}`, err);
+    metadata = resolver.resolve(targetRoot);
+  } catch (err) {
+    if (opts.targetRepoRoot !== undefined) {
+      throw err;
     }
+    // Legacy fallback: if resolution fails, try to use GITHUB_REPOSITORY
+    // or placeholder values for tests that use non-git tmp dirs.
+    const nameWithOwner = opts.repoFullName ?? process.env.GITHUB_REPOSITORY ?? "unknown/unknown";
+    metadata = {
+      rootPath: targetRoot,
+      nameWithOwner,
+      defaultBranch: 'main',
+      remoteUrl: '',
+    };
   }
+  const resolvedDefaultBranch = metadata.defaultBranch;
+  const resolvedRepoFullName = metadata.nameWithOwner !== "unknown/unknown" ? metadata.nameWithOwner : undefined;
+  const resolvedRemoteUrl = metadata.remoteUrl;
 
   let agentRuntime: AgentRuntimeRouter | undefined;
   let capturingAgent: import('@ai-sdlc/application').AgentPort | undefined;
@@ -2372,6 +2360,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         name: resolvedRepoFullName.split('/')[1]!,
         fullName: resolvedRepoFullName,
         defaultBranch: resolvedDefaultBranch,
+        remoteUrl: resolvedRemoteUrl,
         localBasePath: targetRoot,
         enabled: true,
         maxConcurrentRuns: 1 as const,
@@ -2384,6 +2373,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         name: '',
         fullName: '',
         defaultBranch: '',
+        remoteUrl: '',
         localBasePath: '',
         enabled: false,
         maxConcurrentRuns: 1 as const,
