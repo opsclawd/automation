@@ -16,10 +16,12 @@ export default async function Header() {
           <Link href="/" className="text-xl font-bold hover:text-slate-200">
             Orchestrator
           </Link>
-          {meta.repoFullName && (
+          {meta.targetRepoRoot && (
             <div className="flex items-center gap-2 text-sm border-l border-slate-600 pl-4">
               <span className="text-slate-400">Target:</span>
-              <span className="font-mono text-slate-100">{meta.repoFullName}</span>
+              {meta.repoFullName && (
+                <span className="font-mono text-slate-100">{meta.repoFullName}</span>
+              )}
               <span className="text-slate-500 text-xs truncate max-w-[200px]" title={meta.targetRepoRoot}>
                 ({meta.targetRepoRoot})
               </span>

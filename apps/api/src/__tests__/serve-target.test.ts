@@ -7,6 +7,16 @@ import { composeRoot } from '../compose.js';
 import { startServer } from '../server.js';
 import { buildProgram } from '../cli.js';
 
+interface MetaResponse {
+  repoFullName: string;
+  targetRepoRoot: string;
+}
+
+interface RunsResponse {
+  runs: unknown[];
+  total: number;
+}
+
 describe('orchestrator serve --target-repo-root', () => {
   let tmpDir: string;
   let targetRepo: string;
@@ -44,13 +54,13 @@ describe('orchestrator serve --target-repo-root', () => {
     try {
       const metaRes = await fetch(`${baseUrl}/api/meta`);
       expect(metaRes.status).toBe(200);
-      const meta = await metaRes.json() as any;
+      const meta = (await metaRes.json()) as MetaResponse;
       expect(meta.repoFullName).toBe('test-owner/target-repo');
       expect(resolve(meta.targetRepoRoot)).toBe(resolve(targetRepo));
 
       const runsRes = await fetch(`${baseUrl}/api/runs`);
       expect(runsRes.status).toBe(200);
-      const runs = await runsRes.json() as any;
+      const runs = (await runsRes.json()) as RunsResponse;
       expect(runs.runs).toEqual([]);
       expect(runs.total).toBe(0);
     } finally {
