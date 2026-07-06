@@ -35,6 +35,8 @@ function assertField<T>(value: T | undefined, name: string): T {
     throw new Error(
       `Missing required context field '${name}'. ` +
         `Agent phases require promptsRoot, startCommitSha, expectedBranch, and resolveProfile. ` +
+    ...(ctx.modelOverride ? { model: ctx.modelOverride } : {}),
+    ...(ctx.runtimeOverride ? { runtime: ctx.runtimeOverride } : {}),
         `These are populated by buildPhaseHandlerContext() in the compose root.`,
     );
   }
@@ -70,6 +72,8 @@ function buildAgentInvocation(
     startedAt,
     endedAt,
     startCommitSha: request.startCommitSha,
+    ...(ctx.modelOverride ? { model: ctx.modelOverride } : {}),
+    ...(ctx.runtimeOverride ? { runtime: ctx.runtimeOverride } : {}),
     ...(result.endCommitSha ? { endCommitSha: result.endCommitSha } : {}),
     exitCode: result.exitCode,
     durationMs: result.durationMs,
@@ -114,6 +118,8 @@ export async function runSingleShotAgentPhase(
     promptsRoot =
       config.template === undefined ? assertField(ctx.promptsRoot, 'promptsRoot') : undefined;
     startCommitSha = assertField(ctx.startCommitSha, 'startCommitSha');
+    ...(ctx.modelOverride ? { model: ctx.modelOverride } : {}),
+    ...(ctx.runtimeOverride ? { runtime: ctx.runtimeOverride } : {}),
     expectedBranch = assertField(ctx.expectedBranch, 'expectedBranch');
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

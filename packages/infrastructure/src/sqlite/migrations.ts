@@ -18,7 +18,7 @@ import * as addRepoId from './migrations/0016-add-repo-id-to-runs.js';
 import * as addWorkers from './migrations/0017-add-workers.js';
 import * as addClaimTtl from './migrations/0018-claimed-at-ttl.js';
 import * as addCommentSeverity from './migrations/0019-add-comment-severity.js';
-import * as addRunOverrides from './migrations/0020-add-run-overrides.js';
+import * as addRunOverrides from "./migrations/0020-add-run-overrides.js";
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },

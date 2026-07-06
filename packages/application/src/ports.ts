@@ -71,7 +71,7 @@ export interface RunRepositoryPort {
       status: RunStatus;
       completedAt: Date;
       failureReason?: string;
-      currentPhase?: string | null;
+      currentPhase?: string | null | undefined;
     },
   ): boolean;
 }

@@ -1082,7 +1082,7 @@ describe('CLI run command signal handlers', () => {
     chmodSync(scriptPath, 0o755);
 
     const child = spawnOrchestrator(
-      ['run', '--issue', '77', '--executor', 'ts', '--script', scriptPath],
+      ['run', '--issue', '77', '--executor', 'ts'],
       root,
       { GITHUB_REPOSITORY: 'opsclawd/automation' },
     );
@@ -1174,7 +1174,7 @@ describe('CLI run command signal handlers', () => {
     chmodSync(scriptPath, 0o755);
 
     const child = spawnOrchestrator(
-      ['run', '--issue', '78', '--executor', 'ts', '--script', scriptPath],
+      ['run', '--issue', '78', '--executor', 'ts'],
       root,
       { GITHUB_REPOSITORY: 'opsclawd/automation' },
     );
@@ -1260,7 +1260,7 @@ describe('CLI run command signal handlers', () => {
     chmodSync(scriptPath, 0o755);
 
     const child = spawnOrchestrator(
-      ['run', '--issue', '79', '--executor', 'ts', '--script', scriptPath],
+      ['run', '--issue', '79', '--executor', 'ts'],
       root,
       { GITHUB_REPOSITORY: 'opsclawd/automation' },
     );
@@ -1357,7 +1357,7 @@ describe('CLI run command signal handlers', () => {
     chmodSync(scriptPath, 0o755);
 
     const child = spawnOrchestrator(
-      ['run', '--issue', '80', '--executor', 'ts', '--script', scriptPath],
+      ['run', '--issue', '80', '--executor', 'ts'],
       root,
       { GITHUB_REPOSITORY: 'opsclawd/automation' },
     );

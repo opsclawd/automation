@@ -1,9 +1,4 @@
-import type {
-  PhaseName,
-  Failure,
-  AgentProfileName,
-  AgentRuntimeKind,
-} from '@ai-sdlc/domain';
+import type { PhaseName, Failure, AgentProfileName } from '@ai-sdlc/domain';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
@@ -83,8 +78,6 @@ export type PhaseHandlerContextFactory = (
     | 'startCommitSha'
     | 'expectedBranch'
     | 'baseBranch'
-    | 'modelOverride'
-    | 'runtimeOverride'
     | 'resolveProfile'
     | 'idFactory'
   >,
@@ -95,8 +88,6 @@ export type PhaseHandlerContextFactory = (
       | 'startCommitSha'
       | 'expectedBranch'
       | 'baseBranch'
-      | 'modelOverride'
-      | 'runtimeOverride'
       | 'resolveProfile'
       | 'idFactory'
     >
@@ -110,8 +101,6 @@ export function buildPhaseHandlerContext(
     | 'startCommitSha'
     | 'expectedBranch'
     | 'baseBranch'
-    | 'modelOverride'
-    | 'runtimeOverride'
     | 'resolveProfile'
     | 'idFactory'
   >,
@@ -122,8 +111,6 @@ export function buildPhaseHandlerContext(
       | 'startCommitSha'
       | 'expectedBranch'
       | 'baseBranch'
-      | 'modelOverride'
-      | 'runtimeOverride'
       | 'resolveProfile'
       | 'idFactory'
     >

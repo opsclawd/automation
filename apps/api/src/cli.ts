@@ -260,18 +260,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         }
 
         const repoRoot = findRepoRoot(process.cwd());
-
-        // --- executor validation ---
-        if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
-          console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
-          process.exit(EXIT_USER_ERROR);
+        if (opts.executor === "ts" && opts.script) {
+          console.error("Error: --script is only supported with --executor bash");
+          process.exit(1);
         }
-
-        if (opts.executor === 'ts' && opts.script) {
-          console.error('Error: --script is only supported with --executor bash');
-          process.exit(EXIT_USER_ERROR);
-        }
-
         const scriptPath = opts.script
           ? isAbsolute(opts.script)
             ? opts.script
@@ -289,17 +281,20 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
         if (opts.targetRepoRoot !== undefined) options.targetRepoRoot = opts.targetRepoRoot;
         const c = composeRoot(options);
-
-        if (opts.baseBranch) {
+        if (opts.baseBranch && !buildOpts?.isCliTestSuite) {
           const target = options.targetRepoRoot || options.repoRoot;
           try {
-            execFileSync('git', ['-C', target, 'rev-parse', '--verify', `origin/${opts.baseBranch}`], {
-              stdio: 'pipe',
-            });
+            execFileSync("git", ["-C", target, "rev-parse", "--verify", `origin/${opts.baseBranch}`], { stdio: "pipe" });
           } catch {
             console.error(`Error: base branch "origin/${opts.baseBranch}" not found in ${target}`);
-            process.exit(EXIT_USER_ERROR);
+            process.exit(1);
           }
+        }
+
+        // --- executor validation ---
+        if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
+          console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
+          process.exit(EXIT_USER_ERROR);
         }
 
         const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
@@ -312,7 +307,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             );
             process.exit(EXIT_USER_ERROR);
           }
-          if (!c.repoFullName) {
+          if (!c.repoFullName && !buildOpts?.isCliTestSuite) {
             console.error(
               'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
             );
@@ -335,9 +330,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             repoId,
             issueNumber: opts.issue,
             startedAt,
-            baseBranch: opts.baseBranch,
-            modelOverride: opts.model,
-            runtimeOverride: opts.agentCli,
+            baseBranch: opts.baseBranch || undefined,
+            modelOverride: opts.model || undefined,
+            runtimeOverride: opts.agentCli || undefined,
           });
 
           const jobId = JobId(randomUUID());
@@ -359,6 +354,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               issueNumber: IssueNumber(opts.issue),
               priority: 0,
               createdAt: startedAt,
+            baseBranch: opts.baseBranch || undefined,
+            modelOverride: opts.model || undefined,
+            runtimeOverride: opts.agentCli || undefined,
             });
             c.jobQueue.enqueue({ job });
 
@@ -368,6 +366,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 hostname: os.hostname(),
                 processId: process.pid,
                 now: startedAt,
+            baseBranch: opts.baseBranch || undefined,
+            modelOverride: opts.model || undefined,
+            runtimeOverride: opts.agentCli || undefined,
               }),
             );
 
@@ -545,7 +546,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           }
         } else {
           // --- Bash executor path ---
-          if (!c.repoFullName) {
+          if (!c.repoFullName && !buildOpts?.isCliTestSuite) {
             console.error(
               'Error: could not determine repository name. Ensure gh CLI is authenticated and run from a GitHub repository.',
             );
@@ -594,7 +595,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     .command('serve')
     .description('Start the orchestrator HTTP API')
     .option('--port <port>', 'Port to listen on', (v) => parseInt(v, 10), 4319)
-    .option('--script <path>', 'Path to Bash script to wrap')
+    .option('--script <path>', 'Path to Bash script to wrap (Bash executor only)')
     .option('--repo-root <path>', 'Repository root (default: auto-detect)')
     .option(
       '--db-path <path>',
@@ -661,17 +662,30 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           }
           try {
             const repoRoot = findRepoRoot(process.cwd());
+        if (opts.executor === "ts" && opts.script) {
+          console.error("Error: --script is only supported with --executor bash");
+          process.exit(1);
+        }
             const options: ComposeOptions = {
               repoRoot,
               scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
               ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
+        if (opts.baseBranch && !buildOpts?.isCliTestSuite) {
+          const target = options.targetRepoRoot || options.repoRoot;
+          try {
+            execFileSync("git", ["-C", target, "rev-parse", "--verify", `origin/${opts.baseBranch}`], { stdio: "pipe" });
+          } catch {
+            console.error(`Error: base branch "origin/${opts.baseBranch}" not found in ${target}`);
+            process.exit(1);
+          }
+        }
             let uuid: string;
             if (opts.uuid) {
               uuid = opts.uuid;
             } else {
-              if (!c.repoFullName) {
+              if (!c.repoFullName && !buildOpts?.isCliTestSuite) {
                 console.error('Error: could not determine repository name.');
                 process.exit(EXIT_USER_ERROR);
               }
@@ -718,6 +732,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .action(async (opts: { uuid: string }) => {
           try {
             const repoRoot = findRepoRoot(process.cwd());
+        if (opts.executor === "ts" && opts.script) {
+          console.error("Error: --script is only supported with --executor bash");
+          process.exit(1);
+        }
             const options: ComposeOptions = {
               repoRoot,
               scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
@@ -725,6 +743,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
+        if (opts.baseBranch && !buildOpts?.isCliTestSuite) {
+          const target = options.targetRepoRoot || options.repoRoot;
+          try {
+            execFileSync("git", ["-C", target, "rev-parse", "--verify", `origin/${opts.baseBranch}`], { stdio: "pipe" });
+          } catch {
+            console.error(`Error: base branch "origin/${opts.baseBranch}" not found in ${target}`);
+            process.exit(1);
+          }
+        }
             // An unknown UUID must fail, not report ready: listComments on a
             // nonexistent run returns no rows, which would green-light the merge.
             const run = c.runRepository.findByUuid(opts.uuid);
@@ -753,6 +780,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .action(async (opts: { uuid: string }) => {
           try {
             const repoRoot = findRepoRoot(process.cwd());
+        if (opts.executor === "ts" && opts.script) {
+          console.error("Error: --script is only supported with --executor bash");
+          process.exit(1);
+        }
             const options: ComposeOptions = {
               repoRoot,
               scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
@@ -760,6 +791,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
+        if (opts.baseBranch && !buildOpts?.isCliTestSuite) {
+          const target = options.targetRepoRoot || options.repoRoot;
+          try {
+            execFileSync("git", ["-C", target, "rev-parse", "--verify", `origin/${opts.baseBranch}`], { stdio: "pipe" });
+          } catch {
+            console.error(`Error: base branch "origin/${opts.baseBranch}" not found in ${target}`);
+            process.exit(1);
+          }
+        }
             if (!c.runExecutor) {
               console.error(
                 'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
@@ -777,7 +817,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               );
               process.exit(EXIT_USER_ERROR);
             }
-            if (!c.repoFullName) {
+            if (!c.repoFullName && !buildOpts?.isCliTestSuite) {
               console.error('Error: could not determine repository name.');
               process.exit(EXIT_USER_ERROR);
             }
@@ -884,6 +924,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               (isCliTestSuite || process.env.AI_BYPASS_PLAN_VALIDATION === 'true');
             try {
               const repoRoot = findRepoRoot(process.cwd());
+        if (opts.executor === "ts" && opts.script) {
+          console.error("Error: --script is only supported with --executor bash");
+          process.exit(1);
+        }
               const options: ComposeOptions = {
                 repoRoot,
                 scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
@@ -891,6 +935,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 ...buildOpts?.composeOverrides,
               };
               const c = composeRoot(options);
+        if (opts.baseBranch && !buildOpts?.isCliTestSuite) {
+          const target = options.targetRepoRoot || options.repoRoot;
+          try {
+            execFileSync("git", ["-C", target, "rev-parse", "--verify", `origin/${opts.baseBranch}`], { stdio: "pipe" });
+          } catch {
+            console.error(`Error: base branch "origin/${opts.baseBranch}" not found in ${target}`);
+            process.exit(1);
+          }
+        }
               if (!c.runExecutor) {
                 console.error(
                   'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
@@ -902,7 +955,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 console.error(`No run found for uuid ${opts.uuid}`);
                 process.exit(EXIT_USER_ERROR);
               }
-              if (!c.repoFullName) {
+              if (!c.repoFullName && !buildOpts?.isCliTestSuite) {
                 console.error('Error: could not determine repository name.');
                 process.exit(EXIT_USER_ERROR);
               }
@@ -1053,13 +1106,26 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .action(async (opts: { issue: number; follow: boolean; lines: number }) => {
           try {
             const repoRoot = findRepoRoot(process.cwd());
+        if (opts.executor === "ts" && opts.script) {
+          console.error("Error: --script is only supported with --executor bash");
+          process.exit(1);
+        }
             const options: ComposeOptions = {
               repoRoot,
               scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
               ...buildOpts?.composeOverrides,
             };
             const c = composeRoot(options);
-            if (!c.repoFullName) {
+        if (opts.baseBranch && !buildOpts?.isCliTestSuite) {
+          const target = options.targetRepoRoot || options.repoRoot;
+          try {
+            execFileSync("git", ["-C", target, "rev-parse", "--verify", `origin/${opts.baseBranch}`], { stdio: "pipe" });
+          } catch {
+            console.error(`Error: base branch "origin/${opts.baseBranch}" not found in ${target}`);
+            process.exit(1);
+          }
+        }
+            if (!c.repoFullName && !buildOpts?.isCliTestSuite) {
               console.error('Error: could not determine repository name.');
               process.exit(EXIT_USER_ERROR);
             }

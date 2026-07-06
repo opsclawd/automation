@@ -35,8 +35,8 @@ interface RunRow {
  * infrastructure per AGENTS.md layer boundary rules.
  */
 export interface RunRecord extends Run {
-  exitCode?: number | undefined;
-  durationMs?: number | undefined;
+  exitCode?: number;
+  durationMs?: number;
   pid?: number | undefined;
   startCommitSha?: string | undefined;
   baseBranch?: string | undefined;
@@ -52,11 +52,9 @@ export class RunRepository {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
-        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha,
-        base_branch, model_override, runtime_override)
+        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha, base_branch, model_override, runtime_override)
          VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
-           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha,
-           @base_branch, @model_override, @runtime_override)`,
+           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha, @base_branch, @model_override, @runtime_override)`,
       )
       .run({
         uuid: run.uuid,
@@ -143,15 +141,15 @@ export class RunRepository {
       params.start_commit_sha = patch.startCommitSha;
     }
     if (patch.baseBranch !== undefined) {
-      fields.push('base_branch = @base_branch');
+      fields.push("base_branch = @base_branch");
       params.base_branch = patch.baseBranch;
     }
     if (patch.modelOverride !== undefined) {
-      fields.push('model_override = @model_override');
+      fields.push("model_override = @model_override");
       params.model_override = patch.modelOverride;
     }
     if (patch.runtimeOverride !== undefined) {
-      fields.push('runtime_override = @runtime_override');
+      fields.push("runtime_override = @runtime_override");
       params.runtime_override = patch.runtimeOverride;
     }
     if (patch.pid !== undefined) {
@@ -233,15 +231,15 @@ export class RunRepository {
       params.start_commit_sha = patch.startCommitSha;
     }
     if (patch.baseBranch !== undefined) {
-      fields.push('base_branch = @base_branch');
+      fields.push("base_branch = @base_branch");
       params.base_branch = patch.baseBranch;
     }
     if (patch.modelOverride !== undefined) {
-      fields.push('model_override = @model_override');
+      fields.push("model_override = @model_override");
       params.model_override = patch.modelOverride;
     }
     if (patch.runtimeOverride !== undefined) {
-      fields.push('runtime_override = @runtime_override');
+      fields.push("runtime_override = @runtime_override");
       params.runtime_override = patch.runtimeOverride;
     }
     if (patch.pid !== undefined) {

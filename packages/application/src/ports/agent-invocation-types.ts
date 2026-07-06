@@ -18,19 +18,19 @@ export interface AgentInvocationRequest {
   phaseId: string;
   stepId?: string | undefined;
   startCommitSha: string;
-  abortSignal?: AbortSignal | undefined;
   runtime?: AgentRuntimeKind | undefined;
+  abortSignal?: AbortSignal | undefined;
   provider?: string | undefined;
   model?: string | undefined;
   promptBudgetTokens?: number | undefined;
   runtimeHints?: {
-    contextLimitTokens?: number;
-    outputBudgetTokens?: number;
+    contextLimitTokens?: number | undefined;
+    outputBudgetTokens?: number | undefined;
   };
-  fallbackOfInvocationId?: AgentInvocationId;
-  fallbackReason?: string;
-  timeoutMs?: number;
-  sandboxMode?: 'read-only' | 'writable';
+  fallbackOfInvocationId?: AgentInvocationId | undefined;
+  fallbackReason?: string | undefined;
+  timeoutMs?: number | undefined;
+  sandboxMode?: "read-only" | "writable" | undefined;
 }
 
 export interface AgentInvocationResult {
@@ -49,8 +49,8 @@ export interface AgentInvocationResult {
   usage?: {
     inputTokens: number;
     outputTokens: number;
-    reasoningTokens?: number;
-    cachedTokens?: number;
+    reasoningTokens?: number | undefined;
+    cachedTokens?: number | undefined;
   };
   remediatedArtifacts?: { src: string; artifact: string }[];
 }

@@ -84,13 +84,10 @@ export class AgentRuntimeRouter implements AgentPort {
     const runtime = request.runtime || profile.runtime;
     const adapter = this.opts.adapters[runtime];
     if (!adapter) {
-      throw new ConfigError(`no adapter registered for runtime '${runtime}'`);
+      throw new ConfigError(`no adapter registered for runtime \`${runtime}\``);
     }
 
-    const { provider: effectiveProvider, model: effectiveModel } = this.effectiveProfile(
-      profile,
-      request,
-    );
+    const { provider: effectiveProvider, model: effectiveModel } = this.effectiveProfile(profile, request);
 
     const effectiveTimeoutMs = request.timeoutMs ?? profile.timeoutMinutes * 60_000;
 
@@ -442,18 +439,14 @@ export class AgentRuntimeRouter implements AgentPort {
     return { reason: 'unknown' };
   }
 
-  private effectiveProfile(
-    p: { provider: string; model: string; variant?: string | undefined },
-    request?: AgentInvocationRequest,
-  ): {
+  private effectiveProfile(p: { provider: string; model: string; variant?: string | undefined }, request?: AgentInvocationRequest): {
     provider: string;
     model: string;
   } {
     const requestModel = request?.model?.trim();
     const envModel = this.env.AI_AGENT_MODEL?.trim();
     const baseModel = requestModel || envModel || p.model;
-    const effectiveModel =
-      !requestModel && !envModel && p.variant ? `${baseModel}-${p.variant}` : baseModel;
+    const effectiveModel = !requestModel && !envModel && p.variant ? `${baseModel}-${p.variant}` : baseModel;
     return {
       provider: request?.provider?.trim() || this.env.AI_AGENT_PROVIDER?.trim() || p.provider,
       model: effectiveModel,

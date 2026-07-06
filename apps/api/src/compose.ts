@@ -130,7 +130,6 @@ import {
   Run,
   RunId,
   RepositoryId,
-  AgentRuntimeKind,
 } from '@ai-sdlc/domain';
 import {
   AgentRuntimeRouter,
@@ -1131,12 +1130,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         ctx: StepContext,
         opts?: ReviewStepOptions | PostFixGateResult,
       ): Promise<ReviewStepResult> => {
-        const runRecord = runRepository.findByUuid(String(ctx.runId));
         const gateResult: PostFixGateResult | undefined =
           opts && 'outcome' in opts ? opts : opts?.gateResult;
         const historyContext: string | undefined =
           opts && 'historyContext' in opts ? opts.historyContext : undefined;
-        const runDir = runRecord?.displayId ?? String(ctx.runId);
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const promptDir = join(baseTmpDir, 'review-fix-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `review-${String(ctx.runId)}-${ctx.iterationIndex}.md`);
@@ -1162,9 +1160,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           repoId: ctx.repoId,
           phaseId: 'whole-pr-review',
+          model: runRecord?.modelOverride || undefined,
+          runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
           startCommitSha,
-          model: runRecord?.modelOverride,
-          runtime: runRecord?.runtimeOverride as AgentRuntimeKind,
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
@@ -1245,8 +1243,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           historyContext?: string;
         },
       ): Promise<FixStepResult> => {
-        const runRecord = runRepository.findByUuid(String(ctx.runId));
-        const runDir = runRecord?.displayId ?? String(ctx.runId);
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
         const fallbackProfile = opts.fixFallbackProfileOverride ?? fixFallbackProfileName;
         const primaryProfile = opts.fixProfileOverride ?? fixProfileName;
         const profile = opts.useFallback && fallbackProfile ? fallbackProfile : primaryProfile;
@@ -1275,9 +1272,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           repoId: ctx.repoId,
           phaseId: 'fix-review',
+          model: runRecord?.modelOverride || undefined,
+          runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
           startCommitSha,
-          model: runRecord?.modelOverride,
-          runtime: runRecord?.runtimeOverride as AgentRuntimeKind,
           ...(opts.useFallback && opts.previousInvocationId
             ? {
                 fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
@@ -1628,8 +1625,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const buildContext = (run: Run): PhaseHandlerContext => {
         const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
-        const runRecord = runRepository.findByUuid(run.uuid);
-        const startCommitSha = runRecord?.startCommitSha;
+        const startCommitSha = runRepository.findByUuid(run.uuid)?.startCommitSha;
         return composeBuildPhaseHandlerContext(
           {
             runId: run.displayId,
@@ -1648,8 +1644,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             promptsRoot: join(opts.repoRoot, 'prompts'),
             expectedBranch: `ai/issue-${run.issueNumber}`,
             baseBranch: runRecord?.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch,
-            modelOverride: runRecord?.modelOverride,
-            runtimeOverride: runRecord?.runtimeOverride as AgentRuntimeKind,
+            modelOverride: runRecord?.modelOverride || undefined,
+            runtimeOverride: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
             ...(startCommitSha ? { startCommitSha } : {}),
           },
         );
@@ -1677,6 +1673,8 @@ export function composeRoot(opts: ComposeOptions): Container {
               message: `Failed to parse task-manifest.json: ${parsed.error}`,
               timestamp: new Date().toISOString(),
               metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
             });
             return { invocationId: '', agentOutcome: 'failed' as const };
           }
@@ -1690,6 +1688,8 @@ export function composeRoot(opts: ComposeOptions): Container {
               message: `Failed to read task-manifest.json: ${msg}`,
               timestamp: new Date().toISOString(),
               metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
             });
             return { invocationId: '', agentOutcome: 'failed' as const };
           }
@@ -1710,6 +1710,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             message: msg,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
@@ -1730,6 +1732,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                 : `Task ${ctx.stepIndex} is only present inside a balanced code fence`,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
@@ -1756,9 +1760,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             runId: String(ctx.runId),
             repoId: ctx.repoId,
             phaseId: 'implement',
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
             startCommitSha,
-            model: run?.modelOverride,
-            runtime: run?.runtimeOverride as AgentRuntimeKind,
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -1768,6 +1772,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
@@ -1818,6 +1824,8 @@ export function composeRoot(opts: ComposeOptions): Container {
               runId: String(ctx.runId),
               cwd: ctx.cwd,
               phaseId: 'implement',
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
               stepIndex: ctx.stepIndex,
               expectedArtifacts,
               invocationEnd: {
@@ -1857,6 +1865,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                     timestamp: new Date().toISOString(),
                     metadata: {
                       phaseId: 'implement',
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
                       stepIndex: ctx.stepIndex,
                       artifact: s.artifact,
                       reason: s.reason,
@@ -1872,6 +1882,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                   timestamp: new Date().toISOString(),
                   metadata: {
                     phaseId: 'implement',
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
                     stepIndex: ctx.stepIndex,
                     artifact: 'implementation-log.md',
                   },
@@ -1886,6 +1898,8 @@ export function composeRoot(opts: ComposeOptions): Container {
                 timestamp: new Date().toISOString(),
                 metadata: {
                   phaseId: 'implement',
+            model: run?.modelOverride || undefined,
+            runtime: (run?.runtimeOverride as AgentRuntimeKind) || undefined,
                   stepIndex: ctx.stepIndex,
                   artifact: 'implementation-log.md',
                   reason: 'guard_threw',
@@ -1971,7 +1985,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
-          const runRecord = runRepository.findByUuid(String(ctx.runId));
           result = await artifactAgent.invoke({
             profile: AgentProfileName(specReviewProfileName),
             promptPath,
@@ -1980,9 +1993,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             runId: String(ctx.runId),
             repoId: ctx.repoId,
             phaseId: 'spec-review',
+            model: runRecord?.modelOverride || undefined,
+            runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
             startCommitSha,
-            model: runRecord?.modelOverride,
-            runtime: runRecord?.runtimeOverride as AgentRuntimeKind,
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -1992,6 +2005,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'spec-review', stepIndex: ctx.stepIndex },
+            model: runRecord?.modelOverride || undefined,
+            runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
@@ -2029,7 +2044,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let result;
         try {
-          const runRecord = runRepository.findByUuid(String(ctx.runId));
           result = await artifactAgent.invoke({
             profile: AgentProfileName(qualityReviewProfileName),
             promptPath,
@@ -2038,9 +2052,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             runId: String(ctx.runId),
             repoId: ctx.repoId,
             phaseId: 'quality-review',
+            model: runRecord?.modelOverride || undefined,
+            runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
             startCommitSha,
-            model: runRecord?.modelOverride,
-            runtime: runRecord?.runtimeOverride as AgentRuntimeKind,
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2050,6 +2064,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'quality-review', stepIndex: ctx.stepIndex },
+            model: runRecord?.modelOverride || undefined,
+            runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
@@ -2096,7 +2112,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let invokeResult;
         try {
-          const runRecord = runRepository.findByUuid(String(ctx.runId));
           invokeResult = await artifactAgent.invoke({
             profile: AgentProfileName(profile),
             promptPath,
@@ -2105,9 +2120,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             runId: String(ctx.runId),
             repoId: ctx.repoId,
             phaseId: 'fix-review',
+          model: runRecord?.modelOverride || undefined,
+          runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
             startCommitSha,
-            model: runRecord?.modelOverride,
-            runtime: runRecord?.runtimeOverride as AgentRuntimeKind,
             ...(opts.previousInvocationId
               ? {
                   fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
@@ -2123,6 +2138,8 @@ export function composeRoot(opts: ComposeOptions): Container {
             message: `Agent invocation failed: ${err instanceof Error ? err.message : String(err)}`,
             timestamp: new Date().toISOString(),
             metadata: { phaseId: 'fix-review', stepIndex: ctx.stepIndex },
+          model: runRecord?.modelOverride || undefined,
+          runtime: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
           });
           return { invocationId: '', agentOutcome: 'failed' as const };
         }
@@ -2311,7 +2328,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       phaseRegistry.register(
         new CreatePrHandler({
-          baseBranch: resolvedDefaultBranch,
+          baseBranch: r.baseBranch ?? resolvedDefaultBranch,
           headBranch: (ctx) => `ai/issue-${ctx.issueNumber}`,
         }),
       );
@@ -2346,7 +2363,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               pollIntervalMs: (config.phases.postPrReview?.pollIntervalSeconds ?? 60) * 1000,
               readyMaxDays: config.timeouts.readyMaxDays,
               phaseStartedAt: ctx.now(),
-              baseBranch: resolvedDefaultBranch,
+              baseBranch: r.baseBranch ?? resolvedDefaultBranch,
               ...(config.phases.postPrReview?.firstReviewGraceWindowSeconds !== undefined
                 ? {
                     firstReviewGraceWindowSeconds:
@@ -2451,9 +2468,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             const r = runRepository.findByUuid(lease.runId);
             if (!r) return;
             const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
-            gitAdapter
-              .resetWorktreeIfClean(worktreePath, r.baseBranch ?? resolvedDefaultBranch)
-              .catch(() => {});
+            gitAdapter.resetWorktreeIfClean(worktreePath, resolvedDefaultBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {
             const w = workerRegistry.findById(workerId);
@@ -2615,7 +2630,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
       idFactory: () => randomUUID(),
       now: () => new Date(),
-      baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
+      baseBranch: runRecord?.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch,
+            modelOverride: runRecord?.modelOverride || undefined,
+            runtimeOverride: (runRecord?.runtimeOverride as AgentRuntimeKind) || undefined,
       repoRoot: opts.repoRoot,
       onWarning: (message, metadata, runId) => {
         try {

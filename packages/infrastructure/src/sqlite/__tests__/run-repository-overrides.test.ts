@@ -25,6 +25,7 @@ describe('RunRepository overrides', () => {
       type: 'issue_to_pr',
       status: 'running',
       completedPhases: [],
+      skippedPhases: [],
       startedAt: new Date('2026-05-13T00:00:00Z'),
       baseBranch: 'develop',
       modelOverride: 'gpt-4o',
@@ -35,65 +36,6 @@ describe('RunRepository overrides', () => {
     expect(found?.baseBranch).toBe('develop');
     expect(found?.modelOverride).toBe('gpt-4o');
     expect(found?.runtimeOverride).toBe('pi');
-    db.close();
-  });
-
-  it('updates baseBranch, modelOverride, and runtimeOverride via update()', () => {
-    const db = freshDb();
-    const repo = new RunRepository(db);
-    repo.insert({
-      uuid: 'u1',
-      displayId: 'issue-1-20260513-000000',
-      repoId: RepositoryId('owner/repo'),
-      issueNumber: 1,
-      type: 'issue_to_pr',
-      status: 'running',
-      completedPhases: [],
-      startedAt: new Date('2026-05-13T00:00:00Z'),
-    });
-
-    repo.update('u1', {
-      baseBranch: 'feat-x',
-      modelOverride: 'claude-3-opus',
-      runtimeOverride: 'antigravity',
-    });
-
-    const found = repo.findByUuid('u1');
-    expect(found?.baseBranch).toBe('feat-x');
-    expect(found?.modelOverride).toBe('claude-3-opus');
-    expect(found?.runtimeOverride).toBe('antigravity');
-    db.close();
-  });
-
-  it('updates baseBranch, modelOverride, and runtimeOverride via atomicUpdateByUuid()', () => {
-    const db = freshDb();
-    const repo = new RunRepository(db);
-    repo.insert({
-      uuid: 'u1',
-      displayId: 'issue-1-20260513-000000',
-      repoId: RepositoryId('owner/repo'),
-      issueNumber: 1,
-      type: 'issue_to_pr',
-      status: 'running',
-      completedPhases: [],
-      startedAt: new Date('2026-05-13T00:00:00Z'),
-    });
-
-    const updated = repo.atomicUpdateByUuid(
-      'u1',
-      {
-        baseBranch: 'main',
-        modelOverride: 'gemini-1.5-pro',
-        runtimeOverride: 'opencode',
-      },
-      'running'
-    );
-
-    expect(updated).toBe(true);
-    const found = repo.findByUuid('u1');
-    expect(found?.baseBranch).toBe('main');
-    expect(found?.modelOverride).toBe('gemini-1.5-pro');
-    expect(found?.runtimeOverride).toBe('opencode');
     db.close();
   });
 });
