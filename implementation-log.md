@@ -1,15 +1,21 @@
-# Implementation Log - Task 8
+# Implementation Log - Task 9
 
-Implemented Task 8: Update docs/quickstart.md flag table.
+Implemented Task 9: Add CLI tests for new validation, base-branch wiring, and run.config event.
 
 ## What was implemented
-1. **Updated the Flag Table in Documentation**:
-   - Modified `docs/quickstart.md` to update the flag table for the `run` command.
-   - Labeled `--model` and `--agent-cli` as Bash executor only, and clarified they are rejected for `--executor ts`.
-   - Clarified `--base-branch` default behavior (target repository default branch) and its usage (worktree creation and PR base).
-2. **Link Verification**:
-   - Confirmed the schema reference on line 62 in the Configuration section: `[packages/shared/src/config/schema.ts](../packages/shared/src/config/schema.ts)` still points to a valid file path and remains unchanged.
+1. **Added CLI run flag validation describe block in `apps/api/src/__tests__/cli.test.ts`**:
+   - Covers rejection of `--model` and `--agent-cli` under `--executor ts` with exit code 1.
+   - Covers non-rejection of `--model` under `--executor bash`.
+   - Verifies option descriptions/help text updates for `--base-branch`, `--model`, and `--agent-cli`.
+2. **Created focused test file `apps/api/src/__tests__/run-base-branch.test.ts`**:
+   - Verifies `--base-branch` description updates and parses correctly using exitOverride to prevent test hangs.
+   - Verifies the `run.config` event payload structure has correct keys and event type.
 
 ## Verification
-- Checked the contents of `docs/quickstart.md` manually to ensure the formatting and markdown table are correct.
-- Verified that `packages/shared/src/config/schema.ts` exists.
+- Ran new unit tests:
+  - `pnpm --filter @ai-sdlc/api test run-base-branch` -> Passed
+  - `pnpm --filter @ai-sdlc/api test cli` -> Passed
+- Verified workspace-wide typecheck (`pnpm -r typecheck`) -> Passed
+- Verified workspace-wide tests (`pnpm -r test`) -> Passed
+- Verified project linter (`pnpm lint`) -> Passed
+- Verified project dependency limits (`pnpm depcruise`) -> Passed

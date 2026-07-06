@@ -4079,3 +4079,139 @@ describe('CLI runs resume command', () => {
     d2.close();
   }, 45_000);
 });
+
+describe('CLI run flag validation', () => {
+  it('rejects --model with --executor ts and exits non-zero before insertIfNoActive', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-val-model-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const program = buildProgram({
+        composeOverrides: { repoRoot: root, repoFullName: 'owner/repo', runStartupSweeps: false },
+      });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '1',
+        '--executor',
+        'ts',
+        '--model',
+        'opus',
+      ]);
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(errSpy).toHaveBeenCalled();
+      expect(errSpy.mock.calls[0][0]).toContain('--model only apply to --executor bash');
+
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('rejects --agent-cli with --executor ts and exits non-zero', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-val-agent-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const program = buildProgram({
+        composeOverrides: { repoRoot: root, repoFullName: 'owner/repo', runStartupSweeps: false },
+      });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      await program.parseAsync([
+        'node',
+        'orchestrator',
+        'run',
+        '--issue',
+        '1',
+        '--executor',
+        'ts',
+        '--agent-cli',
+        'pi',
+      ]);
+
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(errSpy).toHaveBeenCalled();
+      expect(errSpy.mock.calls[0][0]).toContain('--agent-cli only apply to --executor bash');
+
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('still allows --model with --executor bash (no rejection at the CLI layer)', async () => {
+    const root = trackDir(() => mkdtempSync(join(tmpdir(), 'ai-orch-val-bash-')));
+    writeFileSync(join(root, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    const savedCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const program = buildProgram({
+        composeOverrides: { repoRoot: root, repoFullName: 'owner/repo', runStartupSweeps: false },
+      });
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {}) as never);
+
+      try {
+        await program.parseAsync([
+          'node',
+          'orchestrator',
+          'run',
+          '--issue',
+          '1',
+          '--executor',
+          'bash',
+          '--model',
+          'opus',
+          '--script',
+          '/nonexistent/script',
+        ]);
+      } catch {
+        // Ignore any errors downstream (e.g. from missing script), we only care about CLI validation
+      }
+
+      const hadBashValidationError = errSpy.mock.calls.some((call) =>
+        call[0]?.includes?.('only apply to --executor bash'),
+      );
+      expect(hadBashValidationError).toBe(false);
+
+      errSpy.mockRestore();
+      exitSpy.mockRestore();
+    } finally {
+      process.chdir(savedCwd);
+    }
+  });
+
+  it('updates --base-branch help text to reflect new behavior', () => {
+    const program = buildProgram();
+    const runCmd = program.commands.find((c) => c.name() === 'run');
+    expect(runCmd).toBeDefined();
+    const baseBranchOpt = runCmd!.options.find((o) => o.long === '--base-branch');
+    expect(baseBranchOpt?.description).toMatch(/target repository default branch/i);
+  });
+
+  it('labels --model help text as Bash-only', () => {
+    const program = buildProgram();
+    const runCmd = program.commands.find((c) => c.name() === 'run');
+    const modelOpt = runCmd!.options.find((o) => o.long === '--model');
+    expect(modelOpt?.description).toMatch(/Bash executor only/);
+  });
+
+  it('labels --agent-cli help text as Bash-only', () => {
+    const program = buildProgram();
+    const runCmd = program.commands.find((c) => c.name() === 'run');
+    const agentCliOpt = runCmd!.options.find((o) => o.long === '--agent-cli');
+    expect(agentCliOpt?.description).toMatch(/Bash executor only/);
+  });
+});
