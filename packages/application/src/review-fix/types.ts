@@ -21,6 +21,17 @@ export interface ReviewStepResult {
   overridden?: boolean;
   offendingFindings?: Array<{ severity: string; summary: string }>;
   excerpt?: string;
+  /**
+   * The commit SHA at the start of this review's diff scope — captured by
+   * the adapter (apps/api/src/compose.ts::runReview) before the reviewer
+   * was invoked. On iteration N≥2, the reviewer prompt's `git diff`
+   * command is constrained to `git diff <prevReviewedSha>..HEAD`, so this
+   * field also serves as the "previously reviewed SHA" for the next
+   * iteration's delta scope.
+   *
+   * Undefined on iteration 1 (the reviewer sees the whole feature diff).
+   */
+  reviewedCommitSha?: string;
 }
 
 export interface FixStepResult {
@@ -111,6 +122,7 @@ export interface ReviewLoopHistoryEntry {
     invocationId?: string;
     offendingFindings?: Array<{ severity: string; summary: string }>;
     excerpt?: string;
+    reviewedCommitSha?: string;
   };
   fix?: {
     verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
@@ -135,6 +147,12 @@ export interface ReviewLoopHistoryPort {
 export interface ReviewStepOptions {
   gateResult?: PostFixGateResult;
   historyContext?: string;
+  /**
+   * The SHA the previous review was scoped to. When iterationIndex >= 2,
+   * the reviewer prompt's `git diff` command is constrained to
+   * `git diff <prevReviewedCommitSha>..HEAD`. Undefined on iteration 1.
+   */
+  prevReviewedCommitSha?: string;
 }
 
 export interface ReviewFixLoopInput {
