@@ -712,16 +712,19 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       new Command('check-merge-ready')
         .description('Verify that a run has no unverified or blocked review comments')
         .requiredOption('--uuid <uuid>', 'Run UUID')
-        .action(async (opts: { uuid: string }) => {
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(async (opts: { uuid: string; targetRepoRoot?: string }) => {
           try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              runStartupSweeps: false,
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
+            const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+              console.error(`Error: ${msg}`);
+              process.exit(EXIT_USER_ERROR);
+            });
+            const { c } = composeWithTarget(targetRepoRoot, {
+              ...(buildOpts !== undefined ? { buildOpts } : {}),
+            });
             // An unknown UUID must fail, not report ready: listComments on a
             // nonexistent run returns no rows, which would green-light the merge.
             const run = c.runRepository.findByUuid(opts.uuid);
