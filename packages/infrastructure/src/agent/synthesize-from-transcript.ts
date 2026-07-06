@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, openSync, readSync, closeSync } from 'node:fs';
 import { AgentInvocationId, AgentProfileName } from '@ai-sdlc/domain';
 import type {
   AgentPort,
@@ -369,13 +369,13 @@ function defaultReadTailBytes(path: string): string {
   const stat = statSync(path);
   if (stat.size === 0) return '';
   const bytesToRead = Math.min(stat.size, TAIL_MAX_BYTES);
-  const fd = require('node:fs').openSync(path, 'r');
+  const fd = openSync(path, 'r');
   try {
     const buffer = Buffer.alloc(bytesToRead);
-    require('node:fs').readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
+    readSync(fd, buffer, 0, bytesToRead, stat.size - bytesToRead);
     return buffer.toString('utf-8');
   } finally {
-    require('node:fs').closeSync(fd);
+    closeSync(fd);
   }
 }
 
