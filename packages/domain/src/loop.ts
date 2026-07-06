@@ -2,7 +2,7 @@ import type { RunId, PhaseName } from './ids.js';
 
 export type LoopType = 'review-fix' | 'implement-step' | 'validate-fix';
 
-export type LoopStatus = 'running' | 'converged' | 'exhausted' | 'failed';
+export type LoopStatus = 'running' | 'converged' | 'converged_with_notes' | 'exhausted' | 'failed';
 
 export type LoopIterationOutcome =
   | 'resolved'

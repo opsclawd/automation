@@ -477,6 +477,8 @@ export class ReviewFixLoop {
             trendMode,
           },
         );
+        loop = { ...loop, status: 'converged_with_notes' };
+        this.deps.loops.update(loop);
         return {
           loop,
           phaseOutcome: 'passed',
