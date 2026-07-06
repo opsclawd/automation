@@ -48,6 +48,11 @@ export interface RunRepositoryPort {
     expectedStatus: RunStatus,
   ): boolean;
   findByUuid(uuid: string): RunRecord | undefined;
+  list(opts?: {
+    limit: number;
+    offset?: number;
+    repoId?: RepositoryId | undefined;
+  }): { runs: RunRecord[]; total: number };
   findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined;
   findActiveRuns(): RunRecord[];
   updateStatusByIssueNumber(

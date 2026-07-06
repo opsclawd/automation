@@ -62,7 +62,11 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       req.query.repoId !== undefined && req.query.repoId !== ''
         ? RepositoryId(req.query.repoId)
         : undefined;
-    const { runs, total } = c.runRepository.list({ limit, offset, repoId });
+    const { runs, total } = c.runRepository.list({
+      limit,
+      offset,
+      ...(repoId !== undefined ? { repoId } : {}),
+    });
     return {
       runs: runs.map(serializeRun),
       total,

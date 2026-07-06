@@ -74,6 +74,24 @@ export class FakeRunRepository implements RunRepositoryPort {
     return this.runs.get(uuid);
   }
 
+  list(opts?: {
+    limit: number;
+    offset?: number;
+    repoId?: RepositoryId | undefined;
+  }): { runs: RunRecord[]; total: number } {
+    let filtered = Array.from(this.runs.values());
+    if (opts?.repoId) {
+      filtered = filtered.filter((r) => r.repoId === opts.repoId);
+    }
+    const total = filtered.length;
+    filtered.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+    if (opts?.limit !== undefined) {
+      const offset = opts.offset ?? 0;
+      filtered = filtered.slice(offset, offset + opts.limit);
+    }
+    return { runs: filtered, total };
+  }
+
   findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined {
     if (typeof repoId === 'number') {
       const actualIssueNumber = repoId;
