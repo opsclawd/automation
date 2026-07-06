@@ -98,12 +98,50 @@ _ORCHESTRATOR_LOCAL_CONFIG="${REPO_ROOT}/.ai-orchestrator.local.json"
 _TARGET_ORCHESTRATOR_CONFIG="${REPO_TARGET:+$REPO_TARGET/.ai-orchestrator.json}"
 _TARGET_ORCHESTRATOR_LOCAL_CONFIG="${REPO_TARGET:+$REPO_TARGET/.ai-orchestrator.local.json}"
 
+# Validate JSON syntax of all present override config files
+for _file in "$([[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]] && echo "$_ORCHESTRATOR_LOCAL_CONFIG" || echo "")" \
+             "${_TARGET_ORCHESTRATOR_CONFIG:-}" \
+             "${_TARGET_ORCHESTRATOR_LOCAL_CONFIG:-}"; do
+  if [[ -n "$_file" ]] && [[ -f "$_file" ]]; then
+    jq . "$_file" >/dev/null || { echo "orchestrator: failed to parse config at $_file (check JSON syntax)" >&2; exit 2; }
+  fi
+done
+
 # Resolve active config source (deep-merges overrides if any optional config exists on disk)
 _ACTIVE_CONFIG="$_ORCHESTRATOR_CONFIG"
 if [[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]] || [[ -f "${_TARGET_ORCHESTRATOR_CONFIG:-}" ]] || [[ -f "${_TARGET_ORCHESTRATOR_LOCAL_CONFIG:-}" ]]; then
   _ACTIVE_CONFIG=$(mktemp)
   jq -s '
-    (.[0] // {}) * (.[1] // {}) * (.[2] // {}) * (.[3] // {})
+    def deep_merge(a; b; key):
+      if (a | type == "array") and (b | type == "array") then
+        if key == "commands" then
+          a + b
+        else
+          reduce range(0; [a|length, b|length] | max) as $i ([];
+            .[$i] = deep_merge(a[$i]; b[$i]; null)
+          )
+        end
+      elif (a | type == "object") and (b | type == "object") then
+        if key == "phaseProfiles" or key == "phaseRoutes" then
+          (if a == null then {} else a end) + (if b == null then {} else b end)
+        else
+          a as $base | b as $override |
+          ( ($base | keys_unsorted) + ($override | keys_unsorted) | unique) as $all_keys |
+          reduce $all_keys[] as $k ({};
+            if ($base | has($k)) and ($override | has($k)) then
+              .[$k] = deep_merge($base[$k]; $override[$k]; $k)
+            elif ($base | has($k)) then
+              .[$k] = $base[$k]
+            else
+              .[$k] = $override[$k]
+            end
+          )
+        end
+      else
+        if b != null then b else a end
+      end;
+
+    [.[0], .[1], .[2], .[3]] | reduce .[] as $item ({}; deep_merge(.; $item // {}; null))
     | if .agent.phaseProfiles then
         .agent.phaseProfiles |= with_entries(
           if .value.profile and .value.role then del(.value.profile) | del(.value.fallbackProfile) else . end
