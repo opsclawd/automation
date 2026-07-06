@@ -1,8 +1,7 @@
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Command } from 'commander';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { isAbsolute, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
@@ -21,6 +20,8 @@ import {
 import { newRunId } from '@ai-sdlc/shared';
 import { planRunRecoveryAction } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';
+import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
+import { composeWithTarget } from './cli/compose-with-target.js';
 import { WorkerScheduler } from './worker-scheduler.js';
 
 export interface LeaseConfig {
@@ -173,22 +174,7 @@ function installSignalHandlers(
   };
 }
 
-export function findRepoRoot(
-  startDir: string,
-  exists: (p: string) => boolean = existsSync,
-): string {
-  let dir = startDir;
-  for (;;) {
-    if (exists(join(dir, 'pnpm-workspace.yaml'))) {
-      return dir;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) {
-      return startDir;
-    }
-    dir = parent;
-  }
-}
+export { findRepoRoot };
 
 export interface RunCliOptions {
   issue: number;
@@ -231,52 +217,26 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     )
     .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
       try {
-        // Validate --target-repo-root early so composeRoot never sees a
-        // bad path. Relative paths are resolved against process.cwd().
-        let targetRepoRoot: string | undefined;
-        if (opts.targetRepoRoot !== undefined) {
-          targetRepoRoot = resolve(process.cwd(), opts.targetRepoRoot);
-          if (!existsSync(targetRepoRoot) || !statSync(targetRepoRoot).isDirectory()) {
-            console.error(
-              `Error: --target-repo-root is not an existing directory: ${targetRepoRoot}`,
-            );
-            process.exit(EXIT_USER_ERROR);
-          }
-          try {
-            execFileSync('git', ['-C', targetRepoRoot, 'rev-parse', '--git-dir'], {
-              stdio: 'pipe',
-            });
-          } catch (err) {
-            const code = (err as NodeJS.ErrnoException).code;
-            if (code === 'ENOENT') {
-              console.error(`Error: git CLI not found; cannot validate --target-repo-root.`);
-            } else {
-              console.error(
-                `Error: --target-repo-root is not inside a git working tree: ${targetRepoRoot}`,
-              );
-            }
-            process.exit(EXIT_USER_ERROR);
-          }
-        }
-
-        const repoRoot = findRepoRoot(process.cwd());
-        const scriptPath = opts.script
-          ? isAbsolute(opts.script)
-            ? opts.script
-            : resolve(repoRoot, opts.script)
-          : join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2');
+        const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+          console.error(`Error: ${msg}`);
+          process.exit(EXIT_USER_ERROR);
+        });
         const tee = opts.verbose ?? Boolean(process.stdout.isTTY);
-        const options: ComposeOptions = {
-          repoRoot,
-          scriptPath,
-          tee,
-          ...buildOpts?.composeOverrides,
-        };
-        if (opts.baseBranch !== undefined) options.baseBranch = opts.baseBranch;
-        if (opts.model !== undefined) options.model = opts.model;
-        if (opts.agentCli !== undefined) options.agentCli = opts.agentCli;
-        if (opts.targetRepoRoot !== undefined) options.targetRepoRoot = opts.targetRepoRoot;
-        const c = composeRoot(options);
+        const { c, repoRoot } = composeWithTarget(targetRepoRoot, {
+          ...(buildOpts !== undefined ? { buildOpts } : {}),
+          ...(opts.script !== undefined ? { scriptPath: opts.script } : {}),
+          runStartupSweeps: true,
+          composeOverrides: {
+            tee,
+            ...(opts.baseBranch !== undefined ? { baseBranch: opts.baseBranch } : {}),
+            ...(opts.model !== undefined ? { model: opts.model } : {}),
+            ...(opts.agentCli !== undefined ? { agentCli: opts.agentCli } : {}),
+          },
+        });
+        if (tee) c.runRepository; // tee consumed below by run command's existing logic
+        if (opts.baseBranch !== undefined && c.runRepository) {
+          // baseBranch is propagated via the helper, no extra wiring needed
+        }
 
         // --- executor validation ---
         if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
@@ -593,31 +553,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         runsDir?: string;
         targetRepoRoot?: string;
       }) => {
-        let targetRepoRoot: string | undefined;
-        if (opts.targetRepoRoot !== undefined) {
-          targetRepoRoot = resolve(process.cwd(), opts.targetRepoRoot);
-          if (!existsSync(targetRepoRoot) || !statSync(targetRepoRoot).isDirectory()) {
-            console.error(
-              `Error: --target-repo-root is not an existing directory: ${targetRepoRoot}`,
-            );
-            process.exit(EXIT_USER_ERROR);
-          }
-          try {
-            execFileSync('git', ['-C', targetRepoRoot, 'rev-parse', '--git-dir'], {
-              stdio: 'pipe',
-            });
-          } catch (err) {
-            const code = (err as NodeJS.ErrnoException).code;
-            if (code === 'ENOENT') {
-              console.error(`Error: git CLI not found; cannot validate --target-repo-root.`);
-            } else {
-              console.error(
-                `Error: --target-repo-root is not inside a git working tree: ${targetRepoRoot}`,
-              );
-            }
-            process.exit(EXIT_USER_ERROR);
-          }
-        }
+        const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+          console.error(`Error: ${msg}`);
+          process.exit(EXIT_USER_ERROR);
+        });
 
         const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
         const scriptPath = opts.script
@@ -661,81 +600,95 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         })
         .option('--uuid <uuid>', 'Run UUID')
         .option('--reason <string>', 'Cancellation reason')
-        .action(async (opts: { issue?: number; uuid?: string; reason?: string }) => {
-          if (!opts.issue && !opts.uuid) {
-            console.error('Error: specify --issue or --uuid');
-            process.exit(EXIT_USER_ERROR);
-          }
-          if (opts.issue && opts.uuid) {
-            console.error('Error: specify --issue or --uuid, not both');
-            process.exit(EXIT_USER_ERROR);
-          }
-          try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
-            let uuid: string;
-            if (opts.uuid) {
-              uuid = opts.uuid;
-            } else {
-              if (!c.repoFullName) {
-                console.error('Error: could not determine repository name.');
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(
+          async (opts: {
+            issue?: number;
+            uuid?: string;
+            reason?: string;
+            targetRepoRoot?: string;
+          }) => {
+            if (!opts.issue && !opts.uuid) {
+              console.error('Error: specify --issue or --uuid');
+              process.exit(EXIT_USER_ERROR);
+            }
+            if (opts.issue && opts.uuid) {
+              console.error('Error: specify --issue or --uuid, not both');
+              process.exit(EXIT_USER_ERROR);
+            }
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
                 process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+              });
+              let uuid: string;
+              if (opts.uuid) {
+                uuid = opts.uuid;
+              } else {
+                if (!c.repoFullName) {
+                  console.error('Error: could not determine repository name.');
+                  process.exit(EXIT_USER_ERROR);
+                }
+                const repoId = RepositoryId(c.repoFullName);
+                const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
+                if (!run) {
+                  console.error(`No run found for issue ${opts.issue}`);
+                  process.exit(EXIT_USER_ERROR);
+                }
+                uuid = run.uuid;
               }
-              const repoId = RepositoryId(c.repoFullName);
-              const run = c.runRepository.findByIssueNumber(repoId, opts.issue!);
+              const run = c.runRepository.findByUuid(uuid);
               if (!run) {
-                console.error(`No run found for issue ${opts.issue}`);
-                process.exit(EXIT_USER_ERROR);
+                throw new Error(`No run found for uuid ${uuid}`);
               }
-              uuid = run.uuid;
-            }
-            const run = c.runRepository.findByUuid(uuid);
-            if (!run) {
-              throw new Error(`No run found for uuid ${uuid}`);
-            }
-            const pid = run.pid;
-            if (pid !== undefined && pid !== null && pid !== process.pid) {
-              try {
-                process.kill(pid, 'SIGTERM');
-              } catch (killErr: unknown) {
-                const code = (killErr as NodeJS.ErrnoException).code;
-                if (code === 'EPERM') {
-                  console.error(
-                    `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
-                  );
+              const pid = run.pid;
+              if (pid !== undefined && pid !== null && pid !== process.pid) {
+                try {
+                  process.kill(pid, 'SIGTERM');
+                } catch (killErr: unknown) {
+                  const code = (killErr as NodeJS.ErrnoException).code;
+                  if (code === 'EPERM') {
+                    console.error(
+                      `Warning: could not signal PID ${pid} (permission denied). The process may still be running.`,
+                    );
+                  }
                 }
               }
+              await c.cancelRun.execute({
+                runId: RunId(uuid),
+                ...(opts.reason ? { reason: opts.reason } : {}),
+              });
+              process.stdout.write('Run cancelled successfully\n');
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              process.exit(EXIT_USER_ERROR);
             }
-            await c.cancelRun.execute({
-              runId: RunId(uuid),
-              ...(opts.reason ? { reason: opts.reason } : {}),
-            });
-            process.stdout.write('Run cancelled successfully\n');
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(EXIT_USER_ERROR);
-          }
-        }),
+          },
+        ),
     )
     .addCommand(
       new Command('check-merge-ready')
         .description('Verify that a run has no unverified or blocked review comments')
         .requiredOption('--uuid <uuid>', 'Run UUID')
-        .action(async (opts: { uuid: string }) => {
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(async (opts: { uuid: string; targetRepoRoot?: string }) => {
           try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              runStartupSweeps: false,
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
+            const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+              console.error(`Error: ${msg}`);
+              process.exit(EXIT_USER_ERROR);
+            });
+            const { c } = composeWithTarget(targetRepoRoot, {
+              ...(buildOpts !== undefined ? { buildOpts } : {}),
+            });
             // An unknown UUID must fail, not report ready: listComments on a
             // nonexistent run returns no rows, which would green-light the merge.
             const run = c.runRepository.findByUuid(opts.uuid);
@@ -761,16 +714,19 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       new Command('execute')
         .description('Execute a queued run through the RunExecutor')
         .requiredOption('--uuid <uuid>', 'Run UUID to execute')
-        .action(async (opts: { uuid: string }) => {
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(async (opts: { uuid: string; targetRepoRoot?: string }) => {
           try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              runStartupSweeps: false,
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
+            const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+              console.error(`Error: ${msg}`);
+              process.exit(EXIT_USER_ERROR);
+            });
+            const { c } = composeWithTarget(targetRepoRoot, {
+              ...(buildOpts !== undefined ? { buildOpts } : {}),
+            });
             if (!c.runExecutor) {
               console.error(
                 'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
@@ -881,12 +837,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .option('--confirm', 'Confirm retry/resume of an unsafe phase')
         .option('--verbose', 'Stream progress to terminal (default: auto when TTY)')
         .option('--no-verbose', 'Suppress streaming progress to terminal')
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
         .action(
           async (opts: {
             uuid: string;
             fromPhase?: string;
             confirm?: boolean;
             verbose?: boolean;
+            targetRepoRoot?: string;
           }) => {
             const isCliTestSuite =
               buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
@@ -894,14 +855,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               buildOpts?.bypassPlanValidation ??
               (isCliTestSuite || process.env.AI_BYPASS_PLAN_VALIDATION === 'true');
             try {
-              const repoRoot = findRepoRoot(process.cwd());
-              const options: ComposeOptions = {
-                repoRoot,
-                scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-                runStartupSweeps: false,
-                ...buildOpts?.composeOverrides,
-              };
-              const c = composeRoot(options);
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+              });
               if (!c.runExecutor) {
                 console.error(
                   'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',
@@ -1061,105 +1021,116 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .option('--follow', 'Follow new invocations as they start', true)
         .option('--no-follow', 'Do not follow new invocations')
         .option('--lines <number>', 'Initial lines to show', (v) => parseInt(v, 10), 50)
-        .action(async (opts: { issue: number; follow: boolean; lines: number }) => {
-          try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
-            if (!c.repoFullName) {
-              console.error('Error: could not determine repository name.');
-              process.exit(EXIT_USER_ERROR);
-            }
-            const repoId = RepositoryId(c.repoFullName);
-            let run = c.runRepository.findByIssueNumber(repoId, opts.issue);
-            if (!run) {
-              console.error(`No run found for issue ${opts.issue}`);
-              process.exit(EXIT_USER_ERROR);
-            }
-
-            const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
-            let currentInvocationId: string | undefined;
-            let tailer: import('@ai-sdlc/application/ports').FileTailerPort | undefined;
-            let currentPhase: string | undefined;
-
-            const stopTailer = async () => {
-              if (tailer) {
-                await tailer.stop();
-                tailer = undefined;
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(
+          async (opts: {
+            issue: number;
+            follow: boolean;
+            lines: number;
+            targetRepoRoot?: string;
+          }) => {
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+              });
+              if (!c.repoFullName) {
+                console.error('Error: could not determine repository name.');
+                process.exit(EXIT_USER_ERROR);
               }
-            };
-
-            process.on('SIGINT', async () => {
-              await stopTailer();
-              process.exit(0);
-            });
-
-            for (;;) {
-              // Refresh run record to check status and current phase
-              const updatedRun = c.runRepository.findByUuid(run.uuid);
-              if (updatedRun) {
-                run = updatedRun;
+              const repoId = RepositoryId(c.repoFullName);
+              let run = c.runRepository.findByIssueNumber(repoId, opts.issue);
+              if (!run) {
+                console.error(`No run found for issue ${opts.issue}`);
+                process.exit(EXIT_USER_ERROR);
               }
 
-              if (run.currentPhase !== currentPhase) {
-                currentPhase = run.currentPhase;
-                process.stdout.write(
-                  `\n--- Run ${run.displayId} | Phase: ${currentPhase ?? 'starting'} ---\n`,
-                );
-              }
+              const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
+              let currentInvocationId: string | undefined;
+              let tailer: import('@ai-sdlc/application/ports').FileTailerPort | undefined;
+              let currentPhase: string | undefined;
 
-              const invocations = c.agentInvocationRepository.listByRun(RunId(run.uuid));
-              const latestInvocation = invocations[invocations.length - 1];
-
-              if (latestInvocation && latestInvocation.id !== currentInvocationId) {
-                // Delay advancing currentInvocationId until we have a path to tail,
-                // or handle the case where the same ID eventually gets a path.
-                if (latestInvocation.stdoutPath) {
-                  const isFirstTailer = currentInvocationId === undefined;
-                  await stopTailer();
-                  currentInvocationId = latestInvocation.id;
-
-                  tailer = c.createFileTailer({
-                    path: latestInvocation.stdoutPath,
-                    onData: (data: string) => {
-                      process.stdout.write(data);
-                    },
-                    // If it's the very first invocation we start tailing, honor --lines.
-                    // For subsequent invocations in the same run, start from the beginning.
-                    ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),
-                  });
-                  await tailer.start();
+              const stopTailer = async () => {
+                if (tailer) {
+                  await tailer.stop();
+                  tailer = undefined;
                 }
-              }
+              };
 
-              if (terminalStatuses.includes(run.status)) {
-                // Wait a bit to ensure the tailer has drained everything
+              process.on('SIGINT', async () => {
+                await stopTailer();
+                process.exit(0);
+              });
+
+              for (;;) {
+                // Refresh run record to check status and current phase
+                const updatedRun = c.runRepository.findByUuid(run.uuid);
+                if (updatedRun) {
+                  run = updatedRun;
+                }
+
+                if (run.currentPhase !== currentPhase) {
+                  currentPhase = run.currentPhase;
+                  process.stdout.write(
+                    `\n--- Run ${run.displayId} | Phase: ${currentPhase ?? 'starting'} ---\n`,
+                  );
+                }
+
+                const invocations = c.agentInvocationRepository.listByRun(RunId(run.uuid));
+                const latestInvocation = invocations[invocations.length - 1];
+
+                if (latestInvocation && latestInvocation.id !== currentInvocationId) {
+                  // Delay advancing currentInvocationId until we have a path to tail,
+                  // or handle the case where the same ID eventually gets a path.
+                  if (latestInvocation.stdoutPath) {
+                    const isFirstTailer = currentInvocationId === undefined;
+                    await stopTailer();
+                    currentInvocationId = latestInvocation.id;
+
+                    tailer = c.createFileTailer({
+                      path: latestInvocation.stdoutPath,
+                      onData: (data: string) => {
+                        process.stdout.write(data);
+                      },
+                      // If it's the very first invocation we start tailing, honor --lines.
+                      // For subsequent invocations in the same run, start from the beginning.
+                      ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),
+                    });
+                    await tailer.start();
+                  }
+                }
+
+                if (terminalStatuses.includes(run.status)) {
+                  // Wait a bit to ensure the tailer has drained everything
+                  await sleep(1000);
+                  await stopTailer();
+                  process.stdout.write(
+                    `\n--- Run ${run.displayId} finished with status: ${run.status} ---\n`,
+                  );
+                  break;
+                }
+
+                if (!opts.follow && latestInvocation) {
+                  // If not following, we just show what we have and exit
+                  await sleep(500); // Give it a moment to read
+                  await stopTailer();
+                  break;
+                }
+
                 await sleep(1000);
-                await stopTailer();
-                process.stdout.write(
-                  `\n--- Run ${run.displayId} finished with status: ${run.status} ---\n`,
-                );
-                break;
               }
-
-              if (!opts.follow && latestInvocation) {
-                // If not following, we just show what we have and exit
-                await sleep(500); // Give it a moment to read
-                await stopTailer();
-                break;
-              }
-
-              await sleep(1000);
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              process.exit(EXIT_USER_ERROR);
             }
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(EXIT_USER_ERROR);
-          }
-        }),
+          },
+        ),
     );
 
   return program;
