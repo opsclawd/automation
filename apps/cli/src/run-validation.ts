@@ -1,9 +1,13 @@
 #!/usr/bin/env node
+// SAFETY: config-sources.json MUST NOT contain file contents. It only contains
+// paths and a sha256. Local (.local.json) files may contain secrets; never
+// inline their content here.
 import { parseArgs } from 'node:util';
 import { join } from 'node:path';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { RunId, PhaseName, createRun, RepositoryId } from '@ai-sdlc/domain';
-import { ConfigError, loadConfig } from '@ai-sdlc/shared';
+import { ConfigError, loadLayeredConfig } from '@ai-sdlc/shared';
 
 interface Flags {
   cwd?: string;
@@ -11,6 +15,7 @@ interface Flags {
   'repo-id'?: string;
   'repo-root'?: string;
   'phase-id'?: string;
+  'target-repo-root'?: string;
 }
 
 export function validateRequiredFlags(values: Flags): string[] {
@@ -52,6 +57,7 @@ async function main() {
       'repo-id': { type: 'string' },
       'repo-root': { type: 'string' },
       'phase-id': { type: 'string' },
+      'target-repo-root': { type: 'string' },
     },
     allowPositionals: false,
   }) as { values: Flags };
@@ -64,10 +70,16 @@ async function main() {
 
   // --repo-root is required (enforced above), so no fallback is needed.
   const repoRoot = values['repo-root']!;
+  const targetRepoRoot = values['target-repo-root'];
 
   let config;
+  let layered;
   try {
-    config = loadConfig(repoRoot);
+    layered = loadLayeredConfig({
+      automationRoot: repoRoot,
+      ...(targetRepoRoot ? { targetRoot: targetRepoRoot } : {}),
+    });
+    config = layered.config;
   } catch (err) {
     if (err instanceof ConfigError && (err.cause as { code?: string })?.code === 'ENOENT') {
       console.error('no .ai-orchestrator.json found at repo root');
@@ -111,6 +123,18 @@ async function main() {
   const phaseId = values['phase-id'] ?? 'validate';
   const displayId = c.runRepository.findByUuid(runId)?.displayId ?? runId;
   const logDir = join(c.runsDir, displayId, 'validate');
+
+  const runsDirFor = (id: string) => {
+    const dId = c.runRepository.findByUuid(id)?.displayId ?? id;
+    return join(c.runsDir, dId);
+  };
+
+  const runDir = runsDirFor(runId);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, 'config-sources.json'),
+    JSON.stringify({ fingerprint: layered.fingerprint, sources: layered.sources }, null, 2),
+  );
 
   try {
     const result = await c.runValidation.execute({

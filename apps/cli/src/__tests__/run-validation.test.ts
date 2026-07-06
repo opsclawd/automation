@@ -12,13 +12,14 @@ describe('run-validation CLI helpers', () => {
     it('returns only the missing ones', () => {
       expect(validateRequiredFlags({ cwd: '/w' })).toEqual(['--run-id', '--repo-root']);
     });
-    it('does not require --repo-id or --phase-id', () => {
+    it('does not require --repo-id, --phase-id, or --target-repo-root', () => {
       expect(
         validateRequiredFlags({
           cwd: '/w',
           'run-id': 'u',
           'repo-root': '/r',
           'repo-id': undefined,
+          'target-repo-root': '/target',
         }),
       ).toEqual([]);
     });
