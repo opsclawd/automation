@@ -42,6 +42,15 @@ export function formatReviewLoopHistoryForPrompt(
         for (const finding of entry.review.offendingFindings) {
           lines.push(`    - [${finding.severity}] ${finding.summary}`);
         }
+        const disposition =
+          entry.fix?.verdict === 'done_no_fixes_needed'
+            ? 'rebutted by fixer'
+            : entry.outcome === 'fixed'
+              ? 'addressed by fix'
+              : entry.outcome === 'resolved'
+                ? 'resolved before any fix was needed'
+                : 'still open';
+        lines.push(`  Disposition: ${disposition}`);
       }
       if (entry.revalidation) {
         const status = entry.revalidation.passed ? 'passed' : 'failed';
