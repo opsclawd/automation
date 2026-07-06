@@ -1057,105 +1057,116 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .option('--follow', 'Follow new invocations as they start', true)
         .option('--no-follow', 'Do not follow new invocations')
         .option('--lines <number>', 'Initial lines to show', (v) => parseInt(v, 10), 50)
-        .action(async (opts: { issue: number; follow: boolean; lines: number }) => {
-          try {
-            const repoRoot = findRepoRoot(process.cwd());
-            const options: ComposeOptions = {
-              repoRoot,
-              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-              ...buildOpts?.composeOverrides,
-            };
-            const c = composeRoot(options);
-            if (!c.repoFullName) {
-              console.error('Error: could not determine repository name.');
-              process.exit(EXIT_USER_ERROR);
-            }
-            const repoId = RepositoryId(c.repoFullName);
-            let run = c.runRepository.findByIssueNumber(repoId, opts.issue);
-            if (!run) {
-              console.error(`No run found for issue ${opts.issue}`);
-              process.exit(EXIT_USER_ERROR);
-            }
-
-            const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
-            let currentInvocationId: string | undefined;
-            let tailer: import('@ai-sdlc/application/ports').FileTailerPort | undefined;
-            let currentPhase: string | undefined;
-
-            const stopTailer = async () => {
-              if (tailer) {
-                await tailer.stop();
-                tailer = undefined;
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
+        .action(
+          async (opts: {
+            issue: number;
+            follow: boolean;
+            lines: number;
+            targetRepoRoot?: string;
+          }) => {
+            try {
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+              });
+              if (!c.repoFullName) {
+                console.error('Error: could not determine repository name.');
+                process.exit(EXIT_USER_ERROR);
               }
-            };
-
-            process.on('SIGINT', async () => {
-              await stopTailer();
-              process.exit(0);
-            });
-
-            for (;;) {
-              // Refresh run record to check status and current phase
-              const updatedRun = c.runRepository.findByUuid(run.uuid);
-              if (updatedRun) {
-                run = updatedRun;
+              const repoId = RepositoryId(c.repoFullName);
+              let run = c.runRepository.findByIssueNumber(repoId, opts.issue);
+              if (!run) {
+                console.error(`No run found for issue ${opts.issue}`);
+                process.exit(EXIT_USER_ERROR);
               }
 
-              if (run.currentPhase !== currentPhase) {
-                currentPhase = run.currentPhase;
-                process.stdout.write(
-                  `\n--- Run ${run.displayId} | Phase: ${currentPhase ?? 'starting'} ---\n`,
-                );
-              }
+              const terminalStatuses: RunStatus[] = ['passed', 'failed', 'cancelled'];
+              let currentInvocationId: string | undefined;
+              let tailer: import('@ai-sdlc/application/ports').FileTailerPort | undefined;
+              let currentPhase: string | undefined;
 
-              const invocations = c.agentInvocationRepository.listByRun(RunId(run.uuid));
-              const latestInvocation = invocations[invocations.length - 1];
-
-              if (latestInvocation && latestInvocation.id !== currentInvocationId) {
-                // Delay advancing currentInvocationId until we have a path to tail,
-                // or handle the case where the same ID eventually gets a path.
-                if (latestInvocation.stdoutPath) {
-                  const isFirstTailer = currentInvocationId === undefined;
-                  await stopTailer();
-                  currentInvocationId = latestInvocation.id;
-
-                  tailer = c.createFileTailer({
-                    path: latestInvocation.stdoutPath,
-                    onData: (data: string) => {
-                      process.stdout.write(data);
-                    },
-                    // If it's the very first invocation we start tailing, honor --lines.
-                    // For subsequent invocations in the same run, start from the beginning.
-                    ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),
-                  });
-                  await tailer.start();
+              const stopTailer = async () => {
+                if (tailer) {
+                  await tailer.stop();
+                  tailer = undefined;
                 }
-              }
+              };
 
-              if (terminalStatuses.includes(run.status)) {
-                // Wait a bit to ensure the tailer has drained everything
+              process.on('SIGINT', async () => {
+                await stopTailer();
+                process.exit(0);
+              });
+
+              for (;;) {
+                // Refresh run record to check status and current phase
+                const updatedRun = c.runRepository.findByUuid(run.uuid);
+                if (updatedRun) {
+                  run = updatedRun;
+                }
+
+                if (run.currentPhase !== currentPhase) {
+                  currentPhase = run.currentPhase;
+                  process.stdout.write(
+                    `\n--- Run ${run.displayId} | Phase: ${currentPhase ?? 'starting'} ---\n`,
+                  );
+                }
+
+                const invocations = c.agentInvocationRepository.listByRun(RunId(run.uuid));
+                const latestInvocation = invocations[invocations.length - 1];
+
+                if (latestInvocation && latestInvocation.id !== currentInvocationId) {
+                  // Delay advancing currentInvocationId until we have a path to tail,
+                  // or handle the case where the same ID eventually gets a path.
+                  if (latestInvocation.stdoutPath) {
+                    const isFirstTailer = currentInvocationId === undefined;
+                    await stopTailer();
+                    currentInvocationId = latestInvocation.id;
+
+                    tailer = c.createFileTailer({
+                      path: latestInvocation.stdoutPath,
+                      onData: (data: string) => {
+                        process.stdout.write(data);
+                      },
+                      // If it's the very first invocation we start tailing, honor --lines.
+                      // For subsequent invocations in the same run, start from the beginning.
+                      ...(isFirstTailer ? { initialLines: opts.lines } : { fromStart: true }),
+                    });
+                    await tailer.start();
+                  }
+                }
+
+                if (terminalStatuses.includes(run.status)) {
+                  // Wait a bit to ensure the tailer has drained everything
+                  await sleep(1000);
+                  await stopTailer();
+                  process.stdout.write(
+                    `\n--- Run ${run.displayId} finished with status: ${run.status} ---\n`,
+                  );
+                  break;
+                }
+
+                if (!opts.follow && latestInvocation) {
+                  // If not following, we just show what we have and exit
+                  await sleep(500); // Give it a moment to read
+                  await stopTailer();
+                  break;
+                }
+
                 await sleep(1000);
-                await stopTailer();
-                process.stdout.write(
-                  `\n--- Run ${run.displayId} finished with status: ${run.status} ---\n`,
-                );
-                break;
               }
-
-              if (!opts.follow && latestInvocation) {
-                // If not following, we just show what we have and exit
-                await sleep(500); // Give it a moment to read
-                await stopTailer();
-                break;
-              }
-
-              await sleep(1000);
+            } catch (err) {
+              console.error(err instanceof Error ? err.message : String(err));
+              process.exit(EXIT_USER_ERROR);
             }
-          } catch (err) {
-            console.error(err instanceof Error ? err.message : String(err));
-            process.exit(EXIT_USER_ERROR);
-          }
-        }),
+          },
+        ),
     );
 
   return program;
