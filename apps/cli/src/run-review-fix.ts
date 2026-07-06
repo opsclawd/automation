@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-import { readFileSync, appendFileSync } from 'node:fs';
+// SAFETY: config-sources.json MUST NOT contain file contents. It only contains
+// paths and a sha256. Local (.local.json) files may contain secrets; never
+// inline their content here.
+import { readFileSync, appendFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { parseArgs } from 'node:util';
+import { join } from 'node:path';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { RunId, PhaseName, AgentProfileName, createRun, RepositoryId } from '@ai-sdlc/domain';
-import { ConfigError, loadConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
+import { ConfigError, loadLayeredConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
 import { formatEvent } from './format-event.js';
 
 interface Flags {
@@ -14,6 +18,7 @@ interface Flags {
   'phase-id'?: string;
   'max-iterations'?: string;
   'architect-plan-json'?: string;
+  'target-repo-root'?: string;
 }
 
 export function validateRequiredFlags(values: Flags): string[] {
@@ -68,6 +73,7 @@ async function main() {
       'phase-id': { type: 'string' },
       'max-iterations': { type: 'string' },
       'architect-plan-json': { type: 'string' },
+      'target-repo-root': { type: 'string' },
     },
     allowPositionals: false,
   }) as { values: Flags };
@@ -80,10 +86,16 @@ async function main() {
 
   // --repo-root is required (enforced above), so no fallback is needed.
   const repoRoot = values['repo-root']!;
+  const targetRepoRoot = values['target-repo-root'];
 
   let config;
+  let layered;
   try {
-    config = loadConfig(repoRoot);
+    layered = loadLayeredConfig({
+      automationRoot: repoRoot,
+      ...(targetRepoRoot ? { targetRoot: targetRepoRoot } : {}),
+    });
+    config = layered.config;
   } catch (err) {
     if (err instanceof ConfigError && (err.cause as { code?: string })?.code === 'ENOENT') {
       console.error('no .ai-orchestrator.json found at repo root');
@@ -134,6 +146,18 @@ async function main() {
       }),
     );
   }
+
+  const runsDirFor = (id: string) => {
+    const dId = c.runRepository.findByUuid(id)?.displayId ?? id;
+    return join(c.runsDir, dId);
+  };
+
+  const runDir = runsDirFor(runId);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, 'config-sources.json'),
+    JSON.stringify({ fingerprint: layered.fingerprint, sources: layered.sources }, null, 2),
+  );
 
   const phaseId = values['phase-id'] ?? 'review-fix';
   const maxIterations = values['max-iterations']

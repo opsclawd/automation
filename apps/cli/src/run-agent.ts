@@ -1,10 +1,13 @@
 #!/usr/bin/env node
+// SAFETY: config-sources.json MUST NOT contain file contents. It only contains
+// paths and a sha256. Local (.local.json) files may contain secrets; never
+// inline their content here.
 import { parseArgs } from 'node:util';
 import { composeRoot } from '@ai-sdlc/api/compose.js';
 import { AgentProfileName, RunId, createRun, type Run, RepositoryId } from '@ai-sdlc/domain';
 import type { AgentInvocationResult } from '@ai-sdlc/application';
-import { ConfigError, loadConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
-import { copyFileSync, createReadStream, existsSync, mkdirSync } from 'node:fs';
+import { ConfigError, loadLayeredConfig, PHASE_FALLBACKS } from '@ai-sdlc/shared';
+import { copyFileSync, createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 
 interface Flags {
@@ -21,6 +24,7 @@ interface Flags {
   'timeout-minutes'?: string;
   'start-sha'?: string;
   'worktree-dir'?: string;
+  'target-repo-root'?: string;
 }
 
 export type ConfigForProfileResolution = {
@@ -234,6 +238,7 @@ async function main() {
       'expected-artifacts': { type: 'string' },
       'timeout-minutes': { type: 'string' },
       'start-sha': { type: 'string' },
+      'target-repo-root': { type: 'string' },
     },
     allowPositionals: false,
   }) as { values: Flags };
@@ -268,11 +273,20 @@ async function main() {
 
   // Load config from repo root
   let config;
+  let layered;
   try {
-    config = loadConfig(repoRoot);
+    layered = loadLayeredConfig({
+      automationRoot: repoRoot,
+      ...(values['target-repo-root'] ? { targetRoot: values['target-repo-root'] } : {}),
+    });
+    config = layered.config;
   } catch (err) {
     if (err instanceof ConfigError && (err.cause as { code?: string })?.code === 'ENOENT') {
       console.error('no .ai-orchestrator.json found at repo root');
+      process.exit(2);
+    }
+    if (err instanceof ConfigError) {
+      console.error(err.message);
       process.exit(2);
     }
     throw err;
@@ -325,6 +339,18 @@ async function main() {
     c.runRepository.insert(run);
     createdSynthetic = true;
   }
+
+  const runsDirFor = (id: string) => {
+    const dId = c.runRepository.findByUuid(id)?.displayId ?? id;
+    return join(c.runsDir, dId);
+  };
+
+  const runDir = runsDirFor(runId);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(
+    join(runDir, 'config-sources.json'),
+    JSON.stringify({ fingerprint: layered.fingerprint, sources: layered.sources }, null, 2),
+  );
 
   // When the bash wrapper wraps this process with GNU timeout(1) and the
   // timeout fires, the process receives SIGTERM. If a synthetic run was
