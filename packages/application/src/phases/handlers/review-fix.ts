@@ -46,7 +46,7 @@ export class ReviewFixHandler implements PhaseHandler {
       return { outcome: 'failed', failure };
     }
 
-    if (phaseOutcome === 'passed') {
+    if (phaseOutcome === 'passed' && !result.needsHumanReview) {
       emit('review_fix.completed', 'info', 'review-fix converged');
       return { outcome: 'passed' };
     }

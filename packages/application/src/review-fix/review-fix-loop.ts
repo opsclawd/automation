@@ -116,9 +116,7 @@ export class ReviewFixLoop {
       if (review.offendingFindings) {
         lastOffendingFindings = review.offendingFindings;
       }
-      if (review.reviewedCommitSha) {
-        lastReviewedCommitSha = review.reviewedCommitSha;
-      }
+
       if (review.overridden) {
         const direction: 'upgrade' | 'downgrade' =
           review.verdict === 'fail' ? 'upgrade' : 'downgrade';
@@ -255,6 +253,9 @@ export class ReviewFixLoop {
       }
       consecutiveFixFailures = 0;
       lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
+      if (lastIterationHadFixCommit && review.reviewedCommitSha) {
+        lastReviewedCommitSha = review.reviewedCommitSha;
+      }
 
       // --- REVALIDATE ---
       const reval = await deps.runRevalidation(ctx);
@@ -383,6 +384,7 @@ export class ReviewFixLoop {
                 ? 'failed'
                 : 'exhausted',
           needsHumanReview: true,
+          residualFindingsCount: lastOffendingFindings.length,
         };
       }
 
@@ -490,7 +492,12 @@ export class ReviewFixLoop {
         maxIterations: loop.maxIterations,
       },
     );
-    return { loop, phaseOutcome: 'failed', loopStatus: 'exhausted' };
+    return {
+      loop,
+      phaseOutcome: 'failed',
+      loopStatus: 'exhausted',
+      residualFindingsCount: lastOffendingFindings.length,
+    };
   }
 
   private emit(
@@ -759,7 +766,7 @@ export class ReviewFixLoop {
       });
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.emit(input, 'review_loop_history.append_failed', 'warn', errorMsg, {
+      this.emit(input, 'review_loop.append_residual_findings_failed', 'warn', errorMsg, {
         reason: 'append_residual_findings',
         error: errorMsg,
       });

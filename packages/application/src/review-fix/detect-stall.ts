@@ -109,7 +109,7 @@ export function detectConvergingTrend(
 ): TrendDetectionResult {
   const window = Math.max(2, opts.window ?? 3);
   const mode = opts.mode ?? 'strict';
-  const fixHistory = history.filter((h) => h.fix !== undefined);
+  const fixHistory = history.filter((h) => h.review !== undefined);
   if (fixHistory.length < window) {
     return { converging: false, severityWeighted: [] };
   }
