@@ -6,6 +6,7 @@ export interface Repository {
   name: string;
   fullName: string;
   defaultBranch: string;
+  remoteUrl: string;
   localBasePath: string;
   enabled: boolean;
   maxConcurrentRuns: 1;
