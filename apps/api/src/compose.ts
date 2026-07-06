@@ -26,6 +26,7 @@ import {
   ValidationRunRepository,
   PrReviewRepository,
   AgentUsageRepository,
+  SqliteRepositoryRepository,
   SqliteStepRepository,
   RunDirectory,
   runBashScript,
@@ -461,6 +462,7 @@ export interface Container {
   createFileTailer: (
     opts: import('@ai-sdlc/application/ports').FileTailerOptions,
   ) => import('@ai-sdlc/application/ports').FileTailerPort;
+  repositoryRepository: SqliteRepositoryRepository;
 }
 
 export interface ComposeOptions {
@@ -511,22 +513,6 @@ class AbortRegistry {
 
   unregister(runId: string): void {
     this.entries.delete(runId);
-  }
-}
-
-class SingleRepoAdapter implements RepositoryPort {
-  constructor(private readonly repo: Repository) {}
-
-  findById(id: RepositoryId): Repository | undefined {
-    return this.repo.id === id ? this.repo : undefined;
-  }
-
-  findByFullName(fullName: string): Repository | undefined {
-    return this.repo.fullName === fullName ? this.repo : undefined;
-  }
-
-  listEnabled(): Repository[] {
-    return this.repo.enabled ? [this.repo] : [];
   }
 }
 
@@ -748,6 +734,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);
+  const repositoryRepository = new SqliteRepositoryRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const prReviewRepository = new PrReviewRepository(db);
   const eventBus = new InMemoryEventBus();
@@ -1013,6 +1000,21 @@ export function composeRoot(opts: ComposeOptions): Container {
     } catch (err) {
       console.error(`CancelRun: failed to resolve repo full name for ${targetRoot}`, err);
     }
+  }
+
+  if (resolvedRepoFullName && repositoryRepository.list().length === 0) {
+    repositoryRepository.upsert({
+      id: RepositoryId(resolvedRepoFullName),
+      owner: resolvedRepoFullName.split('/')[0]!,
+      name: resolvedRepoFullName.split('/')[1]!,
+      fullName: resolvedRepoFullName,
+      defaultBranch: resolvedDefaultBranch,
+      localBasePath: targetRoot,
+      enabled: true,
+      maxConcurrentRuns: 1 as const,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
   }
 
   let agentRuntime: AgentRuntimeRouter | undefined;
@@ -2365,33 +2367,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
   }
 
-  const singleRepo: RepositoryPort = resolvedRepoFullName
-    ? new SingleRepoAdapter({
-        id: RepositoryId(resolvedRepoFullName),
-        owner: resolvedRepoFullName.split('/')[0]!,
-        name: resolvedRepoFullName.split('/')[1]!,
-        fullName: resolvedRepoFullName,
-        defaultBranch: resolvedDefaultBranch,
-        localBasePath: targetRoot,
-        enabled: true,
-        maxConcurrentRuns: 1 as const,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
-    : new SingleRepoAdapter({
-        id: '' as RepositoryId,
-        owner: '',
-        name: '',
-        fullName: '',
-        defaultBranch: '',
-        localBasePath: '',
-        enabled: false,
-        maxConcurrentRuns: 1 as const,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-  const jobQueue = new JobQueueRepository(db, singleRepo);
+  const jobQueue = new JobQueueRepository(db, repositoryRepository);
 
   const workerRegistry = new WorkerRegistryRepository(db);
 
@@ -2401,7 +2377,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           registry: workerRegistry,
           queue: jobQueue,
           leases: workerLeaseRepository,
-          repos: singleRepo,
+          repos: repositoryRepository,
           executeRun: async ({ run, signal: _signal }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
@@ -2454,7 +2430,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const resumeRun = new ResumeRun({
     runRepository,
-    repos: singleRepo,
+    repos: repositoryRepository,
     leases: workerLeaseRepository,
     queue: jobQueue,
     stepRepo: stepRepository,
@@ -2907,6 +2883,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     buildPhaseHandlerContext: composeBuildPhaseHandlerContext,
     createFileTailer: (opts: import('@ai-sdlc/application/ports').FileTailerOptions) =>
       new FileTailer(opts),
+    repositoryRepository,
   };
 }
 

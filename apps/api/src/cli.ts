@@ -229,7 +229,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       '--target-repo-root <path>',
       'Target repository root for worktrees and DB (default: orchestrator repo)',
     )
-    .action(async (opts: RunCliOptions & { verbose?: boolean }) => {
+    .option('--repo <repoId>', 'Repository ID to use')
+    .action(async (opts: RunCliOptions & { verbose?: boolean; repo?: string }) => {
       try {
         // Validate --target-repo-root early so composeRoot never sees a
         // bad path. Relative paths are resolved against process.cwd().
@@ -278,6 +279,31 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         if (opts.targetRepoRoot !== undefined) options.targetRepoRoot = opts.targetRepoRoot;
         const c = composeRoot(options);
 
+        const enabledRepos = c.repositoryRepository.listEnabled();
+        let targetRepo: import('@ai-sdlc/domain').Repository | undefined;
+
+        if (opts.repo) {
+          targetRepo = c.repositoryRepository.findById(RepositoryId(opts.repo));
+          if (!targetRepo) {
+            console.error(`Error: repository "${opts.repo}" not found or not enabled.`);
+            process.exit(EXIT_USER_ERROR);
+          }
+        } else if (enabledRepos.length === 1) {
+          targetRepo = enabledRepos[0];
+        } else if (enabledRepos.length > 1) {
+          console.error(
+            'Error: multiple repositories enabled. Specify which one to use with --repo <repoId>',
+          );
+          console.error('Enabled repositories:');
+          for (const r of enabledRepos) {
+            console.error(`  - ${r.id} (${r.fullName})`);
+          }
+          process.exit(EXIT_USER_ERROR);
+        } else {
+          console.error('Error: no enabled repositories found in registry.');
+          process.exit(EXIT_USER_ERROR);
+        }
+
         // --- executor validation ---
         if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
           console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
@@ -310,7 +336,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
           const startedAt = new Date();
           const ids = newRunId({ issueNumber: opts.issue, now: startedAt });
-          const repoId = RepositoryId(c.repoFullName);
+          const repoId = targetRepo!.id;
           const run = createRun({
             uuid: ids.uuid,
             displayId: ids.displayId,
@@ -531,7 +557,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             process.exit(EXIT_USER_ERROR);
           }
 
-          const repoId = RepositoryId(c.repoFullName);
+          const repoId = targetRepo!.id;
           const signalHandlers = installSignalHandlers(c.runRepository, repoId, opts.issue);
 
           try {
@@ -613,6 +639,43 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         process.on('SIGINT', shutdown);
         process.on('SIGTERM', shutdown);
       },
+    );
+
+  program
+    .command('repos')
+    .description('Manage registered repositories')
+    .addCommand(
+      new Command('list')
+        .description('List all registered repositories')
+        .action(async () => {
+          const repoRoot = findRepoRoot(process.cwd());
+          const c = composeRoot({
+            repoRoot,
+            scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            runStartupSweeps: false,
+            ...buildOpts?.composeOverrides,
+          });
+          const repos = c.repositoryRepository.list();
+          if (repos.length === 0) {
+            console.log('No repositories registered.');
+            return;
+          }
+          console.log(
+            'ID'.padEnd(30),
+            'Enabled'.padEnd(10),
+            'Default Branch'.padEnd(20),
+            'Full Name',
+          );
+          console.log('-'.repeat(80));
+          for (const r of repos) {
+            console.log(
+              r.id.padEnd(30),
+              (r.enabled ? 'YES' : 'NO').padEnd(10),
+              r.defaultBranch.padEnd(20),
+              r.fullName,
+            );
+          }
+        }),
     );
 
   program

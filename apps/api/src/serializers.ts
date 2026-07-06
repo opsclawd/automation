@@ -13,6 +13,7 @@ export function serializeRun(r: RunItem) {
     status: r.status,
     currentPhase: r.currentPhase !== undefined ? r.currentPhase : null,
     completedPhases: r.completedPhases,
+    repoId: r.repoId,
     startedAt: r.startedAt.toISOString(),
     completedAt: r.completedAt !== undefined ? r.completedAt.toISOString() : null,
     exitCode: r.exitCode !== undefined ? r.exitCode : null,

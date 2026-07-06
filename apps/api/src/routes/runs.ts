@@ -25,9 +25,13 @@ function apiWorkerId(): WorkerId {
   return WorkerId(`api-${process.pid}`);
 }
 
+import { RepositoryId } from '@ai-sdlc/domain';
+
 export async function runsRoutes(app: FastifyInstance, c: Container): Promise<void> {
-  app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req, reply) => {
-    const MAX_LIMIT = 100;
+  app.get<{ Querystring: { limit?: string; offset?: string; repoId?: string } }>(
+    '/api/runs',
+    async (req, reply) => {
+      const MAX_LIMIT = 100;
     if (req.query.limit !== undefined && req.query.limit !== '') {
       if (!DECIMAL_INT_RE.test(req.query.limit)) {
         return reply.code(400).send({ error: 'limit must be a positive integer' });
@@ -54,7 +58,11 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
       req.query.offset !== undefined && req.query.offset !== ''
         ? Math.max(0, Number(req.query.offset))
         : 0;
-    const { runs, total } = c.runRepository.list({ limit, offset });
+    const repoId =
+      req.query.repoId !== undefined && req.query.repoId !== ''
+        ? RepositoryId(req.query.repoId)
+        : undefined;
+    const { runs, total } = c.runRepository.list({ limit, offset, repoId });
     return {
       runs: runs.map(serializeRun),
       total,

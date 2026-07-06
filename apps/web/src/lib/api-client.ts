@@ -15,6 +15,20 @@ export interface RunDto {
   exitCode: number | null;
   durationMs: number | null;
   failureReason: string | null;
+  repoId: string;
+}
+
+export interface RepositoryDto {
+  id: string;
+  owner: string;
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+  localBasePath: string;
+  enabled: boolean;
+  maxConcurrentRuns: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface FailureDto {
@@ -41,8 +55,15 @@ export interface ListRunsResult {
 export async function listRuns(params?: {
   limit: number;
   offset?: number;
+  repoId?: string;
 }): Promise<ListRunsResult> {
-  const qs = params ? `?limit=${params.limit}&offset=${params.offset ?? 0}` : '';
+  const paramsArray: string[] = [];
+  if (params) {
+    if (params.limit !== undefined) paramsArray.push(`limit=${params.limit}`);
+    if (params.offset !== undefined) paramsArray.push(`offset=${params.offset}`);
+    if (params.repoId !== undefined) paramsArray.push(`repoId=${params.repoId}`);
+  }
+  const qs = paramsArray.length > 0 ? `?${paramsArray.join('&')}` : '';
   const r = await fetch(`${apiUrl}/api/runs${qs}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load runs: ${r.status}`);
   return r.json() as Promise<ListRunsResult>;
@@ -108,6 +129,17 @@ export async function listReviewFix(runUuid: string): Promise<LoopDto[]> {
   const r = await fetch(`${base}/api/runs/${runUuid}/review-fix`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`failed to load review-fix: ${r.status}`);
   return ((await r.json()) as { loops: LoopDto[] }).loops;
+}
+
+export interface ListRepositoriesResult {
+  repositories: RepositoryDto[];
+}
+
+export async function listRepositories(): Promise<ListRepositoriesResult> {
+  const base = typeof window === 'undefined' ? apiUrl : '';
+  const r = await fetch(`${base}/api/repositories`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`failed to load repositories: ${r.status}`);
+  return r.json() as Promise<ListRepositoriesResult>;
 }
 
 export interface JobDto {

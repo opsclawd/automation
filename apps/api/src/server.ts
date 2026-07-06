@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import type { Container } from './compose.js';
 import { runsRoutes } from './routes/runs.js';
+import { repositoriesRoutes } from './routes/repositories.js';
 import { artifactsRoutes } from './routes/artifacts.js';
 import { eventsRoutes } from './routes/events.js';
 import { registerInvocationsRoutes } from './routes/invocations.js';
@@ -23,6 +24,7 @@ export async function buildServer(container: Container, logger: boolean = false)
   const app = Fastify({ logger, forceCloseConnections: 'idle' });
   await app.register(cors, { origin: ['http://127.0.0.1:4310'] });
   await runsRoutes(app, container);
+  await repositoriesRoutes(app, container);
   await artifactsRoutes(app, container);
   await eventsRoutes(app, container);
   registerInvocationsRoutes(app, container);
