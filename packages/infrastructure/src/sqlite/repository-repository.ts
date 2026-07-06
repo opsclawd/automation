@@ -4,7 +4,7 @@ import {
   type RepositoryHealthStatus,
   RepositoryId as mkRepositoryId,
 } from '@ai-sdlc/domain';
-import type { RepositoryRegistryPort } from '@ai-sdlc/application';
+import type { RepositoryRegistryPort } from '@ai-sdlc/application/ports';
 import type { Db } from './database.js';
 
 interface RepositoryRow {
