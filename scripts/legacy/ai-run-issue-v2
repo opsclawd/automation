@@ -95,22 +95,31 @@ mkdir -p "${ISSUES_DIR}"
 # the matching dead-config comment on the Zod schema.
 _ORCHESTRATOR_CONFIG="${REPO_ROOT}/.ai-orchestrator.json"
 _ORCHESTRATOR_LOCAL_CONFIG="${REPO_ROOT}/.ai-orchestrator.local.json"
+_TARGET_ORCHESTRATOR_CONFIG="${REPO_TARGET:+$REPO_TARGET/.ai-orchestrator.json}"
+_TARGET_ORCHESTRATOR_LOCAL_CONFIG="${REPO_TARGET:+$REPO_TARGET/.ai-orchestrator.local.json}"
 
-# Resolve active config source (deep-merges overrides if local config exists)
+# Resolve active config source (deep-merges overrides if any optional config exists on disk)
 _ACTIVE_CONFIG="$_ORCHESTRATOR_CONFIG"
-if [[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]]; then
+if [[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]] || [[ -f "${_TARGET_ORCHESTRATOR_CONFIG:-}" ]] || [[ -f "${_TARGET_ORCHESTRATOR_LOCAL_CONFIG:-}" ]]; then
   _ACTIVE_CONFIG=$(mktemp)
-  # jq '*' merges phaseProfile objects key-by-key, so a base {profile:...} entry merged with a
-  # local {role:...} override produces {role:..., profile:..., fallbackProfile:...} which the
-  # schema rejects. When both are present, role wins (local intent) — drop profile/fallbackProfile.
   jq -s '
-    .[0] * .[1]
+    (.[0] // {}) * (.[1] // {}) * (.[2] // {}) * (.[3] // {})
     | if .agent.phaseProfiles then
         .agent.phaseProfiles |= with_entries(
           if .value.profile and .value.role then del(.value.profile) | del(.value.fallbackProfile) else . end
         )
       else . end
-  ' "$_ORCHESTRATOR_CONFIG" "$_ORCHESTRATOR_LOCAL_CONFIG" > "$_ACTIVE_CONFIG" 2>/dev/null || { warn '.ai-orchestrator.local.json is invalid JSON — using base config'; mv "$_ORCHESTRATOR_LOCAL_CONFIG" "${_ORCHESTRATOR_LOCAL_CONFIG}.malformed-$(date +%s)" 2>/dev/null || true; cp "$_ORCHESTRATOR_CONFIG" "$_ACTIVE_CONFIG"; }
+  ' \
+    "$_ORCHESTRATOR_CONFIG" \
+    "$([[ -f "$_ORCHESTRATOR_LOCAL_CONFIG" ]] && echo "$_ORCHESTRATOR_LOCAL_CONFIG" || echo "/dev/null")" \
+    "$([[ -f "${_TARGET_ORCHESTRATOR_CONFIG:-}" ]] && echo "$_TARGET_ORCHESTRATOR_CONFIG" || echo "/dev/null")" \
+    "$([[ -f "${_TARGET_ORCHESTRATOR_LOCAL_CONFIG:-}" ]] && echo "$_TARGET_ORCHESTRATOR_LOCAL_CONFIG" || echo "/dev/null")" > "$_ACTIVE_CONFIG" \
+    || { echo "orchestrator: failed to merge config (check JSON syntax)" >&2; exit 2; }
+fi
+
+maybe_target_arg=()
+if [[ -n "${REPO_TARGET:-}" ]]; then
+  maybe_target_arg=(--target-repo-root "$REPO_TARGET")
 fi
 MAX_REVIEW_FIX_ITERATIONS=5
 MAX_WHOLE_PR_FIX_ITERATIONS=10
@@ -988,6 +997,7 @@ Write the result now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --prompt-file "$_extract_prompt_file" \
     --timeout-minutes 1 \
     --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
@@ -1079,6 +1089,7 @@ Write the result now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --prompt-file "$_rw_prompt_file" \
     --timeout-minutes 1 \
     --start-sha "$head_sha" \
@@ -1161,6 +1172,7 @@ HARD RULE: Do NOT modify any code beyond fixing lint/format errors reported by t
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --prompt-file "$_cc_prompt_file" \
     --timeout-minutes 2 \
     --start-sha "$head_before" \
@@ -1598,6 +1610,7 @@ Write design.md now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --phase-id plan-design \
     --prompt-file "$_plan_prompt_file" \
     --timeout-minutes $(( (TIMEOUT_BRAINSTORM + 59) / 60 )) \
@@ -1751,6 +1764,7 @@ Write plan.md and task-manifest.json now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --phase-id plan-write \
     --prompt-file "$_plan_prompt_file" \
     --timeout-minutes $(( (TIMEOUT_PLAN_WRITE + 59) / 60 )) \
@@ -2080,6 +2094,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
+      "${maybe_target_arg[@]}" \
       --prompt-file "$_impl_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_IMPLEMENT + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
@@ -2267,6 +2282,7 @@ ${history_excerpt}"
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
+      "${maybe_target_arg[@]}" \
       --prompt-file "$_spec_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
@@ -2540,6 +2556,7 @@ ${history_excerpt}"
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
+      "${maybe_target_arg[@]}" \
       --prompt-file "$_qual_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_REVIEW + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
@@ -2726,6 +2743,7 @@ ${history_excerpt}"
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
+      "${maybe_target_arg[@]}" \
       --prompt-file "$_fix_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_FIX + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
@@ -2849,6 +2867,7 @@ CRITICAL: Do NOT switch branches (no git checkout, git switch, git stash branch)
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
+      "${maybe_target_arg[@]}" \
       --prompt-file "$_arbiter_prompt_file" \
       --timeout-minutes 10 \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
@@ -3600,6 +3619,7 @@ if [[ "$PHASE" == "validate" ]]; then
         --run-id "$RUN_ID" \
         --repo-id "$REPO_ID" \
         --repo-root "$REPO_ROOT" \
+        "${maybe_target_arg[@]}" \
         --phase-id validate \
         2>&1 | tee -a "${ISSUES_DIR}/validate.log"; then
       _pipe_status=("${PIPESTATUS[@]}")
@@ -3753,6 +3773,7 @@ Start now."
         --run-id "$RUN_ID" \
         --repo-id "$REPO_ID" \
         --repo-root "$REPO_ROOT" \
+        "${maybe_target_arg[@]}" \
         --phase-id "fix-validate-${FIX_VALIDATE_COUNT}" \
         --step-id "${FIX_VALIDATE_COUNT}" \
         --prompt-file "$_fv_prompt_file" \
@@ -3793,6 +3814,7 @@ Start now."
           --run-id "$RUN_ID" \
           --repo-id "$REPO_ID" \
           --repo-root "$REPO_ROOT" \
+          "${maybe_target_arg[@]}" \
           --phase-id "fix-validate-revalidate-${FIX_VALIDATE_COUNT}" \
           2>&1 | tee "${ISSUES_DIR}/revalidate-fv-${FIX_VALIDATE_COUNT}.log"; then
         _fv_pipe_status=("${PIPESTATUS[@]}")
@@ -3934,6 +3956,7 @@ Write code-review.md now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --phase-id "review-fix" \
     "${_WHOLE_PR_MAX_ITERATIONS_FLAG[@]}" \
     2>&1 | tee -a "${ISSUES_DIR}/review-fix.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
@@ -4062,6 +4085,7 @@ Write review-task-manifest.json and review-triage.md now."
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --phase-id review-triage \
     --prompt-file "$_triage_prompt_file" \
     --timeout-minutes $(( (TIMEOUT_REVIEW_TRIAGE + 59) / 60 )) \
@@ -4249,6 +4273,7 @@ if [[ "$FIX_REVIEW_USE_LEGACY" -eq 0 && "$FIX_REVIEW_EMPTY" -eq 0 ]]; then
         --run-id "$RUN_ID" \
         --repo-id "$REPO_ID" \
         --repo-root "$REPO_ROOT" \
+        "${maybe_target_arg[@]}" \
         --phase-id fix-review-preflight \
         2>&1 | tee -a "$_preflight_log"; then
       _preflight_pipe_status=("${PIPESTATUS[@]}")
@@ -4333,6 +4358,7 @@ Only include tasks that have action=fix or action=null. Skip defer/skip tasks.
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
+      "${maybe_target_arg[@]}" \
       --phase-id fix-review-architect \
       --prompt-file "$_architect_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_FIX_REVIEW_ARCHITECT + 59) / 60 )) \
@@ -4405,6 +4431,7 @@ else
     --run-id "$RUN_ID" \
     --repo-id "$REPO_ID" \
     --repo-root "$REPO_ROOT" \
+    "${maybe_target_arg[@]}" \
     --phase-id "review-fix" \
     "${_ARCHITECT_PLAN_FLAG[@]}" \
     2>&1 | tee -a "${ISSUES_DIR}/fix-review-cli.log"; _review_fix_ec=${PIPESTATUS[0]} _tee_ec=${PIPESTATUS[1]}
@@ -4498,6 +4525,7 @@ Start now."
       --run-id "$RUN_ID" \
       --repo-id "$REPO_ID" \
       --repo-root "$REPO_ROOT" \
+      "${maybe_target_arg[@]}" \
       --prompt-file "$_compound_prompt_file" \
       --timeout-minutes $(( (TIMEOUT_COMPOUND + 59) / 60 )) \
       --start-sha "$(git -C "$WORKTREE_DIR" rev-parse HEAD 2>/dev/null || printf '0%.0s' {1..40})" \
