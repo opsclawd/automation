@@ -1048,14 +1048,14 @@ exit 1
 
     expect(createWorktreeSpy).toHaveBeenCalledOnce();
     expect(createWorktreeSpy.mock.calls[0][0]).toMatchObject({
-      worktreePath: path.join(root, '.ai-worktrees', 'issue-71'),
+      worktreePath: path.join(root, '.ai-worktrees', 'owner/repo', 'issue-71'),
       branch: 'ai/issue-71',
     });
     expect(headCommitShaSpy).toHaveBeenCalledOnce();
 
     const updated = container.runRepository.findByUuid('prepare-wt-uuid');
     expect(updated?.startCommitSha).toBe('feedfacefeedfacefeedfacefeedfacefeedface');
-    expect(result.cwd).toBe(path.join(root, '.ai-worktrees', 'issue-71'));
+    expect(result.cwd).toBe(path.join(root, '.ai-worktrees', 'owner/repo', 'issue-71'));
 
     createWorktreeSpy.mockRestore();
     headCommitShaSpy.mockRestore();

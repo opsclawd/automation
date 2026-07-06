@@ -75,6 +75,10 @@ export class FakeJobQueuePort implements JobQueuePort {
   listForRepo(repoId: RepositoryId): Job[] {
     return [...this.jobs.values()].filter((j) => j.repoId === repoId);
   }
+
+  listActive(): Job[] {
+    return [...this.jobs.values()].filter((j) => j.status === 'claimed' || j.status === 'running');
+  }
   listForRun(runId: RunId): Job[] {
     return [...this.jobs.values()].filter((j) => j.runId === runId);
   }

@@ -39,8 +39,8 @@ export interface WorkerLoopDeps {
   }) => void;
   onProgress?: () => void;
   outerSignal?: AbortSignal;
-  heartbeatIntervalMs?: number;
-  repoId?: RepositoryId;
+  heartbeatIntervalMs?: number | undefined;
+  repoId?: RepositoryId | undefined;
 }
 
 function isRunnable(status: string): boolean {

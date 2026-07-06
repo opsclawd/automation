@@ -6,9 +6,9 @@ export interface EnqueueJobInput {
 
 export interface ClaimNextInput {
   workerId: WorkerId;
-  skipJobIds?: Set<JobId>;
-  ttlMs?: number;
-  repoId?: RepositoryId;
+  skipJobIds?: Set<JobId> | undefined;
+  ttlMs?: number | undefined;
+  repoId?: RepositoryId | undefined;
 }
 
 export interface JobQueuePort {
