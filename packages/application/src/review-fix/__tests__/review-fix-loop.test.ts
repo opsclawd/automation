@@ -1465,4 +1465,79 @@ describe('ReviewFixLoop', () => {
       expect(out.phaseOutcome).toBe('failed');
     });
   });
+
+  describe('endOnReview (#627)', () => {
+    it('grants one trailing post-fix re-review when the last iteration ended `fixed` and endOnReview=true (default)', async () => {
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: review fail → fix → reval pass → fixed
+      // Iteration 2: review fail → fix → reval pass → fixed
+      // Trailing re-review (iteration 3): review pass → resolved
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loop.status).toBe('converged');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+      expect(reviewCalls).toBe(3);
+    });
+
+    it('does not grant a trailing re-review when endOnReview=false', async () => {
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        options: { endOnReview: false },
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: reviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: review fail → fix → reval pass → fixed
+      // Iteration 2: review fail → fix → reval pass → fixed (budget exhausted)
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(2);
+      expect(reviewCalls).toBe(2);
+    });
+
+    it('does not grant a trailing re-review when the last iteration ended `unresolved`', async () => {
+      let reviewCalls = 0;
+      const deps = makeDeps({
+        runReview: async () => {
+          reviewCalls += 1;
+          return {
+            invocationId: `rev-${reviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => ({
+          invocationId: 'fix-fail',
+          agentOutcome: 'success' as const,
+          verdict: 'cannot_fix' as const,
+        }),
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iterations 1 + 2: review fail → fix (cannot_fix) → unresolved each time
+      // No trailing re-review (cannot_fix is not `fixed`)
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(2);
+      expect(reviewCalls).toBe(2);
+    });
+  });
 });
