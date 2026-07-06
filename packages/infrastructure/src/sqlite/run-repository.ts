@@ -21,6 +21,8 @@ interface RunRow {
   pid: number | null;
   start_commit_sha: string | null;
   base_branch: string | null;
+  config_fingerprint: string | null;
+  config_sources_json: string | null;
 }
 
 /**
@@ -38,19 +40,25 @@ export interface RunRecord extends Run {
   pid?: number;
   startCommitSha?: string;
   baseBranch?: string;
+  configFingerprint?: string;
+  configSourcesJson?: string;
 }
 
 /** Implements RunRepositoryPort (@ai-sdlc/application). */
 export class RunRepository {
-  constructor(private readonly db: Db) {}
+  constructor(
+    private readonly db: Db,
+    private readonly configFingerprint: string | null = null,
+    private readonly configSourcesJson: string | null = null,
+  ) {}
 
   insert(run: Run, pid?: number): void {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
-        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha, base_branch)
+        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha, base_branch, config_fingerprint, config_sources_json)
          VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
-           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha, @base_branch)`,
+           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha, @base_branch, @config_fingerprint, @config_sources_json)`,
       )
       .run({
         uuid: run.uuid,
@@ -68,6 +76,8 @@ export class RunRepository {
         pid: pid ?? null,
         start_commit_sha: (run as RunRecord).startCommitSha ?? null,
         base_branch: (run as RunRecord).baseBranch ?? null,
+        config_fingerprint: (run as RunRecord).configFingerprint ?? this.configFingerprint ?? null,
+        config_sources_json: (run as RunRecord).configSourcesJson ?? this.configSourcesJson ?? null,
       });
   }
 
@@ -141,6 +151,14 @@ export class RunRepository {
     if (patch.pid !== undefined) {
       fields.push('pid = @pid');
       params.pid = patch.pid;
+    }
+    if (patch.configFingerprint !== undefined) {
+      fields.push('config_fingerprint = @config_fingerprint');
+      params.config_fingerprint = patch.configFingerprint;
+    }
+    if (patch.configSourcesJson !== undefined) {
+      fields.push('config_sources_json = @config_sources_json');
+      params.config_sources_json = patch.configSourcesJson;
     }
     if (fields.length === 0) return false;
     const result = this.db
@@ -223,6 +241,14 @@ export class RunRepository {
     if (patch.pid !== undefined) {
       fields.push('pid = @pid');
       params.pid = patch.pid;
+    }
+    if (patch.configFingerprint !== undefined) {
+      fields.push('config_fingerprint = @config_fingerprint');
+      params.config_fingerprint = patch.configFingerprint;
+    }
+    if (patch.configSourcesJson !== undefined) {
+      fields.push('config_sources_json = @config_sources_json');
+      params.config_sources_json = patch.configSourcesJson;
     }
     if (fields.length === 0) return;
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
@@ -362,5 +388,7 @@ function toRecord(row: RunRow): RunRecord {
     ...(row.pid !== null ? { pid: row.pid } : {}),
     ...(row.start_commit_sha !== null ? { startCommitSha: row.start_commit_sha } : {}),
     ...(row.base_branch !== null ? { baseBranch: row.base_branch } : {}),
+    ...(row.config_fingerprint !== null ? { configFingerprint: row.config_fingerprint } : {}),
+    ...(row.config_sources_json !== null ? { configSourcesJson: row.config_sources_json } : {}),
   };
 }

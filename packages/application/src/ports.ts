@@ -25,6 +25,8 @@ export interface RunRecord extends Run {
   pid?: number;
   startCommitSha?: string;
   baseBranch?: string;
+  configFingerprint?: string;
+  configSourcesJson?: string;
 }
 
 export interface RunRepositoryUpdatePatch {
@@ -39,6 +41,8 @@ export interface RunRepositoryUpdatePatch {
   pid?: number;
   startCommitSha?: string;
   baseBranch?: string;
+  configFingerprint?: string;
+  configSourcesJson?: string;
 }
 
 export interface RunRepositoryPort {
