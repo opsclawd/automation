@@ -4,6 +4,30 @@ import { ZodError } from 'zod';
 import { ConfigError } from './errors.js';
 import { orchestratorConfigSchema, type OrchestratorConfig } from './schema.js';
 
+export type ConfigSourceKind = 'automation' | 'target' | 'local';
+
+export interface ConfigSource {
+  path: string;
+  kind: ConfigSourceKind;
+  present: boolean;
+}
+
+export interface LayeredConfigInput {
+  automationRoot: string;
+  targetRoot?: string;
+}
+
+export interface LoadedConfig {
+  config: OrchestratorConfig;
+  sources: ConfigSource[];
+  fingerprint: string;
+  rawMergedJson: unknown;
+}
+
+export function loadLayeredConfig(_input: LayeredConfigInput): LoadedConfig {
+  throw new Error('loadLayeredConfig not implemented');
+}
+
 const CONFIG_FILENAME = '.ai-orchestrator.json';
 const LOCAL_CONFIG_FILENAME = '.ai-orchestrator.local.json';
 
