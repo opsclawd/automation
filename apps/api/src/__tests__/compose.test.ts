@@ -109,10 +109,58 @@ describe('composeRoot', () => {
     expect(row?.status).toBe('passed');
   });
 
+  it('throws when metadata resolution fails for an explicit targetRepoRoot', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const target = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-target-')));
+    const scriptPath = fakeScript(0);
+    const throwingResolver: ComposeOptions['metadataResolver'] = {
+      resolve: () => {
+        throw new Error('not a git repository');
+      },
+    };
+    expect(() =>
+      composeRoot({
+        repoRoot: root,
+        targetRepoRoot: target,
+        scriptPath,
+        metadataResolver: throwingResolver,
+      }),
+    ).toThrow(
+      /Failed to resolve repository metadata for --target-repo-root .*not a git repository/,
+    );
+  });
+
+  it('falls back to GITHUB_REPOSITORY only when no explicit target is supplied', () => {
+    const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
+    const scriptPath = fakeScript(0);
+    const throwingResolver: ComposeOptions['metadataResolver'] = {
+      resolve: () => {
+        throw new Error('not a git repository');
+      },
+    };
+    const orig = process.env.GITHUB_REPOSITORY;
+    process.env.GITHUB_REPOSITORY = 'ambient/fallback';
+    try {
+      const container = composeRoot({
+        repoRoot: root,
+        scriptPath,
+        metadataResolver: throwingResolver,
+      });
+      expect(container.repoFullName).toBe('ambient/fallback');
+    } finally {
+      if (orig !== undefined) process.env.GITHUB_REPOSITORY = orig;
+      else delete process.env.GITHUB_REPOSITORY;
+    }
+  });
+
   it('buildPhaseHandlerContext adds idFactory and resolveProfile from compose wiring', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath,
+    });
 
     const ctx = container.buildPhaseHandlerContext(
       {
@@ -153,7 +201,11 @@ describe('composeRoot', () => {
   it('exposes validationRunRepository', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath,
+    });
     expect(container.validationRunRepository).toBeDefined();
     expect(typeof container.validationRunRepository.listByRun).toBe('function');
   });
@@ -161,7 +213,11 @@ describe('composeRoot', () => {
   it('exposes prReviewRepository', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
     const scriptPath = fakeScript(0);
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath,
+    });
     expect(container.prReviewRepository).toBeDefined();
     expect(typeof container.prReviewRepository.listComments).toBe('function');
   });
@@ -176,7 +232,8 @@ describe('composeRoot', () => {
     );
     chmodSync(scriptPath, 0o755);
 
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER,
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: root,
       scriptPath,
       baseBranch: 'develop',
@@ -206,7 +263,8 @@ exit 1
     );
     chmodSync(scriptPath, 0o755);
 
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER,
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: root,
       scriptPath,
     });
@@ -255,7 +313,11 @@ exit 1
     );
     db.close();
     // Compose should sweep it
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath,
+    });
     const run = container.runRepository.findByUuid('dead-pid-uuid');
     expect(run?.status).toBe('cancelled');
     expect(run?.failureReason).toMatch(/orphaned/);
@@ -288,7 +350,11 @@ exit 1
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
       const out = await container.startIssueRun.execute({
         issueNumber: 1,
         repoId: RepositoryId('owner/repo'),
@@ -314,7 +380,11 @@ exit 1
     const origTmpdir = process.env.TMPDIR;
     process.env.TMPDIR = customTmp;
     try {
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
       expect(container.baseTmpDir).toBe(path.join(customTmp, '.ai-tmp'));
       const out = await container.startIssueRun.execute({
         issueNumber: 2,
@@ -413,14 +483,23 @@ exit 1
       mkdirSync(completedTmpDir, { recursive: true });
       writeFileSync(path.join(completedTmpDir, 'leftover.tmp'), 'data');
 
-      composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath, runStartupSweeps: false });
+      composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+        runStartupSweeps: false,
+      });
 
       expect(existsSync(deadPidTmpDir)).toBe(true);
       expect(existsSync(path.join(deadPidTmpDir, 'prompt.md'))).toBe(true);
       expect(existsSync(completedTmpDir)).toBe(true);
       expect(existsSync(path.join(completedTmpDir, 'leftover.tmp'))).toBe(true);
 
-      const container2 = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container2 = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
       expect(container2.runRepository.findByUuid('dead-pid-uuid')?.status).toBe('cancelled');
       expect(existsSync(completedTmpDir)).toBe(false);
     } finally {
@@ -455,7 +534,11 @@ exit 1
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
       const out = await container.startIssueRun.execute({
         issueNumber: 3,
         repoId: RepositoryId('owner/repo'),
@@ -501,7 +584,12 @@ exit 1
         },
       }),
     );
-    const c = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
+    const c = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      runStartupSweeps: false,
+    });
     expect(c.loopRepository).toBeDefined();
     expect(c.reviewFixLoop).toBeDefined();
     expect(typeof c.reviewFixLoop!.execute).toBe('function');
@@ -539,7 +627,12 @@ exit 1
         },
       }),
     );
-    const c = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
+    const c = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      runStartupSweeps: false,
+    });
     expect(c.runExecutor).toBeDefined();
     expect(c.phaseRegistry).toBeDefined();
     expect(c.runExecutor).toBeInstanceOf(RunExecutor);
@@ -596,7 +689,12 @@ exit 1
         },
       }),
     );
-    const c = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath: '/dev/null', runStartupSweeps: false });
+    const c = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath: '/dev/null',
+      runStartupSweeps: false,
+    });
     const handler = c.phaseRegistry.get(PhaseName('read_issue'));
     expect(handler).toBeDefined();
     // The handler should NOT be a HandlerNotWiredError stub
@@ -711,7 +809,11 @@ exit 1
     const origTmpdir = process.env.TMPDIR;
     delete process.env.TMPDIR;
     try {
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
       const out = await container.startIssueRun.execute({
         issueNumber: 4,
         repoId: RepositoryId('owner/repo'),
@@ -726,7 +828,8 @@ exit 1
   });
 
   it('exposes a buildPrReviewPoller factory', () => {
-    const c = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER,
+    const c = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-'))),
       scriptPath: 'scripts/legacy/ai-run-issue-v2',
       dbPath: ':memory:',
@@ -761,7 +864,8 @@ exit 1
           },
         }),
       );
-      const c = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER,
+      const c = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
         repoRoot: root,
         scriptPath: '/dev/null',
         runStartupSweeps: false,
@@ -794,7 +898,8 @@ exit 1
 
   it('throws ConfigError when buildPrReviewPoller is called without agent config', () => {
     const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
-    const c = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER,
+    const c = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: root,
       scriptPath: '/dev/null',
       runStartupSweeps: false,
@@ -844,7 +949,11 @@ exit 1
     expect(steps[0].completedAt).toBeDefined();
 
     // Verify SQLite persistence by creating a second container with the same db
-    const c2 = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+    const c2 = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
+      repoRoot: root,
+      scriptPath,
+    });
     const steps2 = c2.stepRepository.listForRun('test-run-uuid');
     expect(steps2).toHaveLength(1);
     expect(steps2[0].id).toBe('test-step-1');
@@ -984,7 +1093,8 @@ exit 1
         },
       }),
     );
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER,
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: root,
       scriptPath: '/dev/null',
       dbPath,
@@ -1020,7 +1130,8 @@ exit 1
         },
       }),
     );
-    const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER,
+    const container = composeRoot({
+      metadataResolver: FAKE_METADATA_RESOLVER,
       repoRoot: root,
       scriptPath: '/dev/null',
       repoFullName: 'owner/repo',
@@ -1191,7 +1302,11 @@ exit 1
       const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
       writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(fakeAgentConfig));
       const scriptPath = fakeScript(0);
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
 
       const implementHandler = container.phaseRegistry.get(PhaseName('implement')) as unknown as {
         opts: {
@@ -1227,7 +1342,11 @@ exit 1
       const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
       writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(fakeAgentConfig));
       const scriptPath = fakeScript(0);
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
 
       const implementHandler = container.phaseRegistry.get(PhaseName('implement')) as unknown as {
         opts: {
@@ -1263,7 +1382,11 @@ exit 1
       const root = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-compose-')));
       writeFileSync(path.join(root, '.ai-orchestrator.json'), JSON.stringify(fakeAgentConfig));
       const scriptPath = fakeScript(0);
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot: root, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot: root,
+        scriptPath,
+      });
 
       const implementHandler = container.phaseRegistry.get(PhaseName('implement')) as unknown as {
         opts: {
@@ -1355,14 +1478,23 @@ exit 1
       const repoRoot = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-target-')));
       const target = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-target-other-')));
       const scriptPath = fakeScript(0);
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot, scriptPath, targetRepoRoot: target });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot,
+        scriptPath,
+        targetRepoRoot: target,
+      });
       expect(container.runsDir).toBe(path.join(target, '.ai-runs'));
     });
 
     it('falls back to repoRoot when targetRepoRoot is unset', () => {
       const repoRoot = trackDir(() => mkdtempSync(path.join(os.tmpdir(), 'ai-orch-target-fb-')));
       const scriptPath = fakeScript(0);
-      const container = composeRoot({ metadataResolver: FAKE_METADATA_RESOLVER, repoRoot, scriptPath });
+      const container = composeRoot({
+        metadataResolver: FAKE_METADATA_RESOLVER,
+        repoRoot,
+        scriptPath,
+      });
       expect(container.runsDir).toBe(path.join(repoRoot, '.ai-runs'));
     });
   });
