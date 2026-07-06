@@ -17,6 +17,7 @@ import type {
   StepContext,
   PostFixGateResult,
   ReviewStepOptions,
+  ReviewLoopHistoryEntry,
 } from '../types.js';
 
 function collectEvents() {
@@ -1579,6 +1580,137 @@ describe('ReviewFixLoop', () => {
       await new ReviewFixLoop(deps).execute(baseInput());
       expect(receivedOpts[0]?.prevReviewedCommitSha).toBeUndefined();
       expect(receivedOpts[1]?.prevReviewedCommitSha).toBeUndefined();
+    });
+  });
+
+  describe('trend-aware exit (#627)', () => {
+    function makeDepsWithHistory(over: Partial<ReviewFixLoopDeps>) {
+      const historyStore: ReviewLoopHistoryEntry[] = [];
+      return makeDeps({
+        loopHistory: {
+          read: async () => historyStore,
+          append: async (_ctx, entry) => {
+            historyStore.push(entry);
+          },
+          format: (_entries, audience) => `history for ${audience}`,
+        },
+        ...over,
+      });
+    }
+
+    it('exits as converged_with_notes when severity-weighted counts trend down in strict mode', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      // maxIterations: 3 → 3 reviews run → trend detected at exhaustion.
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.phaseOutcome).toBe('passed');
+      expect(out.loopStatus).toBe('converged_with_notes');
+      expect(out.needsHumanReview).toBe(true);
+    });
+
+    it('does NOT exit as converged_with_notes when post-fix-gate failed (strict mode)', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        runRevalidation: async () => ({ validationRunId: 'v', passed: false, category: 'build' }),
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.phaseOutcome).toBe('failed');
+      expect(out.loopStatus).toBe('exhausted');
+      expect(out.needsHumanReview).toBeUndefined();
+    });
+
+    it('honors lenient mode and exits without requiring post-fix-gate pass', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        options: { trendAwareExit: { mode: 'lenient' } },
+        runRevalidation: async () => ({ validationRunId: 'v', passed: false, category: 'build' }),
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.loopStatus).toBe('converged_with_notes');
+      expect(out.needsHumanReview).toBe(true);
+    });
+
+    it('does not exit as converged_with_notes when trendAwareExit.enabled=false', async () => {
+      let reviewCall = 0;
+      const findingsSequence: Array<Array<{ severity: string; summary: string }>> = [
+        [
+          { severity: 'high', summary: 'a' },
+          { severity: 'high', summary: 'b' },
+        ],
+        [{ severity: 'high', summary: 'a' }],
+        [{ severity: 'medium', summary: 'b' }],
+      ];
+      const deps = makeDepsWithHistory({
+        options: { trendAwareExit: { enabled: false } },
+        runReview: async () => {
+          const i = reviewCall++;
+          return {
+            invocationId: `rev-${i + 1}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+            offendingFindings: findingsSequence[i] ?? [],
+            reviewedCommitSha: `sha-${i + 1}`,
+          };
+        },
+      });
+      const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+      expect(out.loopStatus).toBe('exhausted');
+      expect(out.phaseOutcome).toBe('failed');
     });
   });
 });
