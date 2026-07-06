@@ -8,7 +8,7 @@ export interface ReviewFixHandlerOpts {
    *  real ReviewFixLoop.execute(...) here. */
   runLoop: (ctx: PhaseHandlerContext) => Promise<{
     phaseOutcome: 'passed' | 'failed';
-    loopStatus: 'converged' | 'failed' | 'exhausted';
+    loopStatus: 'converged' | 'converged_with_notes' | 'failed' | 'exhausted';
     /** True when the loop short-circuited via the unfounded_pingpong path. */
     needsHumanReview?: boolean;
   }>;
@@ -23,7 +23,7 @@ export class ReviewFixHandler implements PhaseHandler {
     emit('review_fix.started', 'info', 'review-fix started');
 
     let phaseOutcome: 'passed' | 'failed';
-    let loopStatus: 'converged' | 'failed' | 'exhausted';
+    let loopStatus: 'converged' | 'converged_with_notes' | 'failed' | 'exhausted';
     let result: Awaited<ReturnType<ReviewFixHandlerOpts['runLoop']>>;
     try {
       result = await this.opts.runLoop(ctx);

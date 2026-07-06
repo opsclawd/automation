@@ -171,7 +171,7 @@ export interface ReviewFixLoopInput {
 export interface ReviewFixLoopResult {
   loop: Loop;
   phaseOutcome: 'passed' | 'failed';
-  loopStatus?: 'converged' | 'failed' | 'exhausted';
+  loopStatus: 'converged' | 'converged_with_notes' | 'failed' | 'exhausted';
   /**
    * True iff the loop short-circuited via the `unfounded_pingpong` path
    * or another `needs_human_review` branch. Mapped by the handler to

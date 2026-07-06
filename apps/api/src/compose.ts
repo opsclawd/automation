@@ -2287,7 +2287,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             });
             return {
               phaseOutcome: result.phaseOutcome,
-              loopStatus: result.loop.status as 'converged' | 'failed' | 'exhausted',
+              loopStatus: result.loopStatus,
             };
           },
         }),
