@@ -27,6 +27,9 @@ export interface RunRecord extends Run {
   baseBranch?: string | undefined;
   modelOverride?: string | undefined;
   runtimeOverride?: string | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: string | undefined;
 }
 
 export interface RunRepositoryUpdatePatch {
@@ -40,6 +43,9 @@ export interface RunRepositoryUpdatePatch {
   durationMs?: number | undefined;
   pid?: number | undefined;
   startCommitSha?: string | undefined;
+  baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: string | undefined;
   baseBranch?: string | undefined;
   modelOverride?: string | undefined;
   runtimeOverride?: string | undefined;

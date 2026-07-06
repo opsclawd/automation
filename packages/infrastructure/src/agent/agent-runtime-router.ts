@@ -444,9 +444,10 @@ export class AgentRuntimeRouter implements AgentPort {
     model: string;
   } {
     const requestModel = request?.model?.trim();
+    const requestModel = request?.model?.trim();
     const envModel = this.env.AI_AGENT_MODEL?.trim();
     const baseModel = requestModel || envModel || p.model;
-    const effectiveModel = !requestModel && !envModel && p.variant ? `${baseModel}-${p.variant}` : baseModel;
+    const effectiveModel = !requestModel && !requestModel && !envModel && p.variant ? `${baseModel}-${p.variant}` : baseModel;
     return {
       provider: request?.provider?.trim() || this.env.AI_AGENT_PROVIDER?.trim() || p.provider,
       model: effectiveModel,

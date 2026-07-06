@@ -81,6 +81,8 @@ export function startPhase(run: Run, phase: string): Run {
   return { ...run, currentPhase: phase };
 }
 
+// `phase` must equal `currentPhase` — guards against callers who skipped a
+// startPhase or passed the wrong name.
 export function completePhase(run: Run, phase: string): Run {
   if (run.currentPhase === undefined) {
     throw new RunStateError(
@@ -213,6 +215,14 @@ export function canResume(run: Run): boolean {
   return run.status === 'failed' || run.status === 'blocked' || run.status === 'needs_human_review';
 }
 
+/**
+ * Resume a failed run.
+ *
+ * When `phase` is provided (phase-level retry), the run resumes from that
+ * specific phase — prior completed and skipped phases are preserved.
+ * When `phase` is omitted (full restart), completed and skipped phases are
+ * also preserved and the run restarts from the first phase.
+ */
 export function resumeRun(run: Run, phase?: string): Run {
   if (!canResume(run)) {
     throw new RunStateError(

@@ -1,4 +1,4 @@
-import type { PhaseName, Failure, AgentProfileName } from '@ai-sdlc/domain';
+import type { PhaseName, Failure, AgentProfileName, AgentRuntimeKind } from "@ai-sdlc/domain";
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
@@ -26,6 +26,8 @@ export interface PhaseHandlerContext {
   startCommitSha?: string | undefined;
   expectedBranch?: string | undefined;
   baseBranch?: string | undefined;
+  modelOverride?: string | undefined;
+  runtimeOverride?: AgentRuntimeKind | undefined;
   modelOverride?: string | undefined;
   runtimeOverride?: AgentRuntimeKind | undefined;
   resolveProfile?: ((phase: string) => AgentProfileName) | undefined;

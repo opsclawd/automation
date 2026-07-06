@@ -19,6 +19,7 @@ export interface AgentInvocationRequest {
   stepId?: string | undefined;
   startCommitSha: string;
   runtime?: AgentRuntimeKind | undefined;
+  runtime?: AgentRuntimeKind | undefined;
   abortSignal?: AbortSignal | undefined;
   provider?: string | undefined;
   model?: string | undefined;
