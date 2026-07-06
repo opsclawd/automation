@@ -412,7 +412,8 @@ export interface Container {
   git: GitPort;
   /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
   buildRunContext?: (run: Run) => PhaseHandlerContext;
-  repoFullName?: string;
+  repoFullName: string;
+  targetRepoRoot: string;
   runValidation: RunValidation;
   startIssueRun: StartIssueRun;
   cancelRun: CancelRun;
@@ -2905,7 +2906,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     workerRegistry,
     ...(workerLoopDeps !== undefined ? { workerLoopDeps } : {}),
     git: gitAdapter,
-    ...(resolvedRepoFullName !== undefined ? { repoFullName: resolvedRepoFullName } : {}),
+    repoFullName: resolvedRepoFullName ?? '',
+    targetRepoRoot: targetRoot,
     runValidation,
     startIssueRun,
     cancelRun,

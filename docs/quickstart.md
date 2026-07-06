@@ -85,6 +85,20 @@ A previous run for that issue is in a non-terminal state. Resume or fail it befo
 **Next.js shows `Failed to load runs: 500`**
 The API server is not running. Start it with `pnpm --filter @ai-sdlc/api dev serve` and refresh the dashboard.
 
+## Serving a target repository
+
+The orchestrator server can be bound to a specific target repository. This is useful when you want to inspect or manage runs for a repository other than the one where the orchestrator is installed.
+
+```bash
+pnpm --filter @ai-sdlc/api dev serve --target-repo-root /path/to/target/repo
+```
+
+When bound to a target repository, the API and dashboard will:
+- Use the target repository's `.ai-runs/orchestrator.sqlite` database.
+- Read and write artifacts to the target repository's `.ai-runs/` directory.
+- Perform Git and worktree operations inside the target repository.
+- Display the target repository's name and path in the dashboard header.
+
 ## Emergency: legacy Bash executor
 
 The legacy Bash orchestrator is preserved at `scripts/legacy/ai-run-issue-v2` for emergency use. To invoke it explicitly:

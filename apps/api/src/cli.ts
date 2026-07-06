@@ -580,6 +580,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
       'Override database path (default: <repoRoot>/.ai-runs/orchestrator.sqlite)',
     )
     .option('--runs-dir <path>', 'Override runs directory (default: <repoRoot>/.ai-runs)')
+    .option(
+      '--target-repo-root <path>',
+      'Target repository root for worktrees and DB (default: orchestrator repo)',
+    )
     .action(
       async (opts: {
         port: number;
@@ -587,7 +591,34 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         repoRoot?: string;
         dbPath?: string;
         runsDir?: string;
+        targetRepoRoot?: string;
       }) => {
+        let targetRepoRoot: string | undefined;
+        if (opts.targetRepoRoot !== undefined) {
+          targetRepoRoot = resolve(process.cwd(), opts.targetRepoRoot);
+          if (!existsSync(targetRepoRoot) || !statSync(targetRepoRoot).isDirectory()) {
+            console.error(
+              `Error: --target-repo-root is not an existing directory: ${targetRepoRoot}`,
+            );
+            process.exit(EXIT_USER_ERROR);
+          }
+          try {
+            execFileSync('git', ['-C', targetRepoRoot, 'rev-parse', '--git-dir'], {
+              stdio: 'pipe',
+            });
+          } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT') {
+              console.error(`Error: git CLI not found; cannot validate --target-repo-root.`);
+            } else {
+              console.error(
+                `Error: --target-repo-root is not inside a git working tree: ${targetRepoRoot}`,
+              );
+            }
+            process.exit(EXIT_USER_ERROR);
+          }
+        }
+
         const repoRoot = opts.repoRoot ?? findRepoRoot(process.cwd());
         const scriptPath = opts.script
           ? isAbsolute(opts.script)
@@ -601,6 +632,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         };
         if (opts.dbPath) composeOpts.dbPath = opts.dbPath;
         if (opts.runsDir) composeOpts.runsDir = opts.runsDir;
+        if (opts.targetRepoRoot !== undefined) composeOpts.targetRepoRoot = opts.targetRepoRoot;
         const c = composeRoot(composeOpts);
         const { startServer } = await import('./server.js');
         const server = await startServer({ container: c, port: opts.port });
