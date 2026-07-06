@@ -6,9 +6,11 @@ import type {
   PullRequestReview,
   GitHubReviewComment,
   CreatePullRequestInput,
+  GitHubRepo,
 } from '../ports/github-port.js';
 
 export class FakeGitHubPort implements GitHubPort {
+  repos = new Map<string, GitHubRepo>();
   issues = new Map<string, GitHubIssue>();
   prs = new Map<string, PullRequestDetail>();
   comments = new Map<string, GitHubReviewComment[]>();
@@ -28,6 +30,12 @@ export class FakeGitHubPort implements GitHubPort {
   createdPrs: PullRequest[] = [];
   createdPrInputs: CreatePullRequestInput[] = [];
   reviews = new Map<string, PullRequestReview[]>();
+
+  async getRepo(repoFullName: string): Promise<GitHubRepo> {
+    const r = this.repos.get(repoFullName);
+    if (!r) throw new Error(`no repo ${repoFullName}`);
+    return r;
+  }
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
     const i = this.issues.get(`${repoFullName}/${issueNumber}`);

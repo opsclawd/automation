@@ -38,6 +38,7 @@ import {
   WorkerLeaseRepository,
   JobQueueRepository,
   WorkerRegistryRepository,
+  RepositoryRepository,
   createFilesystemArtifactStore,
   FileTailer,
   createFixDiffInspector,
@@ -76,6 +77,12 @@ import {
   readFixVerdict,
   PhaseHandlerRegistry,
   RunExecutor,
+  RegisterRepository,
+  ListRepositories,
+  GetRepository,
+  UpdateRepository,
+  RemoveRepository,
+  RefreshRepository,
   type WorkerLoopDeps,
   type WorkerRegistryPort,
   ArtifactNotFoundError,
@@ -748,6 +755,7 @@ export function composeRoot(opts: ComposeOptions): Container {
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
   const runRepository = new RunRepository(db);
+  const repositoryRepository = new RepositoryRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const prReviewRepository = new PrReviewRepository(db);
   const eventBus = new InMemoryEventBus();
@@ -2365,33 +2373,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
   }
 
-  const singleRepo: RepositoryPort = resolvedRepoFullName
-    ? new SingleRepoAdapter({
-        id: RepositoryId(resolvedRepoFullName),
-        owner: resolvedRepoFullName.split('/')[0]!,
-        name: resolvedRepoFullName.split('/')[1]!,
-        fullName: resolvedRepoFullName,
-        defaultBranch: resolvedDefaultBranch,
-        localBasePath: targetRoot,
-        enabled: true,
-        maxConcurrentRuns: 1 as const,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
-    : new SingleRepoAdapter({
-        id: '' as RepositoryId,
-        owner: '',
-        name: '',
-        fullName: '',
-        defaultBranch: '',
-        localBasePath: '',
-        enabled: false,
-        maxConcurrentRuns: 1 as const,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-  const jobQueue = new JobQueueRepository(db, singleRepo);
+  const jobQueue = new JobQueueRepository(db, repositoryRepository);
 
   const workerRegistry = new WorkerRegistryRepository(db);
 
@@ -2401,7 +2383,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           registry: workerRegistry,
           queue: jobQueue,
           leases: workerLeaseRepository,
-          repos: singleRepo,
+          repos: repositoryRepository,
           executeRun: async ({ run, signal: _signal }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
@@ -2454,7 +2436,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const resumeRun = new ResumeRun({
     runRepository,
-    repos: singleRepo,
+    repos: repositoryRepository,
     leases: workerLeaseRepository,
     queue: jobQueue,
     stepRepo: stepRepository,
@@ -2882,6 +2864,13 @@ export function composeRoot(opts: ComposeOptions): Container {
     workerLeaseRepository,
     jobQueue,
     workerRegistry,
+    repositoryRegistry: repositoryRepository,
+    registerRepository: new RegisterRepository(repositoryRepository, new GhCliAdapter({}), gitAdapter),
+    listRepositories: new ListRepositories(repositoryRepository),
+    getRepository: new GetRepository(repositoryRepository),
+    updateRepository: new UpdateRepository(repositoryRepository),
+    removeRepository: new RemoveRepository(repositoryRepository, runRepository),
+    refreshRepository: new RefreshRepository(repositoryRepository, new GhCliAdapter({}), gitAdapter),
     ...(workerLoopDeps !== undefined ? { workerLoopDeps } : {}),
     git: gitAdapter,
     ...(resolvedRepoFullName !== undefined ? { repoFullName: resolvedRepoFullName } : {}),

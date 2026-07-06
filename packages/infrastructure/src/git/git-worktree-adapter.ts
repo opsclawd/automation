@@ -34,6 +34,15 @@ export function orchestratorExcludePatterns(): readonly string[] {
 }
 
 export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
+  async resolveFullName(cwd: string): Promise<string> {
+    const remoteUrl = await git(cwd, ['remote', 'get-url', 'origin']);
+    // Handle SSH: git@github.com:owner/repo.git
+    // Handle HTTPS: https://github.com/owner/repo.git
+    const match = remoteUrl.match(/[:/]([^/]+\/[^/]+?)(?:\.git)?$/);
+    if (!match || !match[1]) throw new Error(`Could not parse repository full name from remote URL: ${remoteUrl}`);
+    return match[1];
+  }
+
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     const { repoLocalBasePath, worktreePath, branch, baseBranch } = input;
 

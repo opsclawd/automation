@@ -13,6 +13,10 @@ export class FakeRepositoryPort implements RepositoryPort {
     for (const r of this.byId.values()) if (r.fullName === fullName) return r;
     return undefined;
   }
+  findByLocalPath(localPath: string): Repository | undefined {
+    for (const r of this.byId.values()) if (r.localBasePath === localPath) return r;
+    return undefined;
+  }
   listEnabled(): Repository[] {
     return [...this.byId.values()].filter((r) => r.enabled);
   }

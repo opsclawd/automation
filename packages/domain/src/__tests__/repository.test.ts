@@ -19,9 +19,13 @@ describe('Repository', () => {
       localBasePath: '/tmp/r',
       enabled: true,
       maxConcurrentRuns: 1,
+      configMetadata: {},
       createdAt: new Date(),
       updatedAt: new Date(),
+      healthStatus: 'unknown',
     };
     expect(r.maxConcurrentRuns).toBe(1);
+    expect(r.configMetadata).toEqual({});
+    expect(r.healthStatus).toBe('unknown');
   });
 });

@@ -2,6 +2,7 @@ import type { GitPort, CreateWorktreeInput, PushInput } from '../ports/git-port.
 import { TrackedSourceDriftError } from '../ports/git-port.js';
 
 export class FakeGitPort implements GitPort {
+  fullNameByCwd = new Map<string, string>();
   currentBranchByCwd = new Map<string, string>();
   headByCwd = new Map<string, string>();
   worktrees: string[] = [];
@@ -16,6 +17,12 @@ export class FakeGitPort implements GitPort {
   statusByCwd = new Map<string, string>();
   statusCalls: string[] = [];
   resetWorktreeIfCleanShouldThrow = new Set<string>();
+
+  async resolveFullName(cwd: string): Promise<string> {
+    const fullName = this.fullNameByCwd.get(cwd);
+    if (!fullName) throw new Error(`no full name for cwd ${cwd}`);
+    return fullName;
+  }
 
   async createWorktree(input: CreateWorktreeInput): Promise<void> {
     this.worktrees.push(input.worktreePath);

@@ -616,6 +616,174 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
     );
 
   program
+    .command('repos')
+    .description('Manage registered repositories')
+    .addCommand(
+      new Command('register')
+        .description('Register a new repository')
+        .argument('<path>', 'Local path to the repository')
+        .option('--id <id>', 'Optional stable ID (defaults to nameWithOwner)')
+        .option('--disabled', 'Register in disabled state')
+        .action(async (path: string, opts: { id?: string; disabled?: boolean }) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const c = composeRoot({
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            });
+            const localPath = resolve(process.cwd(), path);
+            const repo = await c.registerRepository.execute({
+              localBasePath: localPath,
+              id: opts.id,
+              enabled: !opts.disabled,
+            });
+            process.stdout.write(`Registered repository: ${repo.fullName} (ID: ${repo.id})\n`);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('list')
+        .description('List all registered repositories')
+        .action(async () => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const c = composeRoot({
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            });
+            const repos = await c.listRepositories.execute();
+            if (repos.length === 0) {
+              process.stdout.write('No repositories registered.\n');
+              return;
+            }
+            const headers = ['ID', 'Full Name', 'Enabled', 'Path', 'Health'];
+            const rows = repos.map((r) => [
+              r.id,
+              r.fullName,
+              r.enabled ? 'yes' : 'no',
+              r.localBasePath,
+              r.healthStatus,
+            ]);
+            // Simple table formatting
+            const colWidths = headers.map((h, i) =>
+              Math.max(h.length, ...rows.map((r) => String(r[i]).length)),
+            );
+            const formatRow = (row: string[]) =>
+              row.map((val, i) => String(val).padEnd(colWidths[i]!)).join('  ') + '\n';
+
+            process.stdout.write(formatRow(headers));
+            process.stdout.write(colWidths.map((w) => '-'.repeat(w)).join('  ') + '\n');
+            rows.forEach((row) => process.stdout.write(formatRow(row)));
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('inspect')
+        .description('Show detailed information for a repository')
+        .argument('<id>', 'Repository ID')
+        .action(async (id: string) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const c = composeRoot({
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            });
+            const repo = await c.getRepository.execute(RepositoryId(id));
+            if (!repo) {
+              console.error(`Repository not found: ${id}`);
+              process.exit(EXIT_USER_ERROR);
+            }
+            process.stdout.write(JSON.stringify(repo, null, 2) + '\n');
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('enable')
+        .description('Enable a repository')
+        .argument('<id>', 'Repository ID')
+        .action(async (id: string) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const c = composeRoot({
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            });
+            await c.updateRepository.execute({ id: RepositoryId(id), enabled: true });
+            process.stdout.write(`Repository ${id} enabled.\n`);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('disable')
+        .description('Disable a repository')
+        .argument('<id>', 'Repository ID')
+        .action(async (id: string) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const c = composeRoot({
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            });
+            await c.updateRepository.execute({ id: RepositoryId(id), enabled: false });
+            process.stdout.write(`Repository ${id} disabled.\n`);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('refresh')
+        .description('Refresh repository metadata and health status')
+        .argument('<id>', 'Repository ID')
+        .action(async (id: string) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const c = composeRoot({
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            });
+            const repo = await c.refreshRepository.execute({ id: RepositoryId(id) });
+            process.stdout.write(`Refreshed repository ${id}. Health: ${repo.healthStatus}\n`);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    )
+    .addCommand(
+      new Command('remove')
+        .description('Remove a repository from the registry')
+        .argument('<id>', 'Repository ID')
+        .action(async (id: string) => {
+          try {
+            const repoRoot = findRepoRoot(process.cwd());
+            const c = composeRoot({
+              repoRoot,
+              scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
+            });
+            await c.removeRepository.execute(RepositoryId(id));
+            process.stdout.write(`Removed repository ${id}.\n`);
+          } catch (err) {
+            console.error(err instanceof Error ? err.message : String(err));
+            process.exit(EXIT_USER_ERROR);
+          }
+        }),
+    );
+
+  program
     .command('runs')
     .description('Manage orchestrator runs')
     .addCommand(

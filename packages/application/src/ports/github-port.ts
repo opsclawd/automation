@@ -47,7 +47,15 @@ export interface PullRequestReview {
   user: string;
 }
 
+export interface GitHubRepo {
+  owner: string;
+  name: string;
+  fullName: string;
+  defaultBranch: string;
+}
+
 export interface GitHubPort {
+  getRepo(repoFullName: string): Promise<GitHubRepo>;
   getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue>;
   getPr(repoFullName: string, prNumber: number): Promise<PullRequestDetail>;
   createPullRequest(input: CreatePullRequestInput): Promise<PullRequest>;

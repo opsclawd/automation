@@ -27,6 +27,7 @@ export class TrackedSourceDriftError extends Error {
 }
 
 export interface GitPort {
+  resolveFullName(cwd: string): Promise<string>;
   createWorktree(input: CreateWorktreeInput): Promise<void>;
   removeWorktree(worktreePath: string): Promise<void>;
   currentBranch(cwd: string): Promise<string>;

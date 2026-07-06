@@ -217,6 +217,11 @@ export class RunRepository {
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE uuid = @uuid`).run(params);
   }
 
+  listByRepo(repoId: RepositoryId): RunRecord[] {
+    const rows = this.db.prepare('SELECT * FROM runs WHERE repo_id = ?').all(repoId) as RunRow[];
+    return rows.map(toRecord);
+  }
+
   findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined {
     if (typeof repoId === 'number') {
       const row = this.db

@@ -21,6 +21,10 @@ export class FakeRunRepository implements RunRepositoryPort {
     this.runs.set(r.uuid, { ...r });
   }
 
+  listByRepo(repoId: RepositoryId): RunRecord[] {
+    return Array.from(this.runs.values()).filter((r) => r.repoId === repoId);
+  }
+
   insertIfNoActive(run: Run): void {
     for (const r of this.runs.values()) {
       if (

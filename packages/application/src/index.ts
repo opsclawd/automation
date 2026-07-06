@@ -7,6 +7,7 @@ export * from './sweep-orphaned-runs.js';
 export * from './sweep-waiting-runs.js';
 export * from './ports.js';
 export * from './use-cases.js';
+export * from './repository/index.js';
 export * from './ports/agent-invocation-types.js';
 export * from './agent/types.js';
 export * from './ports/contract-violation-codes.js';

@@ -49,6 +49,7 @@ export interface RunRepositoryPort {
   ): boolean;
   findByUuid(uuid: string): RunRecord | undefined;
   findByIssueNumber(repoId: RepositoryId | number, issueNumber?: number): RunRecord | undefined;
+  listByRepo(repoId: RepositoryId): RunRecord[];
   findActiveRuns(): RunRecord[];
   updateStatusByIssueNumber(
     issueNumber: number,
@@ -113,7 +114,7 @@ export type TmpDirectoryFactory = (input: {
   runId: string;
 }) => TmpDirectoryHandle;
 
-export type { RepositoryPort } from './ports/repository-port.js';
+export type { RepositoryPort, RepositoryRegistryPort } from './ports/repository-port.js';
 export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
 export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {
@@ -124,6 +125,7 @@ export type {
 
 export type {
   GitHubPort,
+  GitHubRepo,
   GitHubIssue,
   PullRequest,
   PullRequestDetail,

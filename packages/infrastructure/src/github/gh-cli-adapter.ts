@@ -1,6 +1,7 @@
 import { execa } from 'execa';
 import type {
   GitHubPort,
+  GitHubRepo,
   GitHubIssue,
   PullRequestDetail,
   PullRequest,
@@ -68,6 +69,29 @@ export class GhCliAdapter implements GitHubPort {
     const stderr =
       (lastErr as { stderr?: string })?.stderr ?? (lastErr as Error)?.message ?? 'unknown';
     throw new GitHubFailedError(`${this.gh} ${args.join(' ')}`, String(stderr));
+  }
+
+  async getRepo(repoFullName: string): Promise<GitHubRepo> {
+    const out = await this.run([
+      'repo',
+      'view',
+      repoFullName,
+      '--json',
+      'nameWithOwner,owner,name,defaultBranchRef',
+    ]);
+    const command = `gh repo view ${repoFullName}`;
+    const j = this.safeJsonParse<{
+      nameWithOwner: string;
+      owner: { login: string };
+      name: string;
+      defaultBranchRef: { name: string };
+    }>(out, command);
+    return {
+      fullName: j.nameWithOwner,
+      owner: j.owner.login,
+      name: j.name,
+      defaultBranch: j.defaultBranchRef.name,
+    };
   }
 
   async getIssue(repoFullName: string, issueNumber: number): Promise<GitHubIssue> {
