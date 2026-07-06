@@ -25,6 +25,9 @@ export interface Run {
   startedAt: Date;
   completedAt?: Date;
   failureReason?: string;
+  baseBranch?: string;
+  modelOverride?: string;
+  runtimeOverride?: string;
 }
 
 export interface CreateRunInput {
@@ -34,6 +37,9 @@ export interface CreateRunInput {
   issueNumber: number;
   startedAt: Date;
   type?: 'issue_to_pr' | 'pr_review' | 'consolidate';
+  baseBranch?: string;
+  modelOverride?: string;
+  runtimeOverride?: string;
 }
 
 export class RunStateError extends Error {
@@ -54,6 +60,9 @@ export function createRun(input: CreateRunInput): Run {
     completedPhases: [],
     skippedPhases: [],
     startedAt: input.startedAt,
+    baseBranch: input.baseBranch,
+    modelOverride: input.modelOverride,
+    runtimeOverride: input.runtimeOverride,
   };
 }
 

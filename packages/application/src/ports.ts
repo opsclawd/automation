@@ -24,6 +24,9 @@ export interface RunRecord extends Run {
   durationMs?: number;
   pid?: number;
   startCommitSha?: string;
+  baseBranch?: string;
+  modelOverride?: string;
+  runtimeOverride?: string;
 }
 
 export interface RunRepositoryUpdatePatch {
@@ -37,6 +40,9 @@ export interface RunRepositoryUpdatePatch {
   durationMs?: number;
   pid?: number;
   startCommitSha?: string;
+  baseBranch?: string;
+  modelOverride?: string;
+  runtimeOverride?: string;
 }
 
 export interface RunRepositoryPort {

@@ -207,18 +207,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
   program
     .command('run')
-    .description('Start an issue-to-PR run by wrapping the legacy Bash script')
+    .description('Start an issue-to-PR run')
     .requiredOption('--issue <number>', 'GitHub issue number', (v) => {
       if (!/^\d+$/.test(v)) throw new Error(`--issue must be a positive integer, got: ${v}`);
       const n = parseInt(v, 10);
       if (n < 1) throw new Error(`--issue must be >= 1, got: ${v}`);
       return n;
     })
-    .option('--base-branch <branch>', 'Base branch (legacy default: main)')
-    .option('--model <model>', 'AI_AGENT_MODEL env var')
-    .option('--agent-cli <cli>', 'AI_RUNTIME env var')
-    .option('--script <path>', 'Path to Bash script to wrap')
-    .option('--verbose', 'Stream script stdout/stderr to terminal (default: auto when TTY)')
+    .option('--base-branch <branch>', 'Base branch (default: auto-detect from GitHub)')
+    .option('--model <model>', 'Model override (overrides config phase profiles and AI_AGENT_MODEL)')
+    .option('--agent-cli <cli>', 'Runtime override (overrides config phase profiles and AI_RUNTIME)')
+    .option('--script <path>', 'Path to Bash script to wrap (Bash executor only)')
+    .option('--verbose', 'Stream output to terminal (default: auto when TTY)')
     .option('--no-verbose', 'Suppress streaming script output to terminal')
     .option(
       '--executor <executor>',
@@ -260,6 +260,18 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         }
 
         const repoRoot = findRepoRoot(process.cwd());
+
+        // --- executor validation ---
+        if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
+          console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
+          process.exit(EXIT_USER_ERROR);
+        }
+
+        if (opts.executor === 'ts' && opts.script) {
+          console.error('Error: --script is only supported with --executor bash');
+          process.exit(EXIT_USER_ERROR);
+        }
+
         const scriptPath = opts.script
           ? isAbsolute(opts.script)
             ? opts.script
@@ -278,10 +290,16 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         if (opts.targetRepoRoot !== undefined) options.targetRepoRoot = opts.targetRepoRoot;
         const c = composeRoot(options);
 
-        // --- executor validation ---
-        if (opts.executor && !['bash', 'ts'].includes(opts.executor)) {
-          console.error(`Error: --executor must be "bash" or "ts", got "${opts.executor}"`);
-          process.exit(EXIT_USER_ERROR);
+        if (opts.baseBranch) {
+          const target = options.targetRepoRoot || options.repoRoot;
+          try {
+            execFileSync('git', ['-C', target, 'rev-parse', '--verify', `origin/${opts.baseBranch}`], {
+              stdio: 'pipe',
+            });
+          } catch {
+            console.error(`Error: base branch "origin/${opts.baseBranch}" not found in ${target}`);
+            process.exit(EXIT_USER_ERROR);
+          }
         }
 
         const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
@@ -317,6 +335,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             repoId,
             issueNumber: opts.issue,
             startedAt,
+            baseBranch: opts.baseBranch,
+            modelOverride: opts.model,
+            runtimeOverride: opts.agentCli,
           });
 
           const jobId = JobId(randomUUID());

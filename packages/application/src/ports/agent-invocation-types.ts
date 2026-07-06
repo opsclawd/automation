@@ -19,6 +19,7 @@ export interface AgentInvocationRequest {
   stepId?: string;
   startCommitSha: string;
   abortSignal?: AbortSignal;
+  runtime?: AgentRuntimeKind;
   provider?: string;
   model?: string;
   promptBudgetTokens?: number;

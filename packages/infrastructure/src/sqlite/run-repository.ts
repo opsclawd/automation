@@ -20,6 +20,9 @@ interface RunRow {
   duration_ms: number | null;
   pid: number | null;
   start_commit_sha: string | null;
+  base_branch: string | null;
+  model_override: string | null;
+  runtime_override: string | null;
 }
 
 /**
@@ -46,9 +49,11 @@ export class RunRepository {
     this.db
       .prepare(
         `INSERT INTO runs (uuid, display_id, repo_id, issue_number, type, status, current_phase,
-        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha)
+        completed_phases, skipped_phases, started_at, completed_at, failure_reason, pid, start_commit_sha,
+        base_branch, model_override, runtime_override)
          VALUES (@uuid, @display_id, @repo_id, @issue_number, @type, @status, @current_phase,
-           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha)`,
+           @completed_phases, @skipped_phases, @started_at, @completed_at, @failure_reason, @pid, @start_commit_sha,
+           @base_branch, @model_override, @runtime_override)`,
       )
       .run({
         uuid: run.uuid,
@@ -65,6 +70,9 @@ export class RunRepository {
         failure_reason: run.failureReason ?? null,
         pid: pid ?? null,
         start_commit_sha: (run as RunRecord).startCommitSha ?? null,
+        base_branch: run.baseBranch ?? null,
+        model_override: run.modelOverride ?? null,
+        runtime_override: run.runtimeOverride ?? null,
       });
   }
 
@@ -130,6 +138,18 @@ export class RunRepository {
     if (patch.startCommitSha !== undefined) {
       fields.push('start_commit_sha = @start_commit_sha');
       params.start_commit_sha = patch.startCommitSha;
+    }
+    if (patch.baseBranch !== undefined) {
+      fields.push('base_branch = @base_branch');
+      params.base_branch = patch.baseBranch;
+    }
+    if (patch.modelOverride !== undefined) {
+      fields.push('model_override = @model_override');
+      params.model_override = patch.modelOverride;
+    }
+    if (patch.runtimeOverride !== undefined) {
+      fields.push('runtime_override = @runtime_override');
+      params.runtime_override = patch.runtimeOverride;
     }
     if (patch.pid !== undefined) {
       fields.push('pid = @pid');
@@ -208,6 +228,18 @@ export class RunRepository {
     if (patch.startCommitSha !== undefined) {
       fields.push('start_commit_sha = @start_commit_sha');
       params.start_commit_sha = patch.startCommitSha;
+    }
+    if (patch.baseBranch !== undefined) {
+      fields.push('base_branch = @base_branch');
+      params.base_branch = patch.baseBranch;
+    }
+    if (patch.modelOverride !== undefined) {
+      fields.push('model_override = @model_override');
+      params.model_override = patch.modelOverride;
+    }
+    if (patch.runtimeOverride !== undefined) {
+      fields.push('runtime_override = @runtime_override');
+      params.runtime_override = patch.runtimeOverride;
     }
     if (patch.pid !== undefined) {
       fields.push('pid = @pid');
@@ -350,5 +382,8 @@ function toRecord(row: RunRow): RunRecord {
     ...(row.duration_ms !== null ? { durationMs: row.duration_ms } : {}),
     ...(row.pid !== null ? { pid: row.pid } : {}),
     ...(row.start_commit_sha !== null ? { startCommitSha: row.start_commit_sha } : {}),
+    ...(row.base_branch !== null ? { baseBranch: row.base_branch } : {}),
+    ...(row.model_override !== null ? { modelOverride: row.model_override } : {}),
+    ...(row.runtime_override !== null ? { runtimeOverride: row.runtime_override } : {}),
   };
 }

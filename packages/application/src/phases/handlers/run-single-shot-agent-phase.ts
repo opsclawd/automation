@@ -217,6 +217,8 @@ export async function runSingleShotAgentPhase(
     repoId: ctx.repoFullName,
     phaseId: config.phase as string,
     startCommitSha,
+    ...(ctx.modelOverride ? { model: ctx.modelOverride } : {}),
+    ...(ctx.runtimeOverride ? { runtime: ctx.runtimeOverride } : {}),
   };
 
   // 6. Invoke agent
