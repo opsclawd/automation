@@ -40,6 +40,18 @@ Additional opt-in triggers (recommended for cheap-model phases):
 | `prompt_budget_exceeded`    | Agent exceeded prompt budget                |
 | `invalid_result_json`       | Agent produced unparseable result.json      |
 
+## Synthesis-from-transcript events (Issue #640)
+
+When an agent invocation ends with `contract_violation` for `MISSING_REQUIRED_ARTIFACT` on a prose artifact (allow-list: `implementation-log.md`, `compound.md`) and the agent's git state shows real work was committed but never summarized, the orchestrator invokes the `result-writer` profile to lift the summary out of the transcript tail. Three event types cover the lifecycle:
+
+| Event                                       | Level | When                                                                  |
+| ------------------------------------------- | ----- | --------------------------------------------------------------------- |
+| `artifact.synthesized_from_transcript`      | warn  | Synthesis invocation wrote the missing artifact                       |
+| `artifact.synthesis_failed`                 | warn  | Synthesis invocation ran but produced no usable artifact (or BLOCKED) |
+| `artifact.synthesis_policy_not_satisfied`   | info  | Pre-flight policy returned `no_policy_match` (no invocation attempted) |
+
+The synthesis row appears in the timeline linked back to the primary invocation via `fallbackOfInvocationId` and `fallbackReason: 'synthesized_from_transcript'`. The latter is a metadata-only value on the existing `fallbackTriggerSchema` enum; it is **not** a router trigger and is never configured under any phase's `fallbackTriggers` array.
+
 ## Profile Tiers
 
 | Tier               | Profiles                           | Use Case                                                              |

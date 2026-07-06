@@ -145,6 +145,7 @@ const fallbackTriggerSchema = z.enum([
   'quota_exceeded',
   'provider_error',
   'no_output',
+  'synthesized_from_transcript',
 ]);
 
 const roleEntrySchema = z.strictObject({

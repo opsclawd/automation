@@ -166,6 +166,12 @@ export type {
   SynthesizedArtifact,
 } from './ports/implement-artifact-guard-port.js';
 export type {
+  SynthesizeFromTranscriptPort,
+  SynthesizeFromTranscriptInput,
+  SynthesizeFromTranscriptResult,
+  SynthesizeFromTranscriptOutcome,
+} from './ports/synthesize-from-transcript-port.js';
+export type {
   FixDiffInspectorPort,
   FixDiffInspectorInput,
   FixDiffInspectionResult,
