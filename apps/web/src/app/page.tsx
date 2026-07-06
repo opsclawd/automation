@@ -30,7 +30,6 @@ export default async function Page(props: {
               id="repo-filter"
               className="text-sm border rounded p-1"
               defaultValue={repoId ?? ''}
-              onChange="window.location.href = this.value ? `?repoId=${this.value}` : '/'"
               // In Next.js Server Components we can't use onChange easily without a client component.
               // For simplicity in this edit, I'll use a hack or just leave it as a static select for now
               // if I don't want to create a new client component.

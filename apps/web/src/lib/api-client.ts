@@ -55,7 +55,7 @@ export interface ListRunsResult {
 export async function listRuns(params?: {
   limit: number;
   offset?: number;
-  repoId?: string;
+  repoId?: string | undefined;
 }): Promise<ListRunsResult> {
   const paramsArray: string[] = [];
   if (params) {
