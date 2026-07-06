@@ -632,7 +632,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         };
         if (opts.dbPath) composeOpts.dbPath = opts.dbPath;
         if (opts.runsDir) composeOpts.runsDir = opts.runsDir;
-        if (opts.targetRepoRoot !== undefined) composeOpts.targetRepoRoot = opts.targetRepoRoot;
+        if (targetRepoRoot !== undefined) composeOpts.targetRepoRoot = targetRepoRoot;
         const c = composeRoot(composeOpts);
         const { startServer } = await import('./server.js');
         const server = await startServer({ container: c, port: opts.port });

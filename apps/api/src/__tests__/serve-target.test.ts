@@ -44,7 +44,16 @@ describe('orchestrator serve --target-repo-root', () => {
       targetRepoRoot: targetRepo,
       scriptPath: join(repoRoot, 'scripts/legacy/ai-run-issue-v2'),
       runStartupSweeps: false,
-      repoFullName: 'test-owner/target-repo',
+      // The local test repo has no GitHub remote, so the real resolver would
+      // (correctly) reject it; inject resolved metadata instead.
+      metadataResolver: {
+        resolve: (p) => ({
+          rootPath: p,
+          nameWithOwner: 'test-owner/target-repo',
+          defaultBranch: 'main',
+          remoteUrl: 'https://github.com/test-owner/target-repo.git',
+        }),
+      },
     });
 
     const server = await startServer({ container, port: 0, forceCloseAllOnStop: true });
@@ -86,7 +95,7 @@ describe('CLI serve command --target-repo-root', () => {
     mkdirSync(notARepo);
 
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
-        throw new Error('process.exit');
+      throw new Error('process.exit');
     }) as never);
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -96,11 +105,21 @@ describe('CLI serve command --target-repo-root', () => {
     });
 
     // commander will throw if exitOverride is used and process.exit is called
-    await expect(program.parseAsync([
-      'node', 'orchestrator', 'serve', '--port', '0', '--target-repo-root', notARepo
-    ])).rejects.toThrow();
+    await expect(
+      program.parseAsync([
+        'node',
+        'orchestrator',
+        'serve',
+        '--port',
+        '0',
+        '--target-repo-root',
+        notARepo,
+      ]),
+    ).rejects.toThrow();
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('not inside a git working tree'));
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('not inside a git working tree'),
+    );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
