@@ -5,7 +5,7 @@ import {
   type AgentInvocationResult,
   type EventBusPort,
   type OrchestratorEvent,
-} from '@ai-sdlc/application';
+} from '@ai-sdlc/application/ports';
 import { FakeArtifactStore, FakeAgentPort, FakeGitPort } from '@ai-sdlc/application/test-doubles';
 import { SynthesizeFromTranscript } from '../synthesize-from-transcript.js';
 
