@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SqliteRepositoryRepository } from '../repository-repository.js';
-import { openDatabase } from '../database.js';
+import { openDatabase, type Db } from '../database.js';
 import { applyMigrations } from '../migrations.js';
 import { RepositoryId } from '@ai-sdlc/domain';
 
 describe('SqliteRepositoryRepository', () => {
-  let db: any;
+  let db: Db;
   let repo: SqliteRepositoryRepository;
 
   beforeEach(() => {

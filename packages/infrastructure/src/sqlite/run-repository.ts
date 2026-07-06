@@ -156,7 +156,7 @@ export class RunRepository {
     total: number;
   } {
     let where = '';
-    const params: any[] = [];
+    const params: unknown[] = [];
     if (opts?.repoId) {
       where = ' WHERE repo_id = ?';
       params.push(opts.repoId);

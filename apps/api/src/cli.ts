@@ -657,22 +657,24 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           });
           const repos = c.repositoryRepository.list();
           if (repos.length === 0) {
-            console.log('No repositories registered.');
+            process.stdout.write('No repositories registered.\n');
             return;
           }
-          console.log(
-            'ID'.padEnd(30),
-            'Enabled'.padEnd(10),
-            'Default Branch'.padEnd(20),
-            'Full Name',
+          process.stdout.write(
+            'ID'.padEnd(30) +
+              'Enabled'.padEnd(10) +
+              'Default Branch'.padEnd(20) +
+              'Full Name' +
+              '\n',
           );
-          console.log('-'.repeat(80));
+          process.stdout.write('-'.repeat(80) + '\n');
           for (const r of repos) {
-            console.log(
-              r.id.padEnd(30),
-              (r.enabled ? 'YES' : 'NO').padEnd(10),
-              r.defaultBranch.padEnd(20),
-              r.fullName,
+            process.stdout.write(
+              r.id.padEnd(30) +
+                (r.enabled ? 'YES' : 'NO').padEnd(10) +
+                r.defaultBranch.padEnd(20) +
+                r.fullName +
+                '\n',
             );
           }
         }),
