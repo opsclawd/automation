@@ -873,12 +873,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         .option('--confirm', 'Confirm retry/resume of an unsafe phase')
         .option('--verbose', 'Stream progress to terminal (default: auto when TTY)')
         .option('--no-verbose', 'Suppress streaming progress to terminal')
+        .option(
+          '--target-repo-root <path>',
+          'Target repository root for runs DB and worktrees (default: orchestrator repo)',
+        )
         .action(
           async (opts: {
             uuid: string;
             fromPhase?: string;
             confirm?: boolean;
             verbose?: boolean;
+            targetRepoRoot?: string;
           }) => {
             const isCliTestSuite =
               buildOpts?.isCliTestSuite ?? process.env.AI_CLI_TEST_SUITE === 'true';
@@ -886,14 +891,13 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               buildOpts?.bypassPlanValidation ??
               (isCliTestSuite || process.env.AI_BYPASS_PLAN_VALIDATION === 'true');
             try {
-              const repoRoot = findRepoRoot(process.cwd());
-              const options: ComposeOptions = {
-                repoRoot,
-                scriptPath: join(repoRoot, 'scripts', 'legacy', 'ai-run-issue-v2'),
-                runStartupSweeps: false,
-                ...buildOpts?.composeOverrides,
-              };
-              const c = composeRoot(options);
+              const targetRepoRoot = resolveTargetRepoRootOrExit(opts.targetRepoRoot, (msg) => {
+                console.error(`Error: ${msg}`);
+                process.exit(EXIT_USER_ERROR);
+              });
+              const { c } = composeWithTarget(targetRepoRoot, {
+                ...(buildOpts !== undefined ? { buildOpts } : {}),
+              });
               if (!c.runExecutor) {
                 console.error(
                   'Error: RunExecutor not available. Ensure agent config is present in .ai-orchestrator.json.',

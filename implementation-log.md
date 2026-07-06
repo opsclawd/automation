@@ -1,25 +1,27 @@
-# Implementation Log - Task 6
+# Implementation Log — Task 7 (Add --target-repo-root <path> to runs resume)
 
-## Status
-DONE
+Branch: `ai/issue-632`
+Date: 2026-07-06
+Scope: Task 7 only — Add `--target-repo-root <path>` to `runs resume` and route through the helpers in `apps/api/src/cli.ts`.
 
-## What was implemented
-- Added the `--target-repo-root <path>` option to the `runs execute` command in `apps/api/src/cli.ts`.
-- Replaced the inline `findRepoRoot` + `composeRoot` logic inside the `runs execute` action handler with the shared helper functions: `resolveTargetRepoRootOrExit` and `composeWithTarget`.
-- Updated the action options parameter type signature of `execute` to include `targetRepoRoot?: string`.
-- Handled `exactOptionalPropertyTypes` when passing `buildOpts` to `composeWithTarget`.
+## Files modified
 
-## Tests run and results
-- Executed existing execute test cases: `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli.test.ts -t "CLI runs execute command"`
-- Result: **PASS** (8 cases passed).
-- Executed type checking: `pnpm --filter @ai-sdlc/api typecheck`
-- Result: **PASS** (0 errors).
+- `apps/api/src/cli.ts` — Updated the `resume` subcommand to accept `--target-repo-root <path>`, updated the options signature, and routed configuration through the `resolveTargetRepoRootOrExit` and `composeWithTarget` helper functions.
 
-## Files changed
-- [apps/api/src/cli.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-632/apps/api/src/cli.ts)
-- [implementation-log.md](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-632/implementation-log.md)
+## Steps executed
 
-## Self-review findings
-- Checked modified files: only `apps/api/src/cli.ts` and `implementation-log.md` are changed.
-- Validated that the `execute` subcommand behaves identically when `--target-repo-root` is omitted, and uses the target repository root when provided.
-- Confirmed typecheck is clean.
+- **Step 7.1** — Added `--target-repo-root <path>` option to the `resume` command definition.
+- **Step 7.2** — Replaced the inline `findRepoRoot` and `composeRoot` logic with typecheck-safe invocation of `resolveTargetRepoRootOrExit` and `composeWithTarget`.
+- **Step 7.3** — Updated the `opts` parameter type signature of the subcommand action handler to include `targetRepoRoot?: string`.
+- **Step 7.4** — Ran the existing `CLI runs resume command` test suite using Vitest and verified all 16 tests pass.
+- **Step 7.5** — Verified that `@ai-sdlc/api` typechecks with 0 errors.
+
+## Verification results
+
+- `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli.test.ts -t "CLI runs resume command"` → 16 passed.
+- `pnpm --filter @ai-sdlc/api typecheck` → PASS (0 errors).
+
+## Self-review
+
+- **Scope:** Modifies only `apps/api/src/cli.ts`. No later tasks have been pre-staged.
+- **Commit integrity:** Verified typechecking passes and the tests succeed.
