@@ -106,7 +106,7 @@ export class ReviewFixLoop {
       const reviewOptions = {
         ...(gateResult ? { gateResult } : {}),
         ...(historyContext ? { historyContext } : {}),
-        ...(iterationIndex >= 2 && lastReviewedCommitSha
+        ...(iterationIndex >= 2 && lastReviewedCommitSha && (opts.deltaScopedReReview ?? true)
           ? { prevReviewedCommitSha: lastReviewedCommitSha }
           : {}),
       };

@@ -1540,4 +1540,45 @@ describe('ReviewFixLoop', () => {
       expect(reviewCalls).toBe(2);
     });
   });
+
+  describe('deltaScopedReReview (#627)', () => {
+    it('passes prevReviewedCommitSha to runReview on iteration >= 2 by default', async () => {
+      const receivedOpts: Array<ReviewStepOptions | undefined> = [];
+      const deps = makeDeps({
+        runReview: async (_ctx, opts) => {
+          receivedOpts.push(opts);
+          return {
+            invocationId: `rev-${receivedOpts.length}`,
+            agentOutcome: 'success' as const,
+            verdict: receivedOpts.length === 1 ? ('fail' as const) : ('pass' as const),
+            reviewedCommitSha: `sha-${receivedOpts.length}`,
+          };
+        },
+      });
+      await new ReviewFixLoop(deps).execute(baseInput());
+      // Iteration 1: no prev SHA (first review)
+      expect(receivedOpts[0]?.prevReviewedCommitSha).toBeUndefined();
+      // Iteration 2: prev SHA = sha-1 from iteration 1
+      expect(receivedOpts[1]?.prevReviewedCommitSha).toBe('sha-1');
+    });
+
+    it('omits prevReviewedCommitSha when deltaScopedReReview=false', async () => {
+      const receivedOpts: Array<ReviewStepOptions | undefined> = [];
+      const deps = makeDeps({
+        options: { deltaScopedReReview: false },
+        runReview: async (_ctx, opts) => {
+          receivedOpts.push(opts);
+          return {
+            invocationId: `rev-${receivedOpts.length}`,
+            agentOutcome: 'success' as const,
+            verdict: receivedOpts.length === 1 ? ('fail' as const) : ('pass' as const),
+            reviewedCommitSha: `sha-${receivedOpts.length}`,
+          };
+        },
+      });
+      await new ReviewFixLoop(deps).execute(baseInput());
+      expect(receivedOpts[0]?.prevReviewedCommitSha).toBeUndefined();
+      expect(receivedOpts[1]?.prevReviewedCommitSha).toBeUndefined();
+    });
+  });
 });
