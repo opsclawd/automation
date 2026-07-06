@@ -1011,15 +1011,35 @@ export function composeRoot(opts: ComposeOptions): Container {
     } catch (err) {
       console.error(`CancelRun: failed to resolve repo full name for ${targetRoot}`, err);
     }
+
+  // Auto-register the current repository for backward compatibility and migration.
+  if (resolvedRepoFullName) {
+    const existing = repositoryRepository.findById(RepositoryId(resolvedRepoFullName));
+    if (!existing) {
+      repositoryRepository.save({
+        id: RepositoryId(resolvedRepoFullName),
+        owner: resolvedRepoFullName.split("/")[0]!,
+        name: resolvedRepoFullName.split("/")[1]!,
+        fullName: resolvedRepoFullName,
+        defaultBranch: resolvedDefaultBranch,
+        localBasePath: targetRoot,
+        enabled: true,
+        maxConcurrentRuns: 1,
+        configMetadata: {},
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        healthStatus: "unknown",
+      });
+    }
   }
 
   let agentRuntime: AgentRuntimeRouter | undefined;
-  let capturingAgent: import('@ai-sdlc/application').AgentPort | undefined;
+  let capturingAgent: import("@ai-sdlc/application").AgentPort | undefined;
   let resolveProfileForPhaseBound: ((phaseName: string) => AgentProfileName) | undefined;
   let reviewFixLoop: ReviewFixLoop | undefined;
   let validateFixLoop: ValidateFixLoop | undefined;
   let implementStepLoop: ImplementStepLoopType | undefined;
-  let runStep: Container['runStep'] | undefined;
+  let runStep: Container["runStep"] | undefined;
   let runExecutor: RunExecutor | undefined;
   let buildRunContext: ((run: Run) => PhaseHandlerContext) | undefined;
   try {
@@ -2562,6 +2582,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       },
       resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+    ...(agentRuntime ? { agentRuntime } : {}),
+    ...(capturingAgent ? { capturingAgent } : {}),
       idFactory: () => randomUUID(),
       now: () => new Date(),
       baseBranch: opts.baseBranch ?? resolvedDefaultBranch,
@@ -2595,6 +2617,8 @@ export function composeRoot(opts: ComposeOptions): Container {
       verifyCodeChange: createVerifyCodeChange({
         agent: prReviewAgent,
         resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+    ...(agentRuntime ? { agentRuntime } : {}),
+    ...(capturingAgent ? { capturingAgent } : {}),
         idFactory: () => randomUUID(),
         renderVerifyPrompt: async ({
           commentBody,
@@ -2878,6 +2902,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     ...(agentRuntime ? { agentRuntime } : {}),
     ...(buildRunContext !== undefined ? { buildRunContext } : {}),
     resolveProfileForPhase: resolveProfileForPhaseBound ?? defaultResolve,
+    ...(agentRuntime ? { agentRuntime } : {}),
+    ...(capturingAgent ? { capturingAgent } : {}),
     buildPrReviewPoller,
     ...(reviewFixLoop !== undefined ? { reviewFixLoop } : {}),
     ...(validateFixLoop !== undefined ? { validateFixLoop } : {}),
@@ -2910,4 +2936,5 @@ function sweepOrphanedTmpDirs(baseTmpDir: string, runRepository: RunRepositoryPo
       }
     }
   }
+}
 }
