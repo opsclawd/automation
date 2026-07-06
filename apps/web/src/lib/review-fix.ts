@@ -16,7 +16,7 @@ export interface LoopDto {
   id: string;
   phaseId: string;
   type: 'review-fix' | 'implement-step';
-  status: 'running' | 'converged' | 'exhausted' | 'failed';
+  status: 'running' | 'converged' | 'converged_with_notes' | 'exhausted' | 'failed';
   maxIterations: number;
   startedAt: string;
   completedAt: string | null;
@@ -28,6 +28,7 @@ export type PillColor = 'green' | 'red' | 'blue' | 'amber' | 'slate';
 const BADGE: Record<LoopDto['status'], { label: string; color: PillColor }> = {
   running: { label: 'Running', color: 'blue' },
   converged: { label: 'Converged', color: 'green' },
+  converged_with_notes: { label: 'Converged (Notes)', color: 'amber' },
   exhausted: { label: 'Exhausted', color: 'red' },
   failed: { label: 'Failed', color: 'red' },
 };

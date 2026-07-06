@@ -15,6 +15,12 @@ describe('loopBadge', () => {
   it('maps failed to red', () => {
     expect(loopBadge('failed')).toEqual({ label: 'Failed', color: 'red' });
   });
+  it('maps converged_with_notes to amber with "Notes" label (#627)', () => {
+    expect(loopBadge('converged_with_notes')).toEqual({
+      label: 'Converged (Notes)',
+      color: 'amber',
+    });
+  });
 });
 
 describe('iterationChip', () => {
