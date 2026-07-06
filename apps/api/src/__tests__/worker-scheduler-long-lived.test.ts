@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { WorkerScheduler } from '../worker-scheduler.js';
-import { workerLoop } from '@ai-sdlc/application';
-import { WorkerId, JobId, RunId, RepositoryId, IssueNumber } from '@ai-sdlc/domain';
+import { workerLoop, type WorkerLoopDeps } from '@ai-sdlc/application';
+import { WorkerId, JobId, RunId, RepositoryId, IssueNumber, type Repository } from '@ai-sdlc/domain';
 import type { JobQueuePort, RepositoryPort } from '@ai-sdlc/application/ports';
 
 vi.mock('@ai-sdlc/application', async (importOriginal) => {
@@ -32,14 +32,14 @@ describe('WorkerScheduler (long-lived)', () => {
   });
 
   it('cycles through enabled repositories and claims jobs for them', async () => {
-    const repo1 = { id: RepositoryId('org/repo1'), fullName: 'org/repo1', enabled: true, maxConcurrentRuns: 1 };
-    const repo2 = { id: RepositoryId('org/repo2'), fullName: 'org/repo2', enabled: true, maxConcurrentRuns: 1 };
+    const repo1 = { id: RepositoryId('org/repo1'), fullName: 'org/repo1', enabled: true, maxConcurrentRuns: 1 as const } as Repository;
+    const repo2 = { id: RepositoryId('org/repo2'), fullName: 'org/repo2', enabled: true, maxConcurrentRuns: 1 as const } as Repository;
 
     const repos: RepositoryPort = {
       listEnabled: vi.fn(() => [repo1, repo2]),
-      findById: vi.fn((id) => [repo1, repo2].find(r => r.id === id)),
+      findById: vi.fn((id) => [repo1, repo2].find((r) => r.id === id)),
       findByFullName: vi.fn(),
-    } as any;
+    };
 
     const queue: JobQueuePort = {
       reclaimStaleClaims: vi.fn(),
@@ -60,9 +60,9 @@ describe('WorkerScheduler (long-lived)', () => {
 
     const registry = {
       findById: vi.fn(() => ({ status: 'idle' })),
-    } as any;
+    } as unknown as WorkerLoopDeps['registry'];
 
-    const baseDeps = { queue, repos, registry, now: () => new Date() } as any;
+    const baseDeps = { queue, repos, registry, now: () => new Date() } as unknown as Omit<WorkerLoopDeps, 'recoverableRunIds'>;
     const scheduler = new WorkerScheduler([WorkerId('w1'), WorkerId('w2')], baseDeps, 1);
 
     const controller = new AbortController();
@@ -80,13 +80,13 @@ describe('WorkerScheduler (long-lived)', () => {
   });
 
   it('respects per-repository concurrency limits', async () => {
-      const repo1 = { id: RepositoryId('org/repo1'), fullName: 'org/repo1', enabled: true, maxConcurrentRuns: 1 };
+      const repo1 = { id: RepositoryId('org/repo1'), fullName: 'org/repo1', enabled: true, maxConcurrentRuns: 1 as const } as Repository;
 
       const repos: RepositoryPort = {
         listEnabled: vi.fn(() => [repo1]),
-        findById: vi.fn((id) => id === 'org/repo1' ? repo1 : undefined),
+        findById: vi.fn((id) => (id === 'org/repo1' ? repo1 : undefined)),
         findByFullName: vi.fn(),
-      } as any;
+      };
 
       const queue: JobQueuePort = {
         reclaimStaleClaims: vi.fn(),
@@ -107,9 +107,9 @@ describe('WorkerScheduler (long-lived)', () => {
 
       const registry = {
         findById: vi.fn(() => ({ status: 'idle' })),
-      } as any;
+      } as unknown as WorkerLoopDeps['registry'];
 
-      const baseDeps = { queue, repos, registry, now: () => new Date() } as any;
+      const baseDeps = { queue, repos, registry, now: () => new Date() } as unknown as Omit<WorkerLoopDeps, 'recoverableRunIds'>;
       const scheduler = new WorkerScheduler([WorkerId('w1')], baseDeps, 1);
 
       const controller = new AbortController();

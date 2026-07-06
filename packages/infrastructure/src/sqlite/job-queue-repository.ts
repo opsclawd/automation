@@ -93,14 +93,14 @@ export class JobQueueRepository implements JobQueuePort {
         repoId?: RepositoryId,
       ): Job | undefined => {
         let query = `SELECT * FROM jobs WHERE status = 'queued'`;
-        const params: any[] = [];
+        const params: unknown[] = [];
         if (repoId) {
           query += ` AND repo_id = ?`;
           params.push(repoId);
         }
         query += ` ORDER BY priority DESC, created_at ASC, id ASC`;
 
-        const rows = this.db.prepare(query).all(...params) as JobRow[];
+        const rows = this.db.prepare(query).all(...(params as (string | number)[])) as JobRow[];
 
         const nextRow = rows.find((r) => !skipJobIds?.has(mkJobId(r.id)));
         if (!nextRow) return undefined;

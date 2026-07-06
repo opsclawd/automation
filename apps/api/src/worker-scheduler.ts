@@ -1,6 +1,6 @@
 import { workerLoop, type WorkerLoopDeps } from '@ai-sdlc/application';
-import type { JobQueuePort, RepositoryPort } from '@ai-sdlc/application/ports';
-import { type Job, type WorkerId, type JobId, type RunId, RepositoryId } from '@ai-sdlc/domain';
+import type { JobQueuePort } from '@ai-sdlc/application/ports';
+import { type Job, type WorkerId, type JobId, type RunId } from '@ai-sdlc/domain';
 
 function buildRecoverableRunIds(queue: JobQueuePort): ReadonlySet<RunId> {
   const activeJobs = queue.listActive();

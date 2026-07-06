@@ -5,7 +5,7 @@ import { SqliteRepositoryRepository } from '../repository-repository.js';
 import { RepositoryId } from '@ai-sdlc/domain';
 
 describe('SqliteRepositoryRepository', () => {
-  let db: any;
+  let db: import('../database.js').Db;
   let repo: SqliteRepositoryRepository;
 
   beforeEach(() => {
