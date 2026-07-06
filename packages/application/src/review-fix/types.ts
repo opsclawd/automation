@@ -80,6 +80,16 @@ export interface PostFixGateResult {
   output: string;
 }
 
+export interface ReviewFixLoopOptions {
+  endOnReview?: boolean;
+  deltaScopedReReview?: boolean;
+  trendAwareExit?: {
+    enabled?: boolean;
+    mode?: 'strict' | 'lenient';
+    window?: number;
+  };
+}
+
 export interface ReviewFixLoopDeps {
   runPostFixGate: (ctx: StepContext) => Promise<PostFixGateResult>;
   runReview: (ctx: StepContext, opts?: ReviewStepOptions) => Promise<ReviewStepResult>;
@@ -111,6 +121,24 @@ export interface ReviewFixLoopDeps {
    * Defaults to 4 when omitted.
    */
   unfoundedPingPongLimit?: number;
+  /**
+   * Convergence-on-large-diffs options (#627). All three default to ON —
+   * see `packages/shared/src/config/schema.ts` for the always-on defaults.
+   *
+   * - `endOnReview`: when true, the budget grants one trailing post-fix
+   *   re-review whenever the last iteration ended with `outcome: 'fixed'`.
+   *   The post-fix re-review does NOT count against `maxIterations`.
+   * - `deltaScopedReReview`: when true, iteration ≥2 scopes the reviewer
+   *   to `git diff <prevReviewedCommitSha>..HEAD` instead of the full
+   *   feature diff.
+   * - `trendAwareExit`: when enabled, the loop invokes
+   *   `detectConvergingTrend` at budget exhaustion and exits as
+   *   `converged_with_notes` (with `needsHumanReview: true`) when the
+   *   severity-weighted finding count is trending down.
+   *
+   * Set `endOnReview: false` to restore pre-#627 behavior bit-for-bit.
+   */
+  options?: ReviewFixLoopOptions;
 }
 
 export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';
