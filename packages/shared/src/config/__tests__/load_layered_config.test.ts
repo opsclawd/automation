@@ -72,6 +72,82 @@ describe('loadLayeredConfig', () => {
     expect(result.sources[2].path.endsWith('.ai-orchestrator.json')).toBe(true);
     expect(result.sources[3].path.endsWith('.ai-orchestrator.local.json')).toBe(true);
   });
+
+  it('merges automation local after automation base (deep merge on objects)', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({
+        validation: { commands: ['pnpm build'], timeouts: { build: 60 } },
+      }),
+      '.ai-orchestrator.local.json': JSON.stringify({
+        validation: { timeouts: { build: 120, lint: 30 } },
+      }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot });
+
+    expect(result.config.validation.commands).toEqual(['pnpm build']);
+    expect(
+      (result.rawMergedJson as { validation: { timeouts: Record<string, number> } }).validation
+        .timeouts,
+    ).toEqual({ build: 120, lint: 30 });
+    expect(result.sources[1].present).toBe(true);
+  });
+
+  it('applies target base after automation local (target overrides same key)', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({ validation: { commands: ['a'] } }),
+      '.ai-orchestrator.local.json': JSON.stringify({ validation: { commands: ['b'] } }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({ validation: { commands: ['t'] } }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['a', 'b', 't']);
+  });
+
+  it('applies target local after target base', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({ validation: { commands: ['a'] } }),
+    });
+    const targetRoot = makeRepo({
+      '.ai-orchestrator.json': JSON.stringify({ validation: { commands: ['t-base'] } }),
+      '.ai-orchestrator.local.json': JSON.stringify({ validation: { commands: ['t-local'] } }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot, targetRoot });
+
+    expect(result.config.validation.commands).toEqual(['a', 't-base', 't-local']);
+  });
+
+  it('silently skips absent target layers', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({ validation: { commands: ['a'] } }),
+    });
+
+    const result = loadLayeredConfig({
+      automationRoot,
+      targetRoot: mkdtempSync(join(tmpdir(), 'empty-target-')),
+    });
+
+    expect(result.config.validation.commands).toEqual(['a']);
+    expect(result.sources[2].present).toBe(false);
+    expect(result.sources[3].present).toBe(false);
+  });
+
+  it('omits targetRoot entirely when not provided (back-compat)', () => {
+    const automationRoot = makeRepo({
+      '.ai-orchestrator.json': validConfig({ validation: { commands: ['a'] } }),
+      '.ai-orchestrator.local.json': JSON.stringify({ validation: { commands: ['b'] } }),
+    });
+
+    const result = loadLayeredConfig({ automationRoot });
+
+    expect(result.sources[2].path).toContain('.ai-orchestrator.json');
+    expect(result.sources[2].path).toContain(automationRoot);
+    expect(result.config.validation.commands).toEqual(['a', 'b']);
+  });
 });
 
 describe('loadConfig (back-compat wrapper)', () => {
