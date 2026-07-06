@@ -208,4 +208,5 @@ export interface ReviewFixLoopResult {
    * `RUN_STATUS.needs_human_review`.
    */
   needsHumanReview?: boolean;
+  residualFindingsCount?: number;
 }

@@ -225,8 +225,7 @@ async function main() {
       `review-fix: ${phaseOutcome.toUpperCase()} (${loop.iterations.length}/${loop.maxIterations} iterations, status=${loop.status})`,
     );
     if (result.loopStatus === 'converged_with_notes') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const residualCount = (result as any).residualFindingsCount;
+      const residualCount = result.residualFindingsCount;
       console.warn(
         `[review-fix] loop converged with residual findings (${residualCount ?? '?'} findings) — see code-review.md`,
       );

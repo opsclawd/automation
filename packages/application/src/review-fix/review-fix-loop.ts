@@ -54,7 +54,7 @@ export class ReviewFixLoop {
     const findingHistory: Array<Set<string>> = [];
     const unfoundedHistory: FindingHistoryEntry[] = [];
 
-    const opts = this.deps.options ?? {};
+    const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
     const endOnReview = opts.endOnReview ?? true;
     const originalMax = loop.maxIterations;
 
@@ -66,15 +66,14 @@ export class ReviewFixLoop {
       if (!endOnReview) return false;
       if (reviewsStarted > originalMax) return false;
       const last = loop.iterations[loop.iterations.length - 1];
-      const shouldRun = last?.outcome === 'fixed';
-      if (shouldRun) {
-        thisLoop = { ...thisLoop, maxIterations: reviewsStarted + 1 };
-      }
-      return shouldRun;
+      return last?.outcome === 'fixed';
     };
 
     let thisLoop: Loop = loop;
     while (canStartReviewCycle(thisLoop)) {
+      if (thisLoop.iterations.length === originalMax) {
+        thisLoop = { ...thisLoop, maxIterations: thisLoop.iterations.length + 1 };
+      }
       loop = thisLoop;
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepContext = {
@@ -468,6 +467,7 @@ export class ReviewFixLoop {
           phaseOutcome: 'passed',
           loopStatus: 'converged_with_notes',
           needsHumanReview: true,
+          residualFindingsCount: residualFindings.length,
         };
       }
     }
@@ -742,11 +742,12 @@ export class ReviewFixLoop {
       const existing = await this.deps.artifactStore
         .read(String(input.runId), 'code-review.md')
         .catch(() => '');
+      const separator = existing ? (existing.endsWith('\n') ? '\n' : '\n\n') : '';
       await this.deps.artifactStore.write({
         runId: String(input.runId),
         phaseId: String(input.phaseId),
         relativePath: 'code-review.md',
-        contents: existing + (existing.endsWith('\n') ? '\n' : '') + heading + list + footer,
+        contents: existing + separator + heading + list + footer,
       });
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);

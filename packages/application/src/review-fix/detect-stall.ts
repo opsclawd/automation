@@ -84,7 +84,6 @@ export interface TrendDetectionOptions {
   window?: number;
   mode?: 'strict' | 'lenient';
   lastRevalidationPassed?: boolean;
-  ceiling?: 'critical' | 'high' | 'medium' | 'low';
 }
 
 export interface TrendDetectionResult {
@@ -119,7 +118,7 @@ export function detectConvergingTrend(
   const severityWeighted = lateWindow.map((entry) => {
     const findings = entry.review?.offendingFindings ?? [];
     return findings.reduce((acc, f) => {
-      const m = SEVERITY_MULTIPLIER[f.severity] ?? 0;
+      const m = SEVERITY_MULTIPLIER[f.severity.trim().toLowerCase()] ?? 0;
       return acc + m;
     }, 0);
   });
