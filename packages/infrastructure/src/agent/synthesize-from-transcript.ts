@@ -188,6 +188,7 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
     try {
       result = await this.agent.invoke(request);
     } catch (e) {
+      await this.cleanupFailedSynthesis(input);
       this.emitSynthesisFailed(
         input,
         synthesisId,
@@ -202,6 +203,7 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
     }
 
     if (result.outcome !== 'success' || result.exitCode !== 0) {
+      await this.cleanupFailedSynthesis(input);
       this.emitSynthesisFailed(
         input,
         synthesisId,
@@ -217,6 +219,7 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
 
     const written = await this.readIfPresent(artifacts, input.runId, input.missingArtifact);
     if (!written || written.trim().length === 0) {
+      await this.cleanupFailedSynthesis(input);
       this.emitSynthesisFailed(
         input,
         synthesisId,
@@ -231,7 +234,14 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
     }
 
     if (isBlockedArtifact(written)) {
-      this.emitSynthesisFailed(input, synthesisId, headLines.length, 'writer_wrote_blocked');
+      await this.cleanupFailedSynthesis(input);
+      const firstLine = written.split(/\r?\n/, 1)[0] ?? '';
+      this.emitSynthesisFailed(
+        input,
+        synthesisId,
+        headLines.length,
+        `writer_wrote_blocked: ${firstLine}`,
+      );
       return {
         outcome: 'synthesis_failed',
         synthesisInvocationId: synthesisId,
@@ -245,6 +255,26 @@ export class SynthesizeFromTranscript implements SynthesizeFromTranscriptPort {
       synthesisInvocationId: synthesisId,
       tailBytes: headLines.length,
     };
+  }
+
+  private async cleanupFailedSynthesis(input: SynthesizeFromTranscriptInput): Promise<void> {
+    try {
+      await this.git.resetHard(input.cwd, input.endCommitSha);
+      await this.git.cleanUntracked(input.cwd);
+    } catch (e) {
+      this.emit(
+        input,
+        'error',
+        'artifact.synthesis_cleanup_failed',
+        'failed to clean up working tree after synthesis failure',
+        {
+          phaseId: input.phaseId,
+          stepIndex: input.stepIndex,
+          artifact: input.missingArtifact,
+          error: stringifyErr(e),
+        },
+      );
+    }
   }
 
   private async readIfPresent(

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentInvocationId, AgentProfileName } from '@ai-sdlc/domain';
 import {
   type AgentInvocationRequest,
@@ -199,15 +199,23 @@ describe('SynthesizeFromTranscript policy', () => {
         'Files changed: foo.ts\n' +
         'All tests passing.\n',
     });
+    const resetHardSpy = vi.spyOn(git, 'resetHard');
+    const cleanUntrackedSpy = vi.spyOn(git, 'cleanUntracked');
     const result = await guard.synthesizeFromTranscript(makeBaseInput());
     expect(result.outcome).toBe('synthesis_failed');
     expect(eventBus.events.some((e) => e.type === 'artifact.synthesis_failed')).toBe(true);
+    expect(resetHardSpy).toHaveBeenCalledWith('/tmp/wt', 'def456');
+    expect(cleanUntrackedSpy).toHaveBeenCalledWith('/tmp/wt');
   });
 
   it('returns synthesis_failed when writer leaves artifact empty', async () => {
     env = setup({ writer: async () => WRITER_SUCCESS });
+    const resetHardSpy = vi.spyOn(env.git, 'resetHard');
+    const cleanUntrackedSpy = vi.spyOn(env.git, 'cleanUntracked');
     const result = await env.guard.synthesizeFromTranscript(makeBaseInput());
     expect(result.outcome).toBe('synthesis_failed');
+    expect(resetHardSpy).toHaveBeenCalledWith('/tmp/wt', 'def456');
+    expect(cleanUntrackedSpy).toHaveBeenCalledWith('/tmp/wt');
   });
 
   it('returns synthesis_failed when writer throws', async () => {
@@ -216,8 +224,24 @@ describe('SynthesizeFromTranscript policy', () => {
         throw new Error('boom');
       },
     });
+    const resetHardSpy = vi.spyOn(env.git, 'resetHard');
+    const cleanUntrackedSpy = vi.spyOn(env.git, 'cleanUntracked');
     const result = await env.guard.synthesizeFromTranscript(makeBaseInput());
     expect(result.outcome).toBe('synthesis_failed');
+    expect(resetHardSpy).toHaveBeenCalledWith('/tmp/wt', 'def456');
+    expect(cleanUntrackedSpy).toHaveBeenCalledWith('/tmp/wt');
+  });
+
+  it('returns synthesis_failed when writer fails with non-zero exit', async () => {
+    env = setup({
+      writer: async () => ({ ...WRITER_SUCCESS, exitCode: 1 }),
+    });
+    const resetHardSpy = vi.spyOn(env.git, 'resetHard');
+    const cleanUntrackedSpy = vi.spyOn(env.git, 'cleanUntracked');
+    const result = await env.guard.synthesizeFromTranscript(makeBaseInput());
+    expect(result.outcome).toBe('synthesis_failed');
+    expect(resetHardSpy).toHaveBeenCalledWith('/tmp/wt', 'def456');
+    expect(cleanUntrackedSpy).toHaveBeenCalledWith('/tmp/wt');
   });
 
   it('honors a custom proseAllowlist (e.g., to disable the feature)', async () => {
