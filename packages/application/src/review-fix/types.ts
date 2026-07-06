@@ -194,6 +194,7 @@ export interface ReviewFixLoopInput {
   fixProfile: AgentProfileName;
   fixFallbackProfile?: AgentProfileName;
   architectPlan?: ArchitectPlan;
+  options?: ReviewFixLoopOptions;
 }
 
 export interface ReviewFixLoopResult {

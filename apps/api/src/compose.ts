@@ -1501,6 +1501,15 @@ export function composeRoot(opts: ComposeOptions): Container {
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
+        options: {
+          endOnReview: config.phases.reviewFix.endOnReview,
+          deltaScopedReReview: config.phases.reviewFix.deltaScopedReReview,
+          trendAwareExit: {
+            enabled: config.phases.reviewFix.trendAwareExit.enabled,
+            mode: config.phases.reviewFix.trendAwareExit.mode,
+            window: config.phases.reviewFix.trendAwareExit.window,
+          },
+        },
         artifactStore: {
           read: async (runId, relativePath) => {
             const run = runRepository.findByUuid(runId);
@@ -2284,6 +2293,15 @@ export function composeRoot(opts: ComposeOptions): Container {
               blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
               reviewProfile: AgentProfileName(reviewProfileName),
               fixProfile: AgentProfileName(resolveProfileBound('fix-review')),
+              options: {
+                endOnReview: config.phases.reviewFix.endOnReview,
+                deltaScopedReReview: config.phases.reviewFix.deltaScopedReReview,
+                trendAwareExit: {
+                  enabled: config.phases.reviewFix.trendAwareExit.enabled,
+                  mode: config.phases.reviewFix.trendAwareExit.mode,
+                  window: config.phases.reviewFix.trendAwareExit.window,
+                },
+              },
             });
             return {
               phaseOutcome: result.phaseOutcome,
