@@ -26,6 +26,13 @@ function apiWorkerId(): WorkerId {
 }
 
 export async function runsRoutes(app: FastifyInstance, c: Container): Promise<void> {
+  app.get('/api/meta', async (_req, _reply) => {
+    return {
+      repoFullName: c.repoFullName,
+      targetRepoRoot: c.targetRepoRoot,
+    };
+  });
+
   app.get<{ Querystring: { limit?: string; offset?: string } }>('/api/runs', async (req, reply) => {
     const MAX_LIMIT = 100;
     if (req.query.limit !== undefined && req.query.limit !== '') {
