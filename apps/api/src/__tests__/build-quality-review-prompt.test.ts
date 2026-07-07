@@ -18,8 +18,8 @@ describe('buildQualityReviewPrompt', () => {
 
   it('output section uses absolute path for result.json', () => {
     const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
-    expect(prompt).toContain(`Write ${ctx.cwd}/result.json:`);
-    expect(prompt).not.toContain('Write result.json:');
+    expect(prompt).toContain(`Write ${ctx.cwd}/result.json`);
+    expect(prompt).not.toContain('Write result.json');
   });
 
   it('includes negative constraint forbidding relative paths', () => {
@@ -36,5 +36,19 @@ describe('buildQualityReviewPrompt', () => {
   it('includes the step index and title in the task header', () => {
     const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
     expect(prompt).toContain('Review implementation quality for step 3: Add pagination');
+  });
+
+  it('output section defines the findings array contract', () => {
+    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('"findings"');
+    expect(prompt).toContain('"severity"');
+    expect(prompt).toContain('"file": "<optional repo-relative path>"');
+    expect(prompt).toContain('"suggested_fix"');
+    expect(prompt).toContain('"P0" | "P1" | "P2" | "P3"');
+  });
+
+  it('output section forbids omitting findings on fail', () => {
+    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('Do NOT omit `findings` on "fail"');
   });
 });
