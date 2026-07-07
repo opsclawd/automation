@@ -236,6 +236,12 @@ async function main() {
       repoId: values['repo-id']!,
       cwd: values.cwd!,
       maxIterations,
+      ...(config.phases.reviewFix.maxConsecutiveFixFailures !== undefined
+        ? { maxConsecutiveFixFailures: config.phases.reviewFix.maxConsecutiveFixFailures }
+        : {}),
+      ...(config.phases.reviewFix.maxTotalFixAttempts !== undefined
+        ? { maxTotalFixAttempts: config.phases.reviewFix.maxTotalFixAttempts }
+        : {}),
       blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
       reviewProfile: AgentProfileName(reviewEntry.profile),
       fixProfile: AgentProfileName(fixEntry.profile),
