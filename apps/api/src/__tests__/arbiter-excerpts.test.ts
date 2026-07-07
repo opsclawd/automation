@@ -65,6 +65,28 @@ describe('readArbiterExcerpts', () => {
     expect(fixExcerpt).toBe('');
   });
 
+  it('round-trips a finding-bearing spec-review result.json through readArbiterExcerpts', async () => {
+    const { store, durableRoot } = makeStore();
+    const findingJson = JSON.stringify({
+      result: 'fail',
+      findings: [
+        {
+          severity: 'P0',
+          summary: 'Wrong schema for readFixVerdict',
+          file: 'src/foo.ts',
+          suggested_fix: 'Use the new spec-review schema',
+        },
+      ],
+    });
+    writeFileSync(path.join(durableRoot, SPEC_REVIEW_RESULT_ARTIFACT), findingJson);
+
+    const { specExcerpt } = await readArbiterExcerpts(store, 'run-1');
+
+    expect(specExcerpt).toBe(findingJson);
+    expect(specExcerpt).toContain('Wrong schema for readFixVerdict');
+    expect(specExcerpt).toContain('src/foo.ts');
+  });
+
   it('truncates each excerpt to 4000 characters', async () => {
     const { store, durableRoot } = makeStore();
     writeFileSync(path.join(durableRoot, SPEC_REVIEW_RESULT_ARTIFACT), 'a'.repeat(5000));

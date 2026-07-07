@@ -96,6 +96,24 @@ describe('buildArbiterPrompt', () => {
     expect(prompt).toContain(fixExcerpt);
   });
 
+  it('embeds findings in the spec excerpt verbatim in the rendered prompt', () => {
+    const findingSummary = 'Missing fix-prompt findings inlining';
+    const specExcerpt = JSON.stringify({
+      result: 'fail',
+      findings: [{ severity: 'P1', summary: findingSummary, file: 'src/x.ts' }],
+    });
+    const prompt = buildArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      specExcerpt,
+      qualityExcerpt: '',
+      fixExcerpt: '',
+      fixRebuttal: '',
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain(findingSummary);
+    expect(prompt).toContain('src/x.ts');
+  });
+
   it('expands the typecheck section with the failure output when typecheck failed', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304: cannot find name foo' },
