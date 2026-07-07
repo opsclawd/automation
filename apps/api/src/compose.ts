@@ -538,6 +538,12 @@ class SingleRepoAdapter implements RepositoryPort {
     return this.repo.fullName === fullName ? this.repo : undefined;
   }
 
+  findByLocalPath(localBasePath: string): Repository | undefined {
+    return this.repo.localBasePath === localBasePath ? this.repo : undefined;
+  }
+  listAll(): Repository[] {
+    return [this.repo];
+  }
   listEnabled(): Repository[] {
     return this.repo.enabled ? [this.repo] : [];
   }
