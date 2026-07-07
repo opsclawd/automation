@@ -1,21 +1,31 @@
-# Implementation Log - Task 11
+# Task 11 — Test fixtures: remove wholePrFix from three remaining cli test files
 
 ## Scope
-Validation and execution of the full test, typecheck, lint, and layer-boundary suites (Task 11).
+Remove the retired `wholePrFix: { maxIterations: 3 },` configuration line from three remaining cli test files:
+- `apps/api/src/__tests__/cli-runs-target.test.ts`
+- `apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
+- `apps/api/src/__tests__/cli-failure-output.test.ts`
 
-## Findings & Fixes
-- **Layer-boundary check (`pnpm depcruise`)**:
-  - Found 1 dependency cruiser error: `infrastructure-tests-may-use-application-ports-and-test-doubles` due to `packages/infrastructure/src/agent/__tests__/synthesize-from-transcript.test.ts` importing from the barrel export `@ai-sdlc/application`.
-  - **Fix**: Updated `packages/infrastructure/src/agent/__tests__/synthesize-from-transcript.test.ts` to import directly from `@ai-sdlc/application/ports`.
-  - Re-running `pnpm depcruise` completed successfully with `0 errors`.
-- **Workspace typecheck (`pnpm -r typecheck`)**:
-  - Completed successfully with `exit 0` across all packages.
-- **Workspace tests (`pnpm -r test`)**:
-  - Completed successfully with `exit 0` across all packages, including the new `SynthesizeFromTranscript policy` and `buildSynthesisPrompt` suites.
-- **Lint (`pnpm lint`)**:
-  - Completed successfully with `exit 0` (no new lint findings).
-- **Workspace diff check (`git diff --stat main`)**:
-  - All modified/new files correspond exactly to the planned file map for Task 11.
+## Changes
+
+### apps/api/src/__tests__/cli-runs-target.test.ts
+- Removed `wholePrFix: { maxIterations: 3 },` from line 40.
+
+### apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts
+- Removed `wholePrFix: { maxIterations: 3 },` from line 53.
+
+### apps/api/src/__tests__/cli-failure-output.test.ts
+- Removed `wholePrFix: { maxIterations: 3 },` from line 54.
+
+## Verification
+- Ran all three test files:
+  `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/cli-runs-target.test.ts src/__tests__/cli-runs-resume-confirmation.test.ts src/__tests__/cli-failure-output.test.ts`
+  **Result**: 3/3 files passed, 13/13 tests passed.
+- Ran typecheck on `@ai-sdlc/api`:
+  `pnpm --filter @ai-sdlc/api run typecheck`
+  **Result**: Passed successfully.
 
 ## Files changed
-- `packages/infrastructure/src/agent/__tests__/synthesize-from-transcript.test.ts`
+- `apps/api/src/__tests__/cli-runs-target.test.ts`
+- `apps/api/src/__tests__/cli-runs-resume-confirmation.test.ts`
+- `apps/api/src/__tests__/cli-failure-output.test.ts`
