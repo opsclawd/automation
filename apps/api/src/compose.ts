@@ -690,10 +690,28 @@ export function buildQualityReviewPrompt(
   ].join('\n');
 }
 
+export interface BuildImplementStepFixPromptInput {
+  cwd: string;
+  stepIndex: number;
+  stepTitle: string;
+  /**
+   * Optional arbiter rationale from a prior `finding_valid` ruling.
+   * Rendered as a labeled, instruction-bearing section so the fixer
+   * addresses the finding rather than re-rebutting it.
+   */
+  reconciliationContext?: string;
+  /**
+   * Optional prior-fix-history prose. Pre-work for the fix-history
+   * enhancement issue; rendered verbatim when provided, omitted when absent
+   * (mirrors `buildReviewFixFixPrompt` in `apps/api/src/review-fix-prompts.ts`).
+   */
+  historyContext?: string;
+}
+
 export async function buildImplementStepFixPrompt(
   artifacts: ArtifactStore,
   runId: string,
-  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+  input: BuildImplementStepFixPromptInput,
 ): Promise<string> {
   const readFindings = async (
     archive: string,
@@ -727,7 +745,7 @@ export async function buildImplementStepFixPrompt(
 
   return [
     '# TASK',
-    `Fix implementation issues for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+    `Fix implementation issues for step ${input.stepIndex}: ${input.stepTitle}`,
     '',
     '## WHAT THE REVIEWERS FOUND (verbatim)',
     '',
@@ -745,11 +763,35 @@ export async function buildImplementStepFixPrompt(
     'write result.json with "done_no_fixes_needed" and a non-empty `rebuttal`',
     'citing the finding and your reason.',
     '',
+    ...(input.reconciliationContext && input.reconciliationContext.trim().length > 0
+      ? [
+          '## ARBITER RULING — ADDRESS THIS FINDING',
+          '',
+          'The orchestrator escalated a review/fix contradiction to an arbiter, which ruled:',
+          '',
+          `> ${input.reconciliationContext}`,
+          '',
+          "The arbiter's verdict was **finding_valid**: the reviewer's finding was",
+          "correct. The previous fix attempt's `done_no_fixes_needed` rebuttal was",
+          'rejected. You MUST address the finding above — do NOT re-rebut it.',
+          '',
+          'Rules:',
+          '- Apply the suggested fix, or write `done_with_fixes` only if a different',
+          '  fix achieves the same intent.',
+          '- Re-rebutting with the same argument will produce the same arbiter ruling.',
+          "- If you still believe the finding is invalid after reading the arbiter's",
+          '  evidence, write `cannot_fix` and cite what is materially new.',
+          '',
+        ]
+      : []),
+    ...(input.historyContext && input.historyContext.trim().length > 0
+      ? ['## PRIOR FIX HISTORY', '', input.historyContext, '']
+      : []),
     '## CONTEXT',
-    `Working directory: ${ctx.cwd}`,
+    `Working directory: ${input.cwd}`,
     '',
     '## OUTPUT',
-    `Write ${ctx.cwd}/result.json with this shape (no extra keys, no comments):`,
+    `Write ${input.cwd}/result.json with this shape (no extra keys, no comments):`,
     '  { "result": "done_with_fixes" }',
     '  | { "result": "done_no_fixes_needed", "rebuttal": "<reason>" }',
     '  | { "result": "cannot_fix" }',
