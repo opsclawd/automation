@@ -695,15 +695,13 @@ export async function buildImplementStepFixPrompt(
   runId: string,
   ctx: { stepIndex: number; stepTitle: string; cwd: string },
 ): Promise<string> {
-  const EXCERPT_MAX_CHARS = 4000;
-
   const readFindings = async (
     archive: string,
   ): Promise<
     Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>
   > => {
     try {
-      const raw = (await artifacts.read(runId, archive)).slice(0, EXCERPT_MAX_CHARS);
+      const raw = await artifacts.read(runId, archive);
       const parsed = JSON.parse(raw) as { findings?: unknown };
       if (!Array.isArray(parsed.findings)) return [];
       return parsed.findings.filter(

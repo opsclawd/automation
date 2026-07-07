@@ -120,4 +120,31 @@ describe('buildImplementStepFixPrompt', () => {
     expect(prompt).toContain('Kept');
     expect(prompt).not.toContain('wrong severity type');
   });
+
+  it('successfully parses findings exceeding 4000 characters', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'impl-fix-prompt-'));
+    tempDirs.push(root);
+    const durableRoot = path.join(root, 'phase-artifacts');
+    mkdirSync(durableRoot, { recursive: true });
+
+    const largeFindings = Array.from({ length: 100 }).map((_, i) => ({
+      severity: 'P1',
+      summary: `This is a very long summary meant to pad the JSON out so it exceeds four thousand characters. Finding number ${i}`,
+    }));
+
+    const payload = JSON.stringify({
+      result: 'fail',
+      findings: largeFindings,
+    });
+    // Ensure payload exceeds 4000 characters
+    expect(payload.length).toBeGreaterThan(4000);
+
+    writeFileSync(path.join(durableRoot, SPEC_REVIEW_RESULT_ARTIFACT), payload);
+    const artifacts = createFilesystemArtifactStore({ durableRoot, worktreeRoot: root });
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', ctx);
+
+    // We should find the findings array in the prompt and not degraded to []
+    expect(prompt).toContain('Finding number 0');
+    expect(prompt).toContain('Finding number 99');
+  });
 });
