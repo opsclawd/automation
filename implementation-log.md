@@ -1,31 +1,31 @@
-# Implementation Log — Task 4 (RepositoryRegistryRepository Adapter)
+# Implementation Log — Task 6 (Wire RepositoryRegistryRepository and use cases into composition root)
 
 Branch: `ai/issue-637`
 Date: 2026-07-06
-Scope: Task 4 only — SQLite `RepositoryRegistryRepository` adapter implementation, Fake test double, ports re-export, and tests.
+Scope: Task 6 only — Wiring `RepositoryRegistryRepository` and its use cases into the composition root (`apps/api/src/compose.ts`).
 
 ## Files Created/Modified
 
-- **packages/application/src/test-doubles/fake-repository-registry-port.ts** (Created): Implements the `RepositoryRegistryPort` interface using in-memory `Map`s for testing. Includes `seedActiveRunCount` test helper.
-- **packages/application/src/test-doubles/index.ts** (Modified): Re-exports `FakeRepositoryRegistryPort`.
-- **packages/application/src/ports/index.ts** (Modified): Re-exports `RepositoryRegistryPort` and `RepositoryUpdatePatch` from `./ports/repository-registry-port.js` to satisfy dependency-cruiser layering rules (infra can only import from application ports).
-- **packages/infrastructure/src/sqlite/repository-registry-repository.ts** (Created): Implements SQLite database persistence for `RepositoryRegistryPort`.
-- **packages/infrastructure/src/index.ts** (Modified): Re-exports `RepositoryRegistryRepository`.
-- **packages/infrastructure/src/sqlite/__tests__/repository-registry-repository.test.ts** (Created): Integration tests for `RepositoryRegistryRepository` verifying insert, update, remove, and duplicate handling.
+- **packages/application/src/index.ts** (Modified): Exported the new registry use cases (`RegisterRepository`, `RefreshRepository`, etc.) so they are available in `@ai-sdlc/application` exports.
+- **apps/api/src/compose.ts** (Modified):
+  - Imported registry use cases and `RepositoryRegistryPort` from `@ai-sdlc/application`.
+  - Imported `RepositoryRegistryRepository` from `@ai-sdlc/infrastructure`.
+  - Extended `Container` interface with new registry properties.
+  - Instantiated `repositoryRegistry`, `registryBackedRepo` wrapper, and the 8 registry use cases.
+  - Returned the new registry fields from `composeRoot` container.
 
 ## Steps Executed
 
-- **Step 1 & 2** — Created `FakeRepositoryRegistryPort` and re-exported it in `packages/application/src/test-doubles/index.ts`.
-- **Step 3 & 4** — Added failing vitest test file `packages/infrastructure/src/sqlite/__tests__/repository-registry-repository.test.ts` and confirmed module load fails.
-- **Step 5 & 6** — Implemented `RepositoryRegistryRepository` in `packages/infrastructure/src/sqlite/repository-registry-repository.ts` and re-exported it in `packages/infrastructure/src/index.ts`.
-- **Barrel update** — Updated `packages/application/src/ports/index.ts` to export `RepositoryRegistryPort` and `RepositoryUpdatePatch` to avoid dependency cruiser violations when importing in the infrastructure layer.
-- **Step 7** — Ran `vitest run repository-registry-repository.test.ts` and verified all 7 tests pass.
-- **Step 8** — Built `packages/application` and verified workspace-wide typechecking `pnpm -r typecheck` passes.
-- **Step 9** — Ran all workspace tests (`pnpm test`) and verified all 2440 tests pass.
-- **Dependency boundaries** — Ran `pnpm depcruise` and verified 0 errors.
+- **Step 1 & 2** — Added the new repository and use case imports to `apps/api/src/compose.ts`.
+- **Barrel update** — Updated `packages/application/src/index.ts` to export all new repository use cases.
+- **Step 3** — Extended the `Container` interface in `apps/api/src/compose.ts`.
+- **Step 4** — Instantiated the registry repository, the `registryBackedRepo` (reads from `singleRepo` for now), and the 8 use cases (`ListRepositories`, `InspectRepository`, `RegisterRepository`, `UpdateRepository`, `EnableRepository`, `DisableRepository`, `RefreshRepository`, `RemoveRepository`).
+- **Step 5** — Exposed the new fields in the returned Container object.
+- **Step 6** — Ran `pnpm -r build` and `pnpm -r typecheck` to confirm the API surface compiles and passes.
+- **Step 7** — Ran `pnpm --filter @ai-sdlc/api test -- compose cli` to confirm no regression.
 
 ## Verification Results
 
 - `pnpm -r typecheck` → PASS.
-- `pnpm depcruise` → PASS (0 errors, 32 warnings on unrelated web page orphans).
-- `pnpm test` → PASS (2440 tests passed).
+- `pnpm --filter @ai-sdlc/api test -- compose cli` → PASS (11 test files, 158 tests passed).
+- `pnpm depcruise` → PASS (0 errors, 32 warnings on next.js output files).

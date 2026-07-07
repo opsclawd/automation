@@ -117,6 +117,15 @@ import {
   renderStructuredTypecheckErrors,
   type TaskManifest,
   PHASE_DEFINITIONS,
+  RegisterRepository,
+  RefreshRepository,
+  ListRepositories,
+  InspectRepository,
+  UpdateRepository,
+  EnableRepository,
+  DisableRepository,
+  RemoveRepository,
+  type RepositoryRegistryPort,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -146,6 +155,7 @@ import {
   CodexAgentAdapter,
   ImplementArtifactGuard,
   SynthesizeFromTranscript,
+  RepositoryRegistryRepository,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
@@ -470,6 +480,15 @@ export interface Container {
   createFileTailer: (
     opts: import('@ai-sdlc/application/ports').FileTailerOptions,
   ) => import('@ai-sdlc/application/ports').FileTailerPort;
+  repositoryRegistry: RepositoryRegistryPort;
+  listRepositories: ListRepositories;
+  inspectRepository: InspectRepository;
+  registerRepository: RegisterRepository;
+  updateRepository: UpdateRepository;
+  enableRepository: EnableRepository;
+  disableRepository: DisableRepository;
+  refreshRepository: RefreshRepository;
+  removeRepository: RemoveRepository;
 }
 
 export interface ComposeOptions {
@@ -2593,6 +2612,50 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const jobQueue = new JobQueueRepository(db, singleRepo);
 
+  const repositoryRegistry = new RepositoryRegistryRepository(db);
+  const metadataResolver = resolver;
+
+  // The runtime `RepositoryPort` for downstream code stays `singleRepo`. The
+  // registry read port is a thin wrapper that prefers the DB row when present
+  // and otherwise delegates to the synthetic single repo. This lets
+  // `SingleRepoAdapter` continue to feed `JobQueueRepository.claimNext`.
+  const registryBackedRepo: RepositoryPort = {
+    findById: (id) => repositoryRegistry && singleRepo.findById(id),
+    findByFullName: (n) => singleRepo.findByFullName(n),
+    findByLocalPath: (p) => singleRepo.findByLocalPath(p),
+    listAll: () => singleRepo.listAll(),
+    listEnabled: () => singleRepo.listEnabled(),
+  };
+
+  const listRepositories = new ListRepositories({ repos: registryBackedRepo });
+  const inspectRepository = new InspectRepository({ repos: registryBackedRepo });
+  const registerRepository = new RegisterRepository({
+    registry: repositoryRegistry,
+    repos: registryBackedRepo,
+    metadataResolver,
+  });
+  const updateRepository = new UpdateRepository({
+    registry: repositoryRegistry,
+    repos: registryBackedRepo,
+  });
+  const enableRepository = new EnableRepository({
+    registry: repositoryRegistry,
+    repos: registryBackedRepo,
+  });
+  const disableRepository = new DisableRepository({
+    registry: repositoryRegistry,
+    repos: registryBackedRepo,
+  });
+  const refreshRepository = new RefreshRepository({
+    registry: repositoryRegistry,
+    repos: registryBackedRepo,
+    metadataResolver,
+  });
+  const removeRepository = new RemoveRepository({
+    registry: repositoryRegistry,
+    repos: registryBackedRepo,
+  });
+
   const workerRegistry = new WorkerRegistryRepository(db);
 
   const workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'> | undefined =
@@ -3116,6 +3179,15 @@ export function composeRoot(opts: ComposeOptions): Container {
     buildPhaseHandlerContext: composeBuildPhaseHandlerContext,
     createFileTailer: (opts: import('@ai-sdlc/application/ports').FileTailerOptions) =>
       new FileTailer(opts),
+    repositoryRegistry,
+    listRepositories,
+    inspectRepository,
+    registerRepository,
+    updateRepository,
+    enableRepository,
+    disableRepository,
+    refreshRepository,
+    removeRepository,
   };
 }
 
