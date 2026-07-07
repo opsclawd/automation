@@ -120,6 +120,10 @@ export type TmpDirectoryFactory = (input: {
 }) => TmpDirectoryHandle;
 
 export type { RepositoryPort } from './ports/repository-port.js';
+export type {
+  RepositoryRegistryPort,
+  RepositoryUpdatePatch,
+} from './ports/repository-registry-port.js';
 export type { JobQueuePort, EnqueueJobInput } from './ports/job-queue-port.js';
 export type { WorkerRegistryPort } from './ports/worker-registry-port.js';
 export type {

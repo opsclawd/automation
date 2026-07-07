@@ -77,3 +77,5 @@ export type {
   SynthesizeFromTranscriptResult,
   SynthesizeFromTranscriptOutcome,
 } from './synthesize-from-transcript-port.js';
+
+export type { RepositoryRegistryPort, RepositoryUpdatePatch } from './repository-registry-port.js';

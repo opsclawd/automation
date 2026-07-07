@@ -23,6 +23,8 @@ import { composeRoot, type ComposeOptions } from './compose.js';
 import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
 import { composeWithTarget } from './cli/compose-with-target.js';
 import { WorkerScheduler } from './worker-scheduler.js';
+import { registerRepoCommand } from './cli/repo-commands.js';
+import { EXIT_USER_ERROR, EXIT_INTERNAL_ERROR } from './cli/exit-codes.js';
 
 export interface LeaseConfig {
   ttlMs: number;
@@ -32,8 +34,6 @@ export interface LeaseConfig {
 const DEFAULT_LEASE_TTL_MS = 120_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 
-const EXIT_USER_ERROR = 1;
-const EXIT_INTERNAL_ERROR = 2;
 const EXIT_SIGINT = 130;
 const EXIT_SIGTERM = 143;
 
@@ -405,14 +405,15 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   // 'queued' is a no-op: the workerLoop's first tick will reclaim naturally.
                 }
                 workerHeartbeat?.stop();
-                const currentRun = c.runRepository.findByUuid(run.uuid);
-                if (currentRun && currentRun.status === 'running') {
-                  c.runRepository.update(run.uuid, {
+                c.runRepository.atomicUpdateByUuid(
+                  run.uuid,
+                  {
                     status: 'cancelled',
                     completedAt: new Date(),
                     failureReason: `interrupted by ${signal}`,
-                  });
-                }
+                  },
+                  'running',
+                );
                 try {
                   c.workerLeaseRepository.release(repoId, workerId);
                 } catch (err) {
@@ -1189,6 +1190,17 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           },
         ),
     );
+
+  registerRepoCommand(program, (targetRepoRoot?: string) => {
+    const resolved = resolveTargetRepoRootOrExit(targetRepoRoot, (msg) => {
+      console.error(`Error: ${msg}`);
+      process.exit(EXIT_USER_ERROR);
+    });
+    const { c } = composeWithTarget(resolved, {
+      ...(buildOpts !== undefined ? { buildOpts } : {}),
+    });
+    return c;
+  });
 
   return program;
 }
