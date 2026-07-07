@@ -10,9 +10,8 @@ import {
   type ArtifactStore,
   type AgentPort,
   type AgentInvocationPort,
+  extractResult,
 } from '@ai-sdlc/application';
-import { arbiterResultSchema, type ArbiterResult as ArbiterResultType } from '@ai-sdlc/application';
-import { extractResult } from '@ai-sdlc/application';
 
 export interface ArbiterAgentDeps {
   agent: AgentPort;
@@ -116,7 +115,7 @@ export class ArbiterAgent {
     }
 
     // Quality review artifacts might be separate or merged.
-    let qualityReviewMarkdown = '';
+    const qualityReviewMarkdown = '';
 
     let issueExcerpt = '';
     try {
@@ -148,7 +147,7 @@ export class ArbiterAgent {
 
     const startCommitSha = deps.resolveStartCommitSha(ctx.cwd, ctx.runId);
 
-    const result = await deps.agent.invoke({
+    await deps.agent.invoke({
       profile: options.profile,
       promptPath,
       expectedArtifacts: ['result.json'],
@@ -159,15 +158,15 @@ export class ArbiterAgent {
       startCommitSha,
     });
 
-    const invocationId = deps.newestInvocationId(ctx.runId);
-    const inv = deps.invocations.findById(AgentInvocationId(invocationId));
+    const invId = deps.newestInvocationId(ctx.runId);
+    const inv = deps.invocations.findById(AgentInvocationId(invId));
     if (!inv) {
-      throw new Error(`Arbiter invocation ${invocationId} not found`);
+      throw new Error(`Arbiter invocation ${invId} not found`);
     }
 
     const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
     const outcome = await extractResult({
-      invocation: patched as any,
+      invocation: patched,
       ports: { artifacts, agent: deps.agent },
     });
 
@@ -175,7 +174,7 @@ export class ArbiterAgent {
       throw new Error(`Failed to extract arbiter result: ${outcome.detail}`);
     }
 
-    const arbiterResult = outcome.result as ArbiterResultType;
+    const arbiterResult = outcome.result as ArbiterResult;
 
     // Preserve rationale to a task-specific file for PR summary inclusion
     const rationalePath = `arbiter-rationale-${ctx.stepIndex}.md`;

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
@@ -9,7 +9,6 @@ import type {
   SpecReviewResult,
   QualityReviewResult,
   FixResult,
-  StepLoopContext,
   TypecheckResult,
   ArbiterResult,
 } from '../types.js';

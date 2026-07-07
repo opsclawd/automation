@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { ArbiterAgent, buildArbiterPrompt, type ArbiterAgentDeps } from '../arbiter-agent.js';
-import { StepLoopContext, TypecheckResult, FixResult } from '@ai-sdlc/application';
-import { AgentProfileName, AgentInvocationId, RunId, PhaseName } from '@ai-sdlc/domain';
+import type { StepLoopContext, TypecheckResult, FixResult, ArtifactStore, AgentInvocationPort, AgentPort } from '@ai-sdlc/application';
+import { AgentProfileName, RunId, PhaseName } from '@ai-sdlc/domain';
 
 describe('ArbiterAgent', () => {
   const ctx: StepLoopContext = {
@@ -106,9 +106,9 @@ describe('ArbiterAgent', () => {
       };
 
       const deps: ArbiterAgentDeps = {
-        agent: mockAgent as any,
-        artifacts: () => mockArtifacts as any,
-        invocations: mockInvocations as any,
+        agent: mockAgent as unknown as AgentPort,
+        artifacts: () => mockArtifacts as unknown as ArtifactStore,
+        invocations: mockInvocations as unknown as AgentInvocationPort,
         baseTmpDir: '/tmp',
         resolveStartCommitSha: () => 'sha-1',
         newestInvocationId: () => 'arbiter-1',
@@ -146,9 +146,9 @@ describe('ArbiterAgent', () => {
       };
 
       const deps: ArbiterAgentDeps = {
-        agent: mockAgent as any,
-        artifacts: () => mockArtifacts as any,
-        invocations: mockInvocations as any,
+        agent: mockAgent as unknown as AgentPort,
+        artifacts: () => mockArtifacts as unknown as ArtifactStore,
+        invocations: mockInvocations as unknown as AgentInvocationPort,
         baseTmpDir: '/tmp',
         resolveStartCommitSha: () => 'sha-1',
         newestInvocationId: () => 'arbiter-1',
