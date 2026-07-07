@@ -141,18 +141,13 @@ export function registerRepoCommand(
           if (opts.enable && opts.disable) {
             exitUserError('--enable and --disable are mutually exclusive');
           }
-          if (opts.enable) {
-            console.log(JSON.stringify(c.enableRepository.execute(RepositoryId(opts.id)), null, 2));
-            return;
-          }
-          if (opts.disable) {
-            console.log(
-              JSON.stringify(c.disableRepository.execute(RepositoryId(opts.id)), null, 2),
-            );
-            return;
-          }
+          const repoId = opts.id.includes('/')
+            ? c.inspectRepository.executeByFullName(opts.id).id
+            : opts.id;
           const out = c.updateRepository.execute({
-            id: RepositoryId(opts.id),
+            id: RepositoryId(repoId),
+            ...(opts.enable ? { enabled: true } : {}),
+            ...(opts.disable ? { enabled: false } : {}),
             ...(opts.defaultBranch !== undefined ? { defaultBranch: opts.defaultBranch } : {}),
             ...(opts.remoteUrl !== undefined ? { remoteUrl: opts.remoteUrl } : {}),
             ...(opts.configMetadata !== undefined ? { configMetadata: opts.configMetadata } : {}),

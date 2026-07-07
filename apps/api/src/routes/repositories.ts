@@ -104,20 +104,18 @@ export async function registerRepositoriesRoutes(
     };
   }>('/api/repositories/:id', async (req, reply) => {
     const { id } = req.params;
-    if (!ID_RE.test(id)) {
+    if (!ID_RE.test(id) && !id.includes('/')) {
       reply.code(400);
-      return { error: 'id must be a sha256 hex' };
+      return { error: 'id must be a sha256 hex or an owner/name' };
     }
     try {
-      if (req.body?.enabled === true) {
-        return toWire(c.enableRepository.execute(RepositoryId(id)));
-      }
-      if (req.body?.enabled === false) {
-        return toWire(c.disableRepository.execute(RepositoryId(id)));
-      }
+      const repoId = id.includes('/') ? c.inspectRepository.executeByFullName(id).id : id;
       const input: UpdateRepositoryInput = {
-        id: RepositoryId(id),
+        id: RepositoryId(repoId),
       };
+      if (req.body?.enabled !== undefined) {
+        input.enabled = req.body.enabled;
+      }
       if (req.body?.defaultBranch !== undefined) {
         input.defaultBranch = req.body.defaultBranch;
       }
@@ -144,12 +142,13 @@ export async function registerRepositoriesRoutes(
 
   app.post<{ Params: { id: string } }>('/api/repositories/:id/refresh', async (req, reply) => {
     const { id } = req.params;
-    if (!ID_RE.test(id)) {
+    if (!ID_RE.test(id) && !id.includes('/')) {
       reply.code(400);
-      return { error: 'id must be a sha256 hex' };
+      return { error: 'id must be a sha256 hex or an owner/name' };
     }
     try {
-      return toWire(c.refreshRepository.execute(RepositoryId(id)));
+      const repoId = id.includes('/') ? c.inspectRepository.executeByFullName(id).id : id;
+      return toWire(c.refreshRepository.execute(RepositoryId(repoId)));
     } catch (err) {
       if (err instanceof RepositoryNotFoundError) {
         reply.code(404);
@@ -165,12 +164,13 @@ export async function registerRepositoriesRoutes(
 
   app.delete<{ Params: { id: string } }>('/api/repositories/:id', async (req, reply) => {
     const { id } = req.params;
-    if (!ID_RE.test(id)) {
+    if (!ID_RE.test(id) && !id.includes('/')) {
       reply.code(400);
-      return { error: 'id must be a sha256 hex' };
+      return { error: 'id must be a sha256 hex or an owner/name' };
     }
     try {
-      c.removeRepository.execute(RepositoryId(id));
+      const repoId = id.includes('/') ? c.inspectRepository.executeByFullName(id).id : id;
+      c.removeRepository.execute(RepositoryId(repoId));
       reply.code(204);
       return null;
     } catch (err) {
