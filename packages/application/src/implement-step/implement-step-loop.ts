@@ -464,7 +464,7 @@ export class ImplementStepLoop {
             'warn',
             `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
             {
-              toProfile: deps.runArbiter !== undefined ? 'arbiter' : 'none',
+              toProfile: 'arbiter',
               reason: 'contradiction_not_resolved_by_rerun',
               iterationIndex,
             },

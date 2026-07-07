@@ -1277,6 +1277,32 @@ exit 1
     expect(fnSrc).toMatch(/catch[^{]*\{[^}]*\/\/ Non-fatal/);
   });
 
+  it('archives phase-segregated review/fix results so runArbiter reads distinct excerpts (#661)', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    // runSpecReview must archive its result.json under a spec-review-specific name
+    const specReviewMatch = composeSrc.match(
+      /const runSpecReview[\s\S]*?(?=const runQualityReview)/,
+    );
+    expect(specReviewMatch).toBeTruthy();
+    expect(specReviewMatch![0]).toContain('SPEC_REVIEW_RESULT_ARTIFACT');
+    // implRunFix must archive its result.json under a fix-specific name
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    expect(fixMatch![0]).toContain('FIX_RESULT_ARTIFACT');
+    // runArbiter must read the segregated artifacts, never the shared result.json
+    // (both excerpts previously read the same path, so the arbiter always saw
+    // identical spec and fix content)
+    const arbiterMatch = composeSrc.match(
+      /const runArbiter[\s\S]*?(?=implementStepLoop = new ImplementStepLoop)/,
+    );
+    expect(arbiterMatch).toBeTruthy();
+    expect(arbiterMatch![0]).toContain('readArbiterExcerpts');
+    expect(arbiterMatch![0]).not.toMatch(/artifacts\.read\(String\(ctx\.runId\), 'result\.json'\)/);
+  });
+
   describe('worktreeSetup behavior', () => {
     const fakeAgentConfig = {
       validation: { commands: ['echo ok'], timeout: 60 },

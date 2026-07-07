@@ -162,6 +162,11 @@ import {
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildArbiterPrompt } from './arbiter-prompt.js';
+import {
+  FIX_RESULT_ARTIFACT,
+  SPEC_REVIEW_RESULT_ARTIFACT,
+  readArbiterExcerpts,
+} from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
@@ -2280,6 +2285,33 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       };
 
+      // Archive a step invocation's result.json under a phase-segregated
+      // durable name so later phases can't overwrite it (#661). Durable-only
+      // on purpose: writing through the artifact store would also drop the
+      // copy into the git worktree, where fix agents have committed stray
+      // orchestrator files before.
+      const archiveStepResultDurably = (
+        ctx: StepLoopContext,
+        resultJsonPath: string,
+        artifactName: string,
+      ): void => {
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+        const destination = join(runsDir, runDir, 'phase-artifacts', artifactName);
+        try {
+          mkdirSync(dirname(destination), { recursive: true });
+          copyFileSync(join(ctx.cwd, resultJsonPath), destination);
+        } catch (err) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'artifact.copy_failed',
+            message: `Failed to copy artifact: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { source: join(ctx.cwd, resultJsonPath), destination },
+          });
+        }
+      };
+
       const runSpecReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -2329,6 +2361,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        archiveStepResultDurably(
+          ctx,
+          patched.resultJsonPath ?? 'result.json',
+          SPEC_REVIEW_RESULT_ARTIFACT,
+        );
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent },
@@ -2454,6 +2491,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        archiveStepResultDurably(ctx, patched.resultJsonPath ?? 'result.json', FIX_RESULT_ARTIFACT);
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const fixVerdict = await readFixVerdict(patched, {
           artifacts,
@@ -2478,21 +2516,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
-            let specExcerpt = '';
-            try {
-              specExcerpt = (await artifacts.read(String(ctx.runId), 'result.json')).slice(0, 4000);
-            } catch (err) {
-              if (!(err instanceof ArtifactNotFoundError)) throw err;
-              specExcerpt = '';
-            }
-
-            let fixExcerpt = '';
-            try {
-              fixExcerpt = (await artifacts.read(String(ctx.runId), 'result.json')).slice(0, 4000);
-            } catch (err) {
-              if (!(err instanceof ArtifactNotFoundError)) throw err;
-              fixExcerpt = '';
-            }
+            const { specExcerpt, fixExcerpt } = await readArbiterExcerpts(
+              artifacts,
+              String(ctx.runId),
+            );
 
             let taskBody = '';
             try {
