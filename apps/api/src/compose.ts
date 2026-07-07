@@ -827,6 +827,177 @@ export function composeRoot(opts: ComposeOptions): Container {
   mkdirSync(baseTmpDir, { recursive: true });
   const db = openDatabase(opts.dbPath ?? join(runsDir, 'orchestrator.sqlite'));
   applyMigrations(db);
+
+  const resolver = opts.metadataResolver ?? new RepositoryMetadataResolver();
+  let metadata: import('@ai-sdlc/infrastructure').RepositoryMetadata;
+  try {
+    metadata = resolver.resolve(targetRoot);
+  } catch (err) {
+    // An explicit target is authoritative: never mask its resolution failure
+    // with ambient GITHUB_REPOSITORY or placeholder metadata.
+    if (opts.targetRepoRoot !== undefined) {
+      throw new Error(
+        `Failed to resolve repository metadata for --target-repo-root ${targetRoot}: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      );
+    }
+    // Legacy fallback: if resolution fails, try to use GITHUB_REPOSITORY
+    // or placeholder values for tests that use non-git tmp dirs.
+    const nameWithOwner = opts.repoFullName ?? process.env.GITHUB_REPOSITORY ?? 'unknown/unknown';
+    metadata = {
+      rootPath: targetRoot,
+      nameWithOwner,
+      defaultBranch: 'main',
+      remoteUrl: '',
+    };
+  }
+  const resolvedDefaultBranch = metadata.defaultBranch;
+  const resolvedRepoFullName =
+    metadata.nameWithOwner !== 'unknown/unknown' ? metadata.nameWithOwner : undefined;
+  const resolvedRemoteUrl = metadata.remoteUrl;
+
+  const singleRepo: RepositoryPort = resolvedRepoFullName
+    ? new SingleRepoAdapter({
+        id: RepositoryId(resolvedRepoFullName),
+        owner: resolvedRepoFullName.split('/')[0]!,
+        name: resolvedRepoFullName.split('/')[1]!,
+        fullName: resolvedRepoFullName,
+        defaultBranch: resolvedDefaultBranch,
+        remoteUrl: resolvedRemoteUrl,
+        localBasePath: targetRoot,
+        enabled: true,
+        maxConcurrentRuns: 1 as const,
+        healthStatus: 'unknown',
+        healthError: null,
+        lastHealthCheckAt: null,
+        configMetadata: '{}',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    : new SingleRepoAdapter({
+        id: '' as RepositoryId,
+        owner: '',
+        name: '',
+        fullName: '',
+        defaultBranch: '',
+        remoteUrl: '',
+        localBasePath: '',
+        enabled: false,
+        maxConcurrentRuns: 1 as const,
+        healthStatus: 'unknown',
+        healthError: null,
+        lastHealthCheckAt: null,
+        configMetadata: '{}',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+  interface RepositoryRow {
+    id: string;
+    full_name: string;
+    owner: string;
+    name: string;
+    local_base_path: string;
+    default_branch: string;
+    remote_url: string;
+    enabled: number;
+    max_concurrent_runs: number;
+    config_metadata: string;
+    health_status: string;
+    health_error: string | null;
+    last_health_check_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
+  function mapRowToRepo(row: RepositoryRow): import('@ai-sdlc/domain').Repository {
+    return {
+      id: RepositoryId(row.id),
+      fullName: row.full_name,
+      owner: row.owner,
+      name: row.name,
+      localBasePath: row.local_base_path,
+      defaultBranch: row.default_branch,
+      remoteUrl: row.remote_url,
+      enabled: row.enabled === 1,
+      maxConcurrentRuns: 1,
+      configMetadata: row.config_metadata,
+      healthStatus: row.health_status as import('@ai-sdlc/domain').RepositoryHealthStatus,
+      healthError: row.health_error,
+      lastHealthCheckAt: row.last_health_check_at ? new Date(row.last_health_check_at) : null,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    };
+  }
+
+  const registryReadRepo: RepositoryPort = {
+    findById: (id) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE id = ?`).get(id) as
+        | RepositoryRow
+        | undefined;
+      return row ? mapRowToRepo(row) : undefined;
+    },
+    findByFullName: (n) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE full_name = ?`).get(n) as
+        | RepositoryRow
+        | undefined;
+      return row ? mapRowToRepo(row) : undefined;
+    },
+    findByLocalPath: (p) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE local_base_path = ?`).get(p) as
+        | RepositoryRow
+        | undefined;
+      return row ? mapRowToRepo(row) : undefined;
+    },
+    listAll: () => {
+      const rows = db.prepare(`SELECT * FROM repositories`).all() as RepositoryRow[];
+      return rows.map(mapRowToRepo);
+    },
+    listEnabled: () => {
+      const rows = db
+        .prepare(`SELECT * FROM repositories WHERE enabled = 1`)
+        .all() as RepositoryRow[];
+      return rows.map(mapRowToRepo);
+    },
+  };
+
+  const registryBackedRepo: RepositoryPort = {
+    findById: (id) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE id = ?`).get(id) as
+        | RepositoryRow
+        | undefined;
+      if (row) return mapRowToRepo(row);
+      return singleRepo.findById(id);
+    },
+    findByFullName: (n) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE full_name = ?`).get(n) as
+        | RepositoryRow
+        | undefined;
+      if (row) return mapRowToRepo(row);
+      return singleRepo.findByFullName(n);
+    },
+    findByLocalPath: (p) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE local_base_path = ?`).get(p) as
+        | RepositoryRow
+        | undefined;
+      if (row) return mapRowToRepo(row);
+      return singleRepo.findByLocalPath(p);
+    },
+    listAll: () => {
+      const rows = db.prepare(`SELECT * FROM repositories`).all() as RepositoryRow[];
+      if (rows.length > 0) return rows.map(mapRowToRepo);
+      return singleRepo.listAll();
+    },
+    listEnabled: () => {
+      const rows = db
+        .prepare(`SELECT * FROM repositories WHERE enabled = 1`)
+        .all() as RepositoryRow[];
+      if (rows.length > 0) return rows.map(mapRowToRepo);
+      return singleRepo.listEnabled();
+    },
+  };
+
   let fingerprint: string | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let sources: any;
@@ -866,7 +1037,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       ).trim();
       const match = prUrl.match(/\/pull\/(\d+)/);
       if (!match) return undefined;
-      return { repoFullName: run.repoId, prNumber: parseInt(match[1]!, 10) };
+      const repo = registryBackedRepo.findById(run.repoId);
+      const repoFullName = repo ? repo.fullName : (resolvedRepoFullName ?? run.repoId);
+      return { repoFullName, prNumber: parseInt(match[1]!, 10) };
     } catch {
       return undefined;
     }
@@ -1018,24 +1191,23 @@ export function composeRoot(opts: ComposeOptions): Container {
     findCwd: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) throw new Error(`findCwd: no run found for ${runId}`);
-      return join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+      const repo = registryBackedRepo.findById(run.repoId);
+      const repoRootPath = repo ? repo.localBasePath : targetRoot;
+      return join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
     },
     findStartCommitSha: (runId: RunId) => {
       const run = runRepository.findByUuid(runId);
       if (!run) return 'HEAD';
       if (run.startCommitSha) return run.startCommitSha;
-      // Resolve from the worktree's branch at cancel time.
-      // The issue branch (`ai/issue-<n>`, per scripts/ai-run-issue-v2) was
-      // created from origin/<defaultBranch>; the merge base gives the original
-      // commit even if origin/<defaultBranch> has advanced since worktree
-      // creation. This avoids capturing the SHA from repoRoot before the
-      // worktree exists (which could be stale).
+      const repo = registryBackedRepo.findById(run.repoId);
+      const repoRootPath = repo ? repo.localBasePath : targetRoot;
+      const repoDefaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
       const branchName = `ai/issue-${run.issueNumber}`;
       try {
         const sha = execFileSync(
           'git',
-          ['merge-base', branchName, `origin/${resolvedDefaultBranch}`],
-          { cwd: targetRoot },
+          ['merge-base', branchName, `origin/${repoDefaultBranch}`],
+          { cwd: repoRootPath },
         )
           .toString()
           .trim();
@@ -1087,35 +1259,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       },
     });
   }
-
-  const resolver = opts.metadataResolver ?? new RepositoryMetadataResolver();
-  let metadata: import('@ai-sdlc/infrastructure').RepositoryMetadata;
-  try {
-    metadata = resolver.resolve(targetRoot);
-  } catch (err) {
-    // An explicit target is authoritative: never mask its resolution failure
-    // with ambient GITHUB_REPOSITORY or placeholder metadata.
-    if (opts.targetRepoRoot !== undefined) {
-      throw new Error(
-        `Failed to resolve repository metadata for --target-repo-root ${targetRoot}: ` +
-          `${err instanceof Error ? err.message : String(err)}`,
-        { cause: err },
-      );
-    }
-    // Legacy fallback: if resolution fails, try to use GITHUB_REPOSITORY
-    // or placeholder values for tests that use non-git tmp dirs.
-    const nameWithOwner = opts.repoFullName ?? process.env.GITHUB_REPOSITORY ?? 'unknown/unknown';
-    metadata = {
-      rootPath: targetRoot,
-      nameWithOwner,
-      defaultBranch: 'main',
-      remoteUrl: '',
-    };
-  }
-  const resolvedDefaultBranch = metadata.defaultBranch;
-  const resolvedRepoFullName =
-    metadata.nameWithOwner !== 'unknown/unknown' ? metadata.nameWithOwner : undefined;
-  const resolvedRemoteUrl = metadata.remoteUrl;
 
   let agentRuntime: AgentRuntimeRouter | undefined;
   let capturingAgent: import('@ai-sdlc/application').AgentPort | undefined;
@@ -1627,19 +1770,25 @@ export function composeRoot(opts: ComposeOptions): Container {
           read: async (runId, relativePath) => {
             const run = runRepository.findByUuid(runId);
             if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
-            const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const repo = registryBackedRepo.findById(run.repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
             return artifactStoreForRun(runId, cwd).read(runId, relativePath);
           },
           write: async (input) => {
             const run = runRepository.findByUuid(input.runId);
             if (!run) throw new Error(`ArtifactStore: no run found for ${input.runId}`);
-            const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const repo = registryBackedRepo.findById(run.repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
             return artifactStoreForRun(input.runId, cwd).write(input);
           },
           list: async (runId) => {
             const run = runRepository.findByUuid(runId);
             if (!run) throw new Error(`ArtifactStore: no run found for ${runId}`);
-            const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+            const repo = registryBackedRepo.findById(run.repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
             return artifactStoreForRun(runId, cwd).list(runId);
           },
         },
@@ -1747,13 +1896,18 @@ export function composeRoot(opts: ComposeOptions): Container {
         artifactStoreForRun(runUuid, cwd);
 
       const buildContext = (run: Run): PhaseHandlerContext => {
-        const cwd = join(targetRoot, '.ai-worktrees', `issue-${run.issueNumber}`);
+        const repo = registryBackedRepo.findById(run.repoId);
+        const repoRootPath = repo ? repo.localBasePath : targetRoot;
+        const repoFullName = repo ? repo.fullName : (resolvedRepoFullName ?? '');
+        const defaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
+
+        const cwd = join(repoRootPath, '.ai-worktrees', `issue-${run.issueNumber}`);
         const startCommitSha = runRepository.findByUuid(run.uuid)?.startCommitSha;
         return composeBuildPhaseHandlerContext(
           {
             runId: run.displayId,
             runUuid: run.uuid,
-            repoFullName: resolvedRepoFullName ?? '',
+            repoFullName,
             issueNumber: run.issueNumber,
             cwd,
             artifacts: makeArtifactStore(run.uuid, cwd),
@@ -1766,7 +1920,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           {
             promptsRoot: join(opts.repoRoot, 'prompts'),
             expectedBranch: `ai/issue-${run.issueNumber}`,
-            baseBranch: run.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch,
+            baseBranch: run.baseBranch ?? opts.baseBranch ?? defaultBranch,
             ...(startCommitSha ? { startCommitSha } : {}),
           },
         );
@@ -2574,147 +2728,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
   }
 
-  const singleRepo: RepositoryPort = resolvedRepoFullName
-    ? new SingleRepoAdapter({
-        id: RepositoryId(resolvedRepoFullName),
-        owner: resolvedRepoFullName.split('/')[0]!,
-        name: resolvedRepoFullName.split('/')[1]!,
-        fullName: resolvedRepoFullName,
-        defaultBranch: resolvedDefaultBranch,
-        remoteUrl: resolvedRemoteUrl,
-        localBasePath: targetRoot,
-        enabled: true,
-        maxConcurrentRuns: 1 as const,
-        healthStatus: 'unknown',
-        healthError: null,
-        lastHealthCheckAt: null,
-        configMetadata: '{}',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
-    : new SingleRepoAdapter({
-        id: '' as RepositoryId,
-        owner: '',
-        name: '',
-        fullName: '',
-        defaultBranch: '',
-        remoteUrl: '',
-        localBasePath: '',
-        enabled: false,
-        maxConcurrentRuns: 1 as const,
-        healthStatus: 'unknown',
-        healthError: null,
-        lastHealthCheckAt: null,
-        configMetadata: '{}',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      });
-
-  interface RepositoryRow {
-    id: string;
-    full_name: string;
-    owner: string;
-    name: string;
-    local_base_path: string;
-    default_branch: string;
-    remote_url: string;
-    enabled: number;
-    max_concurrent_runs: number;
-    config_metadata: string;
-    health_status: string;
-    health_error: string | null;
-    last_health_check_at: string | null;
-    created_at: string;
-    updated_at: string;
-  }
-
-  function mapRowToRepo(row: RepositoryRow): import('@ai-sdlc/domain').Repository {
-    return {
-      id: RepositoryId(row.id),
-      fullName: row.full_name,
-      owner: row.owner,
-      name: row.name,
-      localBasePath: row.local_base_path,
-      defaultBranch: row.default_branch,
-      remoteUrl: row.remote_url,
-      enabled: row.enabled === 1,
-      maxConcurrentRuns: 1,
-      configMetadata: row.config_metadata,
-      healthStatus: row.health_status as import('@ai-sdlc/domain').RepositoryHealthStatus,
-      healthError: row.health_error,
-      lastHealthCheckAt: row.last_health_check_at ? new Date(row.last_health_check_at) : null,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
-    };
-  }
-
-  const registryReadRepo: RepositoryPort = {
-    findById: (id) => {
-      const row = db.prepare(`SELECT * FROM repositories WHERE id = ?`).get(id) as
-        | RepositoryRow
-        | undefined;
-      return row ? mapRowToRepo(row) : undefined;
-    },
-    findByFullName: (n) => {
-      const row = db.prepare(`SELECT * FROM repositories WHERE full_name = ?`).get(n) as
-        | RepositoryRow
-        | undefined;
-      return row ? mapRowToRepo(row) : undefined;
-    },
-    findByLocalPath: (p) => {
-      const row = db.prepare(`SELECT * FROM repositories WHERE local_base_path = ?`).get(p) as
-        | RepositoryRow
-        | undefined;
-      return row ? mapRowToRepo(row) : undefined;
-    },
-    listAll: () => {
-      const rows = db.prepare(`SELECT * FROM repositories`).all() as RepositoryRow[];
-      return rows.map(mapRowToRepo);
-    },
-    listEnabled: () => {
-      const rows = db
-        .prepare(`SELECT * FROM repositories WHERE enabled = 1`)
-        .all() as RepositoryRow[];
-      return rows.map(mapRowToRepo);
-    },
-  };
-
-  const registryBackedRepo: RepositoryPort = {
-    findById: (id) => {
-      const row = db.prepare(`SELECT * FROM repositories WHERE id = ?`).get(id) as
-        | RepositoryRow
-        | undefined;
-      if (row) return mapRowToRepo(row);
-      return singleRepo.findById(id);
-    },
-    findByFullName: (n) => {
-      const row = db.prepare(`SELECT * FROM repositories WHERE full_name = ?`).get(n) as
-        | RepositoryRow
-        | undefined;
-      if (row) return mapRowToRepo(row);
-      return singleRepo.findByFullName(n);
-    },
-    findByLocalPath: (p) => {
-      const row = db.prepare(`SELECT * FROM repositories WHERE local_base_path = ?`).get(p) as
-        | RepositoryRow
-        | undefined;
-      if (row) return mapRowToRepo(row);
-      return singleRepo.findByLocalPath(p);
-    },
-    listAll: () => {
-      const rows = db.prepare(`SELECT * FROM repositories`).all() as RepositoryRow[];
-      if (rows.length > 0) return rows.map(mapRowToRepo);
-      return singleRepo.listAll();
-    },
-    listEnabled: () => {
-      const rows = db
-        .prepare(`SELECT * FROM repositories WHERE enabled = 1`)
-        .all() as RepositoryRow[];
-      if (rows.length > 0) return rows.map(mapRowToRepo);
-      return singleRepo.listEnabled();
-    },
-  };
-
   const jobQueue = new JobQueueRepository(db, registryBackedRepo);
 
   const repositoryRegistry = new RepositoryRegistryRepository(db);
@@ -2757,19 +2770,22 @@ export function composeRoot(opts: ComposeOptions): Container {
           registry: workerRegistry,
           queue: jobQueue,
           leases: workerLeaseRepository,
-          repos: singleRepo,
+          repos: registryBackedRepo,
           executeRun: async ({ run, signal: _signal }) => {
             runRepository.update(run.uuid, { pid: process.pid });
             const result = await runExecutor.execute({ run, skip: [], presentArtifacts: [] });
             return { ok: result.run.status === 'passed' };
           },
-          prepareWorktree: async ({ runId, signal: _signal }) => {
+          prepareWorktree: async ({ repoId, runId, signal: _signal }) => {
             const r = runRepository.findByUuid(runId);
             if (!r) throw new Error(`prepareWorktree: no run found for ${runId}`);
-            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
-            const baseBranch = r.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch;
+            const repo = registryBackedRepo.findById(repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            const repoDefaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
+            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const baseBranch = r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
             await gitAdapter.createWorktree({
-              repoLocalBasePath: targetRoot,
+              repoLocalBasePath: repoRootPath,
               worktreePath,
               branch: `ai/issue-${r.issueNumber}`,
               baseBranch,
@@ -2786,8 +2802,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             if (!lease) return;
             const r = runRepository.findByUuid(lease.runId);
             if (!r) return;
-            const worktreePath = join(targetRoot, '.ai-worktrees', `issue-${r.issueNumber}`);
-            const baseBranch = r.baseBranch ?? opts.baseBranch ?? resolvedDefaultBranch;
+            const repo = registryBackedRepo.findById(repoId);
+            const repoRootPath = repo ? repo.localBasePath : targetRoot;
+            const repoDefaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
+            const worktreePath = join(repoRootPath, '.ai-worktrees', `issue-${r.issueNumber}`);
+            const baseBranch = r.baseBranch ?? opts.baseBranch ?? repoDefaultBranch;
             gitAdapter.resetWorktreeIfClean(worktreePath, baseBranch).catch(() => {});
           },
           isWorkerAlive: (workerId) => {
@@ -2812,7 +2831,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const resumeRun = new ResumeRun({
     runRepository,
-    repos: singleRepo,
+    repos: registryBackedRepo,
     leases: workerLeaseRepository,
     queue: jobQueue,
     stepRepo: stepRepository,
