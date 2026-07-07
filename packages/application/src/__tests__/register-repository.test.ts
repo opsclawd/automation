@@ -79,4 +79,12 @@ describe('RegisterRepository', () => {
     const uc = new RegisterRepository({ repos, registry, metadataResolver: resolver });
     expect(() => uc.execute({ localPath: '/repos/widgets' })).toThrow(/not in owner\/name form/);
   });
+
+  it('rejects mismatching fullName', () => {
+    const resolver = { resolve: () => fakeMetadata() };
+    const uc = new RegisterRepository({ repos, registry, metadataResolver: resolver });
+    expect(() =>
+      uc.execute({ localPath: '/repos/widgets', fullName: 'other/repo' }),
+    ).toThrow(RepositoryValidationError);
+  });
 });

@@ -268,8 +268,13 @@ describe('runExternalCli', () => {
         makeGitRepo(cwd);
         mkdirSync(join(cwd, 'docs', 'a'), { recursive: true });
         mkdirSync(join(cwd, 'docs', 'b'), { recursive: true });
-        writeFileSync(join(cwd, 'docs', 'a', 'design.md'), '# A');
-        writeFileSync(join(cwd, 'docs', 'b', 'design.md'), '# B');
+        const fileA = join(cwd, 'docs', 'a', 'design.md');
+        const fileB = join(cwd, 'docs', 'b', 'design.md');
+        writeFileSync(fileA, '# A');
+        writeFileSync(fileB, '# B');
+        const future = new Date(Date.now() + 10000);
+        utimesSync(fileA, future, future);
+        utimesSync(fileB, future, future);
         const result = await runExternalCli({
           runtime: 'opencode',
           bin: 'true',

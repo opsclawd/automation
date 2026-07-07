@@ -37,6 +37,13 @@ export class RegisterRepository {
       );
     }
 
+    if (input.fullName !== undefined && input.fullName !== metadata.nameWithOwner) {
+      throw new RepositoryValidationError(
+        `Requested repository name "${input.fullName}" does not match resolved name "${metadata.nameWithOwner}"`,
+        input.localPath,
+      );
+    }
+
     const [owner, name] = metadata.nameWithOwner.split('/');
     if (!owner || !name) {
       throw new RepositoryValidationError(
