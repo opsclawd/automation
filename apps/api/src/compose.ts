@@ -2610,50 +2610,143 @@ export function composeRoot(opts: ComposeOptions): Container {
         updatedAt: new Date(),
       });
 
-  const jobQueue = new JobQueueRepository(db, singleRepo);
+  interface RepositoryRow {
+    id: string;
+    full_name: string;
+    owner: string;
+    name: string;
+    local_base_path: string;
+    default_branch: string;
+    remote_url: string;
+    enabled: number;
+    max_concurrent_runs: number;
+    config_metadata: string;
+    health_status: string;
+    health_error: string | null;
+    last_health_check_at: string | null;
+    created_at: string;
+    updated_at: string;
+  }
+
+  function mapRowToRepo(row: RepositoryRow): import('@ai-sdlc/domain').Repository {
+    return {
+      id: RepositoryId(row.id),
+      fullName: row.full_name,
+      owner: row.owner,
+      name: row.name,
+      localBasePath: row.local_base_path,
+      defaultBranch: row.default_branch,
+      remoteUrl: row.remote_url,
+      enabled: row.enabled === 1,
+      maxConcurrentRuns: 1,
+      configMetadata: row.config_metadata,
+      healthStatus: row.health_status as import('@ai-sdlc/domain').RepositoryHealthStatus,
+      healthError: row.health_error,
+      lastHealthCheckAt: row.last_health_check_at ? new Date(row.last_health_check_at) : null,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    };
+  }
+
+  const registryReadRepo: RepositoryPort = {
+    findById: (id) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE id = ?`).get(id) as
+        | RepositoryRow
+        | undefined;
+      return row ? mapRowToRepo(row) : undefined;
+    },
+    findByFullName: (n) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE full_name = ?`).get(n) as
+        | RepositoryRow
+        | undefined;
+      return row ? mapRowToRepo(row) : undefined;
+    },
+    findByLocalPath: (p) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE local_base_path = ?`).get(p) as
+        | RepositoryRow
+        | undefined;
+      return row ? mapRowToRepo(row) : undefined;
+    },
+    listAll: () => {
+      const rows = db.prepare(`SELECT * FROM repositories`).all() as RepositoryRow[];
+      return rows.map(mapRowToRepo);
+    },
+    listEnabled: () => {
+      const rows = db
+        .prepare(`SELECT * FROM repositories WHERE enabled = 1`)
+        .all() as RepositoryRow[];
+      return rows.map(mapRowToRepo);
+    },
+  };
+
+  const registryBackedRepo: RepositoryPort = {
+    findById: (id) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE id = ?`).get(id) as
+        | RepositoryRow
+        | undefined;
+      if (row) return mapRowToRepo(row);
+      return singleRepo.findById(id);
+    },
+    findByFullName: (n) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE full_name = ?`).get(n) as
+        | RepositoryRow
+        | undefined;
+      if (row) return mapRowToRepo(row);
+      return singleRepo.findByFullName(n);
+    },
+    findByLocalPath: (p) => {
+      const row = db.prepare(`SELECT * FROM repositories WHERE local_base_path = ?`).get(p) as
+        | RepositoryRow
+        | undefined;
+      if (row) return mapRowToRepo(row);
+      return singleRepo.findByLocalPath(p);
+    },
+    listAll: () => {
+      const rows = db.prepare(`SELECT * FROM repositories`).all() as RepositoryRow[];
+      if (rows.length > 0) return rows.map(mapRowToRepo);
+      return singleRepo.listAll();
+    },
+    listEnabled: () => {
+      const rows = db
+        .prepare(`SELECT * FROM repositories WHERE enabled = 1`)
+        .all() as RepositoryRow[];
+      if (rows.length > 0) return rows.map(mapRowToRepo);
+      return singleRepo.listEnabled();
+    },
+  };
+
+  const jobQueue = new JobQueueRepository(db, registryBackedRepo);
 
   const repositoryRegistry = new RepositoryRegistryRepository(db);
   const metadataResolver = resolver;
 
-  // The runtime `RepositoryPort` for downstream code stays `singleRepo`. The
-  // registry read port is a thin wrapper that prefers the DB row when present
-  // and otherwise delegates to the synthetic single repo. This lets
-  // `SingleRepoAdapter` continue to feed `JobQueueRepository.claimNext`.
-  const registryBackedRepo: RepositoryPort = {
-    findById: (id) => repositoryRegistry && singleRepo.findById(id),
-    findByFullName: (n) => singleRepo.findByFullName(n),
-    findByLocalPath: (p) => singleRepo.findByLocalPath(p),
-    listAll: () => singleRepo.listAll(),
-    listEnabled: () => singleRepo.listEnabled(),
-  };
-
-  const listRepositories = new ListRepositories({ repos: registryBackedRepo });
-  const inspectRepository = new InspectRepository({ repos: registryBackedRepo });
+  const listRepositories = new ListRepositories({ repos: registryReadRepo });
+  const inspectRepository = new InspectRepository({ repos: registryReadRepo });
   const registerRepository = new RegisterRepository({
     registry: repositoryRegistry,
-    repos: registryBackedRepo,
+    repos: registryReadRepo,
     metadataResolver,
   });
   const updateRepository = new UpdateRepository({
     registry: repositoryRegistry,
-    repos: registryBackedRepo,
+    repos: registryReadRepo,
   });
   const enableRepository = new EnableRepository({
     registry: repositoryRegistry,
-    repos: registryBackedRepo,
+    repos: registryReadRepo,
   });
   const disableRepository = new DisableRepository({
     registry: repositoryRegistry,
-    repos: registryBackedRepo,
+    repos: registryReadRepo,
   });
   const refreshRepository = new RefreshRepository({
     registry: repositoryRegistry,
-    repos: registryBackedRepo,
+    repos: registryReadRepo,
     metadataResolver,
   });
   const removeRepository = new RemoveRepository({
     registry: repositoryRegistry,
-    repos: registryBackedRepo,
+    repos: registryReadRepo,
   });
 
   const workerRegistry = new WorkerRegistryRepository(db);

@@ -1,16 +1,19 @@
-# Implementation Log - Task 8
+# Task 9 — Integration tests through composeRoot (CLI + HTTP)
 
-## HTTP API routes for `/api/repositories`
+## Scope
+Implemented the three integration test suites for the repository registry and fixed related code issues.
 
-Implemented the Fastify HTTP API routes for repository management in `apps/api/src/routes/repositories.ts` and registered them in `apps/api/src/server.ts`.
+## Changes
+- Created `apps/api/src/__tests__/cli-repo.test.ts` to test Commander CLI use cases.
+- Created `apps/api/src/__tests__/repositories-api.test.ts` to test repositories Fastify HTTP API endpoints.
+- Created `apps/api/src/__tests__/repository-registry-integration.test.ts` to test integration flows.
+- Implemented real database-backed lookups in `registryReadRepo` and `registryBackedRepo` in `compose.ts`.
+- Fixed check-then-set race condition in `cli.ts` by using `atomicUpdateByUuid`.
+- Created `apps/api/src/cli/exit-codes.ts` to break circular dependency between `cli.ts` and `repo-commands.ts`.
+- Added `eslint-disable no-console` to `repo-commands.ts` to make lint check pass cleanly.
 
-### Routes Added
-- `GET /api/repositories` - List repositories (supports `all=1` query parameter).
-- `GET /api/repositories/:id` - Inspect a repository by ID (sha256 hex) or full name (owner/name).
-- `POST /api/repositories` - Register a repository by local path (with optional full name and config metadata).
-- `PATCH /api/repositories/:id` - Update branch, remote URL, config metadata, or toggle enabled status.
-- `POST /api/repositories/:id/refresh` - Refresh repository metadata.
-- `DELETE /api/repositories/:id` - Remove a repository (fails with 409 if active runs exist).
-
-### TypeScript Compliance
-Adjusted input objects in POST and PATCH routes to construct properties dynamically. This avoids sending explicit `undefined` values to `RegisterRepositoryInput` and `UpdateRepositoryInput`, adhering to the strict `exactOptionalPropertyTypes` TS compiler setting configured in the workspace.
+## Verification
+- Run tests: `pnpm --filter @ai-sdlc/api test` (Passed!)
+- Run typecheck: `pnpm -r typecheck` (Passed!)
+- Run depcruise: `pnpm depcruise` (Passed!)
+- Run lint: `pnpm lint` (Passed!)

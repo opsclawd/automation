@@ -1,7 +1,8 @@
+/* eslint-disable no-console */
 import { Command } from 'commander';
 import { RepositoryId } from '@ai-sdlc/domain';
 import type { Container } from '../compose.js';
-import { EXIT_USER_ERROR, EXIT_INTERNAL_ERROR } from '../cli.js';
+import { EXIT_USER_ERROR, EXIT_INTERNAL_ERROR } from './exit-codes.js';
 
 const ID_OR_FULLNAME_RE = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?$/;
 
