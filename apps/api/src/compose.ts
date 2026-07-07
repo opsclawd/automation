@@ -2560,6 +2560,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         localBasePath: targetRoot,
         enabled: true,
         maxConcurrentRuns: 1 as const,
+        healthStatus: 'unknown',
+        healthError: null,
+        lastHealthCheckAt: null,
+        configMetadata: '{}',
         createdAt: new Date(),
         updatedAt: new Date(),
       })
@@ -2573,6 +2577,10 @@ export function composeRoot(opts: ComposeOptions): Container {
         localBasePath: '',
         enabled: false,
         maxConcurrentRuns: 1 as const,
+        healthStatus: 'unknown',
+        healthError: null,
+        lastHealthCheckAt: null,
+        configMetadata: '{}',
         createdAt: new Date(),
         updatedAt: new Date(),
       });
