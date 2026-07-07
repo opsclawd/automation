@@ -55,7 +55,7 @@ const phasesSchema = z.object({
      * loop hits this many in a row, it exits early as `exhausted` with
      * `needsHumanReview: true` rather than continuing to burn the
      * `maxIterations` budget on a pathologically failing fixer.
-     * Replaces the legacy `wholePrFix.maxRetriesPerTask` (which was
+     * Replaces the legacy cap on retries per task (which was
      * never enforced — see issue #667). Omit (or set to 0) to disable.
      * Defaults to undefined (no cap beyond the existing heuristics).
      */
@@ -64,7 +64,7 @@ const phasesSchema = z.object({
      * Cap on total fix invocations whose verdict was `done_with_fixes`
      * (productive fix work). Bounded to prevent a runaway reviewer
      * emitting unbounded findings from consuming unbounded fixer
-     * invocations. Replaces the legacy `wholePrFix.maxTotalTasks`
+     * invocations. Replaces the legacy cap on total tasks
      * (never enforced). Omit (or set to 0) to disable. Defaults to
      * undefined (no cap).
      */
