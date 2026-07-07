@@ -2,9 +2,14 @@ import type { Repository, RepositoryId } from '@ai-sdlc/domain';
 import type { RepositoryPort } from '../ports.js';
 
 export class FakeRepositoryPort implements RepositoryPort {
-  private byId = new Map<RepositoryId, Repository>();
-  private byPath = new Map<string, Repository>();
-  constructor(seed: Repository[] = []) {
+  private byId: Map<RepositoryId, Repository>;
+  private byPath: Map<string, Repository>;
+  constructor(
+    seed: Repository[] = [],
+    sharedStore?: { byId: Map<RepositoryId, Repository>; byPath: Map<string, Repository> },
+  ) {
+    this.byId = sharedStore?.byId ?? new Map();
+    this.byPath = sharedStore?.byPath ?? new Map();
     for (const r of seed) {
       this.byId.set(r.id, r);
       this.byPath.set(r.localBasePath, r);

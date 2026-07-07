@@ -7,9 +7,13 @@ import {
 import type { RepositoryRegistryPort, RepositoryUpdatePatch } from '../ports.js';
 
 export class FakeRepositoryRegistryPort implements RepositoryRegistryPort {
-  private byId = new Map<RepositoryId, Repository>();
+  private byId: Map<RepositoryId, Repository>;
   /** Map repo id → active run count. Seeded by tests via seedActiveRunCount. */
-  private activeCounts = new Map<RepositoryId, number>();
+  private activeCounts: Map<RepositoryId, number>;
+  constructor(sharedStore?: { byId: Map<RepositoryId, Repository> }) {
+    this.byId = sharedStore?.byId ?? new Map();
+    this.activeCounts = new Map();
+  }
 
   insert(repo: Repository): void {
     for (const existing of this.byId.values()) {
