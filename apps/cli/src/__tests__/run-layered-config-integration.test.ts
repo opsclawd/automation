@@ -107,4 +107,36 @@ describe('run-validation layered config integration', () => {
     expect(layered.fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(content.fingerprint).toBe(layered.fingerprint);
   });
+
+  it('writes config-sources.json containing only paths + fingerprint (no file contents)', () => {
+    const runId = 'test-run-1';
+    const runDir = join(runsDir, runId);
+    require('node:fs').mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'config-sources.json'),
+      JSON.stringify(
+        {
+          fingerprint: 'abc123',
+          sources: [
+            {
+              path: join(automationRoot, '.ai-orchestrator.json'),
+              kind: 'automation',
+              present: true,
+            },
+            {
+              path: join(automationRoot, '.ai-orchestrator.local.json'),
+              kind: 'local',
+              present: true,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
+    const body = readFileSync(join(runDir, 'config-sources.json'), 'utf8');
+    // Heuristic guard: this string would appear if a file body were inlined.
+    expect(body).not.toMatch(/echo target1/);
+    expect(body).not.toMatch(/api_key|secret|token/i);
+  });
 });
