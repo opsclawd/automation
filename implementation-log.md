@@ -1,31 +1,22 @@
-# Implementation Log — Task 6 (Wire RepositoryRegistryRepository and use cases into composition root)
+# Implementation Log — Task 7
 
 Branch: `ai/issue-637`
 Date: 2026-07-06
-Scope: Task 6 only — Wiring `RepositoryRegistryRepository` and its use cases into the composition root (`apps/api/src/compose.ts`).
+Scope: Task 7 only — Add the orchestrator repo CLI subcommand
 
-## Files Created/Modified
+## Files created/modified
 
-- **packages/application/src/index.ts** (Modified): Exported the new registry use cases (`RegisterRepository`, `RefreshRepository`, etc.) so they are available in `@ai-sdlc/application` exports.
-- **apps/api/src/compose.ts** (Modified):
-  - Imported registry use cases and `RepositoryRegistryPort` from `@ai-sdlc/application`.
-  - Imported `RepositoryRegistryRepository` from `@ai-sdlc/infrastructure`.
-  - Extended `Container` interface with new registry properties.
-  - Instantiated `repositoryRegistry`, `registryBackedRepo` wrapper, and the 8 registry use cases.
-  - Returned the new registry fields from `composeRoot` container.
+- `apps/api/src/cli/repo-commands.ts` (created) — new module containing register, list, inspect, update, enable, disable, refresh, remove subcommands under `repo`.
+- `apps/api/src/cli.ts` (modified) — registers the `repo` subcommand in `buildProgram` using a container-resolution closure and exports exit code constants.
 
-## Steps Executed
+## Steps executed
 
-- **Step 1 & 2** — Added the new repository and use case imports to `apps/api/src/compose.ts`.
-- **Barrel update** — Updated `packages/application/src/index.ts` to export all new repository use cases.
-- **Step 3** — Extended the `Container` interface in `apps/api/src/compose.ts`.
-- **Step 4** — Instantiated the registry repository, the `registryBackedRepo` (reads from `singleRepo` for now), and the 8 use cases (`ListRepositories`, `InspectRepository`, `RegisterRepository`, `UpdateRepository`, `EnableRepository`, `DisableRepository`, `RefreshRepository`, `RemoveRepository`).
-- **Step 5** — Exposed the new fields in the returned Container object.
-- **Step 6** — Ran `pnpm -r build` and `pnpm -r typecheck` to confirm the API surface compiles and passes.
-- **Step 7** — Ran `pnpm --filter @ai-sdlc/api test -- compose cli` to confirm no regression.
+1. **Created `repo-commands.ts`**: Developed the `registerRepoCommand` function that sets up all the subcommand actions, dynamically filtering out undefined options to satisfy `exactOptionalPropertyTypes`.
+2. **Modified `cli.ts`**: Exported the `EXIT_USER_ERROR` and `EXIT_INTERNAL_ERROR` constants. Wired the `repo` subcommand using the `getContainer` closure.
+3. **Typechecked**: Verified typescript compilation using `pnpm typecheck`.
+4. **Ran CLI tests**: Ran the existing CLI test suite to ensure all tests still pass.
 
-## Verification Results
+## Verification results
 
-- `pnpm -r typecheck` → PASS.
-- `pnpm --filter @ai-sdlc/api test -- compose cli` → PASS (11 test files, 158 tests passed).
-- `pnpm depcruise` → PASS (0 errors, 32 warnings on next.js output files).
+- `pnpm typecheck` -> Clean compilation (exit code 0).
+- `pnpm --filter @ai-sdlc/api test -- cli` -> All 93 tests passed.
