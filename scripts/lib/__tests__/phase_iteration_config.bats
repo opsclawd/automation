@@ -41,6 +41,56 @@ _load_config_block() {
   ' "$SCRIPT_PATH")"
 }
 
+setup_repo_root() {
+  local filename="$1"
+  local content="$2"
+  local repo_dir="${TMPDIR_TEST}/repo"
+  command mkdir -p "$repo_dir"
+  echo "$content" > "${repo_dir}/${filename}"
+  REPO_ROOT="$repo_dir"
+}
+
+load_layered_config() {
+  local repo_root="$1"
+  REPO_ROOT="$repo_root"
+  REPO_TARGET=""
+  _load_config_block
+  echo "$_ACTIVE_CONFIG" > "${TMPDIR_TEST}/last_active_config"
+}
+
+_update_active_config() {
+  if [ -f "${TMPDIR_TEST}/last_active_config" ]; then
+    _ACTIVE_CONFIG="$(cat "${TMPDIR_TEST}/last_active_config")"
+  fi
+}
+
+assert_failure() {
+  _update_active_config
+  local expected_status="${1:-}"
+  if [ "$status" -eq 0 ]; then
+    echo "Expected non-zero exit status, but got 0"
+    return 1
+  fi
+  if [ -n "$expected_status" ] && [ "$status" -ne "$expected_status" ]; then
+    echo "Expected status $expected_status, but got $status"
+    echo "Output: $output"
+    return 1
+  fi
+}
+
+assert_output() {
+  local arg="$1"
+  local val="$2"
+  if [ "$arg" = "--partial" ]; then
+    if [[ "$output" != *"$val"* ]]; then
+      echo "Expected output to contain: '$val'"
+      echo "Actual output: '$output'"
+      return 1
+    fi
+  fi
+}
+
+
 @test "defaults: when config file is missing, defaults are 5, 10, 2" {
   _load_config_block
   [ "$MAX_REVIEW_FIX_ITERATIONS" = "5" ]
@@ -145,11 +195,14 @@ _load_config_block() {
   [ "$FIX_VALIDATE_ENABLED" = "false" ]     # from base (preserved within overridden object)
 }
 
-@test "falls back to base config when local config is malformed JSON" {
-  echo '{"phases":{"reviewFix":{"maxIterations":7},"implement":{"maxIterations":5}}}' > "$TMPDIR_TEST/.ai-orchestrator.json"
-  echo 'not json at all {{{' > "$TMPDIR_TEST/.ai-orchestrator.local.json"
-  _load_config_block
-  [ "$MAX_REVIEW_FIX_ITERATIONS" = "7" ]  # from base (malformed local silently ignored)
+@test "local config malformed: wrapper exits 2 and names local path (fail-closed)" {
+  setup_repo_root '.ai-orchestrator.json' '{"validation":{"commands":["a"]}}'
+  echo "{not json" > "$REPO_ROOT/.ai-orchestrator.local.json"
+
+  run load_layered_config "$REPO_ROOT"
+
+  assert_failure 2
+  assert_output --partial ".ai-orchestrator.local.json"
 }
 
 @test "no local config file: behavior unchanged" {

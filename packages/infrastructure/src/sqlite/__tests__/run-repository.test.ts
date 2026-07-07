@@ -525,4 +525,48 @@ describe('RunRepository', () => {
 
     db.close();
   });
+
+  it('persists and retrieves config fingerprint and sources JSON', () => {
+    const db = freshDb();
+    const fingerprint = 'test-fingerprint-12345';
+    const sourcesJson = JSON.stringify([{ path: 'test-path', kind: 'automation', present: true }]);
+
+    const repo = new RunRepository(db, fingerprint, sourcesJson);
+    repo.insert({
+      uuid: 'u-config',
+      displayId: 'issue-101-config',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 101,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+
+    const found = repo.findByUuid('u-config');
+    expect(found?.configFingerprint).toBe(fingerprint);
+    expect(found?.configSourcesJson).toBe(sourcesJson);
+
+    // Test updates
+    const nextFingerprint = 'test-fingerprint-updated';
+    const nextSourcesJson = JSON.stringify([
+      { path: 'test-path-2', kind: 'local', present: false },
+    ]);
+    repo.update('u-config', {
+      configFingerprint: nextFingerprint,
+      configSourcesJson: nextSourcesJson,
+    });
+
+    const updated = repo.findByUuid('u-config');
+    expect(updated?.configFingerprint).toBe(nextFingerprint);
+    expect(updated?.configSourcesJson).toBe(nextSourcesJson);
+
+    // Test atomicUpdateByUuid
+    const atomicFingerprint = 'test-fingerprint-atomic';
+    repo.atomicUpdateByUuid('u-config', { configFingerprint: atomicFingerprint }, 'running');
+    const atomic = repo.findByUuid('u-config');
+    expect(atomic?.configFingerprint).toBe(atomicFingerprint);
+
+    db.close();
+  });
 });

@@ -19,6 +19,7 @@ import * as addWorkers from './migrations/0017-add-workers.js';
 import * as addClaimTtl from './migrations/0018-claimed-at-ttl.js';
 import * as addCommentSeverity from './migrations/0019-add-comment-severity.js';
 import * as addBaseBranch from './migrations/0020-add-base-branch-column.js';
+import * as addConfigProvenance from './migrations/0021-add-config-provenance.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -41,6 +42,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addClaimTtl.version, sql: addClaimTtl.sql },
   { version: addCommentSeverity.version, sql: addCommentSeverity.sql },
   { version: addBaseBranch.version, sql: addBaseBranch.sql },
+  { version: addConfigProvenance.version, sql: addConfigProvenance.sql },
 ];
 
 export function applyMigrations(db: Db): void {

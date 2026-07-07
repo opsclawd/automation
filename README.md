@@ -195,6 +195,10 @@ After the observable wrapper exists, orchestration should migrate incrementally 
 
 See [`docs/quickstart.md`](./docs/quickstart.md) for installation, starting the API/UI, and triggering a run via the `orchestrator` CLI.
 
+## Configuration
+
+For multi-repository installations, see [Cross-repository configuration](docs/quickstart.md#cross-repository-configuration) in the quickstart.
+
 ## Documentation
 
 - [`CONTEXT.md`](./CONTEXT.md) — project language, core domain model, relationships, outcome rules, and lifecycle states.
