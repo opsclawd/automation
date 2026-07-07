@@ -11,6 +11,6 @@ export function openDatabase(path: string): Db {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
-  db.function('sha256', (val: string) => createHash('sha256').update(val).digest());
+  db.function('sha256', (val: string) => createHash('sha256').update(val).digest('hex'));
   return db;
 }
