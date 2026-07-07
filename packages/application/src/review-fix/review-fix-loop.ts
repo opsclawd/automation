@@ -243,14 +243,23 @@ export class ReviewFixLoop {
         consecutiveFixFailures += 1;
         productiveFixFailures += 1;
         lastIterationHadFixCommit = false;
+
+        // --- RUNAWAY-PROTECTION CAP: maxConsecutiveFixFailures (#667) ---
+        const consecutiveCap = input.maxConsecutiveFixFailures;
+        const capHit =
+          consecutiveCap !== undefined &&
+          consecutiveCap > 0 &&
+          productiveFixFailures >= consecutiveCap;
+        const outcome = capHit ? 'failed' : 'unresolved';
+
         thisLoop = completeIteration(thisLoop, {
-          outcome: 'unresolved',
+          outcome,
           fixInvocationId: fix.invocationId,
           now: deps.now(),
         });
         deps.loops.update(thisLoop);
-        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-        await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input);
+        this.emitIterationCompleted(input, iterationIndex, outcome);
+        await this.appendHistoryEntry(ctx, review, fix, undefined, outcome, input);
         // Record fixer verdict in unfounded-history even on fix failure so
         // the ping-pong detector can see it.
         unfoundedHistory.push({
@@ -258,19 +267,8 @@ export class ReviewFixLoop {
           ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
         });
         await this.runCleanArtifacts(ctx);
-        // --- RUNAWAY-PROTECTION CAP: maxConsecutiveFixFailures (#667) ---
-        const consecutiveCap = input.maxConsecutiveFixFailures;
-        if (
-          consecutiveCap !== undefined &&
-          consecutiveCap > 0 &&
-          productiveFixFailures >= consecutiveCap
-        ) {
-          thisLoop = completeIteration(thisLoop, {
-            outcome: 'failed',
-            fixInvocationId: fix.invocationId,
-            now: deps.now(),
-          });
-          deps.loops.update(thisLoop);
+
+        if (capHit) {
           this.emit(
             input,
             'loop.exhausted.fix_consecutive_failures',
@@ -282,6 +280,8 @@ export class ReviewFixLoop {
               cap: consecutiveCap,
             },
           );
+          thisLoop = exhaust(thisLoop, this.deps.now());
+          this.deps.loops.update(thisLoop);
           return {
             loop: thisLoop,
             phaseOutcome: 'failed',
@@ -323,10 +323,13 @@ export class ReviewFixLoop {
               cap: totalCap,
             },
           );
+          thisLoop = exhaust(thisLoop, this.deps.now());
+          this.deps.loops.update(thisLoop);
           return {
             loop: thisLoop,
             phaseOutcome: 'failed',
             loopStatus: 'exhausted',
+            needsHumanReview: true,
             residualFindingsCount: lastOffendingFindings.length,
           };
         }
