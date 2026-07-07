@@ -94,6 +94,41 @@ describe('ReviewFixLoop — runaway-protection caps (#667)', () => {
     expect(events.some((e) => e.type === 'loop.exhausted.fix_consecutive_failures')).toBe(true);
   });
 
+  it('exits as exhausted when maxConsecutiveFixFailures is hit with done_no_fixes_needed verdicts', async () => {
+    const { events, bus } = collectEvents();
+    let fixCalls = 0;
+    const deps = makeDeps({
+      events: bus,
+      runReview: async () => ({
+        invocationId: 'r',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runFix: async () => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success',
+          verdict: 'done_no_fixes_needed',
+        };
+      },
+      runRevalidation: async () => ({
+        validationRunId: 'val',
+        passed: true,
+      }),
+    });
+    const out = await new ReviewFixLoop(deps).execute({
+      ...baseInput(),
+      maxConsecutiveFixFailures: 3,
+    });
+
+    expect(out.loopStatus).toBe('exhausted');
+    expect(out.needsHumanReview).toBe(true);
+    expect(out.phaseOutcome).toBe('failed');
+    expect(fixCalls).toBe(3);
+    expect(events.some((e) => e.type === 'loop.exhausted.fix_consecutive_failures')).toBe(true);
+  });
+
   it('exits as exhausted when maxTotalFixAttempts is hit', async () => {
     const { events, bus } = collectEvents();
     let iteration = 0;

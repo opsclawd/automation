@@ -292,7 +292,11 @@ export class ReviewFixLoop {
         continue;
       }
       consecutiveFixFailures = 0;
-      consecutiveFixFailuresForCap = 0;
+      if (fix.verdict === 'done_with_fixes') {
+        consecutiveFixFailuresForCap = 0;
+      } else {
+        consecutiveFixFailuresForCap += 1;
+      }
       lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
       if (fix.verdict === 'done_with_fixes') {
         lastPostFixGateFailed = false;
@@ -464,6 +468,35 @@ export class ReviewFixLoop {
             iterationIndex,
             totalFixAttempts,
             cap: totalCap,
+          },
+        );
+        thisLoop = exhaust(thisLoop, this.deps.now());
+        this.deps.loops.update(thisLoop);
+        return {
+          loop: thisLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'exhausted',
+          needsHumanReview: true,
+          residualFindingsCount: lastOffendingFindings.length,
+        };
+      }
+
+      // --- RUNAWAY-PROTECTION CAP: maxConsecutiveFixFailures (#667) ---
+      const consecutiveCap = input.maxConsecutiveFixFailures;
+      if (
+        consecutiveCap !== undefined &&
+        consecutiveCap > 0 &&
+        consecutiveFixFailuresForCap >= consecutiveCap
+      ) {
+        this.emit(
+          input,
+          'loop.exhausted.fix_consecutive_failures',
+          'warn',
+          `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
+          {
+            iterationIndex,
+            consecutiveFixFailuresForCap,
+            cap: consecutiveCap,
           },
         );
         thisLoop = exhaust(thisLoop, this.deps.now());
