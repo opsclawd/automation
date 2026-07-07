@@ -84,6 +84,8 @@ export async function readReviewVerdict(
   // Any fail verdict must carry its findings so downstream consumers
   // (evidence check, rebuttal convergence, unfounded-pingpong detection)
   // can inspect them — not just the severity-gate override paths above.
+  // See also: implRunFix in apps/api/src/compose.ts and arbiter-prompt.ts,
+  // which consume the same findings via phase-segregated archives.
   if (result.result === 'fail' && result.findings.length > 0) {
     return { ok: true, verdict: 'fail', offendingFindings: result.findings };
   }

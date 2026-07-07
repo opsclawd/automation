@@ -17,8 +17,8 @@ describe('buildSpecReviewPrompt', () => {
 
   it('output section uses absolute path for result.json', () => {
     const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
-    expect(prompt).toContain(`Write ${ctx.cwd}/result.json:`);
-    expect(prompt).not.toContain('Write result.json:');
+    expect(prompt).toContain(`Write ${ctx.cwd}/result.json`);
+    expect(prompt).not.toContain('Write result.json');
   });
 
   it('includes negative constraint forbidding relative paths', () => {
@@ -47,6 +47,20 @@ describe('buildSpecReviewPrompt', () => {
     const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
     expect(prompt).toContain('STOP RULE');
     expect(prompt).toContain('After writing result.json you are DONE');
+  });
+
+  it('output section defines the findings array contract', () => {
+    const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('"findings"');
+    expect(prompt).toContain('"severity"');
+    expect(prompt).toContain('"file": "<optional repo-relative path>"');
+    expect(prompt).toContain('"suggested_fix"');
+    expect(prompt).toContain('"P0" | "P1" | "P2" | "P3"');
+  });
+
+  it('output section forbids omitting findings on fail', () => {
+    const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('Do NOT omit `findings` on "fail"');
   });
 
   it('embeds implementer report when provided', () => {
