@@ -8,6 +8,8 @@ export const specReviewResultSchema = z.object({
       z.object({
         severity: z.enum(['P0', 'P1', 'P2', 'P3']),
         summary: z.string().min(1),
+        file: z.string().min(1).optional(),
+        suggested_fix: z.string().min(1).optional(),
       }),
     )
     .optional()
