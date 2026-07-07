@@ -43,9 +43,7 @@ function pickTypecheckPayload(tcResult: TypecheckResult): string | unknown[] | u
     // Filter out volatile TSC summary lines that are not diagnostics.
     const diagnosticLikeLines = rawNonBlankLines.filter(
       (l) =>
-        !/^Found \d+ errors?\.?$/i.test(l) &&
-        !/^in \d+\.?\d*(ms|s)\s*$/i.test(l) &&
-        !/^>/.test(l), // command-echo lines like "> tsc --noEmit"
+        !/^Found \d+ errors?\.?$/i.test(l) && !/^in \d+\.?\d*(ms|s)\s*$/i.test(l) && !/^>/.test(l), // command-echo lines like "> tsc --noEmit"
     );
     if (diagnosticLikeLines.length > structured.length && raw.length > 0) {
       return raw.slice(0, 2000);
@@ -466,22 +464,39 @@ export class ImplementStepLoop {
             'warn',
             `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
             {
-              toProfile: deps.fixFallbackProfile ?? 'none',
+              toProfile: 'arbiter',
               reason: 'contradiction_not_resolved_by_rerun',
               iterationIndex,
             },
           );
 
-          const arbiterResult = await deps.runArbiter(ctx, tcResult, fix);
+          let arbiterResult: ArbiterResult;
+          try {
+            arbiterResult = await deps.runArbiter(ctx, tcResult, fix);
 
-          // G1 guardrail: empty evidence → human review, never auto-proceed
-          if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
+            // G1 guardrail: empty evidence → human review, never auto-proceed
+            if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
+              this.emit(
+                input,
+                'needs_human_review',
+                'warn',
+                `arbiter returned empty evidence at iteration ${iterationIndex} — escalating to human`,
+                { iterationIndex, outcome: arbiterResult.outcome },
+              );
+              loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+              deps.loops.update(loop);
+              return { outcome: 'needs_human_review', loop };
+            }
+          } catch (err) {
             this.emit(
               input,
               'needs_human_review',
               'warn',
-              `arbiter returned empty evidence at iteration ${iterationIndex} — escalating to human`,
-              { iterationIndex, outcome: arbiterResult.outcome },
+              `arbiter failed at iteration ${iterationIndex} — escalating to human`,
+              {
+                iterationIndex,
+                error: err instanceof Error ? err.message : String(err),
+              },
             );
             loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
             deps.loops.update(loop);

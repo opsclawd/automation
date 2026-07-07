@@ -57,7 +57,12 @@ export interface FixResult {
   rebuttal?: string;
 }
 
-import type { ArbiterResult } from '../results/schemas/arbiter.js';
+export interface ArbiterResult {
+  outcome: 'finding_valid' | 'finding_invalid' | 'ambiguous' | 'insufficient_evidence';
+  defect_classification?: string;
+  evidence: string;
+  rationale: string;
+}
 
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext, opts?: ImplementStepOptions) => Promise<ImplementResult>;

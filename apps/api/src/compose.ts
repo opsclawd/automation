@@ -101,6 +101,7 @@ import {
   type ReviewStepOptions,
   type PhaseHandlerContext,
   type PhaseHandlerContextFactory,
+  type ImplementStepLoopDeps,
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
   type FixStepOptions,
@@ -111,6 +112,8 @@ import {
   type ImplementArtifactGuardInput,
   type SynthesizeFromTranscriptInput,
   type SynthesizeFromTranscriptPort as _SynthesizeFromTranscriptPort,
+  arbiterResultSchema,
+  extractResult,
   extractTaskBody,
   parseTaskManifest,
   parseTypescriptErrors,
@@ -155,10 +158,16 @@ import {
   CodexAgentAdapter,
   ImplementArtifactGuard,
   SynthesizeFromTranscript,
-  ArbiterAgent,
   RepositoryRegistryRepository,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
+import { buildArbiterPrompt } from './arbiter-prompt.js';
+import {
+  FIX_RESULT_ARTIFACT,
+  QUALITY_REVIEW_RESULT_ARTIFACT,
+  SPEC_REVIEW_RESULT_ARTIFACT,
+  readArbiterExcerpts,
+} from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
@@ -1205,11 +1214,9 @@ export function composeRoot(opts: ComposeOptions): Container {
       const repoDefaultBranch = repo ? repo.defaultBranch : resolvedDefaultBranch;
       const branchName = `ai/issue-${run.issueNumber}`;
       try {
-        const sha = execFileSync(
-          'git',
-          ['merge-base', branchName, `origin/${repoDefaultBranch}`],
-          { cwd: repoRootPath },
-        )
+        const sha = execFileSync('git', ['merge-base', branchName, `origin/${repoDefaultBranch}`], {
+          cwd: repoRootPath,
+        })
           .toString()
           .trim();
         if (sha) return sha;
@@ -1892,6 +1899,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
       const implFixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
+      const arbiterProfileName: string | undefined =
+        config.agent.phaseProfiles['plan-design']?.profile ??
+        config.agent.phaseProfiles['fix-review']?.profile;
 
       const makeArtifactStore = (runUuid: string, cwd: string): ArtifactStore =>
         artifactStoreForRun(runUuid, cwd);
@@ -2276,6 +2286,33 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       };
 
+      // Archive a step invocation's result.json under a phase-segregated
+      // durable name so later phases can't overwrite it (#661). Durable-only
+      // on purpose: writing through the artifact store would also drop the
+      // copy into the git worktree, where fix agents have committed stray
+      // orchestrator files before.
+      const archiveStepResultDurably = (
+        ctx: StepLoopContext,
+        resultJsonPath: string,
+        artifactName: string,
+      ): void => {
+        const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
+        const destination = join(runsDir, runDir, 'phase-artifacts', artifactName);
+        try {
+          mkdirSync(dirname(destination), { recursive: true });
+          copyFileSync(join(ctx.cwd, resultJsonPath), destination);
+        } catch (err) {
+          persistingEventBusForLoop.publish(String(ctx.runId), {
+            runId: String(ctx.runId),
+            level: 'warn',
+            type: 'artifact.copy_failed',
+            message: `Failed to copy artifact: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { source: join(ctx.cwd, resultJsonPath), destination },
+          });
+        }
+      };
+
       const runSpecReview = async (ctx: StepLoopContext, tcResult: TypecheckResult) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
@@ -2325,6 +2362,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        archiveStepResultDurably(
+          ctx,
+          patched.resultJsonPath ?? 'result.json',
+          SPEC_REVIEW_RESULT_ARTIFACT,
+        );
         const verdict = await readReviewVerdict(
           patched,
           { artifacts, agent: artifactAgent },
@@ -2380,6 +2422,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        archiveStepResultDurably(
+          ctx,
+          patched.resultJsonPath ?? 'result.json',
+          QUALITY_REVIEW_RESULT_ARTIFACT,
+        );
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const verdict = await readReviewVerdict(
           patched,
@@ -2450,6 +2497,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        archiveStepResultDurably(ctx, patched.resultJsonPath ?? 'result.json', FIX_RESULT_ARTIFACT);
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const fixVerdict = await readFixVerdict(patched, {
           artifacts,
@@ -2462,15 +2510,115 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const arbiterAgent = new ArbiterAgent({
-        agent: artifactAgent,
-        artifacts: (runId: string, cwd: string) => artifactStoreForRun(runId, cwd),
-        invocations: agentInvocationRepository,
-        baseTmpDir,
-        resolveStartCommitSha: (cwd: string, runId: string) =>
-          resolveStartCommitSha(cwd, runId),
-        newestInvocationId: (runId: string) => newestInvocationId(runId),
-      });
+      type LoopArbiterResult = Awaited<ReturnType<Required<ImplementStepLoopDeps>['runArbiter']>>;
+
+      const runArbiter: ImplementStepLoopDeps['runArbiter'] | undefined = arbiterProfileName
+        ? async (ctx, tcResult, fixResult): Promise<LoopArbiterResult> => {
+            const promptDir = join(baseTmpDir, 'implement-step-prompts');
+            mkdirSync(promptDir, { recursive: true });
+            const promptPath = join(
+              promptDir,
+              `arbiter-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
+            );
+            const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+
+            const { specExcerpt, qualityExcerpt, fixExcerpt } = await readArbiterExcerpts(
+              artifacts,
+              String(ctx.runId),
+            );
+
+            let taskBody = '';
+            try {
+              const plan = await artifacts.read(String(ctx.runId), 'plan.md');
+              const parsed = parseTaskManifest(
+                await artifacts.read(String(ctx.runId), 'task-manifest.json'),
+              );
+              const titleMatch =
+                parsed.success && parsed.manifest.tasks.find((t) => t.n === ctx.stepIndex)?.title;
+              const extracted = extractTaskBody(plan, {
+                taskNumber: ctx.stepIndex,
+                ...(titleMatch ? { title: titleMatch } : {}),
+              });
+              taskBody = extracted.ok ? extracted.body : '';
+            } catch {
+              taskBody = '';
+            }
+
+            const arbiterPrompt = buildArbiterPrompt(
+              { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
+              {
+                tcResult,
+                specExcerpt,
+                qualityExcerpt,
+                fixExcerpt,
+                fixRebuttal: fixResult.rebuttal ?? '',
+                taskBody,
+              },
+            );
+            writeFileSync(promptPath, arbiterPrompt, 'utf-8');
+
+            const startCommitSha = (() => {
+              try {
+                return execFileSync('git', ['rev-parse', 'HEAD'], {
+                  cwd: ctx.cwd,
+                  encoding: 'utf-8',
+                }).trim();
+              } catch {
+                return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+              }
+            })();
+
+            try {
+              await artifactAgent.invoke({
+                profile: AgentProfileName(arbiterProfileName),
+                promptPath,
+                expectedArtifacts: ['result.json'],
+                cwd: ctx.cwd,
+                runId: String(ctx.runId),
+                repoId: ctx.repoId,
+                phaseId: 'arbiter',
+                startCommitSha,
+              });
+            } catch (err) {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'error',
+                type: 'agent.invoke_failed',
+                message: `Arbiter invocation failed: ${err instanceof Error ? err.message : String(err)}`,
+                timestamp: new Date().toISOString(),
+                metadata: { phaseId: 'arbiter', stepIndex: ctx.stepIndex },
+              });
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
+              };
+            }
+
+            const invocationId = newestInvocationId(String(ctx.runId));
+            const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+            if (!inv) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter invocation produced no row`,
+              };
+            }
+            const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+            const verdict = await extractResult({
+              invocation: patched,
+              ports: { artifacts, agent: artifactAgent },
+            });
+            if (!verdict.ok) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter result.json unparseable: ${verdict.detail}`,
+              };
+            }
+            return arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
+          }
+        : undefined;
 
       implementStepLoop = new ImplementStepLoop({
         runImplement,
@@ -2478,12 +2626,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         runSpecReview,
         runQualityReview,
         runFix: implRunFix,
-        runArbiter: async (ctx, tcResult, fixResult) => {
-          const profile = resolveProfileBound('arbitrate');
-          return arbiterAgent.runArbiter(ctx, tcResult, fixResult, {
-            profile,
-          });
-        },
+        ...(runArbiter ? { runArbiter } : {}),
         loops: loopRepository,
         events: persistingEventBusForLoop,
         fixProfile: AgentProfileName(implFixProfileName),

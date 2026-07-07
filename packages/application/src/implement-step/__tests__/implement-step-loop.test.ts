@@ -711,7 +711,7 @@ describe('ImplementStepLoop', () => {
           return {
             invocationId: `sr-${specCalls}`,
             agentOutcome: 'success' as const,
-            verdict: 'fail' as const,
+            verdict: specCalls === 1 ? ('fail' as const) : ('pass' as const),
           };
         },
         runQualityReview: async (_ctx, _tcResult) => qualSpy(),
@@ -1586,6 +1586,34 @@ describe('ImplementStepLoop', () => {
       expect(out.outcome).toBe('needs_human_review');
       const esc = events.filter((e) => e.type === 'review.contradiction.escalated');
       expect(esc).toHaveLength(1);
+    });
+
+    it('G1 guardrail: catch arbiter exceptions and escalate to human review', async () => {
+      const { bus, events } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async () => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_no_fixes_needed' as const,
+          rebuttal: 'I disagree.',
+        }),
+        runArbiter: async () => {
+          throw new Error('Arbiter crashed');
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      expect(out.outcome).toBe('needs_human_review');
+      const nhr = events.find((e) => e.type === 'needs_human_review');
+      expect(nhr).toBeDefined();
+      expect(nhr?.message).toContain('arbiter failed');
+      expect(nhr?.metadata.error).toBe('Arbiter crashed');
     });
   });
 

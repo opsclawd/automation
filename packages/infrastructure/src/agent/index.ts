@@ -23,4 +23,3 @@ export { ClaudeCodeAgentAdapter, type ClaudeCodeAdapterOptions } from './claude-
 export { CodexAgentAdapter, type CodexAdapterOptions } from './codex-adapter.js';
 export { ImplementArtifactGuard } from './implement-artifact-guard.js';
 export { SynthesizeFromTranscript } from './synthesize-from-transcript.js';
-export { ArbiterAgent, type ArbiterAgentDeps } from './arbiter-agent.js';
