@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Db } from './database.js';
 import * as init from './migrations/0001-init.js';
 import * as addPid from './migrations/0002-add-pid-column.js';
@@ -20,6 +21,8 @@ import * as addClaimTtl from './migrations/0018-claimed-at-ttl.js';
 import * as addCommentSeverity from './migrations/0019-add-comment-severity.js';
 import * as addBaseBranch from './migrations/0020-add-base-branch-column.js';
 import * as addConfigProvenance from './migrations/0021-add-config-provenance.js';
+import * as createRepositories from './migrations/0022-create-repositories.js';
+import * as backfillRepositoryRegistry from './migrations/0023-backfill-repository-registry.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -43,9 +46,16 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addCommentSeverity.version, sql: addCommentSeverity.sql },
   { version: addBaseBranch.version, sql: addBaseBranch.sql },
   { version: addConfigProvenance.version, sql: addConfigProvenance.sql },
+  { version: createRepositories.version, sql: createRepositories.sql },
+  { version: backfillRepositoryRegistry.version, sql: backfillRepositoryRegistry.sql },
 ];
 
+export function registerCustomFunctions(db: Db): void {
+  db.function('sha256', (val: string) => createHash('sha256').update(val).digest());
+}
+
 export function applyMigrations(db: Db): void {
+  registerCustomFunctions(db);
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
