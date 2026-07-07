@@ -155,6 +155,7 @@ import {
   CodexAgentAdapter,
   ImplementArtifactGuard,
   SynthesizeFromTranscript,
+  ArbiterAgent,
   RepositoryRegistryRepository,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
@@ -2461,12 +2462,28 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
+      const arbiterAgent = new ArbiterAgent({
+        agent: artifactAgent,
+        artifacts: (runId: string, cwd: string) => artifactStoreForRun(runId, cwd),
+        invocations: agentInvocationRepository,
+        baseTmpDir,
+        resolveStartCommitSha: (cwd: string, runId: string) =>
+          resolveStartCommitSha(cwd, runId),
+        newestInvocationId: (runId: string) => newestInvocationId(runId),
+      });
+
       implementStepLoop = new ImplementStepLoop({
         runImplement,
         runTypecheck,
         runSpecReview,
         runQualityReview,
         runFix: implRunFix,
+        runArbiter: async (ctx, tcResult, fixResult) => {
+          const profile = resolveProfileBound('arbitrate');
+          return arbiterAgent.runArbiter(ctx, tcResult, fixResult, {
+            profile,
+          });
+        },
         loops: loopRepository,
         events: persistingEventBusForLoop,
         fixProfile: AgentProfileName(implFixProfileName),

@@ -122,6 +122,14 @@ const _phaseDefinitions = {
     retrySafety: 'unsafe',
     skippable: false,
   },
+  arbitrate: {
+    name: makePhaseName('arbitrate'),
+    inputs: { required: [], optional: [] },
+    outputs: ['result.json'],
+    agentContract: { requiredArtifacts: ['result.json'], mustNotChangeBranch: true },
+    retrySafety: 'safe',
+    skippable: true,
+  },
 } satisfies Record<string, PhaseDefinition>;
 
 export const PHASE_DEFINITIONS: Record<PhaseName, PhaseDefinition> = _phaseDefinitions;
