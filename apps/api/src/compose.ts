@@ -690,6 +690,74 @@ export function buildQualityReviewPrompt(
   ].join('\n');
 }
 
+export async function buildImplementStepFixPrompt(
+  artifacts: ArtifactStore,
+  runId: string,
+  ctx: { stepIndex: number; stepTitle: string; cwd: string },
+): Promise<string> {
+  const EXCERPT_MAX_CHARS = 4000;
+
+  const readFindings = async (
+    archive: string,
+  ): Promise<
+    Array<{ severity: string; summary: string; file?: string; suggested_fix?: string }>
+  > => {
+    try {
+      const raw = (await artifacts.read(runId, archive)).slice(0, EXCERPT_MAX_CHARS);
+      const parsed = JSON.parse(raw) as { findings?: unknown };
+      if (!Array.isArray(parsed.findings)) return [];
+      return parsed.findings.filter(
+        (f): f is { severity: string; summary: string; file?: string; suggested_fix?: string } =>
+          typeof f === 'object' &&
+          f !== null &&
+          typeof (f as { severity?: unknown }).severity === 'string' &&
+          typeof (f as { summary?: unknown }).summary === 'string',
+      );
+    } catch (err) {
+      if (!(err instanceof ArtifactNotFoundError)) {
+        // Swallow other errors so the fixer is never blocked by a malformed archive.
+        console.warn(`[buildImplementStepFixPrompt] failed to read ${archive}:`, err);
+      }
+      return [];
+    }
+  };
+
+  const [specFindings, qualityFindings] = await Promise.all([
+    readFindings(SPEC_REVIEW_RESULT_ARTIFACT),
+    readFindings(QUALITY_REVIEW_RESULT_ARTIFACT),
+  ]);
+
+  return [
+    '# TASK',
+    `Fix implementation issues for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
+    '',
+    '## WHAT THE REVIEWERS FOUND (verbatim)',
+    '',
+    'The most-recent spec-review result.json findings:',
+    '```json',
+    JSON.stringify({ findings: specFindings }, null, 2),
+    '```',
+    '',
+    'The most-recent quality-review result.json findings:',
+    '```json',
+    JSON.stringify({ findings: qualityFindings }, null, 2),
+    '```',
+    '',
+    'Apply the suggested fixes when you can. If a finding is wrong or infeasible,',
+    'write result.json with "done_no_fixes_needed" and a non-empty `rebuttal`',
+    'citing the finding and your reason.',
+    '',
+    '## CONTEXT',
+    `Working directory: ${ctx.cwd}`,
+    '',
+    '## OUTPUT',
+    `Write ${ctx.cwd}/result.json with this shape (no extra keys, no comments):`,
+    '  { "result": "done_with_fixes" }',
+    '  | { "result": "done_no_fixes_needed", "rebuttal": "<reason>" }',
+    '  | { "result": "cannot_fix" }',
+  ].join('\n');
+}
+
 export interface BuildPostPrReviewTaskPromptInput {
   cwd: string;
   comment: {
@@ -2490,16 +2558,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           opts.useFallback && implFixFallbackProfileName
             ? implFixFallbackProfileName
             : implFixProfileName;
-        const fixPrompt = [
-          '# TASK',
-          `Fix implementation issues for step ${ctx.stepIndex}: ${ctx.stepTitle}`,
-          '',
-          '## CONTEXT',
-          'Read any review findings in the working directory and apply the suggested fixes.',
-          '',
-          '## OUTPUT',
-          'Write result.json: { "result": "done_with_fixes" } | { "result": "done_no_fixes_needed", "rebuttal": "<reason>" } | { "result": "cannot_fix" }',
-        ].join('\n');
+        const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+        const fixPrompt = await buildImplementStepFixPrompt(artifacts, String(ctx.runId), ctx);
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let invokeResult;
@@ -2536,7 +2596,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         if (!inv) return { invocationId, agentOutcome: invokeResult.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
         archiveStepResultDurably(ctx, patched.resultJsonPath ?? 'result.json', FIX_RESULT_ARTIFACT);
-        const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const fixVerdict = await readFixVerdict(patched, {
           artifacts,
           agent: artifactAgent,

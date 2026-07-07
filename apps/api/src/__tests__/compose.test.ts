@@ -1530,4 +1530,14 @@ exit 1
       expect(container.runsDir).toBe(path.join(repoRoot, '.ai-runs'));
     });
   });
+
+  it('implement-step fix prompt no longer tells fixer to read a nonexistent findings file (#664)', () => {
+    // Source-level regression check: the old broken contract must be gone,
+    // and the new findings section must be present.
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const composeSource = fs.readFileSync(path.join(__dirname, '..', 'compose.ts'), 'utf-8');
+    expect(composeSource).not.toContain('Read any review findings in the working directory');
+    expect(composeSource).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
+  });
 });
