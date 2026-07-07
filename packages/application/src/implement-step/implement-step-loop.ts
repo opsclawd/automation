@@ -43,9 +43,7 @@ function pickTypecheckPayload(tcResult: TypecheckResult): string | unknown[] | u
     // Filter out volatile TSC summary lines that are not diagnostics.
     const diagnosticLikeLines = rawNonBlankLines.filter(
       (l) =>
-        !/^Found \d+ errors?\.?$/i.test(l) &&
-        !/^in \d+\.?\d*(ms|s)\s*$/i.test(l) &&
-        !/^>/.test(l), // command-echo lines like "> tsc --noEmit"
+        !/^Found \d+ errors?\.?$/i.test(l) && !/^in \d+\.?\d*(ms|s)\s*$/i.test(l) && !/^>/.test(l), // command-echo lines like "> tsc --noEmit"
     );
     if (diagnosticLikeLines.length > structured.length && raw.length > 0) {
       return raw.slice(0, 2000);
@@ -466,7 +464,7 @@ export class ImplementStepLoop {
             'warn',
             `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
             {
-              toProfile: deps.fixFallbackProfile ?? 'none',
+              toProfile: deps.runArbiter !== undefined ? 'arbiter' : 'none',
               reason: 'contradiction_not_resolved_by_rerun',
               iterationIndex,
             },
