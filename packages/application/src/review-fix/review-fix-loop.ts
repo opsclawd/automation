@@ -250,7 +250,7 @@ export class ReviewFixLoop {
           consecutiveCap !== undefined &&
           consecutiveCap > 0 &&
           productiveFixFailures >= consecutiveCap;
-        const outcome = capHit ? 'failed' : 'unresolved';
+        const outcome = 'unresolved';
 
         thisLoop = completeIteration(thisLoop, {
           outcome,
@@ -305,13 +305,13 @@ export class ReviewFixLoop {
         const totalCap = input.maxTotalFixAttempts;
         if (totalCap !== undefined && totalCap > 0 && totalFixAttempts >= totalCap) {
           thisLoop = completeIteration(thisLoop, {
-            outcome: 'failed',
+            outcome: 'unresolved',
             fixInvocationId: fix.invocationId,
             now: deps.now(),
           });
           deps.loops.update(thisLoop);
-          this.emitIterationCompleted(input, iterationIndex, 'failed');
-          await this.appendHistoryEntry(ctx, review, fix, undefined, 'failed', input);
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input);
           this.emit(
             input,
             'loop.exhausted.fix_attempt_cap',
