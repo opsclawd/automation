@@ -28,5 +28,7 @@ export { pollTaskManifestSchema } from './schemas/poll-task-manifest.js';
 export type { PollTaskManifest, PollTaskEntry } from './schemas/poll-task-manifest.js';
 export { pollTaskResultSchema } from './schemas/poll-task-result.js';
 export type { PollTaskResult } from './schemas/poll-task-result.js';
+export { arbiterResultSchema } from './schemas/arbiter.js';
+export type { ArbiterResult } from './schemas/arbiter.js';
 export { extractResult } from './extract-result.js';
 export type { ExtractResultOutcome, ExtractResultInput, RerunContext } from './extract-result.js';

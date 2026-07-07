@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PHASE_NAME_MIGRATION_MAP, PHASE_RESULT_REGISTRY } from '../phase-registry.js';
 
 describe('PHASE_RESULT_REGISTRY', () => {
-  it('contains all 9 expected phases', () => {
+  it('contains all 10 expected phases', () => {
     const expected = [
       'implement',
       'quality-review',
@@ -13,6 +13,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
       'whole-pr-review',
       'compound',
       'fix-validate',
+      'arbiter',
     ];
     expect(Object.keys(PHASE_RESULT_REGISTRY).sort()).toEqual([...expected].sort());
   });
@@ -27,6 +28,7 @@ describe('PHASE_RESULT_REGISTRY', () => {
     ['whole-pr-review', true],
     ['compound', false],
     ['fix-validate', false],
+    ['arbiter', true],
   ])('phase %s has retrySafe=%s', (phase, expected) => {
     expect(PHASE_RESULT_REGISTRY[phase].retrySafe).toBe(expected);
   });
