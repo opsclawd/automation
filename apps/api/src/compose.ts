@@ -164,6 +164,7 @@ import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildArbiterPrompt } from './arbiter-prompt.js';
 import {
   FIX_RESULT_ARTIFACT,
+  QUALITY_REVIEW_RESULT_ARTIFACT,
   SPEC_REVIEW_RESULT_ARTIFACT,
   readArbiterExcerpts,
 } from './arbiter-excerpts.js';
@@ -2421,6 +2422,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
         if (!inv) return { invocationId, agentOutcome: result.outcome };
         const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+        archiveStepResultDurably(
+          ctx,
+          patched.resultJsonPath ?? 'result.json',
+          QUALITY_REVIEW_RESULT_ARTIFACT,
+        );
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
         const verdict = await readReviewVerdict(
           patched,
@@ -2516,7 +2522,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
-            const { specExcerpt, fixExcerpt } = await readArbiterExcerpts(
+            const { specExcerpt, qualityExcerpt, fixExcerpt } = await readArbiterExcerpts(
               artifacts,
               String(ctx.runId),
             );
@@ -2543,6 +2549,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               {
                 tcResult,
                 specExcerpt,
+                qualityExcerpt,
                 fixExcerpt,
                 fixRebuttal: fixResult.rebuttal ?? '',
                 taskBody,

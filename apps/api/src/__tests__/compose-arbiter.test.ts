@@ -34,6 +34,7 @@ describe('compose runArbiter wiring', () => {
       {
         tcResult: { outcome: 'fail', output: 'TS2304' },
         specExcerpt: '{}',
+        qualityExcerpt: '{}',
         fixExcerpt: '{}',
         fixRebuttal: 'r',
         taskBody: '## Task 1: x',

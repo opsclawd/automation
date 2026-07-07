@@ -10,6 +10,8 @@ export interface BuildArbiterPromptInputs {
   tcResult: TypecheckResult;
   /** Most-recent spec-review result.json excerpt (first ~4 KB). */
   specExcerpt: string;
+  /** Most-recent quality-review result.json excerpt (first ~4 KB). */
+  qualityExcerpt: string;
   /** Most-recent fix result.json excerpt (first ~4 KB). */
   fixExcerpt: string;
   /** The fix agent's free-text rebuttal (may be empty). */
@@ -53,6 +55,11 @@ export function buildArbiterPrompt(
     '### Most-recent spec-review result.json (excerpt)',
     '```json',
     inputs.specExcerpt || '(empty)',
+    '```',
+    '',
+    '### Most-recent quality-review result.json (excerpt)',
+    '```json',
+    inputs.qualityExcerpt || '(empty)',
     '```',
     '',
     '### Most-recent fix result.json (excerpt)',

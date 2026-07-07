@@ -12,6 +12,7 @@ describe('buildArbiterPrompt', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304: foo not found' },
       specExcerpt: '{"result":"fail","findings":[]}',
+      qualityExcerpt: '{"result":"fail","findings":[]}',
       fixExcerpt: '{"result":"done_no_fixes_needed","rebuttal":"spec misread"}',
       fixRebuttal: 'spec misread the plan letter',
       taskBody: '## Task 4: Add the foo() helper\n\nImplement foo() in src/foo.ts.',
@@ -28,6 +29,7 @@ describe('buildArbiterPrompt', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'pass', output: '' },
       specExcerpt: '',
+      qualityExcerpt: '',
       fixExcerpt: '',
       fixRebuttal: '',
       taskBody,
@@ -39,6 +41,7 @@ describe('buildArbiterPrompt', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'pass', output: '' },
       specExcerpt: '',
+      qualityExcerpt: '',
       fixExcerpt: '',
       fixRebuttal: '',
       taskBody: 'stub',
@@ -51,6 +54,7 @@ describe('buildArbiterPrompt', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304' },
       specExcerpt: '',
+      qualityExcerpt: '',
       fixExcerpt: '',
       fixRebuttal: '',
       taskBody: 'stub',
@@ -65,6 +69,7 @@ describe('buildArbiterPrompt', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304' },
       specExcerpt: '',
+      qualityExcerpt: '',
       fixExcerpt: '',
       fixRebuttal: '',
       taskBody: 'stub',
@@ -74,17 +79,20 @@ describe('buildArbiterPrompt', () => {
     expect(prompt).toContain('"rationale"');
   });
 
-  it('embeds the spec/fix excerpts when provided', () => {
+  it('embeds the spec/quality/fix excerpts when provided', () => {
     const specExcerpt = '{"result":"fail","findings":[{"severity":"P0","summary":"x"}]}';
+    const qualityExcerpt = '{"result":"fail","findings":[{"severity":"P2","summary":"q"}]}';
     const fixExcerpt = '{"result":"done_no_fixes_needed","rebuttal":"y"}';
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: '' },
       specExcerpt,
+      qualityExcerpt,
       fixExcerpt,
       fixRebuttal: '',
       taskBody: 'stub',
     });
     expect(prompt).toContain(specExcerpt);
+    expect(prompt).toContain(qualityExcerpt);
     expect(prompt).toContain(fixExcerpt);
   });
 
@@ -92,6 +100,7 @@ describe('buildArbiterPrompt', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'fail', output: 'TS2304: cannot find name foo' },
       specExcerpt: '',
+      qualityExcerpt: '',
       fixExcerpt: '',
       fixRebuttal: '',
       taskBody: 'stub',
@@ -105,6 +114,7 @@ describe('buildArbiterPrompt', () => {
     const prompt = buildArbiterPrompt(ctx, {
       tcResult: { outcome: 'pass', output: '' },
       specExcerpt: '',
+      qualityExcerpt: '',
       fixExcerpt: '',
       fixRebuttal: '',
       taskBody: 'stub',

@@ -1288,6 +1288,12 @@ exit 1
     );
     expect(specReviewMatch).toBeTruthy();
     expect(specReviewMatch![0]).toContain('SPEC_REVIEW_RESULT_ARTIFACT');
+    // runQualityReview must archive its result.json under a quality-review-specific name
+    const qualityReviewMatch = composeSrc.match(
+      /const runQualityReview[\s\S]*?(?=const implRunFix)/,
+    );
+    expect(qualityReviewMatch).toBeTruthy();
+    expect(qualityReviewMatch![0]).toContain('QUALITY_REVIEW_RESULT_ARTIFACT');
     // implRunFix must archive its result.json under a fix-specific name
     const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
     expect(fixMatch).toBeTruthy();

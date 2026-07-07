@@ -8,6 +8,7 @@ import { ArtifactNotFoundError, type ArtifactStore } from '@ai-sdlc/application'
  * both sides of a contradiction (#661).
  */
 export const SPEC_REVIEW_RESULT_ARTIFACT = 'spec-review-result.json';
+export const QUALITY_REVIEW_RESULT_ARTIFACT = 'quality-review-result.json';
 export const FIX_RESULT_ARTIFACT = 'fix-result.json';
 
 const EXCERPT_MAX_CHARS = 4000;
@@ -28,9 +29,10 @@ async function readExcerpt(
 export async function readArbiterExcerpts(
   artifacts: ArtifactStore,
   runId: string,
-): Promise<{ specExcerpt: string; fixExcerpt: string }> {
+): Promise<{ specExcerpt: string; qualityExcerpt: string; fixExcerpt: string }> {
   return {
     specExcerpt: await readExcerpt(artifacts, runId, SPEC_REVIEW_RESULT_ARTIFACT),
+    qualityExcerpt: await readExcerpt(artifacts, runId, QUALITY_REVIEW_RESULT_ARTIFACT),
     fixExcerpt: await readExcerpt(artifacts, runId, FIX_RESULT_ARTIFACT),
   };
 }
