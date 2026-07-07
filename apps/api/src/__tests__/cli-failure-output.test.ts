@@ -51,7 +51,6 @@ describe('CLI failure output', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {

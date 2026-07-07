@@ -12,14 +12,12 @@
   },
   "phases": {
     "skip": [],
-    "reviewFix": { "maxIterations": 10 },
-    "implement": { "maxIterations": 5 },
-    "wholePrFix": {
+    "reviewFix": {
       "maxIterations": 10,
-      "maxRetriesPerTask": 3,
-      "maxTotalTasks": 50,
-      "architectPass": { "enabled": true }
+      "maxConsecutiveFixFailures": 3,
+      "maxTotalFixAttempts": 50
     },
+    "implement": { "maxIterations": 5 },
     "fixValidate": { "maxIterations": 2 },
     "planReview": { "maxIterations": 5, "enabled": true },
     "postPrReview": { "maxPolls": 10, "pollIntervalSeconds": 300 }

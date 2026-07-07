@@ -45,6 +45,11 @@ export class ReviewFixLoop {
     deps.loops.insert(loop);
 
     let consecutiveFixFailures = 0;
+    // Trackers for the optional runaway-protection caps (#667). Kept
+    // separate from `consecutiveFixFailures` so we don't entangle
+    // fallback-escalation semantics with the new exit conditions.
+    let consecutiveFixFailuresForCap = 0;
+    let totalFixAttempts = 0;
     let lastFixInvocationId: string | undefined;
     let lastFailingCategory: string | undefined;
     let lastIterationHadFixCommit = false;
@@ -235,15 +240,25 @@ export class ReviewFixLoop {
         fix.verdict === 'cannot_fix'
       ) {
         consecutiveFixFailures += 1;
+        consecutiveFixFailuresForCap += 1;
         lastIterationHadFixCommit = false;
+
+        // --- RUNAWAY-PROTECTION CAP: maxConsecutiveFixFailures (#667) ---
+        const consecutiveCap = input.maxConsecutiveFixFailures;
+        const capHit =
+          consecutiveCap !== undefined &&
+          consecutiveCap > 0 &&
+          consecutiveFixFailuresForCap >= consecutiveCap;
+        const outcome = 'unresolved';
+
         thisLoop = completeIteration(thisLoop, {
-          outcome: 'unresolved',
+          outcome,
           fixInvocationId: fix.invocationId,
           now: deps.now(),
         });
         deps.loops.update(thisLoop);
-        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-        await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input);
+        this.emitIterationCompleted(input, iterationIndex, outcome);
+        await this.appendHistoryEntry(ctx, review, fix, undefined, outcome, input);
         // Record fixer verdict in unfounded-history even on fix failure so
         // the ping-pong detector can see it.
         unfoundedHistory.push({
@@ -251,15 +266,44 @@ export class ReviewFixLoop {
           ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
         });
         await this.runCleanArtifacts(ctx);
+
+        if (capHit) {
+          this.emit(
+            input,
+            'loop.exhausted.fix_consecutive_failures',
+            'warn',
+            `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
+            {
+              iterationIndex,
+              consecutiveFixFailuresForCap,
+              cap: consecutiveCap,
+            },
+          );
+          thisLoop = exhaust(thisLoop, this.deps.now());
+          this.deps.loops.update(thisLoop);
+          return {
+            loop: thisLoop,
+            phaseOutcome: 'failed',
+            loopStatus: 'exhausted',
+            needsHumanReview: true,
+            residualFindingsCount: lastOffendingFindings.length,
+          };
+        }
         continue;
       }
       consecutiveFixFailures = 0;
+      if (fix.verdict === 'done_with_fixes') {
+        consecutiveFixFailuresForCap = 0;
+      } else {
+        consecutiveFixFailuresForCap += 1;
+      }
       lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
-      if (lastIterationHadFixCommit) {
+      if (fix.verdict === 'done_with_fixes') {
         lastPostFixGateFailed = false;
         if (review.reviewedCommitSha) {
           lastReviewedCommitSha = review.reviewedCommitSha;
         }
+        totalFixAttempts += 1;
       }
 
       // --- REVALIDATE ---
@@ -411,6 +455,60 @@ export class ReviewFixLoop {
         reval.passed ? 'fixed' : 'unresolved',
         input,
       );
+
+      // --- RUNAWAY-PROTECTION CAP: maxTotalFixAttempts (#667) ---
+      const totalCap = input.maxTotalFixAttempts;
+      if (totalCap !== undefined && totalCap > 0 && totalFixAttempts >= totalCap) {
+        this.emit(
+          input,
+          'loop.exhausted.fix_attempt_cap',
+          'warn',
+          `review/fix loop exhausted: ${totalFixAttempts} productive fix attempts (cap=${totalCap})`,
+          {
+            iterationIndex,
+            totalFixAttempts,
+            cap: totalCap,
+          },
+        );
+        thisLoop = exhaust(thisLoop, this.deps.now());
+        this.deps.loops.update(thisLoop);
+        return {
+          loop: thisLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'exhausted',
+          needsHumanReview: true,
+          residualFindingsCount: lastOffendingFindings.length,
+        };
+      }
+
+      // --- RUNAWAY-PROTECTION CAP: maxConsecutiveFixFailures (#667) ---
+      const consecutiveCap = input.maxConsecutiveFixFailures;
+      if (
+        consecutiveCap !== undefined &&
+        consecutiveCap > 0 &&
+        consecutiveFixFailuresForCap >= consecutiveCap
+      ) {
+        this.emit(
+          input,
+          'loop.exhausted.fix_consecutive_failures',
+          'warn',
+          `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
+          {
+            iterationIndex,
+            consecutiveFixFailuresForCap,
+            cap: consecutiveCap,
+          },
+        );
+        thisLoop = exhaust(thisLoop, this.deps.now());
+        this.deps.loops.update(thisLoop);
+        return {
+          loop: thisLoop,
+          phaseOutcome: 'failed',
+          loopStatus: 'exhausted',
+          needsHumanReview: true,
+          residualFindingsCount: lastOffendingFindings.length,
+        };
+      }
     }
 
     loop = thisLoop;

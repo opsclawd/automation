@@ -2878,6 +2878,12 @@ export function composeRoot(opts: ComposeOptions): Container {
               repoId: ctx.repoFullName,
               cwd: ctx.cwd,
               maxIterations: config.phases.reviewFix.maxIterations,
+              ...(config.phases.reviewFix.maxConsecutiveFixFailures !== undefined
+                ? { maxConsecutiveFixFailures: config.phases.reviewFix.maxConsecutiveFixFailures }
+                : {}),
+              ...(config.phases.reviewFix.maxTotalFixAttempts !== undefined
+                ? { maxTotalFixAttempts: config.phases.reviewFix.maxTotalFixAttempts }
+                : {}),
               blockOnSeverity: config.phases.reviewFix.blockOnSeverity,
               reviewProfile: AgentProfileName(reviewProfileName),
               fixProfile: AgentProfileName(resolveProfileBound('fix-review')),

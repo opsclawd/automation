@@ -397,7 +397,6 @@ describe('CLI runs execute command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -451,7 +450,6 @@ describe('CLI runs execute command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -550,7 +548,6 @@ describe('CLI runs execute command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -653,7 +650,6 @@ describe('CLI runs execute command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -728,7 +724,6 @@ describe('CLI runs execute command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -842,7 +837,6 @@ describe('CLI runs execute command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -892,21 +886,24 @@ describe('CLI runs execute command', () => {
       const poll = () => {
         try {
           const d = openDatabase(dbPath);
-          const row = d
-            .prepare(
-              `SELECT runs.uuid, worker_leases.repo_id
-               FROM runs
-               JOIN worker_leases ON worker_leases.run_id = runs.uuid
-               WHERE runs.uuid = ?`,
-            )
-            .get(runUuid);
-          d.close();
-          if (row) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            setTimeout(poll, 200);
+          try {
+            const row = d
+              .prepare(
+                `SELECT runs.uuid, worker_leases.repo_id
+                 FROM runs
+                 JOIN worker_leases ON worker_leases.run_id = runs.uuid
+                 WHERE runs.uuid = ?`,
+              )
+              .get(runUuid);
+            if (row) {
+              clearTimeout(timeout);
+              resolve();
+              return;
+            }
+          } finally {
+            d.close();
           }
+          setTimeout(poll, 200);
         } catch {
           setTimeout(poll, 200);
         }
@@ -952,7 +949,6 @@ describe('CLI runs execute command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1001,21 +997,24 @@ describe('CLI runs execute command', () => {
       const poll = () => {
         try {
           const d = openDatabase(dbPath);
-          const row = d
-            .prepare(
-              `SELECT runs.uuid, worker_leases.repo_id
-               FROM runs
-               JOIN worker_leases ON worker_leases.run_id = runs.uuid
-               WHERE runs.uuid = ?`,
-            )
-            .get(runUuid);
-          d.close();
-          if (row) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            setTimeout(poll, 200);
+          try {
+            const row = d
+              .prepare(
+                `SELECT runs.uuid, worker_leases.repo_id
+                 FROM runs
+                 JOIN worker_leases ON worker_leases.run_id = runs.uuid
+                 WHERE runs.uuid = ?`,
+              )
+              .get(runUuid);
+            if (row) {
+              clearTimeout(timeout);
+              resolve();
+              return;
+            }
+          } finally {
+            d.close();
           }
+          setTimeout(poll, 200);
         } catch {
           setTimeout(poll, 200);
         }
@@ -1063,7 +1062,6 @@ describe('CLI run command signal handlers', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1102,14 +1100,19 @@ describe('CLI run command signal handlers', () => {
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare(`SELECT * FROM jobs WHERE status != 'succeeded'`).get() as unknown;
-          db.close();
-          if (row) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            setTimeout(poll, 200);
+          try {
+            const row = db
+              .prepare(`SELECT * FROM jobs WHERE status != 'succeeded'`)
+              .get() as unknown;
+            if (row) {
+              clearTimeout(timeout);
+              resolve();
+              return;
+            }
+          } finally {
+            db.close();
           }
+          setTimeout(poll, 200);
         } catch {
           setTimeout(poll, 200);
         }
@@ -1155,7 +1158,6 @@ describe('CLI run command signal handlers', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1187,14 +1189,19 @@ describe('CLI run command signal handlers', () => {
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare(`SELECT * FROM jobs WHERE status != 'succeeded'`).get() as unknown;
-          db.close();
-          if (row) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            setTimeout(poll, 200);
+          try {
+            const row = db
+              .prepare(`SELECT * FROM jobs WHERE status != 'succeeded'`)
+              .get() as unknown;
+            if (row) {
+              clearTimeout(timeout);
+              resolve();
+              return;
+            }
+          } finally {
+            db.close();
           }
+          setTimeout(poll, 200);
         } catch {
           setTimeout(poll, 200);
         }
@@ -1240,7 +1247,6 @@ describe('CLI run command signal handlers', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1270,21 +1276,27 @@ describe('CLI run command signal handlers', () => {
 
     // Wait for job to exist and transition from initial state, then send SIGINT.
     // The job goes queued→claimed→running; we send SIGINT after it enters claimed/running
-    // to test the claimed+signal path. Timing is difficult, so we sleep a bit to let
-    // the scheduler's first tick proceed.
+    // to test the claimed+signal path.
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('timed out waiting for job row')), 15_000);
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare(`SELECT * FROM jobs WHERE issue_number = 79`).get() as unknown;
-          db.close();
-          if (row) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            setTimeout(poll, 200);
+          try {
+            const row = db
+              .prepare(
+                `SELECT * FROM jobs WHERE issue_number = 79 AND status IN ('claimed', 'running')`,
+              )
+              .get() as unknown;
+            if (row) {
+              clearTimeout(timeout);
+              resolve();
+              return;
+            }
+          } finally {
+            db.close();
           }
+          setTimeout(poll, 200);
         } catch {
           setTimeout(poll, 200);
         }
@@ -1292,10 +1304,7 @@ describe('CLI run command signal handlers', () => {
       poll();
     });
 
-    // Sleep to let the first scheduler tick proceed and claim the job, then send SIGINT
-    setTimeout(() => {
-      child.kill('SIGINT');
-    }, 300);
+    child.kill('SIGINT');
 
     await new Promise<number | null>((resolve) => {
       child.on('exit', (code) => resolve(code));
@@ -1337,7 +1346,6 @@ describe('CLI run command signal handlers', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1371,14 +1379,17 @@ describe('CLI run command signal handlers', () => {
       const poll = () => {
         try {
           const db = openDatabase(dbPath);
-          const row = db.prepare(`SELECT * FROM jobs WHERE issue_number = 80`).get() as unknown;
-          db.close();
-          if (row) {
-            clearTimeout(timeout);
-            resolve();
-          } else {
-            setTimeout(poll, 200);
+          try {
+            const row = db.prepare(`SELECT * FROM jobs WHERE issue_number = 80`).get() as unknown;
+            if (row) {
+              clearTimeout(timeout);
+              resolve();
+              return;
+            }
+          } finally {
+            db.close();
           }
+          setTimeout(poll, 200);
         } catch {
           setTimeout(poll, 200);
         }
@@ -1562,7 +1573,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1641,7 +1651,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1739,7 +1748,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1836,7 +1844,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -1933,7 +1940,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2025,7 +2031,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2105,7 +2110,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2183,7 +2187,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2272,7 +2275,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2363,7 +2365,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2437,7 +2438,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2525,7 +2525,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2662,7 +2661,6 @@ describe('CLI run --executor ts', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2823,7 +2821,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2877,7 +2874,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -2992,7 +2988,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3110,7 +3105,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3220,7 +3214,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3332,7 +3325,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3429,7 +3421,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3647,7 +3638,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3737,7 +3727,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3879,7 +3868,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {
@@ -3990,7 +3978,6 @@ describe('CLI runs resume command', () => {
           skip: [],
           reviewFix: { maxIterations: 3, blockOnSeverity: 'medium' },
           implement: { maxIterations: 3 },
-          wholePrFix: { maxIterations: 3 },
         },
         timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
         agent: {

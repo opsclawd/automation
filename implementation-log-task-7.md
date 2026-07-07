@@ -1,28 +1,20 @@
 # Implementation Log — Task 7
 
-Branch: `ai/issue-635`
-Date: 2026-07-06
-Scope: Task 7 only — SQLite migration adding `config_fingerprint` and `config_sources_json` to `runs`
+Branch: `ai/issue-667`
+Date: 2026-07-07
+Scope: Task 7 only — Test fixtures: remove wholePrFix from compose.test.ts (7 occurrences)
 
-## Files created/modified
+## Files modified
 
-- `packages/infrastructure/src/sqlite/migrations/0021-add-config-provenance.ts` (created) — SQLite migration adding `config_fingerprint` and `config_sources_json` columns to `runs` and backfilling with calculated SHA256.
-- `packages/infrastructure/src/sqlite/migrations.ts` (modified) — registers the migration.
-- `packages/infrastructure/src/sqlite/__tests__/migrations-0021.test.ts` (created) — unit test for migration 0021 verifying columns are added and backfilled.
-- `packages/infrastructure/src/sqlite/__tests__/migrations-0002.test.ts` (modified) — updated assertion on migration count/versions list.
-- `packages/infrastructure/src/sqlite/__tests__/migrations-0005.test.ts` (modified) — updated assertion on migration count.
+- `apps/api/src/__tests__/compose.test.ts` (modified) — removed the 7 occurrences of `wholePrFix: { maxIterations: 3 },` in mock config objects.
 
 ## Steps executed
 
-1. **Locate Migration Runner**: Checked `packages/infrastructure/src/sqlite/migrations.ts` and realized migrations are registered inside a `MIGRATIONS` array, importing typescript files from `./migrations/*.js`.
-2. **Compute Config Fingerprint**: Ran a one-shot `node` command invoking `loadLayeredConfig` on the production automation root, resulting in fingerprint `19d021bbabac38fc537e2fee672bb5ce6a06c5a7cfcc661c762955f8893c4e25`.
-3. **Write Migration File**: Created `0021-add-config-provenance.ts` containing the columns addition SQL and the backfill statement using the computed fingerprint.
-4. **Register Migration**: Modified `migrations.ts` to register migration `21`.
-5. **Add Tests**: Created `migrations-0021.test.ts` to verify migration execution and backfilling. Also fixed other migration tests that had hardcoded schema version counts.
-6. **Run and Verify Tests**: Ran `pnpm -F @ai-sdlc/infrastructure test`, which compiled and executed all tests successfully (736 passed).
-7. **Commit**: Staged and committed changes.
+1. **Locate Occurrences**: Viewed `apps/api/src/__tests__/compose.test.ts` and identified all 7 lines containing `wholePrFix: { maxIterations: 3 },` at lines 572, 615, 677, 853, 1081, 1118, 1196.
+2. **Remove Occurrences**: Used the file editing tool to delete these lines while preserving the valid JS/JSON syntax of the surrounding blocks.
+3. **Verify Tests**: Ran the vitest command `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/compose.test.ts` to ensure that all 52 tests continue to pass without errors.
+4. **Commit Work**: Staged and committed the changes on the branch.
 
 ## Verification results
 
-- `pnpm -F @ai-sdlc/infrastructure test` -> 736 passed.
-- `pnpm -F @ai-sdlc/infrastructure build` -> successfully built with exit code 0.
+- `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/compose.test.ts` -> 52 passed.

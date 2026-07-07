@@ -49,6 +49,26 @@ const phasesSchema = z.object({
         window: z.number().int().min(2).max(10).default(3),
       })
       .default({}),
+    /**
+     * Cap on consecutive fixer failures (verdict !== 'done_with_fixes',
+     * including 'cannot_fix' and contract-violation outcomes). When the
+     * loop hits this many in a row, it exits early as `exhausted` with
+     * `needsHumanReview: true` rather than continuing to burn the
+     * `maxIterations` budget on a pathologically failing fixer.
+     * Replaces the legacy cap on retries per task (which was
+     * never enforced — see issue #667). Omit (or set to 0) to disable.
+     * Defaults to undefined (no cap beyond the existing heuristics).
+     */
+    maxConsecutiveFixFailures: z.number().int().nonnegative().optional(),
+    /**
+     * Cap on total fix invocations whose verdict was `done_with_fixes`
+     * (productive fix work). Bounded to prevent a runaway reviewer
+     * emitting unbounded findings from consuming unbounded fixer
+     * invocations. Replaces the legacy cap on total tasks
+     * (never enforced). Omit (or set to 0) to disable. Defaults to
+     * undefined (no cap).
+     */
+    maxTotalFixAttempts: z.number().int().nonnegative().optional(),
   }),
   // implement.maxIterations is validated but not consumed by any shell loop.
   // The implement phase runs each task once sequentially — no retry loop exists.
@@ -64,7 +84,6 @@ const phasesSchema = z.object({
      */
     maxTypeCheckRetries: z.number().int().positive().default(5),
   }),
-  wholePrFix: z.object({ maxIterations: z.number().int().positive() }).optional(),
   fixValidate: z
     .object({
       maxIterations: z.number().int().positive(),

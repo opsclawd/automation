@@ -189,6 +189,17 @@ export interface ReviewFixLoopInput {
   repoId: string;
   cwd: string;
   maxIterations: number;
+  /**
+   * Optional hard cap on consecutive fixer failures. See schema docs.
+   * Undefined = no extra cap (default behaviour preserved).
+   */
+  maxConsecutiveFixFailures?: number;
+  /**
+   * Optional hard cap on total productive fix attempts
+   * (verdict === 'done_with_fixes'). See schema docs.
+   * Undefined = no extra cap (default behaviour preserved).
+   */
+  maxTotalFixAttempts?: number;
   blockOnSeverity?: string;
   reviewProfile: AgentProfileName;
   fixProfile: AgentProfileName;
