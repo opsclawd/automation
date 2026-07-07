@@ -7,6 +7,7 @@ import { postPrReviewResultSchema } from './schemas/post-pr-review.js';
 import { specReviewResultSchema } from './schemas/spec-review.js';
 import { wholePrReviewResultSchema } from './schemas/whole-pr-review.js';
 import { compoundResultSchema } from './schemas/compound.js';
+import { arbiterResultSchema } from './schemas/arbiter.js';
 import { fixValidateResultSchema } from './schemas/fix-validate.js';
 
 export interface PhaseResultMeta {
@@ -43,4 +44,5 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'whole-pr-review': { schema: wholePrReviewResultSchema, retrySafe: true },
   compound: { schema: compoundResultSchema, retrySafe: false },
   'fix-validate': { schema: fixValidateResultSchema, retrySafe: false },
+  arbiter: { schema: arbiterResultSchema, retrySafe: true },
 };
