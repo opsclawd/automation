@@ -161,3 +161,19 @@ The bats test file `scripts/lib/__tests__/phase_iteration_config.bats` (68 lines
 - **The config block must be after `log()`/`info()` are defined**. If you move or refactor the script initialization section, verify the ordering constraint (currently around lines 73-78).
 - **Bats tests extract via `awk`**, not by sourcing the script. If the config-reading block's structure changes (e.g., the comment delimiter or the closing `log` line), update the awk pattern in `_load_config_block()` at line 278-284 of the test file.
 - **`implement.maxIterations` remains dead config**. If a future change adds a retry loop to the implement phase, wire `$MAX_IMPLEMENT_ITERATIONS` there and remove the dead-config comment from the schema.
+
+## Addendum (2026-07-07): `wholePrFix` retired, caps consolidated under `reviewFix` (#667)
+
+The TS review-fix loop is the sole execution path (`scripts/legacy/ai-run-issue-v2` is quarantined per #365). The legacy had a `wholePrFix` config block carrying three caps (`maxIterations`, `maxRetriesPerTask`, `maxTotalTasks`); none of the latter two were ever enforced in the legacy loop — they were read into shell variables and logged but never used in a guard.
+
+The TS review-fix loop honours only `phases.reviewFix.maxIterations` and never consumed `wholePrFix` (verified by grep — no production reference). To close the parity gap #667:
+
+- `phases.wholePrFix` schema key **removed** from `packages/shared/src/config/schema.ts`.
+- `phases.reviewFix` extended with two optional fields (both default to "off" — no behaviour change for operators who don't set them):
+  - `maxConsecutiveFixFailures` (default 3 in `.ai-orchestrator.json`) — replaces legacy `wholePrFix.maxRetriesPerTask`.
+  - `maxTotalFixAttempts` (default 50 in `.ai-orchestrator.json`) — replaces legacy `wholePrFix.maxTotalTasks`, counts only `done_with_fixes` verdicts (productive fix work, not rebuttals).
+- Both new checks emit `loop.exhausted.fix_consecutive_failures` / `loop.exhausted.fix_attempt_cap` warn events and return `loopStatus: 'exhausted'` with `needsHumanReview: true`.
+- The two new counters are tracked separately from the existing `consecutiveFixFailures` fallback-escalation counter to avoid entangling escalation semantics with the new exit conditions.
+
+Operators with `wholePrFix` blocks in their local `.ai-orchestrator.local.json` must remove them — the schema no longer accepts the key. The legacy `MAX_REVIEW_FIX_ITERATIONS` defaults (`5`) remain unchanged in `scripts/legacy/ai-run-issue-v2` because that script is quarantined.
+
