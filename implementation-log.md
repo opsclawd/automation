@@ -1,22 +1,16 @@
-# Implementation Log — Task 7
+# Implementation Log - Task 8
 
-Branch: `ai/issue-637`
-Date: 2026-07-06
-Scope: Task 7 only — Add the orchestrator repo CLI subcommand
+## HTTP API routes for `/api/repositories`
 
-## Files created/modified
+Implemented the Fastify HTTP API routes for repository management in `apps/api/src/routes/repositories.ts` and registered them in `apps/api/src/server.ts`.
 
-- `apps/api/src/cli/repo-commands.ts` (created) — new module containing register, list, inspect, update, enable, disable, refresh, remove subcommands under `repo`.
-- `apps/api/src/cli.ts` (modified) — registers the `repo` subcommand in `buildProgram` using a container-resolution closure and exports exit code constants.
+### Routes Added
+- `GET /api/repositories` - List repositories (supports `all=1` query parameter).
+- `GET /api/repositories/:id` - Inspect a repository by ID (sha256 hex) or full name (owner/name).
+- `POST /api/repositories` - Register a repository by local path (with optional full name and config metadata).
+- `PATCH /api/repositories/:id` - Update branch, remote URL, config metadata, or toggle enabled status.
+- `POST /api/repositories/:id/refresh` - Refresh repository metadata.
+- `DELETE /api/repositories/:id` - Remove a repository (fails with 409 if active runs exist).
 
-## Steps executed
-
-1. **Created `repo-commands.ts`**: Developed the `registerRepoCommand` function that sets up all the subcommand actions, dynamically filtering out undefined options to satisfy `exactOptionalPropertyTypes`.
-2. **Modified `cli.ts`**: Exported the `EXIT_USER_ERROR` and `EXIT_INTERNAL_ERROR` constants. Wired the `repo` subcommand using the `getContainer` closure.
-3. **Typechecked**: Verified typescript compilation using `pnpm typecheck`.
-4. **Ran CLI tests**: Ran the existing CLI test suite to ensure all tests still pass.
-
-## Verification results
-
-- `pnpm typecheck` -> Clean compilation (exit code 0).
-- `pnpm --filter @ai-sdlc/api test -- cli` -> All 93 tests passed.
+### TypeScript Compliance
+Adjusted input objects in POST and PATCH routes to construct properties dynamically. This avoids sending explicit `undefined` values to `RegisterRepositoryInput` and `UpdateRepositoryInput`, adhering to the strict `exactOptionalPropertyTypes` TS compiler setting configured in the workspace.

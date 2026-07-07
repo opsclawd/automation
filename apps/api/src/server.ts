@@ -8,6 +8,7 @@ import { registerInvocationsRoutes } from './routes/invocations.js';
 import { registerValidationRoutes } from './routes/validation.js';
 import { registerPrReviewRoutes } from './routes/pr-review.js';
 import { registerReviewFixRoutes } from './routes/review-fix.js';
+import { registerRepositoriesRoutes } from './routes/repositories.js';
 
 export interface ServerOptions {
   container: Container;
@@ -29,6 +30,7 @@ export async function buildServer(container: Container, logger: boolean = false)
   registerValidationRoutes(app, container);
   registerPrReviewRoutes(app, container);
   registerReviewFixRoutes(app, container);
+  await registerRepositoriesRoutes(app, container);
   return app;
 }
 
