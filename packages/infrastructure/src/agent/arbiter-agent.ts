@@ -9,7 +9,7 @@ import {
   type ArbiterResult,
   type ArtifactStore,
   type AgentPort,
-  type AgentInvocationRepositoryPort,
+  type AgentInvocationPort,
 } from '@ai-sdlc/application';
 import { arbiterResultSchema, type ArbiterResult as ArbiterResultType } from '@ai-sdlc/application';
 import { extractResult } from '@ai-sdlc/application';
@@ -17,7 +17,7 @@ import { extractResult } from '@ai-sdlc/application';
 export interface ArbiterAgentDeps {
   agent: AgentPort;
   artifacts: (runId: string, cwd: string) => ArtifactStore;
-  invocations: AgentInvocationRepositoryPort;
+  invocations: AgentInvocationPort;
   baseTmpDir: string;
   resolveStartCommitSha: (cwd: string, runId: string) => string;
   newestInvocationId: (runId: string) => string;
