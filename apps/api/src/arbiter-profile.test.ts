@@ -6,20 +6,7 @@ describe('resolveArbiterProfileName', () => {
     expect(resolveArbiterProfileName({ arbiter: { profile: 'a' } })).toBe('a');
   });
 
-  it('prefers arbiter over the legacy arbitrate alias when both are configured', () => {
-    expect(
-      resolveArbiterProfileName({
-        arbiter: { profile: 'a' },
-        arbitrate: { profile: 'b' },
-      }),
-    ).toBe('a');
-  });
-
-  it('falls back to the legacy arbitrate alias when arbiter is not configured', () => {
-    expect(resolveArbiterProfileName({ arbitrate: { profile: 'a' } })).toBe('a');
-  });
-
-  it('falls back to plan-design when neither arbiter nor arbitrate is configured', () => {
+  it('falls back to plan-design when arbiter is not configured', () => {
     expect(resolveArbiterProfileName({ 'plan-design': { profile: 'a' } })).toBe('a');
   });
 
@@ -47,5 +34,14 @@ describe('resolveArbiterProfileName', () => {
         'fix-review': { profile: 'fallback' },
       }),
     ).toBe('fallback');
+  });
+
+  it('ignores a stale phaseProfiles.arbitrate key (alias retired, not consulted)', () => {
+    expect(
+      resolveArbiterProfileName({
+        arbitrate: { profile: 'legacy-profile' },
+        'plan-design': { profile: 'plan-design-profile' },
+      }),
+    ).toBe('plan-design-profile');
   });
 });
