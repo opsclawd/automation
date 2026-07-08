@@ -112,9 +112,7 @@ config, the only defensible action is the one already taken by #667 —
 
 If the issue's concern is *operator-facing* (a setter reading `.ai-orchestrator.json`
 wants unused-looking keys gone), document instead of remove:
-- Comment each entry in `.ai-orchestrator.json` with the runtime site that
-  consumes it (one-line annotations, e.g. `// consumed by arbiter-profile.ts`
-  on the `arbitrate` entry).
+- Document these keys in a nearby `README.md` or update the JSON schema descriptions in `packages/shared/src/config/schema.ts` to describe the runtime site that consumes each entry.
 - This achieves the spirit of the request (signaling which config is wired)
   without breaking four live resolution paths.
 
