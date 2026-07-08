@@ -27,16 +27,16 @@ function makeStore() {
   return createFilesystemArtifactStore({ durableRoot, worktreeRoot });
 }
 
-const ctx = {
+const input = {
+  cwd: '/worktrees/issue-664',
   stepIndex: 5,
   stepTitle: 'Refactor foo',
-  cwd: '/worktrees/issue-664',
 };
 
 describe('buildImplementStepFixPrompt', () => {
   it('produces a buildable prompt when both archives are missing', async () => {
     const artifacts = makeStore();
-    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', ctx);
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
     expect(prompt).toContain('## WHAT THE REVIEWERS FOUND (verbatim)');
     expect(prompt).toContain('"findings": []');
     expect(prompt).toContain('Apply the suggested fixes when you can.');
@@ -55,7 +55,7 @@ describe('buildImplementStepFixPrompt', () => {
       }),
     );
     const artifacts = createFilesystemArtifactStore({ durableRoot, worktreeRoot: root });
-    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', ctx);
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
     expect(prompt).toContain('Spec violation in foo()');
     expect(prompt).toContain('src/foo.ts');
   });
@@ -80,7 +80,7 @@ describe('buildImplementStepFixPrompt', () => {
       }),
     );
     const artifacts = createFilesystemArtifactStore({ durableRoot, worktreeRoot: root });
-    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', ctx);
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
     expect(prompt).toContain('Spec defect');
     expect(prompt).toContain('Quality defect');
   });
@@ -92,7 +92,7 @@ describe('buildImplementStepFixPrompt', () => {
     mkdirSync(durableRoot, { recursive: true });
     writeFileSync(path.join(durableRoot, SPEC_REVIEW_RESULT_ARTIFACT), '{ not valid json');
     const artifacts = createFilesystemArtifactStore({ durableRoot, worktreeRoot: root });
-    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', ctx);
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
     expect(prompt).toContain('"findings": []');
     expect(prompt).toContain('Apply the suggested fixes when you can.');
   });
@@ -116,7 +116,7 @@ describe('buildImplementStepFixPrompt', () => {
       }),
     );
     const artifacts = createFilesystemArtifactStore({ durableRoot, worktreeRoot: root });
-    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', ctx);
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
     expect(prompt).toContain('Kept');
     expect(prompt).not.toContain('wrong severity type');
   });
@@ -141,10 +141,57 @@ describe('buildImplementStepFixPrompt', () => {
 
     writeFileSync(path.join(durableRoot, SPEC_REVIEW_RESULT_ARTIFACT), payload);
     const artifacts = createFilesystemArtifactStore({ durableRoot, worktreeRoot: root });
-    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', ctx);
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', input);
 
     // We should find the findings array in the prompt and not degraded to []
     expect(prompt).toContain('Finding number 0');
     expect(prompt).toContain('Finding number 99');
+  });
+
+  it('renders an ARBITER RULING section when reconciliationContext is provided', async () => {
+    const artifacts = makeStore();
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      reconciliationContext:
+        'Reviewer evidence shows the missing null check causes a crash on empty input.',
+    });
+    expect(prompt).toContain('## ARBITER RULING — ADDRESS THIS FINDING');
+    expect(prompt).toContain(
+      'Reviewer evidence shows the missing null check causes a crash on empty input.',
+    );
+    expect(prompt).toContain('finding_valid');
+    expect(prompt).toContain('do NOT re-rebut');
+    // The arbiter ruling must appear BEFORE the CONTEXT block (placement rule).
+    expect(prompt.indexOf('## ARBITER RULING — ADDRESS THIS FINDING')).toBeLessThan(
+      prompt.indexOf('## CONTEXT'),
+    );
+  });
+
+  it('renders a PRIOR FIX HISTORY section when historyContext is provided', async () => {
+    const artifacts = makeStore();
+    const historyBody =
+      'Iteration 1: fix attempted by adding try/catch. Rejected by reviewer as masking the bug.';
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      historyContext: historyBody,
+    });
+    expect(prompt).toContain('## PRIOR FIX HISTORY');
+    expect(prompt).toContain(historyBody);
+  });
+
+  it('renders both sections in document order when both are provided', async () => {
+    const artifacts = makeStore();
+    const prompt = await buildImplementStepFixPrompt(artifacts, 'run-1', {
+      ...input,
+      reconciliationContext: 'Arbiter ruling rationale.',
+      historyContext: 'Prior fix iteration notes.',
+    });
+    expect(prompt).toContain('## ARBITER RULING — ADDRESS THIS FINDING');
+    expect(prompt).toContain('Arbiter ruling rationale.');
+    expect(prompt).toContain('## PRIOR FIX HISTORY');
+    expect(prompt).toContain('Prior fix iteration notes.');
+    expect(prompt.indexOf('## ARBITER RULING — ADDRESS THIS FINDING')).toBeLessThan(
+      prompt.indexOf('## PRIOR FIX HISTORY'),
+    );
   });
 });
