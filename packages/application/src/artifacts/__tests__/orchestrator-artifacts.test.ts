@@ -22,6 +22,7 @@ describe('orchestrator-artifacts (parity with scripts/lib/artifacts.sh)', () => 
       'implementation-log.md',
       'arbiter-result.json',
       'review-loop-history.json',
+      'implement-step-history-*.json',
       'compound-draft.md',
       'validation.result',
       'result.json',

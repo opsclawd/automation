@@ -9,6 +9,7 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'implementation-log.md',
   'arbiter-result.json',
   'review-loop-history.json',
+  'implement-step-history-*.json',
   'compound-draft.md',
   'validation.result',
   'result.json',

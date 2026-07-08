@@ -33,6 +33,7 @@ review.md
 task-manifest.json
 arbiter-result.json
 review-loop-history.json
+implement-step-history-*.json
 compound-draft.md
 validation.result
 result.json
@@ -73,26 +74,59 @@ guard_artifact_clean() {
   while IFS= read -r _artifact; do
     [[ -z "$_artifact" ]] && continue
 
-    # 1. Untracked / uncommitted: just delete it (if not tracked by git).
-    if ! git -C "$worktree_dir" ls-files --error-unmatch -- "$_artifact" >/dev/null 2>&1; then
-      rm -f "${worktree_dir}/${_artifact}"
+    local -a _resolved_artifacts=()
+    if [[ "$_artifact" == *"*"* ]]; then
+      local _f
+      for _f in "${worktree_dir}"/$_artifact; do
+        if [[ -f "$_f" ]]; then
+          _resolved_artifacts+=("$(basename "$_f")")
+        fi
+      done
+      while IFS= read -r _f; do
+        [[ -n "$_f" ]] && _resolved_artifacts+=("$_f")
+      done < <(
+        {
+          git -C "$worktree_dir" ls-files -- "$_artifact" 2>/dev/null
+          git -C "$worktree_dir" diff --cached --name-only -- "$_artifact" 2>/dev/null
+          if [[ -n "$base_branch" ]]; then
+            git -C "$worktree_dir" diff "${base_branch}..HEAD" --name-only -- "$_artifact" 2>/dev/null
+          fi
+        } | sort -u
+      )
+    else
+      _resolved_artifacts+=("$_artifact")
     fi
 
-    # 2. Staged but not committed: unstage and delete.
-    if git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | grep -qxF "$_artifact"; then
-      git -C "$worktree_dir" reset HEAD -- "$_artifact" 2>/dev/null || true
-      rm -f "${worktree_dir}/${_artifact}"
+    local -a _unique_resolved=()
+    if [[ ${#_resolved_artifacts[@]} -gt 0 ]]; then
+      while IFS= read -r _f; do
+        [[ -n "$_f" ]] && _unique_resolved+=("$_f")
+      done < <(printf '%s\n' "${_resolved_artifacts[@]}" | sort -u)
     fi
 
-    # 3. Already committed to the branch.
-    if [[ -n "$base_branch" ]]; then
-      if git -C "$worktree_dir" diff "${base_branch}..HEAD" --name-only 2>/dev/null | grep -qxF "$_artifact"; then
-        if git -C "$worktree_dir" rm -f -- "$_artifact" 2>/dev/null; then
-          _committed_any=1
-          _removed_artifacts+=("$_artifact")
+    local _res_art
+    for _res_art in "${_unique_resolved[@]}"; do
+      # 1. Untracked / uncommitted: just delete it (if not tracked by git).
+      if ! git -C "$worktree_dir" ls-files --error-unmatch -- "$_res_art" >/dev/null 2>&1; then
+        rm -f "${worktree_dir}/${_res_art}"
+      fi
+
+      # 2. Staged but not committed: unstage and delete.
+      if git -C "$worktree_dir" diff --cached --name-only 2>/dev/null | grep -qxF "$_res_art"; then
+        git -C "$worktree_dir" reset HEAD -- "$_res_art" 2>/dev/null || true
+        rm -f "${worktree_dir}/${_res_art}"
+      fi
+
+      # 3. Already committed to the branch.
+      if [[ -n "$base_branch" ]]; then
+        if git -C "$worktree_dir" diff "${base_branch}..HEAD" --name-only 2>/dev/null | grep -qxF "$_res_art"; then
+          if git -C "$worktree_dir" rm -f -- "$_res_art" 2>/dev/null; then
+            _committed_any=1
+            _removed_artifacts+=("$_res_art")
+          fi
         fi
       fi
-    fi
+    done
   done < <(orchestrator_artifact_paths)
 
   if [[ $_committed_any -eq 1 ]]; then

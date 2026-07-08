@@ -24,6 +24,7 @@ ai/
 /review-triage.md
 /code-review.md
 /review-loop-history.json
+/implement-step-history-*.json
 /arbiter-result.json
 /compound-draft.md
 /fix-validate-done.marker
