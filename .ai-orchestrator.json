@@ -15,7 +15,11 @@
     "reviewFix": {
       "maxIterations": 10,
       "maxConsecutiveFixFailures": 3,
-      "maxTotalFixAttempts": 50
+      "maxTotalFixAttempts": 50,
+      "architectPass": {
+        "enabled": false,
+        "timeoutMinutes": 10
+      }
     },
     "implement": { "maxIterations": 5 },
     "fixValidate": { "maxIterations": 2 },
