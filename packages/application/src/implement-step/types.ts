@@ -3,6 +3,7 @@ import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FixStepOptions } from '../review-fix/types.js';
+import type { GitPort } from '../ports/git-port.js';
 
 export interface StepLoopContext {
   loopId: string;
@@ -91,6 +92,19 @@ export interface ImplementStepHistoryEntry {
     typecheckErrorCount: number;
     headBeforeFix: string;
   };
+  /**
+   * When `done_with_fixes` was claimed but HEAD did not advance and the
+   * worktree is dirty (e.g. a pre-commit hook rejected the commit), the
+   * verifier populates this block. Undefined for genuine committed fixes
+   * and for non-done_with_fixes verdicts.
+   */
+  uncommittedChanges?: { dirtyFiles: string[]; statusOutput: string };
+  /**
+   * When `done_with_fixes` was claimed but HEAD did not advance and the
+   * worktree is clean, the verifier populates this block. Undefined for
+   * genuine committed fixes and for non-done_with_fixes verdicts.
+   */
+  noCommit?: { statusOutput: string };
   /** Always set; mirrors `iteration.outcome`. */
   outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed';
 }
@@ -148,6 +162,12 @@ export interface ImplementStepLoopDeps {
    * If absent, the loop falls back to `needs_human_review` on build-breaking fixes.
    */
   revertFix?: (ctx: StepLoopContext, targetSha: string) => Promise<boolean>;
+  /**
+   * Used by the fix-commit verifier (#679). When absent, the loop does not
+   * downgrade `done_with_fixes` iterations — the verifier is intentionally
+   * optional so test doubles can omit it.
+   */
+  git?: GitPort;
   /**
    * Stall detection horizon: number of recent fingerprints compared against
    * the current one when deciding whether to escalate. Larger values catch

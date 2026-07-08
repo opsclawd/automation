@@ -19,6 +19,7 @@ import type {
   FixResult,
   ImplementStepHistoryEntry,
 } from './types.js';
+import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -162,6 +163,9 @@ export class ImplementStepLoop {
         | { headBeforeFix: string; typecheckOutputPreview: string; typecheckErrorCount: number }
         | undefined,
       outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed',
+      commitVerification?:
+        | { kind: 'uncommitted_changes'; dirtyFiles: string[]; statusOutput: string }
+        | { kind: 'no_commit_claimed'; statusOutput: string },
     ): ImplementStepHistoryEntry => {
       const entry: ImplementStepHistoryEntry = {
         iteration: iterationIndex,
@@ -195,6 +199,17 @@ export class ImplementStepLoop {
                 headBeforeFix: reverted.headBeforeFix,
               },
             }
+          : {}),
+        ...(commitVerification && commitVerification.kind === 'uncommitted_changes'
+          ? {
+              uncommittedChanges: {
+                dirtyFiles: commitVerification.dirtyFiles,
+                statusOutput: commitVerification.statusOutput,
+              },
+            }
+          : {}),
+        ...(commitVerification && commitVerification.kind === 'no_commit_claimed'
+          ? { noCommit: { statusOutput: commitVerification.statusOutput } }
           : {}),
         outcome,
       };
@@ -728,6 +743,110 @@ export class ImplementStepLoop {
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         return { outcome: 'needs_human_review', loop };
+      }
+
+      if (fix.verdict === 'done_with_fixes' && fix.headBeforeFix !== undefined && deps.git) {
+        const verification: FixCommitVerification | { kind: 'verification_error'; error: string } =
+          await verifyFixCommit({
+            git: deps.git,
+            cwd: ctx.cwd,
+            expectedHead: fix.headBeforeFix,
+          });
+        if (verification.kind === 'uncommitted_changes') {
+          this.emit(
+            input,
+            'fix.uncommitted_changes',
+            'warn',
+            `step ${input.stepIndex} iteration ${iterationIndex} fix claimed done_with_fixes but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s)`,
+            {
+              stepIndex: input.stepIndex,
+              iterationIndex,
+              invocationId: fix.invocationId,
+              expectedHead: fix.headBeforeFix,
+              actualHead: verification.headAfterFix,
+              dirtyFiles: verification.dirtyFiles.slice(0, 200),
+              statusOutput: verification.statusOutput.slice(0, 4000),
+            },
+          );
+          consecutiveFixFailures += 1;
+          loop = completeIteration(loop, {
+            outcome: 'unresolved',
+            fixInvocationId: fix.invocationId,
+            now: deps.now(),
+          });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              fix,
+              undefined,
+              'unresolved',
+              verification,
+            ),
+          );
+          // Do NOT call deps.revertFix here (plan-review P0, #679): this
+          // branch means the fixer left uncommitted changes in the tree
+          // (e.g. a pre-commit hook rejected the commit). That dirty state
+          // is exactly what the NEXT fixer iteration needs to see in order
+          // to finish committing or fixing it — reverting here would
+          // destroy the evidence #679 exists to preserve. Reverting is only
+          // correct for the separate build-breaking-fix case (#671), which
+          // has its own dedicated branch elsewhere in this loop.
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          continue;
+        }
+        if (verification.kind === 'no_commit_claimed') {
+          this.emit(
+            input,
+            'fix.no_commit_claimed',
+            'warn',
+            `step ${input.stepIndex} iteration ${iterationIndex} fix claimed done_with_fixes but HEAD did not advance and worktree is clean`,
+            {
+              stepIndex: input.stepIndex,
+              iterationIndex,
+              invocationId: fix.invocationId,
+              expectedHead: fix.headBeforeFix,
+              actualHead: verification.headAfterFix,
+            },
+          );
+          consecutiveFixFailures += 1;
+          loop = completeIteration(loop, {
+            outcome: 'unresolved',
+            fixInvocationId: fix.invocationId,
+            now: deps.now(),
+          });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              fix,
+              undefined,
+              'unresolved',
+              verification,
+            ),
+          );
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          continue;
+        }
+        if (verification.kind === 'verification_error') {
+          this.emit(
+            input,
+            'fix.verification_error',
+            'warn',
+            `step ${input.stepIndex} iteration ${iterationIndex} could not verify fix commit: ${verification.error}`,
+            {
+              stepIndex: input.stepIndex,
+              iterationIndex,
+              invocationId: fix.invocationId,
+              error: verification.error,
+            },
+          );
+          // Fall through to normal success path — verifier could not read the tree.
+        }
       }
 
       loop = completeIteration(loop, {
