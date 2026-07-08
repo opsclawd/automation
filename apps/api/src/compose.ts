@@ -3419,7 +3419,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         // Invoke the architect agent.
         let agentOutcome: string = 'success';
         try {
-          await artifactAgent.invoke({
+          const result = await artifactAgent.invoke({
             profile: AgentProfileName(architectProfileName),
             promptPath,
             expectedArtifacts: ['review-fix-plan.json'],
@@ -3430,6 +3430,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             startCommitSha: preArchitectSha,
             timeoutMs: architectPassTimeoutMinutes * 60_000,
           });
+          agentOutcome = result.outcome;
         } catch (err) {
           agentOutcome = 'failed';
           persistingEventBusForLoop.publish(String(ctx.runUuid), {
@@ -3444,6 +3445,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         if (agentOutcome !== 'success') {
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'warn',
+            type: 'review_fix.architect_pass_failed',
+            message: `architect pass failed with outcome: ${agentOutcome}`,
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'exit_code' },
+          });
           return undefined;
         }
 

@@ -81,4 +81,9 @@ describe('compose runArchitect wiring', () => {
     });
     expect(result.success).toBe(true);
   });
+
+  it('compose.ts respects failed architect invocation outcomes', async () => {
+    const src = readFileSync(path.join(import.meta.dirname ?? __dirname, '../compose.ts'), 'utf-8');
+    expect(src).toContain('agentOutcome = result.outcome');
+  });
 });
