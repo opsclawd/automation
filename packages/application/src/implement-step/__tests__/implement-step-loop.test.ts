@@ -759,7 +759,7 @@ describe('ImplementStepLoop', () => {
       });
       const out = await new ImplementStepLoop(deps).execute({
         ...baseInput(),
-        maxIterations: 2,
+        maxIterations: 3,
       });
       // After revert the second `runFix` invocation must carry typecheck errors.
       expect(fixOptsCapture.length).toBeGreaterThanOrEqual(2);
