@@ -180,6 +180,33 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('final fixer pass resolves P1 findings on the last allowed iteration', async () => {
+    let reviewCalls = 0;
+    const deps = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 3 ? ('pass' as const) : ('p1_found' as const),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+  });
+
   it('parity #297 — reviewer retries on agent failure then converges', async () => {
     let reviewCalls = 0;
     const deps = makeDeps({

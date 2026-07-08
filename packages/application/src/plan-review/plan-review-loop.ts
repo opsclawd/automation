@@ -272,7 +272,7 @@ export class PlanReviewLoop {
       loop = completeIteration(loop, {
         outcome: 'fixed',
         fixInvocationId: fix.invocationId,
-        now: deps.now(),
+        now: deps.now(), // check final review if maxIterations reached
       });
       deps.loops.update(loop);
       this.emit(
@@ -282,6 +282,151 @@ export class PlanReviewLoop {
         `iteration ${iterationIndex} completed: fixed`,
         { index: iterationIndex, outcome: 'fixed' },
       );
+
+      if (iterationIndex === loop.maxIterations) {
+        const finalIterationIndex = iterationIndex + 1;
+        const finalCtx: PlanReviewContext = { ...baseCtx, iterationIndex: finalIterationIndex };
+
+        this.emit(
+          input,
+          'plan-review.loop.final_review',
+          'info',
+          'Running final review after last fixer pass',
+          { iteration: finalIterationIndex },
+        );
+
+        // --- REVIEWER (with retry budget per parity #297) ---
+        let finalReview: PlanReviewResult | undefined;
+        let finalReviewAttempts = 0;
+        while (finalReviewAttempts <= reviewerMaxRetries) {
+          finalReviewAttempts += 1;
+          finalReview = await deps.runReview(finalCtx);
+          if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
+          if (finalReviewAttempts <= reviewerMaxRetries) {
+            this.emit(
+              input,
+              'plan-review.reviewer.retry',
+              'warn',
+              `plan-review reviewer attempt ${finalReviewAttempts} failed (invocation ${finalReview.invocationId}), retrying...`,
+              {
+                attempt: finalReviewAttempts,
+                maxAttempts: reviewerMaxRetries + 1,
+                agentOutcome: finalReview.agentOutcome,
+                hasVerdict: finalReview.verdict !== undefined,
+                invocationId: finalReview.invocationId,
+              },
+            );
+          }
+        }
+
+        if (!finalReview || finalReview.agentOutcome !== 'success' || finalReview.verdict === undefined) {
+          this.emit(
+            input,
+            'plan-review.reviewer.failed',
+            'error',
+            `reviewer exhausted retry budget at final review pass`,
+            { iterationIndex: finalIterationIndex, attempts: finalReviewAttempts },
+          );
+          loop = {
+            ...loop,
+            iterations: [
+              ...loop.iterations,
+              {
+                index: finalIterationIndex,
+                reviewInvocationId: finalReview?.invocationId ?? '',
+                startedAt: deps.now(),
+                completedAt: deps.now(),
+                outcome: 'failed',
+              },
+            ],
+          };
+          loop = exhaust(loop, deps.now());
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${finalIterationIndex} completed: failed`,
+            { index: finalIterationIndex, outcome: 'failed' },
+          );
+          return { outcome: 'failed', loop, proceedWithConcerns: false };
+        }
+
+        if (finalReview.verdict === 'pass' || finalReview.verdict === 'p2_only') {
+          const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+            index: finalIterationIndex,
+            reviewInvocationId: finalReview.invocationId,
+            startedAt: deps.now(),
+            completedAt: deps.now(),
+            outcome: 'resolved',
+          };
+          loop = {
+            ...loop,
+            iterations: [...loop.iterations, finalIteration],
+            status: 'converged',
+            completedAt: deps.now(),
+          };
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${finalIterationIndex} completed: resolved`,
+            { index: finalIterationIndex, outcome: 'resolved' },
+          );
+          return { outcome: 'success', loop, proceedWithConcerns: false };
+        }
+
+        if (finalReview.verdict === 'proceed_with_concerns') {
+          const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+            index: finalIterationIndex,
+            reviewInvocationId: finalReview.invocationId,
+            startedAt: deps.now(),
+            completedAt: deps.now(),
+            outcome: 'resolved',
+          };
+          loop = {
+            ...loop,
+            iterations: [...loop.iterations, finalIteration],
+            status: 'converged',
+            completedAt: deps.now(),
+          };
+          deps.loops.update(loop);
+          this.emit(
+            input,
+            'plan-review.loop.iteration.completed',
+            'info',
+            `iteration ${finalIterationIndex} completed: resolved (proceed with concerns)`,
+            { index: finalIterationIndex, outcome: 'resolved', knownLimitations: true },
+          );
+          return {
+            outcome: 'success',
+            loop,
+            proceedWithConcerns: true,
+            ...(finalReview.knownLimitations ? { knownLimitations: finalReview.knownLimitations } : {}),
+          };
+        }
+
+        const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+          index: finalIterationIndex,
+          reviewInvocationId: finalReview.invocationId,
+          startedAt: deps.now(),
+          completedAt: deps.now(),
+          outcome: 'unresolved',
+        };
+        loop = {
+          ...loop,
+          iterations: [...loop.iterations, finalIteration],
+        };
+        deps.loops.update(loop);
+        this.emit(
+          input,
+          'plan-review.loop.iteration.completed',
+          'info',
+          `iteration ${finalIterationIndex} completed: unresolved`,
+          { index: finalIterationIndex, outcome: 'unresolved' },
+        );
+      }
     }
 
     loop = exhaust(loop, deps.now());
