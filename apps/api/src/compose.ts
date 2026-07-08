@@ -2888,8 +2888,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         })();
 
+        let invokeResult;
         try {
-          await artifactAgent.invoke({
+          invokeResult = await artifactAgent.invoke({
             profile: AgentProfileName(profile),
             promptPath,
             expectedArtifacts: [PLAN_REVIEW_FINDINGS_ARTIFACT],
@@ -2906,6 +2907,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           };
         }
         const invocationId = newestInvocationId(String(ctx.runId));
+        if (invokeResult.outcome !== 'success') {
+          return {
+            invocationId,
+            agentOutcome: invokeResult.outcome,
+          };
+        }
         // Read findings and parse verdict; if missing, mark as failed so the loop retries.
         try {
           const findings = await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(
@@ -2983,8 +2990,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         })();
 
+        let invokeResult;
         try {
-          await artifactAgent.invoke({
+          invokeResult = await artifactAgent.invoke({
             profile: AgentProfileName(profile),
             promptPath,
             expectedArtifacts: [PLAN_FIX_RESULT_ARTIFACT],
@@ -2998,6 +3006,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           return { invocationId: '', agentOutcome: 'failed' };
         }
         const invocationId = newestInvocationId(String(ctx.runId));
+        if (invokeResult.outcome !== 'success') {
+          return {
+            invocationId,
+            agentOutcome: invokeResult.outcome,
+          };
+        }
         try {
           const resultJson = await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(
             String(ctx.runId),
