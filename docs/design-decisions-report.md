@@ -291,3 +291,7 @@ stage (independent Codex review) can adjudicate. Operators see an amber
 
 The lenient mode (`phases.reviewFix.trendAwareExit.mode: 'lenient'`)
 fires the exit even when the post-fix-gate failed; this is opt-in.
+
+## #668 — Architect pass is now live in TS
+
+The `fix-review-architect` routing key in `agent.phaseProfiles` is no longer dead. When `phases.reviewFix.architectPass.enabled` is `true`, the executor invokes the architect agent before the review-fix loop and threads the produced `review-fix-plan.json` into the loop as `architectPlan`. Default is `false` (preserves prior behavior). See `docs/solutions/orchestrator/architect-pass-wiring-2026-07-08.md` for the wiring details and the mutation-guard rationale.
