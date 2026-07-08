@@ -104,7 +104,7 @@ import {
   type ImplementStepLoopDeps,
   type ImplementStepLoop as ImplementStepLoopType,
   type StepLoopContext,
-  type FixStepOptions,
+  type ImplementFixStepOptions,
   type ImplementStepOptions,
   type TypecheckResult,
   type TypescriptError,
@@ -172,6 +172,7 @@ import {
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
+import { createImplementStepHistoryFilePort } from './implement-step-history-file-port.js';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
   try {
@@ -707,6 +708,13 @@ export interface BuildImplementStepFixPromptInput {
    * (mirrors `buildReviewFixFixPrompt` in `apps/api/src/review-fix-prompts.ts`).
    */
   historyContext?: string;
+  /**
+   * Optional typecheck errors from the previous fix's reverted build.
+   * Rendered as a labeled section so the fixer addresses them directly (#671).
+   */
+  typecheckErrors?:
+    | string
+    | { file: string; line: number; col: number; code: string; message: string }[];
 }
 
 export async function buildImplementStepFixPrompt(
@@ -787,6 +795,18 @@ export async function buildImplementStepFixPrompt(
       : []),
     ...(input.historyContext && input.historyContext.trim().length > 0
       ? ['## PRIOR FIX HISTORY', '', input.historyContext, '']
+      : []),
+    ...(input.typecheckErrors !== undefined
+      ? [
+          '## TYPECHECK ERRORS (previous fix)',
+          '',
+          'The previous fix produced a build-breaking tree that was reverted. These are the structured typecheck errors captured at the start of this iteration:',
+          '',
+          '```json',
+          JSON.stringify(input.typecheckErrors, null, 2),
+          '```',
+          '',
+        ]
       : []),
     '## CONTEXT',
     `Working directory: ${input.cwd}`,
@@ -1824,6 +1844,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
 
       const loopHistory = createReviewLoopHistoryFilePort(persistingEventBusForLoop);
+      const implementStepHistory = createImplementStepHistoryFilePort(persistingEventBusForLoop);
 
       const resolveStartCommitSha = (cwd: string, runId: string): string => {
         try {
@@ -2588,7 +2609,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         };
       };
 
-      const implRunFix = async (ctx: StepLoopContext, opts: FixStepOptions) => {
+      const implRunFix = async (ctx: StepLoopContext, opts: ImplementFixStepOptions) => {
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(
@@ -2608,6 +2629,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? { reconciliationContext: opts.reconciliationContext }
             : {}),
           ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
+          ...(opts.typecheckErrors !== undefined ? { typecheckErrors: opts.typecheckErrors } : {}),
         });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
@@ -2653,6 +2675,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           invocationId,
           agentOutcome: fixVerdict.ok ? ('success' as const) : ('contract_violation' as const),
           ...(fixVerdict.ok ? { verdict: fixVerdict.verdict } : {}),
+          headBeforeFix: startCommitSha,
         };
       };
 
@@ -2779,6 +2802,18 @@ export function composeRoot(opts: ComposeOptions): Container {
         ...(implFixFallbackProfileName
           ? { fixFallbackProfile: AgentProfileName(implFixFallbackProfileName) }
           : {}),
+        loopHistory: implementStepHistory,
+        // Reuses the same `git reset --hard` closure already declared for the
+        // review-fix loop (rollbackFix at compose.ts:1844). The implement-step
+        // loop is the only other consumer.
+        revertFix: async (ctx: StepLoopContext, targetSha: string): Promise<boolean> => {
+          try {
+            execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
+            return true;
+          } catch {
+            return false;
+          }
+        },
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
