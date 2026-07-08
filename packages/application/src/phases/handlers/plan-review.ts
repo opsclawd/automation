@@ -58,20 +58,24 @@ export class PlanReviewHandler implements PhaseHandler {
         try {
           const planMd = await ctx.artifacts.read(ctx.runUuid, 'plan.md');
           const section = '## Known Limitations';
+
+          let updated = planMd.trimEnd();
           if (!planMd.includes(section)) {
-            const updated = `${planMd.trimEnd()}\n\n${section}\n\n${result.knownLimitations}\n`;
-            await ctx.artifacts.write({
-              runId: ctx.runUuid,
-              phaseId: this.phase,
-              relativePath: 'plan.md',
-              contents: updated,
-            });
-            emit(
-              'plan-review.known_limitations_appended',
-              'info',
-              'appended Known Limitations section',
-            );
+            updated += `\n\n${section}`;
           }
+          updated += `\n\n${result.knownLimitations}\n`;
+
+          await ctx.artifacts.write({
+            runId: ctx.runUuid,
+            phaseId: this.phase,
+            relativePath: 'plan.md',
+            contents: updated,
+          });
+          emit(
+            'plan-review.known_limitations_appended',
+            'info',
+            'appended Known Limitations section',
+          );
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           emit('plan-review.known_limitations_append_failed', 'warn', message);

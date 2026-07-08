@@ -112,6 +112,10 @@ function registerPassThroughHandlers(
     phase: makePhaseName('plan-write'),
     run: async () => ({ outcome: 'passed' }),
   });
+  registry.register({
+    phase: makePhaseName('plan-review'),
+    run: async () => ({ outcome: 'passed' }),
+  });
   registry.register(makePassingHandler('implement', implementSpy));
   for (const phase of PHASES_AFTER_IMPLEMENT) {
     registry.register(makePassingHandler(phase));
@@ -122,7 +126,7 @@ describe('RunExecutor durable resume', () => {
   it('skips implement on resume when completed outputs exist durably and continues into validate', async () => {
     const artifacts = new FakeArtifactStore();
     const run = makeRun({
-      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'implement'],
+      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review', 'implement'],
     });
 
     await artifacts.write({
@@ -206,6 +210,7 @@ describe('RunExecutor durable resume', () => {
       'read_issue',
       'plan-design',
       'plan-write',
+      'plan-review',
       'implement',
       'validate',
       'fix-validate',
@@ -226,7 +231,7 @@ describe('RunExecutor durable resume', () => {
   it('fails with missing_artifact when implementation-log.md is absent from the durable artifact listing', async () => {
     const artifacts = new FakeArtifactStore();
     const run = makeRun({
-      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'implement'],
+      completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review', 'implement'],
     });
 
     await artifacts.write({

@@ -12,3 +12,4 @@ export * from './handlers/fix-validate.js';
 export * from './handlers/compound.js';
 export * from './handlers/create-pr.js';
 export * from './handlers/post-pr-review.js';
+export * from './handlers/plan-review.js';
