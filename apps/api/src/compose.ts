@@ -2599,7 +2599,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? implFixFallbackProfileName
             : implFixProfileName;
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
-        const fixPrompt = await buildImplementStepFixPrompt(artifacts, String(ctx.runId), ctx);
+        const fixPrompt = await buildImplementStepFixPrompt(artifacts, String(ctx.runId), {
+          cwd: ctx.cwd,
+          stepIndex: ctx.stepIndex,
+          stepTitle: ctx.stepTitle,
+          ...(opts.reconciliationContext !== undefined
+            ? { reconciliationContext: opts.reconciliationContext }
+            : {}),
+          ...(opts.historyContext !== undefined ? { historyContext: opts.historyContext } : {}),
+        });
         writeFileSync(promptPath, fixPrompt, 'utf-8');
         const startCommitSha = resolveStartCommitSha(ctx.cwd, String(ctx.runId));
         let invokeResult;
