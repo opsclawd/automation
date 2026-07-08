@@ -4,15 +4,13 @@ export const PLAN_REVIEW_FINDINGS_ARTIFACT = 'plan-review-findings.md';
 export const PLAN_FIX_RESULT_ARTIFACT = 'plan-fix-result.json';
 export const PLAN_REVIEW_ARBITER_RESULT_ARTIFACT = 'plan-review-arbiter-result.json';
 
-const EXCERPT_MAX_CHARS = 4000;
-
 async function readExcerpt(
   artifacts: ArtifactStore,
   runId: string,
   relativePath: string,
 ): Promise<string> {
   try {
-    return (await artifacts.read(runId, relativePath)).slice(0, EXCERPT_MAX_CHARS);
+    return await artifacts.read(runId, relativePath);
   } catch (err) {
     if (!(err instanceof ArtifactNotFoundError)) throw err;
     return '';

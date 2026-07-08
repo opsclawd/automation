@@ -2828,12 +2828,12 @@ export function composeRoot(opts: ComposeOptions): Container {
       });
 
       // --- Plan-review loop (#666) ---
-      const planReviewProfileName =
-        config.agent.phaseProfiles?.['plan-review']?.profile ??
-        config.agent.phaseProfiles?.['plan-write']?.profile;
-      const planFixProfileName =
-        config.agent.phaseProfiles?.['plan-fix']?.profile ??
-        config.agent.phaseProfiles?.['plan-write']?.profile;
+      const planReviewProfileName = config.phases.planReview?.enabled
+        ? resolveProfileForPhaseBound!('plan-review')
+        : undefined;
+      const planFixProfileName = config.phases.planReview?.enabled
+        ? resolveProfileForPhaseBound!('plan-fix')
+        : undefined;
       const planReviewArbiterProfileName = resolveArbiterProfileName(
         config.agent.phaseProfiles ?? {},
       );
@@ -2853,6 +2853,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           promptDir,
           `plan-review-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
         );
+        let planMd = '';
+        try {
+          planMd = await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(
+            String(ctx.runId),
+            'plan.md',
+          );
+        } catch (err) {
+          if (!(err instanceof ArtifactNotFoundError)) throw err;
+        }
+
         const promptBody = [
           '# Plan-Review Iteration',
           `Run: ${ctx.runId}`,
@@ -2862,7 +2872,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           '',
           '## plan.md',
           '```',
-          await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(String(ctx.runId), 'plan.md'),
+          planMd,
           '```',
         ].join('\n');
         writeFileSync(promptPath, promptBody, 'utf-8');
@@ -2936,10 +2946,26 @@ export function composeRoot(opts: ComposeOptions): Container {
           promptDir,
           `plan-fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
         );
+        const excerpts = await readPlanReviewExcerpts(
+          planReviewArtifacts(String(ctx.runId), ctx.cwd),
+          String(ctx.runId),
+        );
         const promptBody = [
           '# Plan-Fix Iteration',
           `Run: ${ctx.runId}`,
           `Iteration: ${ctx.iterationIndex}`,
+          '',
+          'Load prompt from prompts/plan-review/plan-fix.md at the configured promptsRoot.',
+          '',
+          '## plan.md (excerpt)',
+          '```',
+          excerpts.planExcerpt,
+          '```',
+          '',
+          '## plan-review-findings.md (excerpt)',
+          '```',
+          excerpts.findingsExcerpt,
+          '```',
           ...(opts.reconciliationContext
             ? ['', '## Arbiter reconciliation context', '', opts.reconciliationContext]
             : []),
@@ -3075,7 +3101,15 @@ export function composeRoot(opts: ComposeOptions): Container {
                   rationale: `arbiter result.json unparseable: ${verdict.detail}`,
                 };
               }
-              return arbiterResultSchema.parse(verdict.result) as PlanReviewArbiterResult;
+              const parsed = arbiterResultSchema.safeParse(verdict.result);
+              if (!parsed.success) {
+                return {
+                  outcome: 'insufficient_evidence',
+                  evidence: '',
+                  rationale: 'Zod parse error',
+                };
+              }
+              return parsed.data as PlanReviewArbiterResult;
             }
           : undefined;
 
