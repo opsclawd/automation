@@ -587,6 +587,7 @@ export class ImplementStepLoop {
         );
 
         if (!contradictionRetriedThisStep) {
+          // --- 1-SHOT RECONCILIATION RE-RUN (#45 port) ---
           contradictionRetriedThisStep = true;
           const rerunSpec =
             specReview.verdict === 'fail' ? await deps.runSpecReview(ctx, tcResult) : specReview;
@@ -598,6 +599,7 @@ export class ImplementStepLoop {
           const rerunQualityOk =
             rerunQuality.agentOutcome === 'success' && rerunQuality.verdict === 'pass';
           if (rerunSpecOk && rerunQualityOk) {
+            // Contradiction resolved by re-run
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
             await appendHistory(
@@ -615,6 +617,7 @@ export class ImplementStepLoop {
           }
         }
 
+        // --- ARBITER ESCALATION ---
         if (!arbiterInvokedThisStep && deps.runArbiter !== undefined) {
           arbiterInvokedThisStep = true;
           this.emit(
