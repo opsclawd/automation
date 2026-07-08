@@ -3457,10 +3457,11 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
 
         // Mutation guard: tracked-file diffs mean the architect mutated
-        // code. Hard-reset HEAD and discard the plan. Untracked output
+        // code. Hard-reset to preArchitectSha and discard the plan. Untracked output
         // files (review-fix-plan.json) are expected and not mutations.
         // We use inlined orchestrator-diff exclusions to ignore allowed
         // orchestrator artifacts/manifests.
+        const targetSha = preArchitectSha === '0'.repeat(40) ? 'HEAD' : preArchitectSha;
         try {
           const orchestratorDiffExclusions = [
             'review-triage.md',
@@ -3480,12 +3481,12 @@ export function composeRoot(opts: ComposeOptions): Container {
             '*.patch',
           ];
           const exclusions = orchestratorDiffExclusions.map((p) => `:!${p}`);
-          execFileSync('git', ['diff', '--exit-code', 'HEAD', '--', '.', ...exclusions], {
+          execFileSync('git', ['diff', '--exit-code', targetSha, '--', '.', ...exclusions], {
             cwd: ctx.cwd,
           });
         } catch {
           try {
-            execFileSync('git', ['reset', '--hard', 'HEAD'], { cwd: ctx.cwd });
+            execFileSync('git', ['reset', '--hard', targetSha], { cwd: ctx.cwd });
           } catch {
             // best-effort reset; the loop will continue without a plan
           }

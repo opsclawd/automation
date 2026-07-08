@@ -20,7 +20,7 @@ The closure:
 2. Reads the review manifest; returns `undefined` if there are zero `action=fix` entries (emits `architect_pass_skipped reason=no_fix_tasks`).
 3. Resolves the profile via `resolveArchitectProfileName` (`apps/api/src/architect-profile.ts`). Resolution order: `phaseProfiles['fix-review-architect'].profile` → `roles.planner.profile` → `phaseProfiles['plan-design'].profile` → `undefined`. The dedicated key exists so operators can route the architect to a slower model without changing plan-design's profile.
 4. Captures pre-architect HEAD, builds a read-only prompt via `buildArchitectPrompt` (`apps/api/src/architect-prompt.ts`), and calls `artifactAgent.invoke` with `phaseId: 'fix-review-architect'`, `expectedArtifacts: ['review-fix-plan.json']`, and `timeoutMs: timeoutMinutes * 60_000`.
-5. Performs the mutation guard (`git diff --exit-code HEAD -- .` against the inlined orchestrator-diff exclusions). Non-empty diff → `git reset --hard HEAD`, emit `architect_pass_failed reason=mutation`, return `undefined`.
+5. Performs the mutation guard (`git diff --exit-code <preArchitectSha> -- .` against the inlined orchestrator-diff exclusions). Non-empty diff → `git reset --hard <preArchitectSha>`, emit `architect_pass_failed reason=mutation`, return `undefined`.
 6. Reads `review-fix-plan.json`, validates with `architectPlanSchema` (Zod, `packages/application/src/results/schemas/architect.ts`). Failure → `architect_pass_failed reason=invalid_structure|no_output`, return `undefined`.
 7. On success → emit `architect_pass_completed tasks=<count>` and return the validated plan to the loop as `architectPlan`.
 
