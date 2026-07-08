@@ -39,6 +39,7 @@ export const CANONICAL_PHASE_ORDER: readonly PhaseName[] = [
   makePhaseName('read_issue'),
   makePhaseName('plan-design'),
   makePhaseName('plan-write'),
+  makePhaseName('plan-review'),
   makePhaseName('implement'),
   makePhaseName('validate'),
   makePhaseName('fix-validate'),
@@ -71,6 +72,13 @@ const _phaseDefinitions = {
     agentContract: { requiredArtifacts: ['plan.md'], mustNotChangeBranch: true },
     retrySafety: 'safe',
     skippable: false,
+  },
+  'plan-review': {
+    name: makePhaseName('plan-review'),
+    inputs: { required: ['plan.md'], optional: [] },
+    outputs: ['plan.md'], // in-place edits by plan-fix
+    retrySafety: 'safe',
+    skippable: true, // skipped when phases.planReview.enabled === false
   },
   implement: {
     name: makePhaseName('implement'),

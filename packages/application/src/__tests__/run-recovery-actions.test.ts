@@ -222,12 +222,12 @@ describe('planRunRecoveryAction', () => {
       const run = makeRun({
         status: 'failed',
         completedPhases: ['read_issue', 'plan-design'],
-        skippedPhases: ['plan-write'],
+        skippedPhases: ['plan-write', 'plan-review'],
       });
       const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
       expect(plan.allowed).toBe(true);
-      // Canonical order: read_issue, plan-design, plan-write, implement...
-      // Since read_issue, plan-design are completed, and plan-write is skipped,
+      // Canonical order: read_issue, plan-design, plan-write, plan-review, implement...
+      // Since read_issue, plan-design are completed, and plan-write/plan-review are skipped,
       // it should target implement.
       expect(plan.targetPhase).toBe('implement');
       expect(plan.retrySafety).toBe('unsafe');
@@ -241,6 +241,7 @@ describe('planRunRecoveryAction', () => {
           'read_issue',
           'plan-design',
           'plan-write',
+          'plan-review',
           'implement',
           'validate',
           'fix-validate',
@@ -264,6 +265,7 @@ describe('planRunRecoveryAction', () => {
           'read_issue',
           'plan-design',
           'plan-write',
+          'plan-review',
           'implement',
           'validate',
           'fix-validate',
@@ -298,6 +300,7 @@ describe('planRunRecoveryAction', () => {
           'read_issue',
           'plan-design',
           'plan-write',
+          'plan-review',
           'implement',
           'validate',
           'fix-validate',

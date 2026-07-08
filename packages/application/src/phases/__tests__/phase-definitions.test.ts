@@ -15,11 +15,12 @@ import {
 } from '../phase-definitions.js';
 
 describe('phase definitions registry', () => {
-  it('exposes the target canonical order (10 phases, fix-validate)', () => {
+  it('exposes the target canonical order (11 phases, plan-review)', () => {
     expect(CANONICAL_PHASE_ORDER).toEqual([
       'read_issue',
       'plan-design',
       'plan-write',
+      'plan-review',
       'implement',
       'validate',
       'fix-validate',
@@ -37,8 +38,8 @@ describe('phase definitions registry', () => {
     }
   });
 
-  it('has exactly 10 definitions (no extras)', () => {
-    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(10);
+  it('has exactly 11 definitions (no extras)', () => {
+    expect(Object.keys(PHASE_DEFINITIONS)).toHaveLength(11);
   });
 
   it('exposes typed error classes with correct names', () => {
@@ -81,7 +82,7 @@ describe('phase definitions registry', () => {
       const names = orderedPhases(['compound' as PhaseName]).map((p) => p.name);
       expect(names).not.toContain('compound');
       expect(names).toContain('plan-design');
-      expect(names).toHaveLength(9);
+      expect(names).toHaveLength(10);
     });
 
     it('rejects skipping a non-skippable phase', () => {
@@ -126,7 +127,8 @@ describe('phase definitions registry', () => {
   describe('nextPhase', () => {
     it('returns the following phase in canonical order', () => {
       expect(nextPhase('plan-design' as PhaseName, [])).toBe('plan-write');
-      expect(nextPhase('plan-write' as PhaseName, [])).toBe('implement');
+      expect(nextPhase('plan-write' as PhaseName, [])).toBe('plan-review');
+      expect(nextPhase('plan-review' as PhaseName, [])).toBe('implement');
     });
 
     it('returns null for the last phase', () => {
@@ -243,7 +245,9 @@ describe('phase definitions registry', () => {
         const def = PHASE_DEFINITIONS[name]!;
         allOutputs.push(...def.outputs);
       }
-      expect(new Set(allOutputs).size).toBe(allOutputs.length);
+      // plan.md is claimed by both plan-write and plan-review (skippable/in-place edit)
+      const duplicates = allOutputs.filter((item, index) => allOutputs.indexOf(item) !== index);
+      expect(duplicates).toEqual(['plan.md']);
     });
   });
 });

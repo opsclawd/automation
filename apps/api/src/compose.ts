@@ -73,6 +73,9 @@ import {
   FixValidateHandler,
   CheckMergeReadiness,
   ImplementStepLoop,
+  PlanReviewLoop,
+  type PlanReviewLoopDeps,
+  PlanReviewHandler,
   readReviewVerdict,
   readFixVerdict,
   PhaseHandlerRegistry,
@@ -115,6 +118,8 @@ import {
   arbiterResultSchema,
   extractResult,
   extractTaskBody,
+  loadPromptTemplate,
+  renderPrompt,
   parseTaskManifest,
   parseTypescriptErrors,
   renderStructuredTypecheckErrors,
@@ -173,6 +178,12 @@ import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
 import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port.js';
 import { createImplementStepHistoryFilePort } from './implement-step-history-file-port.js';
+import {
+  buildPlanReviewArbiterPrompt,
+  readPlanReviewExcerpts,
+  PLAN_REVIEW_FINDINGS_ARTIFACT,
+  PLAN_FIX_RESULT_ARTIFACT,
+} from './plan-review-prompts.js';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
   try {
@@ -2818,6 +2829,293 @@ export function composeRoot(opts: ComposeOptions): Container {
         idFactory: () => randomUUID(),
       });
 
+      // --- Plan-review loop (#666) ---
+      // Captured here (not inline in the closures below) because
+      // planReviewRunFix's `opts` parameter (PlanFixOptions) shadows the
+      // outer composeRoot `opts` (ComposeOptions) within its own body.
+      const planReviewPromptsRoot = join(opts.repoRoot, 'prompts');
+      const planReviewProfileName = config.phases.planReview?.enabled
+        ? resolveProfileForPhaseBound!('plan-review')
+        : undefined;
+      const planFixProfileName = config.phases.planReview?.enabled
+        ? resolveProfileForPhaseBound!('plan-fix')
+        : undefined;
+      const planReviewArbiterProfileName = resolveArbiterProfileName(
+        config.agent.phaseProfiles ?? {},
+      );
+
+      const planReviewArtifacts = artifactStoreForRun;
+
+      const planReviewRunReview = async (
+        ctx: import('@ai-sdlc/application').PlanReviewContext,
+      ): Promise<import('@ai-sdlc/application').PlanReviewResult> => {
+        const profile = planReviewProfileName;
+        if (!profile) {
+          return { invocationId: '', agentOutcome: 'failed' };
+        }
+        const promptDir = join(baseTmpDir, 'plan-review-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `plan-review-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
+        );
+        const template = loadPromptTemplate('plan-review', 'plan-review', {
+          promptsRoot: planReviewPromptsRoot,
+        });
+        const promptBody = await renderPrompt(template, {
+          runId: String(ctx.runId),
+          vars: {},
+          artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
+        });
+        writeFileSync(promptPath, promptBody, 'utf-8');
+
+        const startCommitSha = (() => {
+          try {
+            return execFileSync('git', ['rev-parse', 'HEAD'], {
+              cwd: ctx.cwd,
+              encoding: 'utf-8',
+            }).trim();
+          } catch {
+            return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+          }
+        })();
+
+        let invokeResult;
+        try {
+          invokeResult = await artifactAgent.invoke({
+            profile: AgentProfileName(profile),
+            promptPath,
+            expectedArtifacts: [PLAN_REVIEW_FINDINGS_ARTIFACT],
+            cwd: ctx.cwd,
+            runId: String(ctx.runId),
+            repoId: ctx.repoId,
+            phaseId: 'plan-review',
+            startCommitSha,
+          });
+        } catch {
+          return {
+            invocationId: '',
+            agentOutcome: 'failed',
+          };
+        }
+        const invocationId = newestInvocationId(String(ctx.runId));
+        if (invokeResult.outcome !== 'success') {
+          return {
+            invocationId,
+            agentOutcome: invokeResult.outcome,
+          };
+        }
+        // Read findings and parse verdict; if missing, mark as failed so the loop retries.
+        try {
+          const findings = await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(
+            String(ctx.runId),
+            PLAN_REVIEW_FINDINGS_ARTIFACT,
+          );
+          const verdictMatch = findings.match(/^## verdict\s*\n([a-z_]+)/m);
+          const verdict = verdictMatch?.[1] as
+            | 'pass'
+            | 'p1_found'
+            | 'p2_only'
+            | 'proceed_with_concerns'
+            | undefined;
+          const knownMatch = findings.match(/^## known_limitations\s*\n([\s\S]*?)(?=^## |\Z)/m);
+          const knownLimitations = knownMatch?.[1]?.trim() || undefined;
+          return {
+            invocationId,
+            agentOutcome: 'success',
+            ...(verdict ? { verdict } : {}),
+            ...(knownLimitations ? { knownLimitations } : {}),
+          };
+        } catch {
+          return { invocationId, agentOutcome: 'failed' };
+        }
+      };
+
+      const planReviewRunFix = async (
+        ctx: import('@ai-sdlc/application').PlanReviewContext,
+        opts: import('@ai-sdlc/application').PlanFixOptions,
+      ): Promise<import('@ai-sdlc/application').PlanFixResult> => {
+        const profile = planFixProfileName;
+        if (!profile) {
+          return { invocationId: '', agentOutcome: 'failed' };
+        }
+        const promptDir = join(baseTmpDir, 'plan-review-prompts');
+        mkdirSync(promptDir, { recursive: true });
+        const promptPath = join(
+          promptDir,
+          `plan-fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
+        );
+        const template = loadPromptTemplate('plan-review', 'plan-fix', {
+          promptsRoot: planReviewPromptsRoot,
+        });
+        const promptBody = await renderPrompt(template, {
+          runId: String(ctx.runId),
+          vars: {
+            reconciliationContext: opts.reconciliationContext ?? '(none — first iteration)',
+          },
+          artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
+        });
+        writeFileSync(promptPath, promptBody, 'utf-8');
+
+        const startCommitSha = (() => {
+          try {
+            return execFileSync('git', ['rev-parse', 'HEAD'], {
+              cwd: ctx.cwd,
+              encoding: 'utf-8',
+            }).trim();
+          } catch {
+            return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+          }
+        })();
+
+        let invokeResult;
+        try {
+          invokeResult = await artifactAgent.invoke({
+            profile: AgentProfileName(profile),
+            promptPath,
+            expectedArtifacts: [PLAN_FIX_RESULT_ARTIFACT],
+            cwd: ctx.cwd,
+            runId: String(ctx.runId),
+            repoId: ctx.repoId,
+            phaseId: 'plan-fix',
+            startCommitSha,
+          });
+        } catch {
+          return { invocationId: '', agentOutcome: 'failed' };
+        }
+        const invocationId = newestInvocationId(String(ctx.runId));
+        if (invokeResult.outcome !== 'success') {
+          return {
+            invocationId,
+            agentOutcome: invokeResult.outcome,
+          };
+        }
+        try {
+          const resultJson = await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(
+            String(ctx.runId),
+            PLAN_FIX_RESULT_ARTIFACT,
+          );
+          const parsed = JSON.parse(resultJson) as {
+            verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
+            summary?: string;
+            rebuttal?: string;
+          };
+          return {
+            invocationId,
+            agentOutcome: 'success',
+            ...(parsed.verdict ? { verdict: parsed.verdict } : {}),
+            ...(parsed.summary ? { summary: parsed.summary } : {}),
+            ...(parsed.rebuttal ? { rebuttal: parsed.rebuttal } : {}),
+          };
+        } catch {
+          return { invocationId, agentOutcome: 'failed' };
+        }
+      };
+
+      type PlanReviewArbiterResult = Awaited<
+        ReturnType<Required<PlanReviewLoopDeps>['runArbiter']>
+      >;
+      const planReviewRunArbiter: PlanReviewLoopDeps['runArbiter'] | undefined =
+        planReviewArbiterProfileName
+          ? async (
+              ctx: import('@ai-sdlc/application').PlanReviewContext,
+              fixResult: import('@ai-sdlc/application').PlanFixResult,
+            ): Promise<PlanReviewArbiterResult> => {
+              const promptDir = join(baseTmpDir, 'plan-review-prompts');
+              mkdirSync(promptDir, { recursive: true });
+              const promptPath = join(
+                promptDir,
+                `plan-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
+              );
+              const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+              const { planExcerpt, findingsExcerpt, fixExcerpt } = await readPlanReviewExcerpts(
+                artifacts,
+                String(ctx.runId),
+              );
+              const arbiterPrompt = buildPlanReviewArbiterPrompt(
+                { cwd: ctx.cwd, runId: String(ctx.runId) },
+                {
+                  planExcerpt,
+                  findingsExcerpt,
+                  fixExcerpt,
+                  fixRebuttal: fixResult.rebuttal ?? '',
+                },
+              );
+              writeFileSync(promptPath, arbiterPrompt, 'utf-8');
+
+              const startCommitSha = (() => {
+                try {
+                  return execFileSync('git', ['rev-parse', 'HEAD'], {
+                    cwd: ctx.cwd,
+                    encoding: 'utf-8',
+                  }).trim();
+                } catch {
+                  return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+                }
+              })();
+
+              try {
+                await artifactAgent.invoke({
+                  profile: AgentProfileName(planReviewArbiterProfileName),
+                  promptPath,
+                  expectedArtifacts: ['result.json'],
+                  cwd: ctx.cwd,
+                  runId: String(ctx.runId),
+                  repoId: ctx.repoId,
+                  phaseId: 'plan-review-arbiter',
+                  startCommitSha,
+                });
+              } catch (err) {
+                return {
+                  outcome: 'insufficient_evidence',
+                  evidence: '',
+                  rationale: `arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
+                };
+              }
+              const invocationId = newestInvocationId(String(ctx.runId));
+              const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+              if (!inv) {
+                return {
+                  outcome: 'insufficient_evidence',
+                  evidence: '',
+                  rationale: 'arbiter invocation produced no row',
+                };
+              }
+              const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+              const verdict = await extractResult({
+                invocation: patched,
+                ports: { artifacts, agent: artifactAgent },
+              });
+              if (!verdict.ok) {
+                return {
+                  outcome: 'insufficient_evidence',
+                  evidence: '',
+                  rationale: `arbiter result.json unparseable: ${verdict.detail}`,
+                };
+              }
+              const parsed = arbiterResultSchema.safeParse(verdict.result);
+              if (!parsed.success) {
+                return {
+                  outcome: 'insufficient_evidence',
+                  evidence: '',
+                  rationale: 'Zod parse error',
+                };
+              }
+              return parsed.data as PlanReviewArbiterResult;
+            }
+          : undefined;
+
+      const planReviewLoop = new PlanReviewLoop({
+        runReview: planReviewRunReview,
+        runFix: planReviewRunFix,
+        ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
+        loops: loopRepository,
+        events: persistingEventBusForLoop,
+        reviewerMaxRetries: 2,
+        now: () => new Date(),
+        idFactory: () => randomUUID(),
+      });
+
       runStep = async (sctx: {
         stepIndex: number;
         stepTitle: string;
@@ -2841,6 +3139,13 @@ export function composeRoot(opts: ComposeOptions): Container {
       // Wire remaining phase handlers that require agent dependencies
       phaseRegistry.register(new PlanDesignHandler());
       phaseRegistry.register(new PlanWriteHandler());
+      phaseRegistry.register(
+        new PlanReviewHandler({
+          loop: planReviewLoop,
+          maxIterations: config.phases.planReview?.maxIterations ?? 3,
+          enabled: config.phases.planReview?.enabled === true,
+        }),
+      );
       phaseRegistry.register(new CompoundHandler());
 
       const worktreeSetup = async (cwd: string): Promise<{ ok: boolean; error?: string }> => {

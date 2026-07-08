@@ -21,6 +21,7 @@ export interface PhaseResultMeta {
 export const PHASE_NAME_MIGRATION_MAP: Record<string, string | null> = {
   'plan-design': null,
   'plan-write': null,
+  'plan-review': null,
   implement: 'implement',
   compound: 'compound',
   'create-pr': 'create-pr',
@@ -45,4 +46,5 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   compound: { schema: compoundResultSchema, retrySafe: false },
   'fix-validate': { schema: fixValidateResultSchema, retrySafe: false },
   arbiter: { schema: arbiterResultSchema, retrySafe: true },
+  'plan-review-arbiter': { schema: arbiterResultSchema, retrySafe: true },
 };

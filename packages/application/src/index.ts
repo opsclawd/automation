@@ -47,6 +47,16 @@ export * from './implement-step/implement-step-loop.js';
 export * from './implement-step/typescript-errors.js';
 export * from './implement-step/implement-step-history.js';
 export type {
+  PlanReviewContext,
+  PlanReviewResult,
+  PlanFixResult,
+  PlanFixOptions,
+  PlanReviewLoopDeps,
+  PlanReviewLoopInput,
+  PlanReviewLoopResult,
+} from './plan-review/types.js';
+export * from './plan-review/plan-review-loop.js';
+export type {
   ImplementStepHistoryEntry,
   ImplementStepHistoryPort,
   ImplementFixStepOptions,

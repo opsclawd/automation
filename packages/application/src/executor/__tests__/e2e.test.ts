@@ -61,6 +61,7 @@ function makeExecutor(overrides?: {
     'read_issue',
     'plan-design',
     'plan-write',
+    'plan-review',
     'implement',
     'validate',
     'fix-validate',
@@ -100,7 +101,7 @@ function makeExecutor(overrides?: {
 }
 
 describe('RunExecutor end-to-end', () => {
-  it('completes a full run through all 10 phases with in-memory fakes', async () => {
+  it('completes a full run through all 11 phases with in-memory fakes', async () => {
     const { executor, run } = makeExecutor();
 
     const result = await executor.execute({
@@ -110,7 +111,7 @@ describe('RunExecutor end-to-end', () => {
     });
 
     expect(result.run.status).toBe('passed');
-    expect(result.phases).toHaveLength(10);
+    expect(result.phases).toHaveLength(11);
     for (const phase of result.phases) {
       expect(phase.status).toBe('passed');
     }
@@ -122,7 +123,7 @@ describe('RunExecutor end-to-end', () => {
     await executor.execute({ run, skip: [], presentArtifacts: [] });
 
     const persistedPhases = phaseRepo.listByRun(run.uuid);
-    expect(persistedPhases).toHaveLength(10);
+    expect(persistedPhases).toHaveLength(11);
     for (const phase of persistedPhases) {
       expect(phase.status).toBe('passed');
     }
@@ -249,7 +250,7 @@ describe('RunExecutor end-to-end', () => {
     const result = await executor.execute({ run, skip: [], presentArtifacts: [] });
 
     expect(result.run.status).toBe('passed');
-    expect(result.phases).toHaveLength(10);
+    expect(result.phases).toHaveLength(11);
     expect(result.phases[0]!.status).toBe('passed');
     expect(result.phases[0]!.phase).toBe(makePhaseName('read_issue'));
     expect(result.phases[1]!.status).toBe('passed');
