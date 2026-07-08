@@ -46,13 +46,14 @@ describe('compose runArbiter wiring', () => {
     }
   });
 
-  it('arbiter profile name is resolved from phaseProfiles.plan-design in compose.ts', () => {
-    // Static check — confirms source contains the fallback chain.
-    // Read the file at test time so we catch regressions if compose.ts
-    // is refactored.
+  it('arbiter profile name is resolved via resolveArbiterProfileName, and compose.ts wires phaseId arbiter', async () => {
+    const { resolveArbiterProfileName } = await import('../arbiter-profile.js');
+    expect(resolveArbiterProfileName({ 'plan-design': { profile: 'a' } })).toBe('a');
+    expect(resolveArbiterProfileName({ 'fix-review': { profile: 'b' } })).toBe('b');
+    // Static check — confirms compose.ts still dispatches the arbiter
+    // invocation under the arbiter phaseId (registry/accounting contract).
     const src = readFileSync(path.join(import.meta.dirname ?? __dirname, '../compose.ts'), 'utf-8');
-    expect(src).toContain("config.agent.phaseProfiles['plan-design']?.profile ??");
-    expect(src).toContain("config.agent.phaseProfiles['fix-review']?.profile");
+    expect(src).toContain('resolveArbiterProfileName(');
     expect(src).toContain('phaseId: \x27arbiter\x27');
   });
 
