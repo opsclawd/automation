@@ -89,3 +89,23 @@ propagated to a phase-level result.json.
   capture the post-fix HEAD so the arbiter's evidence is grounded in the
   current commit, not the run-start commit. This mirrors the
   `runReview`-side pattern at `compose.ts:1410-1414`.
+
+## Superseded: dedicated arbiter profile routing (#669)
+
+The single-consumer framing above (arbiter as a closure-local escalation
+step invoked only from `compose.ts`'s `ImplementStepLoop` wiring) has been
+superseded by an operator requirement: escalation is error-prone enough
+that operators must be able to route the arbiter to a specific model
+without a code change.
+
+`apps/api/src/arbiter-profile.ts` now exports `resolveArbiterProfileName`,
+resolving `phaseProfiles['arbiter'] -> phaseProfiles['arbitrate'] (legacy
+alias) -> phaseProfiles['plan-design'] -> phaseProfiles['fix-review']`.
+`compose.ts` calls this helper instead of inlining the `plan-design ??
+fix-review` chain. The `arbitrate` key was previously dead — operator
+configs declared it but the TS pipeline never consulted it; it is now
+live.
+
+The upcoming plan-review loop (#666) will reuse this same helper for its
+own arbiter instance, per the single-resolution-site rule recorded in the
+helper's docstring.
