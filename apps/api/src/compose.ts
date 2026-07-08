@@ -118,6 +118,8 @@ import {
   arbiterResultSchema,
   extractResult,
   extractTaskBody,
+  loadPromptTemplate,
+  renderPrompt,
   parseTaskManifest,
   parseTypescriptErrors,
   renderStructuredTypecheckErrors,
@@ -2828,6 +2830,10 @@ export function composeRoot(opts: ComposeOptions): Container {
       });
 
       // --- Plan-review loop (#666) ---
+      // Captured here (not inline in the closures below) because
+      // planReviewRunFix's `opts` parameter (PlanFixOptions) shadows the
+      // outer composeRoot `opts` (ComposeOptions) within its own body.
+      const planReviewPromptsRoot = join(opts.repoRoot, 'prompts');
       const planReviewProfileName = config.phases.planReview?.enabled
         ? resolveProfileForPhaseBound!('plan-review')
         : undefined;
@@ -2853,28 +2859,14 @@ export function composeRoot(opts: ComposeOptions): Container {
           promptDir,
           `plan-review-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
         );
-        let planMd = '';
-        try {
-          planMd = await planReviewArtifacts(String(ctx.runId), ctx.cwd).read(
-            String(ctx.runId),
-            'plan.md',
-          );
-        } catch (err) {
-          if (!(err instanceof ArtifactNotFoundError)) throw err;
-        }
-
-        const promptBody = [
-          '# Plan-Review Iteration',
-          `Run: ${ctx.runId}`,
-          `Iteration: ${ctx.iterationIndex}`,
-          '',
-          'Load prompt from prompts/plan-review/plan-review.md at the configured promptsRoot.',
-          '',
-          '## plan.md',
-          '```',
-          planMd,
-          '```',
-        ].join('\n');
+        const template = loadPromptTemplate('plan-review', 'plan-review', {
+          promptsRoot: planReviewPromptsRoot,
+        });
+        const promptBody = await renderPrompt(template, {
+          runId: String(ctx.runId),
+          vars: {},
+          artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
+        });
         writeFileSync(promptPath, promptBody, 'utf-8');
 
         const startCommitSha = (() => {
@@ -2953,30 +2945,16 @@ export function composeRoot(opts: ComposeOptions): Container {
           promptDir,
           `plan-fix-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
         );
-        const excerpts = await readPlanReviewExcerpts(
-          planReviewArtifacts(String(ctx.runId), ctx.cwd),
-          String(ctx.runId),
-        );
-        const promptBody = [
-          '# Plan-Fix Iteration',
-          `Run: ${ctx.runId}`,
-          `Iteration: ${ctx.iterationIndex}`,
-          '',
-          'Load prompt from prompts/plan-review/plan-fix.md at the configured promptsRoot.',
-          '',
-          '## plan.md (excerpt)',
-          '```',
-          excerpts.planExcerpt,
-          '```',
-          '',
-          '## plan-review-findings.md (excerpt)',
-          '```',
-          excerpts.findingsExcerpt,
-          '```',
-          ...(opts.reconciliationContext
-            ? ['', '## Arbiter reconciliation context', '', opts.reconciliationContext]
-            : []),
-        ].join('\n');
+        const template = loadPromptTemplate('plan-review', 'plan-fix', {
+          promptsRoot: planReviewPromptsRoot,
+        });
+        const promptBody = await renderPrompt(template, {
+          runId: String(ctx.runId),
+          vars: {
+            reconciliationContext: opts.reconciliationContext ?? '(none — first iteration)',
+          },
+          artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
+        });
         writeFileSync(promptPath, promptBody, 'utf-8');
 
         const startCommitSha = (() => {
