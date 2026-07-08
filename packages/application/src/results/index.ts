@@ -30,5 +30,7 @@ export { pollTaskResultSchema } from './schemas/poll-task-result.js';
 export type { PollTaskResult } from './schemas/poll-task-result.js';
 export { arbiterResultSchema } from './schemas/arbiter.js';
 export type { ArbiterResult } from './schemas/arbiter.js';
+export { architectPlanSchema, architectPlanTaskSchema } from './schemas/architect.js';
+export type { ArchitectPlanValidated } from './schemas/architect.js';
 export { extractResult } from './extract-result.js';
 export type { ExtractResultOutcome, ExtractResultInput, RerunContext } from './extract-result.js';
