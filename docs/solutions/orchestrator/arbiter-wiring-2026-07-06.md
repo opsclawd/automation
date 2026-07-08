@@ -1,6 +1,6 @@
 ---
 module: orchestrator
-tags: [arbiter, contradiction, runArbiter, phase-registry, layer-boundary, composE-root]
+tags: [arbiter, contradiction, runArbiter, phase-registry, layer-boundary, compose-root]
 problem_type: design-decision
 ---
 
@@ -90,7 +90,7 @@ propagated to a phase-level result.json.
   current commit, not the run-start commit. This mirrors the
   `runReview`-side pattern at `compose.ts:1410-1414`.
 
-## Superseded: dedicated arbiter profile routing (#669)
+## Superseded: dedicated arbiter profile routing (#669) → alias retired (#676)
 
 The single-consumer framing above (arbiter as a closure-local escalation
 step invoked only from `compose.ts`'s `ImplementStepLoop` wiring) has been
@@ -98,22 +98,51 @@ superseded by an operator requirement: escalation is error-prone enough
 that operators must be able to route the arbiter to a specific model
 without a code change.
 
-`apps/api/src/arbiter-profile.ts` now exports `resolveArbiterProfileName`,
-resolving `phaseProfiles['arbiter'] -> phaseProfiles['arbitrate'] (legacy
-alias) -> phaseProfiles['plan-design'] -> phaseProfiles['fix-review']`.
-`compose.ts` calls this helper instead of inlining the `plan-design ??
-fix-review` chain. The `arbitrate` key was previously dead — operator
-configs declared it but the TS pipeline never consulted it; it is now
-live.
+`apps/api/src/arbiter-profile.ts` originally exported
+`resolveArbiterProfileName` resolving
+`phaseProfiles['arbiter'] -> phaseProfiles['arbitrate'] (legacy alias) -> phaseProfiles['plan-design'] -> phaseProfiles['fix-review']`,
+and `compose.ts` called this helper instead of inlining the
+`plan-design ?? fix-review` chain. The `arbitrate` key had been live
+under the #669 alias bridge — operator configs declared it and the TS
+pipeline consulted it via the alias clause.
 
-The upcoming plan-review loop (#666) will reuse this same helper for its
-own arbiter instance, per the single-resolution-site rule recorded in the
+The #676 rename retired the `arbitrate` alias at its source. Two
+independent lookup sites (`resolveArbiterProfileName` and the router's
+adapter-level fallback lookup in
+`packages/infrastructure/src/agent/agent-runtime-router.ts:290,338`)
+each re-derived "which config entry backs the arbiter phase," and only
+the resolver knew about the `arbitrate` alias. The incident in run
+`d975a28d` (issue #671) demonstrated the cost: an arbiter invocation
+whose provider returned HTTP 429 had no fallback fire because the
+router looked up `phaseProfiles['arbiter']`, found nothing (the entry
+lived under `arbitrate`), and concluded no fallback existed — even
+though the `arbitrate` entry had a configured `fallbackProfile`.
+
+Post-rename, the resolver's chain is
+`phaseProfiles['arbiter'] -> phaseProfiles['plan-design'] -> phaseProfiles['fix-review']`,
+the router's single-key lookup on `phaseProfiles[normalizeRoutingPhase(request.phaseId)]`
+resolves to the same entry by construction (since `request.phaseId === 'arbiter'`
+and the operator config only declares `phaseProfiles['arbiter']`), and a
+load-time `console.warn` in `packages/shared/src/config/loader.ts`
+flags any lingering `phaseProfiles['arbitrate']` key so operators with
+un-migrated local configs are not silently broken.
+
+The plan-review loop (#666) reuses the same resolver for its own
+arbiter instance, per the single-resolution-site rule recorded in the
 helper's docstring.
 
-## Config hygiene and intentional config retention (Issue #662)
+## Config hygiene and intentional config retention (Issue #662, revised #676)
 
-To prevent future automated config-hygiene passes from removing "unused-looking" keys, we explicitly document that the following configuration keys in `.ai-orchestrator.json` are live and load-bearing:
+To prevent future automated config-hygiene passes from removing "unused-looking" keys, we explicitly document that the following configuration key in `.ai-orchestrator.json` is live and load-bearing:
 
-- `phaseProfiles['arbitrate']`: Live legacy alias consumed by `resolveArbiterProfileName` in `apps/api/src/arbiter-profile.ts:22`. Pinned by tests in `apps/api/src/arbiter-profile.test.ts`.
+- `phaseProfiles['arbiter']`: Live canonical key consumed by `resolveArbiterProfileName` in `apps/api/src/arbiter-profile.ts:21` (primary resolution) and by the router's adapter-level fallback lookup in `packages/infrastructure/src/agent/agent-runtime-router.ts:290,338` (fallback resolution). Pinned by tests in `apps/api/src/arbiter-profile.test.ts` and `packages/infrastructure/src/agent/__tests__/router-fallback.test.ts`.
 
-Removing any of these keys would silently change runtime behavior and fail the dedicated unit/bats tests. Any static-analysis cleanup tools must walk dynamically-keyed config lookups (e.g. `phaseProfiles[phaseName]`) and fallback tables to avoid false positive detections.
+Additionally, we track the following retired key for historical context and migration tracking:
+
+- `phaseProfiles['arbitrate']` (**retired**): The legacy alias was live from #669 until the #676 rename. Post-#676, the key is silently ignored by the resolver (no alias clause) and is logged at config-load time via `console.warn` from `packages/shared/src/config/loader.ts` so operators can migrate their `.ai-orchestrator.local.json` files. New configs must use `phaseProfiles['arbiter']`.
+
+Removing any of the live keys above would silently change runtime
+behavior and fail the dedicated unit/bats tests. Any static-analysis
+cleanup tools must walk dynamically-keyed config lookups (e.g.
+`phaseProfiles[phaseName]`) and fallback tables to avoid false
+positive detections.
