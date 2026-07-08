@@ -11,6 +11,7 @@ import type {
   ImplementStepLoopDeps,
   ImplementStepLoopInput,
   ImplementStepLoopResult,
+  QualityReviewResult,
   SpecReviewResult,
   StepLoopContext,
   TypecheckResult,
@@ -105,6 +106,7 @@ export class ImplementStepLoop {
     let contradictionRetriedThisStep = false;
     let arbiterInvokedThisStep = false;
     let pendingReconciliationContext: string | undefined;
+    let lastHeadBeforeFix: string | undefined;
 
     const baseCtx: StepLoopContext = {
       loopId: loop.id,
@@ -267,6 +269,9 @@ export class ImplementStepLoop {
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
 
+      let skipReviewsThisIteration = false;
+      let typecheckErrorsFromRevert: string | TypescriptError[] | undefined;
+
       // Re-run typecheck on iterations 2+ (code may have changed after fix)
       if (iterationIndex > 1) {
         tcResult = await deps.runTypecheck(baseCtx);
@@ -282,20 +287,41 @@ export class ImplementStepLoop {
               output: tcResult.output.slice(0, 2000),
             },
           );
-          this.emit(
-            input,
-            'loop.iteration.started',
-            'info',
-            `iteration ${iterationIndex} started`,
-            {
-              index: iterationIndex,
-            },
-          );
-          loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
-          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-          deps.loops.update(loop);
-          this.emitIterationCompleted(input, iterationIndex, 'failed');
-          return { outcome: 'failed', loop };
+
+          let reverted = false;
+          if (deps.revertFix !== undefined && lastHeadBeforeFix !== undefined) {
+            reverted = await deps.revertFix(baseCtx, lastHeadBeforeFix);
+          }
+
+          if (reverted) {
+            this.emit(
+              input,
+              'step.fix.reverted',
+              'warn',
+              `reverted build-breaking fix at iteration ${iterationIndex - 1}`,
+              { index: input.stepIndex, iteration: iterationIndex - 1 },
+            );
+            typecheckErrorsFromRevert = pickTypecheckPayload(tcResult) as
+              | string
+              | TypescriptError[];
+            tcResult = await deps.runTypecheck(baseCtx);
+            skipReviewsThisIteration = true;
+          } else {
+            this.emit(
+              input,
+              'loop.iteration.started',
+              'info',
+              `iteration ${iterationIndex} started`,
+              {
+                index: iterationIndex,
+              },
+            );
+            loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+            loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+            deps.loops.update(loop);
+            this.emitIterationCompleted(input, iterationIndex, 'failed');
+            return { outcome: 'failed', loop };
+          }
         }
       }
 
@@ -303,79 +329,90 @@ export class ImplementStepLoop {
         index: iterationIndex,
       });
 
-      // --- SPEC-REVIEW (with targeted retry) ---
-      const MAX_SPEC_REVIEW_ATTEMPTS = 3;
       let specReview: SpecReviewResult;
-      let specReviewAttempts = 0;
-      const specReviewAttemptInvocationIds: string[] = [];
-      do {
-        specReviewAttempts += 1;
-        specReview = await deps.runSpecReview(ctx, tcResult);
-        specReviewAttemptInvocationIds.push(specReview.invocationId);
+      let qualityReview: QualityReviewResult;
 
-        if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
-          break;
+      if (skipReviewsThisIteration) {
+        loop = startIteration(loop, {
+          reviewInvocationId: '',
+          now: deps.now(),
+        });
+        specReview = { invocationId: '', agentOutcome: 'success', verdict: 'fail' };
+        qualityReview = { invocationId: '', agentOutcome: 'success', verdict: 'fail' };
+      } else {
+        // --- SPEC-REVIEW (with targeted retry) ---
+        const MAX_SPEC_REVIEW_ATTEMPTS = 3;
+        let specReviewAttempts = 0;
+        const specReviewAttemptInvocationIds: string[] = [];
+        do {
+          specReviewAttempts += 1;
+          specReview = await deps.runSpecReview(ctx, tcResult);
+          specReviewAttemptInvocationIds.push(specReview.invocationId);
+
+          if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
+            break;
+          }
+
+          if (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS) {
+            this.emit(
+              input,
+              'step.spec-review.retry',
+              'warn',
+              `spec-review attempt ${specReviewAttempts} failed (invocation ${specReview.invocationId}), retrying...`,
+              {
+                attempt: specReviewAttempts,
+                maxAttempts: MAX_SPEC_REVIEW_ATTEMPTS,
+                agentOutcome: specReview.agentOutcome,
+                hasVerdict: specReview.verdict !== undefined,
+                invocationId: specReview.invocationId,
+              },
+            );
+          }
+        } while (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS);
+
+        this.emit(
+          input,
+          'step.spec-review.attempts',
+          'info',
+          `spec-review completed after ${specReviewAttempts} attempt(s)`,
+          {
+            index: iterationIndex,
+            attempts: specReviewAttempts,
+            invocationIds: specReviewAttemptInvocationIds,
+          },
+        );
+
+        loop = startIteration(loop, {
+          reviewInvocationId: specReview.invocationId,
+          now: deps.now(),
+        });
+
+        if (specReview.agentOutcome !== 'success' || specReview.verdict === undefined) {
+          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'failed');
+          return { outcome: 'failed', loop };
+        }
+        deps.loops.update(loop);
+
+        // --- QUALITY-REVIEW ---
+        qualityReview = await deps.runQualityReview(ctx, tcResult);
+        loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
+        deps.loops.update(loop);
+        if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
+          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'failed');
+          return { outcome: 'failed', loop };
         }
 
-        if (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS) {
-          this.emit(
-            input,
-            'step.spec-review.retry',
-            'warn',
-            `spec-review attempt ${specReviewAttempts} failed (invocation ${specReview.invocationId}), retrying...`,
-            {
-              attempt: specReviewAttempts,
-              maxAttempts: MAX_SPEC_REVIEW_ATTEMPTS,
-              agentOutcome: specReview.agentOutcome,
-              hasVerdict: specReview.verdict !== undefined,
-              invocationId: specReview.invocationId,
-            },
-          );
+        // Both passed?
+        if (specReview.verdict === 'pass' && qualityReview.verdict === 'pass') {
+          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'resolved');
+          return { outcome: 'success', loop };
         }
-      } while (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS);
-
-      this.emit(
-        input,
-        'step.spec-review.attempts',
-        'info',
-        `spec-review completed after ${specReviewAttempts} attempt(s)`,
-        {
-          index: iterationIndex,
-          attempts: specReviewAttempts,
-          invocationIds: specReviewAttemptInvocationIds,
-        },
-      );
-
-      loop = startIteration(loop, {
-        reviewInvocationId: specReview.invocationId,
-        now: deps.now(),
-      });
-
-      if (specReview.agentOutcome !== 'success' || specReview.verdict === undefined) {
-        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-        deps.loops.update(loop);
-        this.emitIterationCompleted(input, iterationIndex, 'failed');
-        return { outcome: 'failed', loop };
-      }
-      deps.loops.update(loop);
-
-      // --- QUALITY-REVIEW ---
-      const qualityReview = await deps.runQualityReview(ctx, tcResult);
-      loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
-      deps.loops.update(loop);
-      if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
-        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-        deps.loops.update(loop);
-        this.emitIterationCompleted(input, iterationIndex, 'failed');
-        return { outcome: 'failed', loop };
-      }
-
-      // Both passed?
-      if (specReview.verdict === 'pass' && qualityReview.verdict === 'pass') {
-        loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-        deps.loops.update(loop);
-        this.emitIterationCompleted(input, iterationIndex, 'resolved');
-        return { outcome: 'success', loop };
       }
 
       // --- FALLBACK ESCALATION ---
@@ -388,6 +425,9 @@ export class ImplementStepLoop {
       // --- FIX ---
       const fix = await deps.runFix(ctx, {
         useFallback,
+        ...(typecheckErrorsFromRevert !== undefined
+          ? { typecheckErrors: typecheckErrorsFromRevert }
+          : {}),
         ...(pendingReconciliationContext !== undefined
           ? { reconciliationContext: pendingReconciliationContext }
           : {}),
@@ -397,6 +437,7 @@ export class ImplementStepLoop {
       });
       pendingReconciliationContext = undefined; // consumed
       lastFixInvocationId = fix.invocationId;
+      lastHeadBeforeFix = fix.headBeforeFix;
 
       if (
         fix.agentOutcome !== 'success' ||
@@ -416,7 +457,10 @@ export class ImplementStepLoop {
 
       // --- CONTRADICTION DETECTION ---
       const reviewFailed = specReview.verdict === 'fail' || qualityReview.verdict === 'fail';
-      if (fix.verdict === 'done_no_fixes_needed' && reviewFailed) {
+      const contradictionDetected =
+        fix.verdict === 'done_no_fixes_needed' && reviewFailed && !skipReviewsThisIteration;
+
+      if (contradictionDetected) {
         this.emit(
           input,
           'review.contradiction.detected',
