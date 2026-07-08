@@ -15,7 +15,7 @@
  * rather than re-deriving the chain inline.
  */
 export function resolveArbiterProfileName(
-  phaseProfiles: Readonly<Record<string, { profile?: string } | undefined>>,
+  phaseProfiles: Readonly<Record<string, { profile?: string | undefined } | undefined>>,
 ): string | undefined {
   return (
     phaseProfiles['arbiter']?.profile ??

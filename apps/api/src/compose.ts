@@ -162,6 +162,7 @@ import {
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildArbiterPrompt } from './arbiter-prompt.js';
+import { resolveArbiterProfileName } from './arbiter-profile.js';
 import {
   FIX_RESULT_ARTIFACT,
   QUALITY_REVIEW_RESULT_ARTIFACT,
@@ -2045,9 +2046,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         config.agent.phaseProfiles['fix-review']?.profile ?? 'opencode-frontier';
       const implFixFallbackProfileName: string | undefined =
         config.agent.phaseProfiles['fix-review']?.fallbackProfile;
-      const arbiterProfileName: string | undefined =
-        config.agent.phaseProfiles['plan-design']?.profile ??
-        config.agent.phaseProfiles['fix-review']?.profile;
+      const arbiterProfileName: string | undefined = resolveArbiterProfileName(
+        config.agent.phaseProfiles,
+      );
 
       const makeArtifactStore = (runUuid: string, cwd: string): ArtifactStore =>
         artifactStoreForRun(runUuid, cwd);
