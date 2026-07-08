@@ -1020,3 +1020,124 @@ describe('AgentRuntimeRouter fallback', () => {
     });
   });
 });
+
+describe('AgentRuntimeRouter arbiter-phase fallback (post #676 rename)', () => {
+  it('fires fallbackProfile when arbiter invocation fails on provider_error (regression for issue #671)', async () => {
+    const inv = new FakeAgentInvocationPort();
+    const agentConfig = cfg();
+    agentConfig.phaseProfiles.arbiter = {
+      profile: 'opencode-frontier',
+      fallbackProfile: 'pi-local',
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: agentConfig,
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 0,
+          durationMs: 4000,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR],
+          outcome: 'failed',
+        }),
+        pi: new StubAdapter({
+          runtime: 'pi',
+          provider: 'local',
+          model: 'q',
+          exitCode: 0,
+          durationMs: 1000,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        }),
+      },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-arbiter-fb',
+      readPromptChars: () => 100,
+    });
+
+    const result = await router.invoke(
+      req({ phaseId: 'arbiter', profile: AgentProfileName('opencode-frontier') }),
+    );
+
+    // Primary failure surfaces as a fallback dispatch
+    expect(result.outcome).toBe('success');
+    expect(result.provider).toBe('local');
+
+    // Two rows persisted: primary failure + fallback success
+    const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+    expect(rows.length).toBe(2);
+    expect(rows[0]?.phaseId).toBe('arbiter');
+    expect(rows[1]?.fallbackOfInvocationId).toBe(rows[0]?.id);
+  });
+
+  it('fires fallbackProfile when arbiter invocation fails on quota_exceeded (default trigger)', async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'router-fallback-arbiter-qe-'));
+    const stderrPath = join(tmpDir, 'stderr.log');
+    writeFileSync(
+      stderrPath,
+      'Error: Usage limit reached for 5 hour. Your limit will reset at 2026-05-29 07:10:54',
+    );
+    let cleanup = true;
+
+    const inv = new FakeAgentInvocationPort();
+    const agentConfig = cfg();
+    agentConfig.phaseProfiles.arbiter = {
+      profile: 'opencode-frontier',
+      fallbackProfile: 'pi-local',
+    };
+
+    const router = new AgentRuntimeRouter({
+      agent: agentConfig,
+      adapters: {
+        opencode: new StubAdapter({
+          runtime: 'opencode',
+          provider: 'anthropic',
+          model: 'm',
+          exitCode: 1,
+          durationMs: 4000,
+          stdoutPath: '/s',
+          stderrPath,
+          contractViolations: [],
+          outcome: 'failed',
+        }),
+        pi: new StubAdapter({
+          runtime: 'pi',
+          provider: 'local',
+          model: 'q',
+          exitCode: 0,
+          durationMs: 1000,
+          stdoutPath: '/s',
+          stderrPath: '/e',
+          contractViolations: [],
+          outcome: 'success',
+        }),
+      },
+      invocationRepository: inv,
+      clock: () => FIXED_NOW,
+      idFactory: () => 'inv-arbiter-qf',
+      readPromptChars: () => 100,
+    });
+
+    try {
+      const result = await router.invoke(
+        req({ phaseId: 'arbiter', profile: AgentProfileName('opencode-frontier') }),
+      );
+
+      expect(result.outcome).toBe('success');
+      expect(result.provider).toBe('local');
+      const rows = inv.listByRun(RunId('00000000-0000-0000-0000-000000000001'));
+      expect(rows.length).toBe(2);
+      expect(rows[0]?.phaseId).toBe('arbiter');
+      expect(rows[1]?.fallbackOfInvocationId).toBe(rows[0]?.id);
+    } finally {
+      if (cleanup) rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
