@@ -14,6 +14,7 @@ import type {
   TypecheckResult,
   ArbiterResult,
   TypescriptError,
+  ImplementFixStepOptions,
 } from '../types.js';
 import type { FixStepOptions } from '../../review-fix/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -610,7 +611,13 @@ describe('ImplementStepLoop', () => {
         "error TS6133: 'foo' is declared but its value is never read.",
       ].join('\n');
       const parsedSubset: TypescriptError[] = [
-        { file: 'src/foo.ts', line: 10, col: 5, code: 'TS2339', message: "Property 'repoId' does not exist" },
+        {
+          file: 'src/foo.ts',
+          line: 10,
+          col: 5,
+          code: 'TS2339',
+          message: "Property 'repoId' does not exist",
+        },
       ];
       const deps = makeDeps({
         runImplement: async (_ctx: StepLoopContext, opts?: ImplementStepOptions) => {
@@ -691,38 +698,79 @@ describe('ImplementStepLoop', () => {
       expect(capturedTc).toEqual(tcResult);
     });
 
-    it('re-runs typecheck on iteration 2 after fix and fails when typecheck regresses', async () => {
+    it('re-runs typecheck on iteration 2 after fix, reverts build-breaking fix, routes typecheck to next fixer (#671)', async () => {
       let tcCalls = 0;
       let specCalls = 0;
-      const qualSpy = vi.fn<() => Promise<QualityReviewResult>>().mockResolvedValue({
-        invocationId: 'qr-1',
-        agentOutcome: 'success',
-        verdict: 'pass',
-      });
+      let qualCalls = 0;
+      const fixOptsCapture: ImplementFixStepOptions[] = [];
+      const headSha = 'deadbeef';
+      let tcOutputForCall = (n: number): string => {
+        if (n === 1) return '';
+        if (n === 2) return 'error TS2345 after fix';
+        return '';
+      };
       const deps = makeDeps({
         runTypecheck: async (): Promise<TypecheckResult> => {
           tcCalls += 1;
-          return tcCalls === 1
-            ? { outcome: 'pass', output: '' }
-            : { outcome: 'fail', output: 'error TS2345 after fix' };
+          const out = tcOutputForCall(tcCalls);
+          return {
+            outcome: out.length === 0 ? 'pass' : 'fail',
+            output: out,
+            ...(out.includes('TS2345')
+              ? {
+                  structuredErrors: [
+                    { file: 'src/x.ts', line: 1, col: 1, code: 'TS2345', message: 'mismatch' },
+                  ],
+                }
+              : {}),
+          };
         },
         runSpecReview: async (_ctx, _tcResult) => {
           specCalls += 1;
+          // Spec review passes on every call (so we burn through the fix loop
+          // and observe the revert path independently of review findings).
           return {
             invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'pass' as const,
+          };
+        },
+        runQualityReview: async (_ctx, _tcResult) => {
+          qualCalls += 1;
+          return {
+            invocationId: `qr-${qualCalls}`,
             agentOutcome: 'success' as const,
             verdict: 'fail' as const,
           };
         },
-        runQualityReview: async (_ctx, _tcResult) => qualSpy(),
+        runFix: async (
+          _ctx: StepLoopContext,
+          opts: ImplementFixStepOptions,
+        ): Promise<FixResult> => {
+          fixOptsCapture.push(opts);
+          return {
+            invocationId: `fix-${fixOptsCapture.length}`,
+            agentOutcome: 'success',
+            verdict: 'done_with_fixes',
+            headBeforeFix: headSha,
+          };
+        },
+        revertFix: async (_ctx, _target) => true,
       });
-      const out = await new ImplementStepLoop(deps).execute(baseInput());
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 3,
+      });
+      // After revert the second `runFix` invocation must carry typecheck errors.
+      expect(fixOptsCapture.length).toBeGreaterThanOrEqual(2);
+      expect(fixOptsCapture[1]?.typecheckErrors).toBeDefined();
+      // Loop exhausts because quality-review keeps failing across iterations.
       expect(out.outcome).toBe('failed');
-      expect(tcCalls).toBe(2); // pre-loop + iteration 2 re-run
-      // Iteration 1: spec fails → quality runs → fix runs
-      // Iteration 2: typecheck re-run fails → spec/quality NOT called
-      expect(specCalls).toBe(1);
-      expect(qualSpy).toHaveBeenCalledTimes(1);
+      // typecheck was called at least twice (pre-loop + iteration 2 re-run).
+      expect(tcCalls).toBeGreaterThanOrEqual(2);
+      // spec + quality must NOT be skipped by the typecheck hard-fail of yore.
+      expect(specCalls).toBe(1); // spec passed iteration 1, typecheck regressed iteration 2
+      expect(qualCalls).toBe(1); // quality-fail then reverted, not a second review cycle yet
     });
 
     it('emits step.typecheck.failed event when typecheck fails', async () => {
