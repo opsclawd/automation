@@ -1,8 +1,8 @@
-import type { RunId, PhaseName } from '@ai-sdlc/domain';
+import type { RunId, PhaseName, Loop } from '@ai-sdlc/domain';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
-export type { ArbiterResult } from '../implement-step/types.js';
+import type { ArbiterResult } from '../implement-step/types.js';
 
 export interface PlanReviewContext {
   loopId: string;
@@ -37,10 +37,7 @@ export interface PlanFixOptions {
 export interface PlanReviewLoopDeps {
   runReview: (ctx: PlanReviewContext) => Promise<PlanReviewResult>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
-  runArbiter?: (
-    ctx: PlanReviewContext,
-    fixResult: PlanFixResult,
-  ) => Promise<import('../implement-step/types.js').ArbiterResult>;
+  runArbiter?: (ctx: PlanReviewContext, fixResult: PlanFixResult) => Promise<ArbiterResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;
   /** Max reviewer retries on `agentOutcome !== 'success'` (parity #297). Default 2. */
@@ -58,7 +55,7 @@ export interface PlanReviewLoopInput {
 }
 
 export interface PlanReviewLoopResult {
-  loop: import('@ai-sdlc/domain').Loop;
+  loop: Loop;
   outcome: 'success' | 'failed' | 'needs_human_review';
   /** True when the loop converged with `verdict === 'proceed_with_concerns'`. */
   proceedWithConcerns: boolean;
