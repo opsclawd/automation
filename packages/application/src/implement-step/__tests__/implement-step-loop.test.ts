@@ -704,6 +704,7 @@ describe('ImplementStepLoop', () => {
       let qualCalls = 0;
       const fixOptsCapture: ImplementFixStepOptions[] = [];
       const headSha = 'deadbeef';
+      const revertSpy = vi.fn().mockResolvedValue(true);
       let tcOutputForCall = (n: number): string => {
         if (n === 1) return '';
         if (n === 2) return 'error TS2345 after fix';
@@ -755,22 +756,23 @@ describe('ImplementStepLoop', () => {
             headBeforeFix: headSha,
           };
         },
-        revertFix: async (_ctx, _target) => true,
+        revertFix: revertSpy,
       });
       const out = await new ImplementStepLoop(deps).execute({
         ...baseInput(),
-        maxIterations: 2,
+        maxIterations: 3,
       });
       // After revert the second `runFix` invocation must carry typecheck errors.
       expect(fixOptsCapture.length).toBeGreaterThanOrEqual(2);
       expect(fixOptsCapture[1]?.typecheckErrors).toBeDefined();
+      expect(revertSpy).toHaveBeenCalledWith(expect.anything(), headSha);
       // Loop exhausts because quality-review keeps failing across iterations.
       expect(out.outcome).toBe('failed');
       // typecheck was called at least twice (pre-loop + iteration 2 re-run).
       expect(tcCalls).toBeGreaterThanOrEqual(2);
       // spec + quality must NOT be skipped by the typecheck hard-fail of yore.
-      expect(specCalls).toBe(1); // spec passed iteration 1, typecheck regressed iteration 2
-      expect(qualCalls).toBe(1); // quality-fail then reverted, not a second review cycle yet
+      expect(specCalls).toBe(2);
+      expect(qualCalls).toBe(2);
     });
 
     it('emits step.typecheck.failed event when typecheck fails', async () => {

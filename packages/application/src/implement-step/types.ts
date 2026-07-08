@@ -57,6 +57,7 @@ export interface FixResult {
   rebuttal?: string;
   /** Commit SHA captured by the adapter before invoking the fix agent (#671). */
   headBeforeFix?: string;
+  summary?: string;
 }
 
 /**

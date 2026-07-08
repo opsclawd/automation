@@ -6,6 +6,8 @@ import {
   exhaust,
   updateOpenIteration,
 } from '@ai-sdlc/domain';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { formatImplementStepHistoryForPrompt } from './implement-step-history.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
   ImplementStepLoopDeps,
@@ -16,6 +18,7 @@ import type {
   StepLoopContext,
   TypecheckResult,
   TypescriptError,
+  FixResult,
 } from './types.js';
 
 function normalizeMessage(message: string): string {
@@ -103,10 +106,11 @@ export class ImplementStepLoop {
 
     let consecutiveFixFailures = 0;
     let lastFixInvocationId: string | undefined;
+    let lastFixHeadBeforeFix: string | undefined;
+    let pendingTypecheckErrors: string | TypescriptError[] | undefined;
     let contradictionRetriedThisStep = false;
     let arbiterInvokedThisStep = false;
     let pendingReconciliationContext: string | undefined;
-    let lastHeadBeforeFix: string | undefined;
 
     const baseCtx: StepLoopContext = {
       loopId: loop.id,
@@ -117,6 +121,93 @@ export class ImplementStepLoop {
       stepIndex: input.stepIndex,
       stepTitle: input.stepTitle,
       iterationIndex: 1,
+    };
+
+    // --- History helpers (closure over deps/loop) ---
+    const readFixerHistoryContext = async (): Promise<string | undefined> => {
+      if (!deps.loopHistory) return undefined;
+      try {
+        const history = await deps.loopHistory.read(baseCtx);
+        if (!history || history.length === 0) return undefined;
+        return deps.loopHistory.format(history);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.emit(input, 'implement_step_history.read_failed', 'warn', msg, {
+          stepIndex: input.stepIndex,
+          error: msg,
+        });
+        return '';
+      }
+    };
+
+    const appendHistory = async (
+      entry: import('./types.js').ImplementStepHistoryEntry,
+    ): Promise<void> => {
+      if (!deps.loopHistory) return;
+      try {
+        await deps.loopHistory.append(baseCtx, entry);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.emit(input, 'implement_step_history.append_failed', 'warn', msg, {
+          stepIndex: input.stepIndex,
+          iteration: entry.iteration,
+          error: msg,
+        });
+      }
+    };
+
+    const buildHistoryEntry = (
+      iterationIndex: number,
+      specReview: SpecReviewResult,
+      qualityReview: QualityReviewResult,
+      fix: FixResult | undefined,
+      tcSnapshot: TypecheckResult | undefined,
+      reverted:
+        | { headBeforeFix: string; typecheckOutputPreview: string; typecheckErrorCount: number }
+        | undefined,
+      outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed',
+    ): import('./types.js').ImplementStepHistoryEntry => {
+      const structuredCount = tcSnapshot?.structuredErrors?.length ?? 0;
+      const entry: import('./types.js').ImplementStepHistoryEntry = {
+        iteration: iterationIndex,
+        specReview: {
+          ...(specReview.verdict !== undefined ? { verdict: specReview.verdict } : {}),
+          ...(specReview.invocationId !== undefined
+            ? { invocationId: specReview.invocationId }
+            : {}),
+        },
+        qualityReview: {
+          ...(qualityReview.verdict !== undefined ? { verdict: qualityReview.verdict } : {}),
+          ...(qualityReview.invocationId !== undefined
+            ? { invocationId: qualityReview.invocationId }
+            : {}),
+        },
+        ...(fix
+          ? {
+              fix: {
+                ...(fix.verdict !== undefined ? { verdict: fix.verdict } : {}),
+                ...(fix.invocationId !== undefined ? { invocationId: fix.invocationId } : {}),
+                ...(fix.headBeforeFix !== undefined ? { headBeforeFix: fix.headBeforeFix } : {}),
+                ...(fix.summary !== undefined ? { summary: fix.summary } : {}),
+              },
+            }
+          : {}),
+        ...(reverted
+          ? {
+              reverted: {
+                typecheckOutputPreview: reverted.typecheckOutputPreview,
+                typecheckErrorCount: reverted.typecheckErrorCount,
+                headBeforeFix: reverted.headBeforeFix,
+              },
+            }
+          : {}),
+        outcome,
+      };
+      // `typecheckErrorCount` is computed from the *snapshot* passed in for
+      // the revert branch; ignore it elsewhere by always populating it when
+      // `reverted` is set (already handled above).
+      void structuredCount;
+      return entry;
     };
 
     // --- PRE-LOOP: IMPLEMENT ---
@@ -145,15 +236,7 @@ export class ImplementStepLoop {
     const stallHistory: string[] = [];
 
     while (tcResult.outcome === 'fail' && typecheckRetryCount < maxTypeCheckRetries) {
-      // Iteration index for events: pre-loop implement is iteration 1, first
-      // typecheck retry is iteration 2, etc. This lines up loop.iteration.* events
-      // with the actual step state observed downstream.
       const iterationIndex = typecheckRetryCount + 2;
-
-      // Stall detection: trigger if the current fingerprint matches ANY of the
-      // last `stallHistorySize` fingerprints, not just the immediately previous
-      // one. This catches cyclic regressions (A → B → A → B → ...) where the
-      // error set oscillates but no forward progress is made.
       const currFingerprint = this.fingerprintTypecheck(tcResult);
       const stallHistorySize = deps.stallHistorySize ?? DEFAULT_STALL_HISTORY_SIZE;
       const stalled =
@@ -176,11 +259,7 @@ export class ImplementStepLoop {
           'step.typecheck.failed',
           'error',
           `step ${input.stepIndex} failed typecheck gate (stalled)`,
-          {
-            index: input.stepIndex,
-            output: tcResult.output.slice(0, 2000),
-            stalled: true,
-          },
+          { index: input.stepIndex, output: tcResult.output.slice(0, 2000), stalled: true },
         );
         this.emit(input, 'loop.iteration.started', 'info', 'typecheck stalled', {
           index: iterationIndex,
@@ -223,10 +302,7 @@ export class ImplementStepLoop {
         this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
           index: iterationIndex,
         });
-        loop = startIteration(loop, {
-          reviewInvocationId: '',
-          now: deps.now(),
-        });
+        loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
         loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
         deps.loops.update(loop);
         this.emit(input, 'loop.iteration.completed', 'info', 'implement step failed', {
@@ -245,10 +321,7 @@ export class ImplementStepLoop {
         'step.typecheck.failed',
         'error',
         `step ${input.stepIndex} failed typecheck gate`,
-        {
-          index: input.stepIndex,
-          output: tcResult.output.slice(0, 2000),
-        },
+        { index: input.stepIndex, output: tcResult.output.slice(0, 2000) },
       );
       const finalIterationIndex = typecheckRetryCount + 1;
       this.emit(input, 'loop.iteration.started', 'info', 'typecheck gate failed', {
@@ -269,59 +342,101 @@ export class ImplementStepLoop {
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
 
-      let skipReviewsThisIteration = false;
-      let typecheckErrorsFromRevert: string | TypescriptError[] | undefined;
-
-      // Re-run typecheck on iterations 2+ (code may have changed after fix)
+      // --- TOP-OF-ITERATION TYPECHECK + OPTIONAL REVERT (#671) ---
       if (iterationIndex > 1) {
         tcResult = await deps.runTypecheck(baseCtx);
         if (tcResult.outcome === 'fail') {
+          // Try to revert the build-breaking fix if a previous fix exists with
+          // a known-passing headBeforeFix captured.
+          if (lastFixHeadBeforeFix !== undefined && deps.revertFix !== undefined) {
+            const reverted = await deps.revertFix(ctx, lastFixHeadBeforeFix);
+            if (reverted) {
+              this.emit(
+                input,
+                'step.typecheck.reverted',
+                'warn',
+                `step ${input.stepIndex} build-breaking fix reverted at iteration ${iterationIndex}`,
+                {
+                  index: input.stepIndex,
+                  iteration: iterationIndex,
+                  restoredSha: lastFixHeadBeforeFix,
+                  typecheckOutput: tcResult.output.slice(0, 2000),
+                },
+              );
+              // Capture the typecheck payload to feed the next fixer call.
+              pendingTypecheckErrors = pickTypecheckPayload(tcResult) as
+                | string
+                | TypescriptError[]
+                | undefined;
+              // Count fix as a failure even when agent reported `done_with_fixes`.
+              consecutiveFixFailures += 1;
+              loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+              // Append a history entry recording the revert (no reviews ran
+              // this loop pass — typecheck failed before review stage).
+              await appendHistory(
+                buildHistoryEntry(
+                  iterationIndex,
+                  { invocationId: '', agentOutcome: 'success' },
+                  { invocationId: '', agentOutcome: 'success' },
+                  undefined,
+                  tcResult,
+                  {
+                    headBeforeFix: lastFixHeadBeforeFix,
+                    typecheckOutputPreview: tcResult.output.slice(0, 1000),
+                    typecheckErrorCount: tcResult.structuredErrors?.length ?? 0,
+                  },
+                  'unresolved',
+                ),
+              );
+              loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+              deps.loops.update(loop);
+              this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+              // Drop the head-before-fix so the next pass does not try to revert again.
+              lastFixHeadBeforeFix = undefined;
+              continue;
+            }
+            // revertFix returned false — fall through to the human-review
+            // branch below.
+          }
+
+          // No revertFix wired, or revert itself failed.
           this.emit(
             input,
             'step.typecheck.failed',
             'error',
-            `step ${input.stepIndex} iteration ${iterationIndex} typecheck failed after fix`,
+            `step ${input.stepIndex} iteration ${iterationIndex} typecheck failed after fix; cannot auto-revert`,
             {
               index: input.stepIndex,
               iteration: iterationIndex,
               output: tcResult.output.slice(0, 2000),
             },
           );
-
-          let reverted = false;
-          if (deps.revertFix !== undefined && lastHeadBeforeFix !== undefined) {
-            reverted = await deps.revertFix(baseCtx, lastHeadBeforeFix);
-          }
-
-          if (reverted) {
-            this.emit(
-              input,
-              'step.fix.reverted',
-              'warn',
-              `reverted build-breaking fix at iteration ${iterationIndex - 1}`,
-              { index: input.stepIndex, iteration: iterationIndex - 1 },
-            );
-            typecheckErrorsFromRevert = pickTypecheckPayload(tcResult) as
-              | string
-              | TypescriptError[];
-            tcResult = await deps.runTypecheck(baseCtx);
-            skipReviewsThisIteration = true;
-          } else {
-            this.emit(
-              input,
-              'loop.iteration.started',
-              'info',
-              `iteration ${iterationIndex} started`,
-              {
-                index: iterationIndex,
-              },
-            );
-            loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
-            loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-            deps.loops.update(loop);
-            this.emitIterationCompleted(input, iterationIndex, 'failed');
-            return { outcome: 'failed', loop };
-          }
+          this.emit(
+            input,
+            'loop.iteration.started',
+            'info',
+            `iteration ${iterationIndex} started`,
+            {
+              index: iterationIndex,
+            },
+          );
+          loop = startIteration(loop, { reviewInvocationId: '', now: deps.now() });
+          // Append a history entry without a `reverted` block (no revert succeeded).
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              { invocationId: '', agentOutcome: 'success' },
+              { invocationId: '', agentOutcome: 'success' },
+              undefined,
+              tcResult,
+              undefined,
+              'failed',
+            ),
+          );
+          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+          deps.loops.update(loop);
+          this.emitIterationCompleted(input, iterationIndex, 'failed');
+          return { outcome: 'needs_human_review', loop };
         }
       }
 
@@ -329,90 +444,87 @@ export class ImplementStepLoop {
         index: iterationIndex,
       });
 
+      // --- SPEC-REVIEW ---
+      const MAX_SPEC_REVIEW_ATTEMPTS = 3;
       let specReview: SpecReviewResult;
-      let qualityReview: QualityReviewResult;
+      let specReviewAttempts = 0;
+      const specReviewAttemptInvocationIds: string[] = [];
+      do {
+        specReviewAttempts += 1;
+        specReview = await deps.runSpecReview(ctx, tcResult);
+        specReviewAttemptInvocationIds.push(specReview.invocationId);
+        if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
+          break;
+        }
+        if (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS) {
+          this.emit(
+            input,
+            'step.spec-review.retry',
+            'warn',
+            `spec-review attempt ${specReviewAttempts} failed (invocation ${specReview.invocationId}), retrying...`,
+            {
+              attempt: specReviewAttempts,
+              maxAttempts: MAX_SPEC_REVIEW_ATTEMPTS,
+              agentOutcome: specReview.agentOutcome,
+              hasVerdict: specReview.verdict !== undefined,
+              invocationId: specReview.invocationId,
+            },
+          );
+        }
+      } while (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS);
 
-      if (skipReviewsThisIteration) {
-        loop = startIteration(loop, {
-          reviewInvocationId: '',
-          now: deps.now(),
-        });
-        specReview = { invocationId: '', agentOutcome: 'success', verdict: 'fail' };
-        qualityReview = { invocationId: '', agentOutcome: 'success', verdict: 'fail' };
-      } else {
-        // --- SPEC-REVIEW (with targeted retry) ---
-        const MAX_SPEC_REVIEW_ATTEMPTS = 3;
-        let specReviewAttempts = 0;
-        const specReviewAttemptInvocationIds: string[] = [];
-        do {
-          specReviewAttempts += 1;
-          specReview = await deps.runSpecReview(ctx, tcResult);
-          specReviewAttemptInvocationIds.push(specReview.invocationId);
+      this.emit(
+        input,
+        'step.spec-review.attempts',
+        'info',
+        `spec-review completed after ${specReviewAttempts} attempt(s)`,
+        {
+          index: iterationIndex,
+          attempts: specReviewAttempts,
+          invocationIds: specReviewAttemptInvocationIds,
+        },
+      );
 
-          if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
-            break;
-          }
+      loop = startIteration(loop, {
+        reviewInvocationId: specReview.invocationId,
+        now: deps.now(),
+      });
 
-          if (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS) {
-            this.emit(
-              input,
-              'step.spec-review.retry',
-              'warn',
-              `spec-review attempt ${specReviewAttempts} failed (invocation ${specReview.invocationId}), retrying...`,
-              {
-                attempt: specReviewAttempts,
-                maxAttempts: MAX_SPEC_REVIEW_ATTEMPTS,
-                agentOutcome: specReview.agentOutcome,
-                hasVerdict: specReview.verdict !== undefined,
-                invocationId: specReview.invocationId,
-              },
-            );
-          }
-        } while (specReviewAttempts < MAX_SPEC_REVIEW_ATTEMPTS);
+      if (specReview.agentOutcome !== 'success' || specReview.verdict === undefined) {
+        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(loop);
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        return { outcome: 'failed', loop };
+      }
+      deps.loops.update(loop);
 
-        this.emit(
-          input,
-          'step.spec-review.attempts',
-          'info',
-          `spec-review completed after ${specReviewAttempts} attempt(s)`,
-          {
-            index: iterationIndex,
-            attempts: specReviewAttempts,
-            invocationIds: specReviewAttemptInvocationIds,
-          },
+      // --- QUALITY-REVIEW ---
+      const qualityReview = await deps.runQualityReview(ctx, tcResult);
+      loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
+      deps.loops.update(loop);
+      if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
+        loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+        deps.loops.update(loop);
+        this.emitIterationCompleted(input, iterationIndex, 'failed');
+        return { outcome: 'failed', loop };
+      }
+
+      if (specReview.verdict === 'pass' && qualityReview.verdict === 'pass') {
+        loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+        deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            undefined,
+            'resolved',
+          ),
         );
-
-        loop = startIteration(loop, {
-          reviewInvocationId: specReview.invocationId,
-          now: deps.now(),
-        });
-
-        if (specReview.agentOutcome !== 'success' || specReview.verdict === undefined) {
-          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-          deps.loops.update(loop);
-          this.emitIterationCompleted(input, iterationIndex, 'failed');
-          return { outcome: 'failed', loop };
-        }
-        deps.loops.update(loop);
-
-        // --- QUALITY-REVIEW ---
-        qualityReview = await deps.runQualityReview(ctx, tcResult);
-        loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
-        deps.loops.update(loop);
-        if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
-          loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
-          deps.loops.update(loop);
-          this.emitIterationCompleted(input, iterationIndex, 'failed');
-          return { outcome: 'failed', loop };
-        }
-
-        // Both passed?
-        if (specReview.verdict === 'pass' && qualityReview.verdict === 'pass') {
-          loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
-          deps.loops.update(loop);
-          this.emitIterationCompleted(input, iterationIndex, 'resolved');
-          return { outcome: 'success', loop };
-        }
+        this.emitIterationCompleted(input, iterationIndex, 'resolved');
+        return { outcome: 'success', loop };
       }
 
       // --- FALLBACK ESCALATION ---
@@ -423,21 +535,26 @@ export class ImplementStepLoop {
       }
 
       // --- FIX ---
+      const historyContext = await readFixerHistoryContext();
       const fix = await deps.runFix(ctx, {
         useFallback,
-        ...(typecheckErrorsFromRevert !== undefined
-          ? { typecheckErrors: typecheckErrorsFromRevert }
-          : {}),
+        ...(historyContext !== undefined ? { historyContext } : {}),
         ...(pendingReconciliationContext !== undefined
           ? { reconciliationContext: pendingReconciliationContext }
+          : {}),
+        ...(pendingTypecheckErrors !== undefined
+          ? { typecheckErrors: pendingTypecheckErrors }
           : {}),
         ...(useFallback && lastFixInvocationId !== undefined
           ? { previousInvocationId: lastFixInvocationId }
           : {}),
       });
-      pendingReconciliationContext = undefined; // consumed
+      pendingReconciliationContext = undefined;
+      pendingTypecheckErrors = undefined;
       lastFixInvocationId = fix.invocationId;
-      lastHeadBeforeFix = fix.headBeforeFix;
+      if (fix.headBeforeFix !== undefined) {
+        lastFixHeadBeforeFix = fix.headBeforeFix;
+      }
 
       if (
         fix.agentOutcome !== 'success' ||
@@ -451,16 +568,24 @@ export class ImplementStepLoop {
           now: deps.now(),
         });
         deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            fix,
+            undefined,
+            undefined,
+            'unresolved',
+          ),
+        );
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
         continue;
       }
 
-      // --- CONTRADICTION DETECTION ---
+      // --- CONTRADICTION DETECTION (unchanged) ---
       const reviewFailed = specReview.verdict === 'fail' || qualityReview.verdict === 'fail';
-      const contradictionDetected =
-        fix.verdict === 'done_no_fixes_needed' && reviewFailed && !skipReviewsThisIteration;
-
-      if (contradictionDetected) {
+      if (fix.verdict === 'done_no_fixes_needed' && reviewFailed) {
         this.emit(
           input,
           'review.contradiction.detected',
@@ -474,32 +599,36 @@ export class ImplementStepLoop {
           },
         );
 
-        // --- 1-SHOT RECONCILIATION RE-RUN (#45 port) ---
         if (!contradictionRetriedThisStep) {
           contradictionRetriedThisStep = true;
-
           const rerunSpec =
             specReview.verdict === 'fail' ? await deps.runSpecReview(ctx, tcResult) : specReview;
           const rerunQuality =
             qualityReview.verdict === 'fail'
               ? await deps.runQualityReview(ctx, tcResult)
               : qualityReview;
-
           const rerunSpecOk = rerunSpec.agentOutcome === 'success' && rerunSpec.verdict === 'pass';
           const rerunQualityOk =
             rerunQuality.agentOutcome === 'success' && rerunQuality.verdict === 'pass';
-
           if (rerunSpecOk && rerunQualityOk) {
-            // Contradiction resolved by re-run
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                rerunSpec,
+                rerunQuality,
+                fix,
+                undefined,
+                undefined,
+                'resolved',
+              ),
+            );
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
             return { outcome: 'success', loop };
           }
-          // Re-run still failing — fall through to arbiter (Task 3 adds this path)
         }
 
-        // --- ARBITER ESCALATION ---
         if (!arbiterInvokedThisStep && deps.runArbiter !== undefined) {
           arbiterInvokedThisStep = true;
           this.emit(
@@ -513,10 +642,7 @@ export class ImplementStepLoop {
               iterationIndex,
             },
           );
-
           const arbiterResult = await deps.runArbiter(ctx, tcResult, fix);
-
-          // G1 guardrail: empty evidence → human review, never auto-proceed
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -529,7 +655,6 @@ export class ImplementStepLoop {
             deps.loops.update(loop);
             return { outcome: 'needs_human_review', loop };
           }
-
           if (arbiterResult.outcome === 'finding_invalid') {
             this.emit(
               input,
@@ -542,13 +667,22 @@ export class ImplementStepLoop {
                 iterationIndex,
               },
             );
-            // Reviewer was wrong — the step is complete
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                fix,
+                undefined,
+                undefined,
+                'resolved',
+              ),
+            );
             this.emitIterationCompleted(input, iterationIndex, 'resolved');
             return { outcome: 'success', loop };
           }
-
           if (arbiterResult.outcome === 'finding_valid') {
             this.emit(
               input,
@@ -561,7 +695,6 @@ export class ImplementStepLoop {
                 iterationIndex,
               },
             );
-            // Fixer was wrong — carry arbiter rationale into next fix call
             pendingReconciliationContext = arbiterResult.rationale;
             loop = completeIteration(loop, {
               outcome: 'unresolved',
@@ -569,12 +702,21 @@ export class ImplementStepLoop {
               now: deps.now(),
             });
             deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                fix,
+                undefined,
+                undefined,
+                'unresolved',
+              ),
+            );
             this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-            consecutiveFixFailures = 0; // arbiter ruled fixer wrong (not incapable) — reset counter
-            continue; // next iteration: reviews run, then fix with reconciliationContext
+            consecutiveFixFailures = 0;
+            continue;
           }
-
-          // ambiguous or insufficient_evidence
           this.emit(
             input,
             'needs_human_review',
@@ -587,7 +729,6 @@ export class ImplementStepLoop {
           return { outcome: 'needs_human_review', loop };
         }
 
-        // Arbiter already invoked this step, or not configured — human escalation
         this.emit(
           input,
           'needs_human_review',
@@ -609,10 +750,20 @@ export class ImplementStepLoop {
         now: deps.now(),
       });
       deps.loops.update(loop);
+      await appendHistory(
+        buildHistoryEntry(
+          iterationIndex,
+          specReview,
+          qualityReview,
+          fix,
+          undefined,
+          undefined,
+          'fixed',
+        ),
+      );
       this.emitIterationCompleted(input, iterationIndex, 'fixed');
     }
 
-    // Exhausted
     loop = exhaust(loop, deps.now());
     deps.loops.update(loop);
     this.emit(
