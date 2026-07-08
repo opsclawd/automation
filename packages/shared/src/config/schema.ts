@@ -69,6 +69,28 @@ const phasesSchema = z.object({
      * undefined (no cap).
      */
     maxTotalFixAttempts: z.number().int().nonnegative().optional(),
+    /**
+     * Architect pass (#668). When enabled, the executor invokes the
+     * `fix-review-architect` agent once before the review-fix loop begins
+     * and threads the produced `review-fix-plan.json` into the loop as
+     * `architectPlan`. When disabled (default), the loop runs without a
+     * plan and no architect invocation occurs. Mirrors the legacy
+     * `architectPass.enabled` flag in `scripts/legacy/ai-run-issue-v2:4394`.
+     */
+    architectPass: z
+      .object({
+        enabled: z.boolean().default(false),
+        /**
+         * Outer timeout for the architect invocation in minutes. The
+         * agent-level `timeoutMinutes` already bounds the runtime; this
+         * is an additional cap on how long the executor will wait for
+         * `review-fix-plan.json` to appear. Defaults to 10 (matches the
+         * legacy `TIMEOUT_FIX_REVIEW_ARCHITECT` default in the shell
+         * orchestrator).
+         */
+        timeoutMinutes: z.number().int().positive().default(10),
+      })
+      .default({ enabled: false, timeoutMinutes: 10 }),
   }),
   // implement.maxIterations is validated but not consumed by any shell loop.
   // The implement phase runs each task once sequentially — no retry loop exists.
