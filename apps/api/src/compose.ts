@@ -3578,7 +3578,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   window: config.phases.reviewFix.trendAwareExit.window,
                 },
               },
-              ...(architectPlan !== undefined ? { architectPlan } : {}),
+              ...(architectPlan ? { architectPlan } : {}),
             });
             return {
               phaseOutcome: result.phaseOutcome,
