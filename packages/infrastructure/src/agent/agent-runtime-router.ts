@@ -287,7 +287,12 @@ export class AgentRuntimeRouter implements AgentPort {
     // --phase, the router will need to consult PHASE_FALLBACKS for adapter-level fallback.
     const routingPhase = normalizeRoutingPhase(request.phaseId);
     if (!isFallbackOrCallerSignalled && this.shouldFallback(result, request.phaseId)) {
-      const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
+      let phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
+      if (!phaseEntry && routingPhase === 'arbiter') {
+        phaseEntry =
+          this.opts.agent.phaseProfiles['plan-design'] ??
+          this.opts.agent.phaseProfiles['fix-review'];
+      }
       const fallbackProfileName = phaseEntry?.fallbackProfile;
       if (fallbackProfileName) {
         const fallbackProfile = this.opts.agent.profiles[fallbackProfileName];
@@ -335,7 +340,11 @@ export class AgentRuntimeRouter implements AgentPort {
     // NOTE: Does not consult PHASE_FALLBACKS — relies on caller passing a phaseId
     // whose normalized form exists in phaseProfiles. See comment in dispatch().
     const routingPhase = normalizeRoutingPhase(phaseId);
-    const phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
+    let phaseEntry = this.opts.agent.phaseProfiles[routingPhase];
+    if (!phaseEntry && routingPhase === 'arbiter') {
+      phaseEntry =
+        this.opts.agent.phaseProfiles['plan-design'] ?? this.opts.agent.phaseProfiles['fix-review'];
+    }
     const triggers = phaseEntry?.fallbackTriggers ?? [
       'timeout',
       'contract_violation',
