@@ -20,6 +20,7 @@ export const ORCHESTRATOR_ARTIFACT_PATHS = Object.freeze([
   'implementation-log.md',
   'arbiter-result.json',
   'review-loop-history.json',
+  'implement-step-history-*.json',
   'compound-draft.md',
   'validation.result',
   'result.json',
@@ -264,7 +265,41 @@ export class GitWorktreeAdapter implements GitPort, ArtifactGuardPort {
     // 3. Process each canonical artifact
     const removedCommittedArtifacts: string[] = [];
 
-    for (const artifact of ORCHESTRATOR_ARTIFACT_PATHS) {
+    const matchPattern = (file: string, pattern: string): boolean => {
+      if (pattern.includes('*')) {
+        const regexStr = '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$';
+        const regex = new RegExp(regexStr);
+        return regex.test(file);
+      }
+      return file === pattern;
+    };
+
+    let physicalFiles: string[] = [];
+    try {
+      const { readdir } = await import('node:fs/promises');
+      physicalFiles = await readdir(cwd);
+    } catch {
+      // ignore
+    }
+
+    const allCandidates = new Set([
+      ...physicalFiles,
+      ...stagedSet,
+      ...committedSet,
+      ...trackedSet,
+    ]);
+
+    const resolvedArtifacts = new Set<string>();
+    for (const candidate of allCandidates) {
+      for (const pattern of ORCHESTRATOR_ARTIFACT_PATHS) {
+        if (matchPattern(candidate, pattern)) {
+          resolvedArtifacts.add(candidate);
+          break;
+        }
+      }
+    }
+
+    for (const artifact of resolvedArtifacts) {
       const artifactPath = join(cwd, artifact);
 
       // Check if tracked

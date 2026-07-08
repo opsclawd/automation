@@ -45,6 +45,12 @@ export type {
 } from './implement-step/types.js';
 export * from './implement-step/implement-step-loop.js';
 export * from './implement-step/typescript-errors.js';
+export * from './implement-step/implement-step-history.js';
+export type {
+  ImplementStepHistoryEntry,
+  ImplementStepHistoryPort,
+  ImplementFixStepOptions,
+} from './implement-step/types.js';
 export * from './artifacts/index.js';
 export * from './run-recovery-actions.js';
 export * from './use-cases/register-repository.js';

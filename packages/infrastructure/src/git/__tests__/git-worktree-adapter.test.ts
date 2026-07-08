@@ -529,6 +529,17 @@ describe('Artifact Guarding & Cleanup', () => {
       await expect(fsAccess(artifactFile)).rejects.toThrow();
     });
 
+    it('cleanup removes untracked wildcard artifacts from worktree root', async () => {
+      const repoPath = await makeTempRepo();
+      const artifactFile = join(repoPath, 'implement-step-history-3.json');
+      await writeFile(artifactFile, 'untracked content\n');
+
+      await adapter.cleanOrchestratorArtifacts(repoPath);
+
+      const { access: fsAccess } = await import('node:fs/promises');
+      await expect(fsAccess(artifactFile)).rejects.toThrow();
+    });
+
     it('cleanup removes committed artifacts and commits the removal when baseBranch is provided', async () => {
       const repoPath = await makeTempRepo();
       const baseBranch = 'main';
