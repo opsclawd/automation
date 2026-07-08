@@ -168,6 +168,9 @@ import {
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
 import { buildArbiterPrompt } from './arbiter-prompt.js';
 import { resolveArbiterProfileName } from './arbiter-profile.js';
+import { buildArchitectPrompt } from './architect-prompt.js';
+import { resolveArchitectProfileName } from './architect-profile.js';
+import { architectPlanSchema } from '@ai-sdlc/application';
 import {
   FIX_RESULT_ARTIFACT,
   QUALITY_REVIEW_RESULT_ARTIFACT,
@@ -3260,9 +3263,297 @@ export function composeRoot(opts: ComposeOptions): Container {
         );
       }
 
+      // Architect pass (#668). Runs once before the review-fix loop when
+      // `phases.reviewFix.architectPass.enabled` is true. Returns the
+      // validated plan or undefined (fail-soft). Mirrors the legacy
+      // shell-side architect in scripts/legacy/ai-run-issue-v2:4338-4457.
+      const architectPassEnabled = config.phases.reviewFix.architectPass?.enabled ?? false;
+      const architectPassTimeoutMinutes =
+        config.phases.reviewFix.architectPass?.timeoutMinutes ?? 10;
+      const architectProfileName: string | undefined = resolveArchitectProfileName(
+        config.agent.phaseProfiles ?? {},
+        config.agent.roles ?? {},
+      );
+
+      const maybeRunArchitect = async (
+        ctx: import('@ai-sdlc/application').PhaseHandlerContext,
+        baseTmpDir: string,
+      ): Promise<
+        | {
+            version: 1;
+            tasks: Array<{
+              task_id: string;
+              approach: string;
+              conflicts_resolved: string[];
+              constraints: string[];
+              depends_on: string[];
+            }>;
+          }
+        | undefined
+      > => {
+        if (!architectPassEnabled) {
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'info',
+            type: 'review_fix.architect_pass_skipped',
+            message: 'architect pass skipped (disabled in config)',
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'disabled' },
+          });
+          return undefined;
+        }
+
+        // Read the review manifest; skip if there are no fix tasks.
+        let manifestJson = '';
+        try {
+          manifestJson = await ctx.artifacts.read(String(ctx.runUuid), 'review-task-manifest.json');
+        } catch {
+          // No manifest — let the loop fail downstream with "no findings to fix".
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'info',
+            type: 'review_fix.architect_pass_skipped',
+            message: 'architect pass skipped (no review-task-manifest.json)',
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'no_fix_tasks' },
+          });
+          return undefined;
+        }
+
+        let fixTaskCount = 0;
+        try {
+          const parsed = JSON.parse(manifestJson) as unknown;
+          const tasks = Array.isArray(parsed)
+            ? parsed
+            : parsed &&
+                typeof parsed === 'object' &&
+                Array.isArray((parsed as Record<string, unknown>).tasks)
+              ? (parsed as Record<string, unknown>).tasks
+              : [];
+          fixTaskCount = (tasks as Array<{ action?: string | null }>).filter(
+            (t) => t?.action === 'fix' || t?.action == null,
+          ).length;
+        } catch {
+          // Manifest isn't valid JSON — let the loop fail downstream.
+          fixTaskCount = 0;
+        }
+
+        if (fixTaskCount === 0) {
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'info',
+            type: 'review_fix.architect_pass_skipped',
+            message: 'architect pass skipped (no fix tasks in manifest)',
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'no_fix_tasks' },
+          });
+          return undefined;
+        }
+
+        if (!architectProfileName) {
+          // No resolvable profile — surface as a config error (mirrors the
+          // existing unknown-phase handling in run-agent.ts:300-304).
+          throw new Error(
+            'architect pass enabled but no profile resolved (configure phaseProfiles["fix-review-architect"] or roles.planner or phaseProfiles["plan-design"])',
+          );
+        }
+
+        persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          runId: String(ctx.runUuid),
+          level: 'info',
+          type: 'review_fix.architect_pass_started',
+          message: 'cohesive architect pass starting',
+          timestamp: new Date().toISOString(),
+          metadata: { task_count: fixTaskCount, profile: architectProfileName },
+        });
+
+        // Capture pre-architect HEAD for the mutation guard.
+        let preArchitectSha: string;
+        try {
+          preArchitectSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: ctx.cwd,
+            encoding: 'utf-8',
+          }).trim();
+        } catch {
+          preArchitectSha = '0'.repeat(40);
+        }
+
+        // Read the review.md and review-triage.md excerpts (best-effort).
+        let reviewMd = '';
+        let triageMd = '';
+        try {
+          reviewMd = await ctx.artifacts.read(String(ctx.runUuid), 'review.md');
+        } catch {
+          reviewMd = '';
+        }
+        try {
+          triageMd = await ctx.artifacts.read(String(ctx.runUuid), 'review-triage.md');
+        } catch {
+          triageMd = '';
+        }
+
+        // Write the prompt to a stable location so the agent can read it.
+        const promptDir = join(baseTmpDir, 'architect-prompts');
+        let promptPath = '';
+        try {
+          mkdirSync(promptDir, { recursive: true });
+          promptPath = join(promptDir, `architect-${String(ctx.runUuid)}.md`);
+          const prompt = buildArchitectPrompt(
+            { cwd: ctx.cwd, repoId: ctx.repoFullName },
+            { manifest: manifestJson, reviewMd, triageMd },
+          );
+          writeFileSync(promptPath, prompt, 'utf-8');
+        } catch (err) {
+          // Fail-soft: I/O errors when writing the prompt must not crash the run.
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'warn',
+            type: 'review_fix.architect_pass_failed',
+            message: `architect pass failed to write prompt: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'io_error' },
+          });
+          return undefined;
+        }
+
+        // Invoke the architect agent.
+        let agentOutcome: string = 'success';
+        try {
+          await artifactAgent.invoke({
+            profile: AgentProfileName(architectProfileName),
+            promptPath,
+            expectedArtifacts: ['review-fix-plan.json'],
+            cwd: ctx.cwd,
+            runId: String(ctx.runUuid),
+            repoId: ctx.repoFullName,
+            phaseId: 'fix-review-architect',
+            startCommitSha: preArchitectSha,
+            timeoutMs: architectPassTimeoutMinutes * 60_000,
+          });
+        } catch (err) {
+          agentOutcome = 'failed';
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'warn',
+            type: 'review_fix.architect_pass_failed',
+            message: `architect pass failed: ${err instanceof Error ? err.message : String(err)}`,
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'exit_code' },
+          });
+          return undefined;
+        }
+
+        if (agentOutcome !== 'success') {
+          return undefined;
+        }
+
+        // Mutation guard: tracked-file diffs mean the architect mutated
+        // code. Hard-reset HEAD and discard the plan. Untracked output
+        // files (review-fix-plan.json) are expected and not mutations.
+        // We use inlined orchestrator-diff exclusions to ignore allowed
+        // orchestrator artifacts/manifests.
+        try {
+          const orchestratorDiffExclusions = [
+            'review-triage.md',
+            'code-review.md',
+            'review.md',
+            'review-task-manifest.json',
+            'task-manifest.json',
+            'arbiter-result.json',
+            'review-loop-history.json',
+            'implement-step-history-*.json',
+            'compound-draft.md',
+            'validation.result',
+            'result.json',
+            'fix-validate-done.marker',
+            'plan-review-passed.marker',
+            'review-fix-plan.json',
+            '*.patch',
+          ];
+          const exclusions = orchestratorDiffExclusions.map((p) => `:!${p}`);
+          execFileSync('git', ['diff', '--exit-code', 'HEAD', '--', '.', ...exclusions], {
+            cwd: ctx.cwd,
+          });
+        } catch {
+          try {
+            execFileSync('git', ['reset', '--hard', 'HEAD'], { cwd: ctx.cwd });
+          } catch {
+            // best-effort reset; the loop will continue without a plan
+          }
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'warn',
+            type: 'review_fix.architect_pass_failed',
+            message: 'architect pass mutated code — plan discarded',
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'mutation' },
+          });
+          return undefined;
+        }
+
+        // Read and validate the plan.
+        const planPath = join(ctx.cwd, 'review-fix-plan.json');
+        let planRaw: string;
+        try {
+          planRaw = readFileSync(planPath, 'utf-8');
+        } catch {
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'warn',
+            type: 'review_fix.architect_pass_failed',
+            message: 'architect pass produced no plan file',
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'no_output' },
+          });
+          return undefined;
+        }
+
+        let planJson: unknown;
+        try {
+          planJson = JSON.parse(planRaw);
+        } catch {
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'warn',
+            type: 'review_fix.architect_pass_failed',
+            message: 'architect pass produced unparseable plan JSON',
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'invalid_structure' },
+          });
+          return undefined;
+        }
+
+        const validated = architectPlanSchema.safeParse(planJson);
+        if (!validated.success) {
+          persistingEventBusForLoop.publish(String(ctx.runUuid), {
+            runId: String(ctx.runUuid),
+            level: 'warn',
+            type: 'review_fix.architect_pass_failed',
+            message: `architect pass plan failed schema validation: ${validated.error.issues
+              .map((i) => `${i.path.join('.')}: ${i.message}`)
+              .join('; ')}`,
+            timestamp: new Date().toISOString(),
+            metadata: { reason: 'invalid_structure' },
+          });
+          return undefined;
+        }
+
+        persistingEventBusForLoop.publish(String(ctx.runUuid), {
+          runId: String(ctx.runUuid),
+          level: 'info',
+          type: 'review_fix.architect_pass_completed',
+          message: 'architect pass completed',
+          timestamp: new Date().toISOString(),
+          metadata: { tasks: validated.data.tasks.length },
+        });
+
+        return validated.data;
+      };
+
       phaseRegistry.register(
         new ReviewFixHandler({
           runLoop: async (ctx) => {
+            const architectPlan = await maybeRunArchitect(ctx, baseTmpDir);
             const result = await reviewFixLoopInstance.execute({
               runId: RunId(ctx.runUuid),
               phaseId: PhaseName('review-fix'),
@@ -3287,6 +3578,7 @@ export function composeRoot(opts: ComposeOptions): Container {
                   window: config.phases.reviewFix.trendAwareExit.window,
                 },
               },
+              ...(architectPlan !== undefined ? { architectPlan } : {}),
             });
             return {
               phaseOutcome: result.phaseOutcome,
