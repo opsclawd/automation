@@ -38,3 +38,11 @@ The closure:
 - `apps/api/src/architect-profile.test.ts` — profile resolution chain (7 cases).
 - `apps/api/src/__tests__/architect-prompt.test.ts` — prompt structure (6 cases).
 - `apps/api/src/__tests__/compose-architect.test.ts` — integration: schema export, registry absence, prompt contents, source-level wiring (8 cases).
+
+## Config hygiene and intentional config retention (Issue #662)
+
+To prevent future automated config-hygiene passes from removing "unused-looking" keys, we explicitly document that the following configuration key in `.ai-orchestrator.json` is live and load-bearing:
+
+- `phaseProfiles['fix-review-architect']`: Consumed by `resolveArchitectProfileName` in `apps/api/src/architect-profile.ts:22` as the first step of the resolution chain, and referenced during dispatch in `compose.ts` at `phaseId: 'fix-review-architect'`. Pinned by tests in `apps/api/src/architect-profile.test.ts` and `apps/api/src/__tests__/compose-architect.test.ts`.
+
+Removing this key would silently change runtime behavior and fail the dedicated unit tests. Static-analysis cleanup tools must account for dynamic configuration lookups to avoid false positive detections.

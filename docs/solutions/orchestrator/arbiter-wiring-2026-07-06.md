@@ -109,3 +109,11 @@ live.
 The upcoming plan-review loop (#666) will reuse this same helper for its
 own arbiter instance, per the single-resolution-site rule recorded in the
 helper's docstring.
+
+## Config hygiene and intentional config retention (Issue #662)
+
+To prevent future automated config-hygiene passes from removing "unused-looking" keys, we explicitly document that the following configuration keys in `.ai-orchestrator.json` are live and load-bearing:
+
+- `phaseProfiles['arbitrate']`: Live legacy alias consumed by `resolveArbiterProfileName` in `apps/api/src/arbiter-profile.ts:22`. Pinned by tests in `apps/api/src/arbiter-profile.test.ts`.
+
+Removing any of these keys would silently change runtime behavior and fail the dedicated unit/bats tests. Any static-analysis cleanup tools must walk dynamically-keyed config lookups (e.g. `phaseProfiles[phaseName]`) and fallback tables to avoid false positive detections.
