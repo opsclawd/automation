@@ -92,6 +92,36 @@ function makeDeps(over: Partial<ImplementStepLoopDeps>): ImplementStepLoopDeps {
   };
 }
 
+function makeInMemoryImplementHistory(): {
+  port: import('../types.js').ImplementStepHistoryPort;
+  entries: import('../types.js').ImplementStepHistoryEntry[];
+} {
+  const entries: import('../types.js').ImplementStepHistoryEntry[] = [];
+  return {
+    entries,
+    port: {
+      async read(_ctx: import('../types.js').StepLoopContext) {
+        return [...entries];
+      },
+      async append(
+        _ctx: import('../types.js').StepLoopContext,
+        entry: import('../types.js').ImplementStepHistoryEntry,
+      ) {
+        entries.push(entry);
+      },
+      format(history: import('../types.js').ImplementStepHistoryEntry[]) {
+        return history
+          .map(
+            (e) =>
+              `- iteration ${e.iteration} outcome=${e.outcome} fix=${e.fix?.verdict ?? 'none'}` +
+              (e.reverted ? ` reverted=${e.reverted.headBeforeFix}` : ''),
+          )
+          .join('\n');
+      },
+    },
+  };
+}
+
 describe('ImplementStepLoop', () => {
   it('converges on iteration 1 when both reviews pass immediately', async () => {
     const deps = makeDeps({});
@@ -1809,5 +1839,189 @@ describe('ImplementStepLoop', () => {
       expect(retryEvents[1]?.metadata.agentOutcome).toBe('timeout');
       expect(retryEvents[1]?.metadata.hasVerdict).toBe(false);
     });
+  });
+  describe('loopHistory', () => {
+    it('reads history and passes context to fixer', async () => {
+      const { bus } = collectEvents();
+      const readSpy = vi.fn().mockResolvedValue([{ iteration: 1, outcome: 'unresolved' }]);
+      const formatSpy = vi.fn().mockReturnValue('## HISTORY');
+      const appendSpy = vi.fn().mockResolvedValue(undefined);
+      const fixOpts: ImplementFixStepOptions[] = [];
+      const deps = makeDeps({
+        events: bus,
+        loopHistory: {
+          read: readSpy,
+          format: formatSpy,
+          append: appendSpy,
+        },
+        runSpecReview: async () => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success',
+          verdict: 'fail',
+        }),
+        runFix: async (_ctx, opts) => {
+          fixOpts.push(opts);
+          return { invocationId: 'fix-1', agentOutcome: 'success', verdict: 'done_with_fixes' };
+        },
+      });
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+
+      expect(readSpy).toHaveBeenCalled();
+      expect(formatSpy).toHaveBeenCalled();
+      expect(fixOpts[0]?.historyContext).toBe('## HISTORY');
+      expect(appendSpy).toHaveBeenCalled();
+      expect(appendSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ outcome: 'fixed' }),
+      );
+    });
+
+    it('appends revert entries to history when a build-breaking fix is reverted', async () => {
+      let tcCalls = 0;
+      const appendSpy = vi.fn().mockResolvedValue(undefined);
+      const deps = makeDeps({
+        runTypecheck: async () => {
+          tcCalls += 1;
+          return { outcome: tcCalls === 1 ? 'pass' : 'fail', output: 'error TS2345' };
+        },
+        runSpecReview: async () => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success',
+          verdict: 'fail',
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: 'deadbeef',
+        }),
+        revertFix: vi.fn().mockResolvedValue(true),
+        loopHistory: {
+          read: vi.fn().mockResolvedValue([]),
+          format: vi.fn().mockReturnValue(''),
+          append: appendSpy,
+        },
+      });
+      await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+      // First iteration append (fixed)
+      expect(appendSpy).toHaveBeenNthCalledWith(
+        1,
+        expect.anything(),
+        expect.objectContaining({ outcome: 'fixed' }),
+      );
+      // Second iteration append (reverted, so outcome is unresolved)
+      expect(appendSpy).toHaveBeenNthCalledWith(
+        2,
+        expect.anything(),
+        expect.objectContaining({
+          outcome: 'unresolved',
+          reverted: expect.objectContaining({
+            headBeforeFix: 'deadbeef',
+            typecheckOutputPreview: 'error TS2345',
+          }),
+        }),
+      );
+    });
+  });
+
+  it('appends a history entry per iteration when loopHistory is wired (#671)', async () => {
+    const history = makeInMemoryImplementHistory();
+    const deps = makeDeps({ loopHistory: history.port });
+    const out = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    // Iteration 1: both reviews passed → outcome 'resolved'.
+    expect(history.entries).toHaveLength(1);
+    expect(history.entries[0]?.outcome).toBe('resolved');
+    expect(history.entries[0]?.specReview.verdict).toBe('pass');
+    expect(history.entries[0]?.qualityReview.verdict).toBe('pass');
+  });
+
+  it('includes prior history in runFix options when iteration >= 2 (#671)', async () => {
+    const history = makeInMemoryImplementHistory();
+    const fixOptsCapture: ImplementFixStepOptions[] = [];
+    let specCalls = 0;
+    let fixCalls = 0;
+    const deps = makeDeps({
+      loopHistory: history.port,
+      runSpecReview: async (
+        _ctx: StepLoopContext,
+        _tc: TypecheckResult,
+      ): Promise<SpecReviewResult> => {
+        specCalls += 1;
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: specCalls <= 2 ? ('fail' as const) : ('pass' as const),
+        };
+      },
+      runFix: async (_ctx: StepLoopContext, opts: ImplementFixStepOptions): Promise<FixResult> => {
+        fixCalls += 1;
+        fixOptsCapture.push(opts);
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success',
+          verdict: 'done_with_fixes',
+          headBeforeFix: `sha-${fixCalls}`,
+        };
+      },
+    });
+    await new ImplementStepLoop(deps).execute(baseInput());
+    expect(fixCalls).toBe(2);
+    // First fix call (iteration 1) has no historyContext (history is empty).
+    expect(fixOptsCapture[0]?.historyContext).toBeUndefined();
+    // Second fix call (iteration 2) must carry rendered history.
+    expect(fixOptsCapture[1]?.historyContext).toContain('iteration 1');
+    expect(fixOptsCapture[1]?.historyContext).toContain('outcome=fixed');
+  });
+
+  it('returns needs_human_review when typecheck regresses and revertFix is unavailable (#671)', async () => {
+    let tcCalls = 0;
+    const deps = makeDeps({
+      // No revertFix dep set → fall through to needs_human_review.
+      runTypecheck: async (): Promise<TypecheckResult> => {
+        tcCalls += 1;
+        return tcCalls === 1
+          ? { outcome: 'pass', output: '' }
+          : { outcome: 'fail', output: 'error TS1128 left uncommitted' };
+      },
+      runSpecReview: async (_ctx, _tcResult): Promise<SpecReviewResult> => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success' as const,
+        verdict: 'fail' as const,
+      }),
+      runQualityReview: async (_ctx, _tcResult): Promise<QualityReviewResult> => ({
+        invocationId: 'qr-1',
+        agentOutcome: 'success' as const,
+        verdict: 'pass' as const,
+      }),
+    });
+    const out = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('needs_human_review');
+  });
+
+  it('returns needs_human_review when revertFix throws/fails on a build-breaking fix (#671)', async () => {
+    let tcCalls = 0;
+    const deps = makeDeps({
+      revertFix: async (_ctx, _sha) => false, // simulates revert failure
+      runTypecheck: async (): Promise<TypecheckResult> => {
+        tcCalls += 1;
+        return tcCalls === 1
+          ? { outcome: 'pass', output: '' }
+          : { outcome: 'fail', output: 'TS9999 boom' };
+      },
+      runSpecReview: async (_ctx, _tcResult): Promise<SpecReviewResult> => ({
+        invocationId: 'sr-1',
+        agentOutcome: 'success' as const,
+        verdict: 'fail' as const,
+      }),
+      runQualityReview: async (_ctx, _tcResult): Promise<QualityReviewResult> => ({
+        invocationId: 'qr-1',
+        agentOutcome: 'success' as const,
+        verdict: 'pass' as const,
+      }),
+    });
+    const out = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('needs_human_review');
   });
 });

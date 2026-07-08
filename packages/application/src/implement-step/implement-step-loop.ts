@@ -6,8 +6,6 @@ import {
   exhaust,
   updateOpenIteration,
 } from '@ai-sdlc/domain';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-import { formatImplementStepHistoryForPrompt } from './implement-step-history.js';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
   ImplementStepLoopDeps,
@@ -19,6 +17,7 @@ import type {
   TypecheckResult,
   TypescriptError,
   FixResult,
+  ImplementStepHistoryEntry,
 } from './types.js';
 
 function normalizeMessage(message: string): string {
@@ -140,9 +139,7 @@ export class ImplementStepLoop {
       }
     };
 
-    const appendHistory = async (
-      entry: import('./types.js').ImplementStepHistoryEntry,
-    ): Promise<void> => {
+    const appendHistory = async (entry: ImplementStepHistoryEntry): Promise<void> => {
       if (!deps.loopHistory) return;
       try {
         await deps.loopHistory.append(baseCtx, entry);
@@ -161,14 +158,12 @@ export class ImplementStepLoop {
       specReview: SpecReviewResult,
       qualityReview: QualityReviewResult,
       fix: FixResult | undefined,
-      tcSnapshot: TypecheckResult | undefined,
       reverted:
         | { headBeforeFix: string; typecheckOutputPreview: string; typecheckErrorCount: number }
         | undefined,
       outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed',
-    ): import('./types.js').ImplementStepHistoryEntry => {
-      const structuredCount = tcSnapshot?.structuredErrors?.length ?? 0;
-      const entry: import('./types.js').ImplementStepHistoryEntry = {
+    ): ImplementStepHistoryEntry => {
+      const entry: ImplementStepHistoryEntry = {
         iteration: iterationIndex,
         specReview: {
           ...(specReview.verdict !== undefined ? { verdict: specReview.verdict } : {}),
@@ -203,10 +198,6 @@ export class ImplementStepLoop {
           : {}),
         outcome,
       };
-      // `typecheckErrorCount` is computed from the *snapshot* passed in for
-      // the revert branch; ignore it elsewhere by always populating it when
-      // `reverted` is set (already handled above).
-      void structuredCount;
       return entry;
     };
 
@@ -379,7 +370,6 @@ export class ImplementStepLoop {
                   { invocationId: '', agentOutcome: 'success' },
                   { invocationId: '', agentOutcome: 'success' },
                   undefined,
-                  tcResult,
                   {
                     headBeforeFix: lastFixHeadBeforeFix,
                     typecheckOutputPreview: tcResult.output.slice(0, 1000),
@@ -428,7 +418,6 @@ export class ImplementStepLoop {
               { invocationId: '', agentOutcome: 'success' },
               { invocationId: '', agentOutcome: 'success' },
               undefined,
-              tcResult,
               undefined,
               'failed',
             ),
@@ -437,6 +426,8 @@ export class ImplementStepLoop {
           deps.loops.update(loop);
           this.emitIterationCompleted(input, iterationIndex, 'failed');
           return { outcome: 'needs_human_review', loop };
+        } else if (loop.iterations[iterationIndex - 2]?.outcome === 'fixed') {
+          consecutiveFixFailures = 0;
         }
       }
 
@@ -519,7 +510,6 @@ export class ImplementStepLoop {
             qualityReview,
             undefined,
             undefined,
-            undefined,
             'resolved',
           ),
         );
@@ -552,9 +542,7 @@ export class ImplementStepLoop {
       pendingReconciliationContext = undefined;
       pendingTypecheckErrors = undefined;
       lastFixInvocationId = fix.invocationId;
-      if (fix.headBeforeFix !== undefined) {
-        lastFixHeadBeforeFix = fix.headBeforeFix;
-      }
+      lastFixHeadBeforeFix = fix.headBeforeFix;
 
       if (
         fix.agentOutcome !== 'success' ||
@@ -574,7 +562,6 @@ export class ImplementStepLoop {
             specReview,
             qualityReview,
             fix,
-            undefined,
             undefined,
             'unresolved',
           ),
@@ -619,7 +606,6 @@ export class ImplementStepLoop {
                 rerunSpec,
                 rerunQuality,
                 fix,
-                undefined,
                 undefined,
                 'resolved',
               ),
@@ -676,7 +662,6 @@ export class ImplementStepLoop {
                 qualityReview,
                 fix,
                 undefined,
-                undefined,
                 'resolved',
               ),
             );
@@ -708,7 +693,6 @@ export class ImplementStepLoop {
                 specReview,
                 qualityReview,
                 fix,
-                undefined,
                 undefined,
                 'unresolved',
               ),
@@ -743,7 +727,6 @@ export class ImplementStepLoop {
         return { outcome: 'needs_human_review', loop };
       }
 
-      consecutiveFixFailures = 0;
       loop = completeIteration(loop, {
         outcome: 'fixed',
         fixInvocationId: fix.invocationId,
@@ -751,15 +734,7 @@ export class ImplementStepLoop {
       });
       deps.loops.update(loop);
       await appendHistory(
-        buildHistoryEntry(
-          iterationIndex,
-          specReview,
-          qualityReview,
-          fix,
-          undefined,
-          undefined,
-          'fixed',
-        ),
+        buildHistoryEntry(iterationIndex, specReview, qualityReview, fix, undefined, 'fixed'),
       );
       this.emitIterationCompleted(input, iterationIndex, 'fixed');
     }
