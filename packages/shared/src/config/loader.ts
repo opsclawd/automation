@@ -83,6 +83,7 @@ export function loadLayeredConfig(input: LayeredConfigInput): LoadedConfig {
 
   try {
     const validated = orchestratorConfigSchema.parse(merged);
+    warnOnRetiredArbiterPhaseKey(validated);
     const normalized = normalizeRoles(validated);
     const fingerprint = sha256OfCanonicalJson(normalized);
 
@@ -98,6 +99,16 @@ export function loadLayeredConfig(input: LayeredConfigInput): LoadedConfig {
     }
     throw err;
   }
+}
+
+function warnOnRetiredArbiterPhaseKey(config: OrchestratorConfig): void {
+  const phaseProfiles = config.agent?.phaseProfiles;
+  if (!phaseProfiles) return;
+  if (!Object.hasOwn(phaseProfiles, 'arbitrate')) return;
+  console.warn(
+    "[ai-orchestrator] phaseProfiles['arbitrate'] is retired and ignored. " +
+      "Use phaseProfiles['arbiter'] instead.",
+  );
 }
 
 function readIfExists(path: string): string | undefined {

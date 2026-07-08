@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -243,5 +243,84 @@ describe('loadConfig (back-compat wrapper)', () => {
 
     const config = loadConfig(automationRoot);
     expect(config.validation.commands).toEqual(['pnpm test']);
+  });
+});
+
+describe('loadLayeredConfig warnOnRetiredArbiterPhaseKey', () => {
+  it('emits console.warn when phaseProfiles.arbitrate is present in merged config', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const automationRoot = makeRepo({
+        '.ai-orchestrator.json': validConfig({
+          agent: {
+            defaultProfile: 'opencode-frontier',
+            profiles: {
+              'opencode-frontier': {
+                runtime: 'opencode',
+                provider: 'anthropic',
+                model: 'm',
+                timeoutMinutes: 1,
+              },
+            },
+            phaseProfiles: {
+              arbitrate: { profile: 'opencode-frontier' },
+            },
+          },
+        }),
+      });
+
+      loadLayeredConfig({ automationRoot });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]?.[0]).toContain("phaseProfiles['arbitrate']");
+      expect(spy.mock.calls[0]?.[0]).toContain('arbiter');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('does not emit console.warn when phaseProfiles.arbitrate is absent', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const automationRoot = makeRepo({
+        '.ai-orchestrator.json': validConfig({
+          agent: {
+            defaultProfile: 'opencode-frontier',
+            profiles: {
+              'opencode-frontier': {
+                runtime: 'opencode',
+                provider: 'anthropic',
+                model: 'm',
+                timeoutMinutes: 1,
+              },
+            },
+            phaseProfiles: {
+              arbiter: { profile: 'opencode-frontier' },
+            },
+          },
+        }),
+      });
+
+      loadLayeredConfig({ automationRoot });
+
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('does not emit console.warn when the config has no agent block', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const automationRoot = makeRepo({
+        '.ai-orchestrator.json': validConfig({}),
+      });
+
+      loadLayeredConfig({ automationRoot });
+
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
