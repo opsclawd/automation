@@ -1302,6 +1302,20 @@ exit 1
     expect(arbiterMatch![0]).not.toMatch(/artifacts\.read\(String\(ctx\.runId\), 'result\.json'\)/);
   });
 
+  it('implRunFix forwards FixStepOptions.reconciliationContext and historyContext into buildImplementStepFixPrompt (#670)', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixMatch = composeSrc.match(/const implRunFix[\s\S]*?(?=type LoopArbiterResult)/);
+    expect(fixMatch).toBeTruthy();
+    // The call site must spread opts.reconciliationContext and opts.historyContext
+    // into the prompt-builder input object. Without this, the arbiter rationale
+    // and prior-fix-history are silently dropped (issue #670).
+    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?reconciliationContext/);
+    expect(fixMatch![0]).toMatch(/buildImplementStepFixPrompt\([^;]*?historyContext/);
+  });
+
   describe('worktreeSetup behavior', () => {
     const fakeAgentConfig = {
       validation: { commands: ['echo ok'], timeout: 60 },
