@@ -318,6 +318,32 @@ describe('RunRepository', () => {
     db.close();
   });
 
+  it('updateStatusByUuid clears currentPhase when set to null in patch', () => {
+    const db = freshDb();
+    const repo = new RunRepository(db);
+    repo.insert({
+      uuid: 'u1',
+      displayId: 'issue-7-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 7,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      currentPhase: 'implement',
+      startedAt: new Date('2026-05-13T00:00:00Z'),
+    });
+    const updated = repo.updateStatusByUuid('u1', {
+      status: 'failed',
+      completedAt: new Date('2026-05-13T01:00:00Z'),
+      currentPhase: null,
+    });
+    expect(updated).toBe(true);
+    const row = repo.findByUuid('u1');
+    expect(row?.status).toBe('failed');
+    expect(row?.currentPhase).toBeUndefined();
+    db.close();
+  });
+
   it('updateStatusByUuid returns false for terminal run', () => {
     const db = freshDb();
     const repo = new RunRepository(db);

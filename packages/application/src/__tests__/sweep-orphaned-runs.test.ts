@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { SweepOrphanedRuns } from '../sweep-orphaned-runs.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
+import { canResume, RepositoryId } from '@ai-sdlc/domain';
+import { planRunRecoveryAction, type RunRecord } from '../index.js';
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
 describe('SweepOrphanedRuns', () => {
-  it('cancels runs whose PID is dead', () => {
+  it('marks runs whose PID is dead as failed', () => {
     const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'orphan-1',
@@ -22,8 +24,58 @@ describe('SweepOrphanedRuns', () => {
     const result = usecase.execute();
     expect(result.swept).toBe(1);
     expect(repo.updates).toHaveLength(1);
-    expect(repo.updates[0]!.patch.status).toBe('cancelled');
+    expect(repo.updates[0]!.patch.status).toBe('failed');
+    expect(repo.updates[0]!.patch.currentPhase).toBeNull();
     expect(repo.updates[0]!.patch.failureReason).toMatch(/orphaned.*99999/);
+  });
+
+  it('produces a record that canResume() accepts and resolves correctly under planRunRecoveryAction', () => {
+    const repo = new FakeRunRepository();
+    repo.addRun({
+      uuid: 'orphan-2',
+      displayId: 'issue-2-20260513-000000',
+      issueNumber: 2,
+      type: 'issue_to_pr',
+      status: 'running',
+      currentPhase: 'implement',
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      pid: 88888,
+    });
+    const isProcessAlive = (pid: number) => pid !== 88888;
+    const usecase = new SweepOrphanedRuns({ runRepository: repo, isProcessAlive, now: fixedNow });
+    const result = usecase.execute();
+    expect(result.swept).toBe(1);
+
+    const updatedRun = repo.findByUuid('orphan-2');
+    expect(updatedRun).toBeDefined();
+    expect(updatedRun!.status).toBe('failed');
+    expect(updatedRun!.currentPhase).toBeUndefined(); // Verify it was cleared to null (mapped to undefined in FakeRepository/Row mapping)
+
+    const sweptRun: RunRecord = {
+      uuid: 'orphan-2',
+      displayId: 'issue-2-20260513-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 2,
+      type: 'issue_to_pr' as const,
+      status: updatedRun!.status,
+      completedPhases: [],
+      skippedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      // currentPhase is omitted (undefined)
+    };
+
+    expect(canResume(sweptRun)).toBe(true);
+
+    const resumePlan = planRunRecoveryAction({ action: 'resume', run: sweptRun, phases: [] });
+    expect(resumePlan.allowed).toBe(true);
+    expect(resumePlan.targetPhase).toBe('read_issue');
+
+    const retryPlan = planRunRecoveryAction({ action: 'retry', run: sweptRun, phases: [] });
+    expect(retryPlan.allowed).toBe(false);
+    expect(retryPlan.statusCodeOnDenied).toBe(409);
+    expect(retryPlan.denialReason).toBe('No current phase or recoverable phase found to retry');
   });
 
   it('skips runs whose PID is still alive', () => {
