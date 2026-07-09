@@ -55,6 +55,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       agentOutcome: 'success' as const,
       verdict: 'done_with_fixes' as const,
     }),
+    checkManifestSync: async (_ctx: PlanReviewContext): Promise<string | null> => null,
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
