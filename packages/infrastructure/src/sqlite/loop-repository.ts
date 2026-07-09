@@ -80,6 +80,7 @@ export class LoopRepository implements LoopRepositoryPort {
           `INSERT INTO loops (id, run_uuid, phase_id, type, max_iterations, status, started_at, completed_at)
            VALUES (@id, @run_uuid, @phase_id, @type, @max_iterations, @status, @started_at, @completed_at)
            ON CONFLICT(id) DO UPDATE SET
+             max_iterations = excluded.max_iterations,
              status = excluded.status,
              completed_at = excluded.completed_at`,
         )

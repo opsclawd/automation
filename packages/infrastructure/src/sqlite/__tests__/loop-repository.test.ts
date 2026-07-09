@@ -67,6 +67,22 @@ describe('LoopRepository', () => {
     expect(stored.iterations[0]?.outcome).toBe('resolved');
   });
 
+  it('update persists maxIterations changes', () => {
+    const { repo } = setup();
+    let l = createLoop({
+      id: 'loop-1',
+      runId: RunId('run-1'),
+      phaseId: PhaseName('whole-pr-review'),
+      type: 'review-fix',
+      maxIterations: 3,
+      now: t0,
+    });
+    repo.insert(l);
+    l = { ...l, maxIterations: 4 };
+    repo.update(l);
+    expect(repo.findById('loop-1')?.maxIterations).toBe(4);
+  });
+
   it('listForRun returns only loops for that run', () => {
     const { repo } = setup();
     repo.insert(twoIterationLoop());
