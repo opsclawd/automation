@@ -181,6 +181,55 @@ describe('loadConfig', () => {
     const cfg = loadConfig(repo);
     expect(cfg.phases.planReview).toBeUndefined();
   });
+
+  it('parses planWrite.maxRepairAttempts when provided', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          planWrite: { maxRepairAttempts: 0 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.planWrite!.maxRepairAttempts).toBe(0);
+  });
+
+  it('defaults planWrite.maxRepairAttempts to 2 when the key is present but empty', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          planWrite: {},
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.planWrite!.maxRepairAttempts).toBe(2);
+  });
+
+  it('defaults planWrite to undefined when omitted entirely', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.planWrite).toBeUndefined();
+  });
 });
 
 describe('loadConfig with local override', () => {

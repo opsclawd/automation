@@ -119,6 +119,14 @@ const phasesSchema = z.object({
       judgmentAgent: z.string().min(1).optional(),
     })
     .optional(),
+  // Bounded self-repair for plan-write's structural validation (validatePlanTaskList).
+  // maxRepairAttempts: 0 reproduces pre-repair-loop behavior (immediate hard-fail on the
+  // first validation failure). Defaults to 2 when the whole key or the field is omitted.
+  planWrite: z
+    .object({
+      maxRepairAttempts: z.number().int().nonnegative().default(2),
+    })
+    .optional(),
   // Post-PR review poller (scripts/ai-pr-review-poll) settings. When absent, the
   // Bash launcher falls back to maxPolls=3 / pollIntervalSeconds=300.
   postPrReview: z
