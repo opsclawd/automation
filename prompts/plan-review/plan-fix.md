@@ -12,6 +12,9 @@ output is a single `plan-fix-result.json` file describing the fix outcome.
 - `{{artifact:design.md}}` — the design the plan must satisfy
 - `{{var:reconciliationContext}}` — optional arbiter rationale when this is
   a post-arbiter iteration; cite it explicitly when revising
+- `{{var:manifestMismatch}}` — structural inconsistency detected between
+  `plan.md` and `task-manifest.json` (empty when none); fix this in addition
+  to (or instead of) any reviewer findings above
 
 ## OUTPUT
 Write a single file named `plan-fix-result.json` at the working-directory

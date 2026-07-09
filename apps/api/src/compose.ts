@@ -124,6 +124,7 @@ import {
   loadPromptTemplate,
   renderPrompt,
   parseTaskManifest,
+  validatePlanTaskList,
   parseTypescriptErrors,
   renderStructuredTypecheckErrors,
   type TaskManifest,
@@ -3014,6 +3015,31 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewArtifacts = artifactStoreForRun;
 
+      const planReviewCheckManifestSync = async (
+        ctx: import('@ai-sdlc/application').PlanReviewContext,
+      ): Promise<string | null> => {
+        const artifacts = planReviewArtifacts(String(ctx.runId), ctx.cwd);
+        let planMd: string;
+        try {
+          planMd = await artifacts.read(String(ctx.runId), 'plan.md');
+        } catch (e) {
+          if (e instanceof ArtifactNotFoundError) return null;
+          throw e;
+        }
+        let manifestJson: string | undefined;
+        try {
+          manifestJson = await artifacts.read(String(ctx.runId), 'task-manifest.json');
+        } catch (e) {
+          if (e instanceof ArtifactNotFoundError) {
+            return null;
+          } else {
+            throw e;
+          }
+        }
+        const result = validatePlanTaskList(planMd, manifestJson);
+        return result.success ? null : result.error;
+      };
+
       const planReviewRunReview = async (
         ctx: import('@ai-sdlc/application').PlanReviewContext,
       ): Promise<import('@ai-sdlc/application').PlanReviewResult> => {
@@ -3122,6 +3148,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           runId: String(ctx.runId),
           vars: {
             reconciliationContext: opts.reconciliationContext ?? '(none — first iteration)',
+            manifestMismatch: opts.manifestMismatch ?? '(none)',
           },
           artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
         });
@@ -3143,7 +3170,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           invokeResult = await artifactAgent.invoke({
             profile: AgentProfileName(profile),
             promptPath,
-            expectedArtifacts: [PLAN_FIX_RESULT_ARTIFACT],
+            expectedArtifacts: [PLAN_FIX_RESULT_ARTIFACT, 'plan.md'],
             cwd: ctx.cwd,
             runId: String(ctx.runId),
             repoId: ctx.repoId,
@@ -3375,6 +3402,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       const planReviewLoop = new PlanReviewLoop({
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
+        checkManifestSync: planReviewCheckManifestSync,
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
         ...(planReviewFinalReviewRunArbiter
           ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }
