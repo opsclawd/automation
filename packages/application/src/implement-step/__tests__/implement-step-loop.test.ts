@@ -2179,78 +2179,165 @@ describe('ImplementStepLoop', () => {
     });
   });
 
-  describe('trailing re-review pass', () => {
-    it('skips revertFix on typecheck failure during the trailing re-review pass and returns needs_human_review', async () => {
-      let specCalls = 0;
-      let typecheckCalls = 0;
-      const revertSpy = vi.fn().mockResolvedValue(true);
+  describe('endOnReview trailing re-review (#680)', () => {
+    it('grants one trailing re-review when cap iteration ends fixed and trailing reviews pass', async () => {
+      let specReviewCalls = 0;
+      const { events, bus } = collectEvents();
       const deps = makeDeps({
-        revertFix: revertSpy,
-        runSpecReview: async () => {
-          specCalls += 1;
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
           return {
-            invocationId: `sr-${specCalls}`,
+            invocationId: `sr-${specReviewCalls}`,
             agentOutcome: 'success' as const,
-            verdict: 'fail' as const,
+            // Trailing pass (call 3) returns 'pass'; iterations 1 and 2 fail.
+            verdict: specReviewCalls < 3 ? ('fail' as const) : ('pass' as const),
           };
         },
-        runFix: async () => {
-          return {
-            invocationId: `fix`,
-            agentOutcome: 'success' as const,
-            verdict: 'done_with_fixes' as const,
-            headBeforeFix: 'sha-before-fix',
-          };
-        },
-        runTypecheck: async () => {
-          typecheckCalls += 1;
-          // iteration 1: typecheck pass (pre-review)
-          // iteration 2 (trailing): typecheck fail
-          return typecheckCalls === 1
-            ? { outcome: 'pass', output: '' }
-            : { outcome: 'fail', output: 'error TS2345: type mismatch in trailing' };
-        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
       });
-      const out = await new ImplementStepLoop(deps).execute({
-        ...baseInput(),
-        maxIterations: 1,
-      });
-      expect(out.outcome).toBe('needs_human_review');
-      expect(revertSpy).not.toHaveBeenCalled();
-      expect(specCalls).toBe(1); // spec review ran on iter 1, iter 2 failed typecheck before review
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: spec-review fail + quality-review pass + fix done_with_fixes → fixed
+      // Iteration 2: spec-review fail + quality-review pass + fix done_with_fixes → fixed (cap)
+      // Trailing (iteration 3): spec-review pass + quality-review pass → resolved
+      expect(out.outcome).toBe('success');
+      expect(out.loop.status).toBe('converged');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+      expect(specReviewCalls).toBe(3);
+      const trailing = events.filter((e) => e.type === 'loop.trailing_review.started');
+      expect(trailing).toHaveLength(1);
+      expect(trailing[0]?.level).toBe('info');
+      expect(trailing[0]?.metadata.iteration).toBe(3);
+      expect(trailing[0]?.metadata.originalMax).toBe(2);
+      expect(trailing[0]?.metadata.lastOutcome).toBe('fixed');
     });
 
-    it('exhausts without a trailing review if endOnReview: false', async () => {
-      let specCalls = 0;
+    it('exhausts when trailing pass reviews fail (no second trailing pass)', async () => {
+      let specReviewCalls = 0;
       const deps = makeDeps({
-        runSpecReview: async () => {
-          specCalls += 1;
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          // All three reviews fail.
           return {
-            invocationId: `sr-${specCalls}`,
+            invocationId: `sr-${specReviewCalls}`,
             agentOutcome: 'success' as const,
             verdict: 'fail' as const,
           };
         },
-        runQualityReview: async () => {
-          return { invocationId: `qr`, agentOutcome: 'success' as const, verdict: 'pass' as const };
-        },
-        runFix: async () => {
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: spec-review fail + quality-review pass + fix → fixed
+      // Iteration 2: spec-review fail + quality-review pass + fix → fixed (cap, trailing fires)
+      // Trailing (iteration 3): spec-review fail → trailing pass exhausts
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+      // No second trailing pass after the trailing pass exhausts.
+      expect(specReviewCalls).toBe(3);
+    });
+
+    it('does NOT grant a trailing re-review when the cap iteration ends unresolved', async () => {
+      let specReviewCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
           return {
-            invocationId: `fix`,
+            invocationId: `sr-${specReviewCalls}`,
             agentOutcome: 'success' as const,
-            verdict: 'done_with_fixes' as const,
+            verdict: 'fail' as const,
           };
         },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        // cannot_fix produces `outcome: 'unresolved'` at iteration 2 (cap).
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'cannot_fix' as const,
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: spec-review fail + quality-review pass + fix cannot_fix → unresolved
+      // Iteration 2: spec-review fail + quality-review pass + fix cannot_fix → unresolved (cap)
+      // No trailing pass (last outcome is 'unresolved', not 'fixed').
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(2);
+      expect(out.loop.iterations[0]?.outcome).toBe('unresolved');
+      expect(out.loop.iterations[1]?.outcome).toBe('unresolved');
+      expect(events.filter((e) => e.type === 'loop.trailing_review.started')).toHaveLength(0);
+      expect(specReviewCalls).toBe(2);
+    });
+
+    it('does NOT grant a trailing re-review when endOnReview=false (opt-out)', async () => {
+      let specReviewCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: specReviewCalls < 3 ? ('fail' as const) : ('pass' as const),
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
       });
       const out = await new ImplementStepLoop(deps).execute({
         ...baseInput(),
-        maxIterations: 1,
+        maxIterations: 2,
         options: { endOnReview: false },
       });
+      // Iteration 1: spec-review fail + quality-review pass + fix → fixed
+      // Iteration 2: spec-review fail + quality-review pass + fix → fixed (cap)
+      // No trailing pass (endOnReview=false).
       expect(out.outcome).toBe('failed');
       expect(out.loop.status).toBe('exhausted');
-      // Max iterations is 1, so it runs once. Since it ended `fixed` but endOnReview is false, it does not do a second iteration.
-      expect(specCalls).toBe(1);
+      expect(out.loop.iterations).toHaveLength(2);
+      expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+      expect(out.loop.iterations[1]?.outcome).toBe('fixed');
+      expect(events.filter((e) => e.type === 'loop.trailing_review.started')).toHaveLength(0);
+      expect(specReviewCalls).toBe(2);
     });
   });
 });
