@@ -2812,24 +2812,29 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         : undefined;
 
-      // --- TRAILING RE-REVIEW ARBITER (#690) ---
-      // The trailing re-review pass (added by #680) is review-only: no fixer
-      // runs after it. Reusing the mid-loop `runArbiter` shape here would
-      // synthesize a fake `FixResult` with `verdict: 'done_no_fixes_needed'`
-      // and a placeholder rebuttal — lying to the arbiter about a fixer
-      // having evaluated the finding. Instead, this closure uses a
-      // trailing-pass-specific prompt (`buildImplementStepFinalReviewArbiterPrompt`)
-      // and reads only the spec/quality excerpts via
-      // `readImplementStepFinalReviewExcerpts`.
-      const implementFinalReviewRunArbiter:
+      type ImplementStepFinalReviewArbiterResult = Awaited<
+        ReturnType<Required<ImplementStepLoopDeps>['runFinalReviewArbiter']>
+      >;
+
+      const implementStepFinalReviewRunArbiter:
         | ImplementStepLoopDeps['runFinalReviewArbiter']
         | undefined = arbiterProfileName
-        ? async (ctx, tcResult, specReview, qualityReview): Promise<LoopArbiterResult> => {
+        ? async (
+            ctx,
+            _tcResult,
+            _specReview,
+            _qualityReview,
+          ): Promise<ImplementStepFinalReviewArbiterResult> => {
+            // Note: _tcResult, _specReview, and _qualityReview are accepted to satisfy the port signature,
+            // but are ignored here because the prompt builder reads their full JSON/markdown artifacts
+            // from the durable artifact store directly to preserve raw formatting/structure.
+            // Also, the caller loop already asserts that typecheck passed before invoking this arbiter.
+
             const promptDir = join(baseTmpDir, 'implement-step-prompts');
             mkdirSync(promptDir, { recursive: true });
             const promptPath = join(
               promptDir,
-              `arbiter-final-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
+              `implement-step-final-review-arbiter-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
             );
             const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
@@ -2884,14 +2889,22 @@ export function composeRoot(opts: ComposeOptions): Container {
                 cwd: ctx.cwd,
                 runId: String(ctx.runId),
                 repoId: ctx.repoId,
-                phaseId: 'arbiter',
+                phaseId: 'implement-final-review-arbiter',
                 startCommitSha,
               });
             } catch (err) {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'error',
+                type: 'agent.invoke_failed',
+                message: `Arbiter invocation failed: ${err instanceof Error ? err.message : String(err)}`,
+                timestamp: new Date().toISOString(),
+                metadata: { phaseId: 'implement-final-review-arbiter', stepIndex: ctx.stepIndex },
+              });
               return {
                 outcome: 'insufficient_evidence',
                 evidence: '',
-                rationale: `trailing review arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
+                rationale: `arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
               };
             }
 
@@ -2901,7 +2914,7 @@ export function composeRoot(opts: ComposeOptions): Container {
               return {
                 outcome: 'insufficient_evidence',
                 evidence: '',
-                rationale: 'trailing review arbiter invocation produced no row',
+                rationale: `arbiter invocation produced no row`,
               };
             }
             const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
@@ -2913,16 +2926,18 @@ export function composeRoot(opts: ComposeOptions): Container {
               return {
                 outcome: 'insufficient_evidence',
                 evidence: '',
-                rationale: `trailing review arbiter result.json unparseable: ${verdict.detail}`,
+                rationale: `arbiter result.json unparseable: ${verdict.detail}`,
               };
             }
-            // The spec/quality review invocation rows are intentionally
-            // ignored: their `verdict` data is already conveyed through the
-            // archived excerpts above. The arbiter's job is to rule on the
-            // finding, not re-litigate the verdicts.
-            void specReview;
-            void qualityReview;
-            return arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
+            const parsed = arbiterResultSchema.safeParse(verdict.result);
+            if (!parsed.success) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter result.json Zod parse error: ${parsed.error.message}`,
+              };
+            }
+            return parsed.data as ImplementStepFinalReviewArbiterResult;
           }
         : undefined;
 
@@ -2933,8 +2948,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         runQualityReview,
         runFix: implRunFix,
         ...(runArbiter ? { runArbiter } : {}),
-        ...(implementFinalReviewRunArbiter
-          ? { runFinalReviewArbiter: implementFinalReviewRunArbiter }
+        ...(implementStepFinalReviewRunArbiter
+          ? { runFinalReviewArbiter: implementStepFinalReviewRunArbiter }
           : {}),
         loops: loopRepository,
         events: persistingEventBusForLoop,

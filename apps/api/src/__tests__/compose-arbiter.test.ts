@@ -130,4 +130,15 @@ describe('compose runArbiter wiring', () => {
     expect(res.outcome).toBe('success');
     expect(invocations[0]?.phaseId).toBe('arbiter');
   });
+
+  it('wires implementStepFinalReviewRunArbiter into the ImplementStepLoop constructor with implement-final-review-arbiter phaseId', () => {
+    const src = readFileSync(path.join(import.meta.dirname ?? __dirname, '../compose.ts'), 'utf-8');
+    expect(src).toContain('implementStepFinalReviewRunArbiter');
+    expect(src).toContain('runFinalReviewArbiter: implementStepFinalReviewRunArbiter');
+    expect(src).toContain('buildImplementStepFinalReviewArbiterPrompt');
+    expect(src).toContain("phaseId: 'implement-final-review-arbiter'");
+    expect(src).toMatch(/rmSync\(join\(ctx\.cwd,\s*['"]result\.json['"]\)/);
+    expect(src).toContain('arbiter invocation threw:');
+    expect(src).toContain('arbiter result.json unparseable:');
+  });
 });

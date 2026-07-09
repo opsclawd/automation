@@ -49,3 +49,14 @@
 - Ran project-wide dependency-cruiser validation (`pnpm depcruise`): Passed.
 
 
+# Implementation Log - Task 7: Wire the trailing-pass arbiter closure into compose.ts
+
+## Changes
+- Modified `apps/api/src/compose.ts` to implement the `implementStepFinalReviewArbiterResult` type, define `implementStepFinalReviewRunArbiter` closure with correct phaseId (`implement-final-review-arbiter`), prompt formatting, Zod parsing, and error logging / event publishing.
+- Wired `implementStepFinalReviewRunArbiter` into the `ImplementStepLoop` constructor.
+- Added a static-check regression test to `apps/api/src/__tests__/compose-arbiter.test.ts`.
+
+## Verification Results
+- Ran `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/compose-arbiter.test.ts`: Passed.
+- Ran project-wide validation (`pnpm -r typecheck`): Passed.
+- Ran dependency-cruiser validation (`pnpm depcruise`): Passed.
