@@ -1752,20 +1752,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         const verdict = patchedFixInv
           ? await readFixVerdict(patchedFixInv, { artifacts: store, agent: artifactAgent })
           : { ok: false as const, detail: 'no invocation row' };
-        // Reject done_with_fixes when git commit did not advance the HEAD SHA.
-        // The fixer may have written result.json but failed to commit (e.g.
-        // missing git identity). Without this check the loop would accept the
-        // fix, run revalidation against dirty uncommitted files, and subsequent
-        // review iterations would diff origin/<base>...HEAD (the pre-fix commit),
-        // silently discarding the fix's changes.
         const shaAdvanced =
           result.endCommitSha !== undefined && result.endCommitSha !== startCommitSha;
-        const effectiveVerdict =
-          verdict.ok && verdict.verdict === 'done_with_fixes' && !shaAdvanced
-            ? undefined
-            : verdict.ok
-              ? verdict.verdict
-              : undefined;
         // Preserve fix artifacts to a stable per-iteration path before
         // subsequent iterations overwrite result.json in the worktree.
         const fixArtifactDir = join(
@@ -1791,21 +1779,22 @@ export function composeRoot(opts: ComposeOptions): Container {
         // against origin/<base>...HEAD (which now includes the spurious commit),
         // and if that review returns 'pass' the loop resolves without running
         // revalidation on the unvalidated changes.
-        if (shaAdvanced && effectiveVerdict !== 'done_with_fixes') {
+        if (shaAdvanced && (!verdict.ok || verdict.verdict !== 'done_with_fixes')) {
           execFileSync('git', ['reset', '--hard', startCommitSha], {
             cwd: ctx.cwd,
           });
         }
-        // Carry the pre-fix SHA so the loop can roll back if revalidation
-        // subsequently fails. Only set when the fix actually advanced HEAD
-        // and produced a valid done_with_fixes verdict (the compose helper
-        // already reverts all other cases above).
+
+        // The loop's verifier (verifyFixCommit, #679) is the policy owner
+        // for downgrade. We pass the fixer's raw verdict through and always
+        // record `headBeforeFix` so the verifier can compare HEAD before vs
+        // after.
         const headBeforeFix =
-          shaAdvanced && effectiveVerdict === 'done_with_fixes' ? startCommitSha : undefined;
+          verdict.ok && verdict.verdict !== undefined ? startCommitSha : undefined;
         return {
           invocationId,
           agentOutcome: result.outcome,
-          ...(effectiveVerdict !== undefined ? { verdict: effectiveVerdict } : {}),
+          ...(verdict.ok && verdict.verdict !== undefined ? { verdict: verdict.verdict } : {}),
           ...(headBeforeFix !== undefined ? { headBeforeFix } : {}),
           ...(verdict.ok && verdict.rebuttal !== undefined ? { rebuttal: verdict.rebuttal } : {}),
         };
@@ -1957,6 +1946,7 @@ export function composeRoot(opts: ComposeOptions): Container {
         rollbackFix,
         loops: loopRepository,
         events: persistingEventBusForLoop,
+        git: gitAdapter,
         loopHistory,
         findingEvidenceInspector: createFindingEvidenceInspector(),
         unfoundedPingPongLimit: config.phases.reviewFix.unfoundedPingPongLimit,
@@ -2841,6 +2831,7 @@ export function composeRoot(opts: ComposeOptions): Container {
             return false;
           }
         },
+        git: gitAdapter,
         now: () => new Date(),
         idFactory: () => randomUUID(),
       });
