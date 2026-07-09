@@ -3,6 +3,8 @@ import { FakeArtifactStore } from '@ai-sdlc/application/test-doubles';
 import {
   buildPlanReviewArbiterPrompt,
   readPlanReviewExcerpts,
+  buildPlanReviewFinalReviewArbiterPrompt,
+  readPlanReviewFinalExcerpts,
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
 } from '../plan-review-prompts.js';
@@ -58,5 +60,63 @@ describe('readPlanReviewExcerpts', () => {
     expect(excerpts.planExcerpt).toBe('');
     expect(excerpts.findingsExcerpt).toBe('');
     expect(excerpts.fixExcerpt).toBe('');
+  });
+});
+
+describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
+  it('includes plan and findings excerpts with no fixer-shaped narrative', () => {
+    const prompt = buildPlanReviewFinalReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      {
+        planExcerpt: '# plan body',
+        findingsExcerpt: '# trailing findings',
+      },
+    );
+    expect(prompt).toContain('plan body');
+    expect(prompt).toContain('trailing findings');
+    expect(prompt).toContain('evidence');
+    expect(prompt).toContain('STOP RULE');
+    expect(prompt).not.toContain('done_no_fixes_needed');
+    expect(prompt).not.toContain('fixExcerpt');
+    expect(prompt).not.toContain('plan-fix-result.json');
+    expect(prompt).not.toContain('rebuttal');
+    expect(prompt).not.toContain('Fixer');
+  });
+
+  it('emits the arbiter result.json shape', () => {
+    const prompt = buildPlanReviewFinalReviewArbiterPrompt(
+      { cwd: '/wt', runId: 'run-1' },
+      { planExcerpt: '', findingsExcerpt: '' },
+    );
+    expect(prompt).toContain('finding_valid | finding_invalid | ambiguous | insufficient_evidence');
+    expect(prompt).toContain('"outcome"');
+  });
+});
+
+describe('readPlanReviewFinalExcerpts', () => {
+  it('reads plan and findings artifacts only', async () => {
+    const store = new FakeArtifactStore();
+    await store.write({ runId: 'run-1', relativePath: 'plan.md', contents: '# plan' });
+    await store.write({
+      runId: 'run-1',
+      relativePath: PLAN_REVIEW_FINDINGS_ARTIFACT,
+      contents: '# findings',
+    });
+    await store.write({
+      runId: 'run-1',
+      relativePath: PLAN_FIX_RESULT_ARTIFACT,
+      contents: '{"stale":true}',
+    });
+    const excerpts = await readPlanReviewFinalExcerpts(store, 'run-1');
+    expect(excerpts.planExcerpt).toContain('# plan');
+    expect(excerpts.findingsExcerpt).toContain('# findings');
+    expect(Object.keys(excerpts)).toEqual(['planExcerpt', 'findingsExcerpt']);
+  });
+
+  it('returns empty strings when artifacts are absent', async () => {
+    const store = new FakeArtifactStore();
+    const excerpts = await readPlanReviewFinalExcerpts(store, 'run-1');
+    expect(excerpts.planExcerpt).toBe('');
+    expect(excerpts.findingsExcerpt).toBe('');
   });
 });
