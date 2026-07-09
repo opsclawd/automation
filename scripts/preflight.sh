@@ -23,7 +23,7 @@ if [[ -n "$orphans" ]]; then
 else
   echo "None found."
 fi
-free -h
+command -v free >/dev/null 2>&1 && free -h || true
 
 echo "==> Checking REPO_ROOT git state ($REPO_ROOT)..."
 if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
