@@ -207,6 +207,66 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations[2]?.outcome).toBe('resolved');
   });
 
+  it('trailing final review fail + arbiter finding_invalid → converges to success', async () => {
+    let reviewCalls = 0;
+    let arbiterCalls = 0;
+    const deps = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+        arbiterCalls += 1;
+        return {
+          outcome: 'finding_invalid',
+          evidence: 'plan section 3 already covers this',
+          rationale: 'the trailing finding misreads the plan',
+        };
+      },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(arbiterCalls).toBe(1);
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+  });
+
+  it('trailing final review fail + no runFinalReviewArbiter configured → needs_human_review (regression)', async () => {
+    let reviewCalls = 0;
+    const deps = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+  });
+
   it('parity #297 — reviewer retries on agent failure then converges', async () => {
     let reviewCalls = 0;
     const deps = makeDeps({
