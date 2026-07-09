@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { RunId, PhaseName, AgentProfileName } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import type { GitPort } from '../../ports/git-port.js';
 import { FakeLoopRepository } from '../../test-doubles/fake-loop-repository.js';
 import {
   FakeFindingEvidenceInspector,
@@ -28,6 +29,38 @@ function collectEvents() {
     subscribe: () => () => {},
   };
   return { events, bus };
+}
+
+function makeFakeGitPort(opts: {
+  headSha: string;
+  statusOutput?: string;
+  headShaThrows?: boolean;
+  statusThrows?: boolean;
+}): GitPort {
+  return {
+    createWorktree: async () => undefined,
+    removeWorktree: async () => undefined,
+    currentBranch: async () => 'main',
+    headCommitSha: async () => {
+      if (opts.headShaThrows) throw new Error('rev-parse failed');
+      return opts.headSha;
+    },
+    resetHard: async () => undefined,
+    diff: async () => '',
+    diffStat: async () => '',
+    commit: async () => '',
+    push: async () => undefined,
+    remoteRef: async () => undefined,
+    isAncestor: async () => true,
+    logBetween: async () => [],
+    cleanUntracked: async () => undefined,
+    headCommitShaOf: async () => undefined,
+    status: async () => {
+      if (opts.statusThrows) throw new Error('status failed');
+      return opts.statusOutput ?? '';
+    },
+    resetWorktreeIfClean: async () => undefined,
+  };
 }
 
 function baseInput() {
@@ -1755,5 +1788,87 @@ describe('ReviewFixLoop', () => {
       expect(out.loopStatus).toBe('exhausted');
       expect(out.phaseOutcome).toBe('failed');
     });
+  });
+});
+
+describe('ReviewFixLoop fix-commit verifier integration', () => {
+  it('treats done_with_fixes as fixed when HEAD advanced (no downgrade events)', async () => {
+    const preSha = 'sha-pre';
+    const postSha = 'sha-post';
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: postSha, statusOutput: '' });
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runReview: async (): Promise<ReviewStepResult> => ({
+        invocationId: 'r1',
+        agentOutcome: 'success' as const,
+        verdict: 'fail' as const,
+      }),
+      runFix: async (): Promise<FixStepResult> => ({
+        invocationId: 'f1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+        headBeforeFix: preSha,
+      }),
+    });
+    const out = await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+    expect(out.loop.iterations.some((it) => it.outcome === 'fixed')).toBe(true);
+    expect(events.find((e) => e.type === 'fix.uncommitted_changes')).toBeUndefined();
+    expect(events.find((e) => e.type === 'fix.no_commit_claimed')).toBeUndefined();
+  });
+
+  it('downgrades done_with_fixes + dirty tree to unresolved with fix.uncommitted_changes; no runRevalidation', async () => {
+    const revalidationCalls: number[] = [];
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({
+      headSha: 'sha-pre',
+      statusOutput: ' M packages/foo.ts\n',
+    });
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runRevalidation: async () => {
+        revalidationCalls.push(Date.now());
+        return { validationRunId: 'v', passed: true };
+      },
+      runReview: async (): Promise<ReviewStepResult> => ({
+        invocationId: 'r1',
+        agentOutcome: 'success' as const,
+        verdict: 'fail' as const,
+      }),
+      runFix: async (): Promise<FixStepResult> => ({
+        invocationId: 'f1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+        headBeforeFix: 'sha-pre',
+      }),
+    });
+    await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+    expect(events.find((e) => e.type === 'fix.uncommitted_changes')).toBeDefined();
+    expect(revalidationCalls).toHaveLength(0);
+  });
+
+  it('downgrades done_with_fixes + clean tree to unresolved with fix.no_commit_claimed', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-pre', statusOutput: '' });
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runReview: async (): Promise<ReviewStepResult> => ({
+        invocationId: 'r1',
+        agentOutcome: 'success' as const,
+        verdict: 'fail' as const,
+      }),
+      runFix: async (): Promise<FixStepResult> => ({
+        invocationId: 'f1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+        headBeforeFix: 'sha-pre',
+      }),
+    });
+    await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+    const ev = events.find((e) => e.type === 'fix.no_commit_claimed');
+    expect(ev).toBeDefined();
   });
 });
