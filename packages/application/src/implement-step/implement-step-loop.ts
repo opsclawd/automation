@@ -590,6 +590,16 @@ export class ImplementStepLoop {
       if (isTrailingReview) {
         loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
         deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            'unresolved',
+          ),
+        );
         this.emitIterationCompleted(input, iterationIndex, 'unresolved');
         break;
       }

@@ -428,8 +428,14 @@ describe('ImplementStepLoop', () => {
 
   it('emits loop.exhausted event when loop exhausts', async () => {
     const { events, bus } = collectEvents();
+    const appendSpy = vi.fn().mockResolvedValue(undefined);
     const deps = makeDeps({
       events: bus,
+      loopHistory: {
+        read: vi.fn().mockResolvedValue([]),
+        format: vi.fn().mockReturnValue(''),
+        append: appendSpy,
+      },
       runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
         invocationId: 'sr-1',
         agentOutcome: 'success' as const,
@@ -447,6 +453,11 @@ describe('ImplementStepLoop', () => {
     // The trailing re-review fired on iteration 4 (cap iteration 3 ended
     // `fixed`), so the `loop.trailing_review.started` event is present.
     expect(events.filter((e) => e.type === 'loop.trailing_review.started')).toHaveLength(1);
+    expect(appendSpy).toHaveBeenNthCalledWith(
+      4,
+      expect.anything(),
+      expect.objectContaining({ outcome: 'unresolved' }),
+    );
   });
 
   it('persists loop via LoopRepositoryPort on each state change', async () => {
