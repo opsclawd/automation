@@ -73,16 +73,25 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
         { attempt, validationError },
       );
 
-      // If task-manifest.json is missing, write a default empty manifest to prevent renderPrompt throwing ArtifactNotFoundError
+      let wrappedCtxForRepair = wrappedCtx;
       if (manifestJson === undefined) {
-        const defaultManifest = JSON.stringify({ version: 1, task_count: 0, tasks: [] });
-        await ctx.artifacts.write({
-          runId: ctx.runUuid,
-          phaseId: this.phase,
-          relativePath: 'task-manifest.json',
-          contents: defaultManifest,
-        });
-        manifestJson = defaultManifest;
+        const placeholderManifest = JSON.stringify({ version: 1, task_count: 0, tasks: [] });
+        const wrappedArtifacts = Object.create(ctx.artifacts) as typeof ctx.artifacts;
+        wrappedArtifacts.read = async (runId: string, relativePath: string) => {
+          if (relativePath === 'task-manifest.json') {
+            try {
+              return await ctx.artifacts.read(runId, relativePath);
+            } catch (e) {
+              if (e instanceof ArtifactNotFoundError || (e instanceof Error && e.name === 'ArtifactNotFoundError')) {
+                return placeholderManifest;
+              }
+              throw e;
+            }
+          }
+          return ctx.artifacts.read(runId, relativePath);
+        };
+        wrappedCtxForRepair = Object.create(wrappedCtx) as PhaseHandlerContext;
+        wrappedCtxForRepair.artifacts = wrappedArtifacts;
       }
 
       const def = getPhaseDefinition(this.phase);
@@ -104,7 +113,7 @@ export class PlanWriteHandler extends SingleShotAgentHandler {
         };
       }
 
-      const repairResult = await runSingleShotAgentPhase(wrappedCtx, {
+      const repairResult = await runSingleShotAgentPhase(wrappedCtxForRepair, {
         phase: this.phase,
         profile: ctx.resolveProfile(this.phase),
         step: 'plan-write-repair',

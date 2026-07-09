@@ -568,8 +568,8 @@ describe('PlanWriteHandler', () => {
     expect(eventsOf(ctx, 'plan-write.repair.succeeded')).toHaveLength(1);
     expect(agent.invocations).toHaveLength(2);
 
-    // Verify that the default task-manifest.json fallback was written
-    expect(writeSpy).toHaveBeenCalledWith(
+    // Verify that the default task-manifest.json fallback was not written
+    expect(writeSpy).not.toHaveBeenCalledWith(
       expect.objectContaining({
         relativePath: 'task-manifest.json',
         contents: JSON.stringify({ version: 1, task_count: 0, tasks: [] }),
