@@ -2339,5 +2339,49 @@ describe('ImplementStepLoop', () => {
       expect(events.filter((e) => e.type === 'loop.trailing_review.started')).toHaveLength(0);
       expect(specReviewCalls).toBe(2);
     });
+
+    it('returns needs_human_review when typecheck fails on trailing pass (no revert is attempted)', async () => {
+      let typecheckCalls = 0;
+      let specReviewCalls = 0;
+      const revertSpy = vi.fn().mockResolvedValue(true);
+      const deps = makeDeps({
+        revertFix: revertSpy,
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          // Iteration 1: pass
+          // Iteration 2: pass
+          // Iteration 3 (trailing): fail
+          return {
+            outcome: typecheckCalls === 3 ? 'fail' : 'pass',
+            output: typecheckCalls === 3 ? 'error TS2345 trailing fail' : '',
+          };
+        },
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+
+      expect(out.outcome).toBe('needs_human_review');
+      expect(out.loop.status).toBe('failed');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[2]?.outcome).toBe('failed');
+      expect(revertSpy).not.toHaveBeenCalled();
+    });
   });
 });
