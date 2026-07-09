@@ -64,4 +64,24 @@ describe('plan-review compose wiring', () => {
       expect(match?.[1]).toBe(verdict);
     }
   });
+
+  it('wires planReviewCheckManifestSync into the PlanReviewLoop using validatePlanTaskList', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+
+    const checkFnMatch = composeSrc.match(
+      /const planReviewCheckManifestSync[\s\S]*?(?=const planReviewRunReview)/,
+    );
+    expect(checkFnMatch).toBeTruthy();
+    expect(checkFnMatch![0]).toContain('validatePlanTaskList(planMd, manifestJson)');
+    expect(checkFnMatch![0]).toContain("artifacts.read(String(ctx.runId), 'plan.md')");
+    expect(checkFnMatch![0]).toContain("artifacts.read(String(ctx.runId), 'task-manifest.json')");
+    expect(checkFnMatch![0]).toContain('ArtifactNotFoundError');
+
+    const constructorMatch = composeSrc.match(/new PlanReviewLoop\({[\s\S]*?}\);/);
+    expect(constructorMatch).toBeTruthy();
+    expect(constructorMatch![0]).toContain('checkManifestSync: planReviewCheckManifestSync');
+  });
 });
