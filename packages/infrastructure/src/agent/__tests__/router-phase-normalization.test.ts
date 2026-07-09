@@ -27,6 +27,8 @@ describe('normalizeRoutingPhase', () => {
     ['post-pr-review', 'post-pr-review'],
     ['create-pr', 'create-pr'],
     ['compound', 'compound'],
+    ['implement-final-review-arbiter', 'arbiter'],
+    ['plan-review-arbiter', 'arbiter'],
   ])('%s → %s', (input, expected) => {
     expect(normalizeRoutingPhase(input)).toBe(expected);
   });
