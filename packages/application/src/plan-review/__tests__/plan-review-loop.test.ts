@@ -246,6 +246,19 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations[2]?.outcome).toBe('resolved');
     expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.escalated');
     expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.resolved');
+    const resolvedEvent = events.find(
+      (e) => e.type === 'plan-review.final_review.arbiter.resolved',
+    );
+    expect(resolvedEvent?.metadata).toMatchObject({
+      resolvedBy: 'final-review-arbiter',
+    });
+    const completedEvent = events.filter(
+      (e) => e.type === 'plan-review.loop.iteration.completed',
+    )[2];
+    expect(completedEvent?.metadata).toMatchObject({
+      outcome: 'resolved',
+      resolvedBy: 'final-review-arbiter',
+    });
   });
 
   it('AC #683.3.b — trailing final review fail + arbiter finding_valid → needs_human_review', async () => {
@@ -349,7 +362,7 @@ describe('PlanReviewLoop', () => {
   it('trailing final review fail + arbiter returns empty evidence → needs_human_review (G1 guardrail)', async () => {
     let reviewCalls = 0;
     let arbiterCalls = 0;
-    const { deps } = makeDeps({
+    const { deps, events } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {
@@ -379,6 +392,12 @@ describe('PlanReviewLoop', () => {
     expect(arbiterCalls).toBe(1);
     expect(out.loop.iterations).toHaveLength(3);
     expect(out.loop.iterations[2]?.outcome).toBe('failed');
+    const completedEvents = events.filter((e) => e.type === 'plan-review.loop.iteration.completed');
+    expect(completedEvents).toHaveLength(3);
+    expect(completedEvents[2]?.metadata).toMatchObject({
+      index: 3,
+      outcome: 'failed',
+    });
   });
 
   it('parity #297 — reviewer retries on agent failure then converges', async () => {

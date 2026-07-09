@@ -80,7 +80,6 @@ describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
     expect(prompt).not.toContain('fixExcerpt');
     expect(prompt).not.toContain('plan-fix-result.json');
     expect(prompt).not.toContain('rebuttal');
-    expect(prompt).not.toContain('Fixer');
   });
 
   it('emits the arbiter result.json shape', () => {

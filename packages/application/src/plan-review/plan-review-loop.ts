@@ -221,7 +221,12 @@ export class PlanReviewLoop {
               'plan-review.review.contradiction.resolved',
               'info',
               `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-              { ruling: arbiterResult.outcome, evidence: arbiterResult.evidence, iterationIndex },
+              {
+                ruling: arbiterResult.outcome,
+                resolvedBy: 'contradiction-arbiter',
+                evidence: arbiterResult.evidence,
+                iterationIndex,
+              },
             );
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
@@ -435,12 +440,22 @@ export class PlanReviewLoop {
               reviewInvocationId: finalReview.invocationId,
               startedAt: deps.now(),
               completedAt: deps.now(),
+              // 'failed' covers both "fixer failed" and "arbiter returned empty evidence"
+              // (G1 guardrail). Consumers should use the iteration event metadata to
+              // distinguish the two when needed.
               outcome: 'failed',
             };
             loop = {
               ...loop,
               iterations: [...loop.iterations, finalIteration],
             };
+            this.emit(
+              input,
+              'plan-review.loop.iteration.completed',
+              'info',
+              `iteration ${finalIterationIndex} completed: failed`,
+              { index: finalIterationIndex, outcome: 'failed' },
+            );
             loop = exhaust(loop, deps.now());
             deps.loops.update(loop);
             return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
@@ -453,6 +468,7 @@ export class PlanReviewLoop {
               `arbiter resolved final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome}`,
               {
                 ruling: arbiterResult.outcome,
+                resolvedBy: 'final-review-arbiter',
                 evidence: arbiterResult.evidence,
                 iterationIndex: finalIterationIndex,
               },
@@ -476,9 +492,20 @@ export class PlanReviewLoop {
               'plan-review.loop.iteration.completed',
               'info',
               `iteration ${finalIterationIndex} completed: resolved`,
-              { index: finalIterationIndex, outcome: 'resolved' },
+              {
+                index: finalIterationIndex,
+                outcome: 'resolved',
+                resolvedBy: 'final-review-arbiter',
+              },
             );
-            return { outcome: 'success', loop, proceedWithConcerns: false };
+            return {
+              outcome: 'success',
+              loop,
+              proceedWithConcerns: false,
+              ...(finalReview.knownLimitations
+                ? { knownLimitations: finalReview.knownLimitations }
+                : {}),
+            };
           }
           this.emit(
             input,

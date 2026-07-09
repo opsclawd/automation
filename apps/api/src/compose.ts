@@ -3119,6 +3119,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         | undefined = planReviewArbiterProfileName
         ? async (
             ctx: import('@ai-sdlc/application').PlanReviewContext,
+            // Reserved for future use: the trailing arbiter's prompt may include
+            // a summary of the failing review verdict (verdict, invocationId).
+            // Part of the `runFinalReviewArbiter` type contract — do not drop.
             _finalReview: import('@ai-sdlc/application').PlanReviewResult,
           ): Promise<PlanReviewArbiterResult> => {
             const promptDir = join(baseTmpDir, 'plan-review-prompts');
