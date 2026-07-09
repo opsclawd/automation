@@ -2857,7 +2857,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
             const arbiterPrompt = buildImplementStepFinalReviewArbiterPrompt(
               { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
-              { tcResult, specExcerpt, qualityExcerpt, taskBody },
+              { specExcerpt, qualityExcerpt, taskBody },
             );
             writeFileSync(promptPath, arbiterPrompt, 'utf-8');
 

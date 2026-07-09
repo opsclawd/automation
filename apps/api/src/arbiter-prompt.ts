@@ -20,14 +20,17 @@ export interface BuildArbiterPromptInputs {
   taskBody: string;
 }
 
+function buildTypecheckSection(tcResult: TypecheckResult): string {
+  return tcResult.outcome === 'pass'
+    ? '## TYPECHECK RESULT\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nThe typecheck is green. Treat typecheck-valid code as objectively correct unless you find explicit evidence of a different defect.'
+    : `## TYPECHECK RESULT\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors:\n\`\`\`\n${tcResult.output}\n\`\`\`\n\nNote: a typecheck failure is usually OBJECTIVE EVIDENCE — when present, prefer finding_valid.`;
+}
+
 export function buildArbiterPrompt(
   ctx: BuildArbiterPromptContext,
   inputs: BuildArbiterPromptInputs,
 ): string {
-  const typecheckSection =
-    inputs.tcResult.outcome === 'pass'
-      ? '## TYPECHECK RESULT\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nThe typecheck is green. Treat typecheck-valid code as objectively correct unless you find explicit evidence of a different defect.'
-      : `## TYPECHECK RESULT\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors:\n\`\`\`\n${inputs.tcResult.output}\n\`\`\`\n\nNote: a typecheck failure is usually OBJECTIVE EVIDENCE — when present, prefer finding_valid.`;
+  const typecheckSection = buildTypecheckSection(inputs.tcResult);
 
   return [
     '# TASK',
@@ -103,7 +106,6 @@ export function buildArbiterPrompt(
 }
 
 export interface BuildImplementStepFinalReviewArbiterPromptInputs {
-  tcResult: TypecheckResult;
   /** Most-recent spec-review result.json excerpt (first ~4 KB). */
   specExcerpt: string;
   /** Most-recent quality-review result.json excerpt (first ~4 KB). */
@@ -112,26 +114,19 @@ export interface BuildImplementStepFinalReviewArbiterPromptInputs {
   taskBody: string;
 }
 
-/**
- * Trailing re-review arbiter prompt (#690). Mirrors the
- * `buildPlanReviewFinalReviewArbiterPrompt` shape: no fixer ran on the
- * trailing pass, so the prompt MUST NOT reference a fixer narrative
- * (no `done_no_fixes_needed`, no `rebuttal`). Reusing the mid-loop
- * `buildArbiterPrompt` here would lie to the arbiter — see issue
- * #690's amendment section.
- */
 export function buildImplementStepFinalReviewArbiterPrompt(
   ctx: BuildArbiterPromptContext,
   inputs: BuildImplementStepFinalReviewArbiterPromptInputs,
 ): string {
+  // A failing typecheck on the trailing pass short-circuits to human review
+  // before arbitration can ever occur. Therefore, the typecheck result
+  // is guaranteed to be PASS when this builder is called.
   const typecheckSection =
-    inputs.tcResult.outcome === 'pass'
-      ? '## TYPECHECK RESULT\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nThe typecheck is green. Treat typecheck-valid code as objectively correct unless you find explicit evidence of a different defect.'
-      : `## TYPECHECK RESULT\nThe orchestrator ran \`pnpm -r typecheck\` after implement completed.\nResult: FAIL\n\nTypecheck errors:\n\`\`\`\n${inputs.tcResult.output}\n\`\`\`\n\nNote: a typecheck failure is usually OBJECTIVE EVIDENCE — when present, prefer finding_valid.`;
+    '## TYPECHECK RESULT\nThe orchestrator ran `pnpm -r typecheck` after implement completed.\nResult: PASS\n\nThe typecheck is green. Treat typecheck-valid code as objectively correct unless you find explicit evidence of a different defect.';
 
   return [
     '# TASK',
-    `You are arbitrating a trailing re-review finding for step ${ctx.stepIndex}: ${ctx.stepTitle}.`,
+    `You are arbitrating a trailing final-review finding for step ${ctx.stepIndex}: ${ctx.stepTitle}.`,
     '',
     'PHASE: READ-ONLY ARBITRATION.',
     'You MUST NOT modify any code, tests, plan, or config. Your sole output is a single `result.json` file describing the ruling.',
@@ -140,9 +135,7 @@ export function buildImplementStepFinalReviewArbiterPrompt(
     `Working directory: ${ctx.cwd}`,
     `Step: ${ctx.stepIndex} — ${ctx.stepTitle}`,
     '',
-    'The orchestrator ran a trailing re-review pass after all implement / review / fix iterations had already completed.',
-    'No fixer ran in this pass — there is no fix result to weigh, and the fixer did not produce a rebuttal.',
-    'The reviewer reports a non-passing verdict. You must rule whether this finding is correct (or that the evidence is inconclusive).',
+    'The orchestrator ran a trailing re-review pass after all fix iterations had already completed. No fixer ran in this pass — there is no fix result to weigh. You are ruling on the review finding alone. The reviewer reports a non-passing verdict. You must rule whether this finding is correct (or that the evidence is inconclusive).',
     '',
     '## INPUTS',
     '',
@@ -153,25 +146,24 @@ export function buildImplementStepFinalReviewArbiterPrompt(
     inputs.taskBody,
     '```',
     '',
-    '### Most-recent spec-review result.json (excerpt, this pass)',
+    '### Most-recent spec-review result.json (excerpt)',
     '```json',
     inputs.specExcerpt || '(empty)',
     '```',
     '',
-    '### Most-recent quality-review result.json (excerpt, this pass)',
+    '### Most-recent quality-review result.json (excerpt)',
     '```json',
     inputs.qualityExcerpt || '(empty)',
     '```',
     '',
     '## DECISION FRAMEWORK',
     'Pick exactly one of these outcomes:',
-    '- **finding_valid** — the reviewer is right; the implementation has a real defect. Cite the typecheck error, the spec-review finding, or the plan task body that proves it.',
-    '- **finding_invalid** — the reviewer is wrong; the implementation is correct and no defect exists. Cite the typecheck pass, the plan task body, or external evidence that disproves the finding.',
+    '- **finding_valid** — the reviewer is right; a real defect remains. Cite the typecheck error, the spec-review finding, or the plan task body that proves it.',
+    '- **finding_invalid** — the reviewer is wrong; no defect exists. Cite the typecheck pass, the plan task body, or external evidence that disproves the finding.',
     '- **ambiguous** — both interpretations are defensible from the available artifacts. Cite what each side claims.',
     '- **insufficient_evidence** — the artifacts are unreadable or absent. Cite what is missing.',
     '',
     'Deterministic signals (use them, do not re-derive):',
-    '- Typecheck FAIL with an error in the code the reviewer flagged → strong evidence for finding_valid.',
     '- Typecheck PASS and the reviewer only cites style → finding_invalid.',
     '- Findings that contradict the verbatim plan task body → finding_invalid.',
     '- Findings that match the plan task body verbatim → finding_valid.',

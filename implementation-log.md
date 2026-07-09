@@ -34,4 +34,18 @@
 ## Verification Results
 - Ran `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/arbiter-excerpts.test.ts` and verified all 7 tests passed successfully.
 
+# Implementation Log - Task 6: Add buildImplementStepFinalReviewArbiterPrompt
+
+## Changes
+- Extracted `buildTypecheckSection` helper in `apps/api/src/arbiter-prompt.ts` to dry up the code.
+- Re-implemented `buildImplementStepFinalReviewArbiterPrompt` in `apps/api/src/arbiter-prompt.ts` to mirror the target structure: removed `tcResult` from `BuildImplementStepFinalReviewArbiterPromptInputs`, removed `fixExcerpt`/`fixRebuttal`, and used a hardcoded PASS typecheck result section.
+- Fixed the invocation call in `apps/api/src/compose.ts` to align with the new signature by removing `tcResult` argument.
+- Replaced the tests in `apps/api/src/__tests__/arbiter-prompt.test.ts` to verify the correct prompt output without fixer narratives.
+
+## Verification Results
+- Ran `pnpm --filter @ai-sdlc/api exec vitest run src/__tests__/arbiter-prompt.test.ts`: All tests passed.
+- Ran project-wide validation (`pnpm -r typecheck`): Passed.
+- Ran project-wide test suite (`pnpm -r test`): Passed.
+- Ran project-wide dependency-cruiser validation (`pnpm depcruise`): Passed.
+
 

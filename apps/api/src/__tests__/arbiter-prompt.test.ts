@@ -145,13 +145,12 @@ describe('buildArbiterPrompt', () => {
   });
 });
 
-describe('buildImplementStepFinalReviewArbiterPrompt (#690)', () => {
+describe('buildImplementStepFinalReviewArbiterPrompt', () => {
   it('includes Task heading, CONTEXT, INPUTS, DECISION FRAMEWORK, OUTPUT sections', () => {
     const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
-      tcResult: { outcome: 'pass', output: '' },
       specExcerpt: '{"result":"fail","findings":[]}',
-      qualityExcerpt: '{"result":"fail","findings":[]}',
-      taskBody: '## Task 4: Add the foo() helper',
+      qualityExcerpt: '{"result":"pass"}',
+      taskBody: '## Task 4: Add the foo() helper\n\nImplement foo() in src/foo.ts.',
     });
     expect(prompt).toContain('# TASK');
     expect(prompt).toContain('## CONTEXT');
@@ -160,58 +159,35 @@ describe('buildImplementStepFinalReviewArbiterPrompt (#690)', () => {
     expect(prompt).toContain('## OUTPUT');
   });
 
-  it('does not include a fabricated fixer narrative (#690 amendment)', () => {
-    // No fixer ran on the trailing pass. The prompt MUST NOT reference
-    // `done_no_fixes_needed`, `fixer`, `fixExcerpt`, or `rebuttal` —
-    // including any of these would lie to the arbiter about a fixer
-    // having run.
+  it('AC #6/#7 — never mentions a FixResult, done_no_fixes_needed, or rebuttal', () => {
     const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
-      tcResult: { outcome: 'pass', output: '' },
-      specExcerpt: '',
-      qualityExcerpt: '',
+      specExcerpt: '{"result":"fail"}',
+      qualityExcerpt: '{"result":"pass"}',
       taskBody: '## Task 4: Add the foo() helper',
     });
+    expect(prompt).not.toContain('FixResult');
     expect(prompt).not.toContain('done_no_fixes_needed');
-    expect(prompt).not.toContain('fixExcerpt');
-    expect(prompt).not.toContain('fixer rebuttal');
-    expect(prompt).not.toContain('Fixer rebuttal');
-    expect(prompt).not.toContain('fix-result.json');
+    expect(prompt).not.toContain('rebuttal');
+    expect(prompt).toContain('No fixer ran in this pass');
   });
 
-  it('lists the four outcome enum values in DECISION FRAMEWORK', () => {
+  it('embeds the Task body verbatim under INPUTS', () => {
+    const taskBody = '## Task 4: Add the foo() helper\n\nImplement foo() in src/foo.ts.';
     const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
-      tcResult: { outcome: 'fail', output: 'TS2304' },
       specExcerpt: '',
       qualityExcerpt: '',
-      taskBody: 'stub',
+      taskBody,
     });
-    expect(prompt).toContain('finding_valid');
-    expect(prompt).toContain('finding_invalid');
-    expect(prompt).toContain('ambiguous');
-    expect(prompt).toContain('insufficient_evidence');
+    expect(prompt).toContain(taskBody);
   });
 
-  it('embeds spec/quality excerpts when provided', () => {
-    const specExcerpt = '{"result":"fail","findings":[{"severity":"P0","summary":"x"}]}';
-    const qualityExcerpt = '{"result":"fail","findings":[{"severity":"P2","summary":"q"}]}';
+  it('marks the phase READ-ONLY and forbids code edits', () => {
     const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
-      tcResult: { outcome: 'pass', output: '' },
-      specExcerpt,
-      qualityExcerpt,
-      taskBody: 'stub',
-    });
-    expect(prompt).toContain(specExcerpt);
-    expect(prompt).toContain(qualityExcerpt);
-  });
-
-  it('marks typecheck as PASS when typecheck succeeded', () => {
-    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
-      tcResult: { outcome: 'pass', output: '' },
       specExcerpt: '',
       qualityExcerpt: '',
-      taskBody: 'stub',
+      taskBody: '',
     });
-    expect(prompt).toContain('Result: PASS');
-    expect(prompt).not.toContain('TS2304');
+    expect(prompt).toContain('READ-ONLY');
+    expect(prompt).toContain('MUST NOT modify any code');
   });
 });
