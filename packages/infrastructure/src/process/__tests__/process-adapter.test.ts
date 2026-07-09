@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { parsePsOutput, killProcess } from '../process-adapter.js';
 
 describe('parsePsOutput', () => {
@@ -42,7 +42,15 @@ describe('parsePsOutput', () => {
 });
 
 describe('killProcess', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('suppresses ESRCH error if process does not exist', () => {
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      const err = Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+      throw err;
+    });
     expect(() => killProcess(999999)).not.toThrow();
   });
 });

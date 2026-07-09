@@ -263,3 +263,6 @@ export interface ProcessInfo {
   ppid: number;
   cmd: string;
 }
+
+export type ListProcessesPort = () => ProcessInfo[];
+export type KillProcessPort = (pid: number) => void;

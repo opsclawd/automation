@@ -1,13 +1,13 @@
-import type { ProcessInfo } from './ports.js';
+import type { ProcessInfo, ListProcessesPort, KillProcessPort } from './ports.js';
 
 export interface ReapOrphanedTestWorkersDeps {
-  listProcesses: () => ProcessInfo[];
-  killProcess: (pid: number) => void;
+  listProcesses: ListProcessesPort;
+  killProcess: KillProcessPort;
   isOrphanTestWorker?: (proc: ProcessInfo) => boolean;
 }
 
 const defaultIsOrphanTestWorker = (proc: ProcessInfo): boolean =>
-  proc.ppid === 1 && /vitest/.test(proc.cmd);
+  proc.ppid === 1 && /node.*vitest\b/.test(proc.cmd);
 
 export class ReapOrphanedTestWorkers {
   constructor(private readonly deps: ReapOrphanedTestWorkersDeps) {}

@@ -20,7 +20,10 @@ export function parsePsOutput(output: string): ProcessInfo[] {
 }
 
 export function listProcesses(): ProcessInfo[] {
-  const output = execFileSync('ps', ['-eo', 'pid,ppid,cmd'], { encoding: 'utf8' });
+  const output = execFileSync('ps', ['-eo', 'pid,ppid,cmd', '-ww'], {
+    encoding: 'utf8',
+    maxBuffer: 10 * 1024 * 1024,
+  });
   return parsePsOutput(output);
 }
 
