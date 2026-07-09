@@ -37,11 +37,31 @@ describe('plan-review compose wiring', () => {
     expect(reviewFnMatch![0]).toContain("loadPromptTemplate('plan-review', 'plan-review'");
     expect(reviewFnMatch![0]).toContain('renderPrompt(template');
 
-    const fixFnMatch = composeSrc.match(
-      /const planReviewRunFix[\s\S]*?(?=const startCommitSha)/,
-    );
+    const fixFnMatch = composeSrc.match(/const planReviewRunFix[\s\S]*?(?=const startCommitSha)/);
     expect(fixFnMatch).toBeTruthy();
     expect(fixFnMatch![0]).toContain("loadPromptTemplate('plan-review', 'plan-fix'");
     expect(fixFnMatch![0]).toContain('renderPrompt(template');
+  });
+
+  it('planReviewRunReview verdict regex captures the full verdict token, not just a prefix before a digit', () => {
+    // Regression test for a bug where `[a-z_]+` (missing 0-9) truncated
+    // `p2_only`/`p1_found` at the digit, capturing just `p` — which never
+    // equals any recognized verdict, so a genuine `p2_only` pass was always
+    // misrouted through the final-review-fail / arbiter-escalation path.
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const regexSourceMatch = composeSrc.match(
+      /findings\.match\(\/\^## verdict\\s\*\\n\(([^)]+)\)\/m\)/,
+    );
+    expect(regexSourceMatch).toBeTruthy();
+    const verdictRegex = new RegExp(`^## verdict\\s*\\n(${regexSourceMatch![1]})`, 'm');
+
+    for (const verdict of ['pass', 'p1_found', 'p2_only', 'proceed_with_concerns']) {
+      const findings = `# Plan Review Findings\n\n## verdict\n${verdict}\n\n## findings\n- none\n`;
+      const match = findings.match(verdictRegex);
+      expect(match?.[1]).toBe(verdict);
+    }
   });
 });
