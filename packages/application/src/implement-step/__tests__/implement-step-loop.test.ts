@@ -2384,4 +2384,127 @@ describe('ImplementStepLoop', () => {
       expect(revertSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('trailing re-review arbiter escalation (#690)', () => {
+    it('AC #1 — trailing-fail + arbiter finding_invalid → success', async () => {
+      let specReviewCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          // Iterations 1 and 2 fail; trailing pass (call 3) also fails —
+          // the arbiter is what converts it to success.
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_invalid',
+          evidence: 'typecheck passes and the flagged code matches the plan task body',
+          rationale: 'the reviewer misread the plan task body',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Iteration 1: spec-review fail + quality-review pass + fix → fixed
+      // Iteration 2: spec-review fail + quality-review pass + fix → fixed (cap, trailing fires)
+      // Trailing (iteration 3): spec-review fail → arbiter finding_invalid → resolved
+      expect(out.outcome).toBe('success');
+      // Note: completeIteration({outcome: 'resolved'}) internally transitions the loop status to 'converged'
+      expect(out.loop.status).toBe('converged');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+
+      // Assert event ordering and counts explicitly
+      const completed = events.filter((e) => e.type === 'loop.iteration.completed');
+      expect(completed).toHaveLength(3);
+      expect(completed[0]?.metadata.outcome).toBe('fixed');
+      expect(completed[1]?.metadata.outcome).toBe('fixed');
+      expect(completed[2]?.metadata.outcome).toBe('resolved');
+      expect(completed[2]?.metadata.resolvedBy).toBe('trailing-review-arbiter');
+
+      const escalated = events.filter((e) => e.type === 'loop.trailing_review.arbiter_escalated');
+      expect(escalated).toHaveLength(1);
+      expect(escalated[0]?.metadata.iterationIndex).toBe(3);
+      expect(escalated[0]?.metadata.reason).toBe('trailing_review_fail');
+
+      const resolved = events.filter((e) => e.type === 'loop.trailing_review.arbiter_resolved');
+      expect(resolved).toHaveLength(1);
+      expect(resolved[0]?.metadata.resolvedBy).toBe('trailing-review-arbiter');
+
+      // Verify overall chronological ordering of the trailing pass events robustly
+      const startIndex = events.findIndex((e) => e.type === 'loop.trailing_review.started');
+      expect(startIndex).toBeGreaterThanOrEqual(0);
+      const sequence = events
+        .slice(startIndex)
+        .map((e) => e.type)
+        .filter((type) =>
+          [
+            'loop.trailing_review.started',
+            'loop.trailing_review.arbiter_escalated',
+            'loop.trailing_review.arbiter_resolved',
+            'loop.iteration.completed',
+          ].includes(type),
+        );
+      expect(sequence).toEqual([
+        'loop.trailing_review.started',
+        'loop.trailing_review.arbiter_escalated',
+        'loop.trailing_review.arbiter_resolved',
+        'loop.iteration.completed',
+      ]);
+    });
+
+    it('AC #3 (regression) — trailing-fail + no arbiter configured → exhausts/fails unchanged', async () => {
+      let specReviewCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runFinalReviewArbiter: undefined,
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+      expect(
+        events.filter((e) => e.type === 'loop.trailing_review.arbiter_escalated'),
+      ).toHaveLength(0);
+
+      const completed = events.filter((e) => e.type === 'loop.iteration.completed');
+      expect(completed).toHaveLength(3);
+      expect(completed[0]?.metadata.outcome).toBe('fixed');
+      expect(completed[1]?.metadata.outcome).toBe('fixed');
+      expect(completed[2]?.metadata.outcome).toBe('unresolved');
+    });
+  });
 });
