@@ -18,7 +18,7 @@ import {
   createWorker,
 } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
-import { planRunRecoveryAction } from '@ai-sdlc/application';
+import { planRunRecoveryAction, ReapOrphanedTestWorkers } from '@ai-sdlc/application';
 import { composeRoot, type ComposeOptions } from './compose.js';
 import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
 import { composeWithTarget } from './cli/compose-with-target.js';
@@ -109,6 +109,29 @@ function startWorkerRegistryHeartbeat(
         `worker-registry heartbeat failed for ${workerId}: ${
           err instanceof Error ? err.message : String(err)
         }`,
+      );
+    }
+  }, intervalMs);
+  return { stop: () => clearInterval(timer) };
+}
+
+const TEST_WORKER_REAP_INTERVAL_MS = 5 * 60 * 1000;
+
+function startTestWorkerReaper(
+  reaper: ReapOrphanedTestWorkers,
+  intervalMs: number = TEST_WORKER_REAP_INTERVAL_MS,
+): {
+  stop: () => void;
+} {
+  const timer = setInterval(() => {
+    try {
+      const result = reaper.execute();
+      if (result.reaped > 0) {
+        console.error(`Reaped ${result.reaped} orphaned test worker(s): ${result.pids.join(', ')}`);
+      }
+    } catch (err) {
+      console.error(
+        `Orphaned test worker reap failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }, intervalMs);
@@ -635,7 +658,9 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const server = await startServer({ container: c, port: opts.port });
         const addr = server.address as { port: number };
         console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
+        const testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
         const shutdown = async () => {
+          testWorkerReaper.stop();
           await server.stop();
           process.exit(0);
         };

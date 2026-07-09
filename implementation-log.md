@@ -1,16 +1,14 @@
-# Implementation Log - Task 3
+# Implementation Log - Task 4
 
-## Wire ReapOrphanedTestWorkers into composeRoot() startup sweeps
+## Wire ReapOrphanedTestWorkers periodic reap loop in serve mode
 
 ### What was implemented:
-- Imported `ReapOrphanedTestWorkers` from `@ai-sdlc/application` and `listProcesses`, `killProcess` from `@ai-sdlc/infrastructure` in `apps/api/src/compose.ts`.
-- Extended the `Container` interface to include `reapOrphanedTestWorkers`.
-- Instantiated `ReapOrphanedTestWorkers` inside `composeRoot`.
-- Added the reap execution block inside the startup sweeps check in `composeRoot`.
-- Exposed `reapOrphanedTestWorkers` in the returned `Container` object.
+- Imported `ReapOrphanedTestWorkers` from `@ai-sdlc/application` in `apps/api/src/cli.ts`.
+- Added the `startTestWorkerReaper` helper function in `apps/api/src/cli.ts` to manage the periodic `setInterval` loop (defaulting to 5 minutes) and log reaped processes.
+- Wired `startTestWorkerReaper` into the `serve` command action to run after the server starts, and stopped it gracefully during the `shutdown` handler.
 
 ### Verification results:
-- Typechecked `apps/api` with `pnpm --filter @ai-sdlc/api typecheck` successfully.
-- Ran existing compose-level tests successfully.
+- Verified that `startTestWorkerReaper` and its stop method are present and correctly wired.
+- Verified that the `apps/api` package typechecks clean with `pnpm --filter @ai-sdlc/api typecheck`.
+- Ran the full test suite with `pnpm -r test` successfully.
 - Verified layer boundaries with `pnpm depcruise` successfully.
-- Verified lint compliance with `pnpm lint` successfully.
