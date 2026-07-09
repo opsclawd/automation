@@ -1,14 +1,13 @@
-# Implementation Log - Task 1
+# Implementation Log - Task 2
 
-## ReapOrphanedTestWorkers use case with unit tests
+## Real process adapter (listProcesses/killProcess) in infrastructure
 
 ### What was implemented:
-- Created the `ReapOrphanedTestWorkers` use case in `packages/application/src/reap-orphaned-test-workers.ts`.
-- Created the corresponding unit tests in `packages/application/src/__tests__/reap-orphaned-test-workers.test.ts` covering normal processes, matching vitest patterns, custom heuristics, empty process list, multiple orphans, and error tolerance.
-- Defined the `ProcessInfo` interface in `packages/application/src/ports.ts` and exported it via `packages/application/src/ports/index.ts` barrel.
-- Exported the `ReapOrphanedTestWorkers` class and its dependencies from the application package entry point in `packages/application/src/index.ts`.
+- Created the process adapter in `packages/infrastructure/src/process/process-adapter.ts` with `parsePsOutput`, `listProcesses`, and `killProcess`.
+- Created tests in `packages/infrastructure/src/process/__tests__/process-adapter.test.ts`.
+- Exported from the infrastructure package index in `packages/infrastructure/src/index.ts`.
 
 ### Verification results:
-- All unit tests passed successfully.
-- Typechecking for the `@ai-sdlc/application` package succeeded with no errors.
+- All unit tests in `@ai-sdlc/infrastructure` passed successfully.
+- Typechecking for the `@ai-sdlc/infrastructure` package succeeded with no errors.
 - Dependency Cruiser (`pnpm depcruise`) verified that no layer boundaries were violated.
