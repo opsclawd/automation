@@ -3064,6 +3064,10 @@ export function composeRoot(opts: ComposeOptions): Container {
               })();
 
               try {
+                rmSync(join(ctx.cwd, 'result.json'), { force: true });
+              } catch {}
+
+              try {
                 await artifactAgent.invoke({
                   profile: AgentProfileName(planReviewArbiterProfileName),
                   promptPath,
@@ -3151,6 +3155,10 @@ export function composeRoot(opts: ComposeOptions): Container {
                 return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
               }
             })();
+
+            try {
+              rmSync(join(ctx.cwd, 'result.json'), { force: true });
+            } catch {}
 
             try {
               await artifactAgent.invoke({
