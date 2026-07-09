@@ -2920,13 +2920,15 @@ export function composeRoot(opts: ComposeOptions): Container {
             String(ctx.runId),
             PLAN_REVIEW_FINDINGS_ARTIFACT,
           );
-          const verdictMatch = findings.match(/^## verdict\s*\n([a-z_]+)/m);
-          const verdict = verdictMatch?.[1] as
-            | 'pass'
-            | 'p1_found'
-            | 'p2_only'
-            | 'proceed_with_concerns'
-            | undefined;
+          const verdictMatch = findings.match(/^## verdict\s*\n([a-z0-9_]+)/m);
+          const rawVerdict = verdictMatch?.[1];
+          const verdict =
+            rawVerdict === 'pass' ||
+            rawVerdict === 'p1_found' ||
+            rawVerdict === 'p2_only' ||
+            rawVerdict === 'proceed_with_concerns'
+              ? rawVerdict
+              : undefined;
           const knownMatch = findings.match(/^## known_limitations\s*\n([\s\S]*?)(?=^## |\Z)/m);
           const knownLimitations = knownMatch?.[1]?.trim() || undefined;
           return {
