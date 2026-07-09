@@ -419,4 +419,63 @@ describe('PlanReviewLoop', () => {
     expect(reviewCalls).toBe(3);
     expect(out.loop.iterations).toHaveLength(1);
   });
+
+  it('checkManifestSync in sync on every call → resolves on first pass, no fix call', async () => {
+    let checkCalls = 0;
+    let fixCalls = 0;
+    const { deps } = makeDeps({
+      checkManifestSync: async () => {
+        checkCalls += 1;
+        return null;
+      },
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: 'fix-should-not-run',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        };
+      },
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(checkCalls).toBe(1);
+    expect(fixCalls).toBe(0);
+  });
+
+  it('checkManifestSync reports drift on iteration 1 (reviewer passes), fixer resolves it, converges on iteration 2', async () => {
+    let checkCalls = 0;
+    let fixManifestMismatchSeen: string | undefined;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success' as const,
+        verdict: 'pass' as const,
+      }),
+      checkManifestSync: async () => {
+        checkCalls += 1;
+        return checkCalls === 1
+          ? 'manifest tasks missing from plan.md prose: Task 4, Task 5, Task 6'
+          : null;
+      },
+      runFix: async (_ctx, opts): Promise<PlanFixResult> => {
+        fixManifestMismatchSeen = opts.manifestMismatch;
+        return {
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        };
+      },
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations[0]?.outcome).toBe('fixed');
+    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+    expect(fixManifestMismatchSeen).toBe(
+      'manifest tasks missing from plan.md prose: Task 4, Task 5, Task 6',
+    );
+    expect(checkCalls).toBe(2);
+  });
 });
