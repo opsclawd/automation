@@ -168,7 +168,17 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
     '## CRITICAL RULES',
     '- Do NOT ask questions.',
     '- Do NOT switch branches. All work must stay on the current branch.',
-    '- After fixing, run: git add -A && git commit -m "fix: review findings"',
+    '- After fixing, commit your change before writing result.json:',
+    '  1. Record HEAD before: `PRE_HEAD=$(git rev-parse HEAD)`',
+    '  2. Stage and commit: `git add -A && git commit -m "fix: review findings"`',
+    '  3. If git commit exits non-zero, the pre-commit hook failed. Read the hook/lint',
+    '     output, FIX the reported errors, and retry the commit. Never report',
+    '     result="done_with_fixes" with a failed or skipped commit.',
+    '  4. After a successful commit, confirm HEAD advanced:',
+    '     `[ "$(git rev-parse HEAD)" != "$PRE_HEAD" ] || { echo "COMMIT DID NOT ADVANCE HEAD"; exit 1; }`',
+    '  5. Confirm clean worktree:',
+    '     `[ -z "$(git status --porcelain)" ] || { echo "WORKTREE DIRTY AFTER COMMIT"; exit 1; }`',
+    '  6. Only write "done_with_fixes" in result.json after steps 4 and 5 both pass.',
     '- Write result.json last.',
   );
 

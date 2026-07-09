@@ -51,6 +51,11 @@ describe('review-fix prompts builders', () => {
 
       expect(findingsIndex).toBeLessThan(historyIndex);
       expect(historyIndex).toBeLessThan(taskIndex);
+
+      // Task 8: verify HEAD-advance commit contract is present
+      expect(result).toMatch(/Record HEAD before: `PRE_HEAD=\$\(git rev-parse HEAD\)`/);
+      expect(result).toMatch(/COMMIT DID NOT ADVANCE HEAD/);
+      expect(result).toMatch(/After fixing, commit your change before writing result\.json/);
     });
 
     it('preserves architect plan and fallback note when supplied', () => {
