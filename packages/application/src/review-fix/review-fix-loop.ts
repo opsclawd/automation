@@ -16,6 +16,7 @@ import {
 } from './detect-stall.js';
 import { extractEvidence } from './extract-evidence.js';
 import { appendRebuttalToCodeReview } from './append-rebuttal.js';
+import { verifyFixCommit } from '../fix-commit-verifier.js';
 import type {
   ReviewFixLoopDeps,
   ReviewFixLoopInput,
@@ -291,6 +292,8 @@ export class ReviewFixLoop {
         }
         continue;
       }
+      const prevConsecutiveFixFailures = consecutiveFixFailures;
+      const prevConsecutiveFixFailuresForCap = consecutiveFixFailuresForCap;
       consecutiveFixFailures = 0;
       if (fix.verdict === 'done_with_fixes') {
         consecutiveFixFailuresForCap = 0;
@@ -304,6 +307,152 @@ export class ReviewFixLoop {
           lastReviewedCommitSha = review.reviewedCommitSha;
         }
         totalFixAttempts += 1;
+
+        // --- FIX-COMMIT VERIFICATION (#679) ---
+        if (this.deps.git && fix.headBeforeFix) {
+          const verification = await verifyFixCommit({
+            git: this.deps.git,
+            cwd: ctx.cwd,
+            expectedHead: fix.headBeforeFix,
+          });
+          if (verification.kind === 'uncommitted_changes') {
+            this.emit(
+              input,
+              'fix.uncommitted_changes',
+              'warn',
+              `review/fix iteration ${iterationIndex} claimed done_with_fixes but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s)`,
+              {
+                iterationIndex,
+                invocationId: fix.invocationId,
+                expectedHead: fix.headBeforeFix,
+                actualHead: verification.headAfterFix,
+                dirtyFiles: verification.dirtyFiles.slice(0, 200),
+                statusOutput: verification.statusOutput.slice(0, 4000),
+              },
+            );
+            consecutiveFixFailures = prevConsecutiveFixFailures + 1;
+            consecutiveFixFailuresForCap = prevConsecutiveFixFailuresForCap + 1;
+            lastIterationHadFixCommit = false;
+            thisLoop = completeIteration(thisLoop, {
+              outcome: 'unresolved',
+              fixInvocationId: fix.invocationId,
+              now: this.deps.now(),
+            });
+            this.deps.loops.update(thisLoop);
+            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+            await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input, {
+              kind: 'uncommitted_changes',
+              dirtyFiles: verification.dirtyFiles,
+              statusOutput: verification.statusOutput,
+            });
+            unfoundedHistory.push({
+              findings: unfoundedFingerprints,
+              ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
+            });
+            // Do NOT call this.deps.rollbackFix here (plan-review P0, #679):
+            // this branch means the fixer left uncommitted changes in the
+            // tree (e.g. a pre-commit hook rejected the commit). That dirty
+            // state is exactly what the NEXT fixer iteration needs to see in
+            // order to finish committing or fixing it — rolling back here
+            // would destroy the evidence #679 exists to preserve. Rollback
+            // is only correct for the separate build-breaking-fix case
+            // (#671), which has its own dedicated branch elsewhere in this
+            // loop.
+            await this.runCleanArtifacts(ctx);
+            // mirror the cap check from the cannot_fix branch below
+            const consecutiveCap = input.maxConsecutiveFixFailures;
+            if (
+              consecutiveCap !== undefined &&
+              consecutiveCap > 0 &&
+              consecutiveFixFailuresForCap >= consecutiveCap
+            ) {
+              this.emit(
+                input,
+                'loop.exhausted.fix_consecutive_failures',
+                'warn',
+                `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
+                { iterationIndex, consecutiveFixFailuresForCap, cap: consecutiveCap },
+              );
+              thisLoop = exhaust(thisLoop, this.deps.now());
+              this.deps.loops.update(thisLoop);
+              return {
+                loop: thisLoop,
+                phaseOutcome: 'failed',
+                loopStatus: 'exhausted',
+                needsHumanReview: true,
+                residualFindingsCount: lastOffendingFindings.length,
+              };
+            }
+            continue;
+          }
+          if (verification.kind === 'no_commit_claimed') {
+            this.emit(
+              input,
+              'fix.no_commit_claimed',
+              'warn',
+              `review/fix iteration ${iterationIndex} claimed done_with_fixes but HEAD did not advance and worktree is clean`,
+              {
+                iterationIndex,
+                invocationId: fix.invocationId,
+                expectedHead: fix.headBeforeFix,
+                actualHead: verification.headAfterFix,
+              },
+            );
+            consecutiveFixFailures = prevConsecutiveFixFailures + 1;
+            consecutiveFixFailuresForCap = prevConsecutiveFixFailuresForCap + 1;
+            lastIterationHadFixCommit = false;
+            thisLoop = completeIteration(thisLoop, {
+              outcome: 'unresolved',
+              fixInvocationId: fix.invocationId,
+              now: this.deps.now(),
+            });
+            this.deps.loops.update(thisLoop);
+            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+            await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input, {
+              kind: 'no_commit_claimed',
+              statusOutput: verification.statusOutput,
+            });
+            unfoundedHistory.push({
+              findings: unfoundedFingerprints,
+              ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
+            });
+            await this.runCleanArtifacts(ctx);
+            const consecutiveCap = input.maxConsecutiveFixFailures;
+            if (
+              consecutiveCap !== undefined &&
+              consecutiveCap > 0 &&
+              consecutiveFixFailuresForCap >= consecutiveCap
+            ) {
+              this.emit(
+                input,
+                'loop.exhausted.fix_consecutive_failures',
+                'warn',
+                `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
+                { iterationIndex, consecutiveFixFailuresForCap, cap: consecutiveCap },
+              );
+              thisLoop = exhaust(thisLoop, this.deps.now());
+              this.deps.loops.update(thisLoop);
+              return {
+                loop: thisLoop,
+                phaseOutcome: 'failed',
+                loopStatus: 'exhausted',
+                needsHumanReview: true,
+                residualFindingsCount: lastOffendingFindings.length,
+              };
+            }
+            continue;
+          }
+          if (verification.kind === 'verification_error') {
+            this.emit(
+              input,
+              'fix.verification_error',
+              'warn',
+              `review/fix iteration ${iterationIndex} could not verify fix commit: ${verification.error}`,
+              { iterationIndex, invocationId: fix.invocationId, error: verification.error },
+            );
+          }
+        }
+        // --- END OF VERIFICATION ---
       }
 
       // --- REVALIDATE ---
@@ -691,6 +840,9 @@ export class ReviewFixLoop {
     reval: RevalidationResult | undefined,
     outcome: ReviewLoopHistoryEntry['outcome'],
     input: ReviewFixLoopInput,
+    commitVerification?:
+      | { kind: 'uncommitted_changes'; dirtyFiles: string[]; statusOutput: string }
+      | { kind: 'no_commit_claimed'; statusOutput: string },
   ): Promise<void> {
     if (!this.deps.loopHistory) {
       return;
@@ -729,6 +881,17 @@ export class ReviewFixLoop {
                 ...(reval.category !== undefined ? { category: reval.category } : {}),
               },
             }
+          : {}),
+        ...(fix && commitVerification && commitVerification.kind === 'uncommitted_changes'
+          ? {
+              uncommittedChanges: {
+                dirtyFiles: commitVerification.dirtyFiles,
+                statusOutput: commitVerification.statusOutput,
+              },
+            }
+          : {}),
+        ...(fix && commitVerification && commitVerification.kind === 'no_commit_claimed'
+          ? { noCommit: { statusOutput: commitVerification.statusOutput } }
           : {}),
         outcome,
       };

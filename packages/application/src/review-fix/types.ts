@@ -4,6 +4,7 @@ import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FindingEvidenceInspectorPort } from '../ports/finding-evidence-inspector-port.js';
 import type { ArtifactStore } from '../ports.js';
+import type { GitPort } from '../ports/git-port.js';
 
 export interface StepContext {
   loopId: string;
@@ -139,6 +140,12 @@ export interface ReviewFixLoopDeps {
    * Set `endOnReview: false` to restore pre-#627 behavior bit-for-bit.
    */
   options?: ReviewFixLoopOptions;
+  /**
+   * Used by the fix-commit verifier (#679). When absent, the loop does not
+   * downgrade `done_with_fixes` iterations — the verifier is intentionally
+   * optional so test doubles can omit it.
+   */
+  git?: GitPort;
 }
 
 export type ReviewLoopHistoryAudience = 'reviewer' | 'fixer';
@@ -163,6 +170,8 @@ export interface ReviewLoopHistoryEntry {
     validationRunId?: string;
     category?: string;
   };
+  uncommittedChanges?: { dirtyFiles: string[]; statusOutput: string };
+  noCommit?: { statusOutput: string };
   outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed';
 }
 
