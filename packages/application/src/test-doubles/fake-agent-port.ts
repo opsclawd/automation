@@ -6,7 +6,7 @@ import type {
 
 export type FakeAgentResponse =
   | AgentInvocationResult
-  | ((req: AgentInvocationRequest) => AgentInvocationResult);
+  | ((req: AgentInvocationRequest) => AgentInvocationResult | Promise<AgentInvocationResult>);
 
 export class FakeAgentPort implements AgentPort {
   readonly invocations: AgentInvocationRequest[] = [];
@@ -29,7 +29,7 @@ export class FakeAgentPort implements AgentPort {
     }
     const response = queue.shift()!;
     if (typeof response === 'function') {
-      return response(input);
+      return await response(input);
     }
     return response;
   }
