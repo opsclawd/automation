@@ -171,6 +171,21 @@ export interface ImplementStepLoopDeps {
     tcResult: TypecheckResult,
     fixResult: FixResult,
   ) => Promise<ArbiterResult>;
+  /**
+   * Escalates a failing trailing re-review pass (#680) to an arbiter before
+   * the loop exhausts to failure. Distinct from `runArbiter` (which requires
+   * a `FixResult`) because no fixer runs on the trailing pass — if these two
+   * fields were collapsed, a future maintainer could pass an empty `FixResult`
+   * synthesized from the trailing review's verdict, lying to the arbiter that
+   * a fixer evaluated the finding when none did. Optional: when omitted,
+   * a trailing-pass fail exhausts exactly as it did before this dep existed (#690).
+   */
+  runFinalReviewArbiter?: (
+    ctx: StepLoopContext,
+    tcResult: TypecheckResult,
+    specReview: SpecReviewResult,
+    qualityReview: QualityReviewResult,
+  ) => Promise<ArbiterResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;
   fixProfile: AgentProfileName;

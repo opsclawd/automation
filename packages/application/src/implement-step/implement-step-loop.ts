@@ -17,6 +17,7 @@ import type {
   TypescriptError,
   FixResult,
   ImplementStepHistoryEntry,
+  ArbiterResult,
 } from './types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
 
@@ -585,9 +586,75 @@ export class ImplementStepLoop {
       // --- TRAILING RE-REVIEW SHORT-CIRCUIT (#680) ---
       // Reviews already ran above (the trailing pass skips `runFix`). If
       // either review failed, the existing branch at line ~533 already
-      // fell through to the `runFix` invocation; intercept that here and
-      // record the trailing pass as `unresolved` then exit the loop.
+      // fell through to the `runFix` invocation; intercept that here.
       if (isTrailingReview) {
+        // --- ARBITER ESCALATION (#690) ---
+        // No fixer ran this pass, so there is no review/fix contradiction to
+        // detect — go straight to arbitration on the failing verdict itself.
+        if (deps.runFinalReviewArbiter !== undefined) {
+          this.emit(
+            input,
+            'loop.trailing_review.arbiter_escalated',
+            'warn',
+            `escalating trailing re-review fail to arbiter at iteration ${iterationIndex}`,
+            { reason: 'trailing_review_fail', iterationIndex },
+          );
+          const arbiterResult: ArbiterResult = await deps.runFinalReviewArbiter(
+            ctx,
+            tcResult,
+            specReview,
+            qualityReview,
+          );
+          if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
+            this.emit(
+              input,
+              'needs_human_review',
+              'warn',
+              `trailing review arbiter returned empty evidence at iteration ${iterationIndex} — escalating to human`,
+              { iterationIndex, outcome: arbiterResult.outcome },
+            );
+            loop = completeIteration(loop, { outcome: 'failed', now: deps.now() });
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop };
+          }
+          if (arbiterResult.outcome === 'finding_invalid') {
+            this.emit(
+              input,
+              'loop.trailing_review.arbiter_resolved',
+              'info',
+              `arbiter resolved trailing review fail at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
+              {
+                ruling: arbiterResult.outcome,
+                resolvedBy: 'trailing-review-arbiter',
+                evidence: arbiterResult.evidence,
+                iterationIndex,
+              },
+            );
+            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                undefined,
+                undefined,
+                'resolved',
+              ),
+            );
+            this.emitIterationCompleted(input, iterationIndex, 'resolved', {
+              resolvedBy: 'trailing-review-arbiter',
+            });
+            return { outcome: 'success', loop };
+          }
+          // arbiterResult.outcome is 'finding_valid' | 'ambiguous' |
+          // 'insufficient_evidence': there is no fixer to hand the rationale
+          // back to on the trailing pass, so fall through to the same
+          // unresolved/exhaust path as the no-arbiter case below. The
+          // `loop.trailing_review.arbiter_escalated` event above already
+          // records that arbitration happened and did not resolve it.
+        }
+
         loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
         deps.loops.update(loop);
         await appendHistory(
@@ -976,13 +1043,14 @@ export class ImplementStepLoop {
     input: ImplementStepLoopInput,
     index: number,
     outcome: string,
+    extraMetadata?: Record<string, unknown>,
   ): void {
     this.emit(
       input,
       'loop.iteration.completed',
       'info',
       `iteration ${index} completed: ${outcome}`,
-      { index, outcome },
+      { ...extraMetadata, index, outcome },
     );
   }
 

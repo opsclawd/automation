@@ -166,7 +166,10 @@ import {
   RepositoryRegistryRepository,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
-import { buildArbiterPrompt } from './arbiter-prompt.js';
+import {
+  buildArbiterPrompt,
+  buildImplementStepFinalReviewArbiterPrompt,
+} from './arbiter-prompt.js';
 import { resolveArbiterProfileName } from './arbiter-profile.js';
 import { buildArchitectPrompt } from './architect-prompt.js';
 import { resolveArchitectProfileName } from './architect-profile.js';
@@ -176,6 +179,7 @@ import {
   QUALITY_REVIEW_RESULT_ARTIFACT,
   SPEC_REVIEW_RESULT_ARTIFACT,
   readArbiterExcerpts,
+  readImplementStepFinalReviewExcerpts,
 } from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
@@ -2808,6 +2812,135 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         : undefined;
 
+      type ImplementStepFinalReviewArbiterResult = Awaited<
+        ReturnType<Required<ImplementStepLoopDeps>['runFinalReviewArbiter']>
+      >;
+
+      const implementStepFinalReviewRunArbiter:
+        | ImplementStepLoopDeps['runFinalReviewArbiter']
+        | undefined = arbiterProfileName
+        ? async (
+            ctx,
+            _tcResult,
+            _specReview,
+            _qualityReview,
+          ): Promise<ImplementStepFinalReviewArbiterResult> => {
+            // Note: _tcResult, _specReview, and _qualityReview are accepted to satisfy the port signature,
+            // but are ignored here because the prompt builder reads their full JSON/markdown artifacts
+            // from the durable artifact store directly to preserve raw formatting/structure.
+            // Also, the caller loop already asserts that typecheck passed before invoking this arbiter.
+
+            const promptDir = join(baseTmpDir, 'implement-step-prompts');
+            mkdirSync(promptDir, { recursive: true });
+            const promptPath = join(
+              promptDir,
+              `implement-step-final-review-arbiter-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
+            );
+            const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+
+            const { specExcerpt, qualityExcerpt } = await readImplementStepFinalReviewExcerpts(
+              artifacts,
+              String(ctx.runId),
+            );
+
+            let taskBody = '';
+            try {
+              const plan = await artifacts.read(String(ctx.runId), 'plan.md');
+              const parsed = parseTaskManifest(
+                await artifacts.read(String(ctx.runId), 'task-manifest.json'),
+              );
+              const titleMatch =
+                parsed.success && parsed.manifest.tasks.find((t) => t.n === ctx.stepIndex)?.title;
+              const extracted = extractTaskBody(plan, {
+                taskNumber: ctx.stepIndex,
+                ...(titleMatch ? { title: titleMatch } : {}),
+              });
+              taskBody = extracted.ok ? extracted.body : '';
+            } catch {
+              taskBody = '';
+            }
+
+            const arbiterPrompt = buildImplementStepFinalReviewArbiterPrompt(
+              { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
+              { specExcerpt, qualityExcerpt, taskBody },
+            );
+            writeFileSync(promptPath, arbiterPrompt, 'utf-8');
+
+            const startCommitSha = (() => {
+              try {
+                return execFileSync('git', ['rev-parse', 'HEAD'], {
+                  cwd: ctx.cwd,
+                  encoding: 'utf-8',
+                }).trim();
+              } catch {
+                return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+              }
+            })();
+
+            try {
+              rmSync(join(ctx.cwd, 'result.json'), { force: true });
+            } catch {}
+
+            try {
+              await artifactAgent.invoke({
+                profile: AgentProfileName(arbiterProfileName),
+                promptPath,
+                expectedArtifacts: ['result.json'],
+                cwd: ctx.cwd,
+                runId: String(ctx.runId),
+                repoId: ctx.repoId,
+                phaseId: 'implement-final-review-arbiter',
+                startCommitSha,
+              });
+            } catch (err) {
+              persistingEventBusForLoop.publish(String(ctx.runId), {
+                runId: String(ctx.runId),
+                level: 'error',
+                type: 'agent.invoke_failed',
+                message: `Arbiter invocation failed: ${err instanceof Error ? err.message : String(err)}`,
+                timestamp: new Date().toISOString(),
+                metadata: { phaseId: 'implement-final-review-arbiter', stepIndex: ctx.stepIndex },
+              });
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
+              };
+            }
+
+            const invocationId = newestInvocationId(String(ctx.runId));
+            const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+            if (!inv) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter invocation produced no row`,
+              };
+            }
+            const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+            const verdict = await extractResult({
+              invocation: patched,
+              ports: { artifacts, agent: artifactAgent },
+            });
+            if (!verdict.ok) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter result.json unparseable: ${verdict.detail}`,
+              };
+            }
+            const parsed = arbiterResultSchema.safeParse(verdict.result);
+            if (!parsed.success) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter result.json Zod parse error: ${parsed.error.message}`,
+              };
+            }
+            return parsed.data as ImplementStepFinalReviewArbiterResult;
+          }
+        : undefined;
+
       implementStepLoop = new ImplementStepLoop({
         runImplement,
         runTypecheck,
@@ -2815,6 +2948,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         runQualityReview,
         runFix: implRunFix,
         ...(runArbiter ? { runArbiter } : {}),
+        ...(implementStepFinalReviewRunArbiter
+          ? { runFinalReviewArbiter: implementStepFinalReviewRunArbiter }
+          : {}),
         loops: loopRepository,
         events: persistingEventBusForLoop,
         fixProfile: AgentProfileName(implFixProfileName),

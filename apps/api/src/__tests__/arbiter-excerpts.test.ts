@@ -8,6 +8,7 @@ import {
   QUALITY_REVIEW_RESULT_ARTIFACT,
   SPEC_REVIEW_RESULT_ARTIFACT,
   readArbiterExcerpts,
+  readImplementStepFinalReviewExcerpts,
 } from '../arbiter-excerpts.js';
 
 const tempDirs: string[] = [];
@@ -98,5 +99,47 @@ describe('readArbiterExcerpts', () => {
     expect(specExcerpt).toBe('a'.repeat(4000));
     expect(qualityExcerpt).toBe('c'.repeat(4000));
     expect(fixExcerpt).toBe('b'.repeat(4000));
+  });
+});
+
+describe('readImplementStepFinalReviewExcerpts', () => {
+  it('reads spec-review and quality-review results, omitting fix', async () => {
+    const { store, durableRoot } = makeStore();
+    writeFileSync(
+      path.join(durableRoot, SPEC_REVIEW_RESULT_ARTIFACT),
+      '{"result":"fail","finding":"trailing spec finding"}',
+    );
+    writeFileSync(
+      path.join(durableRoot, QUALITY_REVIEW_RESULT_ARTIFACT),
+      '{"result":"fail","finding":"trailing quality finding"}',
+    );
+    writeFileSync(
+      path.join(durableRoot, FIX_RESULT_ARTIFACT),
+      '{"result":"done_no_fixes_needed","rebuttal":"should not be read"}',
+    );
+
+    const result = await readImplementStepFinalReviewExcerpts(store, 'run-1');
+
+    expect(result.specExcerpt).toBe('{"result":"fail","finding":"trailing spec finding"}');
+    expect(result.qualityExcerpt).toBe('{"result":"fail","finding":"trailing quality finding"}');
+    expect('fixExcerpt' in result).toBe(false);
+  });
+
+  it('returns empty excerpts when the artifacts are missing', async () => {
+    const { store } = makeStore();
+    const result = await readImplementStepFinalReviewExcerpts(store, 'run-1');
+    expect(result.specExcerpt).toBe('');
+    expect(result.qualityExcerpt).toBe('');
+  });
+
+  it('truncates each excerpt to 4000 characters', async () => {
+    const { store, durableRoot } = makeStore();
+    writeFileSync(path.join(durableRoot, SPEC_REVIEW_RESULT_ARTIFACT), 'a'.repeat(5000));
+    writeFileSync(path.join(durableRoot, QUALITY_REVIEW_RESULT_ARTIFACT), 'b'.repeat(5000));
+
+    const result = await readImplementStepFinalReviewExcerpts(store, 'run-1');
+
+    expect(result.specExcerpt).toBe('a'.repeat(4000));
+    expect(result.qualityExcerpt).toBe('b'.repeat(4000));
   });
 });

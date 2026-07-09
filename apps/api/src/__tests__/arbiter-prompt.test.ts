@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildArbiterPrompt } from '../arbiter-prompt.js';
+import {
+  buildArbiterPrompt,
+  buildImplementStepFinalReviewArbiterPrompt,
+} from '../arbiter-prompt.js';
 
 const ctx = {
   stepIndex: 4,
@@ -139,5 +142,52 @@ describe('buildArbiterPrompt', () => {
     });
     expect(prompt).toContain('Result: PASS');
     expect(prompt).not.toContain('TS2304');
+  });
+});
+
+describe('buildImplementStepFinalReviewArbiterPrompt', () => {
+  it('includes Task heading, CONTEXT, INPUTS, DECISION FRAMEWORK, OUTPUT sections', () => {
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      specExcerpt: '{"result":"fail","findings":[]}',
+      qualityExcerpt: '{"result":"pass"}',
+      taskBody: '## Task 4: Add the foo() helper\n\nImplement foo() in src/foo.ts.',
+    });
+    expect(prompt).toContain('# TASK');
+    expect(prompt).toContain('## CONTEXT');
+    expect(prompt).toContain('## INPUTS');
+    expect(prompt).toContain('## DECISION FRAMEWORK');
+    expect(prompt).toContain('## OUTPUT');
+  });
+
+  it('AC #6/#7 — never mentions a FixResult, done_no_fixes_needed, or rebuttal', () => {
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      specExcerpt: '{"result":"fail"}',
+      qualityExcerpt: '{"result":"pass"}',
+      taskBody: '## Task 4: Add the foo() helper',
+    });
+    expect(prompt).not.toContain('FixResult');
+    expect(prompt).not.toContain('done_no_fixes_needed');
+    expect(prompt).not.toContain('rebuttal');
+    expect(prompt).toContain('No fixer ran in this pass');
+  });
+
+  it('embeds the Task body verbatim under INPUTS', () => {
+    const taskBody = '## Task 4: Add the foo() helper\n\nImplement foo() in src/foo.ts.';
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      specExcerpt: '',
+      qualityExcerpt: '',
+      taskBody,
+    });
+    expect(prompt).toContain(taskBody);
+  });
+
+  it('marks the phase READ-ONLY and forbids code edits', () => {
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      specExcerpt: '',
+      qualityExcerpt: '',
+      taskBody: '',
+    });
+    expect(prompt).toContain('READ-ONLY');
+    expect(prompt).toContain('MUST NOT modify any code');
   });
 });

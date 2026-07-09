@@ -497,7 +497,11 @@ export class AgentRuntimeRouter implements AgentPort {
  * Exported for tests.
  */
 export function normalizeRoutingPhase(phaseId: string): string {
-  return phaseId.replace(/(-task)?-\d+$/, '');
+  const normalized = phaseId.replace(/(-task)?-\d+$/, '');
+  if (normalized === 'implement-final-review-arbiter' || normalized === 'plan-review-arbiter') {
+    return 'arbiter';
+  }
+  return normalized;
 }
 
 function isTokenLimitError(result: AgentInvocationResult): string | null {

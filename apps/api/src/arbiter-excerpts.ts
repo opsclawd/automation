@@ -36,3 +36,18 @@ export async function readArbiterExcerpts(
     fixExcerpt: await readExcerpt(artifacts, runId, FIX_RESULT_ARTIFACT),
   };
 }
+
+/**
+ * Narrower excerpt reader for the trailing re-review arbiter pass (#690):
+ * no fixer ran on the trailing pass, so there is no fix result to read.
+ * Mirrors `readPlanReviewFinalExcerpts`'s split from `readPlanReviewExcerpts`.
+ */
+export async function readImplementStepFinalReviewExcerpts(
+  artifacts: ArtifactStore,
+  runId: string,
+): Promise<{ specExcerpt: string; qualityExcerpt: string }> {
+  return {
+    specExcerpt: await readExcerpt(artifacts, runId, SPEC_REVIEW_RESULT_ARTIFACT),
+    qualityExcerpt: await readExcerpt(artifacts, runId, QUALITY_REVIEW_RESULT_ARTIFACT),
+  };
+}
