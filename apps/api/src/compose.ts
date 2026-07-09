@@ -43,6 +43,8 @@ import {
   FileTailer,
   createFixDiffInspector,
   createFindingEvidenceInspector,
+  listProcesses,
+  killProcess,
 } from '@ai-sdlc/infrastructure';
 import {
   StartIssueRun,
@@ -50,6 +52,7 @@ import {
   ResumeRun,
   RetryFailedPhase,
   SweepOrphanedRuns,
+  ReapOrphanedTestWorkers,
   SweepWaitingRuns,
   checkPid,
   RunValidation,
@@ -445,6 +448,7 @@ export interface Container {
   phaseRepository: PhaseRepository;
   phaseRegistry: PhaseHandlerRegistry;
   runExecutor?: RunExecutor;
+  reapOrphanedTestWorkers: ReapOrphanedTestWorkers;
   eventRepository: EventRepository;
   artifactRepository: ArtifactRepository;
   failureRepository: FailureRepository;
@@ -1255,6 +1259,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     }
   };
 
+  const reapOrphanedTestWorkers = new ReapOrphanedTestWorkers({ listProcesses, killProcess });
+
   if (opts.runStartupSweeps !== false) {
     // Sweep orphaned runs before any new run starts
     const sweep = new SweepOrphanedRuns({
@@ -1269,6 +1275,23 @@ export function composeRoot(opts: ComposeOptions): Container {
     // Sweep orphaned tmp dirs: remove .ai-tmp/<runId>/ where the runId
     // has no active or recent run, or the run is in a terminal state.
     sweepOrphanedTmpDirs(baseTmpDir, runRepository);
+
+    // Reap orphaned vitest fork-pool workers (ppid==1, cmd matches /vitest/)
+    // that were reparented to init when their original parent process died
+    // uncleanly (crashed run, timed-out validation phase). Best-effort:
+    // failures here must never block a run from starting.
+    try {
+      const reapResult = reapOrphanedTestWorkers.execute();
+      if (reapResult.reaped > 0) {
+        console.error(
+          `Reaped ${reapResult.reaped} orphaned test worker(s): ${reapResult.pids.join(', ')}`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        `Orphaned test worker reap failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Sweep waiting runs: reactivate any run parked in `waiting` whose PR
     // has new review activity since the last poll attempt, or finalize
@@ -4451,6 +4474,7 @@ export function composeRoot(opts: ComposeOptions): Container {
     runRepository,
     phaseRepository,
     phaseRegistry,
+    reapOrphanedTestWorkers,
     ...(runExecutor !== undefined ? { runExecutor } : {}),
     eventRepository,
     artifactRepository,

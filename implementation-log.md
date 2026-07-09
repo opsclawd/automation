@@ -1,13 +1,16 @@
-# Implementation Log - Task 2
+# Implementation Log - Task 3
 
-## Real process adapter (listProcesses/killProcess) in infrastructure
+## Wire ReapOrphanedTestWorkers into composeRoot() startup sweeps
 
 ### What was implemented:
-- Created the process adapter in `packages/infrastructure/src/process/process-adapter.ts` with `parsePsOutput`, `listProcesses`, and `killProcess`.
-- Created tests in `packages/infrastructure/src/process/__tests__/process-adapter.test.ts`.
-- Exported from the infrastructure package index in `packages/infrastructure/src/index.ts`.
+- Imported `ReapOrphanedTestWorkers` from `@ai-sdlc/application` and `listProcesses`, `killProcess` from `@ai-sdlc/infrastructure` in `apps/api/src/compose.ts`.
+- Extended the `Container` interface to include `reapOrphanedTestWorkers`.
+- Instantiated `ReapOrphanedTestWorkers` inside `composeRoot`.
+- Added the reap execution block inside the startup sweeps check in `composeRoot`.
+- Exposed `reapOrphanedTestWorkers` in the returned `Container` object.
 
 ### Verification results:
-- All unit tests in `@ai-sdlc/infrastructure` passed successfully.
-- Typechecking for the `@ai-sdlc/infrastructure` package succeeded with no errors.
-- Dependency Cruiser (`pnpm depcruise`) verified that no layer boundaries were violated.
+- Typechecked `apps/api` with `pnpm --filter @ai-sdlc/api typecheck` successfully.
+- Ran existing compose-level tests successfully.
+- Verified layer boundaries with `pnpm depcruise` successfully.
+- Verified lint compliance with `pnpm lint` successfully.
