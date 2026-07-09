@@ -30,12 +30,12 @@ export async function verifyFixCommit(deps: {
   } catch (err: unknown) {
     return { kind: 'verification_error', error: err instanceof Error ? err.message : String(err) };
   }
-  if (headAfterFix !== expectedHead) {
-    return { kind: 'advanced', headAfterFix, statusOutput };
-  }
   const dirtyFiles = statusOutput.split('\n').filter((l) => l.length > 0);
   if (dirtyFiles.length > 0) {
     return { kind: 'uncommitted_changes', headAfterFix, dirtyFiles, statusOutput };
+  }
+  if (headAfterFix !== expectedHead) {
+    return { kind: 'advanced', headAfterFix, statusOutput };
   }
   return { kind: 'no_commit_claimed', headAfterFix, statusOutput };
 }

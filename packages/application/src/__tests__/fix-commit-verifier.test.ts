@@ -39,6 +39,19 @@ describe('verifyFixCommit', () => {
     }
   });
 
+  it('returns uncommitted_changes when HEAD advanced AND status is non-empty', async () => {
+    const git = makeGit({
+      headSha: 'after',
+      statusOutput: ' M packages/foo.ts\n',
+    });
+    const result = await verifyFixCommit({ git, cwd: '/wt', expectedHead: 'before' });
+    expect(result.kind).toBe('uncommitted_changes');
+    if (result.kind === 'uncommitted_changes') {
+      expect(result.headAfterFix).toBe('after');
+      expect(result.dirtyFiles).toEqual([' M packages/foo.ts']);
+    }
+  });
+
   it('returns uncommitted_changes when HEAD unchanged AND status is non-empty', async () => {
     const git = makeGit({
       headSha: 'same',
