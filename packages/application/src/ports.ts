@@ -257,3 +257,12 @@ export type { LoggerPort } from './ports/logger-port.js';
 export type ResolveWorktreeCwdFn = (runId: RunId) => string;
 export type ResolveStartCommitShaFn = (runId: RunId) => string;
 export type ResolveRefShaFn = (cwd: string, ref: string) => string | undefined;
+
+export interface ProcessInfo {
+  pid: number;
+  ppid: number;
+  cmd: string;
+}
+
+export type ListProcessesPort = () => ProcessInfo[];
+export type KillProcessPort = (pid: number) => void;
