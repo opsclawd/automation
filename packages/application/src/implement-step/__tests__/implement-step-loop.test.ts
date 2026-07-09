@@ -2178,4 +2178,79 @@ describe('ImplementStepLoop', () => {
       expect(ev).toBeDefined();
     });
   });
+
+  describe('trailing re-review pass', () => {
+    it('skips revertFix on typecheck failure during the trailing re-review pass and returns needs_human_review', async () => {
+      let specCalls = 0;
+      let typecheckCalls = 0;
+      const revertSpy = vi.fn().mockResolvedValue(true);
+      const deps = makeDeps({
+        revertFix: revertSpy,
+        runSpecReview: async () => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runFix: async () => {
+          return {
+            invocationId: `fix`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+            headBeforeFix: 'sha-before-fix',
+          };
+        },
+        runTypecheck: async () => {
+          typecheckCalls += 1;
+          // iteration 1: typecheck pass (pre-review)
+          // iteration 2 (trailing): typecheck fail
+          return typecheckCalls === 1
+            ? { outcome: 'pass', output: '' }
+            : { outcome: 'fail', output: 'error TS2345: type mismatch in trailing' };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 1,
+      });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(revertSpy).not.toHaveBeenCalled();
+      expect(specCalls).toBe(1); // spec review ran on iter 1, iter 2 failed typecheck before review
+    });
+
+    it('exhausts without a trailing review if endOnReview: false', async () => {
+      let specCalls = 0;
+      const deps = makeDeps({
+        runSpecReview: async () => {
+          specCalls += 1;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async () => {
+          return { invocationId: `qr`, agentOutcome: 'success' as const, verdict: 'pass' as const };
+        },
+        runFix: async () => {
+          return {
+            invocationId: `fix`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 1,
+        options: { endOnReview: false },
+      });
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      // Max iterations is 1, so it runs once. Since it ended `fixed` but endOnReview is false, it does not do a second iteration.
+      expect(specCalls).toBe(1);
+    });
+  });
 });
