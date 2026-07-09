@@ -2506,5 +2506,195 @@ describe('ImplementStepLoop', () => {
       expect(completed[1]?.metadata.outcome).toBe('fixed');
       expect(completed[2]?.metadata.outcome).toBe('unresolved');
     });
+
+    it('AC #2/#3 — trailing-fail + arbiter finding_valid → exhausts/fails (no retry loop)', async () => {
+      let specReviewCalls = 0;
+      let arbiterCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+          arbiterCalls += 1;
+          return {
+            outcome: 'finding_valid',
+            evidence: 'typecheck fails on the exact line the reviewer flagged',
+            rationale: 'the reviewer is right; the fix is incomplete',
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+      // Arbiter invoked exactly once — finding_valid does not retry another pass.
+      expect(arbiterCalls).toBe(1);
+      expect(specReviewCalls).toBe(3);
+      expect(
+        events.filter((e) => e.type === 'loop.trailing_review.arbiter_escalated'),
+      ).toHaveLength(1);
+
+      const completed = events.filter((e) => e.type === 'loop.iteration.completed');
+      expect(completed).toHaveLength(3);
+      expect(completed[2]?.metadata.outcome).toBe('unresolved');
+    });
+
+    it('AC #690 guardrail — trailing arbiter returns finding_invalid with empty evidence → needs_human_review (pins down empty-evidence-first check order)', async () => {
+      let specReviewCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_invalid',
+          evidence: '   ',
+          rationale: 'whitespace-only evidence must be treated as empty',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // If ordering were wrong (outcome checked first), it would return success.
+      // Since ordering is correct (evidence first), it returns needs_human_review.
+      expect(out.outcome).toBe('needs_human_review');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[2]?.outcome).toBe('failed');
+      const humanReview = events.filter((e) => e.type === 'needs_human_review');
+      expect(humanReview).toHaveLength(1);
+      expect(
+        events.filter((e) => e.type === 'loop.trailing_review.arbiter_escalated'),
+      ).toHaveLength(1);
+
+      // Verify that loop.iteration.completed is NOT emitted for iteration 3 because it short-circuited to needs_human_review
+      const completed = events.filter((e) => e.type === 'loop.iteration.completed');
+      expect(completed).toHaveLength(2); // only iteration 1 and 2
+    });
+
+    it('AC #690 guardrail — trailing arbiter returns insufficient_evidence with non-empty evidence → exhausts/fails (ordering check validation)', async () => {
+      let specReviewCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'insufficient_evidence',
+          evidence: 'non-empty evidence provided',
+          rationale: 'non-empty evidence but inconclusive outcome',
+        }),
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      // Shipped outcome is failed (exhausts), not success or needs_human_review.
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+      expect(
+        events.filter((e) => e.type === 'loop.trailing_review.arbiter_escalated'),
+      ).toHaveLength(1);
+      expect(events.filter((e) => e.type === 'loop.trailing_review.arbiter_resolved')).toHaveLength(
+        0,
+      );
+
+      const completed = events.filter((e) => e.type === 'loop.iteration.completed');
+      expect(completed).toHaveLength(3);
+      expect(completed[2]?.metadata.outcome).toBe('unresolved');
+    });
+
+    // Regression check for existing behavior: verifying that trailing-pass typecheck failures
+    // continue to exit early to needs_human_review at line 486 and thus never invoke the arbiter.
+    it('AC #690 guardrail — trailing pass typecheck fail does NOT invoke arbiter', async () => {
+      let typecheckCalls = 0;
+      let arbiterCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runTypecheck: async (): Promise<TypecheckResult> => {
+          typecheckCalls += 1;
+          return {
+            outcome: typecheckCalls === 3 ? 'fail' : 'pass',
+            output: typecheckCalls === 3 ? 'error TS2345 trailing fail' : '',
+          };
+        },
+        runSpecReview: async () => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runQualityReview: async () => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+          arbiterCalls += 1;
+          return {
+            outcome: 'finding_invalid',
+            evidence: 'should not be called',
+            rationale: '',
+          };
+        },
+      });
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('needs_human_review');
+      expect(arbiterCalls).toBe(0);
+      expect(
+        events.filter((e) => e.type === 'loop.trailing_review.arbiter_escalated'),
+      ).toHaveLength(0);
+    });
   });
 });
