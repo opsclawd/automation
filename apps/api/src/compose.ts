@@ -3170,7 +3170,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           invokeResult = await artifactAgent.invoke({
             profile: AgentProfileName(profile),
             promptPath,
-            expectedArtifacts: [PLAN_FIX_RESULT_ARTIFACT],
+            expectedArtifacts: [PLAN_FIX_RESULT_ARTIFACT, 'plan.md'],
             cwd: ctx.cwd,
             runId: String(ctx.runId),
             repoId: ctx.repoId,
