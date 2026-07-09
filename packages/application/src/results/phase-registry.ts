@@ -47,4 +47,5 @@ export const PHASE_RESULT_REGISTRY: Record<string, PhaseResultMeta> = {
   'fix-validate': { schema: fixValidateResultSchema, retrySafe: false },
   arbiter: { schema: arbiterResultSchema, retrySafe: true },
   'plan-review-arbiter': { schema: arbiterResultSchema, retrySafe: true },
+  'implement-final-review-arbiter': { schema: arbiterResultSchema, retrySafe: true },
 };
