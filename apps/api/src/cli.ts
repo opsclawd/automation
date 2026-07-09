@@ -355,6 +355,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
           let sigintHandler: (() => void) | undefined;
           let sigtermHandler: (() => void) | undefined;
           let workerHeartbeat: { stop: () => void } | undefined;
+          let testWorkerReaper: { stop: () => void } | undefined;
 
           try {
             c.runRepository.insertIfNoActive(run);
@@ -396,6 +397,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               buildOpts?.lease?.heartbeatIntervalMs ??
                 DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS,
             );
+            testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
             if (tee) {
               unsubscribe = c.eventBus.subscribe(ids.uuid, (event) => {
@@ -406,6 +408,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             const handleSignal = (signal: string, exitCode: number) => {
               try {
                 abortController.abort();
+                testWorkerReaper?.stop();
                 const currentJob = c.jobQueue.findById(jobId);
                 if (currentJob) {
                   if (currentJob.status === 'claimed') {
@@ -526,6 +529,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               ),
             );
 
+            testWorkerReaper?.stop();
             unsubscribe?.();
             const pausedStatuses: RunStatus[] = ['waiting', 'queued'];
             const isSuccess =
@@ -540,6 +544,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
             if (sigintHandler) process.off('SIGINT', sigintHandler);
             if (sigtermHandler) process.off('SIGTERM', sigtermHandler);
             workerHeartbeat?.stop();
+            testWorkerReaper?.stop();
             unsubscribe?.();
             // Finalize a stale 'running' run so insertIfNoActive doesn't block
             // the next attempt. atomicUpdateByUuid is a no-op if the run was
@@ -863,8 +868,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
             let signalHandlers: { remove: () => void } | undefined;
             let lease: { stop: () => void } | undefined;
+            let testWorkerReaper: { stop: () => void } | undefined;
             const releaseLeaseOnSignal = () => {
               try {
+                testWorkerReaper?.stop();
                 c.workerLeaseRepository.release(repoId, workerId);
               } catch (err) {
                 console.error(
@@ -886,6 +893,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 leaseTtlMs,
                 heartbeatIntervalMs,
               );
+              testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
               // The executor auto-skips phases in run.completedPhases, so passing
               // skip:[] is correct — the run resumes at post-pr-review naturally.
               const result = await c.runExecutor.execute({
@@ -900,6 +908,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                 }) + '\n',
               );
             } finally {
+              testWorkerReaper?.stop();
               signalHandlers?.remove();
               lease?.stop();
             }
@@ -1012,8 +1021,10 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
 
               let signalHandlers: { remove: () => void } | undefined;
               let lease: { stop: () => void } | undefined;
+              let testWorkerReaper: { stop: () => void } | undefined;
               const releaseLeaseOnSignal = () => {
                 try {
+                  testWorkerReaper?.stop();
                   c.workerLeaseRepository.release(repoId, workerId);
                 } catch (err) {
                   console.error(
@@ -1044,6 +1055,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   leaseTtlMs,
                   heartbeatIntervalMs,
                 );
+                testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
 
                 if (opts.fromPhase) {
                   await c.resumeRun.transition({
@@ -1078,6 +1090,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
                   }) + '\n',
                 );
               } finally {
+                testWorkerReaper?.stop();
                 unsubscribe?.();
                 signalHandlers?.remove();
                 lease?.stop();
