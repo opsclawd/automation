@@ -839,7 +839,6 @@ describe('ImplementStepLoop', () => {
       const out = await new ImplementStepLoop(deps).execute({
         ...baseInput(),
         maxIterations: 3,
-        options: { endOnReview: false },
       });
       // After revert the second `runFix` invocation must carry typecheck errors.
       expect(fixOptsCapture.length).toBeGreaterThanOrEqual(2);
@@ -850,8 +849,8 @@ describe('ImplementStepLoop', () => {
       // typecheck was called at least twice (pre-loop + iteration 2 re-run).
       expect(tcCalls).toBeGreaterThanOrEqual(2);
       // spec + quality must NOT be skipped by the typecheck hard-fail of yore.
-      expect(specCalls).toBe(2);
-      expect(qualCalls).toBe(2);
+      expect(specCalls).toBe(3);
+      expect(qualCalls).toBe(3);
     });
 
     it('emits step.typecheck.failed event when typecheck fails', async () => {
@@ -1813,10 +1812,9 @@ describe('ImplementStepLoop', () => {
       const out = await new ImplementStepLoop(deps).execute({
         ...baseInput(),
         maxIterations: 1,
-        options: { endOnReview: false },
       });
-      expect(out.outcome).toBe('failed'); // exhausted after 1 iter
-      expect(specCalls).toBe(1);
+      expect(out.outcome).toBe('failed'); // exhausted after 2 iters (1 + trailing)
+      expect(specCalls).toBe(2);
     });
 
     it('hard fails after all 3 attempts fail (exhaustion)', async () => {
