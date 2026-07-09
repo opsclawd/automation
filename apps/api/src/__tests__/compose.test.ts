@@ -319,7 +319,7 @@ exit 1
       scriptPath,
     });
     const run = container.runRepository.findByUuid('dead-pid-uuid');
-    expect(run?.status).toBe('cancelled');
+    expect(run?.status).toBe('failed');
     expect(run?.failureReason).toMatch(/orphaned/);
   });
 
@@ -500,7 +500,7 @@ exit 1
         repoRoot: root,
         scriptPath,
       });
-      expect(container2.runRepository.findByUuid('dead-pid-uuid')?.status).toBe('cancelled');
+      expect(container2.runRepository.findByUuid('dead-pid-uuid')?.status).toBe('failed');
       expect(existsSync(completedTmpDir)).toBe(false);
     } finally {
       if (origTmpdir !== undefined) process.env.TMPDIR = origTmpdir;

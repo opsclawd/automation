@@ -1,5 +1,5 @@
 {
   "verdict": "done_with_fixes",
-  "summary": "Verified and corrected the implementation plan to address both findings. The trailing review short-circuit block in Task 2, Step 3b is updated to complete the iteration with outcome 'unresolved' and emit the 'unresolved' completed event, ensuring the loop status remains 'running' so it can be exhausted correctly. In Task 3, Step 1, the second test ('exhausts when trailing pass reviews fail') has been updated to expect 'unresolved' rather than 'failed' for the outcome of the trailing pass iteration.",
+  "summary": "Successfully updated `plan.md` to address all reviewer findings. The goal statement was narrowed to clarify that swept runs are resumable but retry is disallowed (with 409) due to the lack of an active phase or history. A new unit test was detailed in Step 3 that types the test fixture properly and exercises both `resume` (allowed) and `retry` (denied) through `planRunRecoveryAction`, verifying the recovery rules end-to-end. We also added verification of the SQLite-level persistence of `currentPhase: null` by detailing a unit test in the infrastructure layer. Finally, workspace-wide validation checks (`pnpm depcruise` and `pnpm lint`) were incorporated into the verification steps.",
   "rebuttal": ""
 }
