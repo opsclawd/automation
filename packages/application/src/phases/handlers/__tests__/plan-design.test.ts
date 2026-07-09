@@ -328,7 +328,7 @@ describe('PlanWriteHandler', () => {
       contents: '{ invalid: json }',
     });
 
-    const handler = new PlanWriteHandler();
+    const handler = new PlanWriteHandler({ maxRepairAttempts: 0 });
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('failed');
@@ -369,7 +369,7 @@ describe('PlanWriteHandler', () => {
       contents: JSON.stringify(manifest),
     });
 
-    const handler = new PlanWriteHandler();
+    const handler = new PlanWriteHandler({ maxRepairAttempts: 0 });
     const result = await handler.run(ctx);
 
     expect(result.outcome).toBe('failed');
@@ -418,6 +418,101 @@ describe('PlanWriteHandler', () => {
     }
     expect(eventsOf(ctx, 'plan-write.failed')).toHaveLength(1);
     expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(0);
+  });
+
+  it('repair loop success path: second attempt passes validation', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan-design',
+      relativePath: 'design.md',
+      contents: '# Design\n\nContent.',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+
+    // First invocation (returns malformed manifest)
+    agent.enqueue('opencode-frontier', successResult());
+    // Second invocation (repair, returns valid manifest and plan)
+    agent.enqueue('opencode-frontier', successResult());
+
+    // Before first validation check
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'task-manifest.json',
+      contents: '{ invalid: json }', // Causes validation failure
+    });
+
+    const handler = new PlanWriteHandler({ maxRepairAttempts: 2 });
+
+    // Hook artifacts.read to return valid content on the second attempt
+    const originalRead = ctx.artifacts.read;
+    let readCount = 0;
+    ctx.artifacts.read = async (runUuid: string, relativePath: string) => {
+      if (relativePath === 'task-manifest.json') {
+        readCount++;
+        if (readCount === 2) {
+          return JSON.stringify({
+            version: 1,
+            task_count: 1,
+            tasks: [{ n: 1, title: 'Impl' }],
+          });
+        }
+      }
+      return originalRead.call(ctx.artifacts, runUuid, relativePath);
+    };
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'plan-write.repair.started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.repair.succeeded')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.completed')).toHaveLength(1);
+    expect(agent.invocations).toHaveLength(2);
+  });
+
+  it('repair loop failure path: exhausts repair attempts', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan-design',
+      relativePath: 'design.md',
+      contents: '# Design\n\nContent.',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+
+    // First invocation (fails)
+    agent.enqueue('opencode-frontier', successResult());
+    // Second invocation (repair 1, still fails)
+    agent.enqueue('opencode-frontier', successResult());
+
+    // Both times return invalid
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan\n\n## Task 1: Impl\nDescription\n',
+    });
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'task-manifest.json',
+      contents: '{ invalid: json }',
+    });
+
+    const handler = new PlanWriteHandler({ maxRepairAttempts: 1 });
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('failed');
+    if (result.outcome === 'failed') {
+      expect(result.failure.kind).toBe('invalid_result');
+    }
+    expect(eventsOf(ctx, 'plan-write.repair.started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.repair.failed')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.failed')).toHaveLength(1);
+    expect(agent.invocations).toHaveLength(2);
   });
 });
 
