@@ -514,6 +514,68 @@ describe('PlanWriteHandler', () => {
     expect(eventsOf(ctx, 'plan-write.failed')).toHaveLength(1);
     expect(agent.invocations).toHaveLength(2);
   });
+
+  it('repair loop handles missing task-manifest.json by generating a default manifest', async () => {
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      phaseId: 'plan-design',
+      relativePath: 'design.md',
+      contents: '# Design\n\nContent.',
+    });
+
+    const agent = ctx.agent as FakeAgentPort;
+
+    // First invocation (returns missing manifest)
+    agent.enqueue('opencode-frontier', successResult());
+    // Second invocation (repair loop)
+    agent.enqueue('opencode-frontier', successResult());
+
+    // Before first validation check
+    await ctx.artifacts.write({
+      runId: ctx.runUuid,
+      relativePath: 'plan.md',
+      contents: '# Plan\n\n## Task 2: Impl\nDescription\n', // Fails validation (non-sequential)
+    });
+    // Deliberately DO NOT write task-manifest.json
+
+    const writeSpy = vi.spyOn(ctx.artifacts, 'write');
+
+    const handler = new PlanWriteHandler({ maxRepairAttempts: 2 });
+
+    const originalRead = ctx.artifacts.read;
+    let readCount = 0;
+    ctx.artifacts.read = async (runUuid: string, relativePath: string) => {
+      if (relativePath === 'task-manifest.json') {
+        readCount++;
+        if (readCount === 2) {
+          return JSON.stringify({
+            version: 1,
+            task_count: 1,
+            tasks: [{ n: 1, title: 'Impl' }],
+          });
+        }
+      }
+      if (relativePath === 'plan.md' && readCount >= 1) {
+        return '# Plan\n\n## Task 1: Impl\nDescription\n';
+      }
+      return originalRead.call(ctx.artifacts, runUuid, relativePath);
+    };
+
+    const result = await handler.run(ctx);
+
+    expect(result.outcome).toBe('passed');
+    expect(eventsOf(ctx, 'plan-write.repair.started')).toHaveLength(1);
+    expect(eventsOf(ctx, 'plan-write.repair.succeeded')).toHaveLength(1);
+    expect(agent.invocations).toHaveLength(2);
+
+    // Verify that the default task-manifest.json fallback was written
+    expect(writeSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        relativePath: 'task-manifest.json',
+        contents: JSON.stringify({ version: 1, task_count: 0, tasks: [] }),
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
