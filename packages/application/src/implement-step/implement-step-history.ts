@@ -48,6 +48,25 @@ export function formatImplementStepHistoryForPrompt(
         lines.push(`    Errors preview: ${preview}`);
       }
     }
+    if (entry.uncommittedChanges) {
+      lines.push(
+        `  Uncommitted changes: ${entry.uncommittedChanges.dirtyFiles.length} dirty file(s) (claimed done_with_fixes but HEAD did not advance)`,
+      );
+      const preview = entry.uncommittedChanges.dirtyFiles.slice(0, 5);
+      for (const file of preview) {
+        lines.push(`    - ${file}`);
+      }
+      if (entry.uncommittedChanges.dirtyFiles.length > preview.length) {
+        lines.push(
+          `    ... and ${entry.uncommittedChanges.dirtyFiles.length - preview.length} more`,
+        );
+      }
+    }
+    if (entry.noCommit) {
+      lines.push(
+        '  No commit: claimed done_with_fixes but HEAD did not advance and worktree is clean',
+      );
+    }
     lines.push(`  Outcome: ${entry.outcome}`);
   }
 

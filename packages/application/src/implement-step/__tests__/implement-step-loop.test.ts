@@ -18,6 +18,39 @@ import type {
 } from '../types.js';
 import type { FixStepOptions } from '../../review-fix/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
+import type { GitPort } from '../../ports/git-port.js';
+
+function makeFakeGitPort(opts: {
+  headSha: string;
+  statusOutput?: string;
+  headShaThrows?: boolean;
+  statusThrows?: boolean;
+}): GitPort {
+  return {
+    createWorktree: async () => undefined,
+    removeWorktree: async () => undefined,
+    currentBranch: async () => 'main',
+    headCommitSha: async () => {
+      if (opts.headShaThrows) throw new Error('rev-parse failed');
+      return opts.headSha;
+    },
+    resetHard: async () => undefined,
+    diff: async () => '',
+    diffStat: async () => '',
+    commit: async () => '',
+    push: async () => undefined,
+    remoteRef: async () => undefined,
+    isAncestor: async () => true,
+    logBetween: async () => [],
+    cleanUntracked: async () => undefined,
+    headCommitShaOf: async () => undefined,
+    status: async () => {
+      if (opts.statusThrows) throw new Error('status failed');
+      return opts.statusOutput ?? '';
+    },
+    resetWorktreeIfClean: async () => undefined,
+  };
+}
 
 function collectEvents() {
   const events: Array<{
@@ -88,6 +121,7 @@ function makeDeps(over: Partial<ImplementStepLoopDeps>): ImplementStepLoopDeps {
     fixFallbackProfile: AgentProfileName('opencode-frontier'),
     now: () => new Date('2026-06-17T00:00:00.000Z'),
     idFactory: () => 'loop-1',
+    git: undefined,
     ...over,
   };
 }
@@ -2023,5 +2057,108 @@ describe('ImplementStepLoop', () => {
     });
     const out = await new ImplementStepLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('needs_human_review');
+  });
+
+  describe('ImplementStepLoop fix-commit verifier integration', () => {
+    it('records genuine committed fix as fixed when HEAD advanced', async () => {
+      const preSha = 'sha-before-fix';
+      const postSha = 'sha-after-fix';
+      const { events, bus } = collectEvents();
+      const git = makeFakeGitPort({ headSha: postSha, statusOutput: '' });
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async () => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success',
+          verdict: 'fail',
+        }),
+        runFix: async () => ({
+          invocationId: 'f1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+          headBeforeFix: preSha,
+        }),
+        git,
+      });
+      // Use a path that immediately reaches the fix branch
+      const out = await new ImplementStepLoop(deps).execute({
+        runId: RunId('run-1'),
+        phaseId: PhaseName('implement'),
+        repoId: 'o/r',
+        cwd: '/wt',
+        stepIndex: 1,
+        stepTitle: 's',
+        maxIterations: 3,
+      });
+      expect(out.loop.iterations.some((it) => it.outcome === 'fixed')).toBe(true);
+      expect(events.find((e) => e.type === 'fix.uncommitted_changes')).toBeUndefined();
+      expect(events.find((e) => e.type === 'fix.no_commit_claimed')).toBeUndefined();
+    });
+
+    it('downgrades done_with_fixes + dirty worktree to unresolved with fix.uncommitted_changes', async () => {
+      const { events, bus } = collectEvents();
+      const git = makeFakeGitPort({
+        headSha: 'sha-before-fix',
+        statusOutput: ' M packages/foo.ts\n',
+      });
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async () => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success',
+          verdict: 'fail',
+        }),
+        runFix: async () => ({
+          invocationId: 'f1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+          headBeforeFix: 'sha-before-fix',
+        }),
+        git,
+      });
+      await new ImplementStepLoop(deps).execute({
+        runId: RunId('run-1'),
+        phaseId: PhaseName('implement'),
+        repoId: 'o/r',
+        cwd: '/wt',
+        stepIndex: 1,
+        stepTitle: 's',
+        maxIterations: 3,
+      });
+      const ev = events.find((e) => e.type === 'fix.uncommitted_changes');
+      expect(ev).toBeDefined();
+      expect((ev!.metadata as { dirtyFiles: string[] }).dirtyFiles).toEqual([' M packages/foo.ts']);
+    });
+
+    it('downgrades done_with_fixes + clean tree to unresolved with fix.no_commit_claimed', async () => {
+      const { events, bus } = collectEvents();
+      const git = makeFakeGitPort({ headSha: 'sha-before-fix', statusOutput: '' });
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async () => ({
+          invocationId: 'sr-1',
+          agentOutcome: 'success',
+          verdict: 'fail',
+        }),
+        runFix: async () => ({
+          invocationId: 'f1',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+          headBeforeFix: 'sha-before-fix',
+        }),
+        git,
+      });
+      await new ImplementStepLoop(deps).execute({
+        runId: RunId('run-1'),
+        phaseId: PhaseName('implement'),
+        repoId: 'o/r',
+        cwd: '/wt',
+        stepIndex: 1,
+        stepTitle: 's',
+        maxIterations: 3,
+      });
+      const ev = events.find((e) => e.type === 'fix.no_commit_claimed');
+      expect(ev).toBeDefined();
+    });
   });
 });
