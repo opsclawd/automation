@@ -272,7 +272,7 @@ describe('ImplementStepLoop', () => {
     // maxIterations=3 → 3 iterations of fail→pass→fix→fail→pass→fix → exhausted
     expect(out.outcome).toBe('failed');
     expect(out.loop.status).toBe('exhausted');
-    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations).toHaveLength(4);
     expect(events.filter((e) => e.type === 'loop.exhausted')).toHaveLength(1);
   });
 
@@ -441,9 +441,12 @@ describe('ImplementStepLoop', () => {
     const exhausted = events.filter((e) => e.type === 'loop.exhausted');
     expect(exhausted).toHaveLength(1);
     expect(exhausted[0]?.level).toBe('error');
-    expect(exhausted[0]?.message).toBe('implement-step loop exhausted after 3 iterations');
-    expect(exhausted[0]?.metadata.iterations).toBe(3);
-    expect(exhausted[0]?.metadata.maxIterations).toBe(3);
+    expect(exhausted[0]?.message).toBe('implement-step loop exhausted after 4 iterations');
+    expect(exhausted[0]?.metadata.iterations).toBe(4);
+    expect(exhausted[0]?.metadata.maxIterations).toBe(4);
+    // The trailing re-review fired on iteration 4 (cap iteration 3 ended
+    // `fixed`), so the `loop.trailing_review.started` event is present.
+    expect(events.filter((e) => e.type === 'loop.trailing_review.started')).toHaveLength(1);
   });
 
   it('persists loop via LoopRepositoryPort on each state change', async () => {
@@ -462,11 +465,11 @@ describe('ImplementStepLoop', () => {
     await new ImplementStepLoop(deps).execute(baseInput());
     const found = deps.loops.findById('loop-1');
     expect(found).toBeDefined();
-    expect(found?.iterations.length).toBe(3); // 3 iterations inserted
+    expect(found?.iterations.length).toBe(4); // 4 iterations inserted
     // Exercise update path: second read should match persisted state
     const refetch = deps.loops.findById('loop-1');
     expect(refetch?.status).toBe('exhausted');
-    expect(refetch?.iterations).toHaveLength(3);
+    expect(refetch?.iterations).toHaveLength(4);
   });
 
   it('does not call runImplement beyond the first (pre-loop) execution', async () => {
@@ -825,6 +828,7 @@ describe('ImplementStepLoop', () => {
       const out = await new ImplementStepLoop(deps).execute({
         ...baseInput(),
         maxIterations: 3,
+        options: { endOnReview: false },
       });
       // After revert the second `runFix` invocation must carry typecheck errors.
       expect(fixOptsCapture.length).toBeGreaterThanOrEqual(2);
@@ -1795,7 +1799,11 @@ describe('ImplementStepLoop', () => {
         },
       });
       // fail verdict proceeds to quality-review and fix, NOT retried
-      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+      const out = await new ImplementStepLoop(deps).execute({
+        ...baseInput(),
+        maxIterations: 1,
+        options: { endOnReview: false },
+      });
       expect(out.outcome).toBe('failed'); // exhausted after 1 iter
       expect(specCalls).toBe(1);
     });
