@@ -136,6 +136,27 @@ export interface ArbiterResult {
   rationale: string;
 }
 
+/**
+ * Convergence-on-large-diffs options (#680). Mirrors `ReviewFixLoopOptions.endOnReview`:
+ * when true, the budget grants one trailing re-review whenever the last allowed
+ * iteration ended with `outcome: 'fixed'`. The trailing re-review does NOT
+ * count against `maxIterations` (the loop bumps `loop.maxIterations` to
+ * `originalMax + 1` for the trailing pass only).
+ *
+ * Set `endOnReview: false` to restore pre-#680 behavior bit-for-bit (the
+ * loop exhausts immediately when `canIterate` returns false, with no
+ * trailing pass).
+ */
+export interface ImplementStepLoopOptions {
+  /**
+   * When true (default), grant a trailing re-review pass at the cap if
+   * the cap iteration ended `fixed`. The trailing pass runs the
+   * top-of-iteration typecheck and the spec/quality reviews only;
+   * `runFix` is not invoked.
+   */
+  endOnReview?: boolean;
+}
+
 export interface ImplementStepLoopDeps {
   runImplement: (ctx: StepLoopContext, opts?: ImplementStepOptions) => Promise<ImplementResult>;
   runTypecheck: (ctx: StepLoopContext) => Promise<TypecheckResult>;
@@ -177,6 +198,11 @@ export interface ImplementStepLoopDeps {
   stallHistorySize?: number;
   now: () => Date;
   idFactory: () => string;
+  /**
+   * Convergence options (#680). See `ImplementStepLoopOptions`. If
+   * omitted, defaults to `{ endOnReview: true }`.
+   */
+  options?: ImplementStepLoopOptions;
 }
 
 export interface ImplementStepLoopInput {
@@ -188,6 +214,11 @@ export interface ImplementStepLoopInput {
   stepTitle: string;
   maxIterations: number;
   maxTypeCheckRetries?: number;
+  /**
+   * Convergence options (#680). Overrides any value on `Deps.options` per
+   * the precedent in `ReviewFixLoopOptions`. See `ImplementStepLoopOptions`.
+   */
+  options?: ImplementStepLoopOptions;
 }
 
 export interface ImplementStepLoopResult {

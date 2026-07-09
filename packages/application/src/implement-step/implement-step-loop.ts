@@ -2,7 +2,6 @@ import {
   createLoop,
   startIteration,
   completeIteration,
-  canIterate,
   exhaust,
   updateOpenIteration,
 } from '@ai-sdlc/domain';
@@ -103,6 +102,26 @@ export class ImplementStepLoop {
       now: deps.now(),
     });
     deps.loops.insert(loop);
+
+    // --- TRAILING RE-REVIEW OPTIONS (#680) ---
+    // Mirror ReviewFixLoop: merge Deps.options and Input.options, default
+    // `endOnReview` to `true` so a converged final fix is confirmed rather
+    // than silently discarded. Capture the original cap so the trailing
+    // pass can be gated on `iterationIndex === originalMax + 1`.
+    const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
+    const endOnReview = opts.endOnReview ?? true;
+    const originalMax = loop.maxIterations;
+
+    const canStartReviewCycle = (current: typeof loop): boolean => {
+      const reviewsStarted = current.iterations.length;
+      if (reviewsStarted < originalMax) return true;
+      // Trailing post-fix re-review: only when the last iteration ended
+      // with `fixed` (a fix commit was produced and verified).
+      if (!endOnReview) return false;
+      if (reviewsStarted > originalMax) return false;
+      const last = current.iterations[current.iterations.length - 1];
+      return last?.outcome === 'fixed';
+    };
 
     let consecutiveFixFailures = 0;
     let lastFixInvocationId: string | undefined;
@@ -344,9 +363,26 @@ export class ImplementStepLoop {
     }
 
     // Enter review-fix loop
-    while (canIterate(loop)) {
+    while (canStartReviewCycle(loop)) {
       const iterationIndex = loop.iterations.length + 1;
+      const isTrailingReview = iterationIndex === originalMax + 1;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
+
+      // --- TRAILING RE-REVIEW STARTED (#680) ---
+      if (isTrailingReview) {
+        // Mirror ReviewFixLoop: bump `loop.maxIterations` so the trailing
+        // pass is admitted by the underlying iteration machinery.
+        if (loop.iterations.length === originalMax) {
+          loop = { ...loop, maxIterations: loop.iterations.length + 1 };
+        }
+        this.emit(
+          input,
+          'loop.trailing_review.started',
+          'info',
+          `trailing re-review at iteration ${iterationIndex} after cap iteration ended fixed`,
+          { iteration: iterationIndex, originalMax, lastOutcome: 'fixed' },
+        );
+      }
 
       // --- TOP-OF-ITERATION TYPECHECK + OPTIONAL REVERT (#671) ---
       if (iterationIndex > 1) {
@@ -354,7 +390,14 @@ export class ImplementStepLoop {
         if (tcResult.outcome === 'fail') {
           // Try to revert the build-breaking fix if a previous fix exists with
           // a known-passing headBeforeFix captured.
-          if (lastFixHeadBeforeFix !== undefined && deps.revertFix !== undefined) {
+          // On the trailing re-review pass, never invoke revertFix — it
+          // would destroy the just-confirmed fix. Escalate to
+          // `needs_human_review` instead (#680).
+          if (
+            !isTrailingReview &&
+            lastFixHeadBeforeFix !== undefined &&
+            deps.revertFix !== undefined
+          ) {
             const reverted = await deps.revertFix(ctx, lastFixHeadBeforeFix);
             if (reverted) {
               this.emit(
@@ -537,6 +580,28 @@ export class ImplementStepLoop {
       const useFallback = escalateForFixFailures && deps.fixFallbackProfile !== undefined;
       if (useFallback) {
         this.emitEscalation(input, 'two_consecutive_fix_failures');
+      }
+
+      // --- TRAILING RE-REVIEW SHORT-CIRCUIT (#680) ---
+      // Reviews already ran above (the trailing pass skips `runFix`). If
+      // either review failed, the existing branch at line ~533 already
+      // fell through to the `runFix` invocation; intercept that here and
+      // record the trailing pass as `unresolved` then exit the loop.
+      if (isTrailingReview) {
+        loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+        deps.loops.update(loop);
+        await appendHistory(
+          buildHistoryEntry(
+            iterationIndex,
+            specReview,
+            qualityReview,
+            undefined,
+            undefined,
+            'unresolved',
+          ),
+        );
+        this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+        break;
       }
 
       // --- FIX ---
@@ -868,6 +933,12 @@ export class ImplementStepLoop {
       this.emitIterationCompleted(input, iterationIndex, 'fixed');
     }
 
+    // If the trailing re-review ran, `loop.maxIterations` already reflects
+    // `originalMax + 1` (mirrors `ReviewFixLoop.canStartReviewCycle`).
+    // Otherwise, `loop.maxIterations` still equals `originalMax`. The
+    // `exhaust` and `loop.exhausted` event both report the actual values
+    // verbatim, so operators can detect the trailing pass by comparing
+    // `maxIterations` to their input.
     loop = exhaust(loop, deps.now());
     deps.loops.update(loop);
     this.emit(
