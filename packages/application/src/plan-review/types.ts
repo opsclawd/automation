@@ -32,11 +32,20 @@ export interface PlanFixResult {
 export interface PlanFixOptions {
   historyContext?: string;
   reconciliationContext?: string;
+  manifestMismatch?: string;
 }
 
 export interface PlanReviewLoopDeps {
   runReview: (ctx: PlanReviewContext) => Promise<PlanReviewResult>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
+  /**
+   * Deterministic, no-LLM-call structural check that `plan.md`'s `## Task N`
+   * prose headings agree with `task-manifest.json` — the same check
+   * `implement`'s pre-flight gate runs. Returns a human-readable mismatch
+   * description, or `null` when in sync (including when there is no
+   * manifest to reconcile against).
+   */
+  checkManifestSync: (ctx: PlanReviewContext) => Promise<string | null>;
   runArbiter?: (ctx: PlanReviewContext, fixResult: PlanFixResult) => Promise<ArbiterResult>;
   /**
    * Distinct from `runArbiter`: invoked only for the trailing final-review-fail
