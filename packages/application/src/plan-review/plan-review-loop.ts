@@ -221,7 +221,12 @@ export class PlanReviewLoop {
               'plan-review.review.contradiction.resolved',
               'info',
               `arbiter resolved contradiction at iteration ${iterationIndex}: ${arbiterResult.outcome}`,
-              { ruling: arbiterResult.outcome, evidence: arbiterResult.evidence, iterationIndex },
+              {
+                ruling: arbiterResult.outcome,
+                resolvedBy: 'contradiction-arbiter',
+                evidence: arbiterResult.evidence,
+                iterationIndex,
+              },
             );
             loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(loop);
@@ -319,7 +324,11 @@ export class PlanReviewLoop {
           }
         }
 
-        if (!finalReview || finalReview.agentOutcome !== 'success' || finalReview.verdict === undefined) {
+        if (
+          !finalReview ||
+          finalReview.agentOutcome !== 'success' ||
+          finalReview.verdict === undefined
+        ) {
           this.emit(
             input,
             'plan-review.reviewer.failed',
@@ -403,8 +412,112 @@ export class PlanReviewLoop {
             outcome: 'success',
             loop,
             proceedWithConcerns: true,
-            ...(finalReview.knownLimitations ? { knownLimitations: finalReview.knownLimitations } : {}),
+            ...(finalReview.knownLimitations
+              ? { knownLimitations: finalReview.knownLimitations }
+              : {}),
           };
+        }
+
+        if (deps.runFinalReviewArbiter !== undefined) {
+          this.emit(
+            input,
+            'plan-review.final_review.arbiter.escalated',
+            'warn',
+            `escalating final review fail to arbiter at iteration ${finalIterationIndex}`,
+            { reason: 'final_review_fail', iterationIndex: finalIterationIndex },
+          );
+          const arbiterResult = await deps.runFinalReviewArbiter(finalCtx, finalReview);
+          if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
+            this.emit(
+              input,
+              'plan-review.needs_human_review',
+              'warn',
+              `final review arbiter returned empty evidence at iteration ${finalIterationIndex} — escalating to human`,
+              { iterationIndex: finalIterationIndex, outcome: arbiterResult.outcome },
+            );
+            const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+              index: finalIterationIndex,
+              reviewInvocationId: finalReview.invocationId,
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              // 'failed' covers both "fixer failed" and "arbiter returned empty evidence"
+              // (G1 guardrail). Consumers should use the iteration event metadata to
+              // distinguish the two when needed.
+              outcome: 'failed',
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, finalIteration],
+            };
+            this.emit(
+              input,
+              'plan-review.loop.iteration.completed',
+              'info',
+              `iteration ${finalIterationIndex} completed: failed`,
+              { index: finalIterationIndex, outcome: 'failed' },
+            );
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+          }
+          if (arbiterResult.outcome === 'finding_invalid') {
+            this.emit(
+              input,
+              'plan-review.final_review.arbiter.resolved',
+              'info',
+              `arbiter resolved final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome}`,
+              {
+                ruling: arbiterResult.outcome,
+                resolvedBy: 'final-review-arbiter',
+                evidence: arbiterResult.evidence,
+                iterationIndex: finalIterationIndex,
+              },
+            );
+            const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
+              index: finalIterationIndex,
+              reviewInvocationId: finalReview.invocationId,
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              outcome: 'resolved',
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, finalIteration],
+              status: 'converged',
+              completedAt: deps.now(),
+            };
+            deps.loops.update(loop);
+            this.emit(
+              input,
+              'plan-review.loop.iteration.completed',
+              'info',
+              `iteration ${finalIterationIndex} completed: resolved`,
+              {
+                index: finalIterationIndex,
+                outcome: 'resolved',
+                resolvedBy: 'final-review-arbiter',
+              },
+            );
+            return {
+              outcome: 'success',
+              loop,
+              proceedWithConcerns: false,
+              ...(finalReview.knownLimitations
+                ? { knownLimitations: finalReview.knownLimitations }
+                : {}),
+            };
+          }
+          this.emit(
+            input,
+            'plan-review.final_review.arbiter.resolved',
+            'info',
+            `arbiter could not resolve final review fail at iteration ${finalIterationIndex}: ${arbiterResult.outcome}`,
+            {
+              ruling: arbiterResult.outcome,
+              evidence: arbiterResult.evidence,
+              iterationIndex: finalIterationIndex,
+            },
+          );
         }
 
         const finalIteration: import('@ai-sdlc/domain').LoopIteration = {

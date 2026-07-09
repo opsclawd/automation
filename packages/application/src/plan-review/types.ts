@@ -38,6 +38,21 @@ export interface PlanReviewLoopDeps {
   runReview: (ctx: PlanReviewContext) => Promise<PlanReviewResult>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
   runArbiter?: (ctx: PlanReviewContext, fixResult: PlanFixResult) => Promise<ArbiterResult>;
+  /**
+   * Distinct from `runArbiter`: invoked only for the trailing final-review-fail
+   * path, which has no `PlanFixResult` (no fixer ran in that pass). Kept as a
+   * separate field rather than an overload so there is no way to accidentally
+   * pass a stale or synthesized fix result into it. Concretely, if these two
+   * fields were collapsed (e.g. by giving `runArbiter` a `fixResult?` optional
+   * parameter), a future maintainer could pass an empty `PlanFixResult`
+   * synthesized from the trailing review's verdict, causing the arbiter to
+   * rule on a fabricated fix result and silently override a real review
+   * finding. The current shape makes that misuse unrepresentable.
+   */
+  runFinalReviewArbiter?: (
+    ctx: PlanReviewContext,
+    finalReview: PlanReviewResult,
+  ) => Promise<ArbiterResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;
   /** Max reviewer retries on `agentOutcome !== 'success'` (parity #297). Default 2. */

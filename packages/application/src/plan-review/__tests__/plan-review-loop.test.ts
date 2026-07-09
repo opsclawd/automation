@@ -38,10 +38,13 @@ function baseInput() {
   };
 }
 
-function makeDeps(over: Partial<PlanReviewLoopDeps>): PlanReviewLoopDeps {
+function makeDeps(over: Partial<PlanReviewLoopDeps>): {
+  deps: PlanReviewLoopDeps;
+  events: ReturnType<typeof collectEvents>['events'];
+} {
   let n = 0;
-  const { bus } = collectEvents();
-  return {
+  const { bus, events } = collectEvents();
+  const deps: PlanReviewLoopDeps = {
     runReview: async (_ctx: PlanReviewContext): Promise<PlanReviewResult> => ({
       invocationId: `rev-${++n}`,
       agentOutcome: 'success' as const,
@@ -59,11 +62,12 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): PlanReviewLoopDeps {
     idFactory: () => 'loop-1',
     ...over,
   };
+  return { deps, events };
 }
 
 describe('PlanReviewLoop', () => {
   it('AC #5.1 — pass on first review', async () => {
-    const deps = makeDeps({});
+    const { deps } = makeDeps({});
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
     expect(out.loop.status).toBe('converged');
@@ -74,7 +78,7 @@ describe('PlanReviewLoop', () => {
 
   it('AC #5.2 — fix then pass', async () => {
     let reviewCalls = 0;
-    const deps = makeDeps({
+    const { deps } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {
@@ -98,7 +102,7 @@ describe('PlanReviewLoop', () => {
 
   it('AC #5.3 — contradiction → arbiter → finding_invalid', async () => {
     let reviewCalls = 0;
-    const deps = makeDeps({
+    const { deps } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {
@@ -127,7 +131,7 @@ describe('PlanReviewLoop', () => {
   it('AC #5.4 — contradiction → arbiter → finding_valid → eventually passes', async () => {
     let reviewCalls = 0;
     let fixCalls = 0;
-    const deps = makeDeps({
+    const { deps } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {
@@ -160,7 +164,7 @@ describe('PlanReviewLoop', () => {
   });
 
   it('AC #5.5 — exhaustion → needs_human_review', async () => {
-    const deps = makeDeps({
+    const { deps } = makeDeps({
       maxIterations: 2,
       runReview: async (): Promise<PlanReviewResult> => ({
         invocationId: 'rev-x',
@@ -182,7 +186,7 @@ describe('PlanReviewLoop', () => {
 
   it('final fixer pass resolves P1 findings on the last allowed iteration', async () => {
     let reviewCalls = 0;
-    const deps = makeDeps({
+    const { deps } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {
@@ -207,9 +211,198 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations[2]?.outcome).toBe('resolved');
   });
 
+  it('AC #683.3.a — trailing final review fail + arbiter finding_invalid → success', async () => {
+    let reviewCalls = 0;
+    let arbiterCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+        arbiterCalls += 1;
+        return {
+          outcome: 'finding_invalid',
+          evidence: 'plan section 3 already covers this',
+          rationale: 'the trailing finding misreads the plan',
+        };
+      },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(arbiterCalls).toBe(1);
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.escalated');
+    expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.resolved');
+    const resolvedEvent = events.find(
+      (e) => e.type === 'plan-review.final_review.arbiter.resolved',
+    );
+    expect(resolvedEvent?.metadata).toMatchObject({
+      resolvedBy: 'final-review-arbiter',
+    });
+    const completedEvent = events.filter(
+      (e) => e.type === 'plan-review.loop.iteration.completed',
+    )[2];
+    expect(completedEvent?.metadata).toMatchObject({
+      outcome: 'resolved',
+      resolvedBy: 'final-review-arbiter',
+    });
+  });
+
+  it('AC #683.3.b — trailing final review fail + arbiter finding_valid → needs_human_review', async () => {
+    let reviewCalls = 0;
+    let arbiterCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+        arbiterCalls += 1;
+        return {
+          outcome: 'finding_valid',
+          evidence: 'defect is real and not addressed by prior fixes',
+          rationale: 'the trailing reviewer identified a genuine gap',
+        };
+      },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(arbiterCalls).toBe(1);
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+    expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.escalated');
+    expect(events.map((e) => e.type)).toContain('plan-review.final_review.arbiter.resolved');
+  });
+
+  it('AC #683.3.c — trailing final review fail + no runFinalReviewArbiter configured → needs_human_review (regression)', async () => {
+    let reviewCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+    expect(events.map((e) => e.type)).not.toContain('plan-review.final_review.arbiter.escalated');
+  });
+
+  it('trailing final review fail + arbiter finding_valid → needs_human_review', async () => {
+    let reviewCalls = 0;
+    let arbiterCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+        arbiterCalls += 1;
+        return {
+          outcome: 'finding_valid',
+          evidence: 'plan section 5 is missing the migration step',
+          rationale: 'the trailing finding is correct',
+        };
+      },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(arbiterCalls).toBe(1);
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('unresolved');
+  });
+
+  it('trailing final review fail + arbiter returns empty evidence → needs_human_review (G1 guardrail)', async () => {
+    let reviewCalls = 0;
+    let arbiterCalls = 0;
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'p1_found' as const,
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-y',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+        arbiterCalls += 1;
+        return {
+          outcome: 'insufficient_evidence',
+          evidence: '   ',
+          rationale: 'artifacts unreadable',
+        };
+      },
+    });
+    const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(arbiterCalls).toBe(1);
+    expect(out.loop.iterations).toHaveLength(3);
+    expect(out.loop.iterations[2]?.outcome).toBe('failed');
+    const completedEvents = events.filter((e) => e.type === 'plan-review.loop.iteration.completed');
+    expect(completedEvents).toHaveLength(3);
+    expect(completedEvents[2]?.metadata).toMatchObject({
+      index: 3,
+      outcome: 'failed',
+    });
+  });
+
   it('parity #297 — reviewer retries on agent failure then converges', async () => {
     let reviewCalls = 0;
-    const deps = makeDeps({
+    const { deps } = makeDeps({
       runReview: async (): Promise<PlanReviewResult> => {
         reviewCalls += 1;
         return {

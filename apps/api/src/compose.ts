@@ -184,6 +184,8 @@ import { createImplementStepHistoryFilePort } from './implement-step-history-fil
 import {
   buildPlanReviewArbiterPrompt,
   readPlanReviewExcerpts,
+  buildPlanReviewFinalReviewArbiterPrompt,
+  readPlanReviewFinalExcerpts,
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
 } from './plan-review-prompts.js';
@@ -3062,6 +3064,10 @@ export function composeRoot(opts: ComposeOptions): Container {
               })();
 
               try {
+                rmSync(join(ctx.cwd, 'result.json'), { force: true });
+              } catch {}
+
+              try {
                 await artifactAgent.invoke({
                   profile: AgentProfileName(planReviewArbiterProfileName),
                   promptPath,
@@ -3112,10 +3118,106 @@ export function composeRoot(opts: ComposeOptions): Container {
             }
           : undefined;
 
+      const planReviewFinalReviewRunArbiter:
+        | PlanReviewLoopDeps['runFinalReviewArbiter']
+        | undefined = planReviewArbiterProfileName
+        ? async (
+            ctx: import('@ai-sdlc/application').PlanReviewContext,
+            // Reserved for future use: the trailing arbiter's prompt may include
+            // a summary of the failing review verdict (verdict, invocationId).
+            // Part of the `runFinalReviewArbiter` type contract — do not drop.
+            _finalReview: import('@ai-sdlc/application').PlanReviewResult,
+          ): Promise<PlanReviewArbiterResult> => {
+            const promptDir = join(baseTmpDir, 'plan-review-prompts');
+            mkdirSync(promptDir, { recursive: true });
+            const promptPath = join(
+              promptDir,
+              `plan-review-final-review-arbiter-${String(ctx.runId)}-${ctx.iterationIndex}.md`,
+            );
+            const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+            const { planExcerpt, findingsExcerpt } = await readPlanReviewFinalExcerpts(
+              artifacts,
+              String(ctx.runId),
+            );
+            const arbiterPrompt = buildPlanReviewFinalReviewArbiterPrompt(
+              { cwd: ctx.cwd, runId: String(ctx.runId) },
+              { planExcerpt, findingsExcerpt },
+            );
+            writeFileSync(promptPath, arbiterPrompt, 'utf-8');
+
+            const startCommitSha = (() => {
+              try {
+                return execFileSync('git', ['rev-parse', 'HEAD'], {
+                  cwd: ctx.cwd,
+                  encoding: 'utf-8',
+                }).trim();
+              } catch {
+                return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+              }
+            })();
+
+            try {
+              rmSync(join(ctx.cwd, 'result.json'), { force: true });
+            } catch {}
+
+            try {
+              await artifactAgent.invoke({
+                profile: AgentProfileName(planReviewArbiterProfileName),
+                promptPath,
+                expectedArtifacts: ['result.json'],
+                cwd: ctx.cwd,
+                runId: String(ctx.runId),
+                repoId: ctx.repoId,
+                phaseId: 'plan-review-arbiter',
+                startCommitSha,
+              });
+            } catch (err) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
+              };
+            }
+            const invocationId = newestInvocationId(String(ctx.runId));
+            const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+            if (!inv) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: 'arbiter invocation produced no row',
+              };
+            }
+            const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+            const verdict = await extractResult({
+              invocation: patched,
+              ports: { artifacts, agent: artifactAgent },
+            });
+            if (!verdict.ok) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `arbiter result.json unparseable: ${verdict.detail}`,
+              };
+            }
+            const parsed = arbiterResultSchema.safeParse(verdict.result);
+            if (!parsed.success) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: 'Zod parse error',
+              };
+            }
+            return parsed.data as PlanReviewArbiterResult;
+          }
+        : undefined;
+
       const planReviewLoop = new PlanReviewLoop({
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
+        ...(planReviewFinalReviewRunArbiter
+          ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }
+          : {}),
         loops: loopRepository,
         events: persistingEventBusForLoop,
         reviewerMaxRetries: 2,
