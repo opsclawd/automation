@@ -794,6 +794,10 @@ export class ImplementStepLoop {
           // destroy the evidence #679 exists to preserve. Reverting is only
           // correct for the separate build-breaking-fix case (#671), which
           // has its own dedicated branch elsewhere in this loop.
+          // Clear lastFixHeadBeforeFix so the next iteration's build-breaking
+          // typecheck path does NOT revert to the pre-fix SHA and destroy the
+          // dirty fix attempts (#679 review feedback).
+          lastFixHeadBeforeFix = undefined;
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
           continue;
         }
@@ -829,6 +833,9 @@ export class ImplementStepLoop {
               verification,
             ),
           );
+          // Same rationale as uncommitted_changes: do not let the next
+          // iteration's build-breaking rollback destroy the fixer's output.
+          lastFixHeadBeforeFix = undefined;
           this.emitIterationCompleted(input, iterationIndex, 'unresolved');
           continue;
         }
