@@ -3408,7 +3408,11 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       // Wire remaining phase handlers that require agent dependencies
       phaseRegistry.register(new PlanDesignHandler());
-      phaseRegistry.register(new PlanWriteHandler());
+      phaseRegistry.register(
+        new PlanWriteHandler({
+          maxRepairAttempts: config.phases.planWrite?.maxRepairAttempts ?? 2,
+        }),
+      );
       phaseRegistry.register(
         new PlanReviewHandler({
           loop: planReviewLoop,
