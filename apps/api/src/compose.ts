@@ -166,7 +166,10 @@ import {
   RepositoryRegistryRepository,
 } from '@ai-sdlc/infrastructure';
 import { createArtifactCapturingAgent } from './durable-agent-artifacts.js';
-import { buildArbiterPrompt } from './arbiter-prompt.js';
+import {
+  buildArbiterPrompt,
+  buildImplementStepFinalReviewArbiterPrompt,
+} from './arbiter-prompt.js';
 import { resolveArbiterProfileName } from './arbiter-profile.js';
 import { buildArchitectPrompt } from './architect-prompt.js';
 import { resolveArchitectProfileName } from './architect-profile.js';
@@ -176,6 +179,7 @@ import {
   QUALITY_REVIEW_RESULT_ARTIFACT,
   SPEC_REVIEW_RESULT_ARTIFACT,
   readArbiterExcerpts,
+  readImplementStepFinalReviewExcerpts,
 } from './arbiter-excerpts.js';
 import { buildLintTaskSize } from './lint-task-size.js';
 import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from './review-fix-prompts.js';
@@ -2808,6 +2812,120 @@ export function composeRoot(opts: ComposeOptions): Container {
           }
         : undefined;
 
+      // --- TRAILING RE-REVIEW ARBITER (#690) ---
+      // The trailing re-review pass (added by #680) is review-only: no fixer
+      // runs after it. Reusing the mid-loop `runArbiter` shape here would
+      // synthesize a fake `FixResult` with `verdict: 'done_no_fixes_needed'`
+      // and a placeholder rebuttal — lying to the arbiter about a fixer
+      // having evaluated the finding. Instead, this closure uses a
+      // trailing-pass-specific prompt (`buildImplementStepFinalReviewArbiterPrompt`)
+      // and reads only the spec/quality excerpts via
+      // `readImplementStepFinalReviewExcerpts`.
+      const implementFinalReviewRunArbiter:
+        | ImplementStepLoopDeps['runFinalReviewArbiter']
+        | undefined = arbiterProfileName
+        ? async (ctx, tcResult, specReview, qualityReview): Promise<LoopArbiterResult> => {
+            const promptDir = join(baseTmpDir, 'implement-step-prompts');
+            mkdirSync(promptDir, { recursive: true });
+            const promptPath = join(
+              promptDir,
+              `arbiter-final-review-${String(ctx.runId)}-${ctx.stepIndex}-${ctx.iterationIndex}.md`,
+            );
+            const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
+
+            const { specExcerpt, qualityExcerpt } = await readImplementStepFinalReviewExcerpts(
+              artifacts,
+              String(ctx.runId),
+            );
+
+            let taskBody = '';
+            try {
+              const plan = await artifacts.read(String(ctx.runId), 'plan.md');
+              const parsed = parseTaskManifest(
+                await artifacts.read(String(ctx.runId), 'task-manifest.json'),
+              );
+              const titleMatch =
+                parsed.success && parsed.manifest.tasks.find((t) => t.n === ctx.stepIndex)?.title;
+              const extracted = extractTaskBody(plan, {
+                taskNumber: ctx.stepIndex,
+                ...(titleMatch ? { title: titleMatch } : {}),
+              });
+              taskBody = extracted.ok ? extracted.body : '';
+            } catch {
+              taskBody = '';
+            }
+
+            const arbiterPrompt = buildImplementStepFinalReviewArbiterPrompt(
+              { stepIndex: ctx.stepIndex, stepTitle: ctx.stepTitle, cwd: ctx.cwd },
+              { tcResult, specExcerpt, qualityExcerpt, taskBody },
+            );
+            writeFileSync(promptPath, arbiterPrompt, 'utf-8');
+
+            const startCommitSha = (() => {
+              try {
+                return execFileSync('git', ['rev-parse', 'HEAD'], {
+                  cwd: ctx.cwd,
+                  encoding: 'utf-8',
+                }).trim();
+              } catch {
+                return resolveStartCommitSha(ctx.cwd, String(ctx.runId));
+              }
+            })();
+
+            try {
+              rmSync(join(ctx.cwd, 'result.json'), { force: true });
+            } catch {}
+
+            try {
+              await artifactAgent.invoke({
+                profile: AgentProfileName(arbiterProfileName),
+                promptPath,
+                expectedArtifacts: ['result.json'],
+                cwd: ctx.cwd,
+                runId: String(ctx.runId),
+                repoId: ctx.repoId,
+                phaseId: 'arbiter',
+                startCommitSha,
+              });
+            } catch (err) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `trailing review arbiter invocation threw: ${err instanceof Error ? err.message : String(err)}`,
+              };
+            }
+
+            const invocationId = newestInvocationId(String(ctx.runId));
+            const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
+            if (!inv) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: 'trailing review arbiter invocation produced no row',
+              };
+            }
+            const patched = inv.resultJsonPath ? inv : { ...inv, resultJsonPath: 'result.json' };
+            const verdict = await extractResult({
+              invocation: patched,
+              ports: { artifacts, agent: artifactAgent },
+            });
+            if (!verdict.ok) {
+              return {
+                outcome: 'insufficient_evidence',
+                evidence: '',
+                rationale: `trailing review arbiter result.json unparseable: ${verdict.detail}`,
+              };
+            }
+            // The spec/quality review invocation rows are intentionally
+            // ignored: their `verdict` data is already conveyed through the
+            // archived excerpts above. The arbiter's job is to rule on the
+            // finding, not re-litigate the verdicts.
+            void specReview;
+            void qualityReview;
+            return arbiterResultSchema.parse(verdict.result) as LoopArbiterResult;
+          }
+        : undefined;
+
       implementStepLoop = new ImplementStepLoop({
         runImplement,
         runTypecheck,
@@ -2815,6 +2933,9 @@ export function composeRoot(opts: ComposeOptions): Container {
         runQualityReview,
         runFix: implRunFix,
         ...(runArbiter ? { runArbiter } : {}),
+        ...(implementFinalReviewRunArbiter
+          ? { runFinalReviewArbiter: implementFinalReviewRunArbiter }
+          : {}),
         loops: loopRepository,
         events: persistingEventBusForLoop,
         fixProfile: AgentProfileName(implFixProfileName),

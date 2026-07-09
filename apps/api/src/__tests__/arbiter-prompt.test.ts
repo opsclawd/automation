@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildArbiterPrompt } from '../arbiter-prompt.js';
+import {
+  buildArbiterPrompt,
+  buildImplementStepFinalReviewArbiterPrompt,
+} from '../arbiter-prompt.js';
 
 const ctx = {
   stepIndex: 4,
@@ -135,6 +138,77 @@ describe('buildArbiterPrompt', () => {
       qualityExcerpt: '',
       fixExcerpt: '',
       fixRebuttal: '',
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain('Result: PASS');
+    expect(prompt).not.toContain('TS2304');
+  });
+});
+
+describe('buildImplementStepFinalReviewArbiterPrompt (#690)', () => {
+  it('includes Task heading, CONTEXT, INPUTS, DECISION FRAMEWORK, OUTPUT sections', () => {
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      specExcerpt: '{"result":"fail","findings":[]}',
+      qualityExcerpt: '{"result":"fail","findings":[]}',
+      taskBody: '## Task 4: Add the foo() helper',
+    });
+    expect(prompt).toContain('# TASK');
+    expect(prompt).toContain('## CONTEXT');
+    expect(prompt).toContain('## INPUTS');
+    expect(prompt).toContain('## DECISION FRAMEWORK');
+    expect(prompt).toContain('## OUTPUT');
+  });
+
+  it('does not include a fabricated fixer narrative (#690 amendment)', () => {
+    // No fixer ran on the trailing pass. The prompt MUST NOT reference
+    // `done_no_fixes_needed`, `fixer`, `fixExcerpt`, or `rebuttal` —
+    // including any of these would lie to the arbiter about a fixer
+    // having run.
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      specExcerpt: '',
+      qualityExcerpt: '',
+      taskBody: '## Task 4: Add the foo() helper',
+    });
+    expect(prompt).not.toContain('done_no_fixes_needed');
+    expect(prompt).not.toContain('fixExcerpt');
+    expect(prompt).not.toContain('fixer rebuttal');
+    expect(prompt).not.toContain('Fixer rebuttal');
+    expect(prompt).not.toContain('fix-result.json');
+  });
+
+  it('lists the four outcome enum values in DECISION FRAMEWORK', () => {
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      tcResult: { outcome: 'fail', output: 'TS2304' },
+      specExcerpt: '',
+      qualityExcerpt: '',
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain('finding_valid');
+    expect(prompt).toContain('finding_invalid');
+    expect(prompt).toContain('ambiguous');
+    expect(prompt).toContain('insufficient_evidence');
+  });
+
+  it('embeds spec/quality excerpts when provided', () => {
+    const specExcerpt = '{"result":"fail","findings":[{"severity":"P0","summary":"x"}]}';
+    const qualityExcerpt = '{"result":"fail","findings":[{"severity":"P2","summary":"q"}]}';
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      specExcerpt,
+      qualityExcerpt,
+      taskBody: 'stub',
+    });
+    expect(prompt).toContain(specExcerpt);
+    expect(prompt).toContain(qualityExcerpt);
+  });
+
+  it('marks typecheck as PASS when typecheck succeeded', () => {
+    const prompt = buildImplementStepFinalReviewArbiterPrompt(ctx, {
+      tcResult: { outcome: 'pass', output: '' },
+      specExcerpt: '',
+      qualityExcerpt: '',
       taskBody: 'stub',
     });
     expect(prompt).toContain('Result: PASS');
