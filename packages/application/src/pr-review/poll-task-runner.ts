@@ -9,7 +9,7 @@ import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import { verifyComment } from './verify-comment.js';
-import { ContextSelector, type SelectedContext } from './context-selector.js';
+import { type SelectedContext, DefaultContextSelector } from './context-selector.js';
 
 export interface PollTaskRunnerDeps {
   github: GitHubPort;
@@ -88,7 +88,7 @@ export class PollTaskRunner {
     await d.git.cleanUntracked(input.cwd);
 
     // 1. Select context
-    const selector = new ContextSelector(d.git);
+    const selector = new DefaultContextSelector(d.git);
     const selectedContext = await selector.select({
       cwd: input.cwd,
       comments: input.comments,
