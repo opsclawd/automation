@@ -3,6 +3,7 @@ import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { ArbiterResult } from '../implement-step/types.js';
+import type { PlanReviewFinding } from './evidence-resolver-port.js';
 
 export interface PlanReviewContext {
   loopId: string;
@@ -19,6 +20,53 @@ export interface PlanReviewResult {
   verdict?: 'pass' | 'p1_found' | 'p2_only' | 'proceed_with_concerns';
   /** Free-text summary of findings, surfaced for the handler's append-to-plan path. */
   knownLimitations?: string;
+  /**
+   * Structured findings parsed from the reviewer's `plan-review-findings.md`
+   * artifact (#716). Loop-internal; not exposed on `PlanReviewLoopResult`.
+   * When omitted (e.g. reviewer agent failure), the loop treats the review
+   * as having no eligible findings.
+   */
+  findings?: ReadonlyArray<PlanReviewFinding>;
+}
+
+/**
+ * Structured finding produced by the plan-review reviewer, parsed from
+ * `plan-review-findings.md`. Each finding MUST have a `citation` (path:line
+ * or section anchor) and a `failureScenario` (one-sentence defect
+ * description) for P0/P1 severity. `evidence` reflects whether the citation
+ * resolved against the artifact store (#716, AC #3).
+ *
+ * The shape lives in `./evidence-resolver-port.ts` so the port file does
+ * not depend on `types.ts` (avoiding a circular import). Re-exported here
+ * for callers that already depend on `types.ts`.
+ */
+// Re-export from the port file (defined there to avoid a cycle).
+export type { PlanReviewFinding, EvidenceResolver } from './evidence-resolver-port.js';
+
+/**
+ * Options the loop passes to `PlanReviewLoopDeps.runReview` for iteration
+ * N >= 2 when delta scoping is enabled (#716).
+ */
+export interface PlanReviewStepOptions {
+  /**
+   * The finding set frozen at the end of iteration 1's review. The loop
+   * keeps this constant across iterations; the reviewer uses it as the
+   * "previously open findings" payload for the SCOPE/DISPOSITION GUIDANCE
+   * block.
+   */
+  prevFindings?: ReadonlyArray<PlanReviewFinding>;
+  /**
+   * Citations for text introduced by the most recent fix invocation. A
+   * new finding whose citation is in this set is eligible to contribute
+   * to the verdict on iteration N >= 2; findings outside this set are
+   * dropped from verdict computation as `out_of_scope`.
+   *
+   * Populated by the loop-internal `lastFixDiffCitations` state, which the
+   * composition-root adapter refreshes after each fix invocation via
+   * `deps.computeLastFixDiffCitations(headBeforeFix)` (#716, design
+   * §2.5 / §7.1).
+   */
+  recentFixCitations?: ReadonlyArray<string>;
 }
 
 export interface PlanFixResult {
@@ -27,6 +75,22 @@ export interface PlanFixResult {
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
   rebuttal?: string;
   summary?: string;
+  /**
+   * The git HEAD SHA captured BEFORE the fixer wrote its commit (#716,
+   * design §7.1). The composition-root adapter computes
+   * `git diff <headBeforeFix>..HEAD -- plan.md` line ranges from this and
+   * the loop uses them as `lastFixDiffCitations` for the next iteration's
+   * SCOPE block.
+   *
+   * Populated by `planReviewRunFix` in `apps/api/src/compose.ts` from the
+   * `startCommitSha` it captures before invoking the fixer. When absent
+   * (e.g. fixer failure, or `agentOutcome !== 'success'`), the loop treats
+   * the next iteration as having no recent-fix citations — every new
+   * finding from the reviewer is classified `out_of_scope` and dropped from
+   * verdict computation. This is the safe default: never promote a
+   * citation to in-scope when we cannot prove the fix touched it.
+   */
+  headBeforeFix?: string;
 }
 
 export interface PlanFixOptions {
@@ -41,10 +105,34 @@ export interface PlanReviewLoopOptions {
    * trailing review arbiter rules `finding_valid`.
    */
   bonusIteration?: boolean;
+  /**
+   * When true (default), iteration >= 2 threads `prevFindings` +
+   * `recentFixCitations` into `runReview` and enforces the evidence-bound
+   * gate + out-of-scope drop (#716). Set to false to restore pre-#716
+   * behavior bit-for-bit. Mirrors `ReviewFixLoopOptions.deltaScopedReReview`.
+   */
+  deltaScopedReReview?: boolean;
 }
 
 export interface PlanReviewLoopDeps {
-  runReview: (ctx: PlanReviewContext) => Promise<PlanReviewResult>;
+  runReview: (ctx: PlanReviewContext, opts?: PlanReviewStepOptions) => Promise<PlanReviewResult>;
+  /**
+   * Composition-root seam for refreshing the loop's internal
+   * `lastFixDiffCitations` after each fix invocation (#716, fix to reviewer
+   * finding #1). The loop calls this with the `headBeforeFix` SHA captured
+   * by the fixer adapter; the composition root uses it to compute
+   * `git diff <headBeforeFix>..HEAD -- plan.md` line ranges and returns
+   * them as `plan.md:N` or `plan.md:N-M` citation strings.
+   *
+   * When `headBeforeFix` is undefined (fixer failure, no fix this
+   * iteration), the composition root returns `[]` — every new finding
+   * from the next reviewer is classified `out_of_scope` and dropped from
+   * verdict computation (the safe default per reviewer finding #1).
+   *
+   * The application package does NOT call `git` directly; this dep is
+   * the layer-rule-safe indirection.
+   */
+  computeLastFixDiffCitations: (headBeforeFix: string | undefined) => ReadonlyArray<string>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
   /**
    * Deterministic, no-LLM-call structural check that `plan.md`'s `## Task N`
