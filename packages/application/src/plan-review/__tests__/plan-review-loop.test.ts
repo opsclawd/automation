@@ -39,6 +39,17 @@ function baseInput() {
   };
 }
 
+function groundedP1Findings(citation = 'plan.md:42'): ReadonlyArray<PlanReviewFinding> {
+  return [
+    {
+      severity: 'P1' as const,
+      citation,
+      failureScenario: 'Missing transition handler',
+      evidence: 'grounded' as const,
+    },
+  ];
+}
+
 function makeDeps(over: Partial<PlanReviewLoopDeps>): {
   deps: PlanReviewLoopDeps;
   events: ReturnType<typeof collectEvents>['events'];
@@ -57,7 +68,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       verdict: 'done_with_fixes' as const,
     }),
     checkManifestSync: async (_ctx: PlanReviewContext): Promise<string | null> => null,
-    computeLastFixDiffCitations: () => [],
+    computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
@@ -79,6 +90,22 @@ describe('PlanReviewLoop', () => {
     expect(out.proceedWithConcerns).toBe(false);
   });
 
+  it('delta-scoped re-review normalizes missing findings to an empty set', async () => {
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success' as const,
+        verdict: 'p1_found' as const,
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    expect(events.some((e) => e.type === 'plan-review.review.evidence.gate_applied')).toBe(true);
+  });
+
   it('AC #5.2 — fix then pass', async () => {
     let reviewCalls = 0;
     const { deps } = makeDeps({
@@ -88,6 +115,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 1 ? ('p1_found' as const) : ('pass' as const),
+          findings: reviewCalls === 1 ? groundedP1Findings() : [],
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -112,6 +140,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -141,6 +170,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+          findings: reviewCalls === 2 ? [] : groundedP1Findings(),
         };
       },
       runFix: async (_ctx: PlanReviewContext, opts: PlanFixOptions): Promise<PlanFixResult> => {
@@ -173,6 +203,7 @@ describe('PlanReviewLoop', () => {
         invocationId: 'rev-x',
         agentOutcome: 'success' as const,
         verdict: 'p1_found' as const,
+        findings: groundedP1Findings(),
       }),
       runFix: async (): Promise<PlanFixResult> => ({
         invocationId: 'fix-x',
@@ -224,7 +255,7 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 1 ? 'fix-head-1' : 'fix-head-2',
         };
       },
-      computeLastFixDiffCitations: (headBeforeFix) =>
+      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
         headBeforeFix === 'fix-head-1'
           ? ['plan.md:42']
           : headBeforeFix === 'fix-head-2'
@@ -273,6 +304,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+          findings: reviewCalls === 2 ? [] : groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -280,16 +312,26 @@ describe('PlanReviewLoop', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
       }),
-      computeLastFixDiffCitations: (headBeforeFix) => {
-        computeCalls.push(headBeforeFix);
+      computeLastFixDiffCitations: (cwd, headBeforeFix) => {
+        computeCalls.push(`${cwd}:${headBeforeFix ?? 'undefined'}`);
         return [];
       },
     });
 
     const out = await new PlanReviewLoop(deps).execute(baseInput());
     expect(out.outcome).toBe('success');
-    expect(computeCalls).toEqual([undefined]);
-    expect(reviewOptions[1]).toBeUndefined();
+    expect(computeCalls).toEqual(['/wt:undefined']);
+    expect(reviewOptions[1]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+          disposition: 'still_open',
+        },
+      ],
+    });
   });
 
   it('AC #683.3.a — trailing final review fail + arbiter finding_invalid → success', async () => {
@@ -302,6 +344,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -352,6 +395,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -389,6 +433,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -416,6 +461,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -452,6 +498,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -529,7 +576,7 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 3 ? 'bonus-fix-head' : `fix-head-${fixCalls}`,
         };
       },
-      computeLastFixDiffCitations: (headBeforeFix) =>
+      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
         headBeforeFix === 'bonus-fix-head'
           ? ['plan.md:99-101']
           : headBeforeFix === 'fix-head-1'
@@ -580,6 +627,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -607,6 +655,7 @@ describe('PlanReviewLoop', () => {
         invocationId: 'rev-x',
         agentOutcome: 'success' as const,
         verdict: 'p1_found' as const,
+        findings: groundedP1Findings(),
       }),
       runFix: async (): Promise<PlanFixResult> => ({
         invocationId: 'fix-x',
@@ -717,6 +766,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls <= 3 ? ('p1_found' as const) : ('pass' as const),
+          findings: reviewCalls <= 3 ? groundedP1Findings() : [],
         };
       },
       checkManifestSync: async (ctx: PlanReviewContext) =>
@@ -791,6 +841,7 @@ describe('PlanReviewLoop', () => {
         invocationId: 'rev-1',
         agentOutcome: 'success' as const,
         verdict: 'p1_found' as const,
+        findings: groundedP1Findings(),
       }),
       checkManifestSync: async () => {
         checkCalls += 1;

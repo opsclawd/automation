@@ -157,12 +157,17 @@ export interface PlanReviewLoopDeps {
    * The application package does NOT call `git` directly; this dep is
    * the layer-rule-safe indirection.
    *
-   * The composition root must bind the run's workspace path in its closure
-   * and expose only the `headBeforeFix` input here. That keeps the loop
-   * contract deterministic and prevents the call sites from silently
-   * skipping citation refreshes.
+   * The first parameter is the per-iteration `cwd` (#716, fix to reviewer
+   * finding #2: do not read `cwd` from a shared mutable closure in the
+   * composition root — overlapping plan-review runs would compute
+   * citations against the wrong workspace). Always thread the active
+   * `ctx.cwd` through; never store it on a closure variable that could
+   * be overwritten by a concurrent run.
    */
-  computeLastFixDiffCitations: (headBeforeFix: string | undefined) => ReadonlyArray<string>;
+  computeLastFixDiffCitations: (
+    cwd: string,
+    headBeforeFix: string | undefined,
+  ) => ReadonlyArray<string>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
   /**
    * Deterministic, no-LLM-call structural check that `plan.md`'s `## Task N`

@@ -3036,7 +3036,6 @@ export function composeRoot(opts: ComposeOptions): Container {
       // planReviewRunFix's `opts` parameter (PlanFixOptions) shadows the
       // outer composeRoot `opts` (ComposeOptions) within its own body.
       const planReviewPromptsRoot = join(opts.repoRoot, 'prompts');
-      const planReviewCwd = targetRoot;
       const planReviewProfileName = config.phases.planReview?.enabled
         ? resolveProfileForPhaseBound!('plan-review')
         : undefined;
@@ -3467,8 +3466,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkManifestSync: planReviewCheckManifestSync,
-        computeLastFixDiffCitations: (headBeforeFix) =>
-          getRecentFixCitations(planReviewCwd, headBeforeFix),
+        computeLastFixDiffCitations: (cwd, headBeforeFix) =>
+          getRecentFixCitations(cwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
         ...(planReviewFinalReviewRunArbiter
           ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }

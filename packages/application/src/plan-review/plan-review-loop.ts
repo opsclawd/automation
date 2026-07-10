@@ -61,8 +61,18 @@ export class PlanReviewLoop {
       'addressed' | 'rebutted' | 'still_open' | 'never_seen_again'
     >();
 
-    const buildReviewStepOptions = (): PlanReviewStepOptions | undefined => {
+    const buildReviewStepOptions = (iterationIndex: number): PlanReviewStepOptions | undefined => {
       if (!deltaScopedReReview) return undefined;
+      // Iteration 1 is a fresh full review — no scope block needed.
+      // Iteration 2+ is the delta-scoped re-review; even if both
+      // `prevFindings` and `recentFixCitations` are empty (e.g., iter-1
+      // returned no grounded findings AND no fix citations to scope
+      // against), the composition root still needs to know this is a
+      // delta-scoped invocation so it can decide whether to append the
+      // SCOPE / DISPOSITION GUIDANCE block (#716, fix to reviewer
+      // finding: returning `undefined` here causes the SCOPE block to
+      // be silently dropped on iter 2+ when there's nothing to thread).
+      if (iterationIndex < 2) return undefined;
       const stepOptions: PlanReviewStepOptions = {};
       if (frozenPrevFindings !== undefined && frozenPrevFindings.length > 0) {
         // Stamp each frozen finding with its current disposition from the
@@ -76,7 +86,7 @@ export class PlanReviewLoop {
       if (recentFixCitations.length > 0) {
         stepOptions.recentFixCitations = recentFixCitations;
       }
-      return Object.keys(stepOptions).length > 0 ? stepOptions : undefined;
+      return stepOptions;
     };
 
     while (canIterate(loop)) {
@@ -98,7 +108,7 @@ export class PlanReviewLoop {
       let reviewAttempts = 0;
       while (reviewAttempts <= reviewerMaxRetries) {
         reviewAttempts += 1;
-        review = await deps.runReview(ctx, buildReviewStepOptions());
+        review = await deps.runReview(ctx, buildReviewStepOptions(iterationIndex));
         if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
         if (reviewAttempts <= reviewerMaxRetries) {
           this.emit(
@@ -157,16 +167,14 @@ export class PlanReviewLoop {
       //      downgrades to `p2_only` (symmetric: an under-reported verdict
       //      with grounded P0/P1 in scope escalates).
       //
-      // When `deltaScopedReReview` is `false`, OR when the reviewer
-      // returned no findings (e.g., retry after parse failure, or a test
-      // fixture that exercises loop dispatch without findings), the gate
-      // is skipped — there is no evidence to classify and we trust the
-      // reviewer verdict as-is. This is the documented opt-out path that
-      // restores pre-#716 behavior bit-for-bit (no scope prompt, no
-      // verdict reinterpretation).
+      // When `deltaScopedReReview` is `false`, the gate is skipped and we
+      // trust the reviewer verdict as-is. Otherwise, normalize a missing
+      // findings payload to an empty set so malformed successful reviewer
+      // output still flows through the same empty-set verdict
+      // normalization as an explicit `[]`.
       let eligibleFindings: ReadonlyArray<PlanReviewFinding> = [];
-      if (deltaScopedReReview && review.findings !== undefined) {
-        const rawFindings = review.findings;
+      if (deltaScopedReReview) {
+        const rawFindings = review.findings ?? [];
         if (iterationIndex === 1) {
           frozenPrevFindings = rawFindings;
           for (const f of frozenPrevFindings) {
@@ -280,7 +288,7 @@ export class PlanReviewLoop {
       // headBeforeFix MUST clear stale citations, not carry the previous
       // iteration's diff scope forward into the next review (#716, fix to
       // reviewer finding #1).
-      recentFixCitations = deps.computeLastFixDiffCitations(fix.headBeforeFix);
+      recentFixCitations = deps.computeLastFixDiffCitations(ctx.cwd, fix.headBeforeFix);
       if (fix.headBeforeFix !== undefined) {
         this.emit(
           input,
@@ -791,7 +799,10 @@ export class PlanReviewLoop {
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: arbiterResult.rationale,
             });
-            recentFixCitations = deps.computeLastFixDiffCitations(bonusFix.headBeforeFix);
+            recentFixCitations = deps.computeLastFixDiffCitations(
+              finalCtx.cwd,
+              bonusFix.headBeforeFix,
+            );
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
               index: finalIterationIndex,
@@ -830,7 +841,10 @@ export class PlanReviewLoop {
               let confirmAttempts = 0;
               while (confirmAttempts <= reviewerMaxRetries) {
                 confirmAttempts += 1;
-                confirmReview = await deps.runReview(confirmCtx, buildReviewStepOptions());
+                confirmReview = await deps.runReview(
+                  confirmCtx,
+                  buildReviewStepOptions(confirmIterationIndex),
+                );
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
                 if (confirmAttempts <= reviewerMaxRetries) {
