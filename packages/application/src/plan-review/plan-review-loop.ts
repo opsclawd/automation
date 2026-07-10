@@ -22,6 +22,8 @@ export class PlanReviewLoop {
   async execute(input: PlanReviewLoopInput): Promise<PlanReviewLoopResult> {
     const { deps } = this;
     const reviewerMaxRetries = deps.reviewerMaxRetries ?? DEFAULT_REVIEWER_MAX_RETRIES;
+    const options = { ...(deps.options ?? {}), ...(input.options ?? {}) };
+    let bonusIterationUsed = false;
 
     let loop = createLoop({
       id: deps.idFactory(),
@@ -596,6 +598,136 @@ export class PlanReviewLoop {
                   : {}),
               };
             }
+          } else if (
+            arbiterResult.outcome === 'finding_valid' &&
+            !bonusIterationUsed &&
+            options.bonusIteration !== false
+          ) {
+            this.emit(
+              input,
+              'plan-review.loop.trailing_review.bonus_fix_iteration',
+              'info',
+              `granting one-time bonus fix iteration for valid trailing finding at iteration ${finalIterationIndex}`,
+              { iterationIndex: finalIterationIndex, rationale: arbiterResult.rationale },
+            );
+            bonusIterationUsed = true;
+
+            // 1. Bonus Fix
+            const bonusFix = await deps.runFix(finalCtx, {
+              reconciliationContext: arbiterResult.rationale,
+            });
+
+            const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
+              index: finalIterationIndex,
+              reviewInvocationId: finalReview.invocationId,
+              fixInvocationId: bonusFix.invocationId,
+              startedAt: deps.now(),
+              completedAt: deps.now(),
+              outcome:
+                bonusFix.agentOutcome === 'success' && bonusFix.verdict === 'done_with_fixes'
+                  ? 'fixed'
+                  : 'unresolved',
+            };
+            loop = {
+              ...loop,
+              iterations: [...loop.iterations, fixIteration],
+            };
+            deps.loops.update(loop);
+
+            if (fixIteration.outcome === 'fixed') {
+              // 2. Confirmation Review
+              const confirmIterationIndex = finalIterationIndex + 1;
+              const confirmCtx: PlanReviewContext = {
+                ...baseCtx,
+                iterationIndex: confirmIterationIndex,
+              };
+
+              this.emit(
+                input,
+                'plan-review.loop.final_review',
+                'info',
+                'Running confirmation review after bonus fixer pass',
+                { iteration: confirmIterationIndex },
+              );
+
+              let confirmReview: PlanReviewResult | undefined;
+              let confirmAttempts = 0;
+              while (confirmAttempts <= reviewerMaxRetries) {
+                confirmAttempts += 1;
+                confirmReview = await deps.runReview(confirmCtx);
+                if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
+                  break;
+                if (confirmAttempts <= reviewerMaxRetries) {
+                  this.emit(
+                    input,
+                    'plan-review.reviewer.retry',
+                    'warn',
+                    `plan-review confirmation reviewer attempt ${confirmAttempts} failed, retrying...`,
+                    { attempt: confirmAttempts, iterationIndex: confirmIterationIndex },
+                  );
+                }
+              }
+
+              if (
+                confirmReview?.agentOutcome === 'success' &&
+                confirmReview.verdict !== undefined
+              ) {
+                const confirmManifestError = await deps.checkManifestSync(confirmCtx);
+                if (
+                  !confirmManifestError &&
+                  (confirmReview.verdict === 'pass' ||
+                    confirmReview.verdict === 'p2_only' ||
+                    confirmReview.verdict === 'proceed_with_concerns')
+                ) {
+                  const confirmIteration: import('@ai-sdlc/domain').LoopIteration = {
+                    index: confirmIterationIndex,
+                    reviewInvocationId: confirmReview.invocationId,
+                    startedAt: deps.now(),
+                    completedAt: deps.now(),
+                    outcome: 'resolved',
+                  };
+                  loop = {
+                    ...loop,
+                    iterations: [...loop.iterations, confirmIteration],
+                    status: 'converged',
+                    completedAt: deps.now(),
+                  };
+                  deps.loops.update(loop);
+                  return {
+                    outcome: 'success',
+                    loop,
+                    proceedWithConcerns: confirmReview.verdict === 'proceed_with_concerns',
+                    ...(confirmReview.knownLimitations
+                      ? { knownLimitations: confirmReview.knownLimitations }
+                      : {}),
+                  };
+                }
+
+                // Confirm review failed
+                const confirmIteration: import('@ai-sdlc/domain').LoopIteration = {
+                  index: confirmIterationIndex,
+                  reviewInvocationId: confirmReview.invocationId,
+                  startedAt: deps.now(),
+                  completedAt: deps.now(),
+                  outcome: 'unresolved',
+                };
+                loop = { ...loop, iterations: [...loop.iterations, confirmIteration] };
+              } else {
+                // Confirm review agent failure
+                const confirmIteration: import('@ai-sdlc/domain').LoopIteration = {
+                  index: confirmIterationIndex,
+                  reviewInvocationId: confirmReview?.invocationId ?? '',
+                  startedAt: deps.now(),
+                  completedAt: deps.now(),
+                  outcome: 'failed',
+                };
+                loop = { ...loop, iterations: [...loop.iterations, confirmIteration] };
+              }
+            }
+
+            loop = exhaust(loop, deps.now());
+            deps.loops.update(loop);
+            return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
           } else {
             this.emit(
               input,

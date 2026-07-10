@@ -35,6 +35,14 @@ export interface PlanFixOptions {
   manifestMismatch?: string;
 }
 
+export interface PlanReviewLoopOptions {
+  /**
+   * When true (default), grant exactly one additional fix iteration if the
+   * trailing review arbiter rules `finding_valid`.
+   */
+  bonusIteration?: boolean;
+}
+
 export interface PlanReviewLoopDeps {
   runReview: (ctx: PlanReviewContext) => Promise<PlanReviewResult>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
@@ -68,6 +76,8 @@ export interface PlanReviewLoopDeps {
   reviewerMaxRetries?: number;
   now: () => Date;
   idFactory: () => string;
+  /** Convergence options. See `PlanReviewLoopOptions`. */
+  options?: PlanReviewLoopOptions;
 }
 
 export interface PlanReviewLoopInput {
@@ -76,6 +86,8 @@ export interface PlanReviewLoopInput {
   repoId: string;
   cwd: string;
   maxIterations: number;
+  /** Convergence options. Overrides any value on `Deps.options`. */
+  options?: PlanReviewLoopOptions;
 }
 
 export interface PlanReviewLoopResult {
