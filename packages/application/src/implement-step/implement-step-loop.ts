@@ -579,17 +579,56 @@ export class ImplementStepLoop {
       deps.loops.update(loop);
 
       // --- QUALITY-REVIEW ---
-      const qualityReview = await deps.runQualityReview(
-        {
-          ...ctx,
-          metadata: {
-            implementation_task_number: input.stepIndex,
-            iteration: iterationIndex,
-            invocation_type: 'initial',
+      const MAX_QUALITY_REVIEW_ATTEMPTS = 3;
+      let qualityReview: QualityReviewResult;
+      let qualityReviewAttempts = 0;
+      const qualityReviewAttemptInvocationIds: string[] = [];
+      do {
+        qualityReviewAttempts += 1;
+        qualityReview = await deps.runQualityReview(
+          {
+            ...ctx,
+            metadata: {
+              implementation_task_number: input.stepIndex,
+              iteration: iterationIndex,
+              invocation_type: qualityReviewAttempts === 1 ? 'initial' : 'retry',
+            },
           },
+          tcResult,
+        );
+        qualityReviewAttemptInvocationIds.push(qualityReview.invocationId);
+        if (qualityReview.agentOutcome === 'success' && qualityReview.verdict !== undefined) {
+          break;
+        }
+        if (qualityReviewAttempts < MAX_QUALITY_REVIEW_ATTEMPTS) {
+          this.emit(
+            input,
+            'step.quality-review.retry',
+            'warn',
+            `quality-review attempt ${qualityReviewAttempts} failed (invocation ${qualityReview.invocationId}), retrying...`,
+            {
+              attempt: qualityReviewAttempts,
+              maxAttempts: MAX_QUALITY_REVIEW_ATTEMPTS,
+              agentOutcome: qualityReview.agentOutcome,
+              hasVerdict: qualityReview.verdict !== undefined,
+              invocationId: qualityReview.invocationId,
+            },
+          );
+        }
+      } while (qualityReviewAttempts < MAX_QUALITY_REVIEW_ATTEMPTS);
+
+      this.emit(
+        input,
+        'step.quality-review.attempts',
+        'info',
+        `quality-review completed after ${qualityReviewAttempts} attempt(s)`,
+        {
+          index: iterationIndex,
+          attempts: qualityReviewAttempts,
+          invocationIds: qualityReviewAttemptInvocationIds,
         },
-        tcResult,
       );
+
       loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
       deps.loops.update(loop);
       if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
