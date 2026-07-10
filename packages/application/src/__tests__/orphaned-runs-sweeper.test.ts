@@ -282,4 +282,31 @@ describe('OrphanedRunsSweeper', () => {
     expect(result.terminalizedRepoDisabled).toBe(1);
     expect(runRepo.findByUuid('o7')?.status).toBe('cancelled');
   });
+
+  it('rolls back status to failed when eventBus.publish throws, without enqueuing the job', async () => {
+    const failed = makeFailedRun('o8');
+    runRepo.addRun(failed);
+    vi.spyOn(eventBus, 'publish').mockImplementationOnce(() => {
+      throw new Error('eventBus publish failed');
+    });
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: runRepo,
+      leases,
+      queue,
+      repos,
+      eventBus,
+      ...makeSweeperDeps(),
+    });
+
+    const result = await sweeper.execute([{ uuid: 'o8', run: failed, previousPid: 99999 }]);
+
+    expect(result.enqueued).toBe(0);
+    expect(result.enqueueErrors).toHaveLength(1);
+    expect(result.enqueueErrors[0]!.error).toBe('eventBus publish failed');
+    expect(runRepo.findByUuid('o8')?.status).toBe('failed');
+    expect(runRepo.findByUuid('o8')?.failureReason).toBe('eventBus publish failed');
+    // Ensure the queue.enqueue was NOT called (i.e. no job in queue)
+    expect(queue.listForRun('o8' as never)).toHaveLength(0);
+  });
 });

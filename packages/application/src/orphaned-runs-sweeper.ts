@@ -185,7 +185,6 @@ export class OrphanedRunsSweeper {
             priority: ORPHAN_RECOVERY_JOB_PRIORITY,
             createdAt: this.deps.now(),
           });
-          this.deps.queue.enqueue({ job });
 
           this.deps.eventBus.publish(run.uuid, {
             runId: run.uuid,
@@ -195,6 +194,8 @@ export class OrphanedRunsSweeper {
             timestamp: this.deps.now().toISOString(),
             metadata: { previousPid: entry.previousPid },
           });
+
+          this.deps.queue.enqueue({ job });
 
           result.enqueued++;
         } catch (err) {
