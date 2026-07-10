@@ -2848,8 +2848,16 @@ describe('ImplementStepLoop auto-commit fallback', () => {
       git,
       runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
       runTypecheck: async () => ({ outcome: 'pass', output: '' }),
-      runSpecReview: async () => ({ invocationId: 'sr1', agentOutcome: 'success', verdict: 'fail' }),
-      runQualityReview: async () => ({ invocationId: 'qr1', agentOutcome: 'success', verdict: 'pass' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runQualityReview: async () => ({
+        invocationId: 'qr1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      }),
       runFix: async () => ({
         invocationId: 'f1',
         agentOutcome: 'success',
@@ -2860,10 +2868,89 @@ describe('ImplementStepLoop auto-commit fallback', () => {
 
     const result = await new ImplementStepLoop(deps).execute(baseInput());
     expect(commitCalled).toBe(true);
-    expect(events.find(e => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     // Iteration 1 is implement + initial TC (pass). Then it enters review-fix loop.
     // In review-fix iteration 1: spec-fail -> fix -> uncommitted -> TC(pass) -> auto-commit -> fixed.
     expect(result.loop.iterations[0].outcome).toBe('fixed');
+  });
+
+  it('retries once on git lock error and succeeds', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let attempts = 0;
+    git.commit = async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('Unable to create .git/index.lock');
+      return 'sha-2';
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runQualityReview: async () => ({
+        invocationId: 'qr1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+    });
+
+    const result = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    expect(attempts).toBe(2);
+    expect(events.find((e) => e.type === 'fix.auto_commit.retry')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    expect(result.loop.iterations[0].outcome).toBe('fixed');
+  });
+
+  it('retries once on git lock error and fails if still locked', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let attempts = 0;
+    git.commit = async () => {
+      attempts++;
+      throw new Error('Unable to create .git/index.lock');
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
+      runQualityReview: async () => ({
+        invocationId: 'qr1',
+        agentOutcome: 'success',
+        verdict: 'pass',
+      }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+    });
+
+    const result = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    expect(attempts).toBe(2);
+    expect(events.find((e) => e.type === 'fix.auto_commit.retry')).toBeDefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.failed')).toBeDefined();
+    expect(result.loop.iterations[0].outcome).toBe('unresolved');
   });
 
   it('rejects when dirty worktree fails typecheck', async () => {
@@ -2886,7 +2973,11 @@ describe('ImplementStepLoop auto-commit fallback', () => {
         // 2nd: uncommitted changes check (fail)
         return { outcome: typecheckCount === 1 ? 'pass' : 'fail', output: 'error' };
       },
-      runSpecReview: async () => ({ invocationId: 'sr1', agentOutcome: 'success', verdict: 'fail' }),
+      runSpecReview: async () => ({
+        invocationId: 'sr1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+      }),
       runFix: async () => ({
         invocationId: 'f1',
         agentOutcome: 'success',
@@ -2897,7 +2988,7 @@ describe('ImplementStepLoop auto-commit fallback', () => {
 
     const result = await new ImplementStepLoop(deps).execute(baseInput());
     expect(commitCalled).toBe(false);
-    expect(events.find(e => e.type === 'fix.auto_commit.failed')).toBeUndefined();
+    expect(events.find((e) => e.type === 'fix.auto_commit.failed')).toBeUndefined();
     expect(result.loop.iterations[0].outcome).toBe('unresolved');
   });
 });
