@@ -3036,12 +3036,14 @@ export function composeRoot(opts: ComposeOptions): Container {
       // planReviewRunFix's `opts` parameter (PlanFixOptions) shadows the
       // outer composeRoot `opts` (ComposeOptions) within its own body.
       const planReviewPromptsRoot = join(opts.repoRoot, 'prompts');
+      const planReviewCwd = targetRoot;
       const planReviewProfileName = config.phases.planReview?.enabled
         ? resolveProfileForPhaseBound!('plan-review')
         : undefined;
       const planFixProfileName = config.phases.planReview?.enabled
         ? resolveProfileForPhaseBound!('plan-fix')
         : undefined;
+      const planReviewDeltaScopedReReview = config.phases.planReview?.deltaScopedReReview ?? true;
       const planReviewArbiterProfileName = resolveArbiterProfileName(
         config.agent.phaseProfiles ?? {},
       );
@@ -3152,20 +3154,24 @@ export function composeRoot(opts: ComposeOptions): Container {
             String(ctx.runId),
             PLAN_REVIEW_FINDINGS_ARTIFACT,
           );
-          // (#716) Composition-root seam: thread the artifact-store-backed
-          // `EvidenceResolver` into the parser. This re-stamps each
-          // finding's `evidence` field based on whether its citation
-          // actually resolves against the current plan.md / design.md /
-          // task-manifest.json artifacts — overriding whatever the
-          // reviewer wrote in the markdown. The loop's evidence-bound
-          // gate then uses the resolver's verdict, not the reviewer's
-          // self-reported evidence, to decide which findings are
-          // eligible to drive the verdict.
-          const evidenceResolver = createPlanReviewEvidenceResolver(
-            planReviewArtifacts(String(ctx.runId), ctx.cwd),
-            String(ctx.runId),
-          );
-          const parsedFindings = await parsePlanReviewFindings(findings, evidenceResolver);
+          // (#716) Composition-root seam: when delta-scoped re-review is
+          // enabled, thread the artifact-store-backed `EvidenceResolver`
+          // into the parser so evidence is grounded against the live
+          // artifacts. When it is disabled, preserve the reviewer-supplied
+          // findings verbatim so the opt-out restores the pre-#716 data
+          // contract bit-for-bit.
+          let parsedFindings: Awaited<ReturnType<typeof parsePlanReviewFindings>>;
+          if (planReviewDeltaScopedReReview) {
+            parsedFindings = await parsePlanReviewFindings(
+              findings,
+              createPlanReviewEvidenceResolver(
+                planReviewArtifacts(String(ctx.runId), ctx.cwd),
+                String(ctx.runId),
+              ),
+            );
+          } else {
+            parsedFindings = await parsePlanReviewFindings(findings);
+          }
           return {
             invocationId,
             agentOutcome: 'success',
@@ -3461,8 +3467,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkManifestSync: planReviewCheckManifestSync,
-        computeLastFixDiffCitations: (cwd, headBeforeFix) =>
-          getRecentFixCitations(cwd, headBeforeFix),
+        computeLastFixDiffCitations: (headBeforeFix) =>
+          getRecentFixCitations(planReviewCwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
         ...(planReviewFinalReviewRunArbiter
           ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }
@@ -3476,9 +3482,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           // (#716) Composition-root seam: thread the operator-configured
           // `deltaScopedReReview` flag into the loop. When false, the loop
           // skips the evidence-bound gate, skips the SCOPE / DISPOSITION
-          // GUIDANCE block, and trusts the reviewer's verdict as-is —
-          // restoring pre-#716 behavior bit-for-bit.
-          deltaScopedReReview: config.phases.planReview?.deltaScopedReReview ?? true,
+          // GUIDANCE block, and preserves reviewer-supplied evidence and
+          // verdicts as-is — restoring pre-#716 behavior bit-for-bit.
+          deltaScopedReReview: planReviewDeltaScopedReReview,
         },
       });
 

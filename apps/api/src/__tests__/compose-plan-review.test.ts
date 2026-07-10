@@ -53,7 +53,8 @@ describe('plan-review compose wiring', () => {
       /const planReviewRunReview[\s\S]*?(?=const planReviewRunFix)/,
     );
     expect(reviewFnMatch).toBeTruthy();
-    expect(reviewFnMatch![0]).toContain('parsePlanReviewFindings(findings, evidenceResolver)');
+    expect(reviewFnMatch![0]).toContain('parsePlanReviewFindings(findings');
+    expect(reviewFnMatch![0]).toContain('planReviewDeltaScopedReReview');
     expect(reviewFnMatch![0]).toContain('parsedFindings.findings');
     expect(reviewFnMatch![0]).toContain('parsedFindings.knownLimitations');
   });

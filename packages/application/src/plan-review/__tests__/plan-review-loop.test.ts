@@ -57,6 +57,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       verdict: 'done_with_fixes' as const,
     }),
     checkManifestSync: async (_ctx: PlanReviewContext): Promise<string | null> => null,
+    computeLastFixDiffCitations: () => [],
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
@@ -223,7 +224,7 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 1 ? 'fix-head-1' : 'fix-head-2',
         };
       },
-      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
+      computeLastFixDiffCitations: (headBeforeFix) =>
         headBeforeFix === 'fix-head-1'
           ? ['plan.md:42']
           : headBeforeFix === 'fix-head-2'
@@ -255,6 +256,40 @@ describe('PlanReviewLoop', () => {
     // to catch anything missed by the iterative loop. So `runReview` is
     // called with `undefined` opts, NOT `buildReviewStepOptions()`.
     expect(reviewOptions[2]).toBeUndefined();
+  });
+
+  it('refreshes recentFixCitations from computeLastFixDiffCitations even when headBeforeFix is undefined', async () => {
+    let reviewCalls = 0;
+    const computeCalls: Array<string | undefined> = [];
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
+    const { deps } = makeDeps({
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        reviewOptions.push(opts);
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      computeLastFixDiffCitations: (headBeforeFix) => {
+        computeCalls.push(headBeforeFix);
+        return [];
+      },
+    });
+
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(computeCalls).toEqual([undefined]);
+    expect(reviewOptions[1]).toBeUndefined();
   });
 
   it('AC #683.3.a — trailing final review fail + arbiter finding_invalid → success', async () => {
@@ -494,7 +529,7 @@ describe('PlanReviewLoop', () => {
           headBeforeFix: fixCalls === 3 ? 'bonus-fix-head' : `fix-head-${fixCalls}`,
         };
       },
-      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
+      computeLastFixDiffCitations: (headBeforeFix) =>
         headBeforeFix === 'bonus-fix-head'
           ? ['plan.md:99-101']
           : headBeforeFix === 'fix-head-1'

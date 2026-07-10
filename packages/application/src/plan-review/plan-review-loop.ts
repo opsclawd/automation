@@ -280,8 +280,8 @@ export class PlanReviewLoop {
       // headBeforeFix MUST clear stale citations, not carry the previous
       // iteration's diff scope forward into the next review (#716, fix to
       // reviewer finding #1).
+      recentFixCitations = deps.computeLastFixDiffCitations(fix.headBeforeFix);
       if (fix.headBeforeFix !== undefined) {
-        recentFixCitations = deps.computeLastFixDiffCitations?.(ctx.cwd, fix.headBeforeFix) ?? [];
         this.emit(
           input,
           'plan-review.fix.diff_citations.refreshed',
@@ -791,8 +791,7 @@ export class PlanReviewLoop {
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: arbiterResult.rationale,
             });
-            recentFixCitations =
-              deps.computeLastFixDiffCitations?.(finalCtx.cwd, bonusFix.headBeforeFix) ?? [];
+            recentFixCitations = deps.computeLastFixDiffCitations(bonusFix.headBeforeFix);
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
               index: finalIterationIndex,
