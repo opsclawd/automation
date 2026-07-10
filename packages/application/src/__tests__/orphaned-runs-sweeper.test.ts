@@ -8,6 +8,13 @@ import { FakeWorkerRegistryPort } from '../test-doubles/fake-worker-registry-por
 import { FakeRepositoryPort } from '../test-doubles/fake-repository-port.js';
 import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
 
+function makeSweeperDeps() {
+  return {
+    now: () => fixedNow,
+    logger: { error: () => {} },
+  };
+}
+
 const fixedNow = new Date('2026-07-10T00:00:00Z');
 const repoId = RepositoryId('owner/repo');
 
@@ -62,15 +69,17 @@ describe('OrphanedRunsSweeper', () => {
       runRepository: runRepo,
       leases,
       queue,
+      repos,
       eventBus,
-      now: () => fixedNow,
-      logger: { error: () => {} },
+      ...makeSweeperDeps(),
     });
 
     const result = await sweeper.execute([{ uuid: 'o1', run: failed, previousPid: 99999 }]);
 
     expect(result.enqueued).toBe(1);
     expect(result.skippedLeaseConflict).toBe(0);
+    expect(result.skippedJobInFlight).toBe(0);
+    expect(result.terminalizedRepoDisabled).toBe(0);
     expect(result.enqueueErrors).toEqual([]);
     expect(queue.listForRun('o1' as never)).toHaveLength(1);
     expect(runRepo.findByUuid('o1')?.status).toBe('running');
@@ -93,9 +102,9 @@ describe('OrphanedRunsSweeper', () => {
       runRepository: runRepo,
       leases,
       queue,
+      repos,
       eventBus,
-      now: () => fixedNow,
-      logger: { error: () => {} },
+      ...makeSweeperDeps(),
     });
 
     const result = await sweeper.execute([{ uuid: 'o2', run: failed, previousPid: 99999 }]);
@@ -118,9 +127,9 @@ describe('OrphanedRunsSweeper', () => {
       runRepository: runRepo,
       leases,
       queue,
+      repos,
       eventBus,
-      now: () => fixedNow,
-      logger: { error: () => {} },
+      ...makeSweeperDeps(),
     });
 
     const result = await sweeper.execute([{ uuid: 'o3', run: failed, previousPid: 99999 }]);
@@ -132,10 +141,9 @@ describe('OrphanedRunsSweeper', () => {
     expect(runRepo.findByUuid('o3')?.status).toBe('failed');
   });
 
-  it('does not enqueue if a run already has an active job', async () => {
+  it('does not enqueue if a run already has an in-flight job, and counts it under skippedJobInFlight', async () => {
     const failed = makeFailedRun('o4');
     runRepo.addRun(failed);
-    // Pre-existing active job for the same runId (simulating a re-enqueue attempt)
     vi.spyOn(queue, 'listForRun').mockReturnValueOnce([
       {
         id: 'existing-job' as never,
@@ -152,19 +160,52 @@ describe('OrphanedRunsSweeper', () => {
       runRepository: runRepo,
       leases,
       queue,
+      repos,
       eventBus,
-      now: () => fixedNow,
-      logger: { error: () => {} },
+      ...makeSweeperDeps(),
     });
 
     const result = await sweeper.execute([{ uuid: 'o4', run: failed, previousPid: 99999 }]);
 
     expect(result.enqueued).toBe(0);
-    expect(result.skippedAlreadyQueued).toBe(1);
+    expect(result.skippedJobInFlight).toBe(1);
     expect(runRepo.findByUuid('o4')?.status).toBe('failed');
   });
 
-  it('rolls back status to failed when enqueue throws after the status flip', async () => {
+  it('does not treat completed jobs as in-flight when checking listForRun', async () => {
+    // listForRun returns a job whose status is 'succeeded' (terminal); the sweeper
+    // must filter to in-flight statuses only so resumption is not incorrectly skipped.
+    const failed = makeFailedRun('o4b');
+    runRepo.addRun(failed);
+    vi.spyOn(queue, 'listForRun').mockReturnValueOnce([
+      {
+        id: 'completed-job' as never,
+        runId: 'o4b' as never,
+        repoId,
+        issueNumber: 1,
+        priority: 10,
+        status: 'succeeded',
+        createdAt: fixedNow,
+        completedAt: fixedNow,
+      } as never,
+    ]);
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: runRepo,
+      leases,
+      queue,
+      repos,
+      eventBus,
+      ...makeSweeperDeps(),
+    });
+
+    const result = await sweeper.execute([{ uuid: 'o4b', run: failed, previousPid: 99999 }]);
+
+    expect(result.skippedJobInFlight).toBe(0);
+    expect(result.enqueued).toBe(1);
+  });
+
+  it('rolls back status to failed when enqueue throws after the status flip, recording the enqueue error', async () => {
     const failed = makeFailedRun('o5');
     runRepo.addRun(failed);
     vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
@@ -175,9 +216,9 @@ describe('OrphanedRunsSweeper', () => {
       runRepository: runRepo,
       leases,
       queue,
+      repos,
       eventBus,
-      now: () => fixedNow,
-      logger: { error: () => {} },
+      ...makeSweeperDeps(),
     });
 
     const result = await sweeper.execute([{ uuid: 'o5', run: failed, previousPid: 99999 }]);
@@ -186,5 +227,59 @@ describe('OrphanedRunsSweeper', () => {
     expect(result.enqueueErrors).toHaveLength(1);
     expect(result.enqueueErrors[0]!.error).toBe('enqueue DB write failed');
     expect(runRepo.findByUuid('o5')?.status).toBe('failed');
+    // The rollback must record the enqueue error, not the original orphan failure
+    // reason. Otherwise the next sweep tick can't see why resumption failed.
+    expect(runRepo.findByUuid('o5')?.failureReason).toBe('enqueue DB write failed');
+  });
+
+  it('terminalizes the run when the repo is missing and counts it under terminalizedRepoDisabled', async () => {
+    const failed = makeFailedRun('o6');
+    runRepo.addRun(failed);
+    const emptyRepos = new FakeRepositoryPort([]);
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: runRepo,
+      leases,
+      queue,
+      repos: emptyRepos,
+      eventBus,
+      ...makeSweeperDeps(),
+    });
+
+    const result = await sweeper.execute([{ uuid: 'o6', run: failed, previousPid: 99999 }]);
+
+    expect(result.enqueued).toBe(0);
+    expect(result.terminalizedRepoDisabled).toBe(1);
+    expect(runRepo.findByUuid('o6')?.status).toBe('cancelled');
+    expect(queue.listForRun('o6' as never)).toHaveLength(0);
+  });
+
+  it('terminalizes the run when the repo is disabled and counts it under terminalizedRepoDisabled', async () => {
+    const failed = makeFailedRun('o7');
+    runRepo.addRun(failed);
+    const disabledRepos = new FakeRepositoryPort([
+      {
+        id: repoId,
+        fullName: 'owner/repo',
+        localBasePath: '/tmp/owner-repo',
+        defaultBranch: 'main',
+        enabled: false,
+      } as never,
+    ]);
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: runRepo,
+      leases,
+      queue,
+      repos: disabledRepos,
+      eventBus,
+      ...makeSweeperDeps(),
+    });
+
+    const result = await sweeper.execute([{ uuid: 'o7', run: failed, previousPid: 99999 }]);
+
+    expect(result.enqueued).toBe(0);
+    expect(result.terminalizedRepoDisabled).toBe(1);
+    expect(runRepo.findByUuid('o7')?.status).toBe('cancelled');
   });
 });
