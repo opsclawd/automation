@@ -49,6 +49,8 @@ interface Row {
   contract_violations: string;
   result_json_path: string | null;
   fallback_of_invocation_id: string | null;
+  prompt_hash: string | null;
+  metadata: string | null;
 }
 
 function rowToInvocation(r: Row): AgentInvocation {
@@ -80,6 +82,8 @@ function rowToInvocation(r: Row): AgentInvocation {
     ...(r.fallback_of_invocation_id !== null
       ? { fallbackOfInvocationId: AgentInvocationId(r.fallback_of_invocation_id) }
       : {}),
+    ...(r.prompt_hash !== null ? { promptHash: r.prompt_hash } : {}),
+    ...(r.metadata !== null ? { metadata: JSON.parse(r.metadata) } : {}),
   };
 }
 
@@ -96,14 +100,16 @@ export class AgentInvocationRepository {
           stdout_path, stderr_path,
           started_at, ended_at, start_commit_sha, end_commit_sha,
           exit_code, duration_ms, timeout_ms,
-          outcome, contract_violations, result_json_path, fallback_of_invocation_id
+          outcome, contract_violations, result_json_path, fallback_of_invocation_id,
+          prompt_hash, metadata
         ) VALUES (
           @id, @runId, @phaseId, @stepId, @profile, @runtime, @provider, @model, @skill,
           @promptPath, @promptChars, @promptTokensApprox,
           @stdoutPath, @stderrPath,
           @startedAt, @endedAt, @startCommitSha, @endCommitSha,
           @exitCode, @durationMs, @timeoutMs,
-          @outcome, @contractViolations, @resultJsonPath, @fallbackOfInvocationId
+          @outcome, @contractViolations, @resultJsonPath, @fallbackOfInvocationId,
+          @promptHash, @metadata
         )`,
       )
       .run({
@@ -132,6 +138,8 @@ export class AgentInvocationRepository {
         contractViolations: JSON.stringify(inv.contractViolations ?? []),
         resultJsonPath: inv.resultJsonPath ?? null,
         fallbackOfInvocationId: inv.fallbackOfInvocationId ?? null,
+        promptHash: inv.promptHash ?? null,
+        metadata: inv.metadata ? JSON.stringify(inv.metadata) : null,
       });
   }
 

@@ -29,4 +29,6 @@ export interface AgentInvocation {
   contractViolations?: string[];
   resultJsonPath?: string;
   fallbackOfInvocationId?: AgentInvocationId;
+  promptHash?: string;
+  metadata?: Record<string, unknown>;
 }

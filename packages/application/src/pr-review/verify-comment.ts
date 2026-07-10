@@ -1,7 +1,6 @@
 import type { PrReviewComment } from '@ai-sdlc/domain';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
-import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
 
 export interface VerificationResult {
@@ -100,7 +99,17 @@ export async function verifyComment(
       cwd: string;
       runId: string;
     }) => Promise<{ passed: boolean; error?: string }>;
-    verifyCodeChange?: VerifyCodeChangeFn;
+    verifyCodeChange?: (input: {
+      commentBody: string;
+      path: string;
+      line: number;
+      cwd: string;
+      startCommitSha: string;
+      fixCommitSha: string;
+      runId: string;
+      repoId: string;
+      commentId?: number;
+    }) => Promise<{ pass: boolean; reason: string }>;
     fixDiffInspector?: FixDiffInspectorPort;
   },
   context: {
@@ -111,6 +120,7 @@ export async function verifyComment(
     originalStartCommitSha: string | undefined;
     runningStartSha: string | undefined;
     repoId?: string;
+    commentId?: number;
   },
 ): Promise<VerificationResult> {
   const replyVerified = await verifyReplyPosted(deps, context, comment.commentId);
@@ -231,6 +241,7 @@ export async function verifyComment(
       fixCommitSha: comment.commitSha,
       runId: String(comment.runId),
       repoId: context.repoId ?? String(comment.runId),
+      commentId: comment.commentId,
     });
     codeVerified = codeResult.pass;
     if (!codeResult.pass) {

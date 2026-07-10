@@ -240,7 +240,14 @@ export class ImplementStepLoop {
     };
 
     // --- PRE-LOOP: IMPLEMENT ---
-    const implementResult = await deps.runImplement(baseCtx);
+    const implementResult = await deps.runImplement({
+      ...baseCtx,
+      metadata: {
+        implementation_task_number: input.stepIndex,
+        iteration: 1,
+        invocation_type: 'initial',
+      },
+    });
     if (implementResult.agentOutcome !== 'success') {
       this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
         index: 1,
@@ -321,11 +328,21 @@ export class ImplementStepLoop {
         },
       );
 
-      const retryImplementResult = await deps.runImplement(baseCtx, {
-        ...(pickTypecheckPayload(tcResult) !== undefined
-          ? { typecheckErrors: pickTypecheckPayload(tcResult) as string | TypescriptError[] }
-          : {}),
-      });
+      const retryImplementResult = await deps.runImplement(
+        {
+          ...baseCtx,
+          metadata: {
+            implementation_task_number: input.stepIndex,
+            iteration: iterationIndex,
+            invocation_type: 'retry',
+          },
+        },
+        {
+          ...(pickTypecheckPayload(tcResult) !== undefined
+            ? { typecheckErrors: pickTypecheckPayload(tcResult) as string | TypescriptError[] }
+            : {}),
+        },
+      );
 
       if (retryImplementResult.agentOutcome !== 'success') {
         this.emit(input, 'loop.iteration.started', 'info', 'implementation step started', {
@@ -504,7 +521,17 @@ export class ImplementStepLoop {
       const specReviewAttemptInvocationIds: string[] = [];
       do {
         specReviewAttempts += 1;
-        specReview = await deps.runSpecReview(ctx, tcResult);
+        specReview = await deps.runSpecReview(
+          {
+            ...ctx,
+            metadata: {
+              implementation_task_number: input.stepIndex,
+              iteration: iterationIndex,
+              invocation_type: specReviewAttempts === 1 ? 'initial' : 'retry',
+            },
+          },
+          tcResult,
+        );
         specReviewAttemptInvocationIds.push(specReview.invocationId);
         if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
           break;
@@ -552,7 +579,17 @@ export class ImplementStepLoop {
       deps.loops.update(loop);
 
       // --- QUALITY-REVIEW ---
-      const qualityReview = await deps.runQualityReview(ctx, tcResult);
+      const qualityReview = await deps.runQualityReview(
+        {
+          ...ctx,
+          metadata: {
+            implementation_task_number: input.stepIndex,
+            iteration: iterationIndex,
+            invocation_type: 'initial',
+          },
+        },
+        tcResult,
+      );
       loop = updateOpenIteration(loop, { qualityReviewInvocationId: qualityReview.invocationId });
       deps.loops.update(loop);
       if (qualityReview.agentOutcome !== 'success' || qualityReview.verdict === undefined) {
@@ -603,7 +640,14 @@ export class ImplementStepLoop {
             { reason: 'trailing_review_fail', iterationIndex },
           );
           const arbiterResult: ArbiterResult = await deps.runFinalReviewArbiter(
-            ctx,
+            {
+              ...ctx,
+              metadata: {
+                implementation_task_number: input.stepIndex,
+                iteration: iterationIndex,
+                invocation_type: 'initial',
+              },
+            },
             tcResult,
             specReview,
             qualityReview,
@@ -668,11 +712,23 @@ export class ImplementStepLoop {
 
             // Perform the bonus fix iteration immediately
             const bonusFixHistoryContext = await readFixerHistoryContext();
-            const bonusFix = await deps.runFix(ctx, {
-              useFallback: false,
-              ...(bonusFixHistoryContext !== undefined ? { historyContext: bonusFixHistoryContext } : {}),
-              reconciliationContext: pendingReconciliationContext,
-            });
+            const bonusFix = await deps.runFix(
+              {
+                ...ctx,
+                metadata: {
+                  implementation_task_number: input.stepIndex,
+                  iteration: iterationIndex,
+                  invocation_type: 'initial',
+                },
+              },
+              {
+                useFallback: false,
+                ...(bonusFixHistoryContext !== undefined
+                  ? { historyContext: bonusFixHistoryContext }
+                  : {}),
+                reconciliationContext: pendingReconciliationContext,
+              },
+            );
             pendingReconciliationContext = undefined;
             lastFixInvocationId = bonusFix.invocationId;
             lastFixHeadBeforeFix = bonusFix.headBeforeFix;
@@ -752,7 +808,14 @@ export class ImplementStepLoop {
             loop = { ...loop, maxIterations: loop.maxIterations + 1 };
             deps.loops.update(loop);
             await appendHistory(
-              buildHistoryEntry(iterationIndex, specReview, qualityReview, bonusFix, undefined, 'fixed'),
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                bonusFix,
+                undefined,
+                'fixed',
+              ),
             );
             this.emitIterationCompleted(input, iterationIndex, 'fixed');
             continue;
@@ -779,19 +842,29 @@ export class ImplementStepLoop {
 
       // --- FIX ---
       const historyContext = await readFixerHistoryContext();
-      const fix = await deps.runFix(ctx, {
-        useFallback,
-        ...(historyContext !== undefined ? { historyContext } : {}),
-        ...(pendingReconciliationContext !== undefined
-          ? { reconciliationContext: pendingReconciliationContext }
-          : {}),
-        ...(pendingTypecheckErrors !== undefined
-          ? { typecheckErrors: pendingTypecheckErrors }
-          : {}),
-        ...(useFallback && lastFixInvocationId !== undefined
-          ? { previousInvocationId: lastFixInvocationId }
-          : {}),
-      });
+      const fix = await deps.runFix(
+        {
+          ...ctx,
+          metadata: {
+            implementation_task_number: input.stepIndex,
+            iteration: iterationIndex,
+            invocation_type: 'initial',
+          },
+        },
+        {
+          useFallback,
+          ...(historyContext !== undefined ? { historyContext } : {}),
+          ...(pendingReconciliationContext !== undefined
+            ? { reconciliationContext: pendingReconciliationContext }
+            : {}),
+          ...(pendingTypecheckErrors !== undefined
+            ? { typecheckErrors: pendingTypecheckErrors }
+            : {}),
+          ...(useFallback && lastFixInvocationId !== undefined
+            ? { previousInvocationId: lastFixInvocationId }
+            : {}),
+        },
+      );
       pendingReconciliationContext = undefined;
       pendingTypecheckErrors = undefined;
       lastFixInvocationId = fix.invocationId;
@@ -884,7 +957,18 @@ export class ImplementStepLoop {
               iterationIndex,
             },
           );
-          const arbiterResult = await deps.runArbiter(ctx, tcResult, fix);
+          const arbiterResult = await deps.runArbiter(
+            {
+              ...ctx,
+              metadata: {
+                implementation_task_number: input.stepIndex,
+                iteration: iterationIndex,
+                invocation_type: 'initial',
+              },
+            },
+            tcResult,
+            fix,
+          );
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,

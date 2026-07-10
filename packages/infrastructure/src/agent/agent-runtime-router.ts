@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
-import { readFileSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import {
   AgentInvocationId,
   AgentProfileName,
@@ -29,7 +29,7 @@ export interface AgentRuntimeRouterOptions {
   usageRepository?: AgentUsagePort;
   clock?: () => Date;
   idFactory?: () => string;
-  readPromptChars?: (path: string) => number;
+  readPromptContent?: (path: string) => string;
   env?: Record<string, string | undefined>;
 }
 
@@ -98,13 +98,13 @@ function tryParseOpenCodeError(line: string): string | null {
 export class AgentRuntimeRouter implements AgentPort {
   private readonly clock: () => Date;
   private readonly idFactory: () => string;
-  private readonly readPromptChars: (path: string) => number;
+  private readonly readPromptContent: (path: string) => string;
   private readonly env: Record<string, string | undefined>;
 
   constructor(private readonly opts: AgentRuntimeRouterOptions) {
     this.clock = opts.clock ?? (() => new Date());
     this.idFactory = opts.idFactory ?? (() => randomUUID());
-    this.readPromptChars = opts.readPromptChars ?? defaultReadPromptChars;
+    this.readPromptContent = opts.readPromptContent ?? defaultReadPromptContent;
     this.env = opts.env ?? process.env;
   }
 
@@ -149,7 +149,15 @@ export class AgentRuntimeRouter implements AgentPort {
 
     const id = AgentInvocationId(this.idFactory());
     const startedAt = this.clock();
-    const promptChars = this.readPromptChars(request.promptPath);
+    const promptContent = this.readPromptContent(request.promptPath);
+    const promptChars = promptContent.length;
+    const promptHash = createHash('sha256').update(promptContent).digest('hex');
+
+    const metadata = { ...request.metadata };
+    if (!metadata.invocation_type) {
+      metadata.invocation_type = request.fallbackOfInvocationId ? 'fallback' : 'initial';
+    }
+
     const pre: AgentInvocation = {
       id,
       runId: RunId(request.runId),
@@ -166,6 +174,8 @@ export class AgentRuntimeRouter implements AgentPort {
       startCommitSha: request.startCommitSha,
       timeoutMs: effectiveTimeoutMs,
       contractViolations: [],
+      promptHash,
+      metadata,
     };
     if (request.stepId) {
       pre.stepId = request.stepId;
@@ -619,11 +629,10 @@ function isQuotaError(result: AgentInvocationResult): string | null {
   }
 }
 
-function defaultReadPromptChars(path: string): number {
+function defaultReadPromptContent(path: string): string {
   try {
-    if (statSync(path).size === 0) return 0;
-    return readFileSync(path, 'utf-8').length;
+    return readFileSync(path, 'utf-8');
   } catch {
-    return 0;
+    return '';
   }
 }

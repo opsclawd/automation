@@ -79,10 +79,20 @@ To override per-repo, edit `.ai-orchestrator.json`:
 
 ## Measuring Impact
 
-Use the compare-runs CLI to compare routing strategies:
+Use the compare-runs CLI to compare routing strategies and measure efficiency:
 
 ```
 pnpm run compare-runs <run-id-a> <run-id-b>
 ```
 
-Compare per-phase: model used, prompt tokens, duration, outcome.
+### Efficiency Metrics
+
+The orchestrator uses **fresh input tokens per accepted unit of work** as the primary efficiency metric. Character counts and total input tokens can be misleading when cache-hit rates are high.
+
+The comparison tool reports:
+- **Fresh Input Tokens**: `max(input_tokens - cached_tokens, 0)`. This measures actual provider consumption.
+- **Cache Hit Rate**: Percentage of input tokens served from provider cache.
+- **Invocation Amplification**:
+  - **Invs/Task**: Average number of agent invocations spent per completed implementation task.
+  - **Invs/Comment**: Average invocations per resolved PR review comment.
+- **Duplicate Invocations**: Identifies repeated calls with identical prompt hashes, indicating redundant work or loop stalls.

@@ -1699,6 +1699,10 @@ export function composeRoot(opts: ComposeOptions): Container {
           repoId: ctx.repoId,
           phaseId: 'whole-pr-review',
           startCommitSha,
+          metadata: {
+            iteration: ctx.iterationIndex,
+            invocation_type: 'initial',
+          },
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
@@ -1814,8 +1818,17 @@ export function composeRoot(opts: ComposeOptions): Container {
             ? {
                 fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
                 fallbackReason: 'use_case_escalation',
+                metadata: {
+                  iteration: ctx.iterationIndex,
+                  invocation_type: 'fallback',
+                },
               }
-            : {}),
+            : {
+                metadata: {
+                  iteration: ctx.iterationIndex,
+                  invocation_type: 'initial',
+                },
+              }),
         });
         const invocationId = newestInvocationId(String(ctx.runId));
         const inv = agentInvocationRepository.findById(AgentInvocationId(invocationId));
@@ -2287,6 +2300,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             repoId: ctx.repoId,
             phaseId: 'implement',
             startCommitSha,
+            metadata: {
+              implementation_task_number: ctx.stepIndex,
+              iteration: ctx.iterationIndex,
+              invocation_type: 'initial',
+            },
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2594,6 +2612,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             repoId: ctx.repoId,
             phaseId: 'spec-review',
             startCommitSha,
+            metadata: {
+              implementation_task_number: ctx.stepIndex,
+              iteration: ctx.iterationIndex,
+              invocation_type: 'initial',
+            },
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2654,6 +2677,11 @@ export function composeRoot(opts: ComposeOptions): Container {
             repoId: ctx.repoId,
             phaseId: 'quality-review',
             startCommitSha,
+            metadata: {
+              implementation_task_number: ctx.stepIndex,
+              iteration: ctx.iterationIndex,
+              invocation_type: 'initial',
+            },
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2728,8 +2756,19 @@ export function composeRoot(opts: ComposeOptions): Container {
               ? {
                   fallbackOfInvocationId: AgentInvocationId(opts.previousInvocationId),
                   fallbackReason: 'two_consecutive_fix_failures',
+                  metadata: {
+                    implementation_task_number: ctx.stepIndex,
+                    iteration: ctx.iterationIndex,
+                    invocation_type: 'fallback',
+                  },
                 }
-              : {}),
+              : {
+                  metadata: {
+                    implementation_task_number: ctx.stepIndex,
+                    iteration: ctx.iterationIndex,
+                    invocation_type: 'initial',
+                  },
+                }),
           });
         } catch (err) {
           persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2827,6 +2866,11 @@ export function composeRoot(opts: ComposeOptions): Container {
                 repoId: ctx.repoId,
                 phaseId: 'arbiter',
                 startCommitSha,
+                metadata: {
+                  implementation_task_number: ctx.stepIndex,
+                  iteration: ctx.iterationIndex,
+                  invocation_type: 'initial',
+                },
               });
             } catch (err) {
               persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -2948,6 +2992,11 @@ export function composeRoot(opts: ComposeOptions): Container {
                 repoId: ctx.repoId,
                 phaseId: 'implement-final-review-arbiter',
                 startCommitSha,
+                metadata: {
+                  implementation_task_number: ctx.stepIndex,
+                  iteration: ctx.iterationIndex,
+                  invocation_type: 'initial',
+                },
               });
             } catch (err) {
               persistingEventBusForLoop.publish(String(ctx.runId), {
@@ -3133,6 +3182,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             repoId: ctx.repoId,
             phaseId: 'plan-review',
             startCommitSha,
+            metadata: {
+              iteration: ctx.iterationIndex,
+              invocation_type: 'initial',
+            },
           });
         } catch {
           return {
@@ -3238,6 +3291,10 @@ export function composeRoot(opts: ComposeOptions): Container {
             repoId: ctx.repoId,
             phaseId: 'plan-fix',
             startCommitSha,
+            metadata: {
+              iteration: ctx.iterationIndex,
+              invocation_type: 'initial',
+            },
           });
         } catch {
           return { invocationId: '', agentOutcome: 'failed' };
@@ -3328,6 +3385,10 @@ export function composeRoot(opts: ComposeOptions): Container {
                   repoId: ctx.repoId,
                   phaseId: 'plan-review-arbiter',
                   startCommitSha,
+                  metadata: {
+                    iteration: ctx.iterationIndex,
+                    invocation_type: 'initial',
+                  },
                 });
               } catch (err) {
                 return {
@@ -3421,6 +3482,10 @@ export function composeRoot(opts: ComposeOptions): Container {
                 repoId: ctx.repoId,
                 phaseId: 'plan-review-arbiter',
                 startCommitSha,
+                metadata: {
+                  iteration: ctx.iterationIndex,
+                  invocation_type: 'initial',
+                },
               });
             } catch (err) {
               return {
@@ -3807,6 +3872,9 @@ export function composeRoot(opts: ComposeOptions): Container {
             phaseId: 'fix-review-architect',
             startCommitSha: preArchitectSha,
             timeoutMs: architectPassTimeoutMinutes * 60_000,
+            metadata: {
+              invocation_type: 'initial',
+            },
           });
           agentOutcome = result.outcome;
         } catch (err) {

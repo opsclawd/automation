@@ -15,6 +15,8 @@ export interface StepLoopContext {
   stepIndex: number;
   stepTitle: string;
   iterationIndex: number; // 1-based
+  /** Invocation-metadata tagging (#719): invocation type, task/comment linkage, etc. */
+  metadata?: Record<string, unknown>;
   manifest: TaskManifest;
   planMd: string;
 }

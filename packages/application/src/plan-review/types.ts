@@ -11,6 +11,7 @@ export interface PlanReviewContext {
   repoId: string;
   cwd: string;
   iterationIndex: number; // 1-based
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlanReviewResult {
@@ -19,6 +20,8 @@ export interface PlanReviewResult {
   verdict?: 'pass' | 'p1_found' | 'p2_only' | 'proceed_with_concerns';
   /** Free-text summary of findings, surfaced for the handler's append-to-plan path. */
   knownLimitations?: string;
+  /** Invocation-metadata tagging (#719): invocation type, task/comment linkage, etc. */
+  metadata?: Record<string, unknown>;
   /**
    * Structured findings parsed from the reviewer's `plan-review-findings.md`
    * artifact (#716). Loop-internal; not exposed on `PlanReviewLoopResult`.
@@ -100,6 +103,8 @@ export interface PlanFixResult {
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
   rebuttal?: string;
   summary?: string;
+  /** Invocation-metadata tagging (#719): invocation type, task/comment linkage, etc. */
+  metadata?: Record<string, unknown>;
   /**
    * The git HEAD SHA captured BEFORE the fixer wrote its commit (#716,
    * design §7.1). The composition-root adapter computes
@@ -122,6 +127,7 @@ export interface PlanFixOptions {
   historyContext?: string;
   reconciliationContext?: string;
   manifestMismatch?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlanReviewLoopOptions {

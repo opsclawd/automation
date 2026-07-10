@@ -78,7 +78,9 @@ Something else.
     expect(result.content).toContain('### Expected Files\n- src/index.ts');
     expect(result.content).toContain('### Relevant Symbols\n- MyClass');
     expect(result.content).toContain('## Validation Commands\n\n```bash\nnpm test\n```');
-    expect(result.content).toContain('## Migration & Compatibility Constraints\n\n- No breaking changes');
+    expect(result.content).toContain(
+      '## Migration & Compatibility Constraints\n\n- No breaking changes',
+    );
     expect(result.content).toContain('## Explicitly Out-of-Scope\n\n- UI changes');
     expect(result.diagnostics.truncated).toHaveLength(0);
     expect(result.diagnostics.unresolvedReferences).toHaveLength(0);

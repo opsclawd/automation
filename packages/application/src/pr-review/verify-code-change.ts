@@ -57,6 +57,10 @@ export function createVerifyCodeChange(deps: VerifyCodeChangeDeps): VerifyCodeCh
         phaseId: 'verify-pr-review',
         startCommitSha: input.fixCommitSha,
         timeoutMs: 5 * 60_000,
+        metadata: {
+          pr_review_comment_id: (input as { commentId?: number }).commentId ?? 0,
+          invocation_type: 'verifier',
+        },
       });
     } catch {
       return { pass: false, reason: 'verifier agent invocation threw an exception' };

@@ -111,7 +111,16 @@ export class PlanReviewLoop {
       let reviewAttempts = 0;
       while (reviewAttempts <= reviewerMaxRetries) {
         reviewAttempts += 1;
-        review = await deps.runReview(ctx, buildReviewStepOptions(iterationIndex));
+        review = await deps.runReview(
+          {
+            ...ctx,
+            metadata: {
+              iteration: iterationIndex,
+              invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
+            },
+          },
+          buildReviewStepOptions(iterationIndex),
+        );
         if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
         if (reviewAttempts <= reviewerMaxRetries) {
           this.emit(
@@ -276,6 +285,10 @@ export class PlanReviewLoop {
           ? { reconciliationContext: pendingReconciliationContext }
           : {}),
         ...(manifestError ? { manifestMismatch: manifestError } : {}),
+        metadata: {
+          iteration: iterationIndex,
+          invocation_type: 'initial',
+        },
       });
       pendingReconciliationContext = undefined;
 
@@ -361,7 +374,13 @@ export class PlanReviewLoop {
             `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
             { reason: 'contradiction', iterationIndex },
           );
-          const arbiterResult = await deps.runArbiter(ctx, fix);
+          const arbiterResult = await deps.runArbiter(ctx, {
+            ...fix,
+            metadata: {
+              iteration: iterationIndex,
+              invocation_type: 'initial',
+            },
+          });
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -530,7 +549,16 @@ export class PlanReviewLoop {
           // anything the iterative review/fix loop missed; threading
           // `prevFindings` here would scope it back to the iter-1 finding
           // set and defeat the purpose.
-          finalReview = await deps.runReview(finalCtx, undefined);
+          finalReview = await deps.runReview(
+            {
+              ...finalCtx,
+              metadata: {
+                iteration: finalIterationIndex,
+                invocation_type: 'initial',
+              },
+            },
+            undefined,
+          );
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(
@@ -665,7 +693,13 @@ export class PlanReviewLoop {
             `escalating final review fail to arbiter at iteration ${finalIterationIndex}`,
             { reason: 'final_review_fail', iterationIndex: finalIterationIndex },
           );
-          const arbiterResult = await deps.runFinalReviewArbiter(finalCtx, finalReview);
+          const arbiterResult = await deps.runFinalReviewArbiter(finalCtx, {
+            ...finalReview,
+            metadata: {
+              iteration: finalIterationIndex,
+              invocation_type: 'initial',
+            },
+          });
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -801,6 +835,10 @@ export class PlanReviewLoop {
             // 1. Bonus Fix
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: arbiterResult.rationale,
+              metadata: {
+                iteration: finalIterationIndex,
+                invocation_type: 'initial',
+              },
             });
             recentFixCitations = deps.computeLastFixDiffCitations(
               finalCtx.cwd,
@@ -845,7 +883,13 @@ export class PlanReviewLoop {
               while (confirmAttempts <= reviewerMaxRetries) {
                 confirmAttempts += 1;
                 confirmReview = await deps.runReview(
-                  confirmCtx,
+                  {
+                    ...confirmCtx,
+                    metadata: {
+                      iteration: confirmIterationIndex,
+                      invocation_type: confirmAttempts === 1 ? 'initial' : 'retry',
+                    },
+                  },
                   buildReviewStepOptions(confirmIterationIndex),
                 );
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)

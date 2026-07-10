@@ -125,7 +125,10 @@ export class TaskContextGenerator {
     // 6. Repository Targets (Files & Symbols)
     if (input.manifest.version === 2) {
       const t2 = task as TaskManifestEntryV2;
-      if ((t2.expected_files && t2.expected_files.length > 0) || (t2.relevant_symbols && t2.relevant_symbols.length > 0)) {
+      if (
+        (t2.expected_files && t2.expected_files.length > 0) ||
+        (t2.relevant_symbols && t2.relevant_symbols.length > 0)
+      ) {
         let targetContent = '## Repository Targets\n\n';
         if (t2.expected_files && t2.expected_files.length > 0) {
           targetContent += `### Expected Files\n${t2.expected_files.map((f) => `- ${f}`).join('\n')}\n\n`;
@@ -175,7 +178,9 @@ export class TaskContextGenerator {
       if (totalSize + section.length > DEFAULT_BUDGET) {
         const remaining = DEFAULT_BUDGET - totalSize;
         if (remaining > 100) {
-          finalSections.push(section.slice(0, remaining) + '\n\n... (truncated due to budget) ...\n');
+          finalSections.push(
+            section.slice(0, remaining) + '\n\n... (truncated due to budget) ...\n',
+          );
           diagnostics.truncated.push('context_overflow');
         } else {
           diagnostics.truncated.push('context_overflow');
@@ -228,7 +233,7 @@ export class TaskContextGenerator {
   private summarizeLog(log: string): string {
     // Basic summarizer: try to find "Implementation Detail" or just return the first 1000 characters
     const lines = log.split(/\r?\n/);
-    const detailHeaderIdx = lines.findIndex(l => /^#{1,3}\s+Implementation Detail/i.test(l));
+    const detailHeaderIdx = lines.findIndex((l) => /^#{1,3}\s+Implementation Detail/i.test(l));
     if (detailHeaderIdx !== -1) {
       const summaryLines: string[] = [];
       for (let i = detailHeaderIdx + 1; i < lines.length; i++) {

@@ -234,6 +234,7 @@ export class ProcessPrReviewComments {
               originalStartCommitSha,
               runningStartSha,
               ...(input.runId ? { repoId: String(input.runId) } : {}),
+              commentId: currentComment.commentId,
             });
             if (verification.ok) {
               d.prReviewRepo.upsertComment(
@@ -426,6 +427,7 @@ export class ProcessPrReviewComments {
         repoFullName: input.repoFullName,
         originalStartCommitSha: startCommitSha,
         runningStartSha: startCommitSha,
+        commentId: c.commentId,
       });
 
       if (verification.ok) {
