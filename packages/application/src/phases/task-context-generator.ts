@@ -58,21 +58,31 @@ export class TaskContextGenerator {
 
     // 3. Exact Task Requirements (High Priority)
     const bodyResult = extractTaskBody(planMd, { taskNumber: task.n, title: task.title });
-    const taskBody = bodyResult.ok ? bodyResult.body.trim() : `(Failed to extract task body from plan.md: ${bodyResult.reason})`;
+    const taskBody = bodyResult.ok
+      ? bodyResult.body.trim()
+      : `(Failed to extract task body from plan.md: ${bodyResult.reason})`;
     if (!bodyResult.ok) diagnostics.unresolvedReferences.push('plan_task_body');
 
     let requirementSection = `## Task Requirements\n\n${taskBody}\n\n`;
-    if (task.version === 2 && task.acceptance_criteria && task.acceptance_criteria.length > 0) {
-      requirementSection += `### Acceptance Criteria\n${task.acceptance_criteria.map(ac => `- ${ac}`).join('\n')}\n\n`;
+    if (
+      input.manifest.version === 2 &&
+      (task as any).acceptance_criteria &&
+      (task as any).acceptance_criteria.length > 0
+    ) {
+      requirementSection += `### Acceptance Criteria\n${(task as any).acceptance_criteria.map((ac: string) => `- ${ac}`).join('\n')}\n\n`;
     }
     sections.push(requirementSection);
     diagnostics.componentSizes['requirements'] = requirementSection.length;
 
     // 4. Relevant Design Sections
-    if (task.version === 2 && task.design_sections && task.design_sections.length > 0) {
+    if (
+      input.manifest.version === 2 &&
+      (task as any).design_sections &&
+      (task as any).design_sections.length > 0
+    ) {
       let designContent = '## Relevant Design Decisions\n\n';
       if (designMd) {
-        for (const sectionTitle of task.design_sections) {
+        for (const sectionTitle of (task as any).design_sections as string[]) {
           const extracted = this.extractDesignSection(designMd, sectionTitle);
           if (extracted) {
             designContent += `### ${sectionTitle}\n\n${extracted}\n\n`;
@@ -81,7 +91,7 @@ export class TaskContextGenerator {
           }
         }
       } else {
-        for (const sectionTitle of task.design_sections) {
+        for (const sectionTitle of (task as any).design_sections as string[]) {
           diagnostics.unresolvedReferences.push(`design_section:${sectionTitle}`);
         }
       }
@@ -92,9 +102,13 @@ export class TaskContextGenerator {
     }
 
     // 5. Dependency Summaries
-    if (task.version === 2 && task.depends_on && task.depends_on.length > 0) {
+    if (
+      input.manifest.version === 2 &&
+      (task as any).depends_on &&
+      (task as any).depends_on.length > 0
+    ) {
       let depContent = '## Completed Dependencies\n\n';
-      for (const depId of task.depends_on) {
+      for (const depId of (task as any).depends_on as number[]) {
         const log = dependencyLogs.get(depId);
         if (log) {
           const summary = this.summarizeLog(log);
@@ -108,35 +122,51 @@ export class TaskContextGenerator {
     }
 
     // 6. Repository Targets (Files & Symbols)
-    if (task.version === 2 && ((task.expected_files && task.expected_files.length > 0) || (task.relevant_symbols && task.relevant_symbols.length > 0))) {
+    if (
+      input.manifest.version === 2 &&
+      (((task as any).expected_files && (task as any).expected_files.length > 0) ||
+        ((task as any).relevant_symbols && (task as any).relevant_symbols.length > 0))
+    ) {
       let targetContent = '## Repository Targets\n\n';
-      if (task.expected_files && task.expected_files.length > 0) {
-        targetContent += `### Expected Files\n${task.expected_files.map(f => `- ${f}`).join('\n')}\n\n`;
+      if ((task as any).expected_files && (task as any).expected_files.length > 0) {
+        targetContent += `### Expected Files\n${((task as any).expected_files as string[]).map((f: string) => `- ${f}`).join('\n')}\n\n`;
       }
-      if (task.relevant_symbols && task.relevant_symbols.length > 0) {
-        targetContent += `### Relevant Symbols\n${task.relevant_symbols.map(s => `- ${s}`).join('\n')}\n\n`;
+      if ((task as any).relevant_symbols && (task as any).relevant_symbols.length > 0) {
+        targetContent += `### Relevant Symbols\n${((task as any).relevant_symbols as string[]).map((s: string) => `- ${s}`).join('\n')}\n\n`;
       }
       sections.push(targetContent);
       diagnostics.componentSizes['targets'] = targetContent.length;
     }
 
     // 7. Deterministic Validation Commands
-    if (task.version === 2 && task.validation_commands && task.validation_commands.length > 0) {
-      const valContent = `## Validation Commands\n\n\`\`\`bash\n${task.validation_commands.join('\n')}\n\`\`\`\n\n`;
+    if (
+      input.manifest.version === 2 &&
+      (task as any).validation_commands &&
+      (task as any).validation_commands.length > 0
+    ) {
+      const valContent = `## Validation Commands\n\n\`\`\`bash\n${((task as any).validation_commands as string[]).join('\n')}\n\`\`\`\n\n`;
       sections.push(valContent);
       diagnostics.componentSizes['validation'] = valContent.length;
     }
 
     // 8. Migration & Compatibility Constraints
-    if (task.version === 2 && task.migration_constraints && task.migration_constraints.length > 0) {
-      const migContent = `## Migration & Compatibility Constraints\n\n${task.migration_constraints.map(mc => `- ${mc}`).join('\n')}\n\n`;
+    if (
+      input.manifest.version === 2 &&
+      (task as any).migration_constraints &&
+      (task as any).migration_constraints.length > 0
+    ) {
+      const migContent = `## Migration & Compatibility Constraints\n\n${((task as any).migration_constraints as string[]).map((mc: string) => `- ${mc}`).join('\n')}\n\n`;
       sections.push(migContent);
       diagnostics.componentSizes['migration'] = migContent.length;
     }
 
     // 9. Out-of-Scope Notes
-    if (task.version === 2 && task.out_of_scope && task.out_of_scope.length > 0) {
-      const oosContent = `## Explicitly Out-of-Scope\n\n${task.out_of_scope.map(oos => `- ${oos}`).join('\n')}\n\n`;
+    if (
+      input.manifest.version === 2 &&
+      (task as any).out_of_scope &&
+      (task as any).out_of_scope.length > 0
+    ) {
+      const oosContent = `## Explicitly Out-of-Scope\n\n${((task as any).out_of_scope as string[]).map((oos: string) => `- ${oos}`).join('\n')}\n\n`;
       sections.push(oosContent);
       diagnostics.componentSizes['out_of_scope'] = oosContent.length;
     }
