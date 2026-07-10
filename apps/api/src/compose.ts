@@ -54,6 +54,7 @@ import {
   SweepOrphanedRuns,
   ReapOrphanedTestWorkers,
   SweepWaitingRuns,
+  WaitingRunsSweeper,
   checkPid,
   RunValidation,
   ReadIssueHandler,
@@ -461,6 +462,8 @@ export interface Container {
   jobQueue: JobQueuePort;
   workerRegistry?: WorkerRegistryPort;
   workerLoopDeps?: Omit<WorkerLoopDeps, 'recoverableRunIds'>;
+  serveSweepIntervalSeconds: number;
+  buildWaitingRunsSweeper: () => import('@ai-sdlc/application').WaitingRunsSweeper;
   /** Exposed for worktree lifecycle management in CLI and tests. */
   git: GitPort;
   /** Context factory for a full run (includes promptsRoot, expectedBranch, cwd). Only present when agent config is loaded. */
@@ -1262,6 +1265,36 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const reapOrphanedTestWorkers = new ReapOrphanedTestWorkers({ listProcesses, killProcess });
 
+  let readyMaxDays = 7;
+  let serveSweepIntervalSeconds = 0;
+  try {
+    const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
+    let sweepLayered = layeredConfigCache.get(cacheKey);
+    if (!sweepLayered) {
+      sweepLayered = loadLayeredConfig({
+        automationRoot: opts.repoRoot,
+        ...(opts.targetRepoRoot !== undefined ? { targetRoot: opts.targetRepoRoot } : {}),
+      });
+      layeredConfigCache.set(cacheKey, sweepLayered);
+    }
+    readyMaxDays = sweepLayered.config.timeouts.readyMaxDays;
+    serveSweepIntervalSeconds = sweepLayered.config.serve.sweepIntervalSeconds;
+  } catch {
+    // Fallback to default 7 / disabled.
+  }
+
+  let ghAdapterForSweep: GhCliAdapter | undefined;
+  const getGhAdapterForSweep = () => {
+    if (!ghAdapterForSweep) {
+      ghAdapterForSweep = new GhCliAdapter({});
+    }
+    return ghAdapterForSweep;
+  };
+
+  const sweepLogger: { error: (message: string, ...args: unknown[]) => void } = {
+    error: (msg, ...args) => console.error(msg, ...args),
+  };
+
   if (opts.runStartupSweeps !== false) {
     // Sweep orphaned runs before any new run starts
     const sweep = new SweepOrphanedRuns({
@@ -1298,30 +1331,10 @@ export function composeRoot(opts: ComposeOptions): Container {
     // has new review activity since the last poll attempt, or finalize
     // runs whose PRs were closed/merged while the orchestrator was
     // offline. Best-effort: a single broken run does not abort the sweep.
-    const ghAdapterForSweep = new GhCliAdapter({});
-    // Load config to get readyMaxDays for SweepWaitingRuns
-    let readyMaxDays = 7;
-    try {
-      const cacheKey = `${opts.repoRoot}|${opts.targetRepoRoot ?? ''}`;
-      let sweepLayered = layeredConfigCache.get(cacheKey);
-      if (!sweepLayered) {
-        sweepLayered = loadLayeredConfig({
-          automationRoot: opts.repoRoot,
-          ...(opts.targetRepoRoot !== undefined ? { targetRoot: opts.targetRepoRoot } : {}),
-        });
-        layeredConfigCache.set(cacheKey, sweepLayered);
-      }
-      const sweepConfig = sweepLayered.config;
-      readyMaxDays = sweepConfig.timeouts.readyMaxDays;
-    } catch {
-      // Fallback to default 7 days. The main config loader below will throw
-      // the error if the config file exists but is invalid.
-    }
-
     const waitingSweep = new SweepWaitingRuns({
       runRepository,
       prReviewRepo: prReviewRepository,
-      github: ghAdapterForSweep,
+      github: getGhAdapterForSweep(),
       eventBus,
       now: () => new Date(),
       readyMaxDays,
@@ -4017,6 +4030,48 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const workerRegistry = new WorkerRegistryRepository(db);
 
+  const buildWaitingRunsSweeper = () =>
+    new WaitingRunsSweeper({
+      sweep: new SweepWaitingRuns({
+        runRepository,
+        prReviewRepo: prReviewRepository,
+        github: getGhAdapterForSweep(),
+        eventBus,
+        now: () => new Date(),
+        readyMaxDays,
+        applyReactivation: (run: RunRecord, decision: { action: string; reason: string }) => {
+          // Defer database updates only for a genuine reactivation (new review
+          // activity) — Task 3's enqueued job drives that via the worker loop.
+          // Merged/closed-PR finalization also arrives as action: 'reactivate'
+          // but transitions the run to a terminal state (passed/cancelled)
+          // and is a terminal outcome with no further worker step —
+          // it must apply immediately or the finalization event is silently dropped.
+
+          // We determine finalization by checking if decision action is 'reactivate'
+          // and if decision reason indicates PR closure or merge.
+          const isFinalization =
+            decision.action === 'reactivate' &&
+            (decision.reason.includes('PR merged') || decision.reason.includes('PR closed'));
+          const isGenuineReactivation = decision.action === 'reactivate' && !isFinalization;
+
+          if (!isGenuineReactivation) {
+            applyReactivation(run as never, decision as never, {
+              runRepository,
+              eventBus,
+              now: () => new Date(),
+            });
+          }
+        },
+        resolvePrContext: async (run: RunRecord) => resolvePrContextForRun(run),
+      }),
+      runRepository,
+      leases: workerLeaseRepository,
+      queue: jobQueue,
+      eventBus,
+      now: () => new Date(),
+      logger: sweepLogger,
+    });
+
   const workerLoopDeps: Omit<WorkerLoopDeps, 'recoverableRunIds'> | undefined =
     runExecutor !== undefined
       ? {
@@ -4554,6 +4609,8 @@ export function composeRoot(opts: ComposeOptions): Container {
     disableRepository,
     refreshRepository,
     removeRepository,
+    serveSweepIntervalSeconds,
+    buildWaitingRunsSweeper,
   };
 }
 

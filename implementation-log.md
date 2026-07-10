@@ -1,17 +1,11 @@
-# Implementation Log
+# Implementation Log - Task 5
 
-## Task 4: apps/api/src/worker-drain-loop.ts — persistent worker-drain loop
+## Status
+DONE
 
-### What was implemented:
-- Modified `JobQueuePort` in `packages/application/src/ports/job-queue-port.ts` to add `listActive(): Job[]`.
-- Implemented `listActive(): Job[]` in `FakeJobQueuePort` under `packages/application/src/test-doubles/fake-job-queue-port.ts`.
-- Implemented `listActive(): Job[]` in SQLite `JobQueueRepository` under `packages/infrastructure/src/sqlite/job-queue-repository.ts`.
-- Created `apps/api/src/worker-drain-loop.ts` featuring:
-  - `startWorkerDrainLoop`: sets up a recurring interval with a concurrency guard (`isRunning`) preventing overlapping runs.
-  - `buildRecoverableRunIds`: retrieves active runs and filters out those matching currently active jobs or runs with active worker leases, resolving potential split-brain recovery conflicts.
-  - Uses `deps.now()` as the exact cutoff for reclaiming stale claims to prevent double recovery delays.
-- Created unit tests under `apps/api/src/__tests__/worker-drain-loop.test.ts`.
-
-### Verification results:
-- Ran `pnpm --filter @ai-sdlc/api test -- worker-drain-loop.test.ts` successfully (all 3 tests passing).
-- Verified `pnpm -r typecheck`, `pnpm depcruise`, `pnpm -r test`, and `pnpm lint` all passed successfully.
+## What was implemented
+- Hoisted config loading and `readyMaxDays` calculation inside `composeRoot` in [compose.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-681/apps/api/src/compose.ts) to run unconditionally.
+- Lazily instantiated `GhCliAdapter` via `getGhAdapterForSweep()`.
+- Exposed `serveSweepIntervalSeconds: number` and `buildWaitingRunsSweeper` factory function on the `Container` interface and returned them from `composeRoot`.
+- Implemented `buildWaitingRunsSweeper` factory inside `composeRoot` injecting dependencies such as `runRepository`, `workerLeaseRepository`, `jobQueue`, and `eventBus`, with a custom `applyReactivation` function that correctly identifies finalization transitions versus genuine reactivations to defer or apply updates.
+- Added failing tests to [compose-sweep-waiting.test.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-681/apps/api/src/__tests__/compose-sweep-waiting.test.ts) to verify correct default behavior of the interval and the factory function, and ensured all tests pass.
