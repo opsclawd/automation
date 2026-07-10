@@ -1,4 +1,16 @@
-import type { RunRepositoryPort } from './ports.js';
+import type { RunRecord, RunRepositoryPort } from './ports.js';
+
+export interface SweepOrphanedRunEntry {
+  uuid: string;
+  run: RunRecord;
+  previousPid: number;
+}
+
+export interface SweepOrphanedRunsResult {
+  scanned: number;
+  swept: number;
+  orphanedRuns: SweepOrphanedRunEntry[];
+}
 
 export interface SweepOrphanedRunsDeps {
   runRepository: RunRepositoryPort;
@@ -9,16 +21,17 @@ export interface SweepOrphanedRunsDeps {
 export class SweepOrphanedRuns {
   constructor(private readonly deps: SweepOrphanedRunsDeps) {}
 
-  execute(): { swept: number } {
+  execute(): SweepOrphanedRunsResult {
     const now = this.deps.now ?? (() => new Date());
     const activeRuns = this.deps.runRepository.findActiveRuns();
-    let swept = 0;
+    const orphanedRuns: SweepOrphanedRunEntry[] = [];
 
     for (const run of activeRuns) {
       if (run.pid === undefined || run.pid === null) {
         continue;
       }
       if (!this.deps.isProcessAlive(run.pid)) {
+        const previousPid = run.pid;
         const completedAt = now();
         this.deps.runRepository.updateStatusByUuid(run.uuid, {
           status: 'failed',
@@ -26,11 +39,19 @@ export class SweepOrphanedRuns {
           failureReason: `orphaned: process ${run.pid} no longer running`,
           currentPhase: null,
         });
-        swept++;
+        orphanedRuns.push({
+          uuid: run.uuid,
+          run: { ...run, status: 'failed', completedAt },
+          previousPid,
+        });
       }
     }
 
-    return { swept };
+    return {
+      scanned: activeRuns.length,
+      swept: orphanedRuns.length,
+      orphanedRuns,
+    };
   }
 }
 
