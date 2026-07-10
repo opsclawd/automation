@@ -1090,37 +1090,115 @@ export class ImplementStepLoop {
               statusOutput: verification.statusOutput.slice(0, 4000),
             },
           );
-          consecutiveFixFailures += 1;
-          loop = completeIteration(loop, {
-            outcome: 'unresolved',
-            fixInvocationId: fix.invocationId,
-            now: deps.now(),
-          });
-          deps.loops.update(loop);
-          await appendHistory(
-            buildHistoryEntry(
-              iterationIndex,
-              specReview,
-              qualityReview,
-              fix,
-              undefined,
-              'unresolved',
-              verification,
-            ),
-          );
-          // Do NOT call deps.revertFix here (plan-review P0, #679): this
-          // branch means the fixer left uncommitted changes in the tree
-          // (e.g. a pre-commit hook rejected the commit). That dirty state
-          // is exactly what the NEXT fixer iteration needs to see in order
-          // to finish committing or fixing it — reverting here would
-          // destroy the evidence #679 exists to preserve. Reverting is only
-          // correct for the separate build-breaking-fix case (#671), which
-          // has its own dedicated branch elsewhere in this loop.
-          // Clear lastFixHeadBeforeFix so the next iteration's build-breaking
-          // typecheck path does NOT revert to the pre-fix SHA and destroy the
-          // dirty fix attempts (#679 review feedback).
-          lastFixHeadBeforeFix = undefined;
-          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+
+          // --- AUTO-COMMIT FALLBACK ---
+          // If the worktree is dirty but valid (passes typecheck), auto-commit on the
+          // agent's behalf so correct work isn't lost to minor git/hook failures.
+          tcResult = await deps.runTypecheck(baseCtx);
+          let autoCommitted = false;
+          if (tcResult.outcome === 'pass') {
+            const message = `fix: ${input.stepTitle} (auto-committed — agent left changes uncommitted)`;
+            let committedSha: string | undefined;
+
+            for (let attempt = 1; attempt <= 2; attempt++) {
+              try {
+                committedSha = await this.deps.git!.commit(baseCtx.cwd, message);
+                break;
+              } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : String(err);
+                const isLockError =
+                  msg.toLowerCase().includes('index.lock') ||
+                  msg.toLowerCase().includes('unable to create');
+                if (attempt === 1 && isLockError) {
+                  this.emit(
+                    input,
+                    'fix.auto_commit.retry',
+                    'warn',
+                    `auto-commit failed with lock error; retrying once...`,
+                    { iterationIndex, error: msg },
+                  );
+                  continue;
+                }
+                this.emit(
+                  input,
+                  'fix.auto_commit.failed',
+                  'error',
+                  `auto-commit fallback failed: ${msg}`,
+                  { iterationIndex, error: msg },
+                );
+                break;
+              }
+            }
+
+            if (committedSha) {
+              this.emit(
+                input,
+                'fix.auto_commit.succeeded',
+                'info',
+                `auto-committed ${verification.dirtyFiles.length} dirty file(s) after passing typecheck`,
+                { sha: committedSha, iterationIndex },
+              );
+              autoCommitted = true;
+              // Success: treat this as a productive fix that advanced HEAD.
+              consecutiveFixFailures = 0;
+              lastFixHeadBeforeFix = undefined;
+              loop = completeIteration(loop, {
+                outcome: 'fixed',
+                fixInvocationId: fix.invocationId,
+                now: deps.now(),
+              });
+              deps.loops.update(loop);
+              await appendHistory(
+                buildHistoryEntry(
+                  iterationIndex,
+                  specReview,
+                  qualityReview,
+                  fix,
+                  undefined,
+                  'fixed',
+                ),
+              );
+              this.emitIterationCompleted(input, iterationIndex, 'fixed');
+              // Fall through to the next iteration (re-review).
+            }
+          }
+
+          if (!autoCommitted) {
+            consecutiveFixFailures += 1;
+            loop = completeIteration(loop, {
+              outcome: 'unresolved',
+              fixInvocationId: fix.invocationId,
+              now: deps.now(),
+            });
+            deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                fix,
+                undefined,
+                'unresolved',
+                verification,
+              ),
+            );
+            // Do NOT call deps.revertFix here (plan-review P0, #679): this
+            // branch means the fixer left uncommitted changes in the tree
+            // (e.g. a pre-commit hook rejected the commit). That dirty state
+            // is exactly what the NEXT fixer iteration needs to see in order
+            // to finish committing or fixing it — reverting here would
+            // destroy the evidence #679 exists to preserve. Reverting is only
+            // correct for the separate build-breaking-fix case (#671), which
+            // has its own dedicated branch elsewhere in this loop.
+            // Clear lastFixHeadBeforeFix so the next iteration's build-breaking
+            // typecheck path does NOT revert to the pre-fix SHA and destroy the
+            // dirty fix attempts (#679 review feedback).
+            lastFixHeadBeforeFix = undefined;
+            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+            continue;
+          }
+          // If we autoCommitted, we fall out of the `uncommitted_changes` block and
+          // continue the loop (bypassing the Redundant `fixed` completion).
           continue;
         }
         if (verification.kind === 'no_commit_claimed') {
