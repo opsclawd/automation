@@ -375,6 +375,20 @@ export const orchestratorConfigSchema = z
         maxTestCases: 10,
         blockOversizedTasks: false,
       }),
+    serve: z
+      .object({
+        /**
+         * Interval, in seconds, at which `orchestrator serve` re-runs
+         * SweepWaitingRuns and drives any reactivated run with the worker
+         * loop. 0 (the default) disables the periodic sweep entirely —
+         * `serve` behaves exactly as it does today (a single startup sweep,
+         * no periodic re-check). A positive value is clamped to a minimum
+         * of 30s by the CLI wiring (Task 6) to avoid hammering the GitHub
+         * API/DB if misconfigured.
+         */
+        sweepIntervalSeconds: z.number().int().nonnegative().default(0),
+      })
+      .default({ sweepIntervalSeconds: 0 }),
   })
   .superRefine((config, ctx) => {
     const judgmentAgent = config.phases.planReview?.judgmentAgent;

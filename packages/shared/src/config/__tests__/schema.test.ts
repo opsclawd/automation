@@ -48,3 +48,46 @@ describe('phases.reviewFix.architectPass', () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe('serve config', () => {
+  const baseConfig = {
+    validation: { commands: ['pnpm test'], timeout: 60 },
+    phases: {
+      skip: [],
+      reviewFix: { maxIterations: 5 },
+      implement: { maxIterations: 1 },
+    },
+    timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+  };
+
+  it('defaults sweepIntervalSeconds to 0 when serve is absent', () => {
+    const result = orchestratorConfigSchema.parse(baseConfig);
+    expect(result.serve.sweepIntervalSeconds).toBe(0);
+  });
+
+  it('accepts an explicit positive sweepIntervalSeconds', () => {
+    const result = orchestratorConfigSchema.parse({
+      ...baseConfig,
+      serve: { sweepIntervalSeconds: 120 },
+    });
+    expect(result.serve.sweepIntervalSeconds).toBe(120);
+  });
+
+  it('rejects a negative sweepIntervalSeconds', () => {
+    expect(() =>
+      orchestratorConfigSchema.parse({
+        ...baseConfig,
+        serve: { sweepIntervalSeconds: -1 },
+      }),
+    ).toThrow();
+  });
+
+  it('rejects a non-integer sweepIntervalSeconds', () => {
+    expect(() =>
+      orchestratorConfigSchema.parse({
+        ...baseConfig,
+        serve: { sweepIntervalSeconds: 1.5 },
+      }),
+    ).toThrow();
+  });
+});
