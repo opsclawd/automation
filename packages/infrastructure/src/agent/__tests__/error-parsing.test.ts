@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { AgentRuntimeRouter } from '../agent-runtime-router.js';
-import { AgentProfileName, AgentInvocationId, RunId, PhaseName } from '@ai-sdlc/domain';
+import { AgentProfileName } from '@ai-sdlc/domain';
 import { FakeAgentInvocationPort } from '@ai-sdlc/application/test-doubles';
 import { join } from 'node:path';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import type { AgentInvocationRequest, AgentInvocationResult, AgentPort, EventBusPort } from '@ai-sdlc/application/ports';
-import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import type { OrchestratorEvent, AgentConfig } from '@ai-sdlc/shared';
 
 describe('AgentRuntimeRouter error parsing', () => {
   const FIXED_NOW = new Date('2026-07-08T22:10:00Z');
@@ -25,11 +25,11 @@ describe('AgentRuntimeRouter error parsing', () => {
       },
     };
 
-    const agentConfig = {
+    const agentConfig: AgentConfig = {
       defaultProfile: 'primary',
       profiles: {
-        primary: { runtime: 'opencode' as any, provider: 'opencode', model: 'mimo', timeoutMinutes: 1 },
-        fallback: { runtime: 'opencode' as any, provider: 'openai', model: 'gpt-4', timeoutMinutes: 1 },
+        primary: { runtime: 'opencode', provider: 'opencode', model: 'mimo', timeoutMinutes: 1 },
+        fallback: { runtime: 'opencode', provider: 'openai', model: 'gpt-4', timeoutMinutes: 1 },
       },
       phaseProfiles: {
         'plan-design': {
@@ -44,7 +44,7 @@ describe('AgentRuntimeRouter error parsing', () => {
       async invoke(req: AgentInvocationRequest): Promise<AgentInvocationResult> {
         if (req.profile === 'primary') {
           return {
-            runtime: 'opencode' as any,
+            runtime: 'opencode',
             provider: 'opencode',
             model: 'mimo',
             exitCode: 1,
@@ -56,7 +56,7 @@ describe('AgentRuntimeRouter error parsing', () => {
           };
         }
         return {
-          runtime: 'opencode' as any,
+          runtime: 'opencode',
           provider: 'openai',
           model: 'gpt-4',
           exitCode: 0,
@@ -70,7 +70,7 @@ describe('AgentRuntimeRouter error parsing', () => {
     };
 
     const router = new AgentRuntimeRouter({
-      agent: agentConfig as any,
+      agent: agentConfig,
       adapters: { opencode: adapter },
       invocationRepository: new FakeAgentInvocationPort(),
       eventBus,
