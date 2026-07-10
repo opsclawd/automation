@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TaskContextGenerator } from '../task-context-generator.js';
-import { TaskManifest } from '../results/schemas/task-manifest.js';
+import { TaskManifest, TaskManifestEntry } from '../results/schemas/task-manifest.js';
 
 describe('TaskContextGenerator', () => {
   const generator = new TaskContextGenerator();
@@ -13,8 +13,7 @@ describe('TaskContextGenerator', () => {
         n: 1,
         title: 'Dependency Task',
         acceptance_criteria: ['Done'],
-        version: 2,
-      } as any,
+      } as TaskManifestEntry,
       {
         n: 2,
         title: 'Current Task',
@@ -27,8 +26,7 @@ describe('TaskContextGenerator', () => {
         validation_commands: ['npm test'],
         migration_constraints: ['No breaking changes'],
         out_of_scope: ['UI changes'],
-        version: 2,
-      } as any,
+      } as TaskManifestEntry,
     ],
   };
 
@@ -93,8 +91,7 @@ Something else.
         title: 'Current Task',
         design_sections: ['Non-existent'],
         depends_on: [3],
-        version: 2,
-      } as any,
+      } as TaskManifestEntry,
       manifest: mockManifest,
       planMd: '## Task 2: Current Task\nBody',
       workspaceConstraints: '',
@@ -111,8 +108,8 @@ Something else.
   it('respects the context budget', () => {
     const longBody = 'A'.repeat(40000);
     const input = {
-      task: { n: 1, title: 'Big Task', version: 2 } as any,
-      manifest: { version: 2, task_count: 1, tasks: [] } as any,
+      task: { n: 1, title: 'Big Task' } as TaskManifestEntry,
+      manifest: { version: 2, task_count: 1, tasks: [] } as TaskManifest,
       planMd: `## Task 1: Big Task\n${longBody}`,
       workspaceConstraints: '',
       cwd: '/app',

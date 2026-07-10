@@ -1,4 +1,8 @@
-import { TaskManifest, TaskManifestEntry } from '../results/schemas/task-manifest.js';
+import type {
+  TaskManifest,
+  TaskManifestEntry,
+  TaskManifestEntryV2,
+} from '../results/schemas/task-manifest.js';
 import { extractTaskBody } from './plan-tasks.js';
 
 export interface TaskContextGeneratorInput {
@@ -64,111 +68,104 @@ export class TaskContextGenerator {
     if (!bodyResult.ok) diagnostics.unresolvedReferences.push('plan_task_body');
 
     let requirementSection = `## Task Requirements\n\n${taskBody}\n\n`;
-    if (
-      input.manifest.version === 2 &&
-      (task as any).acceptance_criteria &&
-      (task as any).acceptance_criteria.length > 0
-    ) {
-      requirementSection += `### Acceptance Criteria\n${(task as any).acceptance_criteria.map((ac: string) => `- ${ac}`).join('\n')}\n\n`;
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.acceptance_criteria && t2.acceptance_criteria.length > 0) {
+        requirementSection += `### Acceptance Criteria\n${t2.acceptance_criteria.map((ac) => `- ${ac}`).join('\n')}\n\n`;
+      }
     }
     sections.push(requirementSection);
     diagnostics.componentSizes['requirements'] = requirementSection.length;
 
     // 4. Relevant Design Sections
-    if (
-      input.manifest.version === 2 &&
-      (task as any).design_sections &&
-      (task as any).design_sections.length > 0
-    ) {
-      let designContent = '## Relevant Design Decisions\n\n';
-      if (designMd) {
-        for (const sectionTitle of (task as any).design_sections as string[]) {
-          const extracted = this.extractDesignSection(designMd, sectionTitle);
-          if (extracted) {
-            designContent += `### ${sectionTitle}\n\n${extracted}\n\n`;
-          } else {
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.design_sections && t2.design_sections.length > 0) {
+        let designContent = '## Relevant Design Decisions\n\n';
+        if (designMd) {
+          for (const sectionTitle of t2.design_sections) {
+            const extracted = this.extractDesignSection(designMd, sectionTitle);
+            if (extracted) {
+              designContent += `### ${sectionTitle}\n\n${extracted}\n\n`;
+            } else {
+              diagnostics.unresolvedReferences.push(`design_section:${sectionTitle}`);
+            }
+          }
+        } else {
+          for (const sectionTitle of t2.design_sections) {
             diagnostics.unresolvedReferences.push(`design_section:${sectionTitle}`);
           }
         }
-      } else {
-        for (const sectionTitle of (task as any).design_sections as string[]) {
-          diagnostics.unresolvedReferences.push(`design_section:${sectionTitle}`);
+        if (designContent !== '## Relevant Design Decisions\n\n') {
+          sections.push(designContent);
+          diagnostics.componentSizes['design'] = designContent.length;
         }
-      }
-      if (designContent !== '## Relevant Design Decisions\n\n') {
-        sections.push(designContent);
-        diagnostics.componentSizes['design'] = designContent.length;
       }
     }
 
     // 5. Dependency Summaries
-    if (
-      input.manifest.version === 2 &&
-      (task as any).depends_on &&
-      (task as any).depends_on.length > 0
-    ) {
-      let depContent = '## Completed Dependencies\n\n';
-      for (const depId of (task as any).depends_on as number[]) {
-        const log = dependencyLogs.get(depId);
-        if (log) {
-          const summary = this.summarizeLog(log);
-          depContent += `### Task ${depId} Summary\n\n${summary}\n\n`;
-        } else {
-          diagnostics.unresolvedReferences.push(`dependency_log:${depId}`);
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.depends_on && t2.depends_on.length > 0) {
+        let depContent = '## Completed Dependencies\n\n';
+        for (const depId of t2.depends_on) {
+          const log = dependencyLogs.get(depId);
+          if (log) {
+            const summary = this.summarizeLog(log);
+            depContent += `### Task ${depId} Summary\n\n${summary}\n\n`;
+          } else {
+            diagnostics.unresolvedReferences.push(`dependency_log:${depId}`);
+          }
         }
+        sections.push(depContent);
+        diagnostics.componentSizes['dependencies'] = depContent.length;
       }
-      sections.push(depContent);
-      diagnostics.componentSizes['dependencies'] = depContent.length;
     }
 
     // 6. Repository Targets (Files & Symbols)
-    if (
-      input.manifest.version === 2 &&
-      (((task as any).expected_files && (task as any).expected_files.length > 0) ||
-        ((task as any).relevant_symbols && (task as any).relevant_symbols.length > 0))
-    ) {
-      let targetContent = '## Repository Targets\n\n';
-      if ((task as any).expected_files && (task as any).expected_files.length > 0) {
-        targetContent += `### Expected Files\n${((task as any).expected_files as string[]).map((f: string) => `- ${f}`).join('\n')}\n\n`;
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if ((t2.expected_files && t2.expected_files.length > 0) || (t2.relevant_symbols && t2.relevant_symbols.length > 0)) {
+        let targetContent = '## Repository Targets\n\n';
+        if (t2.expected_files && t2.expected_files.length > 0) {
+          targetContent += `### Expected Files\n${t2.expected_files.map((f) => `- ${f}`).join('\n')}\n\n`;
+        }
+        if (t2.relevant_symbols && t2.relevant_symbols.length > 0) {
+          targetContent += `### Relevant Symbols\n${t2.relevant_symbols.map((s) => `- ${s}`).join('\n')}\n\n`;
+        }
+        sections.push(targetContent);
+        diagnostics.componentSizes['targets'] = targetContent.length;
       }
-      if ((task as any).relevant_symbols && (task as any).relevant_symbols.length > 0) {
-        targetContent += `### Relevant Symbols\n${((task as any).relevant_symbols as string[]).map((s: string) => `- ${s}`).join('\n')}\n\n`;
-      }
-      sections.push(targetContent);
-      diagnostics.componentSizes['targets'] = targetContent.length;
     }
 
     // 7. Deterministic Validation Commands
-    if (
-      input.manifest.version === 2 &&
-      (task as any).validation_commands &&
-      (task as any).validation_commands.length > 0
-    ) {
-      const valContent = `## Validation Commands\n\n\`\`\`bash\n${((task as any).validation_commands as string[]).join('\n')}\n\`\`\`\n\n`;
-      sections.push(valContent);
-      diagnostics.componentSizes['validation'] = valContent.length;
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.validation_commands && t2.validation_commands.length > 0) {
+        const valContent = `## Validation Commands\n\n\`\`\`bash\n${t2.validation_commands.join('\n')}\n\`\`\`\n\n`;
+        sections.push(valContent);
+        diagnostics.componentSizes['validation'] = valContent.length;
+      }
     }
 
     // 8. Migration & Compatibility Constraints
-    if (
-      input.manifest.version === 2 &&
-      (task as any).migration_constraints &&
-      (task as any).migration_constraints.length > 0
-    ) {
-      const migContent = `## Migration & Compatibility Constraints\n\n${((task as any).migration_constraints as string[]).map((mc: string) => `- ${mc}`).join('\n')}\n\n`;
-      sections.push(migContent);
-      diagnostics.componentSizes['migration'] = migContent.length;
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.migration_constraints && t2.migration_constraints.length > 0) {
+        const migContent = `## Migration & Compatibility Constraints\n\n${t2.migration_constraints.map((mc) => `- ${mc}`).join('\n')}\n\n`;
+        sections.push(migContent);
+        diagnostics.componentSizes['migration'] = migContent.length;
+      }
     }
 
     // 9. Out-of-Scope Notes
-    if (
-      input.manifest.version === 2 &&
-      (task as any).out_of_scope &&
-      (task as any).out_of_scope.length > 0
-    ) {
-      const oosContent = `## Explicitly Out-of-Scope\n\n${((task as any).out_of_scope as string[]).map((oos: string) => `- ${oos}`).join('\n')}\n\n`;
-      sections.push(oosContent);
-      diagnostics.componentSizes['out_of_scope'] = oosContent.length;
+    if (input.manifest.version === 2) {
+      const t2 = task as TaskManifestEntryV2;
+      if (t2.out_of_scope && t2.out_of_scope.length > 0) {
+        const oosContent = `## Explicitly Out-of-Scope\n\n${t2.out_of_scope.map((oos) => `- ${oos}`).join('\n')}\n\n`;
+        sections.push(oosContent);
+        diagnostics.componentSizes['out_of_scope'] = oosContent.length;
+      }
     }
 
     // Apply Budgeting (Simple truncation for now, prioritizing earlier sections)

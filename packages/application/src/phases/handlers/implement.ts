@@ -6,8 +6,7 @@ import type { Step, RunId } from '@ai-sdlc/domain';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { validatePlanTaskList, derivePlanTasks, extractTaskBody } from '../plan-tasks.js';
-import type { TaskManifest } from '../plan-tasks.js';
-import { TaskContextGenerator } from '../task-context-generator.js';
+import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 
 export interface OversizedTask {
   taskNum: number;
@@ -124,7 +123,7 @@ export class ImplementHandler implements PhaseHandler {
       try {
         const filteredManifest: TaskManifest = {
           ...manifest,
-          tasks: manifest.tasks.filter((t: any) => !doneIdx.has(t.n)),
+          tasks: (manifest.tasks as TaskManifestEntry[]).filter((t) => !doneIdx.has(t.n)),
         } as TaskManifest;
         lintResult = await this.opts.lintTaskSize(ctx.cwd, filteredManifest);
         if (!lintResult) {

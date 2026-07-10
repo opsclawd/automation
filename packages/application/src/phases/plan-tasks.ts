@@ -1,8 +1,8 @@
 import type { EventBusPort } from '../ports.js';
 import { taskManifestSchema } from '../results/schemas/task-manifest.js';
-import type { TaskManifest } from '../results/schemas/task-manifest.js';
+import type { TaskManifest, TaskManifestEntry } from '../results/schemas/task-manifest.js';
 
-export { TaskManifest };
+export { TaskManifest, TaskManifestEntry };
 
 export type TaskManifestValidationResult =
   | { success: true; manifest: TaskManifest }
@@ -266,7 +266,7 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, _totalFences
 }
 
 export function parseTaskManifest(json: string): TaskManifestValidationResult {
-  let parsed: any;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(json);
   } catch (err: unknown) {
@@ -281,7 +281,8 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
   // But if the test specifically expects "manifest version must be 1" for version: 2,
   // it means the current code (before my changes) only supported version 1.
 
-  if (parsed?.version !== 1 && parsed?.version !== 2) {
+  const parsedObj = parsed as { version?: unknown };
+  if (parsedObj?.version !== 1 && parsedObj?.version !== 2) {
     return { success: false, error: 'manifest version must be 1' };
   }
 
