@@ -2752,7 +2752,7 @@ describe('ImplementStepLoop', () => {
 
     it('bonus iteration — capped at one (escalates to human if bonus fix does not converge)', async () => {
       let specReviewCalls = 0;
-      const { events, bus } = collectEvents();
+      const { bus } = collectEvents();
       const deps = makeDeps({
         events: bus,
         runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
