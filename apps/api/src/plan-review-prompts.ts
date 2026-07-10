@@ -1,16 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import {
-  ArtifactNotFoundError,
-  parsePlanReviewFindings,
-  parseTaskManifest,
-  type ArtifactStore,
-  type EvidenceResolver,
-  type PlanReviewFinding,
-  type PlanReviewStepOptions,
-  WORKSPACE_CONSTRAINTS,
+import { ArtifactNotFoundError, WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import type {
+  PlanReviewFinding,
+  PlanReviewStepOptions,
+  EvidenceResolver,
+  ArtifactStore,
 } from '@ai-sdlc/application';
+import { parseTaskManifest } from '@ai-sdlc/application';
 
-export { parsePlanReviewFindings };
+export { parsePlanReviewFindings } from '@ai-sdlc/application/plan-review/parse-plan-review-findings';
 export type { PlanReviewFinding, PlanReviewStepOptions, EvidenceResolver };
 
 export const PLAN_REVIEW_FINDINGS_ARTIFACT = 'plan-review-findings.md';
