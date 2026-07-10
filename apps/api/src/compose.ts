@@ -78,7 +78,9 @@ import {
   CheckMergeReadiness,
   ImplementStepLoop,
   PlanReviewLoop,
+  parsePlanReviewFindings,
   type PlanReviewLoopDeps,
+  type PlanReviewFinding,
   PlanReviewHandler,
   readReviewVerdict,
   readFixVerdict,
@@ -3133,22 +3135,19 @@ export function composeRoot(opts: ComposeOptions): Container {
             String(ctx.runId),
             PLAN_REVIEW_FINDINGS_ARTIFACT,
           );
-          const verdictMatch = findings.match(/^## verdict\s*\n([a-z0-9_]+)/m);
-          const rawVerdict = verdictMatch?.[1];
-          const verdict =
-            rawVerdict === 'pass' ||
-            rawVerdict === 'p1_found' ||
-            rawVerdict === 'p2_only' ||
-            rawVerdict === 'proceed_with_concerns'
-              ? rawVerdict
-              : undefined;
-          const knownMatch = findings.match(/^## known_limitations\s*\n([\s\S]*?)(?=^## |\Z)/m);
-          const knownLimitations = knownMatch?.[1]?.trim() || undefined;
+          const parsedFindings = parsePlanReviewFindings(findings);
           return {
             invocationId,
             agentOutcome: 'success',
-            ...(verdict ? { verdict } : {}),
-            ...(knownLimitations ? { knownLimitations } : {}),
+            verdict: parsedFindings.verdict,
+            ...(parsedFindings.knownLimitations
+              ? {
+                  knownLimitations: parsedFindings.knownLimitations
+                    .map((line) => `- ${line}`)
+                    .join('\n'),
+                }
+              : {}),
+            findings: parsedFindings.findings as ReadonlyArray<PlanReviewFinding>,
           };
         } catch {
           return { invocationId, agentOutcome: 'failed' };

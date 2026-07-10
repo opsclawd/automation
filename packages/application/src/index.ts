@@ -61,6 +61,13 @@ export type {
   EvidenceResolver,
 } from './plan-review/types.js';
 export * from './plan-review/plan-review-loop.js';
+export {
+  parsePlanReviewFindings,
+  planReviewFindingSchema,
+  planReviewFindingsSchema,
+  PlanReviewFindingsParseError,
+} from './plan-review/parse-plan-review-findings.js';
+export type { PlanReviewFindingsDocument } from './plan-review/parse-plan-review-findings.js';
 export type {
   ImplementStepHistoryEntry,
   ImplementStepHistoryPort,

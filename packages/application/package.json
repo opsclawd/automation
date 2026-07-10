@@ -25,11 +25,6 @@
       "development": "./src/plan-review/parse-plan-review-findings.ts",
       "types": "./dist/plan-review/parse-plan-review-findings.d.ts",
       "import": "./dist/plan-review/parse-plan-review-findings.js"
-    },
-    "./plan-review/parse-plan-review-findings.js": {
-      "development": "./src/plan-review/parse-plan-review-findings.ts",
-      "types": "./dist/plan-review/parse-plan-review-findings.d.ts",
-      "import": "./dist/plan-review/parse-plan-review-findings.js"
     }
   },
   "files": [
