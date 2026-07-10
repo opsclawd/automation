@@ -23,7 +23,10 @@ describe('SweepOrphanedRuns', () => {
     const usecase = new SweepOrphanedRuns({ runRepository: repo, isProcessAlive, now: fixedNow });
     const result = usecase.execute();
     expect(result.swept).toBe(1);
+    expect(repo.updates).toHaveLength(1);
     expect(repo.updates[0]!.patch.status).toBe('failed');
+    expect(repo.updates[0]!.patch.currentPhase).toBeNull();
+    expect(repo.updates[0]!.patch.failureReason).toMatch(/orphaned.*99999/);
   });
 
   it('returns orphaned run entries so callers can re-enqueue them', () => {
@@ -45,6 +48,8 @@ describe('SweepOrphanedRuns', () => {
     expect(result.orphanedRuns).toHaveLength(1);
     expect(result.orphanedRuns[0]!.uuid).toBe('orphan-1');
     expect(result.orphanedRuns[0]!.previousPid).toBe(99999);
+    expect(result.orphanedRuns[0]!.run.failureReason).toMatch(/orphaned.*99999/);
+    expect(result.orphanedRuns[0]!.run.currentPhase).toBeUndefined();
   });
 
   it('does not include runs that are still alive in orphanedRuns', () => {

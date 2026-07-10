@@ -33,15 +33,17 @@ export class SweepOrphanedRuns {
       if (!this.deps.isProcessAlive(run.pid)) {
         const previousPid = run.pid;
         const completedAt = now();
+        const failureReason = `orphaned: process ${run.pid} no longer running`;
         this.deps.runRepository.updateStatusByUuid(run.uuid, {
           status: 'failed',
           completedAt,
-          failureReason: `orphaned: process ${run.pid} no longer running`,
+          failureReason,
           currentPhase: null,
         });
+        const { currentPhase: _currentPhase, ...runWithoutPhase } = run;
         orphanedRuns.push({
           uuid: run.uuid,
-          run: { ...run, status: 'failed', completedAt },
+          run: { ...runWithoutPhase, status: 'failed', completedAt, failureReason },
           previousPid,
         });
       }
