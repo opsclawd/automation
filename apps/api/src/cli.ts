@@ -143,9 +143,7 @@ const MIN_SWEEP_INTERVAL_MS = 30_000;
 
 function startWaitingRunsSweepTimer(
   sweeper: {
-    execute(
-      workerId: WorkerId,
-    ): Promise<{
+    execute(workerId: WorkerId): Promise<{
       reactivated: number;
       enqueued: number;
       skippedLeaseConflict: number;
@@ -180,6 +178,12 @@ function startWaitingRunsSweepTimer(
           console.error(
             `Reactivation sweep: ${result.reactivated} reactivated (${result.enqueued} enqueued, ${result.skippedLeaseConflict} skipped due to lease conflict), ${result.timedOut} timed out, ${result.passedOnMergedPr} passed (merged PR), ${result.cancelledOnClosedPr} cancelled (closed PR), ${result.stayedReady} stayed ready, ${result.skipped} skipped, ${result.errors.length} errors, ${result.enqueueErrors.length} enqueue errors`,
           );
+          for (const err of result.errors) {
+            console.error(`  Error in run ${err.runId}: ${err.error}`);
+          }
+          for (const err of result.enqueueErrors) {
+            console.error(`  Enqueue error in run ${err.runId}: ${err.error}`);
+          }
         }
       },
       (err) => {
@@ -747,6 +751,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         }
 
         let sweepTimer: { stop: () => void } | undefined;
+        let isShuttingDown = false;
         if (c.workerRegistry && c.workerLoopDeps && serveWorkerId) {
           const sweeper = c.buildWaitingRunsSweeper();
 
@@ -760,7 +765,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
               console.error('Initial startup reactivation sweep error:', err);
             })
             .finally(() => {
-              if (c.serveSweepIntervalSeconds > 0) {
+              if (c.serveSweepIntervalSeconds > 0 && !isShuttingDown) {
                 sweepTimer = startWaitingRunsSweepTimer(
                   sweeper,
                   c.serveSweepIntervalSeconds,
@@ -771,6 +776,8 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         }
 
         const shutdown = async () => {
+          if (isShuttingDown) return;
+          isShuttingDown = true;
           sweepTimer?.stop();
           workerDrainLoop?.stop();
           serveWorkerHeartbeat?.stop();
