@@ -1,3 +1,23 @@
+## Before opening a PR — mandatory, not optional
+
+Run all four of these and confirm every one passes. **Do not open a PR, and do
+not report work as done, if any of these fail:**
+
+```
+pnpm -r build      # exact command CI runs first — catches TypeScript build errors
+pnpm -r typecheck  # per-package tsc --noEmit — catches missing workspace deps too
+pnpm lint          # eslint --max-warnings=0 — unused vars, no-explicit-any, etc.
+pnpm -r test       # full suite — catches regressions in tests you didn't touch
+```
+
+This is not a suggestion or a nice-to-have — every one of these is enforced by
+CI on every PR, and a PR that fails any of them will not be merged. Fixing a
+red PR after the fact costs more (a human or another agent has to notice,
+diagnose, and push a follow-up commit) than running four commands before the
+first push. If a command fails, fix the failure and re-run all four again —
+do not open the PR with a known-red check on the assumption it can be fixed
+later.
+
 ## Agent skills
 
 ### Issue tracker
@@ -46,14 +66,9 @@ to `packages/application/package.json`, stop — you are about to break the laye
 rule. Define a port instead. See `packages/application/src/ports.ts` for the
 existing pattern (`RunRepositoryPort`, `RunDirectoryFactory`, `RunBashScriptFn`).
 
-**Verifying locally before pushing:**
-
-```
-pnpm depcruise          # layer + circular-dep check
-pnpm -r typecheck       # also catches missing workspace deps
-pnpm -r test
-pnpm lint
-```
+**Verifying locally before pushing:** see "Before opening a PR" at the top of
+this file — also add `pnpm depcruise` (layer + circular-dep check) when
+touching imports across `packages/`/`apps/` boundaries.
 
 **Shell tests** for `scripts/` belong in `scripts/lib/__tests__/*.bats` — anything
 else is silently ignored by `pnpm test:bash`. See
