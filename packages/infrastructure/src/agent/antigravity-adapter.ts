@@ -246,6 +246,27 @@ export class AntigravityAgentAdapter implements AgentPort {
     const printTimeoutMs = request.timeoutMs ?? this.opts.timeoutMsDefault ?? 30 * 60 * 1000;
     const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
     const modelLabel = resolveAgyModelLabel(request.model);
+
+    // Verified headless contract (agy 1.0.3): passing the prompt as a
+    // positional argument after --print is the only verified stable contract.
+    // Deviation to '-' + stdin (added in a prior iteration) caused the CLI
+    // to ignore the prompt and return a generic greeting in some environments
+    // (#709).
+    //
+    // NOTE: This introduces a risk of E2BIG (argument list too long) for
+    // extremely large prompts, but is necessary for correct prompt reception
+    // given agy's verified interface.
+    //
+    // --dangerously-skip-permissions and detached:true are load-bearing, not
+    // incidental — verified directly against the live binary: without
+    // --dangerously-skip-permissions, any tool-using prompt (reading a file,
+    // running a command — i.e. virtually every real task) blocks waiting for
+    // interactive permission approval that can never arrive in this headless
+    // context, and the process hangs until the external timeout kills it
+    // (confirmed: `agy --print "<tool-using prompt>" </dev/null` times out;
+    // the identical invocation with --dangerously-skip-permissions completes
+    // normally). Removing it trades a fast, wrong response (#709's symptom)
+    // for a slow hang on nearly every invocation — strictly worse.
     const args = [
       '--dangerously-skip-permissions',
       '--add-dir',
@@ -254,13 +275,13 @@ export class AntigravityAgentAdapter implements AgentPort {
       `${printTimeoutMins}m`,
       ...(modelLabel !== null ? ['--model', modelLabel] : []),
       '--print',
-      '-',
+      prompt,
     ];
     const result = await runExternalCli({
       runtime: 'antigravity',
       bin,
       args,
-      input: prompt,
+      input: '', // prompt is passed as a positional arg above; stdin unused
       detached: true,
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
