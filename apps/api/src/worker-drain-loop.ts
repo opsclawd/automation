@@ -12,7 +12,11 @@ function buildRecoverableRunIds(
 ): ReadonlySet<RunId> {
   const activeRuns = runRepo.findActiveRuns();
   const ids = new Set<RunId>();
-  const activeRunIdsFromJobs = new Set(queue.listActive().map((j) => j.runId));
+  const activeRunIdsFromJobs = new Set(
+    queue.listActive()
+      .filter((j) => j.status === 'queued')
+      .map((j) => j.runId)
+  );
   for (const r of activeRuns) {
     if (activeRunIdsFromJobs.has(r.uuid as RunId)) continue;
     // If the run has an active lease, we filter it out to prevent recovering runs that are in the middle of being reactivated by WaitingRunsSweeper.
