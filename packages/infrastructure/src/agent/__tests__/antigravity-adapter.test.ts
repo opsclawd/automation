@@ -78,7 +78,7 @@ describe('AntigravityAgentAdapter', () => {
     expect(r.exitCode).toBe(5);
   });
 
-  it('passes the prompt via --print and stdin', async () => {
+  it('passes the prompt via --print as a positional argument', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
     try {
@@ -93,25 +93,8 @@ describe('AntigravityAgentAdapter', () => {
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       const stdin = readFileSync(join(logDir, 'agy-last-stdin.txt'), 'utf-8');
       expect(args).toContain('--print');
-      expect(args).not.toContain('REVIEW THIS PR DIFF');
-      expect(stdin).toBe('REVIEW THIS PR DIFF');
-    } finally {
-      rmSync(logDir, { recursive: true, force: true });
-    }
-  });
-
-  it('includes --dangerously-skip-permissions in args', async () => {
-    const cwd = makeWorktree();
-    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
-    try {
-      const adapter = new AntigravityAgentAdapter({
-        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
-        artifactsDir: cwd,
-        env: { AGY_LOG_DIR: logDir },
-      });
-      await adapter.invoke(req(cwd));
-      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
-      expect(args).toContain('--dangerously-skip-permissions');
+      expect(args).toContain('REVIEW THIS PR DIFF');
+      expect(stdin).toBe('');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }
@@ -986,6 +969,32 @@ exit 0
       const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
       const tokens = args.split(' ');
       expect(tokens).not.toContain('--model');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it('receives prompt correctly in back-to-back invocations', async () => {
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-b2b-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+
+      // First invocation
+      const p1 = join(cwd, 'p1.md');
+      writeFileSync(p1, 'PROMPT 1');
+      await adapter.invoke(req(cwd, { promptPath: p1 }));
+      expect(readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8')).toContain('PROMPT 1');
+
+      // Second invocation (immediately after)
+      const p2 = join(cwd, 'p2.md');
+      writeFileSync(p2, 'PROMPT 2');
+      await adapter.invoke(req(cwd, { promptPath: p2 }));
+      expect(readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8')).toContain('PROMPT 2');
     } finally {
       rmSync(logDir, { recursive: true, force: true });
     }

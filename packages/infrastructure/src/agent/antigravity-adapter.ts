@@ -246,22 +246,31 @@ export class AntigravityAgentAdapter implements AgentPort {
     const printTimeoutMs = request.timeoutMs ?? this.opts.timeoutMsDefault ?? 30 * 60 * 1000;
     const printTimeoutMins = Math.max(1, Math.floor(printTimeoutMs / 60_000) - 1);
     const modelLabel = resolveAgyModelLabel(request.model);
+
+    // Verified headless contract (agy 1.0.3): passing the prompt as a
+    // positional argument after --print is the only verified stable contract.
+    // Deviation to '-' + stdin (added in a prior iteration) caused the CLI
+    // to ignore the prompt and return a generic greeting in some environments.
+    //
+    // NOTE: This introduces a risk of E2BIG (argument list too long) for
+    // extremely large prompts, but is necessary for correct prompt reception
+    // given agy's verified interface. We also remove 'detached: true' and
+    // unauthorized flags to align with other adapters and the original
+    // implementation plan.
     const args = [
-      '--dangerously-skip-permissions',
       '--add-dir',
       request.cwd,
       '--print-timeout',
       `${printTimeoutMins}m`,
       ...(modelLabel !== null ? ['--model', modelLabel] : []),
       '--print',
-      '-',
+      prompt,
     ];
     const result = await runExternalCli({
       runtime: 'antigravity',
       bin,
       args,
-      input: prompt,
-      detached: true,
+      input: '', // Explicitly close stdin to avoid hanging processes
       cwd: request.cwd,
       artifactsDir: this.opts.artifactsDir,
       model: request.model ?? '',
