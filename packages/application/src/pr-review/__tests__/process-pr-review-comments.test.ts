@@ -169,13 +169,13 @@ describe('ProcessPrReviewComments — happy path', () => {
     expect(github.repliesPosted).toContainEqual({
       repoFullName: 'o/r',
       prNumber: 5,
-
+      commentId: 9001,
       body: 'Renamed foo to bar.',
     });
     expect(github.resolvedThreads).toContainEqual({
       repoFullName: 'o/r',
       prNumber: 5,
-
+      commentId: 9001,
     });
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('processed');
@@ -400,7 +400,7 @@ describe('ProcessPrReviewComments — no_fix action', () => {
     expect(github.resolvedThreads).toContainEqual({
       repoFullName: 'o/r',
       prNumber: 5,
-
+      commentId: 9001,
     });
   });
 });

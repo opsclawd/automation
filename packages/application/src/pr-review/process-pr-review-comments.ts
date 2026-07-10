@@ -34,9 +34,9 @@ export interface ProcessPrReviewDeps {
     attempt: number;
     diff: string;
     branch: string;
-    previousBuildError?: string;
-    previousCodeVerifyReason?: string;
-    selectedContext?: SelectedContext;
+    previousBuildError: string | undefined;
+    previousCodeVerifyReason: string | undefined;
+    selectedContext: SelectedContext;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -172,7 +172,7 @@ export class ProcessPrReviewComments {
 
     const manifest = this.generateManifest(unresolved);
     const taskRunner = new PollTaskRunner(d);
-    const taskResults: PollTaskOutput[] = [];
+    const taskResults: PollTaskOutput['comments'][number][] = [];
     // Each task's agent may commit, advancing HEAD. Later tasks must verify
     // against the HEAD as of when they start, not the stale poll-start SHA. (M1)
     let runningStartSha = startCommitSha;
@@ -199,7 +199,13 @@ export class ProcessPrReviewComments {
       let lastOutput: PollTaskOutput | undefined;
       try {
         lastOutput = await taskRunner.execute({
-          ...input,
+          runId: input.runId,
+          repoId: input.repoId,
+          repoFullName: input.repoFullName,
+          prNumber: input.prNumber,
+          cwd: input.cwd,
+          phaseId: input.phaseId,
+          pollNumber: input.pollNumber,
           comments: currentComments,
           attempt: task.attempt,
           diff: currentDiff,
@@ -207,14 +213,14 @@ export class ProcessPrReviewComments {
           startCommitSha: runningStartSha,
           originalStartCommitSha: originalStartCommitSha,
           unresolvedCommentCount: unresolved.length,
-          previousBuildError: task.previousBuildError,
-          previousCodeVerifyReason: task.previousCodeVerifyReason,
+          previousBuildError: task.previousBuildError ?? undefined,
+          previousCodeVerifyReason: task.previousCodeVerifyReason ?? undefined,
         });
       } catch (err) {
         lastOutput = {
           comments: currentComments.map((c) => ({
             commentId: c.commentId,
-            action: 'failed',
+            action: 'failed' as const,
             processed: false,
             blocked: false,
           })),
@@ -275,7 +281,7 @@ export class ProcessPrReviewComments {
           d.prReviewRepo.upsertComment(blockComment(comment, fallbackReason));
           taskResults.push({
             ...co,
-            action: 'failed',
+            action: 'failed' as const,
             processed: false,
             blocked: true,
           });

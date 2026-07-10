@@ -895,9 +895,9 @@ export interface BuildPostPrReviewTaskPromptInput {
   }[];
   attempt: number;
   diff: string;
-  previousBuildError?: string;
-  previousCodeVerifyReason?: string;
-  selectedContext?: import('@ai-sdlc/application').SelectedContext;
+  previousBuildError: string | undefined;
+  previousCodeVerifyReason: string | undefined;
+  selectedContext: import('@ai-sdlc/application').SelectedContext;
 }
 
 export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptInput): string {
@@ -4292,8 +4292,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           comments,
           attempt,
           diff,
-          previousBuildError,
-          previousCodeVerifyReason,
+          previousBuildError: previousBuildError ?? undefined,
+          previousCodeVerifyReason: previousCodeVerifyReason ?? undefined,
           selectedContext,
         });
         writeFileSync(promptPath, content, 'utf-8');

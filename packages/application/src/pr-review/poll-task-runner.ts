@@ -22,9 +22,9 @@ export interface PollTaskRunnerDeps {
     attempt: number;
     diff: string;
     branch: string;
-    previousBuildError?: string;
-    previousCodeVerifyReason?: string;
-    selectedContext?: SelectedContext;
+    previousBuildError: string | undefined;
+    previousCodeVerifyReason: string | undefined;
+    selectedContext: SelectedContext;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -63,8 +63,8 @@ export interface PollTaskInput {
   startCommitSha: string;
   originalStartCommitSha: string;
   unresolvedCommentCount: number;
-  previousBuildError?: string;
-  previousCodeVerifyReason?: string;
+  previousBuildError?: string | undefined;
+  previousCodeVerifyReason?: string | undefined;
 }
 
 export interface PollTaskOutput {
@@ -105,8 +105,8 @@ export class PollTaskRunner {
       attempt: input.attempt,
       diff: input.diff,
       branch: input.branch,
-      previousBuildError: input.previousBuildError,
-      previousCodeVerifyReason: input.previousCodeVerifyReason,
+      previousBuildError: input.previousBuildError ?? undefined,
+      previousCodeVerifyReason: input.previousCodeVerifyReason ?? undefined,
       selectedContext,
     });
 

@@ -9,8 +9,8 @@ export interface ContextSelectorInput {
   comments: PrReviewComment[];
   attempt: number;
   diff: string; // current full diff origin/HEAD..HEAD (or similar)
-  previousBuildError?: string;
-  previousCodeVerifyReason?: string;
+  previousBuildError: string | undefined;
+  previousCodeVerifyReason: string | undefined;
 }
 
 export interface SelectedContext {
