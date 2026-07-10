@@ -510,6 +510,8 @@ export interface Container {
     stepTitle: string;
     cwd: string;
     ctx: import('@ai-sdlc/application').PhaseHandlerContext;
+    manifest: TaskManifest;
+    planMd: string;
   }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
@@ -2236,13 +2238,13 @@ export function composeRoot(opts: ComposeOptions): Container {
           task,
           manifest,
           planMd,
-          designMd,
+          designMd: designMd ?? '',
           dependencyLogs,
           workspaceConstraints: WORKSPACE_CONSTRAINTS,
           cwd: ctx.cwd,
           repoId: ctx.repoId,
           branchName,
-          startCommitSha: run?.startCommitSha,
+          startCommitSha: run?.startCommitSha ?? '',
         });
 
         const taskContext = contextResult.content;
@@ -3549,14 +3551,16 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus: persistingEventBusForLoop,
       });
 
-      phaseRegistry.register(
-        new ImplementHandler({
-          steps: stepRepository,
-          runStep,
-          setup: worktreeSetup,
-          lintTaskSize: lintTaskSizeDep,
-        }),
-      );
+      if (runStep !== undefined) {
+        phaseRegistry.register(
+          new ImplementHandler({
+            steps: stepRepository,
+            runStep,
+            setup: worktreeSetup,
+            lintTaskSize: lintTaskSizeDep,
+          }),
+        );
+      }
 
       phaseRegistry.register(
         new ValidateHandler({

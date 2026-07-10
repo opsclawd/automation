@@ -3,8 +3,8 @@ import { z } from 'zod';
 export const taskManifestEntryV1Schema = z.object({
   n: z.number().int().min(1, { message: 'manifest task entry must have a valid n (number) and non-empty title (string)' }),
   title: z.string().min(1, { message: 'manifest task entry must have a valid n (number) and non-empty title (string)' }),
-  files: z.array(z.string()).optional(),
-  validation: z.array(z.string()).optional(),
+  files: z.array(z.string()).nullish(),
+  validation: z.array(z.string()).nullish(),
 }).passthrough();
 
 export const taskManifestV1Schema = z.object({
@@ -18,18 +18,18 @@ export const taskManifestV1Schema = z.object({
 export const taskManifestEntryV2Schema = z.object({
   n: z.number().int().min(1),
   title: z.string().min(1),
-  description: z.string().optional(),
-  acceptance_criteria: z.array(z.string()).optional(),
-  expected_files: z.array(z.string()).optional(),
-  relevant_symbols: z.array(z.string()).optional(),
-  design_sections: z.array(z.string()).optional(),
-  depends_on: z.array(z.number().int().min(1)).optional(),
-  validation_commands: z.array(z.string()).optional(),
-  migration_constraints: z.array(z.string()).optional(),
-  out_of_scope: z.array(z.string()).optional(),
+  description: z.string().nullish(),
+  acceptance_criteria: z.array(z.string()).nullish(),
+  expected_files: z.array(z.string()).nullish(),
+  relevant_symbols: z.array(z.string()).nullish(),
+  design_sections: z.array(z.string()).nullish(),
+  depends_on: z.array(z.number().int().min(1)).nullish(),
+  validation_commands: z.array(z.string()).nullish(),
+  migration_constraints: z.array(z.string()).nullish(),
+  out_of_scope: z.array(z.string()).nullish(),
   // Maintain some compatibility with V1 fields if needed, but the goal is structural
-  files: z.array(z.string()).optional(),
-  validation: z.array(z.string()).optional(),
+  files: z.array(z.string()).nullish(),
+  validation: z.array(z.string()).nullish(),
 }).passthrough();
 
 export const taskManifestV2Schema = z.object({

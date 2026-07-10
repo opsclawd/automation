@@ -6,7 +6,7 @@ export interface TaskContextGeneratorInput {
   manifest: TaskManifest;
   planMd: string;
   designMd?: string;
-  dependencyLogs: Map<number, string>; // task number -> implementation-log.md content
+  dependencyLogs?: Map<number, string>; // task number -> implementation-log.md content
   workspaceConstraints: string;
   cwd: string;
   repoId: string;

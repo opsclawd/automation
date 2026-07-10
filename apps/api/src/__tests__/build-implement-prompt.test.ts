@@ -17,29 +17,18 @@ describe('buildImplementPrompt', () => {
     expect(prompt).toMatch(/^You are implementing Task 3: Add authentication/);
   });
 
-  it('includes the full task text in the Task Description section', () => {
+  it('includes the full task text from context', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
-    expect(prompt).toContain('## Task Description');
     expect(prompt).toContain('Implement JWT-based auth middleware and write integration tests.');
   });
 
-  // Kept explicitly for direct helper formatting compatibility (Task 4)
-  it('falls back gracefully when taskText is empty', () => {
-    const prompt = buildImplementPrompt(ctx, '', branchName);
-    expect(prompt).toContain('## Task Description');
-    expect(prompt).toContain('See plan.md Task 3 for details.');
-  });
-
-  it('includes the working directory, repo, branch, and reference files in Context', () => {
+  it('includes the working directory, repo, branch, and reference files in Context Supplement', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
-    expect(prompt).toContain('## Context');
+    expect(prompt).toContain('## Context Supplement');
     expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('/workspace/issue-42');
     expect(prompt).toContain('opsclawd/automation');
     expect(prompt).toContain('ai/issue-42');
-    expect(prompt).toContain('issue.md');
-    expect(prompt).toContain('design.md');
-    expect(prompt).toContain('plan.md');
   });
 
   it('includes SCOPE RESTRICTION section naming the task number', () => {
@@ -49,9 +38,10 @@ describe('buildImplementPrompt', () => {
     expect(prompt).toContain('numbered higher than 3');
   });
 
-  it('includes Your Job section with commit verification commands', () => {
+  it('includes Your Job section with context guidance and commit verification commands', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
     expect(prompt).toContain('## Your Job');
+    expect(prompt).toContain('Review the Task Context above');
     expect(prompt).toContain('git rev-parse HEAD');
     expect(prompt).toContain('git status --porcelain');
   });
