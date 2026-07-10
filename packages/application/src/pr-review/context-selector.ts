@@ -44,7 +44,7 @@ export class DefaultContextSelector implements ContextSelectorPort {
 
     if (attempt === 3) {
       return {
-        comments: comments.map(c => ({
+        comments: comments.map((c) => ({
           commentId: c.commentId,
           path: c.path,
           line: c.line,
@@ -60,19 +60,23 @@ export class DefaultContextSelector implements ContextSelectorPort {
 
     let additionalInfo: string | undefined = undefined;
     if (attempt === 2) {
-        let info = '';
-        if (previousBuildError) info += `### Previous Build Error\n\n${previousBuildError}\n\n`;
-        if (previousCodeVerifyReason) info += `### Previous Code Verification Rejection\n\n> ${previousCodeVerifyReason}\n\n`;
-        if (info) additionalInfo = info;
+      let info = '';
+      if (previousBuildError) info += `### Previous Build Error\n\n${previousBuildError}\n\n`;
+      if (previousCodeVerifyReason)
+        info += `### Previous Code Verification Rejection\n\n> ${previousCodeVerifyReason}\n\n`;
+      if (info) additionalInfo = info;
     }
 
     return {
-      comments: comments.map(c => ({
+      comments: comments.map((c) => ({
         commentId: c.commentId,
         path: c.path,
         line: c.line,
         body: c.body,
-        context: attempt === 1 ? 'Attempt 1: Limited context (implemented via full diff for now).' : 'Attempt 2: Expanded context (full file diffs).',
+        context:
+          attempt === 1
+            ? 'Attempt 1: Limited context (implemented via full diff for now).'
+            : 'Attempt 2: Expanded context (full file diffs).',
       })),
       files: [],
       diffs: [{ content: diff }],
