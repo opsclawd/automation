@@ -37,6 +37,20 @@ describe('buildQualityReviewPrompt', () => {
     expect(prompt).toContain('Printing the');
   });
 
+  it('permits read-only inspection commands instead of forbidding all shell use', () => {
+    // A weaker model (e.g. gpt-5.4-mini on codex) with no dedicated file-read
+    // tool has no way to comply with a blanket "no shell commands" rule —
+    // codex's only real file-read mechanism is `cat`. Confirmed live: this
+    // caused a quality-review invocation to burn ~1M tokens flailing between
+    // web search and other tools rather than just reading the diff, then
+    // fail without ever writing result.json.
+    const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('HARD CONSTRAINT — READ-ONLY REVIEW');
+    expect(prompt).toContain('MUST NOT run tests, run builds');
+    expect(prompt).toContain('Read-only shell commands for');
+    expect(prompt).toContain('cat, ls, grep, git diff, git log');
+  });
+
   it('includes the typecheck section', () => {
     const prompt = buildQualityReviewPrompt(ctx, typecheckSection);
     expect(prompt).toContain('## TYPECHECK RESULT');
