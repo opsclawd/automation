@@ -28,4 +28,5 @@ export interface JobQueuePort {
       on every job whose status='claimed' AND claim_expires_at < cutoff.
       Returns the number of rows reclaimed. */
   reclaimStaleClaims(cutoff: Date): number;
+  listActive(): Job[];
 }
