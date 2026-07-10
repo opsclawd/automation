@@ -5,10 +5,15 @@ import {
   RepositoryId,
   WorkerId,
   WorkerLeaseConflictError,
+  RunId,
 } from '@ai-sdlc/domain';
 import { SweepWaitingRuns, type SweepWaitingRunsDeps } from '../sweep-waiting-runs.js';
+import { SweepOrphanedRuns } from '../sweep-orphaned-runs.js';
+import { ResumeRun } from '../resume-run.js';
 import { WaitingRunsSweeper } from '../waiting-runs-sweeper.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
+import { FakePhaseRepository } from '../test-doubles/fake-phase-repository.js';
+import { FakeStepRepository } from '../test-doubles/fake-step-repository.js';
 import { FakePrReviewRepository } from '../test-doubles/fake-pr-review-repository.js';
 import { FakeGitHubPort } from '../test-doubles/fake-github-port.js';
 import { FakeEventBus } from '../test-doubles/fake-event-bus.js';
@@ -44,8 +49,14 @@ describe('WaitingRunsSweeper', () => {
   let registry: FakeWorkerRegistryPort;
   let repos: FakeRepositoryPort;
   let sweepDeps: SweepWaitingRunsDeps;
+  let phaseRepo: FakePhaseRepository;
+  let stepRepo: FakeStepRepository;
+  let resumeRun: ResumeRun;
+  let orphanedSweep: SweepOrphanedRuns;
 
   beforeEach(() => {
+    phaseRepo = new FakePhaseRepository();
+    stepRepo = new FakeStepRepository();
     runRepo = new FakeRunRepository();
     prReviewRepo = new FakePrReviewRepository();
     github = new FakeGitHubPort();
@@ -83,6 +94,21 @@ describe('WaitingRunsSweeper', () => {
       },
       resolvePrContext: async () => ({ repoFullName: 'owner/repo', prNumber: 7 }),
     };
+    resumeRun = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo,
+      phaseRepo,
+      logger: { error: () => {} },
+      now: () => fixedNow,
+    });
+    orphanedSweep = new SweepOrphanedRuns({
+      runRepository: runRepo,
+      isProcessAlive: () => true,
+      now: () => fixedNow,
+    });
   });
 
   it('enqueues a job for a reactivated run and transitions it to running after acquiring a lease', async () => {
@@ -101,6 +127,8 @@ describe('WaitingRunsSweeper', () => {
     ]);
     const sweeper = new WaitingRunsSweeper({
       sweep: new SweepWaitingRuns(sweepDeps),
+      orphanedSweep,
+      resumeRun,
       runRepository: runRepo,
       leases,
       queue,
@@ -113,7 +141,7 @@ describe('WaitingRunsSweeper', () => {
     expect(result.enqueued).toBe(1);
     expect(result.skippedLeaseConflict).toBe(0);
     expect(result.enqueueErrors).toEqual([]);
-    const jobs = queue.listForRun('w1' as never);
+    const jobs = queue.listForRun('w1' as RunId);
     expect(jobs).toHaveLength(1);
     expect(jobs[0]?.status).toBe('queued');
     expect(runRepo.findByUuid('w1')?.status).toBe('running');
@@ -133,11 +161,13 @@ describe('WaitingRunsSweeper', () => {
         createdAt: new Date('2026-06-04T00:45:00Z'),
       },
     ]);
-    vi.spyOn(leases, 'acquire').mockImplementationOnce(() => {
+    vi.spyOn(resumeRun, 'execute').mockImplementationOnce(() => {
       throw new WorkerLeaseConflictError('owner/repo', WorkerId('other-worker'));
     });
     const sweeper = new WaitingRunsSweeper({
       sweep: new SweepWaitingRuns(sweepDeps),
+      orphanedSweep,
+      resumeRun,
       runRepository: runRepo,
       leases,
       queue,
@@ -159,6 +189,8 @@ describe('WaitingRunsSweeper', () => {
     github.comments.set('owner/repo/7', []);
     const sweeper = new WaitingRunsSweeper({
       sweep: new SweepWaitingRuns(sweepDeps),
+      orphanedSweep,
+      resumeRun,
       runRepository: runRepo,
       leases,
       queue,
@@ -169,7 +201,7 @@ describe('WaitingRunsSweeper', () => {
     const result = await sweeper.execute(workerId);
     expect(result.stayedReady).toBe(1);
     expect(result.enqueued).toBe(0);
-    expect(queue.listForRun('w2' as never)).toHaveLength(0);
+    expect(queue.listForRun('w2' as RunId)).toHaveLength(0);
     expect(runRepo.findByUuid('w2')?.status).toBe('waiting');
   });
 
@@ -192,6 +224,8 @@ describe('WaitingRunsSweeper', () => {
     });
     const sweeper = new WaitingRunsSweeper({
       sweep: new SweepWaitingRuns(sweepDeps),
+      orphanedSweep,
+      resumeRun,
       runRepository: runRepo,
       leases,
       queue,
@@ -205,5 +239,49 @@ describe('WaitingRunsSweeper', () => {
     expect(result.enqueueErrors).toHaveLength(1);
     expect(result.enqueueErrors[0]?.error).toBe('Enqueue failed');
     expect(runRepo.findByUuid('w3')?.status).toBe('waiting');
+  });
+
+  it('automatically detects and resumes an orphaned run', async () => {
+    // 1. Setup a run that looks like it crashed (status 'running', dead PID)
+    const run = createRun({
+      uuid: 'orphan-1',
+      displayId: 'issue-1-20260604-000000',
+      repoId: RepositoryId('owner/repo'),
+      issueNumber: 1,
+      startedAt: new Date('2026-06-04T00:00:00Z'),
+    });
+    runRepo.addRun({ ...run, status: 'running', pid: 12345 });
+
+    // 2. Mock SweepOrphanedRuns to find it
+    const isProcessAlive = (pid: number) => pid !== 12345;
+    const mockedOrphanedSweep = new SweepOrphanedRuns({
+      runRepository: runRepo,
+      isProcessAlive,
+      now: () => fixedNow,
+    });
+
+    const sweeper = new WaitingRunsSweeper({
+      sweep: new SweepWaitingRuns(sweepDeps),
+      orphanedSweep: mockedOrphanedSweep,
+      resumeRun,
+      runRepository: runRepo,
+      leases,
+      queue,
+      eventBus,
+      now: () => fixedNow,
+      logger: { error: () => {} },
+    });
+
+    // 4. Execute sweep
+    const result = await sweeper.execute(workerId);
+
+    // 5. Verify results
+    expect(result.orphanedSwept).toBe(1);
+    expect(result.enqueued).toBe(1);
+    const jobs = queue.listForRun('orphan-1' as RunId);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.status).toBe('queued');
+    // After resumeRun.execute, the run status should be 'running' (preparing for worker)
+    expect(runRepo.findByUuid('orphan-1')?.status).toBe('running');
   });
 });

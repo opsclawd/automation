@@ -481,7 +481,7 @@ export interface Container {
       fromPhase?: string;
       workerId: import('@ai-sdlc/domain').WorkerId;
       attempt?: number;
-    }): Promise<void>;
+    }): Promise<{ jobId: import('@ai-sdlc/domain').JobId; jobStatus: 'queued' }>;
     transition(input: {
       runId: RunId;
       fromPhase?: string;
@@ -1294,12 +1294,38 @@ export function composeRoot(opts: ComposeOptions): Container {
   const sweepLogger: { error: (message: string, ...args: unknown[]) => void } = {
     error: (msg, ...args) => console.error(msg, ...args),
   };
+  const logger: { error: (message: string, ...args: unknown[]) => void } = {
+    error: (msg, ...args) => console.error(msg, ...args),
+  };
+
+  const phaseRepository = new PhaseRepository(db);
+  const eventRepository = new EventRepository(db);
+  const failureRepository = new FailureRepository(db);
+  const agentInvocationRepository = new AgentInvocationRepository(db);
+  const validationRunRepository = new ValidationRunRepository(db);
+  const agentUsageRepository = new AgentUsageRepository(db);
+  const loopRepository = new LoopRepository(db);
+  const workerLeaseRepository = new WorkerLeaseRepository(db);
+
+  const jobQueue = new JobQueueRepository(db, registryBackedRepo);
+  const stepRepository: StepRepositoryPort = new SqliteStepRepository(db);
+
+  const resumeRun = new ResumeRun({
+    runRepository,
+    repos: registryBackedRepo,
+    leases: workerLeaseRepository,
+    queue: jobQueue,
+    stepRepo: stepRepository,
+    phaseRepo: phaseRepository,
+    logger,
+  });
 
   if (opts.runStartupSweeps !== false) {
     // Sweep orphaned runs before any new run starts
     const sweep = new SweepOrphanedRuns({
       runRepository,
       isProcessAlive: checkPid,
+      leasePort: workerLeaseRepository,
     });
     const sweepResult = sweep.execute();
     if (sweepResult.swept > 0) {
@@ -1367,14 +1393,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     );
   }
 
-  const phaseRepository = new PhaseRepository(db);
-  const eventRepository = new EventRepository(db);
-  const failureRepository = new FailureRepository(db);
-  const agentInvocationRepository = new AgentInvocationRepository(db);
-  const validationRunRepository = new ValidationRunRepository(db);
-  const agentUsageRepository = new AgentUsageRepository(db);
-  const loopRepository = new LoopRepository(db);
-  const workerLeaseRepository = new WorkerLeaseRepository(db);
   const validationAdapter = new ProcessValidationAdapter();
   const runValidation = new RunValidation({
     validation: validationAdapter,
@@ -1422,9 +1440,6 @@ export function composeRoot(opts: ComposeOptions): Container {
   }) satisfies ResolveRefShaFn;
   const startIssueRun = new StartIssueRun(deps);
   const checkMergeReadiness = new CheckMergeReadiness({ prReviewRepo: prReviewRepository });
-  const logger: { error: (message: string, ...args: unknown[]) => void } = {
-    error: (msg, ...args) => console.error(msg, ...args),
-  };
 
   const abortRegistry = new AbortRegistry();
   const gitAdapter = new GitWorktreeAdapter();
@@ -1465,7 +1480,6 @@ export function composeRoot(opts: ComposeOptions): Container {
   });
 
   const phaseRegistry = new PhaseHandlerRegistry();
-  const stepRepository: StepRepositoryPort = new SqliteStepRepository(db);
 
   // Register the phase handler that does not require agent-mode dependencies
   phaseRegistry.register(new ReadIssueHandler());
@@ -3994,8 +4008,6 @@ export function composeRoot(opts: ComposeOptions): Container {
     if ((err.cause as { code?: string })?.code !== 'ENOENT') throw err;
   }
 
-  const jobQueue = new JobQueueRepository(db, registryBackedRepo);
-
   const repositoryRegistry = new RepositoryRegistryRepository(db);
   const metadataResolver = resolver;
 
@@ -4032,6 +4044,12 @@ export function composeRoot(opts: ComposeOptions): Container {
 
   const buildWaitingRunsSweeper = () =>
     new WaitingRunsSweeper({
+      orphanedSweep: new SweepOrphanedRuns({
+        runRepository,
+        isProcessAlive: checkPid,
+        leasePort: workerLeaseRepository,
+      }),
+      resumeRun,
       sweep: new SweepWaitingRuns({
         runRepository,
         prReviewRepo: prReviewRepository,
@@ -4137,15 +4155,6 @@ export function composeRoot(opts: ComposeOptions): Container {
         }
       : undefined;
 
-  const resumeRun = new ResumeRun({
-    runRepository,
-    repos: registryBackedRepo,
-    leases: workerLeaseRepository,
-    queue: jobQueue,
-    stepRepo: stepRepository,
-    phaseRepo: phaseRepository,
-    logger,
-  }) as unknown as Container['resumeRun'];
 
   const retryFailedPhase = new RetryFailedPhase({
     runRepository,

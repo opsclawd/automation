@@ -8,6 +8,8 @@ import {
 } from '@ai-sdlc/domain';
 import {
   SweepWaitingRuns,
+  SweepOrphanedRuns,
+  ResumeRun,
   WaitingRunsSweeper,
   type SweepWaitingRunsDeps,
   workerLoop,
@@ -110,8 +112,21 @@ describe('serve sweep-then-drive integration', () => {
     const run = makeWaitingRun('r1', new Date('2026-06-04T00:30:00Z'));
     runRepo.addRun(run);
 
+    const resumeRun = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo: undefined as any,
+      phaseRepo: undefined as any,
+      logger: { error: () => {} },
+      now: () => fixedNow,
+    });
+
     const sweeper = new WaitingRunsSweeper({
       sweep: new SweepWaitingRuns(makeSweepDeps()),
+      orphanedSweep: new SweepOrphanedRuns({ runRepository: runRepo, isProcessAlive: () => true }),
+      resumeRun,
       runRepository: runRepo,
       leases,
       queue,
@@ -156,8 +171,21 @@ describe('serve sweep-then-drive integration', () => {
       ttlMs: 60_000,
     });
 
+    const resumeRun = new ResumeRun({
+      runRepository: runRepo,
+      repos,
+      leases,
+      queue,
+      stepRepo: undefined as any,
+      phaseRepo: undefined as any,
+      logger: { error: () => {} },
+      now: () => fixedNow,
+    });
+
     const sweeper = new WaitingRunsSweeper({
       sweep: new SweepWaitingRuns(makeSweepDeps()),
+      orphanedSweep: new SweepOrphanedRuns({ runRepository: runRepo, isProcessAlive: () => true }),
+      resumeRun,
       runRepository: runRepo,
       leases,
       queue,

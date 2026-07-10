@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { SweepOrphanedRuns } from '../sweep-orphaned-runs.js';
 import { FakeRunRepository } from '../test-doubles/fake-run-repository.js';
-import { canResume, RepositoryId } from '@ai-sdlc/domain';
+import { canResume, RepositoryId, RunId, WorkerId } from '@ai-sdlc/domain';
+import { FakeWorkerLeasePort } from '../test-doubles/fake-worker-lease-port.js';
+import { FakeWorkerRegistryPort } from '../test-doubles/fake-worker-registry-port.js';
 import { planRunRecoveryAction, type RunRecord } from '../index.js';
 
 const fixedNow = () => new Date('2026-05-13T19:23:00Z');
 
 describe('SweepOrphanedRuns', () => {
-  it('marks runs whose PID is dead as failed', () => {
+  it('marks runs whose PID is dead as failed and returns them', () => {
     const repo = new FakeRunRepository();
     repo.addRun({
       uuid: 'orphan-1',
@@ -23,10 +25,51 @@ describe('SweepOrphanedRuns', () => {
     const usecase = new SweepOrphanedRuns({ runRepository: repo, isProcessAlive, now: fixedNow });
     const result = usecase.execute();
     expect(result.swept).toBe(1);
+    expect(result.sweptRuns).toHaveLength(1);
+    expect(result.sweptRuns[0]!.uuid).toBe('orphan-1');
+    expect(result.sweptRuns[0]!.status).toBe('failed');
+
     expect(repo.updates).toHaveLength(1);
     expect(repo.updates[0]!.patch.status).toBe('failed');
     expect(repo.updates[0]!.patch.currentPhase).toBeNull();
     expect(repo.updates[0]!.patch.failureReason).toMatch(/orphaned.*99999/);
+  });
+
+  it('skips runs that have an active worker lease even if PID is dead', () => {
+    const repo = new FakeRunRepository();
+    const repoId = RepositoryId('owner/repo');
+    repo.addRun({
+      uuid: 'leased-1',
+      displayId: 'issue-1-20260513-000000',
+      repoId,
+      issueNumber: 1,
+      type: 'issue_to_pr',
+      status: 'running',
+      completedPhases: [],
+      startedAt: new Date('2026-05-13T18:00:00Z'),
+      pid: 99999,
+    });
+
+    const registry = new FakeWorkerRegistryPort();
+    const leasePort = new FakeWorkerLeasePort(registry);
+    leasePort.acquire({
+      repoId,
+      workerId: WorkerId('other-host-worker'),
+      runId: RunId('leased-1'),
+      now: fixedNow(),
+      ttlMs: 60000,
+    });
+
+    const isProcessAlive = () => false;
+    const usecase = new SweepOrphanedRuns({
+      runRepository: repo,
+      isProcessAlive,
+      leasePort,
+      now: fixedNow,
+    });
+    const result = usecase.execute();
+    expect(result.swept).toBe(0);
+    expect(repo.updates).toHaveLength(0);
   });
 
   it('produces a record that canResume() accepts and resolves correctly under planRunRecoveryAction', () => {
