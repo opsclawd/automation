@@ -24,7 +24,7 @@ export interface SweepWaitingRunsDeps {
 export interface SweepWaitingRunsResult {
   scanned: number;
   reactivated: number;
-  reactivatedRuns: Array<{ run: RunRecord; reason: string; targetTime?: Date; timerId?: string }>;
+  reactivatedRuns: Array<{ run: RunRecord; reason: string }>;
   timedOut: number;
   passedOnMergedPr: number;
   cancelledOnClosedPr: number;
