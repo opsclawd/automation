@@ -44,6 +44,10 @@ export class FakeGitPort implements GitPort {
     this.headByCwd.set(cwd, commitSha);
   }
 
+  async add(cwd: string, pathspec: string): Promise<void> {
+    // No-op for now, could track if needed
+  }
+
   async diff(cwd: string, base: string, head?: string): Promise<string> {
     return `diff for ${cwd} ${base}..${head ?? 'HEAD'}`;
   }

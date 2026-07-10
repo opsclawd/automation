@@ -3,6 +3,7 @@ import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FixStepOptions, RevalidationResult } from '../review-fix/types.js';
+import type { GitPort } from '../ports/git-port.js';
 
 export interface ValidateFixStepContext {
   loopId: string;
