@@ -99,7 +99,12 @@ export class CodexAgentAdapter implements AgentPort {
         }
 
         // Deep-parse the error message if it's JSON
-        let errorData: any = {};
+        let errorData: {
+          status?: number;
+          type?: string;
+          message?: string;
+          error?: { status?: number; type?: string; message?: string };
+        } = {};
         try {
           errorData = JSON.parse(detectedError);
         } catch {
@@ -125,7 +130,7 @@ export class CodexAgentAdapter implements AgentPort {
         const stderrLog = readFileSync(result.stderrPath, 'utf-8');
         writeFileSync(result.stderrPath, `${marker}: ${errorMessage}\n${stderrLog}`);
       }
-    } catch (e) {
+    } catch {
       // Best-effort parsing. If it fails, result stands as-is (from runExternalCli).
     }
 
