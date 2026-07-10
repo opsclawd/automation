@@ -29,7 +29,6 @@ export interface AgentInvocationRequest {
   fallbackOfInvocationId?: AgentInvocationId;
   fallbackReason?: string;
   timeoutMs?: number;
-  sandboxMode?: 'read-only' | 'writable';
 }
 
 export interface AgentInvocationResult {

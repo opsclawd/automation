@@ -141,7 +141,6 @@
         "runtime": "codex",
         "provider": "openai",
         "model": "default",
-        "sandboxMode": "writable",
         "timeoutMinutes": 45
       }
     },
