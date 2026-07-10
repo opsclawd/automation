@@ -175,7 +175,6 @@ export class ProcessPrReviewComments {
     const taskResults: PollTaskOutput['comments'][number][] = [];
     // Each task's agent may commit, advancing HEAD. Later tasks must verify
     // against the HEAD as of when they start, not the stale poll-start SHA. (M1)
-    let runningStartSha = startCommitSha;
 
     // Track comments being processed in this poll
     const commentQueue = manifest.tasks.map((t) => ({
@@ -193,7 +192,8 @@ export class ProcessPrReviewComments {
 
       if (currentComments.length === 0) continue;
 
-      runningStartSha = await d.git.headCommitSha(input.cwd);
+
+      const taskStartSha = await d.git.headCommitSha(input.cwd);
       const currentDiff = task.attempt === 1 ? diff : await d.git.diff(input.cwd, 'origin/HEAD');
 
       let lastOutput: PollTaskOutput | undefined;
@@ -210,7 +210,7 @@ export class ProcessPrReviewComments {
           attempt: task.attempt,
           diff: currentDiff,
           branch: pr.headRefName,
-          startCommitSha: runningStartSha,
+          startCommitSha: taskStartSha,
           originalStartCommitSha: originalStartCommitSha,
           unresolvedCommentCount: unresolved.length,
           previousBuildError: task.previousBuildError ?? undefined,
@@ -262,12 +262,12 @@ export class ProcessPrReviewComments {
           // Final attempt failed
           const rollbackOk = await d.rollbackFix?.(
             { cwd: input.cwd, branch: pr.headRefName },
-            runningStartSha,
+            taskStartSha,
           );
           if (rollbackOk === false) {
             d.onWarning?.(
               'rollbackFix failed: broken commits may remain on remote branch',
-              { branch: pr.headRefName, cwd: input.cwd, targetSha: runningStartSha },
+              { branch: pr.headRefName, cwd: input.cwd, targetSha: taskStartSha },
               String(input.runId),
             );
           }

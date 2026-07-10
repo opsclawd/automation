@@ -75,7 +75,7 @@ export class DefaultContextSelector implements ContextSelectorPort {
         body: c.body,
         context:
           attempt === 1
-            ? 'Attempt 1: Limited context (implemented via full diff for now).'
+            ? 'Attempt 1: Limited context.'
             : 'Attempt 2: Expanded context (full file diffs).',
       })),
       files: [],
