@@ -11,6 +11,7 @@ export interface PlanReviewContext {
   repoId: string;
   cwd: string;
   iterationIndex: number; // 1-based
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlanReviewResult {
@@ -33,6 +34,7 @@ export interface PlanFixOptions {
   historyContext?: string;
   reconciliationContext?: string;
   manifestMismatch?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlanReviewLoopOptions {

@@ -109,6 +109,10 @@ export class PollTaskRunner {
       phaseId: String(input.phaseId),
       startCommitSha: input.startCommitSha,
       timeoutMs,
+      metadata: {
+        pr_review_comment_id: comment.commentId,
+        invocation_type: input.previousBuildError || input.previousCodeVerifyReason ? 'retry' : 'initial',
+      },
     });
 
     if (invocation.outcome !== 'success') {

@@ -23,6 +23,7 @@ import * as addBaseBranch from './migrations/0020-add-base-branch-column.js';
 import * as addConfigProvenance from './migrations/0021-add-config-provenance.js';
 import * as createRepositories from './migrations/0022-create-repositories.js';
 import * as backfillRepositoryRegistry from './migrations/0023-backfill-repository-registry.js';
+import * as addInvocationMetadata from './migrations/0024-add-invocation-metadata.js';
 
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: init.version, sql: init.sql },
@@ -48,6 +49,7 @@ export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: addConfigProvenance.version, sql: addConfigProvenance.sql },
   { version: createRepositories.version, sql: createRepositories.sql },
   { version: backfillRepositoryRegistry.version, sql: backfillRepositoryRegistry.sql },
+  { version: addInvocationMetadata.version, sql: addInvocationMetadata.sql },
 ];
 
 export function registerCustomFunctions(db: Db): void {

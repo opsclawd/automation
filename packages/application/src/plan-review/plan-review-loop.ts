@@ -65,7 +65,13 @@ export class PlanReviewLoop {
       let reviewAttempts = 0;
       while (reviewAttempts <= reviewerMaxRetries) {
         reviewAttempts += 1;
-        review = await deps.runReview(ctx);
+        review = await deps.runReview({
+          ...ctx,
+          metadata: {
+            iteration: iterationIndex,
+            invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
+          },
+        } as any);
         if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
         if (reviewAttempts <= reviewerMaxRetries) {
           this.emit(
@@ -168,7 +174,11 @@ export class PlanReviewLoop {
           ? { reconciliationContext: pendingReconciliationContext }
           : {}),
         ...(manifestError ? { manifestMismatch: manifestError } : {}),
-      });
+        metadata: {
+          iteration: iterationIndex,
+          invocation_type: 'initial',
+        },
+      } as any);
       pendingReconciliationContext = undefined;
 
       if (
@@ -224,7 +234,13 @@ export class PlanReviewLoop {
             `escalating review/fix contradiction to arbiter at iteration ${iterationIndex}`,
             { reason: 'contradiction', iterationIndex },
           );
-          const arbiterResult = await deps.runArbiter(ctx, fix);
+          const arbiterResult = await deps.runArbiter(ctx, {
+            ...fix,
+            metadata: {
+              iteration: iterationIndex,
+              invocation_type: 'initial',
+            },
+          } as any);
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -365,7 +381,13 @@ export class PlanReviewLoop {
         let finalReviewAttempts = 0;
         while (finalReviewAttempts <= reviewerMaxRetries) {
           finalReviewAttempts += 1;
-          finalReview = await deps.runReview(finalCtx);
+          finalReview = await deps.runReview({
+            ...finalCtx,
+            metadata: {
+              iteration: finalIterationIndex,
+              invocation_type: 'initial',
+            },
+          } as any);
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(
@@ -500,7 +522,13 @@ export class PlanReviewLoop {
             `escalating final review fail to arbiter at iteration ${finalIterationIndex}`,
             { reason: 'final_review_fail', iterationIndex: finalIterationIndex },
           );
-          const arbiterResult = await deps.runFinalReviewArbiter(finalCtx, finalReview);
+          const arbiterResult = await deps.runFinalReviewArbiter(finalCtx, {
+            ...finalReview,
+            metadata: {
+              iteration: finalIterationIndex,
+              invocation_type: 'initial',
+            },
+          } as any);
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -615,7 +643,11 @@ export class PlanReviewLoop {
             // 1. Bonus Fix
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: arbiterResult.rationale,
-            });
+              metadata: {
+                iteration: finalIterationIndex,
+                invocation_type: 'initial',
+              },
+            } as any);
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
               index: finalIterationIndex,
@@ -654,7 +686,13 @@ export class PlanReviewLoop {
               let confirmAttempts = 0;
               while (confirmAttempts <= reviewerMaxRetries) {
                 confirmAttempts += 1;
-                confirmReview = await deps.runReview(confirmCtx);
+                confirmReview = await deps.runReview({
+                  ...confirmCtx,
+                  metadata: {
+                    iteration: confirmIterationIndex,
+                  invocation_type: confirmAttempts === 1 ? 'initial' : 'retry',
+                  },
+                } as any);
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
                 if (confirmAttempts <= reviewerMaxRetries) {

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
 import { readFileSync, rmSync, statSync } from 'node:fs';
 import {
@@ -71,12 +71,14 @@ export class AgentRuntimeRouter implements AgentPort {
   private readonly clock: () => Date;
   private readonly idFactory: () => string;
   private readonly readPromptChars: (path: string) => number;
+  private readonly readPromptContent: (path: string) => string;
   private readonly env: Record<string, string | undefined>;
 
   constructor(private readonly opts: AgentRuntimeRouterOptions) {
     this.clock = opts.clock ?? (() => new Date());
     this.idFactory = opts.idFactory ?? (() => randomUUID());
     this.readPromptChars = opts.readPromptChars ?? defaultReadPromptChars;
+    this.readPromptContent = defaultReadPromptContent;
     this.env = opts.env ?? process.env;
   }
 
@@ -121,7 +123,15 @@ export class AgentRuntimeRouter implements AgentPort {
 
     const id = AgentInvocationId(this.idFactory());
     const startedAt = this.clock();
-    const promptChars = this.readPromptChars(request.promptPath);
+    const promptContent = this.readPromptContent(request.promptPath);
+    const promptChars = promptContent.length;
+    const promptHash = createHash('sha256').update(promptContent).digest('hex');
+
+    const metadata = { ...request.metadata };
+    if (!metadata.invocation_type) {
+      metadata.invocation_type = request.fallbackOfInvocationId ? 'fallback' : 'initial';
+    }
+
     const pre: AgentInvocation = {
       id,
       runId: RunId(request.runId),
@@ -138,6 +148,8 @@ export class AgentRuntimeRouter implements AgentPort {
       startCommitSha: request.startCommitSha,
       timeoutMs: effectiveTimeoutMs,
       contractViolations: [],
+      promptHash,
+      metadata,
     };
     if (request.stepId) {
       pre.stepId = request.stepId;
@@ -597,5 +609,13 @@ function defaultReadPromptChars(path: string): number {
     return readFileSync(path, 'utf-8').length;
   } catch {
     return 0;
+  }
+}
+
+function defaultReadPromptContent(path: string): string {
+  try {
+    return readFileSync(path, 'utf-8');
+  } catch {
+    return '';
   }
 }

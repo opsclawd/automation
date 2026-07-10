@@ -95,6 +95,7 @@ describe('AgentRuntimeRouter', () => {
       idFactory: () => 'inv-fixed',
       readPromptChars: () => 100,
     });
+    (router as any).readPromptContent = () => 'x'.repeat(100);
     const result = await router.invoke(req());
     expect(result.outcome).toBe('success');
     const row = inv.findById(AgentInvocationId('inv-fixed'));

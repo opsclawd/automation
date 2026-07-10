@@ -217,6 +217,9 @@ export async function runSingleShotAgentPhase(
     repoId: ctx.repoFullName,
     phaseId: config.phase as string,
     startCommitSha,
+    metadata: {
+      invocation_type: 'initial',
+    },
   };
 
   // 6. Invoke agent

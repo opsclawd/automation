@@ -106,6 +106,10 @@ function buildRetryRequest(
     startCommitSha: invocation.startCommitSha,
     fallbackOfInvocationId: invocation.id,
     fallbackReason,
+    metadata: {
+      ...invocation.metadata,
+      invocation_type: 'extraction_repair',
+    },
   };
 }
 

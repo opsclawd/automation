@@ -14,6 +14,7 @@ export interface StepLoopContext {
   stepIndex: number;
   stepTitle: string;
   iterationIndex: number; // 1-based
+  metadata?: Record<string, unknown>;
 }
 
 export interface ImplementResult {
