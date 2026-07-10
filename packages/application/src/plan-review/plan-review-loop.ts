@@ -73,7 +73,10 @@ export class PlanReviewLoop {
       // finding: returning `undefined` here causes the SCOPE block to
       // be silently dropped on iter 2+ when there's nothing to thread).
       if (iterationIndex < 2) return undefined;
-      const stepOptions: PlanReviewStepOptions = {};
+      const stepOptions: PlanReviewStepOptions = {
+        prevFindings: [],
+        recentFixCitations: [],
+      };
       if (frozenPrevFindings !== undefined && frozenPrevFindings.length > 0) {
         // Stamp each frozen finding with its current disposition from the
         // tracker (#716, design §3.3). The reviewer uses these dispositions

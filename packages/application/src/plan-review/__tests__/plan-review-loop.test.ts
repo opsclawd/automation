@@ -334,6 +334,57 @@ describe('PlanReviewLoop', () => {
     });
   });
 
+  it('passes explicit empty recentFixCitations on delta-scoped re-review when the fix diff is empty', async () => {
+    let reviewCalls = 0;
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
+    const { deps } = makeDeps({
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        reviewOptions.push(opts);
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+          findings:
+            reviewCalls === 2
+              ? []
+              : [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Missing transition handler',
+                    evidence: 'grounded' as const,
+                  },
+                ],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      computeLastFixDiffCitations: () => [],
+    });
+
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(reviewOptions[1]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+          disposition: 'still_open',
+        },
+      ],
+      recentFixCitations: [],
+    });
+  });
+
   it('AC #683.3.a — trailing final review fail + arbiter finding_invalid → success', async () => {
     let reviewCalls = 0;
     let arbiterCalls = 0;

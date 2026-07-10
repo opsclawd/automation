@@ -224,8 +224,19 @@ describe('buildPlanReviewReviewScopeBlock (#716)', () => {
   });
 
   it('emits empty string when no opts supplied (caller will skip the suffix entirely)', () => {
-    const block = buildPlanReviewReviewScopeBlock({});
+    const block = buildPlanReviewReviewScopeBlock(undefined);
     expect(block).toBe('');
+  });
+
+  it('renders a minimal no-data scope block when explicit empty arrays are threaded', () => {
+    const block = buildPlanReviewReviewScopeBlock({
+      prevFindings: [],
+      recentFixCitations: [],
+    });
+    expect(block).toContain('## SCOPE');
+    expect(block).toContain('## DISPOSITION GUIDANCE');
+    expect(block).toContain('delta-scoped');
+    expect(block).toContain('No frozen findings were produced in iteration 1.');
   });
 
   it('falls back to still_open when prior disposition is undefined', () => {

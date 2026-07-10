@@ -188,8 +188,9 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
 
 export function buildPlanReviewReviewPrompt(
   basePrompt: string,
-  opts: PlanReviewStepOptions = {},
+  opts?: PlanReviewStepOptions,
 ): string {
+  if (opts === undefined) return basePrompt;
   const scopeBlock = buildPlanReviewReviewScopeBlock(opts);
   if (!scopeBlock) return basePrompt;
   return [basePrompt, scopeBlock].join('\n\n');
@@ -204,58 +205,71 @@ export function buildPlanReviewReviewPrompt(
  * and the WORKSPACE_CONSTRAINTS block — substituting it would discard
  * those and break the reviewer's ability to evaluate the plan itself.
  */
-export function buildPlanReviewReviewScopeBlock(opts: PlanReviewStepOptions): string {
+export function buildPlanReviewReviewScopeBlock(opts?: PlanReviewStepOptions): string {
+  if (opts === undefined) return '';
+  const prevFindings = opts.prevFindings ?? [];
+  const recentFixCitations = opts.recentFixCitations ?? [];
   const sections: string[] = [];
-  const hasScopeGuidance =
-    (opts.prevFindings && opts.prevFindings.length > 0) ||
-    (opts.recentFixCitations && opts.recentFixCitations.length > 0);
+  const hasNoThreadedInputs = prevFindings.length === 0 && recentFixCitations.length === 0;
 
-  if (hasScopeGuidance) {
-    sections.push(
-      '## SCOPE',
-      'You are reviewing changes within an automated plan-review/fix loop.',
-      'Your review is scoped to:',
-      '1. The disposition of the prior finding set (frozen at iteration 1).',
-      '2. New findings whose citation references text introduced by the most recent fix.',
-      '',
-      'Out of scope: brand-new findings about pre-existing plan prose that was NOT',
-      'modified by the most recent fix. The orchestrator will drop these from verdict',
-      'computation; do not waste finding slots on them. If you find a defect in such',
-      'prose, surface it under the `## noted_but_out_of_scope` heading (informational only).',
-      '',
-      '## DISPOSITION GUIDANCE',
-      opts.prevFindings && opts.prevFindings.length > 0
-        ? 'For each prior finding below, mark one disposition:'
-        : 'No frozen findings were produced in iteration 1.',
-      opts.prevFindings && opts.prevFindings.length > 0
-        ? '- `addressed by fix` — the defect is gone in the current plan.'
-        : 'Use the recent fix citations below to scope any new findings.',
-      opts.prevFindings && opts.prevFindings.length > 0
-        ? '- `still open` — the defect persists; re-flag with the SAME citation.'
-        : '',
-      opts.prevFindings && opts.prevFindings.length > 0
-        ? '- `rebutted by fixer` — the fixer asserted no change was needed; confirm against the current plan.'
-        : '',
-      '',
-      ...(opts.prevFindings && opts.prevFindings.length > 0
-        ? [
-            '### Frozen findings (from iteration 1)',
-            ...opts.prevFindings.map(
-              (f) =>
-                `- [${f.severity}] \`${f.citation}\` | ${f.failureScenario} | prior disposition: ${f.disposition ?? 'still_open'} | prior evidence: ${f.evidence}`,
-            ),
-            '',
-          ]
-        : []),
-    );
-  }
+  sections.push(
+    '## SCOPE',
+    'You are reviewing changes within an automated plan-review/fix loop.',
+    'Your review is scoped to:',
+    '1. The disposition of the prior finding set (frozen at iteration 1).',
+    '2. New findings whose citation references text introduced by the most recent fix.',
+    '',
+    'Out of scope: brand-new findings about pre-existing plan prose that was NOT',
+    'modified by the most recent fix. The orchestrator will drop these from verdict',
+    'computation; do not waste finding slots on them. If you find a defect in such',
+    'prose, surface it under the `## noted_but_out_of_scope` heading (informational only).',
+    ...(hasNoThreadedInputs
+      ? [
+          '',
+          'Even though no prior findings or recent fix citations were threaded, this pass',
+          'is still delta-scoped. Do NOT fall back to a full-plan review just because the',
+          'scoped inputs are empty.',
+        ]
+      : []),
+    '',
+    '## DISPOSITION GUIDANCE',
+    prevFindings.length > 0
+      ? 'For each prior finding below, mark one disposition:'
+      : 'No frozen findings were produced in iteration 1.',
+    prevFindings.length > 0
+      ? '- `addressed by fix` — the defect is gone in the current plan.'
+      : 'Use the recent fix citations below to scope any new findings.',
+    prevFindings.length > 0
+      ? '- `still open` — the defect persists; re-flag with the SAME citation.'
+      : '',
+    prevFindings.length > 0
+      ? '- `rebutted by fixer` — the fixer asserted no change was needed; confirm against the current plan.'
+      : '',
+    '',
+    ...(prevFindings.length > 0
+      ? [
+          '### Frozen findings (from iteration 1)',
+          ...prevFindings.map(
+            (f) =>
+              `- [${f.severity}] \`${f.citation}\` | ${f.failureScenario} | prior disposition: ${f.disposition ?? 'still_open'} | prior evidence: ${f.evidence}`,
+          ),
+          '',
+        ]
+      : []),
+  );
 
-  if (opts.recentFixCitations && opts.recentFixCitations.length > 0) {
+  if (recentFixCitations.length > 0) {
     sections.push(
       '## RECENT FIX CITATIONS',
       'The most recent fix invocation modified text at the following citations.',
       'New findings targeting these citations are eligible to count toward the verdict:',
-      ...opts.recentFixCitations.map((c) => `- \`${c}\``),
+      ...recentFixCitations.map((c) => `- \`${c}\``),
+      '',
+    );
+  } else if (!hasNoThreadedInputs) {
+    sections.push(
+      '## RECENT FIX CITATIONS',
+      'No citations were recorded for the most recent fix invocation.',
       '',
     );
   }
