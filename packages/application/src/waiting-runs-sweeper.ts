@@ -99,6 +99,7 @@ export class WaitingRunsSweeper {
           });
           this.deps.queue.enqueue({ job });
           enqueued++;
+          this.deps.leases.release(run.repoId, workerId);
         } catch (err) {
           // Log original error that caused the rollback before event publishing or rollback status update
           this.deps.logger.error(
