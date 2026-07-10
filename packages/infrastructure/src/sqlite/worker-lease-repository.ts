@@ -102,6 +102,13 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
     return row ? toWorkerLease(row) : undefined;
   }
 
+  checkActiveLease(repoId: RepositoryId, now: Date): boolean {
+    const row = this.db
+      .prepare(`SELECT * FROM worker_leases WHERE repo_id = @repo_id`)
+      .get({ repo_id: repoId }) as WorkerLeaseRow | undefined;
+    return row !== undefined && new Date(row.expires_at).getTime() > now.getTime();
+  }
+
   reclaimExpired(input: ReclaimExpiredInput): WorkerLease[] {
     const expiredRows = this.db
       .prepare(`SELECT * FROM worker_leases WHERE expires_at < @now`)

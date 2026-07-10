@@ -100,7 +100,9 @@ export class FakeJobQueuePort implements JobQueuePort {
   }
 
   listActive(): Job[] {
-    return [...this.jobs.values()].filter((j) => j.status === 'claimed' || j.status === 'running');
+    return [...this.jobs.values()].filter(
+      (j) => j.status === 'queued' || j.status === 'claimed' || j.status === 'running',
+    );
   }
 
   private update(jobId: JobId, fn: (j: Job) => Job): void {

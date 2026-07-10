@@ -60,6 +60,11 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
     return this.leases.get(repoId);
   }
 
+  checkActiveLease(repoId: RepositoryId, now: Date): boolean {
+    const l = this.leases.get(repoId);
+    return l !== undefined && l.expiresAt.getTime() > now.getTime();
+  }
+
   reclaimExpired(input: ReclaimExpiredInput): WorkerLease[] {
     const reclaimed: WorkerLease[] = [];
     for (const lease of [...this.leases.values()]) {

@@ -247,7 +247,7 @@ export class JobQueueRepository implements JobQueuePort {
 
   listActive(): Job[] {
     const rows = this.db
-      .prepare("SELECT * FROM jobs WHERE status IN ('claimed', 'running')")
+      .prepare("SELECT * FROM jobs WHERE status IN ('queued', 'claimed', 'running')")
       .all() as JobRow[];
     return rows.map(toJob);
   }

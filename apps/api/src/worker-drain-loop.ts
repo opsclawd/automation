@@ -1,5 +1,5 @@
 import { workerLoop, type WorkerLoopDeps } from '@ai-sdlc/application';
-import type { RunRepositoryPort, WorkerLeasePort } from '@ai-sdlc/application/ports';
+import type { RunRepositoryPort, WorkerLeasePort, JobQueuePort } from '@ai-sdlc/application/ports';
 import type { WorkerId, RunId } from '@ai-sdlc/domain';
 
 const DEFAULT_DRAIN_INTERVAL_MS = 5_000;
@@ -7,15 +7,16 @@ const DEFAULT_DRAIN_INTERVAL_MS = 5_000;
 function buildRecoverableRunIds(
   runRepo: RunRepositoryPort,
   leases: WorkerLeasePort,
+  queue: JobQueuePort,
   now: Date,
 ): ReadonlySet<RunId> {
   const activeRuns = runRepo.findActiveRuns();
   const ids = new Set<RunId>();
+  const activeRunIdsFromJobs = new Set(queue.listActive().map((j) => j.runId));
   for (const r of activeRuns) {
+    if (activeRunIdsFromJobs.has(r.uuid as RunId)) continue;
     // If the run has an active lease, we filter it out to prevent recovering runs that are in the middle of being reactivated by WaitingRunsSweeper.
-    const lease = leases.current(r.repoId);
-    const isLeased = lease !== undefined && lease.expiresAt.getTime() > now.getTime();
-    if (!isLeased) {
+    if (!leases.checkActiveLease(r.repoId, now)) {
       ids.add(r.uuid as RunId);
     }
   }
@@ -35,7 +36,12 @@ export function startWorkerDrainLoop(
     try {
       const cutoff = deps.now();
       deps.queue.reclaimStaleClaims(cutoff);
-      const recoverableRunIds = buildRecoverableRunIds(deps.runRepository, deps.leases, deps.now());
+      const recoverableRunIds = buildRecoverableRunIds(
+        deps.runRepository,
+        deps.leases,
+        deps.queue,
+        deps.now(),
+      );
       await workerLoop(workerId, { ...deps, recoverableRunIds });
     } catch (err) {
       onError(err);
