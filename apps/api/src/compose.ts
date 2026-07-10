@@ -194,11 +194,12 @@ import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port
 import { createImplementStepHistoryFilePort } from './implement-step-history-file-port.js';
 import {
   buildPlanReviewArbiterPrompt,
-  buildPlanReviewReviewPrompt,
+  buildPlanReviewReviewScopeBlock,
   readPlanReviewExcerpts,
   buildPlanReviewFinalReviewArbiterPrompt,
   readPlanReviewFinalExcerpts,
   getRecentFixCitations,
+  createPlanReviewEvidenceResolver,
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
 } from './plan-review-prompts.js';
@@ -3074,7 +3075,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewRunReview = async (
         ctx: import('@ai-sdlc/application').PlanReviewContext,
-        stepOpts?: import('@ai-sdlc/application').PlanReviewStepOptions,
+        reviewOpts?: import('@ai-sdlc/application').PlanReviewStepOptions,
       ): Promise<import('@ai-sdlc/application').PlanReviewResult> => {
         const profile = planReviewProfileName;
         if (!profile) {
@@ -3089,12 +3090,25 @@ export function composeRoot(opts: ComposeOptions): Container {
         const template = loadPromptTemplate('plan-review', 'plan-review', {
           promptsRoot: planReviewPromptsRoot,
         });
-        const promptBody = await renderPrompt(template, {
+        let promptBody = await renderPrompt(template, {
           runId: String(ctx.runId),
           vars: {},
           artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
         });
-        writeFileSync(promptPath, buildPlanReviewReviewPrompt(promptBody, stepOpts), 'utf-8');
+        // (#716 — reviewer finding #1) When the loop passes reviewOpts for
+        // iteration >= 2, APPEND the SCOPE / DISPOSITION GUIDANCE block to
+        // the base prompt. NEVER substitute promptBody — that would discard
+        // the plan.md/design.md artifact content and WORKSPACE_CONSTRAINTS
+        // block the base prompt template renders.
+        if (
+          reviewOpts !== undefined &&
+          ctx.iterationIndex >= 2 &&
+          (reviewOpts.prevFindings !== undefined || reviewOpts.recentFixCitations !== undefined)
+        ) {
+          const scopeBlock = buildPlanReviewReviewScopeBlock(reviewOpts);
+          promptBody = `${promptBody}\n\n${scopeBlock}`;
+        }
+        writeFileSync(promptPath, promptBody, 'utf-8');
 
         const startCommitSha = (() => {
           try {
@@ -3138,7 +3152,20 @@ export function composeRoot(opts: ComposeOptions): Container {
             String(ctx.runId),
             PLAN_REVIEW_FINDINGS_ARTIFACT,
           );
-          const parsedFindings = parsePlanReviewFindings(findings);
+          // (#716) Composition-root seam: thread the artifact-store-backed
+          // `EvidenceResolver` into the parser. This re-stamps each
+          // finding's `evidence` field based on whether its citation
+          // actually resolves against the current plan.md / design.md /
+          // task-manifest.json artifacts — overriding whatever the
+          // reviewer wrote in the markdown. The loop's evidence-bound
+          // gate then uses the resolver's verdict, not the reviewer's
+          // self-reported evidence, to decide which findings are
+          // eligible to drive the verdict.
+          const evidenceResolver = createPlanReviewEvidenceResolver(
+            planReviewArtifacts(String(ctx.runId), ctx.cwd),
+            String(ctx.runId),
+          );
+          const parsedFindings = await parsePlanReviewFindings(findings, evidenceResolver);
           return {
             invocationId,
             agentOutcome: 'success',
@@ -3445,6 +3472,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         reviewerMaxRetries: 2,
         now: () => new Date(),
         idFactory: () => randomUUID(),
+        options: {
+          // (#716) Composition-root seam: thread the operator-configured
+          // `deltaScopedReReview` flag into the loop. When false, the loop
+          // skips the evidence-bound gate, skips the SCOPE / DISPOSITION
+          // GUIDANCE block, and trusts the reviewer's verdict as-is —
+          // restoring pre-#716 behavior bit-for-bit.
+          deltaScopedReReview: config.phases.planReview?.deltaScopedReReview ?? true,
+        },
       });
 
       runStep = async (sctx: {

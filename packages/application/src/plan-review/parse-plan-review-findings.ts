@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { PlanReviewFinding } from './types.js';
+import type { EvidenceResolver, PlanReviewFinding } from './types.js';
 
 const verdictSchema = z.enum(['pass', 'p1_found', 'p2_only', 'proceed_with_concerns']);
 const severitySchema = z.enum(['P0', 'P1', 'P2']);
@@ -324,27 +324,11 @@ function collectFindingBlocks(lines: string[]): Array<{ severity: string; lines:
   return findings;
 }
 
-export function parsePlanReviewFindings(markdown: string): PlanReviewFindingsDocument {
-  if (typeof markdown !== 'string') {
-    throw new PlanReviewFindingsParseError('plan-review findings markdown must be a string');
-  }
-
-  const lines = normalizeLines(markdown);
-  const verdict = parseVerdict(extractSectionLines(lines, 'verdict'));
-  const findings = parseFindings(extractSectionLines(lines, 'findings'));
-  const knownLimitationsSection = maybeExtractSectionLines(lines, 'known_limitations');
-
-  if (verdict !== 'proceed_with_concerns' && knownLimitationsSection !== undefined) {
-    throw new PlanReviewFindingsParseError(
-      'known_limitations section is only allowed when verdict is proceed_with_concerns',
-    );
-  }
-
-  const parsedKnownLimitations =
-    knownLimitationsSection === undefined
-      ? undefined
-      : parseKnownLimitations(knownLimitationsSection);
-
+function finalizeDocument(
+  verdict: PlanReviewFindingsDocument['verdict'],
+  findings: PlanReviewFinding[],
+  parsedKnownLimitations: string[] | undefined,
+): PlanReviewFindingsDocument {
   if (verdict === 'pass' && findings.length > 0) {
     throw new PlanReviewFindingsParseError('pass verdict must not include findings');
   }
@@ -380,4 +364,49 @@ export function parsePlanReviewFindings(markdown: string): PlanReviewFindingsDoc
   }
 
   return document;
+}
+
+export function parsePlanReviewFindings(
+  markdown: string,
+  resolver?: EvidenceResolver,
+): PlanReviewFindingsDocument | Promise<PlanReviewFindingsDocument> {
+  if (typeof markdown !== 'string') {
+    throw new PlanReviewFindingsParseError('plan-review findings markdown must be a string');
+  }
+
+  const lines = normalizeLines(markdown);
+  const verdict = parseVerdict(extractSectionLines(lines, 'verdict'));
+  const findings = parseFindings(extractSectionLines(lines, 'findings'));
+  const knownLimitationsSection = maybeExtractSectionLines(lines, 'known_limitations');
+
+  if (verdict !== 'proceed_with_concerns' && knownLimitationsSection !== undefined) {
+    throw new PlanReviewFindingsParseError(
+      'known_limitations section is only allowed when verdict is proceed_with_concerns',
+    );
+  }
+
+  const parsedKnownLimitations =
+    knownLimitationsSection === undefined
+      ? undefined
+      : parseKnownLimitations(knownLimitationsSection);
+
+  if (resolver) {
+    return (async () => {
+      for (const f of findings) {
+        if (!f.citation || !f.failureScenario) {
+          f.evidence = 'ungrounded';
+          continue;
+        }
+        try {
+          const resolved = await resolver(f);
+          f.evidence = resolved ? 'grounded' : 'ungrounded';
+        } catch {
+          f.evidence = 'ungrounded';
+        }
+      }
+      return finalizeDocument(verdict, findings, parsedKnownLimitations);
+    })();
+  }
+
+  return finalizeDocument(verdict, findings, parsedKnownLimitations);
 }

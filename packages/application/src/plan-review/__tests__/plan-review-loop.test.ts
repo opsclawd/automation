@@ -250,17 +250,11 @@ describe('PlanReviewLoop', () => {
       ],
       recentFixCitations: ['plan.md:42'],
     });
-    expect(reviewOptions[2]).toMatchObject({
-      prevFindings: [
-        {
-          severity: 'P1',
-          citation: 'plan.md:42',
-          failureScenario: 'Missing transition handler',
-          evidence: 'grounded',
-        },
-      ],
-      recentFixCitations: ['plan.md:50-55'],
-    });
+    // The trailing final review is a fresh full-plan review, NOT a
+    // delta-scoped re-review (#716, design §4 Assumption 9) — its job is
+    // to catch anything missed by the iterative loop. So `runReview` is
+    // called with `undefined` opts, NOT `buildReviewStepOptions()`.
+    expect(reviewOptions[2]).toBeUndefined();
   });
 
   it('AC #683.3.a — trailing final review fail + arbiter finding_invalid → success', async () => {
@@ -469,21 +463,26 @@ describe('PlanReviewLoop', () => {
         // Iterations 1, 2: fail
         // Iteration 3 (trailing): fail
         // Iteration 4 (bonus final): pass
+        // Every non-pass review call returns at least one grounded P1
+        // finding. The evidence-bound gate (#716) downgrades a `p1_found`
+        // verdict to `p2_only` when the reviewer returns no eligible
+        // (grounded) findings; the test fixture must keep at least one
+        // grounded P1 in scope so the verdict stays `p1_found`.
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 4 ? ('pass' as const) : ('p1_found' as const),
           findings:
-            reviewCalls === 1
-              ? [
+            reviewCalls === 4
+              ? []
+              : [
                   {
                     severity: 'P1' as const,
                     citation: 'plan.md:42',
                     failureScenario: 'Missing transition handler',
                     evidence: 'grounded' as const,
                   },
-                ]
-              : [],
+                ],
         };
       },
       runFix: async (): Promise<PlanFixResult> => {

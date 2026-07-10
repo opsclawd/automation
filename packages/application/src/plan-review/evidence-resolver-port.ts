@@ -1,4 +1,4 @@
-import type { PlanReviewFinding } from './types.js';
+import type { EvidenceResolver } from './types.js';
 
 /**
  * Port for resolving plan-review citations against the actual artifact
@@ -13,4 +13,4 @@ import type { PlanReviewFinding } from './types.js';
  * resolve are marked `evidence: 'grounded'`; unresolvable citations are
  * `evidence: 'ungrounded'` and cannot contribute to a `p1_found` verdict.
  */
-export type EvidenceResolver = (finding: PlanReviewFinding) => Promise<boolean>;
+export type { EvidenceResolver };

@@ -36,7 +36,7 @@ describe('plan-review compose wiring', () => {
     expect(reviewFnMatch).toBeTruthy();
     expect(reviewFnMatch![0]).toContain("loadPromptTemplate('plan-review', 'plan-review'");
     expect(reviewFnMatch![0]).toContain('renderPrompt(template');
-    expect(reviewFnMatch![0]).toContain('buildPlanReviewReviewPrompt');
+    expect(reviewFnMatch![0]).toContain('buildPlanReviewReviewScopeBlock');
 
     const fixFnMatch = composeSrc.match(/const planReviewRunFix[\s\S]*?(?=const startCommitSha)/);
     expect(fixFnMatch).toBeTruthy();
@@ -53,7 +53,7 @@ describe('plan-review compose wiring', () => {
       /const planReviewRunReview[\s\S]*?(?=const planReviewRunFix)/,
     );
     expect(reviewFnMatch).toBeTruthy();
-    expect(reviewFnMatch![0]).toContain('parsePlanReviewFindings(findings)');
+    expect(reviewFnMatch![0]).toContain('parsePlanReviewFindings(findings, evidenceResolver)');
     expect(reviewFnMatch![0]).toContain('parsedFindings.findings');
     expect(reviewFnMatch![0]).toContain('parsedFindings.knownLimitations');
   });
