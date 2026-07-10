@@ -38,9 +38,9 @@ root with this exact shape:
 <optional: list of carried-forward P1 concerns, only when verdict is proceed_with_concerns>
 
 ## findings
-- [P0] `<citation>` | "<failure scenario>"
-- [P1] `<citation>` | "<failure scenario>"
-- [P2] `<citation>` | "<failure scenario>"
+- [P0] `<citation>` | "<failure scenario>" | grounded
+- [P1] `<citation>` | "<failure scenario>" | grounded | still_open
+- [P2] `<citation>` | "<failure scenario>" | ungrounded
 ```
 
 ### Citation formats (required for P0/P1)
@@ -54,6 +54,15 @@ A finding missing either the citation or the failure scenario, OR whose
 citation does not resolve against the actual artifacts in the worktree, is
 marked `ungrounded` by the orchestrator and cannot contribute to a
 `p1_found` verdict (#716, AC #3).
+
+Each finding line MUST include the evidence token as the final required
+field:
+
+- Use `grounded` when the citation resolves against the current artifacts.
+- Use `ungrounded` when the citation does not resolve.
+- If the finding is being carried forward or reclassified on a later pass,
+  add the optional disposition token after the evidence token:
+  `addressed`, `rebutted`, `still_open`, or `never_seen_again`.
 
 ### Iteration >= 2: SCOPE and DISPOSITION GUIDANCE (APPENDED, not a replacement)
 

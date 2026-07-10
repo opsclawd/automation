@@ -194,9 +194,11 @@ import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port
 import { createImplementStepHistoryFilePort } from './implement-step-history-file-port.js';
 import {
   buildPlanReviewArbiterPrompt,
+  buildPlanReviewReviewPrompt,
   readPlanReviewExcerpts,
   buildPlanReviewFinalReviewArbiterPrompt,
   readPlanReviewFinalExcerpts,
+  getRecentFixCitations,
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
 } from './plan-review-prompts.js';
@@ -3072,6 +3074,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewRunReview = async (
         ctx: import('@ai-sdlc/application').PlanReviewContext,
+        stepOpts?: import('@ai-sdlc/application').PlanReviewStepOptions,
       ): Promise<import('@ai-sdlc/application').PlanReviewResult> => {
         const profile = planReviewProfileName;
         if (!profile) {
@@ -3091,7 +3094,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           vars: {},
           artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
         });
-        writeFileSync(promptPath, promptBody, 'utf-8');
+        writeFileSync(promptPath, buildPlanReviewReviewPrompt(promptBody, stepOpts), 'utf-8');
 
         const startCommitSha = (() => {
           try {
@@ -3227,6 +3230,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           return {
             invocationId,
             agentOutcome: 'success',
+            headBeforeFix: startCommitSha,
             ...(parsed.verdict ? { verdict: parsed.verdict } : {}),
             ...(parsed.summary ? { summary: parsed.summary } : {}),
             ...(parsed.rebuttal ? { rebuttal: parsed.rebuttal } : {}),
@@ -3430,6 +3434,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkManifestSync: planReviewCheckManifestSync,
+        computeLastFixDiffCitations: (cwd, headBeforeFix) =>
+          getRecentFixCitations(cwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
         ...(planReviewFinalReviewRunArbiter
           ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }

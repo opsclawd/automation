@@ -9,6 +9,7 @@ import type {
   PlanFixResult,
   PlanReviewContext,
   PlanFixOptions,
+  PlanReviewStepOptions,
 } from '../types.js';
 import type { ArbiterResult } from '../../implement-step/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -187,20 +188,47 @@ describe('PlanReviewLoop', () => {
 
   it('final fixer pass resolves P1 findings on the last allowed iteration', async () => {
     let reviewCalls = 0;
+    let fixCalls = 0;
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
     const { deps } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => {
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
         reviewCalls += 1;
+        reviewOptions.push(opts);
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 3 ? ('pass' as const) : ('p1_found' as const),
+          findings:
+            reviewCalls === 3
+              ? []
+              : [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Missing transition handler',
+                    evidence: 'grounded' as const,
+                  },
+                ],
         };
       },
-      runFix: async (): Promise<PlanFixResult> => ({
-        invocationId: 'fix-y',
-        agentOutcome: 'success' as const,
-        verdict: 'done_with_fixes' as const,
-      }),
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+          headBeforeFix: fixCalls === 1 ? 'fix-head-1' : 'fix-head-2',
+        };
+      },
+      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
+        headBeforeFix === 'fix-head-1'
+          ? ['plan.md:42']
+          : headBeforeFix === 'fix-head-2'
+            ? ['plan.md:50-55']
+            : [],
     });
     const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
     const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
@@ -210,6 +238,29 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
     expect(out.loop.iterations[1]?.outcome).toBe('fixed');
     expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewOptions[0]).toBeUndefined();
+    expect(reviewOptions[1]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+        },
+      ],
+      recentFixCitations: ['plan.md:42'],
+    });
+    expect(reviewOptions[2]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+        },
+      ],
+      recentFixCitations: ['plan.md:50-55'],
+    });
   });
 
   it('AC #683.3.a — trailing final review fail + arbiter finding_invalid → success', async () => {
@@ -444,7 +495,9 @@ describe('PlanReviewLoop', () => {
     expect(fixCalls).toBe(3); // 2 original + 1 bonus
     expect(reviewCalls).toBe(4); // 2 original + 1 trailing + 1 bonus-trailing
 
-    expect(events.map((e) => e.type)).toContain('plan-review.loop.trailing_review.bonus_fix_iteration');
+    expect(events.map((e) => e.type)).toContain(
+      'plan-review.loop.trailing_review.bonus_fix_iteration',
+    );
   });
 
   it('bonus iteration — capped at one (escalates to human if bonus fix does not converge)', async () => {

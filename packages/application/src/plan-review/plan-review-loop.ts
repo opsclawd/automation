@@ -8,9 +8,11 @@ import {
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
   PlanReviewContext,
+  PlanReviewFinding,
   PlanReviewLoopDeps,
   PlanReviewLoopInput,
   PlanReviewLoopResult,
+  PlanReviewStepOptions,
   PlanReviewResult,
 } from './types.js';
 
@@ -45,6 +47,21 @@ export class PlanReviewLoop {
     };
 
     let pendingReconciliationContext: string | undefined;
+    let frozenPrevFindings: ReadonlyArray<PlanReviewFinding> | undefined;
+    let recentFixCitations: ReadonlyArray<string> = [];
+    const deltaScopedReReview = options.deltaScopedReReview ?? true;
+
+    const buildReviewStepOptions = (): PlanReviewStepOptions | undefined => {
+      if (!deltaScopedReReview) return undefined;
+      const stepOptions: PlanReviewStepOptions = {};
+      if (frozenPrevFindings !== undefined && frozenPrevFindings.length > 0) {
+        stepOptions.prevFindings = frozenPrevFindings;
+      }
+      if (recentFixCitations.length > 0) {
+        stepOptions.recentFixCitations = recentFixCitations;
+      }
+      return Object.keys(stepOptions).length > 0 ? stepOptions : undefined;
+    };
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -65,7 +82,7 @@ export class PlanReviewLoop {
       let reviewAttempts = 0;
       while (reviewAttempts <= reviewerMaxRetries) {
         reviewAttempts += 1;
-        review = await deps.runReview(ctx);
+        review = await deps.runReview(ctx, buildReviewStepOptions());
         if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
         if (reviewAttempts <= reviewerMaxRetries) {
           this.emit(
@@ -109,6 +126,9 @@ export class PlanReviewLoop {
       }
 
       loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
+      if (iterationIndex === 1 && review.findings !== undefined) {
+        frozenPrevFindings = review.findings;
+      }
 
       const manifestError = await deps.checkManifestSync(ctx);
       if (manifestError) {
@@ -170,6 +190,7 @@ export class PlanReviewLoop {
         ...(manifestError ? { manifestMismatch: manifestError } : {}),
       });
       pendingReconciliationContext = undefined;
+      recentFixCitations = deps.computeLastFixDiffCitations?.(ctx.cwd, fix.headBeforeFix) ?? [];
 
       if (
         fix.agentOutcome !== 'success' ||
@@ -365,7 +386,7 @@ export class PlanReviewLoop {
         let finalReviewAttempts = 0;
         while (finalReviewAttempts <= reviewerMaxRetries) {
           finalReviewAttempts += 1;
-          finalReview = await deps.runReview(finalCtx);
+          finalReview = await deps.runReview(finalCtx, buildReviewStepOptions());
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(

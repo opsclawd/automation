@@ -186,6 +186,15 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
   ].join('\n');
 }
 
+export function buildPlanReviewReviewPrompt(
+  basePrompt: string,
+  opts: PlanReviewStepOptions = {},
+): string {
+  const scopeBlock = buildPlanReviewReviewScopeBlock(opts);
+  if (!scopeBlock) return basePrompt;
+  return [basePrompt, scopeBlock].join('\n\n');
+}
+
 /**
  * Render the SCOPE + DISPOSITION GUIDANCE block for the plan-review
  * reviewer's iteration >= 2 prompt (#716). This block is APPENDED to the
@@ -197,8 +206,11 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
  */
 export function buildPlanReviewReviewScopeBlock(opts: PlanReviewStepOptions): string {
   const sections: string[] = [];
+  const hasScopeGuidance =
+    (opts.prevFindings && opts.prevFindings.length > 0) ||
+    (opts.recentFixCitations && opts.recentFixCitations.length > 0);
 
-  if (opts.prevFindings && opts.prevFindings.length > 0) {
+  if (hasScopeGuidance) {
     sections.push(
       '## SCOPE',
       'You are reviewing changes within an automated plan-review/fix loop.',
@@ -212,17 +224,29 @@ export function buildPlanReviewReviewScopeBlock(opts: PlanReviewStepOptions): st
       'prose, surface it under the `## noted_but_out_of_scope` heading (informational only).',
       '',
       '## DISPOSITION GUIDANCE',
-      'For each prior finding below, mark one disposition:',
-      '- `addressed by fix` — the defect is gone in the current plan.',
-      '- `still open` — the defect persists; re-flag with the SAME citation.',
-      '- `rebutted by fixer` — the fixer asserted no change was needed; confirm against the current plan.',
+      opts.prevFindings && opts.prevFindings.length > 0
+        ? 'For each prior finding below, mark one disposition:'
+        : 'No frozen findings were produced in iteration 1.',
+      opts.prevFindings && opts.prevFindings.length > 0
+        ? '- `addressed by fix` — the defect is gone in the current plan.'
+        : 'Use the recent fix citations below to scope any new findings.',
+      opts.prevFindings && opts.prevFindings.length > 0
+        ? '- `still open` — the defect persists; re-flag with the SAME citation.'
+        : '',
+      opts.prevFindings && opts.prevFindings.length > 0
+        ? '- `rebutted by fixer` — the fixer asserted no change was needed; confirm against the current plan.'
+        : '',
       '',
-      '### Frozen findings (from iteration 1)',
-      ...opts.prevFindings.map(
-        (f) =>
-          `- [${f.severity}] \`${f.citation}\` | ${f.failureScenario} | prior disposition: ${f.disposition ?? 'still_open'} | prior evidence: ${f.evidence}`,
-      ),
-      '',
+      ...(opts.prevFindings && opts.prevFindings.length > 0
+        ? [
+            '### Frozen findings (from iteration 1)',
+            ...opts.prevFindings.map(
+              (f) =>
+                `- [${f.severity}] \`${f.citation}\` | ${f.failureScenario} | prior disposition: ${f.disposition ?? 'still_open'} | prior evidence: ${f.evidence}`,
+            ),
+            '',
+          ]
+        : []),
     );
   }
 
@@ -274,7 +298,7 @@ export function createPlanReviewEvidenceResolver(
         const lines = plan.split('\n');
         const start = parseInt(planMatch[1]!, 10);
         const end = planMatch[2] ? parseInt(planMatch[2], 10) : start;
-        return start >= 1 && end <= lines.length;
+        return start >= 1 && start <= end && end <= lines.length;
       } catch {
         return false;
       }
@@ -303,7 +327,7 @@ export function createPlanReviewEvidenceResolver(
         const design = await artifacts.read(runId, 'design.md');
         const sectionNumber = designMatch[1]!;
         const escaped = sectionNumber.replace(/\./g, '\\.');
-        const headingRe = new RegExp(`^#{2,3}\\s+${escaped}(\\b|$)`, 'm');
+        const headingRe = new RegExp(`^#{2,3}\\s+${escaped}(?:\\s+.*)?$`, 'm');
         return headingRe.test(design);
       } catch {
         return false;

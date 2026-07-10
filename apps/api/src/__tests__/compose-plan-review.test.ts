@@ -36,6 +36,7 @@ describe('plan-review compose wiring', () => {
     expect(reviewFnMatch).toBeTruthy();
     expect(reviewFnMatch![0]).toContain("loadPromptTemplate('plan-review', 'plan-review'");
     expect(reviewFnMatch![0]).toContain('renderPrompt(template');
+    expect(reviewFnMatch![0]).toContain('buildPlanReviewReviewPrompt');
 
     const fixFnMatch = composeSrc.match(/const planReviewRunFix[\s\S]*?(?=const startCommitSha)/);
     expect(fixFnMatch).toBeTruthy();
@@ -75,5 +76,7 @@ describe('plan-review compose wiring', () => {
     const constructorMatch = composeSrc.match(/new PlanReviewLoop\({[\s\S]*?}\);/);
     expect(constructorMatch).toBeTruthy();
     expect(constructorMatch![0]).toContain('checkManifestSync: planReviewCheckManifestSync');
+    expect(constructorMatch![0]).toContain('computeLastFixDiffCitations');
+    expect(constructorMatch![0]).toContain('getRecentFixCitations');
   });
 });

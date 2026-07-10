@@ -75,8 +75,8 @@ export interface PlanReviewStepOptions {
    *
    * Populated by the loop-internal `lastFixDiffCitations` state, which the
    * composition-root adapter refreshes after each fix invocation via
-   * `deps.computeLastFixDiffCitations(headBeforeFix)` (#716, design
-   * §2.5 / §7.1).
+   * `deps.computeLastFixDiffCitations(ctx.cwd, headBeforeFix)` (#716,
+   * design §2.5 / §7.1).
    */
   recentFixCitations?: ReadonlyArray<string>;
 }
@@ -143,8 +143,18 @@ export interface PlanReviewLoopDeps {
    *
    * The application package does NOT call `git` directly; this dep is
    * the layer-rule-safe indirection.
+   *
+   * The first parameter is the per-iteration `cwd` (#716, fix to reviewer
+   * finding #2: do not read `cwd` from a shared mutable closure in the
+   * composition root — overlapping plan-review runs would compute
+   * citations against the wrong workspace). Always thread the active
+   * `ctx.cwd` through; never store it on a closure variable that could
+   * be overwritten by a concurrent run.
    */
-  computeLastFixDiffCitations?: (headBeforeFix: string | undefined) => ReadonlyArray<string>;
+  computeLastFixDiffCitations?: (
+    cwd: string,
+    headBeforeFix: string | undefined,
+  ) => ReadonlyArray<string>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
   /**
    * Deterministic, no-LLM-call structural check that `plan.md`'s `## Task N`

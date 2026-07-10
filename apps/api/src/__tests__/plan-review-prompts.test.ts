@@ -1,9 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as childProcess from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { FakeArtifactStore } from '@ai-sdlc/application/test-doubles';
 import {
   buildPlanReviewArbiterPrompt,
   buildPlanReviewFinalReviewArbiterPrompt,
+  buildPlanReviewReviewPrompt,
   buildPlanReviewReviewScopeBlock,
   createPlanReviewEvidenceResolver,
   getRecentFixCitations,
@@ -113,6 +115,43 @@ describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
   });
 });
 
+describe('buildPlanReviewReviewPrompt', () => {
+  it('appends the scoped re-review block when prior findings and recent fix citations are present', () => {
+    const prompt = buildPlanReviewReviewPrompt('BASE PROMPT', {
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+        },
+      ],
+      recentFixCitations: ['plan.md:42', 'plan.md:50-55'],
+    });
+
+    expect(prompt.startsWith('BASE PROMPT')).toBe(true);
+    expect(prompt).toContain('## SCOPE');
+    expect(prompt).toContain('## DISPOSITION GUIDANCE');
+    expect(prompt).toContain('## RECENT FIX CITATIONS');
+    expect(prompt).toContain('`plan.md:42`');
+    expect(prompt).toContain('prior evidence: grounded');
+  });
+});
+
+describe('prompts/plan-review/plan-review.md', () => {
+  it('requires the evidence token in the findings output schema', () => {
+    const template = readFileSync(
+      new URL('../../../../prompts/plan-review/plan-review.md', import.meta.url),
+      'utf-8',
+    );
+
+    expect(template).toContain('grounded');
+    expect(template).toContain('ungrounded');
+    expect(template).toContain('evidence token');
+    expect(template).toContain('still_open');
+  });
+});
+
 describe('readPlanReviewFinalExcerpts', () => {
   it('reads plan and findings artifacts only', async () => {
     const store = new FakeArtifactStore();
@@ -203,13 +242,13 @@ describe('buildPlanReviewReviewScopeBlock (#716)', () => {
     expect(block).toContain('prior disposition: still_open');
   });
 
-  it('does not duplicate SCOPE block when only recentFixCitations are set', () => {
+  it('still emits SCOPE guidance when only recentFixCitations are set', () => {
     const block = buildPlanReviewReviewScopeBlock({
       recentFixCitations: ['plan.md:1'],
     });
+    expect(block).toContain('## SCOPE');
+    expect(block).toContain('## DISPOSITION GUIDANCE');
     expect(block).toContain('## RECENT FIX CITATIONS');
-    expect(block).not.toContain('## SCOPE');
-    expect(block).not.toContain('## DISPOSITION GUIDANCE');
   });
 });
 
@@ -260,6 +299,24 @@ describe('createPlanReviewEvidenceResolver (#716)', () => {
       await resolve({
         severity: 'P1',
         citation: 'plan.md:3-5',
+        failureScenario: 'x',
+        evidence: 'grounded',
+      }),
+    ).toBe(false);
+  });
+
+  it('rejects reversed plan.md line ranges', async () => {
+    const store = new FakeArtifactStore();
+    await store.write({
+      runId: 'run-x',
+      relativePath: 'plan.md',
+      contents: 'a\nb\nc\nd',
+    });
+    const resolve = createPlanReviewEvidenceResolver(store, 'run-x');
+    expect(
+      await resolve({
+        severity: 'P1',
+        citation: 'plan.md:3-2',
         failureScenario: 'x',
         evidence: 'grounded',
       }),
@@ -358,6 +415,24 @@ describe('createPlanReviewEvidenceResolver (#716)', () => {
       runId: 'run-x',
       relativePath: 'design.md',
       contents: '## §3.1 Wrong form',
+    });
+    const resolve = createPlanReviewEvidenceResolver(store, 'run-x');
+    expect(
+      await resolve({
+        severity: 'P1',
+        citation: 'design.md:3.1',
+        failureScenario: 'x',
+        evidence: 'grounded',
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT match design.md headings that only suffix the requested section number without whitespace', async () => {
+    const store = new FakeArtifactStore();
+    await store.write({
+      runId: 'run-x',
+      relativePath: 'design.md',
+      contents: '## 3.1: Wrong form',
     });
     const resolve = createPlanReviewEvidenceResolver(store, 'run-x');
     expect(
