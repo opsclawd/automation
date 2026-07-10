@@ -24,6 +24,7 @@ export interface SweepWaitingRunsDeps {
 export interface SweepWaitingRunsResult {
   scanned: number;
   reactivated: number;
+  reactivatedRuns: RunRecord[];
   timedOut: number;
   passedOnMergedPr: number;
   cancelledOnClosedPr: number;
@@ -40,6 +41,7 @@ export class SweepWaitingRuns {
     const result: SweepWaitingRunsResult = {
       scanned: 0,
       reactivated: 0,
+      reactivatedRuns: [],
       timedOut: 0,
       passedOnMergedPr: 0,
       cancelledOnClosedPr: 0,
@@ -187,8 +189,10 @@ export class SweepWaitingRuns {
 
         try {
           this.deps.applyReactivation(run, decision);
-          if (decision.action === 'reactivate') result.reactivated++;
-          else if (decision.action === 'timeout') result.timedOut++;
+          if (decision.action === 'reactivate') {
+            result.reactivated++;
+            result.reactivatedRuns.push(run);
+          } else if (decision.action === 'timeout') result.timedOut++;
           else result.stayedReady++;
         } catch (err) {
           if (err instanceof RunStateError) {

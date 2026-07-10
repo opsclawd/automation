@@ -260,4 +260,59 @@ describe('SweepWaitingRuns', () => {
     ).toBe(true);
     expect(applyCalls).toEqual([]);
   });
+
+  it('includes the reactivated run in reactivatedRuns, but not merged/closed finalizations', async () => {
+    const { deps, runRepo, github } = makeDeps();
+    const run = makeWaitingRun('w8', new Date('2026-06-04T00:30:00Z'));
+    runRepo.addRun(run);
+    github.comments.set('owner/repo/7', [
+      {
+        id: 1,
+        prNumber: 7,
+        path: 'a.ts',
+        line: 1,
+        reviewer: 'octocat',
+        body: 'needs work',
+        createdAt: new Date('2026-06-04T00:45:00Z'),
+      },
+    ]);
+    const sweep = new SweepWaitingRuns(deps);
+    const result = await sweep.execute();
+    expect(result.reactivatedRuns).toHaveLength(1);
+    expect(result.reactivatedRuns[0]?.uuid).toBe('w8');
+    expect(result.reactivatedRuns[0]?.repoId).toBe('owner/repo');
+    expect(result.reactivatedRuns[0]?.issueNumber).toBe(7);
+  });
+
+  it('does not include a merged-PR finalization in reactivatedRuns', async () => {
+    const { deps, runRepo, github } = makeDeps();
+    const run = makeWaitingRun('w9', new Date('2026-06-04T00:30:00Z'));
+    runRepo.addRun(run);
+    github.prs.set('owner/repo/7', {
+      number: 7,
+      url: 'https://example/pr/7',
+      state: 'merged',
+      headRefName: 'ai/issue-7',
+    });
+    const sweep = new SweepWaitingRuns(deps);
+    const result = await sweep.execute();
+    expect(result.passedOnMergedPr).toBe(1);
+    expect(result.reactivatedRuns).toHaveLength(0);
+  });
+
+  it('does not include a closed-PR finalization in reactivatedRuns', async () => {
+    const { deps, runRepo, github } = makeDeps();
+    const run = makeWaitingRun('w10', new Date('2026-06-04T00:30:00Z'));
+    runRepo.addRun(run);
+    github.prs.set('owner/repo/7', {
+      number: 7,
+      url: 'https://example/pr/7',
+      state: 'closed',
+      headRefName: 'ai/issue-7',
+    });
+    const sweep = new SweepWaitingRuns(deps);
+    const result = await sweep.execute();
+    expect(result.cancelledOnClosedPr).toBe(1);
+    expect(result.reactivatedRuns).toHaveLength(0);
+  });
 });
