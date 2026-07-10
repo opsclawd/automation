@@ -3,7 +3,6 @@ import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { ArbiterResult } from '../implement-step/types.js';
-import type { PlanReviewFinding } from './evidence-resolver-port.js';
 
 export interface PlanReviewContext {
   loopId: string;
@@ -35,13 +34,26 @@ export interface PlanReviewResult {
  * or section anchor) and a `failureScenario` (one-sentence defect
  * description) for P0/P1 severity. `evidence` reflects whether the citation
  * resolved against the artifact store (#716, AC #3).
- *
- * The shape lives in `./evidence-resolver-port.ts` so the port file does
- * not depend on `types.ts` (avoiding a circular import). Re-exported here
- * for callers that already depend on `types.ts`.
  */
-// Re-export from the port file (defined there to avoid a cycle).
-export type { PlanReviewFinding, EvidenceResolver } from './evidence-resolver-port.js';
+export interface PlanReviewFinding {
+  severity: 'P0' | 'P1' | 'P2';
+  /** Required: path:line OR section-anchor reference (e.g. `plan.md:42`). */
+  citation: string;
+  /** Required: one-sentence failure scenario. */
+  failureScenario: string;
+  /**
+   * Whether the citation resolved against the artifact store at parse time.
+   * Ungrounded P0/P1 findings cannot contribute to a `p1_found` verdict.
+   */
+  evidence: 'grounded' | 'ungrounded';
+  /**
+   * Current disposition of this finding in the loop, if carried forward
+   * from a prior iteration.
+   */
+  disposition?: 'addressed' | 'rebutted' | 'still_open' | 'never_seen_again';
+}
+
+export type { EvidenceResolver } from './evidence-resolver-port.js';
 
 /**
  * Options the loop passes to `PlanReviewLoopDeps.runReview` for iteration
@@ -132,7 +144,7 @@ export interface PlanReviewLoopDeps {
    * The application package does NOT call `git` directly; this dep is
    * the layer-rule-safe indirection.
    */
-  computeLastFixDiffCitations: (headBeforeFix: string | undefined) => ReadonlyArray<string>;
+  computeLastFixDiffCitations?: (headBeforeFix: string | undefined) => ReadonlyArray<string>;
   runFix: (ctx: PlanReviewContext, opts: PlanFixOptions) => Promise<PlanFixResult>;
   /**
    * Deterministic, no-LLM-call structural check that `plan.md`'s `## Task N`
