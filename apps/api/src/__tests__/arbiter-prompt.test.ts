@@ -22,6 +22,7 @@ describe('buildArbiterPrompt', () => {
     });
     expect(prompt).toContain('# TASK');
     expect(prompt).toContain('## CONTEXT');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('## INPUTS');
     expect(prompt).toContain('## DECISION FRAMEWORK');
     expect(prompt).toContain('## OUTPUT');
@@ -154,6 +155,7 @@ describe('buildImplementStepFinalReviewArbiterPrompt', () => {
     });
     expect(prompt).toContain('# TASK');
     expect(prompt).toContain('## CONTEXT');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('## INPUTS');
     expect(prompt).toContain('## DECISION FRAMEWORK');
     expect(prompt).toContain('## OUTPUT');

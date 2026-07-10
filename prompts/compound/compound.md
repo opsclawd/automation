@@ -2,6 +2,8 @@
 
 ## CONTEXT
 
+{{var:WORKSPACE_CONSTRAINTS}}
+
 Plan: {{artifact:plan.md}}
 Design: {{artifact:design.md}}
 

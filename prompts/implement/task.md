@@ -1,5 +1,9 @@
 # Implement task {{taskIndex}}: {{taskTitle}}
 
+## WORKSPACE CONSTRAINTS
+
+{{var:WORKSPACE_CONSTRAINTS}}
+
 You are running implement Step {{taskIndex}} of a plan. Your job is to make
 the code changes this step describes and then produce the two required
 artifacts. Treat them as two distinct, numbered steps.

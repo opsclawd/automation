@@ -6,6 +6,10 @@ PHASE: WRITE THE PLAN.
 You MUST edit `plan.md` in place to address the reviewer's findings. Your sole
 output is a single `plan-fix-result.json` file describing the fix outcome.
 
+## CONTEXT
+
+{{var:WORKSPACE_CONSTRAINTS}}
+
 ## INPUTS
 - `{{artifact:plan.md}}` — the plan to fix
 - `{{artifact:plan-review-findings.md}}` — the reviewer's findings

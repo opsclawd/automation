@@ -198,6 +198,7 @@ import {
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
 } from './plan-review-prompts.js';
+import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
 
 async function readTail(filePath: string, maxBytes: number = 65536): Promise<string> {
   try {
@@ -321,6 +322,9 @@ export function buildImplementPrompt(
     description,
     '',
     '## Context',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `You are working in: ${ctx.cwd}`,
     `Repository: ${ctx.repoId}`,
     'Issue: issue.md',
@@ -636,6 +640,9 @@ export function buildSpecReviewPrompt(
     reportExcerpt,
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${ctx.cwd}`,
     '',
     typecheckSection,
@@ -691,6 +698,9 @@ export function buildQualityReviewPrompt(
     '"pass" — quality review does not apply to verification-only steps.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${ctx.cwd}`,
     '',
     typecheckSection,
@@ -837,6 +847,9 @@ export async function buildImplementStepFixPrompt(
         ]
       : []),
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${input.cwd}`,
     '',
     '## OUTPUT',
@@ -877,6 +890,8 @@ export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptIn
   const { cwd, comment, diff, previousBuildError, previousCodeVerifyReason } = input;
   const sections = [
     '# PR Review Comment Task',
+    '',
+    WORKSPACE_CONSTRAINTS,
     '',
     'Address the following PR review comment:',
     '',
@@ -4379,6 +4394,8 @@ export function composeRoot(opts: ComposeOptions): Container {
 
           const content = [
             '# Code Verification Task',
+            '',
+            WORKSPACE_CONSTRAINTS,
             '',
             'An automated fix was applied to address a PR review comment. Verify that the fix actually addresses the concern.',
             '',

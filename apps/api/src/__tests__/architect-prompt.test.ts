@@ -8,6 +8,7 @@ describe('buildArchitectPrompt', () => {
       { manifest: '{"tasks":[]}', reviewMd: '', triageMd: '' },
     );
     expect(prompt).toContain('/tmp/worktree-x');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
   });
 
   it('includes the manifest JSON in the prompt', () => {

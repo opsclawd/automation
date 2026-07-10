@@ -12,6 +12,7 @@ describe('buildSpecReviewPrompt', () => {
   it('includes a CONTEXT section with Working directory anchored to ctx.cwd', () => {
     const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
     expect(prompt).toContain('## CONTEXT');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain(`Working directory: ${ctx.cwd}`);
   });
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderPrompt } from '../prompts/render-prompt.js';
 import { TemplateError } from '../prompts/errors.js';
+import { WORKSPACE_CONSTRAINTS } from '../prompts/constants.js';
 import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 
@@ -34,6 +35,15 @@ describe('renderPrompt', () => {
       artifacts: fakeArtifacts({ 'plan.md': 'PLAN BODY' }),
     });
     expect(out).toBe('plan:\nPLAN BODY');
+  });
+
+  it('substitutes WORKSPACE_CONSTRAINTS automatically', async () => {
+    const out = await renderPrompt('constraints:\n{{var:WORKSPACE_CONSTRAINTS}}', {
+      runId: 'run-1',
+      vars: {},
+      artifacts: fakeArtifacts({}),
+    });
+    expect(out).toBe(`constraints:\n${WORKSPACE_CONSTRAINTS}`);
   });
 
   it('throws TemplateError on unknown var', async () => {

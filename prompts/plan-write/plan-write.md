@@ -2,6 +2,8 @@ You are writing an implementation plan.
 
 ## CONTEXT
 
+{{var:WORKSPACE_CONSTRAINTS}}
+
 You are working in the repository worktree.
 Design doc: `design.md` (produced in the previous brainstorming step)
 Issue file: `issue.md`

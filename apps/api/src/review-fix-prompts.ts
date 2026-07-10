@@ -1,4 +1,4 @@
-import { type ArchitectPlan } from '@ai-sdlc/application';
+import { type ArchitectPlan, WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
 
 export interface BuildReviewPromptInput {
   cwd: string;
@@ -29,6 +29,9 @@ export function buildReviewFixReviewPrompt(input: BuildReviewPromptInput): strin
     'You are reviewing code changes in a pull request.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${input.cwd}`,
     `Repository: ${input.repoId}`,
     '',
@@ -118,6 +121,9 @@ export function buildReviewFixFixPrompt(input: BuildFixPromptInput): string {
     'You are fixing code review findings.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${input.cwd}`,
     `Repository: ${input.repoId}`,
     'Review findings: ./code-review.md',

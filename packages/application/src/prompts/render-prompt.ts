@@ -1,6 +1,7 @@
 import { TemplateError } from './errors.js';
 import { ArtifactNotFoundError } from '../ports/artifact-store.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
+import { WORKSPACE_CONSTRAINTS } from './constants.js';
 
 export interface PromptContext {
   runId: string;
@@ -26,9 +27,13 @@ export async function renderPrompt(template: string, ctx: PromptContext): Promis
     let value: string;
 
     if (kind === 'var') {
-      const v = ctx.vars[key!.trim()];
+      const trimmedKey = key!.trim();
+      let v = ctx.vars[trimmedKey];
+      if (v === undefined && trimmedKey === 'WORKSPACE_CONSTRAINTS') {
+        v = WORKSPACE_CONSTRAINTS;
+      }
       if (v === undefined) {
-        throw new TemplateError(`unknown var: ${key!}`, key!);
+        throw new TemplateError(`unknown var: ${trimmedKey}`, trimmedKey);
       }
       value = v;
     } else {

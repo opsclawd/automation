@@ -16,6 +16,7 @@ describe('buildPostPrReviewTaskPrompt', () => {
   it('renders the base prompt correctly and asserts no-push instructions', () => {
     const prompt = buildPostPrReviewTaskPrompt(baseInput);
 
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('Do NOT push');
     expect(prompt).toContain('commit the change locally');
     expect(prompt).not.toContain('git push');
