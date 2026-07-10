@@ -15,6 +15,8 @@
  *   - Output ONLY `review-fix-plan.json`.
  *   - Stop after writing the file.
  */
+import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+
 export interface BuildArchitectPromptContext {
   cwd: string;
   repoId: string;
@@ -59,6 +61,9 @@ export function buildArchitectPrompt(
     'You MUST NOT modify any code, tests, plan, or config. Your sole output is a single `review-fix-plan.json` file describing the cross-task fix plan.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${ctx.cwd}`,
     `Repository: ${ctx.repoId}`,
     '',

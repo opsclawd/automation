@@ -1,4 +1,4 @@
-import { ArtifactNotFoundError, type ArtifactStore } from '@ai-sdlc/application';
+import { ArtifactNotFoundError, type ArtifactStore, WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
 
 export const PLAN_REVIEW_FINDINGS_ARTIFACT = 'plan-review-findings.md';
 export const PLAN_FIX_RESULT_ARTIFACT = 'plan-fix-result.json';
@@ -62,6 +62,9 @@ export function buildPlanReviewArbiterPrompt(
     'You MUST NOT modify any code, plan, or config. Your sole output is a single `result.json` file describing the ruling.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${ctx.cwd}`,
     `Run: ${ctx.runId}`,
     '',
@@ -128,6 +131,9 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
     'You MUST NOT modify any code, plan, or config. Your sole output is a single `result.json` file describing the ruling.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${ctx.cwd}`,
     `Run: ${ctx.runId}`,
     '',

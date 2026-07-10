@@ -2,6 +2,8 @@ You are analyzing a GitHub issue to produce a design document.
 
 ## CONTEXT
 
+{{var:WORKSPACE_CONSTRAINTS}}
+
 You are working in the repository worktree.
 Issue file: issue.md (contains the GitHub issue description)
 Comments file: issue-comments.md (contains issue comments, may not exist)

@@ -2,6 +2,8 @@ You are writing the pull request description.
 
 ## CONTEXT
 
+{{var:WORKSPACE_CONSTRAINTS}}
+
 You are working in the repository worktree.
 Plan: `plan.md`
 Design: `design.md`

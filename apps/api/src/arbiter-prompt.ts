@@ -1,4 +1,5 @@
 import type { TypecheckResult } from '@ai-sdlc/application';
+import { WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
 
 export interface BuildArbiterPromptContext {
   stepIndex: number;
@@ -40,6 +41,9 @@ export function buildArbiterPrompt(
     'You MUST NOT modify any code, tests, plan, or config. Your sole output is a single `result.json` file describing the ruling.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${ctx.cwd}`,
     `Step: ${ctx.stepIndex} — ${ctx.stepTitle}`,
     '',
@@ -132,6 +136,9 @@ export function buildImplementStepFinalReviewArbiterPrompt(
     'You MUST NOT modify any code, tests, plan, or config. Your sole output is a single `result.json` file describing the ruling.',
     '',
     '## CONTEXT',
+    '',
+    WORKSPACE_CONSTRAINTS,
+    '',
     `Working directory: ${ctx.cwd}`,
     `Step: ${ctx.stepIndex} — ${ctx.stepTitle}`,
     '',

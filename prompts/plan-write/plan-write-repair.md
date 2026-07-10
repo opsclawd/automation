@@ -2,6 +2,8 @@ You are repairing a previously-written implementation plan that failed structura
 
 ## CONTEXT
 
+{{var:WORKSPACE_CONSTRAINTS}}
+
 Your previous attempt at `plan.md` / `task-manifest.json` failed structural validation with this
 specific error:
 

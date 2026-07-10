@@ -176,6 +176,7 @@ describe('buildImplementStepFixPrompt', () => {
       historyContext: historyBody,
     });
     expect(prompt).toContain('## PRIOR FIX HISTORY');
+      expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain(historyBody);
   });
 

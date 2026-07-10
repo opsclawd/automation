@@ -21,6 +21,7 @@ describe('buildPlanReviewArbiterPrompt', () => {
       },
     );
     expect(prompt).toContain('plan body');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('findings');
     expect(prompt).toContain('done_no_fixes_needed');
     expect(prompt).toContain('finding is wrong');
@@ -73,6 +74,7 @@ describe('buildPlanReviewFinalReviewArbiterPrompt', () => {
       },
     );
     expect(prompt).toContain('plan body');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('trailing findings');
     expect(prompt).toContain('evidence');
     expect(prompt).toContain('STOP RULE');

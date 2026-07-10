@@ -28,6 +28,7 @@ describe('review-fix prompts builders', () => {
       });
 
       expect(result).toContain('Run: git diff origin/main...HEAD');
+      expect(result).toContain('## WORKSPACE CONSTRAINTS');
     });
   });
 
@@ -82,6 +83,7 @@ describe('review-fix prompts builders', () => {
       expect(result).toContain('## CROSS-TASK FIX PLAN');
       expect(result).toContain('Use helper function');
       expect(result).toContain('## NOTE');
+      expect(result).toContain('## WORKSPACE CONSTRAINTS');
       expect(result).toContain('The previous fix attempt failed.');
     });
   });

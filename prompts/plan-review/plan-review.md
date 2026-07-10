@@ -6,6 +6,10 @@ PHASE: READ-ONLY REVIEW.
 You MUST NOT modify `plan.md` or any other file. Your sole output is a single
 `plan-review-findings.md` file describing the plan's defects.
 
+## CONTEXT
+
+{{var:WORKSPACE_CONSTRAINTS}}
+
 ## INPUTS
 - `{{artifact:plan.md}}` — the plan to review
 - `{{artifact:design.md}}` — the design the plan must satisfy

@@ -33,6 +33,7 @@ describe('buildImplementPrompt', () => {
   it('includes the working directory, repo, branch, and reference files in Context', () => {
     const prompt = buildImplementPrompt(ctx, taskText, branchName);
     expect(prompt).toContain('## Context');
+    expect(prompt).toContain('## WORKSPACE CONSTRAINTS');
     expect(prompt).toContain('/workspace/issue-42');
     expect(prompt).toContain('opsclawd/automation');
     expect(prompt).toContain('ai/issue-42');
