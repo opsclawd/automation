@@ -1876,8 +1876,8 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
 
 describe('ReviewFixLoop auto-commit fallback', () => {
   const baseInput = () => ({
-    runId: 'run-1' as any,
-    phaseId: 'phase-1' as any,
+    runId: RunId('run-1'),
+    phaseId: PhaseName('phase-1'),
     repoId: 'repo-1',
     cwd: '/wt',
     maxIterations: 2,

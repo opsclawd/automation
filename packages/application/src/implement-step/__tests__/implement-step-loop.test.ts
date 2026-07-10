@@ -2824,8 +2824,8 @@ describe('ImplementStepLoop', () => {
 
 describe('ImplementStepLoop auto-commit fallback', () => {
   const baseInput = () => ({
-    runId: 'run-1' as any,
-    phaseId: 'implement' as any,
+    runId: RunId('run-1'),
+    phaseId: PhaseName('implement'),
     repoId: 'repo-1',
     cwd: '/wt',
     stepIndex: 1,
