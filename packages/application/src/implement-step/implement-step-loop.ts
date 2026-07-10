@@ -142,6 +142,8 @@ export class ImplementStepLoop {
       stepIndex: input.stepIndex,
       stepTitle: input.stepTitle,
       iterationIndex: 1,
+      manifest: input.manifest,
+      planMd: input.planMd,
     };
 
     // --- History helpers (closure over deps/loop) ---

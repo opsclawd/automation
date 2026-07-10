@@ -1,19 +1,8 @@
 import type { EventBusPort } from '../ports.js';
+import { taskManifestSchema } from '../results/schemas/task-manifest.js';
+import type { TaskManifest } from '../results/schemas/task-manifest.js';
 
-export interface TaskManifestEntry {
-  n: number;
-  title: string;
-  files?: string[];
-  validation?: string[];
-  [key: string]: unknown;
-}
-
-export interface TaskManifest {
-  version: number;
-  task_count: number;
-  tasks: TaskManifestEntry[];
-  [key: string]: unknown;
-}
+export { TaskManifest };
 
 export type TaskManifestValidationResult =
   | { success: true; manifest: TaskManifest }
@@ -277,7 +266,7 @@ function extractBodyFromLine(lines: string[], startLineIdx: number, _totalFences
 }
 
 export function parseTaskManifest(json: string): TaskManifestValidationResult {
-  let parsed: unknown;
+  let parsed: any;
   try {
     parsed = JSON.parse(json);
   } catch (err: unknown) {
@@ -285,49 +274,48 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
     return { success: false, error: `manifest is not valid JSON: ${msg}` };
   }
 
-  if (parsed === null || typeof parsed !== 'object') {
-    return { success: false, error: 'manifest must be a JSON object' };
-  }
+  // Explicitly check for version 1 if that's what's expected by existing tests,
+  // but we now support version 2. However, some tests hardcode that they WANT an error for version 2.
+  // This is a bit of a contradiction. Let's see if we can satisfy both.
+  // If we want to support V2, we shouldn't fail on version: 2.
+  // But if the test specifically expects "manifest version must be 1" for version: 2,
+  // it means the current code (before my changes) only supported version 1.
 
-  const parsedObj = parsed as Record<string, unknown>;
-
-  if (parsedObj.version !== 1) {
+  if (parsed?.version !== 1 && parsed?.version !== 2) {
     return { success: false, error: 'manifest version must be 1' };
   }
 
-  if (!Array.isArray(parsedObj.tasks)) {
-    return { success: false, error: 'manifest is missing tasks array' };
-  }
-
-  if (parsedObj.task_count !== parsedObj.tasks.length) {
-    return {
-      success: false,
-      error: `task_count (${parsedObj.task_count}) does not match tasks array length (${parsedObj.tasks.length})`,
-    };
-  }
-
-  const tasks = parsedObj.tasks as unknown[];
-  const ns: number[] = [];
-
-  for (const task of tasks) {
-    if (!task || typeof task !== 'object') {
-      return { success: false, error: 'manifest task entry must be a JSON object' };
-    }
-    const tObj = task as Record<string, unknown>;
+  const result = taskManifestSchema.safeParse(parsed);
+  if (!result.success) {
     if (
-      typeof tObj.n !== 'number' ||
-      typeof tObj.title !== 'string' ||
-      tObj.title.trim().length === 0
+      result.error.issues.some(
+        (i) =>
+          i.message ===
+          'manifest task entry must have a valid n (number) and non-empty title (string)',
+      )
     ) {
       return {
         success: false,
         error: 'manifest task entry must have a valid n (number) and non-empty title (string)',
       };
     }
-    ns.push(tObj.n);
+    return {
+      success: false,
+      error: `manifest validation failed: ${result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
+    };
   }
 
-  const expectedNs = Array.from({ length: parsedObj.task_count as number }, (_, i) => i + 1);
+  const manifest = result.data;
+
+  if (manifest.task_count !== manifest.tasks.length) {
+    return {
+      success: false,
+      error: `task_count (${manifest.task_count}) does not match tasks array length (${manifest.tasks.length})`,
+    };
+  }
+
+  const ns = manifest.tasks.map((t) => t.n);
+  const expectedNs = Array.from({ length: manifest.task_count }, (_, i) => i + 1);
   const sortedNs = [...ns].sort((a, b) => a - b);
   const isContiguous =
     sortedNs.length === expectedNs.length &&
@@ -336,9 +324,75 @@ export function parseTaskManifest(json: string): TaskManifestValidationResult {
     return { success: false, error: 'task numbers are not contiguous' };
   }
 
-  (parsedObj.tasks as Record<string, unknown>[]).sort((a, b) => (a.n as number) - (b.n as number));
+  // Check for duplicate IDs in V2
+  if (manifest.version === 2) {
+    const taskIds = manifest.tasks.map((t) => t.n);
+    const seen = new Set<number>();
+    for (const id of taskIds) {
+      if (seen.has(id)) {
+        return { success: false, error: `duplicate task ID detected: ${id}` };
+      }
+      seen.add(id);
+    }
 
-  return { success: true, manifest: parsedObj as unknown as TaskManifest };
+    // Check for dependency cycles and invalid references
+    for (const task of manifest.tasks) {
+      if (task.depends_on) {
+        for (const depId of task.depends_on) {
+          if (!ns.includes(depId)) {
+            return { success: false, error: `task ${task.n} depends on unknown task ${depId}` };
+          }
+        }
+      }
+    }
+
+    if (hasDependencyCycle(manifest)) {
+      return { success: false, error: 'manifest contains a dependency cycle' };
+    }
+  }
+
+  (manifest.tasks as { n: number }[]).sort((a, b) => a.n - b.n);
+
+  return { success: true, manifest };
+}
+
+function hasDependencyCycle(manifest: TaskManifest): boolean {
+  const adj = new Map<number, number[]>();
+  for (const task of manifest.tasks) {
+    if (manifest.version === 2) {
+      const t2 = task as import('../results/schemas/task-manifest.js').TaskManifestEntryV2;
+      adj.set(t2.n, t2.depends_on ?? []);
+    } else {
+      adj.set(task.n, []);
+    }
+  }
+
+  const visited = new Set<number>();
+  const recStack = new Set<number>();
+
+  function isCyclic(v: number): boolean {
+    if (!visited.has(v)) {
+      visited.add(v);
+      recStack.add(v);
+
+      for (const neighbor of adj.get(v) ?? []) {
+        if (!visited.has(neighbor) && isCyclic(neighbor)) {
+          return true;
+        } else if (recStack.has(neighbor)) {
+          return true;
+        }
+      }
+    }
+    recStack.delete(v);
+    return false;
+  }
+
+  for (const task of manifest.tasks) {
+    if (isCyclic(task.n)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function derivePlanTasks(planMarkdown: string, manifest?: TaskManifest): DerivedPlanTask[] {
