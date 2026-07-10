@@ -216,7 +216,7 @@ export class ProcessPrReviewComments {
           previousBuildError: task.previousBuildError ?? undefined,
           previousCodeVerifyReason: task.previousCodeVerifyReason ?? undefined,
         });
-      } catch (err) {
+      } catch {
         lastOutput = {
           comments: currentComments.map((c) => ({
             commentId: c.commentId,

@@ -79,13 +79,13 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   git.remoteRefs.set('origin/feat-x', 'tipSha');
 
   let replyCounter = 0;
-  let currentCommentId = 9001;
+  let  _currentCommentId = 9001;
   const deps: ProcessPrReviewDeps = {
     github,
     git,
     agent,
     prReviewRepo: repo,
-    renderTaskPrompt: async ({ comments }) => {
+    renderTaskPrompt: async ({  _comments }) => {
       currentCommentId = comment.commentId;
       return '/tmp/prompt.md';
     },
@@ -319,13 +319,13 @@ describe('ProcessPrReviewComments — multi-comment line-shift', () => {
     git.remoteRefs.set('origin/feat-x', 'tipSha');
 
     let replyCounter = 0;
-    let currentCommentId = 9001;
+    let  _currentCommentId = 9001;
     const deps: ProcessPrReviewDeps = {
       github,
       git,
       agent,
       prReviewRepo: repo,
-      renderTaskPrompt: async ({ comments }) => {
+      renderTaskPrompt: async ({  _comments }) => {
         currentCommentId = comment.commentId;
         return '/tmp/p.md';
       },

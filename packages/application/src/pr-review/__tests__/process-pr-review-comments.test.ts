@@ -122,12 +122,12 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
     git,
     agent,
     prReviewRepo: repo,
-    renderTaskPrompt: async ({ comments }) => {
+    renderTaskPrompt: async ({ comments }: { comments: import("@ai-sdlc/domain").PrReviewComment[] }) => {
       currentCommentIds = comments.map((c) => c.commentId);
       return '/tmp/prompt.md';
     },
     extractTaskResult: async () => {
-      const result: any = {};
+      const result: Record<string, { action: string; replyBody: string }> = {};
       for (const id of currentCommentIds) {
         result[String(id)] = { action: 'fixed', replyBody: 'Renamed foo to bar.' };
       }
@@ -424,10 +424,9 @@ describe('ProcessPrReviewComments — multiple comments', () => {
       9002: { action: 'no_fix', replyBody: 'Intentional.' },
       9003: { action: 'blocked', replyBody: 'Cannot fix safely.', blockedReason: 'unsafe change' },
     };
-    let activeCommentId = 0;
     const { deps, github, repo } = makeDeps({
       agent,
-      renderTaskPrompt: async ({ comments }) => {
+      renderTaskPrompt: async ({ comments }: { comments: import("@ai-sdlc/domain").PrReviewComment[] }) => {
         activeCommentIds = comments.map(c => c.commentId);
         return '/tmp/prompt.md';
       },
