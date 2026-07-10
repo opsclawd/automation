@@ -104,7 +104,7 @@ export class SweepWaitingRuns {
                 status: 'passed',
                 completedAt: mergedAt,
               },
-              'waiting',
+              'running',
             );
             if (updated) {
               this.deps.eventBus.publish(run.uuid, {
@@ -141,7 +141,7 @@ export class SweepWaitingRuns {
                 completedAt: closedAt,
                 failureReason: 'PR closed',
               },
-              'waiting',
+              'running',
             );
             if (updated) {
               this.deps.eventBus.publish(run.uuid, {
