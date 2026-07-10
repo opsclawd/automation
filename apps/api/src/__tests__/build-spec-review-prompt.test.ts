@@ -27,6 +27,15 @@ describe('buildSpecReviewPrompt', () => {
     expect(prompt).toContain('Do NOT write to a relative path');
   });
 
+  it('instructs the agent to use its file-write tool, not print the JSON in chat', () => {
+    // Weaker models (e.g. gpt-5.4-mini) sometimes answer with the result JSON
+    // as their final chat message instead of writing result.json to disk,
+    // triggering a missing_required_artifact fallback. Make the requirement explicit.
+    const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
+    expect(prompt).toContain('You MUST use your file-write tool');
+    expect(prompt).toContain('Printing the');
+  });
+
   it('includes the typecheck section', () => {
     const prompt = buildSpecReviewPrompt(ctx, typecheckSection);
     expect(prompt).toContain('## TYPECHECK RESULT');

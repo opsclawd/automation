@@ -669,6 +669,9 @@ export function buildSpecReviewPrompt(
     '- `file` and `suggested_fix` are STRONGLY RECOMMENDED for actionable findings; they may be omitted when the defect spans multiple files or is a plan/letter deviation.',
     '- Do NOT omit `findings` on "fail" — the orchestrator\'s fixer and arbiter cannot act on a fail verdict without findings.',
     'Do NOT write to a relative path — use the full absolute path above.',
+    'You MUST use your file-write tool to create result.json on disk. Printing the',
+    'JSON in your chat response instead of writing the file is a contract violation —',
+    'the orchestrator only reads the file, never your response text.',
     '',
     '## STOP RULE — THIS IS THE MOST IMPORTANT RULE',
     'After writing result.json you are DONE. Do NOT:',
@@ -727,6 +730,9 @@ export function buildQualityReviewPrompt(
     '- `file` and `suggested_fix` are STRONGLY RECOMMENDED for actionable findings; they may be omitted when the defect spans multiple files or is a plan/letter deviation.',
     '- Do NOT omit `findings` on "fail" — the orchestrator\'s fixer and arbiter cannot act on a fail verdict without findings.',
     'Do NOT write to a relative path — use the full absolute path above.',
+    'You MUST use your file-write tool to create result.json on disk. Printing the',
+    'JSON in your chat response instead of writing the file is a contract violation —',
+    'the orchestrator only reads the file, never your response text.',
   ].join('\n');
 }
 
