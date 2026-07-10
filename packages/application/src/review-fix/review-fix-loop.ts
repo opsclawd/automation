@@ -330,59 +330,138 @@ export class ReviewFixLoop {
                 statusOutput: verification.statusOutput.slice(0, 4000),
               },
             );
-            consecutiveFixFailures = prevConsecutiveFixFailures + 1;
-            consecutiveFixFailuresForCap = prevConsecutiveFixFailuresForCap + 1;
-            lastIterationHadFixCommit = false;
-            thisLoop = completeIteration(thisLoop, {
-              outcome: 'unresolved',
-              fixInvocationId: fix.invocationId,
-              now: this.deps.now(),
-            });
-            this.deps.loops.update(thisLoop);
-            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-            await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input, {
-              kind: 'uncommitted_changes',
-              dirtyFiles: verification.dirtyFiles,
-              statusOutput: verification.statusOutput,
-            });
-            unfoundedHistory.push({
-              findings: unfoundedFingerprints,
-              ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
-            });
-            // Do NOT call this.deps.rollbackFix here (plan-review P0, #679):
-            // this branch means the fixer left uncommitted changes in the
-            // tree (e.g. a pre-commit hook rejected the commit). That dirty
-            // state is exactly what the NEXT fixer iteration needs to see in
-            // order to finish committing or fixing it — rolling back here
-            // would destroy the evidence #679 exists to preserve. Rollback
-            // is only correct for the separate build-breaking-fix case
-            // (#671), which has its own dedicated branch elsewhere in this
-            // loop.
-            await this.runCleanArtifacts(ctx);
-            // mirror the cap check from the cannot_fix branch below
-            const consecutiveCap = input.maxConsecutiveFixFailures;
-            if (
-              consecutiveCap !== undefined &&
-              consecutiveCap > 0 &&
-              consecutiveFixFailuresForCap >= consecutiveCap
-            ) {
-              this.emit(
-                input,
-                'loop.exhausted.fix_consecutive_failures',
-                'warn',
-                `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
-                { iterationIndex, consecutiveFixFailuresForCap, cap: consecutiveCap },
-              );
-              thisLoop = exhaust(thisLoop, this.deps.now());
-              this.deps.loops.update(thisLoop);
-              return {
-                loop: thisLoop,
-                phaseOutcome: 'failed',
-                loopStatus: 'exhausted',
-                needsHumanReview: true,
-                residualFindingsCount: lastOffendingFindings.length,
-              };
+
+            // --- AUTO-COMMIT FALLBACK ---
+            // If the worktree is dirty but valid (passes revalidation), auto-commit on the
+            // agent's behalf so correct work isn't lost to minor git/hook failures.
+            const reval = await deps.runRevalidation(ctx);
+            let autoCommitted = false;
+            if (reval.passed) {
+              const firstFinding = review.offendingFindings?.[0]?.summary ?? 'uncommitted changes';
+              const message = `fix: ${firstFinding} (auto-committed — agent left changes uncommitted)`;
+              let committedSha: string | undefined;
+
+              for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                  committedSha = await this.deps.git!.commit(ctx.cwd, message);
+                  break;
+                } catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  const isLockError =
+                    msg.toLowerCase().includes('index.lock') ||
+                    msg.toLowerCase().includes('unable to create');
+                  if (attempt === 1 && isLockError) {
+                    this.emit(
+                      input,
+                      'fix.auto_commit.retry',
+                      'warn',
+                      `auto-commit failed with lock error; retrying once...`,
+                      { iterationIndex, error: msg },
+                    );
+                    continue;
+                  }
+                  this.emit(
+                    input,
+                    'fix.auto_commit.failed',
+                    'error',
+                    `auto-commit fallback failed: ${msg}`,
+                    { iterationIndex, error: msg },
+                  );
+                  break;
+                }
+              }
+
+              if (committedSha) {
+                this.emit(
+                  input,
+                  'fix.auto_commit.succeeded',
+                  'info',
+                  `auto-committed ${verification.dirtyFiles.length} dirty file(s) after passing revalidation`,
+                  { sha: committedSha, iterationIndex },
+                );
+                autoCommitted = true;
+                // Success: treat this as a productive fix that advanced HEAD.
+                lastIterationHadFixCommit = true;
+                consecutiveFixFailures = 0;
+                consecutiveFixFailuresForCap = 0;
+                totalFixAttempts += 1;
+                if (review.reviewedCommitSha) {
+                  lastReviewedCommitSha = review.reviewedCommitSha;
+                }
+
+                thisLoop = completeIteration(thisLoop, {
+                  outcome: 'fixed',
+                  fixInvocationId: fix.invocationId,
+                  revalidationId: reval.validationRunId,
+                  now: deps.now(),
+                });
+                deps.loops.update(thisLoop);
+                this.emitIterationCompleted(input, iterationIndex, 'fixed');
+                await this.appendHistoryEntry(ctx, review, fix, reval, 'fixed', input);
+                // Fall through to the next iteration (re-review) rather than continuing the loop here.
+                // We must bypass the redundant revalidation and cap checks below.
+              }
             }
+
+            if (!autoCommitted) {
+              consecutiveFixFailures = prevConsecutiveFixFailures + 1;
+              consecutiveFixFailuresForCap = prevConsecutiveFixFailuresForCap + 1;
+              lastIterationHadFixCommit = false;
+              thisLoop = completeIteration(thisLoop, {
+                outcome: 'unresolved',
+                fixInvocationId: fix.invocationId,
+                now: this.deps.now(),
+              });
+              this.deps.loops.update(thisLoop);
+              this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+              await this.appendHistoryEntry(ctx, review, fix, reval, 'unresolved', input, {
+                kind: 'uncommitted_changes',
+                dirtyFiles: verification.dirtyFiles,
+                statusOutput: verification.statusOutput,
+              });
+              unfoundedHistory.push({
+                findings: unfoundedFingerprints,
+                ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
+              });
+              // Do NOT call this.deps.rollbackFix here (plan-review P0, #679):
+              // this branch means the fixer left uncommitted changes in the
+              // tree (e.g. a pre-commit hook rejected the commit). That dirty
+              // state is exactly what the NEXT fixer iteration needs to see in
+              // order to finish committing or fixing it — rolling back here
+              // would destroy the evidence #679 exists to preserve. Rollback
+              // is only correct for the separate build-breaking-fix case
+              // (#671), which has its own dedicated branch elsewhere in this
+              // loop.
+              await this.runCleanArtifacts(ctx);
+              // mirror the cap check from the cannot_fix branch below
+              const consecutiveCap = input.maxConsecutiveFixFailures;
+              if (
+                consecutiveCap !== undefined &&
+                consecutiveCap > 0 &&
+                consecutiveFixFailuresForCap >= consecutiveCap
+              ) {
+                this.emit(
+                  input,
+                  'loop.exhausted.fix_consecutive_failures',
+                  'warn',
+                  `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
+                  { iterationIndex, consecutiveFixFailuresForCap, cap: consecutiveCap },
+                );
+                thisLoop = exhaust(thisLoop, this.deps.now());
+                this.deps.loops.update(thisLoop);
+                return {
+                  loop: thisLoop,
+                  phaseOutcome: 'failed',
+                  loopStatus: 'exhausted',
+                  needsHumanReview: true,
+                  residualFindingsCount: lastOffendingFindings.length,
+                };
+              }
+              continue;
+            }
+            // If we autoCommitted, we fall out of the `uncommitted_changes` block.
+            // Since we already completed the iteration as 'fixed', we MUST continue the loop
+            // to avoid running the redundant revalidation below.
             continue;
           }
           if (verification.kind === 'no_commit_claimed') {

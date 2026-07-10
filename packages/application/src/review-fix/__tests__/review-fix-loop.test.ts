@@ -48,7 +48,7 @@ function makeFakeGitPort(opts: {
     resetHard: async () => undefined,
     diff: async () => '',
     diffStat: async () => '',
-    commit: async () => '',
+    commit: async () => 'sha-new',
     push: async () => undefined,
     remoteRef: async () => undefined,
     isAncestor: async () => true,
@@ -1818,7 +1818,7 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
     expect(events.find((e) => e.type === 'fix.no_commit_claimed')).toBeUndefined();
   });
 
-  it('downgrades done_with_fixes + dirty tree to unresolved with fix.uncommitted_changes; no runRevalidation', async () => {
+  it('downgrades done_with_fixes + dirty tree to unresolved with fix.uncommitted_changes; calls runRevalidation and auto-commits', async () => {
     const revalidationCalls: number[] = [];
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({
@@ -1846,7 +1846,8 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
     });
     await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
     expect(events.find((e) => e.type === 'fix.uncommitted_changes')).toBeDefined();
-    expect(revalidationCalls).toHaveLength(0);
+    expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    expect(revalidationCalls.length).toBeGreaterThan(0);
   });
 
   it('downgrades done_with_fixes + clean tree to unresolved with fix.no_commit_claimed', async () => {
@@ -1870,5 +1871,154 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
     await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
     const ev = events.find((e) => e.type === 'fix.no_commit_claimed');
     expect(ev).toBeDefined();
+  });
+});
+
+describe('ReviewFixLoop auto-commit fallback', () => {
+  const baseInput = () => ({
+    runId: 'run-1' as any,
+    phaseId: 'phase-1' as any,
+    repoId: 'repo-1',
+    cwd: '/wt',
+    maxIterations: 2,
+  });
+
+  it('auto-commits when dirty worktree passes revalidation', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let commitCalled = false;
+    git.commit = async (cwd, message) => {
+      commitCalled = true;
+      expect(message).toContain('(auto-committed — agent left changes uncommitted)');
+      return 'sha-2';
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runReview: async () => ({
+        invocationId: 'r1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [{ severity: 'high', summary: 'fix this' }],
+      }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+    });
+
+    const result = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(commitCalled).toBe(true);
+    expect(events.find(e => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    // Iteration 1 should be 'fixed'
+    expect(result.loop.iterations[0].outcome).toBe('fixed');
+  });
+
+  it('rejects when dirty worktree fails revalidation', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let commitCalled = false;
+    git.commit = async () => {
+      commitCalled = true;
+      return 'sha-2';
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runReview: async () => ({
+        invocationId: 'r1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [{ severity: 'high', summary: 'fix this' }],
+      }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: false }),
+    });
+
+    const result = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(commitCalled).toBe(false);
+    expect(events.find(e => e.type === 'fix.auto_commit.failed')).toBeUndefined();
+    expect(result.loop.iterations[0].outcome).toBe('unresolved');
+  });
+
+  it('retries once on git lock error and succeeds', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let attempts = 0;
+    git.commit = async () => {
+      attempts++;
+      // Reset attempts between iterations because the loop will retry the whole thing
+      // until it exhausts maxIterations or succeeds.
+      // Iteration 1 auto-commit succeeds on 2nd attempt -> fixed.
+      // Iteration 2 starts...
+      if (attempts === 1) throw new Error('Unable to create .git/index.lock');
+      return 'sha-2';
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runReview: async () => ({
+        invocationId: 'r1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [{ severity: 'high', summary: 'fix this' }],
+      }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+    });
+
+    await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    expect(attempts).toBe(2);
+    expect(events.find(e => e.type === 'fix.auto_commit.retry')).toBeDefined();
+    expect(events.find(e => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+  });
+
+  it('retries once on git lock error and fails if still locked', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let attempts = 0;
+    git.commit = async () => {
+      attempts++;
+      throw new Error('Unable to create .git/index.lock');
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runReview: async () => ({
+        invocationId: 'r1',
+        agentOutcome: 'success',
+        verdict: 'fail',
+        offendingFindings: [{ severity: 'high', summary: 'fix this' }],
+      }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+      runRevalidation: async () => ({ validationRunId: 'v1', passed: true }),
+    });
+
+    await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
+    expect(attempts).toBe(2);
+    expect(events.find(e => e.type === 'fix.auto_commit.retry')).toBeDefined();
+    expect(events.find(e => e.type === 'fix.auto_commit.failed')).toBeDefined();
   });
 });

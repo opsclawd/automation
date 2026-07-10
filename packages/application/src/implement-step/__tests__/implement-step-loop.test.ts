@@ -37,7 +37,7 @@ function makeFakeGitPort(opts: {
     resetHard: async () => undefined,
     diff: async () => '',
     diffStat: async () => '',
-    commit: async () => '',
+    commit: async () => 'sha-new',
     push: async () => undefined,
     remoteRef: async () => undefined,
     isAncestor: async () => true,
@@ -2112,7 +2112,7 @@ describe('ImplementStepLoop', () => {
       expect(events.find((e) => e.type === 'fix.no_commit_claimed')).toBeUndefined();
     });
 
-    it('downgrades done_with_fixes + dirty worktree to unresolved with fix.uncommitted_changes', async () => {
+    it('downgrades done_with_fixes + dirty worktree to unresolved with fix.uncommitted_changes; auto-commits if typecheck passes', async () => {
       const { events, bus } = collectEvents();
       const git = makeFakeGitPort({
         headSha: 'sha-before-fix',
@@ -2132,6 +2132,7 @@ describe('ImplementStepLoop', () => {
           headBeforeFix: 'sha-before-fix',
         }),
         git,
+        runTypecheck: async () => ({ outcome: 'pass', output: '' }),
       });
       await new ImplementStepLoop(deps).execute({
         runId: RunId('run-1'),
@@ -2142,9 +2143,8 @@ describe('ImplementStepLoop', () => {
         stepTitle: 's',
         maxIterations: 3,
       });
-      const ev = events.find((e) => e.type === 'fix.uncommitted_changes');
-      expect(ev).toBeDefined();
-      expect((ev!.metadata as { dirtyFiles: string[] }).dirtyFiles).toEqual([' M packages/foo.ts']);
+      expect(events.find((e) => e.type === 'fix.uncommitted_changes')).toBeDefined();
+      expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     });
 
     it('downgrades done_with_fixes + clean tree to unresolved with fix.no_commit_claimed', async () => {
@@ -2819,5 +2819,85 @@ describe('ImplementStepLoop', () => {
       expect(out.loop.iterations).toHaveLength(3);
       expect(arbiterCalls).toBe(1);
     });
+  });
+});
+
+describe('ImplementStepLoop auto-commit fallback', () => {
+  const baseInput = () => ({
+    runId: 'run-1' as any,
+    phaseId: 'implement' as any,
+    repoId: 'repo-1',
+    cwd: '/wt',
+    stepIndex: 1,
+    stepTitle: 'step 1',
+    maxIterations: 2,
+  });
+
+  it('auto-commits when dirty worktree passes typecheck', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let commitCalled = false;
+    git.commit = async (cwd, message) => {
+      commitCalled = true;
+      expect(message).toContain('(auto-committed — agent left changes uncommitted)');
+      return 'sha-2';
+    };
+
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => ({ outcome: 'pass', output: '' }),
+      runSpecReview: async () => ({ invocationId: 'sr1', agentOutcome: 'success', verdict: 'fail' }),
+      runQualityReview: async () => ({ invocationId: 'qr1', agentOutcome: 'success', verdict: 'pass' }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+    });
+
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(commitCalled).toBe(true);
+    expect(events.find(e => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
+    // Iteration 1 is implement + initial TC (pass). Then it enters review-fix loop.
+    // In review-fix iteration 1: spec-fail -> fix -> uncommitted -> TC(pass) -> auto-commit -> fixed.
+    expect(result.loop.iterations[0].outcome).toBe('fixed');
+  });
+
+  it('rejects when dirty worktree fails typecheck', async () => {
+    const { events, bus } = collectEvents();
+    const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
+    let commitCalled = false;
+    git.commit = async () => {
+      commitCalled = true;
+      return 'sha-2';
+    };
+
+    let typecheckCount = 0;
+    const deps = makeDeps({
+      events: bus,
+      git,
+      runImplement: async () => ({ invocationId: 'i1', agentOutcome: 'success' }),
+      runTypecheck: async () => {
+        typecheckCount++;
+        // 1st: top-level gate (pass)
+        // 2nd: uncommitted changes check (fail)
+        return { outcome: typecheckCount === 1 ? 'pass' : 'fail', output: 'error' };
+      },
+      runSpecReview: async () => ({ invocationId: 'sr1', agentOutcome: 'success', verdict: 'fail' }),
+      runFix: async () => ({
+        invocationId: 'f1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+        headBeforeFix: 'sha-1',
+      }),
+    });
+
+    const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(commitCalled).toBe(false);
+    expect(events.find(e => e.type === 'fix.auto_commit.failed')).toBeUndefined();
+    expect(result.loop.iterations[0].outcome).toBe('unresolved');
   });
 });
