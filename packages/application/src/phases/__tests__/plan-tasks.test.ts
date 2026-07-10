@@ -37,7 +37,7 @@ describe('plan-tasks parsing and validation', () => {
 
     it('wrong version', () => {
       const json = JSON.stringify({
-        version: 2,
+        version: 3,
         task_count: 1,
         tasks: [{ n: 1, title: 'Task' }],
       });

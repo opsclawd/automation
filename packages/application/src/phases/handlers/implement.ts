@@ -6,7 +6,7 @@ import type { Step, RunId } from '@ai-sdlc/domain';
 import { createEventEmitter } from '../handler.js';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import { validatePlanTaskList, derivePlanTasks, extractTaskBody } from '../plan-tasks.js';
-import type { TaskManifest } from '../plan-tasks.js';
+import type { TaskManifest, TaskManifestEntry } from '../plan-tasks.js';
 
 export interface OversizedTask {
   taskNum: number;
@@ -26,6 +26,8 @@ export interface StepRunContext {
   stepTitle: string;
   cwd: string;
   ctx: PhaseHandlerContext;
+  manifest: TaskManifest;
+  planMd: string;
 }
 
 export interface StepRunResult {
@@ -67,7 +69,7 @@ export class ImplementHandler implements PhaseHandler {
     if (!validation.success) {
       return this.fail(ctx, emit, 'invalid_result', validation.error);
     }
-    const manifest = validation.manifest;
+    let manifest = validation.manifest;
 
     const derived = derivePlanTasks(planMd, manifest);
     if (derived.length === 0) {
@@ -95,6 +97,20 @@ export class ImplementHandler implements PhaseHandler {
       }
     }
 
+    const manifestPresent = !!manifest;
+    if (!manifest) {
+      // Synthesize a V1 manifest if none exists so downstream logic is uniform
+      const synthManifest: TaskManifest = {
+        version: 1,
+        task_count: derived.length,
+        tasks: derived.map((d) => ({
+          n: d.index,
+          title: d.title.replace(/^Task \d+: /, ''),
+        })),
+      };
+      manifest = synthManifest;
+    }
+
     const existing = this.opts.steps.listForRun(ctx.runUuid as RunId);
     const doneIdx = new Set(
       existing
@@ -102,14 +118,17 @@ export class ImplementHandler implements PhaseHandler {
         .map((s) => s.index),
     );
 
-    if (this.opts.lintTaskSize && manifest) {
+    if (this.opts.lintTaskSize && manifestPresent) {
       let lintResult: LintTaskSizeResult;
       try {
-        const filteredManifest = {
+        const filteredManifest: TaskManifest = {
           ...manifest,
-          tasks: manifest.tasks.filter((t) => !doneIdx.has(t.n)),
-        };
+          tasks: (manifest.tasks as TaskManifestEntry[]).filter((t) => !doneIdx.has(t.n)),
+        } as TaskManifest;
         lintResult = await this.opts.lintTaskSize(ctx.cwd, filteredManifest);
+        if (!lintResult) {
+          lintResult = { ok: true, oversized: [] };
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         const isPathTraversal = message.includes('Path traversal detected');
@@ -179,6 +198,8 @@ export class ImplementHandler implements PhaseHandler {
           stepTitle: d.title,
           cwd: ctx.cwd,
           ctx,
+          manifest: manifest!,
+          planMd,
         });
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
