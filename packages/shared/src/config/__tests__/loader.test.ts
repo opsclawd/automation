@@ -630,3 +630,39 @@ describe('phases.implement.maxTypeCheckRetries', () => {
     expect(() => loadConfig(dir)).toThrow(/maxTypeCheckRetries/);
   });
 });
+
+describe('planReview.deltaScopedReReview (#716)', () => {
+  it('defaults to true when planReview config is provided without the field', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          planReview: { maxIterations: 3, enabled: true },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.planReview!.deltaScopedReReview).toBe(true);
+  });
+
+  it('honors an explicit false value', () => {
+    const repo = makeRepo(
+      JSON.stringify({
+        validation: { commands: ['pnpm build'], timeout: 300 },
+        phases: {
+          skip: [],
+          reviewFix: { maxIterations: 10 },
+          implement: { maxIterations: 5 },
+          planReview: { maxIterations: 3, enabled: true, deltaScopedReReview: false },
+        },
+        timeouts: { readyMaxDays: 7, invocationMaxMinutes: 30 },
+      }),
+    );
+    const cfg = loadConfig(repo);
+    expect(cfg.phases.planReview!.deltaScopedReReview).toBe(false);
+  });
+});

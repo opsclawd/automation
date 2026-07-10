@@ -117,6 +117,13 @@ const phasesSchema = z.object({
       maxIterations: z.number().int().positive(),
       enabled: z.boolean().default(true),
       judgmentAgent: z.string().min(1).optional(),
+      /**
+       * When true (default), iteration >= 2 scopes the reviewer to the prior
+       * finding set + their dispositions + citations introduced by the most
+       * recent fix, instead of re-reviewing the entire plan from scratch
+       * (#716). Mirrors `phases.reviewFix.deltaScopedReReview`.
+       */
+      deltaScopedReReview: z.boolean().default(true),
     })
     .optional(),
   // Bounded self-repair for plan-write's structural validation (validatePlanTaskList).

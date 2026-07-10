@@ -44,6 +44,34 @@ function truncate(s: string, max = 200): string {
 }
 
 /**
+ * Extract a human-readable error message from a parsed provider-error
+ * object, trying progressively more nested shapes. Plain shapes
+ * (`{message: "..."}`, `{error: {message: "..."}}`) are checked first.
+ * Vercel AI SDK's `AI_APICallError` (seen from minimax and other
+ * Anthropic-compatible providers) has no top-level `message` — the real
+ * text is nested in `data.error.message` (already-parsed) or
+ * `responseBody` (a JSON string that needs its own parse).
+ */
+function extractErrorMessage(error: Record<string, unknown>): string | undefined {
+  if (typeof error.message === 'string') return error.message;
+  const data = error.data as Record<string, unknown> | undefined;
+  const dataErrorMessage = (data?.error as Record<string, unknown> | undefined)?.message;
+  if (typeof dataErrorMessage === 'string') return dataErrorMessage;
+  if (typeof data?.message === 'string') return data.message;
+  if (typeof error.responseBody === 'string') {
+    try {
+      const body = JSON.parse(error.responseBody);
+      const bodyErrorMessage = body?.error?.message;
+      if (typeof bodyErrorMessage === 'string') return bodyErrorMessage;
+      if (typeof body?.message === 'string') return body.message;
+    } catch {
+      // responseBody isn't JSON — nothing to extract
+    }
+  }
+  return undefined;
+}
+
+/**
  * Attempt to parse OpenCode's structured JSON error from a log line.
  * If found and parseable, returns a "nice" summary string; otherwise null.
  */
@@ -54,7 +82,7 @@ function tryParseOpenCodeError(line: string): string | null {
     const parsed = JSON.parse(match[1]!);
     const error = parsed.error || parsed;
     const statusCode = error.statusCode;
-    const message = error.message;
+    const message = extractErrorMessage(error);
     if (statusCode && message) {
       return `HTTP ${statusCode}: "${message}"`;
     }
