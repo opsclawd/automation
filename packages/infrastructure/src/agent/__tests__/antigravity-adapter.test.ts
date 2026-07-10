@@ -100,6 +100,27 @@ describe('AntigravityAgentAdapter', () => {
     }
   });
 
+  it('includes --dangerously-skip-permissions in args', async () => {
+    // Load-bearing, not incidental: without it, any tool-using prompt blocks
+    // waiting for interactive permission approval that can never arrive in
+    // this headless context, and the process hangs until timeout kills it
+    // (verified directly against the live agy binary — see #713 review).
+    const cwd = makeWorktree();
+    const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
+    try {
+      const adapter = new AntigravityAgentAdapter({
+        binaryPath: join(FIXTURES, 'fake-agy-args-logger.sh'),
+        artifactsDir: cwd,
+        env: { AGY_LOG_DIR: logDir },
+      });
+      await adapter.invoke(req(cwd));
+      const args = readFileSync(join(logDir, 'agy-last-args.txt'), 'utf-8');
+      expect(args).toContain('--dangerously-skip-permissions');
+    } finally {
+      rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
   it('registers the worktree as a workspace via --add-dir <cwd>', async () => {
     const cwd = makeWorktree();
     const logDir = mkdtempSync(join(tmpdir(), 'agy-log-'));
