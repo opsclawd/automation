@@ -155,6 +155,11 @@ export interface ImplementStepLoopOptions {
    * `runFix` is not invoked.
    */
   endOnReview?: boolean;
+  /**
+   * When true (default), grant exactly one additional fix iteration if the
+   * trailing review arbiter rules `finding_valid`.
+   */
+  bonusIteration?: boolean;
 }
 
 export interface ImplementStepLoopDeps {

@@ -2539,6 +2539,7 @@ describe('ImplementStepLoop', () => {
             rationale: 'the reviewer is right; the fix is incomplete',
           };
         },
+        options: { bonusIteration: false },
       });
       const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
       expect(out.outcome).toBe('failed');
@@ -2695,6 +2696,128 @@ describe('ImplementStepLoop', () => {
       expect(
         events.filter((e) => e.type === 'loop.trailing_review.arbiter_escalated'),
       ).toHaveLength(0);
+    });
+
+    it('bonus iteration — trailing arbiter finding_valid triggers bonus fix → succeeds', async () => {
+      let specReviewCalls = 0;
+      let fixCalls = 0;
+      let arbiterCalls = 0;
+      const { events, bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          // Iterations 1, 2: fail
+          // Iteration 3 (trailing): fail
+          // Iteration 4 (bonus trailing): pass
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: specReviewCalls === 4 ? ('pass' as const) : ('fail' as const),
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => {
+          fixCalls += 1;
+          return {
+            invocationId: `fix-${fixCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'done_with_fixes' as const,
+            headBeforeFix: 'sha-before',
+          };
+        },
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+          arbiterCalls += 1;
+          return {
+            outcome: 'finding_valid',
+            evidence: 'P0 confirmed',
+            rationale: 'fix it',
+          };
+        },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('success');
+      expect(out.loop.iterations).toHaveLength(4);
+      expect(arbiterCalls).toBe(1);
+      expect(fixCalls).toBe(3); // 2 original + 1 bonus
+      expect(specReviewCalls).toBe(4); // 2 original + 1 trailing + 1 bonus-trailing
+
+      expect(events.map((e) => e.type)).toContain('loop.trailing_review.bonus_fix_iteration');
+    });
+
+    it('bonus iteration — capped at one (escalates to human if bonus fix does not converge)', async () => {
+      let specReviewCalls = 0;
+      const { bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => {
+          specReviewCalls += 1;
+          return {
+            invocationId: `sr-${specReviewCalls}`,
+            agentOutcome: 'success' as const,
+            verdict: 'fail' as const,
+          };
+        },
+        runQualityReview: async (_ctx: StepLoopContext, _tcResult: TypecheckResult) => ({
+          invocationId: 'qr-1',
+          agentOutcome: 'success' as const,
+          verdict: 'pass' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-x',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+          headBeforeFix: 'sha-before',
+        }),
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => ({
+          outcome: 'finding_valid',
+          evidence: 'real defect',
+          rationale: 'still broken',
+        }),
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('failed'); // exhausts
+      expect(out.loop.status).toBe('exhausted');
+      expect(out.loop.iterations).toHaveLength(4); // 2 original + 1 trailing + 1 bonus-trailing
+      expect(specReviewCalls).toBe(4);
+    });
+
+    it('bonus iteration — can be disabled via options', async () => {
+      let arbiterCalls = 0;
+      const { bus } = collectEvents();
+      const deps = makeDeps({
+        events: bus,
+        runSpecReview: async () => ({
+          invocationId: 'sr-x',
+          agentOutcome: 'success' as const,
+          verdict: 'fail' as const,
+        }),
+        runFix: async () => ({
+          invocationId: 'fix-x',
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+        }),
+        runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
+          arbiterCalls += 1;
+          return {
+            outcome: 'finding_valid',
+            evidence: 'real defect',
+            rationale: 'fix it',
+          };
+        },
+        options: { bonusIteration: false },
+      });
+
+      const out = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 2 });
+      expect(out.outcome).toBe('failed');
+      expect(out.loop.iterations).toHaveLength(3);
+      expect(arbiterCalls).toBe(1);
     });
   });
 });

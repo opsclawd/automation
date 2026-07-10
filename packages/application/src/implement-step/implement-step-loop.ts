@@ -94,6 +94,7 @@ export class ImplementStepLoop {
 
   async execute(input: ImplementStepLoopInput): Promise<ImplementStepLoopResult> {
     const { deps } = this;
+    let bonusIterationUsed = false;
     let loop = createLoop({
       id: deps.idFactory(),
       runId: input.runId,
@@ -115,11 +116,11 @@ export class ImplementStepLoop {
 
     const canStartReviewCycle = (current: typeof loop): boolean => {
       const reviewsStarted = current.iterations.length;
-      if (reviewsStarted < originalMax) return true;
+      if (reviewsStarted < originalMax + (bonusIterationUsed ? 1 : 0)) return true;
       // Trailing post-fix re-review: only when the last iteration ended
       // with `fixed` (a fix commit was produced and verified).
       if (!endOnReview) return false;
-      if (reviewsStarted > originalMax) return false;
+      if (reviewsStarted > originalMax + (bonusIterationUsed ? 1 : 0)) return false;
       const last = current.iterations[current.iterations.length - 1];
       return last?.outcome === 'fixed';
     };
@@ -366,7 +367,7 @@ export class ImplementStepLoop {
     // Enter review-fix loop
     while (canStartReviewCycle(loop)) {
       const iterationIndex = loop.iterations.length + 1;
-      const isTrailingReview = iterationIndex === originalMax + 1;
+      const isTrailingReview = iterationIndex > originalMax;
       const ctx: StepLoopContext = { ...baseCtx, iterationIndex };
 
       // --- TRAILING RE-REVIEW STARTED (#680) ---
@@ -647,12 +648,115 @@ export class ImplementStepLoop {
             });
             return { outcome: 'success', loop };
           }
-          // arbiterResult.outcome is 'finding_valid' | 'ambiguous' |
-          // 'insufficient_evidence': there is no fixer to hand the rationale
-          // back to on the trailing pass, so fall through to the same
-          // unresolved/exhaust path as the no-arbiter case below. The
-          // `loop.trailing_review.arbiter_escalated` event above already
-          // records that arbitration happened and did not resolve it.
+
+          if (
+            arbiterResult.outcome === 'finding_valid' &&
+            !bonusIterationUsed &&
+            opts.bonusIteration !== false
+          ) {
+            this.emit(
+              input,
+              'loop.trailing_review.bonus_fix_iteration',
+              'info',
+              `granting one-time bonus fix iteration for valid trailing finding at iteration ${iterationIndex}`,
+              { iterationIndex, rationale: arbiterResult.rationale },
+            );
+            bonusIterationUsed = true;
+            pendingReconciliationContext = arbiterResult.rationale;
+
+            // Perform the bonus fix iteration immediately
+            const bonusFixHistoryContext = await readFixerHistoryContext();
+            const bonusFix = await deps.runFix(ctx, {
+              useFallback: false,
+              ...(bonusFixHistoryContext !== undefined ? { historyContext: bonusFixHistoryContext } : {}),
+              reconciliationContext: pendingReconciliationContext,
+            });
+            pendingReconciliationContext = undefined;
+            lastFixInvocationId = bonusFix.invocationId;
+            lastFixHeadBeforeFix = bonusFix.headBeforeFix;
+
+            if (
+              bonusFix.agentOutcome !== 'success' ||
+              bonusFix.verdict === undefined ||
+              bonusFix.verdict === 'cannot_fix'
+            ) {
+              loop = completeIteration(loop, {
+                outcome: 'unresolved',
+                fixInvocationId: bonusFix.invocationId,
+                now: deps.now(),
+              });
+              deps.loops.update(loop);
+              await appendHistory(
+                buildHistoryEntry(
+                  iterationIndex,
+                  specReview,
+                  qualityReview,
+                  bonusFix,
+                  undefined,
+                  'unresolved',
+                ),
+              );
+              this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+              // bonusIterationUsed is already true, so the loop will exhaust
+              break;
+            }
+
+            // Verify the bonus fix
+            if (
+              bonusFix.verdict === 'done_with_fixes' &&
+              bonusFix.headBeforeFix !== undefined &&
+              deps.git
+            ) {
+              const verification:
+                | FixCommitVerification
+                | { kind: 'verification_error'; error: string } = await verifyFixCommit({
+                git: deps.git,
+                cwd: ctx.cwd,
+                expectedHead: bonusFix.headBeforeFix,
+              });
+              if (
+                verification.kind === 'uncommitted_changes' ||
+                verification.kind === 'no_commit_claimed' ||
+                verification.kind === 'verification_error'
+              ) {
+                loop = completeIteration(loop, {
+                  outcome: 'unresolved',
+                  fixInvocationId: bonusFix.invocationId,
+                  now: deps.now(),
+                });
+                deps.loops.update(loop);
+                await appendHistory(
+                  buildHistoryEntry(
+                    iterationIndex,
+                    specReview,
+                    qualityReview,
+                    bonusFix,
+                    undefined,
+                    'unresolved',
+                    verification.kind !== 'verification_error' ? verification : undefined,
+                  ),
+                );
+                this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+                break;
+              }
+            }
+
+            loop = completeIteration(loop, {
+              outcome: 'fixed',
+              fixInvocationId: bonusFix.invocationId,
+              now: deps.now(),
+            });
+            // Bump maxIterations to allow the new trailing review pass
+            loop = { ...loop, maxIterations: loop.maxIterations + 1 };
+            deps.loops.update(loop);
+            await appendHistory(
+              buildHistoryEntry(iterationIndex, specReview, qualityReview, bonusFix, undefined, 'fixed'),
+            );
+            this.emitIterationCompleted(input, iterationIndex, 'fixed');
+            continue;
+          }
+          // arbiterResult.outcome is 'ambiguous' | 'insufficient_evidence':
+          // fall through to the same unresolved/exhaust path as the no-arbiter case below.
         }
 
         loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
