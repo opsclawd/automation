@@ -17,6 +17,7 @@ import {
 import { extractEvidence } from './extract-evidence.js';
 import { appendRebuttalToCodeReview } from './append-rebuttal.js';
 import { verifyFixCommit } from '../fix-commit-verifier.js';
+import { commitIfDirty } from '../utils/commit-utils.js';
 import type {
   ReviewFixLoopDeps,
   ReviewFixLoopInput,
@@ -58,6 +59,7 @@ export class ReviewFixLoop {
     let lastPostFixGateFailed = false;
     let lastOffendingFindings: Array<{ severity: string; summary: string }> = [];
     let lastReviewedCommitSha: string | undefined;
+    let lastFixSummary: string | undefined;
     const findingHistory: Array<Set<string>> = [];
     const unfoundedHistory: FindingHistoryEntry[] = [];
 
@@ -95,6 +97,28 @@ export class ReviewFixLoop {
       // --- POST-FIX GATE (skip iteration 1 — fixer has not yet committed) ---
       let gateResult: PostFixGateResult | undefined;
       if (iterationIndex > 1 && lastIterationHadFixCommit) {
+        // If the worktree is dirty, commit it before running the gate.
+        if (deps.git) {
+          const message = lastFixSummary ? `fix: ${lastFixSummary}` : 'fix: review findings';
+          const committed = await commitIfDirty({
+            git: deps.git,
+            cwd: input.cwd,
+            message,
+          });
+          if (committed) {
+            this.emit(
+              input,
+              'fix.orchestrator_commit',
+              'info',
+              'orchestrator committed uncommitted changes before post-fix gate',
+              {
+                iterationIndex,
+                prevIterationIndex: iterationIndex - 1,
+              },
+            );
+          }
+        }
+
         gateResult = await deps.runPostFixGate(ctx);
         lastPostFixGateFailed = gateResult.outcome === 'fail';
       }
@@ -234,6 +258,7 @@ export class ReviewFixLoop {
         ...(fixerHistoryContext ? { historyContext: fixerHistoryContext } : {}),
       });
       lastFixInvocationId = fix.invocationId;
+      lastFixSummary = fix.summary;
 
       if (
         fix.agentOutcome !== 'success' ||
@@ -319,8 +344,8 @@ export class ReviewFixLoop {
             this.emit(
               input,
               'fix.uncommitted_changes',
-              'warn',
-              `review/fix iteration ${iterationIndex} claimed done_with_fixes but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s)`,
+              'info',
+              `review/fix iteration ${iterationIndex} claimed done_with_fixes but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s); permitting and proceeding to validation`,
               {
                 iterationIndex,
                 invocationId: fix.invocationId,
@@ -330,62 +355,9 @@ export class ReviewFixLoop {
                 statusOutput: verification.statusOutput.slice(0, 4000),
               },
             );
-            consecutiveFixFailures = prevConsecutiveFixFailures + 1;
-            consecutiveFixFailuresForCap = prevConsecutiveFixFailuresForCap + 1;
-            lastIterationHadFixCommit = false;
-            thisLoop = completeIteration(thisLoop, {
-              outcome: 'unresolved',
-              fixInvocationId: fix.invocationId,
-              now: this.deps.now(),
-            });
-            this.deps.loops.update(thisLoop);
-            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
-            await this.appendHistoryEntry(ctx, review, fix, undefined, 'unresolved', input, {
-              kind: 'uncommitted_changes',
-              dirtyFiles: verification.dirtyFiles,
-              statusOutput: verification.statusOutput,
-            });
-            unfoundedHistory.push({
-              findings: unfoundedFingerprints,
-              ...(fix.verdict ? { fixerVerdict: fix.verdict } : {}),
-            });
-            // Do NOT call this.deps.rollbackFix here (plan-review P0, #679):
-            // this branch means the fixer left uncommitted changes in the
-            // tree (e.g. a pre-commit hook rejected the commit). That dirty
-            // state is exactly what the NEXT fixer iteration needs to see in
-            // order to finish committing or fixing it — rolling back here
-            // would destroy the evidence #679 exists to preserve. Rollback
-            // is only correct for the separate build-breaking-fix case
-            // (#671), which has its own dedicated branch elsewhere in this
-            // loop.
-            await this.runCleanArtifacts(ctx);
-            // mirror the cap check from the cannot_fix branch below
-            const consecutiveCap = input.maxConsecutiveFixFailures;
-            if (
-              consecutiveCap !== undefined &&
-              consecutiveCap > 0 &&
-              consecutiveFixFailuresForCap >= consecutiveCap
-            ) {
-              this.emit(
-                input,
-                'loop.exhausted.fix_consecutive_failures',
-                'warn',
-                `review/fix loop exhausted: ${consecutiveFixFailuresForCap} consecutive fixer failures (cap=${consecutiveCap})`,
-                { iterationIndex, consecutiveFixFailuresForCap, cap: consecutiveCap },
-              );
-              thisLoop = exhaust(thisLoop, this.deps.now());
-              this.deps.loops.update(thisLoop);
-              return {
-                loop: thisLoop,
-                phaseOutcome: 'failed',
-                loopStatus: 'exhausted',
-                needsHumanReview: true,
-                residualFindingsCount: lastOffendingFindings.length,
-              };
-            }
-            continue;
-          }
-          if (verification.kind === 'no_commit_claimed') {
+            // Permitting uncommitted changes: treat as productive and proceed.
+            // The post-fix gate or revalidation will handle it.
+          } else if (verification.kind === 'no_commit_claimed') {
             this.emit(
               input,
               'fix.no_commit_claimed',
@@ -456,7 +428,31 @@ export class ReviewFixLoop {
       }
 
       // --- REVALIDATE ---
+      // If we allowed uncommitted changes through, they need to be committed
+      // before revalidation if they pass revalidation? Actually revalidation
+      // runs on the current worktree state. If revalidation passes, we SHOULD
+      // commit them now if they aren't already.
       const reval = await deps.runRevalidation(ctx);
+
+      if (reval.passed && deps.git) {
+        const message = lastFixSummary ? `fix: ${lastFixSummary}` : 'fix: review findings';
+        const committed = await commitIfDirty({
+          git: deps.git,
+          cwd: input.cwd,
+          message,
+        });
+        if (committed) {
+          this.emit(
+            input,
+            'fix.orchestrator_commit',
+            'info',
+            'orchestrator committed uncommitted changes after successful revalidation',
+            {
+              iterationIndex,
+            },
+          );
+        }
+      }
       outstandingFailedRevalidation = !reval.passed;
 
       // When revalidation fails after a fix that advanced HEAD, roll back
@@ -587,22 +583,36 @@ export class ReviewFixLoop {
       }
 
       // Default path: complete the iteration as fixed or unresolved.
+      const iterationOutcome = reval.passed ? 'fixed' : 'unresolved';
       thisLoop = completeIteration(thisLoop, {
-        outcome: reval.passed ? 'fixed' : 'unresolved',
+        outcome: iterationOutcome,
         fixInvocationId: fix.invocationId,
         revalidationId: reval.validationRunId,
         now: deps.now(),
       });
       deps.loops.update(thisLoop);
-      this.emitIterationCompleted(input, iterationIndex, reval.passed ? 'fixed' : 'unresolved');
+      this.emitIterationCompleted(input, iterationIndex, iterationOutcome);
+
+      const verification =
+        this.deps.git && fix.headBeforeFix
+          ? await verifyFixCommit({
+              git: this.deps.git,
+              cwd: ctx.cwd,
+              expectedHead: fix.headBeforeFix,
+            })
+          : undefined;
 
       await this.appendHistoryEntry(
         ctx,
         review,
         fix,
         reval,
-        reval.passed ? 'fixed' : 'unresolved',
+        iterationOutcome,
         input,
+        verification && (verification.kind === 'uncommitted_changes' || verification.kind === 'no_commit_claimed')
+          ? verification
+          : undefined,
+        verification?.kind === 'uncommitted_changes' && reval.passed,
       );
 
       // --- RUNAWAY-PROTECTION CAP: maxTotalFixAttempts (#667) ---
@@ -843,6 +853,7 @@ export class ReviewFixLoop {
     commitVerification?:
       | { kind: 'uncommitted_changes'; dirtyFiles: string[]; statusOutput: string }
       | { kind: 'no_commit_claimed'; statusOutput: string },
+    orchestratorCommitted?: boolean,
   ): Promise<void> {
     if (!this.deps.loopHistory) {
       return;
@@ -893,6 +904,7 @@ export class ReviewFixLoop {
         ...(fix && commitVerification && commitVerification.kind === 'no_commit_claimed'
           ? { noCommit: { statusOutput: commitVerification.statusOutput } }
           : {}),
+        ...(orchestratorCommitted ? { orchestratorCommitted } : {}),
         outcome,
       };
       await this.deps.loopHistory.append(ctx, entry);

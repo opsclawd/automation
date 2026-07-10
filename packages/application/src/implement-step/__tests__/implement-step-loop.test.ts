@@ -2112,28 +2112,43 @@ describe('ImplementStepLoop', () => {
       expect(events.find((e) => e.type === 'fix.no_commit_claimed')).toBeUndefined();
     });
 
-    it('downgrades done_with_fixes + dirty worktree to unresolved with fix.uncommitted_changes', async () => {
+    it('permits done_with_fixes + dirty worktree; proceeds to fixed state and handles orchestrator commit', async () => {
       const { events, bus } = collectEvents();
       const git = makeFakeGitPort({
         headSha: 'sha-before-fix',
         statusOutput: ' M packages/foo.ts\n',
       });
+      const addSpy = vi.fn().mockResolvedValue(undefined);
+      const commitSpy = vi.fn().mockResolvedValue('sha-new');
+      git.add = addSpy;
+      git.commit = commitSpy;
+
+      let specCalls = 0;
       const deps = makeDeps({
         events: bus,
-        runSpecReview: async () => ({
-          invocationId: 'sr-1',
-          agentOutcome: 'success',
-          verdict: 'fail',
-        }),
+        runSpecReview: async () => {
+          specCalls++;
+          return {
+            invocationId: `sr-${specCalls}`,
+            agentOutcome: 'success',
+            verdict: specCalls === 1 ? 'fail' : 'pass',
+          };
+        },
         runFix: async () => ({
           invocationId: 'f1',
           agentOutcome: 'success' as const,
           verdict: 'done_with_fixes' as const,
           headBeforeFix: 'sha-before-fix',
+          summary: 'added foo',
         }),
         git,
       });
-      await new ImplementStepLoop(deps).execute({
+      // Iteration 1: initial implement -> dirty.
+      // Iteration 2: top-of-iteration typecheck passes -> commitIfDirty called for implement step.
+      //              review fail -> fix -> dirty.
+      // Iteration 3: top-of-iteration typecheck passes -> commitIfDirty called for iteration 2 fix.
+      //              review pass -> resolved.
+      const out = await new ImplementStepLoop(deps).execute({
         runId: RunId('run-1'),
         phaseId: PhaseName('implement'),
         repoId: 'o/r',
@@ -2142,9 +2157,17 @@ describe('ImplementStepLoop', () => {
         stepTitle: 's',
         maxIterations: 3,
       });
+      expect(out.outcome).toBe('success');
       const ev = events.find((e) => e.type === 'fix.uncommitted_changes');
       expect(ev).toBeDefined();
-      expect((ev!.metadata as { dirtyFiles: string[] }).dirtyFiles).toEqual([' M packages/foo.ts']);
+
+      // 1. commit implement step
+      // 2. commit iteration 2 fix
+      expect(commitSpy).toHaveBeenCalledWith('/wt', 'implement: task 1');
+      expect(commitSpy).toHaveBeenCalledWith('/wt', 'fix: added foo');
+
+      const orchestratorCommitEvents = events.filter((e) => e.type === 'fix.orchestrator_commit');
+      expect(orchestratorCommitEvents).toHaveLength(1); // from iteration 2's top-of-iteration check
     });
 
     it('downgrades done_with_fixes + clean tree to unresolved with fix.no_commit_claimed', async () => {

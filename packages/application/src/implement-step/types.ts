@@ -105,6 +105,11 @@ export interface ImplementStepHistoryEntry {
    * genuine committed fixes and for non-done_with_fixes verdicts.
    */
   noCommit?: { statusOutput: string };
+  /**
+   * Set to true if the orchestrator (not the agent) performed the commit
+   * for this iteration (coding/commit split).
+   */
+  orchestratorCommitted?: boolean;
   /** Always set; mirrors `iteration.outcome`. */
   outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed';
 }

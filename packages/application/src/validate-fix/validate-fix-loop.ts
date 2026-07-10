@@ -7,6 +7,8 @@ import {
   type AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
+import { verifyFixCommit } from '../fix-commit-verifier.js';
+import { commitIfDirty } from '../utils/commit-utils.js';
 import type {
   ValidateFixLoopDeps,
   ValidateFixLoopInput,
@@ -30,6 +32,7 @@ export class ValidateFixLoop {
     deps.loops.insert(loop);
 
     let consecutiveFixFailures = 0;
+    let lastFixSummary: string | undefined;
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -57,6 +60,7 @@ export class ValidateFixLoop {
       }
 
       const fix = await deps.runFix(ctx, { useFallback });
+      lastFixSummary = fix.summary;
       loop = startIteration(loop, { reviewInvocationId: fix.invocationId, now: deps.now() });
       deps.loops.update(loop);
 
@@ -126,10 +130,37 @@ export class ValidateFixLoop {
         this.emitIterationCompleted(input, iterationIndex, 'fix_failed');
         continue;
       }
+
+      if (fix.verdict === 'fixed' && fix.headBeforeFix && deps.git) {
+        const verification = await verifyFixCommit({
+          git: deps.git,
+          cwd: ctx.cwd,
+          expectedHead: fix.headBeforeFix,
+        });
+        if (verification.kind === 'uncommitted_changes') {
+          this.emit(
+            input,
+            'fix.uncommitted_changes',
+            'info',
+            `validate-fix iteration ${iterationIndex} claimed fixed but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s); permitting and proceeding to validation`,
+            {
+              iterationIndex,
+              invocationId: fix.invocationId,
+              dirtyFiles: verification.dirtyFiles.slice(0, 200),
+            },
+          );
+        }
+      }
+
       consecutiveFixFailures = 0;
 
       // revalidate
       const reval = await deps.runRevalidation(ctx);
+
+      if (reval.passed && deps.git) {
+        const message = lastFixSummary ? `fix: ${lastFixSummary}` : 'fix: validation failures';
+        await commitIfDirty({ git: deps.git, cwd: input.cwd, message });
+      }
 
       if (!reval.passed && !fix.headBeforeFix && deps.rollbackFix) {
         this.emit(

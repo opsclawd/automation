@@ -20,6 +20,7 @@ import type {
   ArbiterResult,
 } from './types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
+import { commitIfDirty } from '../utils/commit-utils.js';
 
 function normalizeMessage(message: string): string {
   return message.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -132,6 +133,7 @@ export class ImplementStepLoop {
     let contradictionRetriedThisStep = false;
     let arbiterInvokedThisStep = false;
     let pendingReconciliationContext: string | undefined;
+    let lastFixSummary: string | undefined;
 
     const baseCtx: StepLoopContext = {
       loopId: loop.id,
@@ -187,6 +189,7 @@ export class ImplementStepLoop {
       commitVerification?:
         | { kind: 'uncommitted_changes'; dirtyFiles: string[]; statusOutput: string }
         | { kind: 'no_commit_claimed'; statusOutput: string },
+      orchestratorCommitted?: boolean,
     ): ImplementStepHistoryEntry => {
       const entry: ImplementStepHistoryEntry = {
         iteration: iterationIndex,
@@ -232,6 +235,7 @@ export class ImplementStepLoop {
         ...(commitVerification && commitVerification.kind === 'no_commit_claimed'
           ? { noCommit: { statusOutput: commitVerification.statusOutput } }
           : {}),
+        ...(orchestratorCommitted ? { orchestratorCommitted } : {}),
         outcome,
       };
       return entry;
@@ -364,6 +368,15 @@ export class ImplementStepLoop {
       return { outcome: 'failed', loop };
     }
 
+    // Initial typecheck passed: commit any dirty changes from the implementation step.
+    if (deps.git) {
+      await commitIfDirty({
+        git: deps.git,
+        cwd: input.cwd,
+        message: `implement: task ${input.stepIndex}`,
+      });
+    }
+
     // Enter review-fix loop
     while (canStartReviewCycle(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -389,6 +402,33 @@ export class ImplementStepLoop {
       // --- TOP-OF-ITERATION TYPECHECK + OPTIONAL REVERT (#671) ---
       if (iterationIndex > 1) {
         tcResult = await deps.runTypecheck(baseCtx);
+        if (tcResult.outcome === 'pass') {
+          // Typecheck passed: commit any dirty changes from the previous iteration.
+          const lastIteration = loop.iterations[iterationIndex - 2];
+          if (lastIteration?.outcome === 'fixed' && deps.git) {
+            const message = lastFixSummary ? `fix: ${lastFixSummary}` : `fix: review findings`;
+            const committed = await commitIfDirty({
+              git: deps.git,
+              cwd: input.cwd,
+              message,
+            });
+            if (committed) {
+              this.emit(
+                input,
+                'fix.orchestrator_commit',
+                'info',
+                'orchestrator committed uncommitted changes after successful typecheck',
+                {
+                  iterationIndex,
+                  prevIterationIndex: iterationIndex - 1,
+                },
+              );
+              // Note: history for iterationIndex-1 already appended; orchestratorCommitted
+              // will be true in the NEXT entry if we wanted, but the event is enough.
+            }
+          }
+        }
+
         if (tcResult.outcome === 'fail') {
           // Try to revert the build-breaking fix if a previous fix exists with
           // a known-passing headBeforeFix captured.
@@ -714,8 +754,20 @@ export class ImplementStepLoop {
                 cwd: ctx.cwd,
                 expectedHead: bonusFix.headBeforeFix,
               });
-              if (
-                verification.kind === 'uncommitted_changes' ||
+              if (verification.kind === 'uncommitted_changes') {
+                this.emit(
+                  input,
+                  'fix.uncommitted_changes',
+                  'info',
+                  `bonus fix at iteration ${iterationIndex} claimed done_with_fixes but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s); permitting`,
+                  {
+                    iterationIndex,
+                    invocationId: bonusFix.invocationId,
+                    dirtyFiles: verification.dirtyFiles.slice(0, 200),
+                  },
+                );
+                // Permitting: proceed to 'fixed' state.
+              } else if (
                 verification.kind === 'no_commit_claimed' ||
                 verification.kind === 'verification_error'
               ) {
@@ -794,6 +846,7 @@ export class ImplementStepLoop {
       pendingTypecheckErrors = undefined;
       lastFixInvocationId = fix.invocationId;
       lastFixHeadBeforeFix = fix.headBeforeFix;
+      lastFixSummary = fix.summary;
 
       if (
         fix.agentOutcome !== 'success' ||
@@ -992,8 +1045,8 @@ export class ImplementStepLoop {
           this.emit(
             input,
             'fix.uncommitted_changes',
-            'warn',
-            `step ${input.stepIndex} iteration ${iterationIndex} fix claimed done_with_fixes but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s)`,
+            'info',
+            `step ${input.stepIndex} iteration ${iterationIndex} fix claimed done_with_fixes but HEAD did not advance and worktree has ${verification.dirtyFiles.length} dirty file(s); permitting and proceeding to validation`,
             {
               stepIndex: input.stepIndex,
               iterationIndex,
@@ -1004,9 +1057,10 @@ export class ImplementStepLoop {
               statusOutput: verification.statusOutput.slice(0, 4000),
             },
           );
-          consecutiveFixFailures += 1;
+          // Permitting uncommitted changes: treat as 'fixed' and proceed.
+          // The top-of-iteration typecheck in the next iteration will handle the commit.
           loop = completeIteration(loop, {
-            outcome: 'unresolved',
+            outcome: 'fixed',
             fixInvocationId: fix.invocationId,
             now: deps.now(),
           });
@@ -1018,23 +1072,15 @@ export class ImplementStepLoop {
               qualityReview,
               fix,
               undefined,
-              'unresolved',
+              'fixed',
               verification,
+              true, // orchestratorCommitted: intended
             ),
           );
-          // Do NOT call deps.revertFix here (plan-review P0, #679): this
-          // branch means the fixer left uncommitted changes in the tree
-          // (e.g. a pre-commit hook rejected the commit). That dirty state
-          // is exactly what the NEXT fixer iteration needs to see in order
-          // to finish committing or fixing it — reverting here would
-          // destroy the evidence #679 exists to preserve. Reverting is only
-          // correct for the separate build-breaking-fix case (#671), which
-          // has its own dedicated branch elsewhere in this loop.
-          // Clear lastFixHeadBeforeFix so the next iteration's build-breaking
-          // typecheck path does NOT revert to the pre-fix SHA and destroy the
-          // dirty fix attempts (#679 review feedback).
+          // Same rationale as original: do not let the next iteration's build-breaking
+          // rollback destroy the fixer's output.
           lastFixHeadBeforeFix = undefined;
-          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
+          this.emitIterationCompleted(input, iterationIndex, 'fixed');
           continue;
         }
         if (verification.kind === 'no_commit_claimed') {

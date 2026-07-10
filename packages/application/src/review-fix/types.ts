@@ -172,6 +172,11 @@ export interface ReviewLoopHistoryEntry {
   };
   uncommittedChanges?: { dirtyFiles: string[]; statusOutput: string };
   noCommit?: { statusOutput: string };
+  /**
+   * Set to true if the orchestrator (not the agent) performed the commit
+   * for this iteration (coding/commit split).
+   */
+  orchestratorCommitted?: boolean;
   outcome: 'resolved' | 'fixed' | 'unresolved' | 'failed';
 }
 

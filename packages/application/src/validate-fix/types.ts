@@ -18,6 +18,7 @@ export interface ValidateFixAgentResult {
   agentOutcome: StepAgentOutcome;
   verdict?: 'fixed' | 'cannot_fix' | 'no_fixes_needed';
   headBeforeFix?: string;
+  summary?: string;
 }
 
 export interface ValidateFixLoopDeps {
@@ -25,6 +26,7 @@ export interface ValidateFixLoopDeps {
   runRevalidation: (ctx: ValidateFixStepContext) => Promise<RevalidationResult>;
   loops: LoopRepositoryPort;
   events: EventBusPort;
+  git?: GitPort;
   now: () => Date;
   idFactory: () => string;
   rollbackFix?: (ctx: ValidateFixStepContext, targetSha: string) => Promise<boolean>;

@@ -32,6 +32,7 @@ export interface GitPort {
   currentBranch(cwd: string): Promise<string>;
   headCommitSha(cwd: string): Promise<string>;
   resetHard(cwd: string, commitSha: string): Promise<void>;
+  add(cwd: string, pathspec: string): Promise<void>;
   diff(cwd: string, base: string, head?: string): Promise<string>;
   diffStat(cwd: string, base: string, head?: string): Promise<string>;
   commit(cwd: string, message: string): Promise<string>;

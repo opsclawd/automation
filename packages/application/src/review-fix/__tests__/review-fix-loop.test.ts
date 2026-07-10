@@ -1818,13 +1818,18 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
     expect(events.find((e) => e.type === 'fix.no_commit_claimed')).toBeUndefined();
   });
 
-  it('downgrades done_with_fixes + dirty tree to unresolved with fix.uncommitted_changes; no runRevalidation', async () => {
+  it('permits done_with_fixes + dirty tree; proceeds to runRevalidation and handles orchestrator commit', async () => {
     const revalidationCalls: number[] = [];
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({
       headSha: 'sha-pre',
       statusOutput: ' M packages/foo.ts\n',
     });
+    const addSpy = vi.fn().mockResolvedValue(undefined);
+    const commitSpy = vi.fn().mockResolvedValue('sha-new');
+    git.add = addSpy;
+    git.commit = commitSpy;
+
     const deps = makeDeps({
       events: bus,
       git,
@@ -1842,11 +1847,16 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
         agentOutcome: 'success' as const,
         verdict: 'done_with_fixes' as const,
         headBeforeFix: 'sha-pre',
+        summary: 'added foo',
       }),
     });
-    await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+    await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 1 });
     expect(events.find((e) => e.type === 'fix.uncommitted_changes')).toBeDefined();
-    expect(revalidationCalls).toHaveLength(0);
+    expect(revalidationCalls).toHaveLength(1);
+    expect(addSpy).toHaveBeenCalledWith('/wt', '-A');
+    expect(commitSpy).toHaveBeenCalledWith('/wt', 'fix: added foo');
+    const orchestratorCommitEvent = events.find((e) => e.type === 'fix.orchestrator_commit');
+    expect(orchestratorCommitEvent).toBeDefined();
   });
 
   it('downgrades done_with_fixes + clean tree to unresolved with fix.no_commit_claimed', async () => {
