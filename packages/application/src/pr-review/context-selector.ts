@@ -5,7 +5,7 @@ export interface ContextSelectorInput {
   cwd: string;
   comments: PrReviewComment[];
   attempt: number;
-  diff: string; // current full diff origin/HEAD..HEAD (or similar)
+  diff: string;
   previousBuildError: string | undefined;
   previousCodeVerifyReason: string | undefined;
 }
@@ -38,7 +38,7 @@ export class DefaultContextSelector implements ContextSelectorPort {
   constructor(private readonly git: GitPort) {}
 
   async select(input: ContextSelectorInput): Promise<SelectedContext> {
-    const { attempt, diff, comments, cwd, previousBuildError, previousCodeVerifyReason } = input;
+    const { attempt, diff, comments = [], cwd, previousBuildError, previousCodeVerifyReason } = input;
 
     const diffStats = await this.git.diffStat(cwd, 'origin/HEAD');
 

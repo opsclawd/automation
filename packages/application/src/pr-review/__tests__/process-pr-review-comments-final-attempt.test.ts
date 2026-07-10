@@ -137,7 +137,7 @@ describe('ProcessPrReviewComments — final attempt verification (M1 progression
       pollNumber: 1,
     });
 
-    expect(out.processed).toBe(1);
+    expect(out.blocked).toBe(1);
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('processed');
     expect(github.resolvedThreads).toContainEqual({
