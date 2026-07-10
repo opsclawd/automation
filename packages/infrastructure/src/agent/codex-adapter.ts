@@ -111,19 +111,19 @@ export class CodexAgentAdapter implements AgentPort {
           // Not JSON
         }
 
-        const status = errorData.status || errorData.error?.status;
+        const status: number | undefined = errorData.status ?? errorData.error?.status;
         const errorType = errorData.error?.type || errorData.type;
         const errorMessage = String(errorData.error?.message || errorData.message || detectedError);
 
         let marker = 'PROVIDER_ERROR';
-        if (status === 429 || errorType === 'insufficient_quota' || errorType === 'quota_exceeded') {
+        if (status !== undefined && status === 429 || errorType === 'insufficient_quota' || errorType === 'quota_exceeded') {
           marker = 'QUOTA_EXCEEDED';
         } else if (
           errorType === 'context_length_exceeded' ||
           errorMessage.toLowerCase().includes('maximum context length')
         ) {
           marker = 'TOKEN_LIMIT_EXCEEDED';
-        } else if (status >= 500) {
+        } else if (typeof status === 'number' && status >= 500) {
           marker = 'PROVIDER_ERROR';
         }
 
