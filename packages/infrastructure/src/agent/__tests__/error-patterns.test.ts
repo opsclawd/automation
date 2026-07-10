@@ -176,6 +176,17 @@ describe('testQuotaPatterns', () => {
     expect(testQuotaPatterns(tableRow)).toBeNull();
   });
 
+  it("does not match a grep result line echoing this repo's own quota-pattern source (issue #706)", () => {
+    // Confirmed live: an agent researching the codebase grepped
+    // scripts/legacy/ai-run-issue-v2 for existing error-detection
+    // conventions, and its own quota-detection regex source text got
+    // echoed to stderr as a grep -n "path:lineno:content" result line —
+    // triggering a false QUOTA_EXCEEDED fallback with quota genuinely fine.
+    const grepResultLine =
+      'scripts/legacy/ai-run-issue-v2:3742:  elif grep -qiE \'(quota.exceeded|rate.limit|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|Cannot connect|fetch failed|network.error|Internal server error|\\[install failed\\])\' "${ISSUES_DIR}/validation.md" 2>/dev/null; then';
+    expect(testQuotaPatterns(grepResultLine)).toBeNull();
+  });
+
   it('still matches "Quota exceeded" natural-language form', () => {
     const result = testQuotaPatterns('ERROR: Quota exceeded for this billing period.');
     expect(result).toBeTruthy();

@@ -33,6 +33,11 @@ const SHELL_ASSIGNMENT_LINE = /^\s*(?:export\s+)?\w+=(['"]?)/;
 // Markdown table rows (lines starting with |) — codex echoes its prompt to stderr,
 // which may contain documentation tables listing these error type names as identifiers.
 const MARKDOWN_TABLE_LINE = /^\s*\|/;
+// grep/ripgrep result lines (path:lineno:content) — an agent researching the
+// codebase can grep this very file's pattern definitions (or any source line
+// mentioning "quota exceeded"/"rate limit" etc. as a string literal) and echo
+// the match to stderr, which is not a real provider error.
+const GREP_RESULT_LINE = /^\s*[\w./-]+:\d+:/;
 
 export function isOpenCodeLogLine(line: string): boolean {
   return OPENCODE_LOG_LINE.test(line);
@@ -131,7 +136,8 @@ function testPatterns(
     if (
       BASH_TRACE_LINE.test(line) ||
       SHELL_ASSIGNMENT_LINE.test(line) ||
-      MARKDOWN_TABLE_LINE.test(line)
+      MARKDOWN_TABLE_LINE.test(line) ||
+      GREP_RESULT_LINE.test(line)
     )
       continue;
     for (const pattern of patterns) {
