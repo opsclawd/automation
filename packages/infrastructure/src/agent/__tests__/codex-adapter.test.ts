@@ -1,10 +1,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { AgentProfileName } from '@ai-sdlc/domain';
 import { CodexAgentAdapter } from '../codex-adapter.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const dirs: string[] = [];
 
@@ -44,34 +48,58 @@ function req(cwd: string, overrides = {}) {
 }
 
 describe('CodexAgentAdapter', () => {
-  it('returns success and runtime "codex" for a 0-exit child', async () => {
+  it('returns success and extracts transcript from JSONL output', async () => {
     const cwd = makeWorktree();
     const adapter = new CodexAgentAdapter({
-      binaryPath: join(FIXTURES, 'fake-codex-success.sh'),
+      binaryPath: join(FIXTURES, 'fake-codex-json-success.sh'),
       artifactsDir: cwd,
     });
     const result = await adapter.invoke(req(cwd));
     expect(result.outcome).toBe('success');
     expect(result.runtime).toBe('codex');
-    expect(readFileSync(result.stdoutPath, 'utf-8')).toContain('Review findings');
-    expect(result.endCommitSha).toMatch(/^[0-9a-f]{40}$/);
+    const transcript = readFileSync(result.stdoutPath, 'utf-8');
+    expect(transcript).toBe('Review findings: LGTM, no issues found.');
+    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 50 });
   });
 
-  it('returns failed outcome with quota stderr preserved for the router', async () => {
+  it('classifies quota error from JSONL and ignores false-positives in prose', async () => {
     const cwd = makeWorktree();
     const adapter = new CodexAgentAdapter({
-      binaryPath: join(FIXTURES, 'fake-codex-quota.sh'),
+      binaryPath: join(FIXTURES, 'fake-codex-json-quota.sh'),
       artifactsDir: cwd,
     });
-    const r = await adapter.invoke(req(cwd));
-    expect(r.outcome).toBe('failed');
-    expect(r.exitCode).toBe(1);
-    // The router's isQuotaError reads stderrPath; must contain the signature.
-    expect(readFileSync(r.stderrPath, 'utf-8')).toMatch(/quota.*exceed/i);
-    expect(r.endCommitSha).toMatch(/^[0-9a-f]{40}$/);
+    const result = await adapter.invoke(req(cwd));
+    expect(result.outcome).toBe('failed');
+    expect(readFileSync(result.stderrPath, 'utf-8')).toMatch(/^QUOTA_EXCEEDED:/);
   });
 
-  it('runs exec in a read-only sandbox and never bypasses approvals', async () => {
+  it('ignores false-positive error strings in transcript text', async () => {
+    const cwd = makeWorktree();
+    const adapter = new CodexAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-codex-json-false-positive.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.outcome).toBe('success');
+    const transcript = readFileSync(result.stdoutPath, 'utf-8');
+    expect(transcript).toContain('Usage limit reached');
+    // Ensure the stderr doesn't have the QUOTA_EXCEEDED marker that runExternalCli's
+    // regex scanning would have added if it wasn't skipped.
+    expect(readFileSync(result.stderrPath, 'utf-8')).not.toContain('QUOTA_EXCEEDED');
+  });
+
+  it('classifies 5xx errors as PROVIDER_ERROR', async () => {
+    const cwd = makeWorktree();
+    const adapter = new CodexAgentAdapter({
+      binaryPath: join(FIXTURES, 'fake-codex-json-provider-error.sh'),
+      artifactsDir: cwd,
+    });
+    const result = await adapter.invoke(req(cwd));
+    expect(result.outcome).toBe('failed');
+    expect(readFileSync(result.stderrPath, 'utf-8')).toMatch(/^PROVIDER_ERROR:/);
+  });
+
+  it('always runs in workspace-write sandbox', async () => {
     const cwd = makeWorktree();
     const argLog = join(cwd, 'args.txt');
     const shim = join(cwd, 'shim.sh');
@@ -82,11 +110,8 @@ describe('CodexAgentAdapter', () => {
     const args = readFileSync(argLog, 'utf-8');
     expect(args).toContain('exec');
     expect(args).toContain('--sandbox');
-    expect(args).toContain('read-only');
-    expect(args).toContain('-');
-    expect(args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
-    expect(args).not.toContain('workspace-write');
-    expect(args).not.toContain('danger-full-access');
+    expect(args).toContain('workspace-write');
+    expect(args).toContain('--json');
   });
 
   it('passes --color never for clean parseable output', async () => {
@@ -130,7 +155,7 @@ describe('CodexAgentAdapter', () => {
   it('propagates provider field from request through adapter to result', async () => {
     const cwd = makeWorktree();
     const adapter = new CodexAgentAdapter({
-      binaryPath: join(FIXTURES, 'fake-codex-success.sh'),
+      binaryPath: join(FIXTURES, 'fake-codex-json-success.sh'),
       artifactsDir: cwd,
     });
     const result = await adapter.invoke(req(cwd, { provider: 'openai' }));

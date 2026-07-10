@@ -24,6 +24,7 @@ export interface ExternalCliRunInput {
   detached?: boolean;
   startCommitSha?: string;
   expectedArtifacts?: string[];
+  skipErrorScanning?: boolean;
 }
 
 export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentInvocationResult> {
@@ -94,28 +95,32 @@ export async function runExternalCli(input: ExternalCliRunInput): Promise<AgentI
       }
     } else if (exitCode !== 0) {
       outcome = 'failed';
-      const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 2000 });
-      if (providerMatch) {
-        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr, { maxLines: 2000 });
-        if (quotaLine) {
-          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
-        } else {
-          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+      if (!input.skipErrorScanning) {
+        const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 2000 });
+        if (providerMatch) {
+          contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+          const quotaLine = testQuotaPatterns(stderr, { maxLines: 2000 });
+          if (quotaLine) {
+            stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+          } else {
+            stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+          }
         }
       }
     } else if (outcome === 'success') {
-      const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 2000 });
-      if (providerMatch) {
-        outcome = 'failed';
-        contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
-        const quotaLine = testQuotaPatterns(stderr, { maxLines: 2000 });
-        if (quotaLine) {
-          stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
-          stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
-        } else {
-          stderr = `PROVIDER_ERROR: ${providerMatch}`;
-          stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+      if (!input.skipErrorScanning) {
+        const providerMatch = testProviderErrorPatterns(stderr, { maxLines: 2000 });
+        if (providerMatch) {
+          outcome = 'failed';
+          contractViolations = [CONTRACT_VIOLATION_CODES.PROVIDER_ERROR];
+          const quotaLine = testQuotaPatterns(stderr, { maxLines: 2000 });
+          if (quotaLine) {
+            stderr = `QUOTA_EXCEEDED: ${quotaLine}`;
+            stderrForLog = `QUOTA_EXCEEDED: ${quotaLine}\n${stderrForLog}`;
+          } else {
+            stderr = `PROVIDER_ERROR: ${providerMatch}`;
+            stderrForLog = `PROVIDER_ERROR: ${providerMatch}\n${stderrForLog}`;
+          }
         }
       }
     }
