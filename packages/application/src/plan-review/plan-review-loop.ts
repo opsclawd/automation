@@ -8,9 +8,11 @@ import {
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
   PlanReviewContext,
+  PlanReviewFinding,
   PlanReviewLoopDeps,
   PlanReviewLoopInput,
   PlanReviewLoopResult,
+  PlanReviewStepOptions,
   PlanReviewResult,
 } from './types.js';
 
@@ -45,6 +47,50 @@ export class PlanReviewLoop {
     };
 
     let pendingReconciliationContext: string | undefined;
+    let frozenPrevFindings: ReadonlyArray<PlanReviewFinding> | undefined;
+    let recentFixCitations: ReadonlyArray<string> = [];
+    const deltaScopedReReview = options.deltaScopedReReview ?? true;
+    // Per-citation disposition tracker. Keyed by `finding.citation`; updated
+    // after every fix invocation based on whether the citation re-appeared
+    // in the next reviewer's eligible set, whether the fixer rebutted, etc.
+    // (#716, design §3.3 / §7.5). When delta scoping is enabled the loop
+    // stamps each frozen finding with its current disposition when
+    // threading `prevFindings` to the reviewer.
+    const frozenDispositions = new Map<
+      string,
+      'addressed' | 'rebutted' | 'still_open' | 'never_seen_again'
+    >();
+
+    const buildReviewStepOptions = (iterationIndex: number): PlanReviewStepOptions | undefined => {
+      if (!deltaScopedReReview) return undefined;
+      // Iteration 1 is a fresh full review — no scope block needed.
+      // Iteration 2+ is the delta-scoped re-review; even if both
+      // `prevFindings` and `recentFixCitations` are empty (e.g., iter-1
+      // returned no grounded findings AND no fix citations to scope
+      // against), the composition root still needs to know this is a
+      // delta-scoped invocation so it can decide whether to append the
+      // SCOPE / DISPOSITION GUIDANCE block (#716, fix to reviewer
+      // finding: returning `undefined` here causes the SCOPE block to
+      // be silently dropped on iter 2+ when there's nothing to thread).
+      if (iterationIndex < 2) return undefined;
+      const stepOptions: PlanReviewStepOptions = {
+        prevFindings: [],
+        recentFixCitations: [],
+      };
+      if (frozenPrevFindings !== undefined && frozenPrevFindings.length > 0) {
+        // Stamp each frozen finding with its current disposition from the
+        // tracker (#716, design §3.3). The reviewer uses these dispositions
+        // to decide whether to re-flag, address, or rebut each prior finding.
+        stepOptions.prevFindings = frozenPrevFindings.map((f) => ({
+          ...f,
+          disposition: frozenDispositions.get(f.citation) ?? 'still_open',
+        }));
+      }
+      if (recentFixCitations.length > 0) {
+        stepOptions.recentFixCitations = recentFixCitations;
+      }
+      return stepOptions;
+    };
 
     while (canIterate(loop)) {
       const iterationIndex = loop.iterations.length + 1;
@@ -65,7 +111,7 @@ export class PlanReviewLoop {
       let reviewAttempts = 0;
       while (reviewAttempts <= reviewerMaxRetries) {
         reviewAttempts += 1;
-        review = await deps.runReview(ctx);
+        review = await deps.runReview(ctx, buildReviewStepOptions(iterationIndex));
         if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
         if (reviewAttempts <= reviewerMaxRetries) {
           this.emit(
@@ -109,6 +155,68 @@ export class PlanReviewLoop {
       }
 
       loop = startIteration(loop, { reviewInvocationId: review.invocationId, now: deps.now() });
+
+      // --- EVIDENCE-BOUND GATE + OUT-OF-SCOPE DROP (#716) ---
+      // When `deltaScopedReReview` is true, the loop applies the
+      // evidence-bound gate to the reviewer's verdict. The gate:
+      //   1. Captures the iteration-1 finding set as `frozenFindings` and
+      //      stamps each entry's initial disposition as `still_open`.
+      //   2. Classifies the current reviewer's findings into an "eligible"
+      //      subset (grounded + either in `frozenCitations` or
+      //      `recentFixCitations`); out-of-scope findings are dropped from
+      //      verdict computation.
+      //   3. Recomputes the verdict from the eligible set's severities
+      //      so that a `p1_found` verdict with no grounded P0/P1 in scope
+      //      downgrades to `p2_only` (symmetric: an under-reported verdict
+      //      with grounded P0/P1 in scope escalates).
+      //
+      // When `deltaScopedReReview` is `false`, the gate is skipped and we
+      // trust the reviewer verdict as-is. Otherwise, normalize a missing
+      // findings payload to an empty set so malformed successful reviewer
+      // output still flows through the same empty-set verdict
+      // normalization as an explicit `[]`.
+      let eligibleFindings: ReadonlyArray<PlanReviewFinding> = [];
+      if (deltaScopedReReview) {
+        const rawFindings = review.findings ?? [];
+        if (iterationIndex === 1) {
+          frozenPrevFindings = rawFindings;
+          for (const f of frozenPrevFindings) {
+            frozenDispositions.set(f.citation, 'still_open');
+          }
+        }
+        eligibleFindings = this.classifyFindings(
+          rawFindings,
+          iterationIndex,
+          frozenPrevFindings,
+          recentFixCitations,
+        );
+        // The failure check above guarantees `review.verdict` is defined;
+        // assert for the type checker.
+        const adjustedVerdict = this.computeVerdict(review.verdict!, eligibleFindings);
+        if (adjustedVerdict !== review.verdict) {
+          this.emit(
+            input,
+            'plan-review.review.evidence.gate_applied',
+            'info',
+            `evidence-bound gate adjusted verdict from ${review.verdict} to ${adjustedVerdict} at iteration ${iterationIndex}`,
+            {
+              iterationIndex,
+              originalVerdict: review.verdict,
+              adjustedVerdict,
+              ungroundedCount: rawFindings.filter((f) => f.evidence === 'ungrounded').length,
+              outOfScopeCount: rawFindings.length - eligibleFindings.length,
+            },
+          );
+        }
+        // Apply the gate verdict. Compute to a local — direct reassignment
+        // of `let review` here would widen the type back to
+        // `PlanReviewResult | undefined`, defeating the narrowing the
+        // failure check above established.
+        const gatedReview: PlanReviewResult = { ...review, verdict: adjustedVerdict };
+        // Replace `review` only after computing the gated value, so the
+        // rest of the function continues to see a non-`undefined` type.
+        review = gatedReview;
+      }
 
       const manifestError = await deps.checkManifestSync(ctx);
       if (manifestError) {
@@ -170,6 +278,35 @@ export class PlanReviewLoop {
         ...(manifestError ? { manifestMismatch: manifestError } : {}),
       });
       pendingReconciliationContext = undefined;
+
+      // Refresh the loop-internal `recentFixCitations` from the fix's
+      // `headBeforeFix` SHA (#716, design §2.5 / §7.1). The composition-root
+      // adapter supplies `computeLastFixDiffCitations`, which uses
+      // `git diff <headBeforeFix>..HEAD -- plan.md` to compute line ranges
+      // of text the fixer touched. The loop keeps the result until the next
+      // fix refreshes it.
+      //
+      // When `headBeforeFix` is undefined (fixer failure, no fix this
+      // iteration), the dep returns `[]` — the safe default. A missing
+      // headBeforeFix MUST clear stale citations, not carry the previous
+      // iteration's diff scope forward into the next review (#716, fix to
+      // reviewer finding #1).
+      recentFixCitations = deps.computeLastFixDiffCitations(ctx.cwd, fix.headBeforeFix);
+      if (fix.headBeforeFix !== undefined) {
+        this.emit(
+          input,
+          'plan-review.fix.diff_citations.refreshed',
+          'info',
+          `refreshed recentFixCitations at iteration ${iterationIndex} (${recentFixCitations.length} citations)`,
+          {
+            iterationIndex,
+            headBeforeFix: fix.headBeforeFix,
+            citationCount: recentFixCitations.length,
+          },
+        );
+      } else {
+        recentFixCitations = [];
+      }
 
       if (
         fix.agentOutcome !== 'success' ||
@@ -334,6 +471,29 @@ export class PlanReviewLoop {
         continue;
       }
 
+      // Update frozen-finding dispositions based on the fixer's outcome and the
+      // new reviewer's eligible findings (#716, design §3.3). For each
+      // frozen citation:
+      //   - If the citation re-appeared in the eligible findings set, the
+      //     defect is still open (`still_open`).
+      //   - Else if the fixer asserted `done_no_fixes_needed`, the fixer's
+      //     rebuttal stands (`rebutted`).
+      //   - Otherwise the fix addressed the defect (`addressed`).
+      // These dispositions are stamped onto `prevFindings` when the loop
+      // threads them to the next reviewer via `buildReviewStepOptions`.
+      if (deltaScopedReReview && frozenPrevFindings !== undefined) {
+        for (const frozen of frozenPrevFindings) {
+          const stillFlagged = eligibleFindings.some((f) => f.citation === frozen.citation);
+          if (stillFlagged) {
+            frozenDispositions.set(frozen.citation, 'still_open');
+          } else if (fix.verdict === 'done_no_fixes_needed') {
+            frozenDispositions.set(frozen.citation, 'rebutted');
+          } else {
+            frozenDispositions.set(frozen.citation, 'addressed');
+          }
+        }
+      }
+
       loop = completeIteration(loop, {
         outcome: 'fixed',
         fixInvocationId: fix.invocationId,
@@ -365,7 +525,12 @@ export class PlanReviewLoop {
         let finalReviewAttempts = 0;
         while (finalReviewAttempts <= reviewerMaxRetries) {
           finalReviewAttempts += 1;
-          finalReview = await deps.runReview(finalCtx);
+          // The trailing final review is a fresh full-plan review, NOT a delta-scoped
+          // re-review (#716, design §4 Assumption 9). Its job is to catch
+          // anything the iterative review/fix loop missed; threading
+          // `prevFindings` here would scope it back to the iter-1 finding
+          // set and defeat the purpose.
+          finalReview = await deps.runReview(finalCtx, undefined);
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(
@@ -612,10 +777,35 @@ export class PlanReviewLoop {
             );
             bonusIterationUsed = true;
 
+            // Fix to reviewer finding #3: the trailing finding that triggered
+            // this bonus iteration must be added to scope so the confirmation
+            // pass (Step 8) actually verifies it, not just the iteration-1
+            // frozen findings. Without this, the confirmation review has no
+            // record of what it is meant to confirm and can drift onto
+            // unrelated new findings instead. This is exactly how the bonus
+            // mechanism silently wasted its one shot on run `b8f66cc4`
+            // (issue #693): the confirmation review found unrelated new
+            // issues instead of checking the trigger.
+            if (deltaScopedReReview) {
+              const triggeringFindings = finalReview.findings ?? [];
+              for (const f of triggeringFindings) {
+                if (frozenPrevFindings === undefined) {
+                  frozenPrevFindings = [f];
+                } else if (!frozenPrevFindings.some((ff) => ff.citation === f.citation)) {
+                  frozenPrevFindings = [...frozenPrevFindings, f];
+                }
+                frozenDispositions.set(f.citation, 'still_open');
+              }
+            }
+
             // 1. Bonus Fix
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: arbiterResult.rationale,
             });
+            recentFixCitations = deps.computeLastFixDiffCitations(
+              finalCtx.cwd,
+              bonusFix.headBeforeFix,
+            );
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
               index: finalIterationIndex,
@@ -654,7 +844,10 @@ export class PlanReviewLoop {
               let confirmAttempts = 0;
               while (confirmAttempts <= reviewerMaxRetries) {
                 confirmAttempts += 1;
-                confirmReview = await deps.runReview(confirmCtx);
+                confirmReview = await deps.runReview(
+                  confirmCtx,
+                  buildReviewStepOptions(confirmIterationIndex),
+                );
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
                 if (confirmAttempts <= reviewerMaxRetries) {
@@ -793,5 +986,99 @@ export class PlanReviewLoop {
       timestamp: this.deps.now().toISOString(),
       metadata,
     });
+  }
+
+  /**
+   * Classify the reviewer's raw findings into the subset eligible to
+   * contribute to the loop's verdict computation (#716, design §3.2).
+   *
+   * A finding is eligible when ALL of:
+   *   - Its `evidence` is `grounded` (the citation resolved against the
+   *     artifact store). Ungrounded findings cannot drive `p1_found`.
+   *   - On iteration 1 (discovery pass), this is the only criterion — every
+   *     grounded finding is eligible because there is no prior scope yet.
+   *   - On iteration >= 2, the finding must EITHER re-flag a frozen
+   *     finding from iteration 1 (`frozenCitations`), OR cite text the
+   *     most recent fix invocation actually modified (`recentSet`).
+   *     Findings outside both sets are out-of-scope: brand-new findings
+   *     about pre-existing plan prose that the fixer did not touch.
+   *     These are dropped from verdict computation (the loop never asks
+   *     the reviewer to retract them — it just refuses to let them
+   *     re-open a converged iteration).
+   */
+  private classifyFindings(
+    raw: ReadonlyArray<PlanReviewFinding>,
+    iterationIndex: number,
+    frozenFindings: ReadonlyArray<PlanReviewFinding> | undefined,
+    recentFixCitations: ReadonlyArray<string>,
+  ): ReadonlyArray<PlanReviewFinding> {
+    if (iterationIndex === 1) {
+      // Discovery pass: every grounded finding is eligible.
+      return raw.filter((f) => f.evidence === 'grounded');
+    }
+    const frozenCitations = new Set((frozenFindings ?? []).map((f) => f.citation));
+    const recentSet = new Set(recentFixCitations);
+    const eligible: PlanReviewFinding[] = [];
+    for (const f of raw) {
+      if (f.evidence !== 'grounded') {
+        // Schema-level or resolver-rejected finding: never eligible.
+        continue;
+      }
+      if (frozenCitations.has(f.citation)) {
+        // A frozen finding re-flagged: eligible (still_open path).
+        eligible.push(f);
+        continue;
+      }
+      if (recentSet.has(f.citation)) {
+        // A new finding targeting text the most recent fix touched.
+        eligible.push(f);
+        continue;
+      }
+      // Out of scope: drop from verdict computation.
+    }
+    return eligible;
+  }
+
+  /**
+   * Recompute the verdict from the eligible findings set (#716, design
+   * §3.2). Symmetric: an under-reported verdict with grounded P0/P1 in
+   * scope escalates; an over-reported verdict with no eligible P0/P1
+   * downgrades.
+   *
+   * The rules:
+   *   - If the eligible set contains a grounded P0 or P1, the verdict
+   *     must reflect a blocking finding. `p1_found` stays `p1_found`.
+   *     `proceed_with_concerns` upgrades to `p1_found` if any eligible
+   *     P1 is present, otherwise to `p2_only` (P0 absence makes the P1
+   *     "no longer applicable" — the reviewer reported it without a P0
+   *     "this is the most serious defect" anchor, so the verdict moves
+   *     from `proceed_with_concerns` → `p2_only`).
+   *   - If the eligible set has no grounded P0/P1, any verdict that
+   *     signaled blocking (`p1_found`, `proceed_with_concerns`) is
+   *     downgraded to `p2_only` because every P0/P1 was either
+   *     ungrounded (citation didn't resolve) or out-of-scope (cites
+   *     pre-existing prose the fixer did not touch).
+   *
+   * Caller MUST guarantee `reviewerVerdict` is defined; this is enforced
+   * by the gate's call site (the loop's failure check above has already
+   * rejected undefined verdicts). Returning the defined-only subset here
+   * keeps the gate's spread assignable to `PlanReviewResult` without
+   * forcing `exactOptionalPropertyTypes: true` plumbing.
+   */
+  private computeVerdict(
+    reviewerVerdict: NonNullable<PlanReviewResult['verdict']>,
+    eligible: ReadonlyArray<PlanReviewFinding>,
+  ): NonNullable<PlanReviewResult['verdict']> {
+    const hasP0 = eligible.some((f) => f.severity === 'P0');
+    const hasP1 = eligible.some((f) => f.severity === 'P1');
+    if (hasP0) return 'p1_found';
+    if (hasP1) {
+      return reviewerVerdict === 'proceed_with_concerns' ? 'proceed_with_concerns' : 'p1_found';
+    }
+
+    if (reviewerVerdict === 'p1_found' || reviewerVerdict === 'proceed_with_concerns') {
+      return 'p2_only';
+    }
+    return reviewerVerdict;
   }
 }

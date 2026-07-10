@@ -9,6 +9,7 @@ import type {
   PlanFixResult,
   PlanReviewContext,
   PlanFixOptions,
+  PlanReviewStepOptions,
 } from '../types.js';
 import type { ArbiterResult } from '../../implement-step/types.js';
 import type { EventBusPort } from '../../ports/event-bus-port.js';
@@ -38,6 +39,17 @@ function baseInput() {
   };
 }
 
+function groundedP1Findings(citation = 'plan.md:42'): ReadonlyArray<PlanReviewFinding> {
+  return [
+    {
+      severity: 'P1' as const,
+      citation,
+      failureScenario: 'Missing transition handler',
+      evidence: 'grounded' as const,
+    },
+  ];
+}
+
 function makeDeps(over: Partial<PlanReviewLoopDeps>): {
   deps: PlanReviewLoopDeps;
   events: ReturnType<typeof collectEvents>['events'];
@@ -56,6 +68,7 @@ function makeDeps(over: Partial<PlanReviewLoopDeps>): {
       verdict: 'done_with_fixes' as const,
     }),
     checkManifestSync: async (_ctx: PlanReviewContext): Promise<string | null> => null,
+    computeLastFixDiffCitations: (_cwd: string, _headBeforeFix: string | undefined) => [],
     runArbiter: undefined,
     loops: new FakeLoopRepository(),
     events: bus,
@@ -77,6 +90,22 @@ describe('PlanReviewLoop', () => {
     expect(out.proceedWithConcerns).toBe(false);
   });
 
+  it('delta-scoped re-review normalizes missing findings to an empty set', async () => {
+    const { deps, events } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success' as const,
+        verdict: 'p1_found' as const,
+      }),
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.status).toBe('converged');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+    expect(events.some((e) => e.type === 'plan-review.review.evidence.gate_applied')).toBe(true);
+  });
+
   it('AC #5.2 — fix then pass', async () => {
     let reviewCalls = 0;
     const { deps } = makeDeps({
@@ -86,6 +115,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 1 ? ('p1_found' as const) : ('pass' as const),
+          findings: reviewCalls === 1 ? groundedP1Findings() : [],
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -110,6 +140,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -139,6 +170,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+          findings: reviewCalls === 2 ? [] : groundedP1Findings(),
         };
       },
       runFix: async (_ctx: PlanReviewContext, opts: PlanFixOptions): Promise<PlanFixResult> => {
@@ -171,6 +203,7 @@ describe('PlanReviewLoop', () => {
         invocationId: 'rev-x',
         agentOutcome: 'success' as const,
         verdict: 'p1_found' as const,
+        findings: groundedP1Findings(),
       }),
       runFix: async (): Promise<PlanFixResult> => ({
         invocationId: 'fix-x',
@@ -187,20 +220,47 @@ describe('PlanReviewLoop', () => {
 
   it('final fixer pass resolves P1 findings on the last allowed iteration', async () => {
     let reviewCalls = 0;
+    let fixCalls = 0;
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
     const { deps } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => {
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
         reviewCalls += 1;
+        reviewOptions.push(opts);
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 3 ? ('pass' as const) : ('p1_found' as const),
+          findings:
+            reviewCalls === 3
+              ? []
+              : [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Missing transition handler',
+                    evidence: 'grounded' as const,
+                  },
+                ],
         };
       },
-      runFix: async (): Promise<PlanFixResult> => ({
-        invocationId: 'fix-y',
-        agentOutcome: 'success' as const,
-        verdict: 'done_with_fixes' as const,
-      }),
+      runFix: async (): Promise<PlanFixResult> => {
+        fixCalls += 1;
+        return {
+          invocationId: `fix-${fixCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: 'done_with_fixes' as const,
+          headBeforeFix: fixCalls === 1 ? 'fix-head-1' : 'fix-head-2',
+        };
+      },
+      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
+        headBeforeFix === 'fix-head-1'
+          ? ['plan.md:42']
+          : headBeforeFix === 'fix-head-2'
+            ? ['plan.md:50-55']
+            : [],
     });
     const baseInputWithMax2 = { ...baseInput(), maxIterations: 2 };
     const out = await new PlanReviewLoop(deps).execute(baseInputWithMax2);
@@ -210,6 +270,119 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations[0]?.outcome).toBe('fixed');
     expect(out.loop.iterations[1]?.outcome).toBe('fixed');
     expect(out.loop.iterations[2]?.outcome).toBe('resolved');
+    expect(reviewOptions[0]).toBeUndefined();
+    expect(reviewOptions[1]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+        },
+      ],
+      recentFixCitations: ['plan.md:42'],
+    });
+    // The trailing final review is a fresh full-plan review, NOT a
+    // delta-scoped re-review (#716, design §4 Assumption 9) — its job is
+    // to catch anything missed by the iterative loop. So `runReview` is
+    // called with `undefined` opts, NOT `buildReviewStepOptions()`.
+    expect(reviewOptions[2]).toBeUndefined();
+  });
+
+  it('refreshes recentFixCitations from computeLastFixDiffCitations even when headBeforeFix is undefined', async () => {
+    let reviewCalls = 0;
+    const computeCalls: Array<string | undefined> = [];
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
+    const { deps } = makeDeps({
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        reviewOptions.push(opts);
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+          findings: reviewCalls === 2 ? [] : groundedP1Findings(),
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      computeLastFixDiffCitations: (cwd, headBeforeFix) => {
+        computeCalls.push(`${cwd}:${headBeforeFix ?? 'undefined'}`);
+        return [];
+      },
+    });
+
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(computeCalls).toEqual(['/wt:undefined']);
+    expect(reviewOptions[1]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+          disposition: 'still_open',
+        },
+      ],
+    });
+  });
+
+  it('passes explicit empty recentFixCitations on delta-scoped re-review when the fix diff is empty', async () => {
+    let reviewCalls = 0;
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
+    const { deps } = makeDeps({
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
+        reviewCalls += 1;
+        reviewOptions.push(opts);
+        return {
+          invocationId: `rev-${reviewCalls}`,
+          agentOutcome: 'success' as const,
+          verdict: reviewCalls === 2 ? ('pass' as const) : ('p1_found' as const),
+          findings:
+            reviewCalls === 2
+              ? []
+              : [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Missing transition handler',
+                    evidence: 'grounded' as const,
+                  },
+                ],
+        };
+      },
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      computeLastFixDiffCitations: () => [],
+    });
+
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(reviewOptions[1]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+          disposition: 'still_open',
+        },
+      ],
+      recentFixCitations: [],
+    });
   });
 
   it('AC #683.3.a — trailing final review fail + arbiter finding_invalid → success', async () => {
@@ -222,6 +395,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -272,6 +446,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -309,6 +484,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -336,6 +512,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -372,6 +549,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -407,16 +585,37 @@ describe('PlanReviewLoop', () => {
     let reviewCalls = 0;
     let fixCalls = 0;
     let arbiterCalls = 0;
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
     const { deps, events } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => {
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
         reviewCalls += 1;
+        reviewOptions.push(opts);
         // Iterations 1, 2: fail
         // Iteration 3 (trailing): fail
         // Iteration 4 (bonus final): pass
+        // Every non-pass review call returns at least one grounded P1
+        // finding. The evidence-bound gate (#716) downgrades a `p1_found`
+        // verdict to `p2_only` when the reviewer returns no eligible
+        // (grounded) findings; the test fixture must keep at least one
+        // grounded P1 in scope so the verdict stays `p1_found`.
         return {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 4 ? ('pass' as const) : ('p1_found' as const),
+          findings:
+            reviewCalls === 4
+              ? []
+              : [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Missing transition handler',
+                    evidence: 'grounded' as const,
+                  },
+                ],
         };
       },
       runFix: async (): Promise<PlanFixResult> => {
@@ -425,8 +624,17 @@ describe('PlanReviewLoop', () => {
           invocationId: `fix-${fixCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'done_with_fixes' as const,
+          headBeforeFix: fixCalls === 3 ? 'bonus-fix-head' : `fix-head-${fixCalls}`,
         };
       },
+      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
+        headBeforeFix === 'bonus-fix-head'
+          ? ['plan.md:99-101']
+          : headBeforeFix === 'fix-head-1'
+            ? ['plan.md:42']
+            : headBeforeFix === 'fix-head-2'
+              ? ['plan.md:50-55']
+              : [],
       runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
         arbiterCalls += 1;
         return {
@@ -443,8 +651,22 @@ describe('PlanReviewLoop', () => {
     expect(arbiterCalls).toBe(1);
     expect(fixCalls).toBe(3); // 2 original + 1 bonus
     expect(reviewCalls).toBe(4); // 2 original + 1 trailing + 1 bonus-trailing
+    expect(reviewOptions[0]).toBeUndefined();
+    expect(reviewOptions[3]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+        },
+      ],
+      recentFixCitations: ['plan.md:99-101'],
+    });
 
-    expect(events.map((e) => e.type)).toContain('plan-review.loop.trailing_review.bonus_fix_iteration');
+    expect(events.map((e) => e.type)).toContain(
+      'plan-review.loop.trailing_review.bonus_fix_iteration',
+    );
   });
 
   it('bonus iteration — capped at one (escalates to human if bonus fix does not converge)', async () => {
@@ -456,6 +678,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'p1_found' as const,
+          findings: groundedP1Findings(),
         };
       },
       runFix: async (): Promise<PlanFixResult> => ({
@@ -483,6 +706,7 @@ describe('PlanReviewLoop', () => {
         invocationId: 'rev-x',
         agentOutcome: 'success' as const,
         verdict: 'p1_found' as const,
+        findings: groundedP1Findings(),
       }),
       runFix: async (): Promise<PlanFixResult> => ({
         invocationId: 'fix-x',
@@ -593,6 +817,7 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls <= 3 ? ('p1_found' as const) : ('pass' as const),
+          findings: reviewCalls <= 3 ? groundedP1Findings() : [],
         };
       },
       checkManifestSync: async (ctx: PlanReviewContext) =>
@@ -667,6 +892,7 @@ describe('PlanReviewLoop', () => {
         invocationId: 'rev-1',
         agentOutcome: 'success' as const,
         verdict: 'p1_found' as const,
+        findings: groundedP1Findings(),
       }),
       checkManifestSync: async () => {
         checkCalls += 1;
@@ -693,5 +919,205 @@ describe('PlanReviewLoop', () => {
     expect(arbiterCalls).toBeGreaterThan(0);
     expect(checkCalls).toBeGreaterThan(0);
     expect(out.loop.iterations[0]?.outcome).toBe('unresolved');
+  });
+});
+
+describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
+  // Helper: stub runReview that records the opts argument on each call.
+  function makeRecordingRunReview(
+    verdictSequence: Array<'pass' | 'p1_found' | 'p2_only'>,
+    findingsSequence: Array<ReadonlyArray<import('../types.js').PlanReviewFinding>> = [],
+  ) {
+    const calls: Array<{
+      ctx: import('../types.js').PlanReviewContext;
+      opts?: import('../types.js').PlanReviewStepOptions;
+    }> = [];
+    let i = 0;
+    const runReview = async (
+      ctx: import('../types.js').PlanReviewContext,
+      opts?: import('../types.js').PlanReviewStepOptions,
+    ): Promise<import('../types.js').PlanReviewResult> => {
+      calls.push({ ctx, opts });
+      const verdict = verdictSequence[i] ?? 'pass';
+      const findings = findingsSequence[i] ?? [];
+      i += 1;
+      return {
+        invocationId: `rev-${i}`,
+        agentOutcome: 'success' as const,
+        verdict,
+        findings,
+      };
+    };
+    return { runReview, calls };
+  }
+
+  it('AC #1 — iteration 2 passes prevFindings and their current dispositions to runReview', async () => {
+    const { runReview, calls } = makeRecordingRunReview(
+      ['p1_found', 'pass'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A',
+            evidence: 'grounded',
+          },
+        ],
+        [],
+      ],
+    );
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.opts?.prevFindings).toEqual([
+      {
+        severity: 'P1',
+        citation: 'plan.md:42',
+        failureScenario: 'defect A',
+        evidence: 'grounded',
+        disposition: 'still_open',
+      },
+    ]);
+  });
+
+  it('AC #1 negative — options.deltaScopedReReview=false omits prevFindings', async () => {
+    const { runReview, calls } = makeRecordingRunReview(['p1_found', 'pass']);
+    const { deps } = makeDeps({
+      runReview,
+      options: { deltaScopedReReview: false },
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.opts).toBeUndefined();
+  });
+
+  it('AC #2 regression — out-of-scope finding dropped from verdict computation', async () => {
+    // Iter 1: returns a frozen finding (P1 at plan.md:42).
+    // Iter 2: returns a NEW finding about pre-existing prose (plan.md:99)
+    //         that the fix did NOT touch — must be dropped.
+    const { runReview } = makeRecordingRunReview(
+      ['p1_found', 'p2_only'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A',
+            evidence: 'grounded',
+          },
+        ],
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:99',
+            failureScenario: 'unrelated defect',
+            evidence: 'grounded',
+          },
+        ],
+      ],
+    );
+    // lastFixDiffCitations defaults to [] when computeLastFixDiffCitations
+    // returns [] (no headBeforeFix). Every iter-2 finding outside the frozen
+    // set is out of scope (the safe default per reviewer finding #1).
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+  });
+
+  it('AC #2 positive control — finding targeting recent-fix citation is eligible', async () => {
+    // Stub runReview to return a frozen finding on iter 1 and a finding on
+    // iter 2 whose citation is in the recent-fix citation list — supplied
+    // by computeLastFixDiffCitations returning ['plan.md:42'].
+    const { runReview, calls } = makeRecordingRunReview(
+      ['p1_found', 'p2_only'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A',
+            evidence: 'grounded',
+          },
+        ],
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A still open',
+            evidence: 'grounded',
+          },
+        ],
+      ],
+    );
+    const { deps } = makeDeps({
+      runReview,
+      computeLastFixDiffCitations: () => ['plan.md:42'],
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(calls[1]?.opts?.prevFindings).toBeDefined();
+    // The frozen finding is re-flagged with the same citation → eligible.
+    expect(out.loop.status).toBe('converged');
+  });
+
+  it('AC #3 — ungrounded P1 cannot produce p1_found (downgrades to p2_only)', async () => {
+    const { runReview } = makeRecordingRunReview(
+      ['p1_found', 'pass'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: '',
+            failureScenario: 'no citation',
+            evidence: 'ungrounded',
+          },
+        ],
+        [],
+      ],
+    );
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    // Iter 1: reviewer says p1_found, but no grounded P0/P1 → downgrade to
+    // p2_only → resolve (no fix needed).
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+  });
+
+  it('AC #4 — finding-set is frozen at iteration 1', async () => {
+    const frozen = [
+      {
+        severity: 'P1' as const,
+        citation: 'plan.md:42',
+        failureScenario: 'defect A',
+        evidence: 'grounded' as const,
+      },
+    ];
+    const { runReview, calls } = makeRecordingRunReview(
+      ['p1_found', 'pass'],
+      [
+        frozen,
+        [
+          {
+            severity: 'P2',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A — now P2',
+            evidence: 'grounded' as const,
+          },
+        ],
+      ],
+    );
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    // The frozen finding list passed on iteration 2 must equal the iter-1
+    // finding list (frozen at the end of iter 1).
+    expect(calls[1]?.opts?.prevFindings).toEqual(
+      frozen.map((f) => ({ ...f, disposition: 'still_open' })),
+    );
   });
 });

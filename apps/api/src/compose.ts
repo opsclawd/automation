@@ -78,7 +78,9 @@ import {
   CheckMergeReadiness,
   ImplementStepLoop,
   PlanReviewLoop,
+  parsePlanReviewFindings,
   type PlanReviewLoopDeps,
+  type PlanReviewFinding,
   PlanReviewHandler,
   readReviewVerdict,
   readFixVerdict,
@@ -192,9 +194,12 @@ import { createReviewLoopHistoryFilePort } from './review-loop-history-file-port
 import { createImplementStepHistoryFilePort } from './implement-step-history-file-port.js';
 import {
   buildPlanReviewArbiterPrompt,
+  buildPlanReviewReviewScopeBlock,
   readPlanReviewExcerpts,
   buildPlanReviewFinalReviewArbiterPrompt,
   readPlanReviewFinalExcerpts,
+  getRecentFixCitations,
+  createPlanReviewEvidenceResolver,
   PLAN_REVIEW_FINDINGS_ARTIFACT,
   PLAN_FIX_RESULT_ARTIFACT,
 } from './plan-review-prompts.js';
@@ -3049,6 +3054,7 @@ export function composeRoot(opts: ComposeOptions): Container {
       const planFixProfileName = config.phases.planReview?.enabled
         ? resolveProfileForPhaseBound!('plan-fix')
         : undefined;
+      const planReviewDeltaScopedReReview = config.phases.planReview?.deltaScopedReReview ?? true;
       const planReviewArbiterProfileName = resolveArbiterProfileName(
         config.agent.phaseProfiles ?? {},
       );
@@ -3082,6 +3088,7 @@ export function composeRoot(opts: ComposeOptions): Container {
 
       const planReviewRunReview = async (
         ctx: import('@ai-sdlc/application').PlanReviewContext,
+        reviewOpts?: import('@ai-sdlc/application').PlanReviewStepOptions,
       ): Promise<import('@ai-sdlc/application').PlanReviewResult> => {
         const profile = planReviewProfileName;
         if (!profile) {
@@ -3096,11 +3103,24 @@ export function composeRoot(opts: ComposeOptions): Container {
         const template = loadPromptTemplate('plan-review', 'plan-review', {
           promptsRoot: planReviewPromptsRoot,
         });
-        const promptBody = await renderPrompt(template, {
+        let promptBody = await renderPrompt(template, {
           runId: String(ctx.runId),
           vars: {},
           artifacts: planReviewArtifacts(String(ctx.runId), ctx.cwd),
         });
+        // (#716 — reviewer finding #1) When the loop passes reviewOpts for
+        // iteration >= 2, APPEND the SCOPE / DISPOSITION GUIDANCE block to
+        // the base prompt. NEVER substitute promptBody — that would discard
+        // the plan.md/design.md artifact content and WORKSPACE_CONSTRAINTS
+        // block the base prompt template renders.
+        if (
+          reviewOpts !== undefined &&
+          ctx.iterationIndex >= 2 &&
+          (reviewOpts.prevFindings !== undefined || reviewOpts.recentFixCitations !== undefined)
+        ) {
+          const scopeBlock = buildPlanReviewReviewScopeBlock(reviewOpts);
+          promptBody = `${promptBody}\n\n${scopeBlock}`;
+        }
         writeFileSync(promptPath, promptBody, 'utf-8');
 
         const startCommitSha = (() => {
@@ -3145,22 +3165,36 @@ export function composeRoot(opts: ComposeOptions): Container {
             String(ctx.runId),
             PLAN_REVIEW_FINDINGS_ARTIFACT,
           );
-          const verdictMatch = findings.match(/^## verdict\s*\n([a-z0-9_]+)/m);
-          const rawVerdict = verdictMatch?.[1];
-          const verdict =
-            rawVerdict === 'pass' ||
-            rawVerdict === 'p1_found' ||
-            rawVerdict === 'p2_only' ||
-            rawVerdict === 'proceed_with_concerns'
-              ? rawVerdict
-              : undefined;
-          const knownMatch = findings.match(/^## known_limitations\s*\n([\s\S]*?)(?=^## |\Z)/m);
-          const knownLimitations = knownMatch?.[1]?.trim() || undefined;
+          // (#716) Composition-root seam: when delta-scoped re-review is
+          // enabled, thread the artifact-store-backed `EvidenceResolver`
+          // into the parser so evidence is grounded against the live
+          // artifacts. When it is disabled, preserve the reviewer-supplied
+          // findings verbatim so the opt-out restores the pre-#716 data
+          // contract bit-for-bit.
+          let parsedFindings: Awaited<ReturnType<typeof parsePlanReviewFindings>>;
+          if (planReviewDeltaScopedReReview) {
+            parsedFindings = await parsePlanReviewFindings(
+              findings,
+              createPlanReviewEvidenceResolver(
+                planReviewArtifacts(String(ctx.runId), ctx.cwd),
+                String(ctx.runId),
+              ),
+            );
+          } else {
+            parsedFindings = await parsePlanReviewFindings(findings);
+          }
           return {
             invocationId,
             agentOutcome: 'success',
-            ...(verdict ? { verdict } : {}),
-            ...(knownLimitations ? { knownLimitations } : {}),
+            verdict: parsedFindings.verdict,
+            ...(parsedFindings.knownLimitations
+              ? {
+                  knownLimitations: parsedFindings.knownLimitations
+                    .map((line) => `- ${line}`)
+                    .join('\n'),
+                }
+              : {}),
+            findings: parsedFindings.findings as ReadonlyArray<PlanReviewFinding>,
           };
         } catch {
           return { invocationId, agentOutcome: 'failed' };
@@ -3240,6 +3274,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           return {
             invocationId,
             agentOutcome: 'success',
+            headBeforeFix: startCommitSha,
             ...(parsed.verdict ? { verdict: parsed.verdict } : {}),
             ...(parsed.summary ? { summary: parsed.summary } : {}),
             ...(parsed.rebuttal ? { rebuttal: parsed.rebuttal } : {}),
@@ -3443,6 +3478,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         runReview: planReviewRunReview,
         runFix: planReviewRunFix,
         checkManifestSync: planReviewCheckManifestSync,
+        computeLastFixDiffCitations: (cwd, headBeforeFix) =>
+          getRecentFixCitations(cwd, headBeforeFix),
         ...(planReviewRunArbiter ? { runArbiter: planReviewRunArbiter } : {}),
         ...(planReviewFinalReviewRunArbiter
           ? { runFinalReviewArbiter: planReviewFinalReviewRunArbiter }
@@ -3452,6 +3489,14 @@ export function composeRoot(opts: ComposeOptions): Container {
         reviewerMaxRetries: 2,
         now: () => new Date(),
         idFactory: () => randomUUID(),
+        options: {
+          // (#716) Composition-root seam: thread the operator-configured
+          // `deltaScopedReReview` flag into the loop. When false, the loop
+          // skips the evidence-bound gate, skips the SCOPE / DISPOSITION
+          // GUIDANCE block, and preserves reviewer-supplied evidence and
+          // verdicts as-is — restoring pre-#716 behavior bit-for-bit.
+          deltaScopedReReview: planReviewDeltaScopedReReview,
+        },
       });
 
       runStep = async (sctx: {
