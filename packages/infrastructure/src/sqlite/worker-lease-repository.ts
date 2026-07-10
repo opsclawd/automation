@@ -50,7 +50,7 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
            acquired_at = excluded.acquired_at,
            heartbeat_at = excluded.heartbeat_at,
            expires_at = excluded.expires_at
-         WHERE worker_leases.expires_at <= @acquired_at OR worker_leases.worker_id = @worker_id`,
+         WHERE worker_leases.expires_at <= @acquired_at OR (worker_leases.worker_id = @worker_id AND worker_leases.run_id = @run_id)`,
       )
       .run({
         repo_id: input.repoId,

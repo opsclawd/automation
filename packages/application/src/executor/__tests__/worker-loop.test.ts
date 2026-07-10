@@ -297,7 +297,7 @@ describe('workerLoop', () => {
     expect(executeRun).not.toHaveBeenCalled();
   });
 
-  it('permits re-acquisition of a lease if requested by the same worker currently holding it', async () => {
+  it('does not release a pre-existing lease held by the same worker on acquire conflict', async () => {
     const s = setup();
     // Simulate a worker restart: w1 already holds an unexpired lease on r1 for a
     // prior run (e.g. the process restarted and re-registered as idle before its
@@ -310,8 +310,8 @@ describe('workerLoop', () => {
       ttlMs: 60_000,
     });
 
-    // A fresh job for the same repo is queued; w1 will claim it and successfully
-    // re-acquire because it is the same worker ID currently holding the lease.
+    // A fresh job for the same repo is queued; w1 will claim it and conflict on
+    // acquire because it still holds the prior (unexpired) lease.
     s.queue.enqueue({
       job: createJob({
         id: JobId('j1'),
@@ -322,31 +322,27 @@ describe('workerLoop', () => {
       }),
     });
 
-    let runLeaseDuringExecution: unknown = null;
-    const executeCheck = async () => {
-      runLeaseDuringExecution = s.leases.current(RepositoryId('r1'));
-      return { ok: true };
-    };
-
     await workerLoop(WorkerId('w1'), {
       registry: s.registry,
       queue: s.queue,
       leases: s.leases,
       repos: s.repos,
-      executeRun: executeCheck,
+      executeRun: executeOk,
       prepareWorktree: prepareOk,
       resetWorktree: (_repoId) => {},
       isWorkerAlive: (_workerId) => true,
       recoverableRunIds: new Set([RunId('run-old'), RunId('run-1')]),
-      now: () => s.now,
+      now: () => s.now, // keep the prior lease unexpired
       ttlMs: 60_000,
       findRun: (runId) => makeRun(runId as string),
     });
 
-    expect(s.queue.findById(JobId('j1'))!.status).toBe('succeeded');
-    expect(runLeaseDuringExecution?.workerId).toBe('w1');
-    expect(runLeaseDuringExecution?.runId).toBe('run-1');
-    expect(s.leases.current(RepositoryId('r1'))).toBeUndefined();
+    // The new job is released back to queued (conflict), and crucially the prior
+    // lease this tick did NOT acquire must be preserved — not dropped by finally.
+    expect(s.queue.findById(JobId('j1'))!.status).toBe('queued');
+    const lease = s.leases.current(RepositoryId('r1'));
+    expect(lease?.workerId).toBe('w1');
+    expect(lease?.runId).toBe('run-old');
   });
 
   it('reclaimExpired recovers a dead worker lease so new worker can proceed', async () => {
