@@ -279,9 +279,9 @@ describe('SweepWaitingRuns', () => {
     const sweep = new SweepWaitingRuns(deps);
     const result = await sweep.execute();
     expect(result.reactivatedRuns).toHaveLength(1);
-    expect(result.reactivatedRuns[0]?.uuid).toBe('w8');
-    expect(result.reactivatedRuns[0]?.repoId).toBe('owner/repo');
-    expect(result.reactivatedRuns[0]?.issueNumber).toBe(7);
+    expect(result.reactivatedRuns[0]?.run.uuid).toBe('w8');
+    expect(result.reactivatedRuns[0]?.run.repoId).toBe('owner/repo');
+    expect(result.reactivatedRuns[0]?.run.issueNumber).toBe(7);
   });
 
   it('does not include a merged-PR finalization in reactivatedRuns', async () => {

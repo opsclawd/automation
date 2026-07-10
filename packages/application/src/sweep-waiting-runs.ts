@@ -24,7 +24,7 @@ export interface SweepWaitingRunsDeps {
 export interface SweepWaitingRunsResult {
   scanned: number;
   reactivated: number;
-  reactivatedRuns: RunRecord[];
+  reactivatedRuns: Array<{ run: RunRecord; reason: string; targetTime?: Date; timerId?: string }>;
   timedOut: number;
   passedOnMergedPr: number;
   cancelledOnClosedPr: number;
@@ -191,7 +191,7 @@ export class SweepWaitingRuns {
           this.deps.applyReactivation(run, decision);
           if (decision.action === 'reactivate') {
             result.reactivated++;
-            result.reactivatedRuns.push(run);
+            result.reactivatedRuns.push({ run, reason: decision.reason });
           } else if (decision.action === 'timeout') result.timedOut++;
           else result.stayedReady++;
         } catch (err) {
