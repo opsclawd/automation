@@ -216,7 +216,10 @@ function parseFindingBlock(severity: string, lines: string[]): PlanReviewFinding
 
   const findingBase = {
     severity: parseSeverityToken(severity),
-    citation: parsedFields.citation.trim(),
+    citation: parsedFields.citation
+      .trim()
+      .replace(/(^`|`$)/g, '')
+      .trim(),
     failureScenario: parsedFields.failureScenario.trim(),
     evidence: parseEvidenceToken(parsedFields.evidence),
   };

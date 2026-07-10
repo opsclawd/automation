@@ -22,8 +22,8 @@ describe('parsePlanReviewFindings', () => {
       '- Keep the temporary compatibility shim',
       '',
       '## findings',
-      '- [P1] plan.md:42 | The rollback path is missing from the error handler | grounded | still_open',
-      '- [P2] docs/notes.md:8 | The wording in the recovery note is too vague | ungrounded',
+      '- [P1] `plan.md:42` | The rollback path is missing from the error handler | grounded | still_open',
+      '- [P2] `docs/notes.md:8` | The wording in the recovery note is too vague | ungrounded',
       '',
     );
 
@@ -54,7 +54,7 @@ describe('parsePlanReviewFindings', () => {
       'p1_found',
       '',
       '## findings',
-      '- [P1] plan.md:42 | The rollback path is missing',
+      '- [P1] `plan.md:42` | The rollback path is missing',
       '  from the error handler | grounded | addressed',
       '',
     );
@@ -76,12 +76,12 @@ describe('parsePlanReviewFindings', () => {
   it.each([
     [
       'missing verdict section',
-      buildMarkdown('## findings', '- [P1] plan.md:1 | defect | grounded'),
+      buildMarkdown('## findings', '- [P1] `plan.md:1` | defect | grounded'),
     ],
     ['missing findings section', buildMarkdown('## verdict', 'pass')],
     [
       'invalid verdict value',
-      buildMarkdown('## verdict', 'maybe', '## findings', '- [P2] plan.md:1 | defect | grounded'),
+      buildMarkdown('## verdict', 'maybe', '## findings', '- [P2] `plan.md:1` | defect | grounded'),
     ],
     [
       'invalid severity token',
@@ -89,12 +89,12 @@ describe('parsePlanReviewFindings', () => {
         '## verdict',
         'p1_found',
         '## findings',
-        '- [P3] plan.md:1 | defect | grounded',
+        '- [P3] `plan.md:1` | defect | grounded',
       ),
     ],
     [
       'pass verdict with findings rejected',
-      buildMarkdown('## verdict', 'pass', '## findings', '- [P2] plan.md:1 | defect | grounded'),
+      buildMarkdown('## verdict', 'pass', '## findings', '- [P2] `plan.md:1` | defect | grounded'),
     ],
     ['p1_found with no findings rejected', buildMarkdown('## verdict', 'p1_found', '## findings')],
     [
@@ -105,7 +105,7 @@ describe('parsePlanReviewFindings', () => {
         '## known_limitations',
         '- keep the shim',
         '## findings',
-        '- [P2] plan.md:1 | defect | grounded',
+        '- [P2] `plan.md:1` | defect | grounded',
       ),
     ],
     [
@@ -114,7 +114,7 @@ describe('parsePlanReviewFindings', () => {
         '## verdict',
         'proceed_with_concerns',
         '## findings',
-        '- [P1] plan.md:1 | defect | grounded',
+        '- [P1] `plan.md:1` | defect | grounded',
       ),
     ],
     [
@@ -125,7 +125,7 @@ describe('parsePlanReviewFindings', () => {
         '## known_limitations',
         '',
         '## findings',
-        '- [P1] plan.md:1 | defect | grounded',
+        '- [P1] `plan.md:1` | defect | grounded',
       ),
     ],
   ])('throws PlanReviewFindingsParseError for %s', (_label, markdown) => {

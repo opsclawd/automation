@@ -1069,19 +1069,16 @@ export class PlanReviewLoop {
     reviewerVerdict: NonNullable<PlanReviewResult['verdict']>,
     eligible: ReadonlyArray<PlanReviewFinding>,
   ): NonNullable<PlanReviewResult['verdict']> {
-    const hasEligibleP1 = eligible.some((f) => f.severity === 'P1');
-    const hasBlockingGrounded = eligible.some((f) => f.severity === 'P0' || f.severity === 'P1');
-
-    if (hasBlockingGrounded) {
-      if (reviewerVerdict === 'proceed_with_concerns') {
-        return hasEligibleP1 ? 'proceed_with_concerns' : 'p2_only';
-      }
-      return 'p1_found';
+    const hasP0 = eligible.some((f) => f.severity === 'P0');
+    const hasP1 = eligible.some((f) => f.severity === 'P1');
+    if (hasP0) return 'p1_found';
+    if (hasP1) {
+      return reviewerVerdict === 'proceed_with_concerns' ? 'proceed_with_concerns' : 'p1_found';
     }
 
-    // No eligible P0/P1: any blocking verdict must downgrade.
-    if (reviewerVerdict === 'p1_found') return 'p2_only';
-    if (reviewerVerdict === 'proceed_with_concerns') return 'p2_only';
+    if (reviewerVerdict === 'p1_found' || reviewerVerdict === 'proceed_with_concerns') {
+      return 'p2_only';
+    }
     return reviewerVerdict;
   }
 }
