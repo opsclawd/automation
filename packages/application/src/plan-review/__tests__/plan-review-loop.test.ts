@@ -921,3 +921,203 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations[0]?.outcome).toBe('unresolved');
   });
 });
+
+describe('PlanReviewLoop deltaScopedReReview (#716)', () => {
+  // Helper: stub runReview that records the opts argument on each call.
+  function makeRecordingRunReview(
+    verdictSequence: Array<'pass' | 'p1_found' | 'p2_only'>,
+    findingsSequence: Array<ReadonlyArray<import('../types.js').PlanReviewFinding>> = [],
+  ) {
+    const calls: Array<{
+      ctx: import('../types.js').PlanReviewContext;
+      opts?: import('../types.js').PlanReviewStepOptions;
+    }> = [];
+    let i = 0;
+    const runReview = async (
+      ctx: import('../types.js').PlanReviewContext,
+      opts?: import('../types.js').PlanReviewStepOptions,
+    ): Promise<import('../types.js').PlanReviewResult> => {
+      calls.push({ ctx, opts });
+      const verdict = verdictSequence[i] ?? 'pass';
+      const findings = findingsSequence[i] ?? [];
+      i += 1;
+      return {
+        invocationId: `rev-${i}`,
+        agentOutcome: 'success' as const,
+        verdict,
+        findings,
+      };
+    };
+    return { runReview, calls };
+  }
+
+  it('AC #1 — iteration 2 passes prevFindings and their current dispositions to runReview', async () => {
+    const { runReview, calls } = makeRecordingRunReview(
+      ['p1_found', 'pass'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A',
+            evidence: 'grounded',
+          },
+        ],
+        [],
+      ],
+    );
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.opts?.prevFindings).toEqual([
+      {
+        severity: 'P1',
+        citation: 'plan.md:42',
+        failureScenario: 'defect A',
+        evidence: 'grounded',
+        disposition: 'still_open',
+      },
+    ]);
+  });
+
+  it('AC #1 negative — options.deltaScopedReReview=false omits prevFindings', async () => {
+    const { runReview, calls } = makeRecordingRunReview(['p1_found', 'pass']);
+    const { deps } = makeDeps({
+      runReview,
+      options: { deltaScopedReReview: false },
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.opts).toBeUndefined();
+  });
+
+  it('AC #2 regression — out-of-scope finding dropped from verdict computation', async () => {
+    // Iter 1: returns a frozen finding (P1 at plan.md:42).
+    // Iter 2: returns a NEW finding about pre-existing prose (plan.md:99)
+    //         that the fix did NOT touch — must be dropped.
+    const { runReview } = makeRecordingRunReview(
+      ['p1_found', 'p2_only'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A',
+            evidence: 'grounded',
+          },
+        ],
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:99',
+            failureScenario: 'unrelated defect',
+            evidence: 'grounded',
+          },
+        ],
+      ],
+    );
+    // lastFixDiffCitations defaults to [] when computeLastFixDiffCitations
+    // returns [] (no headBeforeFix). Every iter-2 finding outside the frozen
+    // set is out of scope (the safe default per reviewer finding #1).
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(2);
+    expect(out.loop.iterations[1]?.outcome).toBe('resolved');
+  });
+
+  it('AC #2 positive control — finding targeting recent-fix citation is eligible', async () => {
+    // Stub runReview to return a frozen finding on iter 1 and a finding on
+    // iter 2 whose citation is in the recent-fix citation list — supplied
+    // by computeLastFixDiffCitations returning ['plan.md:42'].
+    const { runReview, calls } = makeRecordingRunReview(
+      ['p1_found', 'p2_only'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A',
+            evidence: 'grounded',
+          },
+        ],
+        [
+          {
+            severity: 'P1',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A still open',
+            evidence: 'grounded',
+          },
+        ],
+      ],
+    );
+    const { deps } = makeDeps({
+      runReview,
+      computeLastFixDiffCitations: () => ['plan.md:42'],
+    });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    expect(calls[1]?.opts?.prevFindings).toBeDefined();
+    // The frozen finding is re-flagged with the same citation → eligible.
+    expect(out.loop.status).toBe('converged');
+  });
+
+  it('AC #3 — ungrounded P1 cannot produce p1_found (downgrades to p2_only)', async () => {
+    const { runReview } = makeRecordingRunReview(
+      ['p1_found', 'pass'],
+      [
+        [
+          {
+            severity: 'P1',
+            citation: '',
+            failureScenario: 'no citation',
+            evidence: 'ungrounded',
+          },
+        ],
+        [],
+      ],
+    );
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    // Iter 1: reviewer says p1_found, but no grounded P0/P1 → downgrade to
+    // p2_only → resolve (no fix needed).
+    expect(out.outcome).toBe('success');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.outcome).toBe('resolved');
+  });
+
+  it('AC #4 — finding-set is frozen at iteration 1', async () => {
+    const frozen = [
+      {
+        severity: 'P1' as const,
+        citation: 'plan.md:42',
+        failureScenario: 'defect A',
+        evidence: 'grounded' as const,
+      },
+    ];
+    const { runReview, calls } = makeRecordingRunReview(
+      ['p1_found', 'pass'],
+      [
+        frozen,
+        [
+          {
+            severity: 'P2',
+            citation: 'plan.md:42',
+            failureScenario: 'defect A — now P2',
+            evidence: 'grounded' as const,
+          },
+        ],
+      ],
+    );
+    const { deps } = makeDeps({ runReview });
+    const out = await new PlanReviewLoop(deps).execute(baseInput());
+    expect(out.outcome).toBe('success');
+    // The frozen finding list passed on iteration 2 must equal the iter-1
+    // finding list (frozen at the end of iter 1).
+    expect(calls[1]?.opts?.prevFindings).toEqual(
+      frozen.map((f) => ({ ...f, disposition: 'still_open' })),
+    );
+  });
+});
