@@ -85,13 +85,13 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
     git,
     agent,
     prReviewRepo: repo,
-    renderTaskPrompt: async ({ comment }) => {
+    renderTaskPrompt: async ({ comments }) => {
       currentCommentId = comment.commentId;
       return '/tmp/prompt.md';
     },
     extractTaskResult: async () => ({
       ok: true,
-      result: { commentId: currentCommentId, action: 'fixed', replyBody: 'Renamed.' },
+      result: { "9001": { action: 'fixed', replyBody: 'Renamed.' } },
     }),
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => ({ passed: true }),
@@ -325,13 +325,13 @@ describe('ProcessPrReviewComments — multi-comment line-shift', () => {
       git,
       agent,
       prReviewRepo: repo,
-      renderTaskPrompt: async ({ comment }) => {
+      renderTaskPrompt: async ({ comments }) => {
         currentCommentId = comment.commentId;
         return '/tmp/p.md';
       },
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: currentCommentId, action: 'fixed', replyBody: 'fixed' },
+        result: { "9001": { action: 'fixed', replyBody: 'fixed' } },
       }),
       verifyCommitPushed: async () => true,
       verifyBuildPasses: async () => ({ passed: true }),

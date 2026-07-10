@@ -94,7 +94,7 @@ function makeDeps(overrides: Partial<PollTaskRunnerDeps> = {}): {
     renderTaskPrompt: async () => '/tmp/prompt.md',
     extractTaskResult: async () => ({
       ok: true,
-      result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
+      result: { '9001': { action: 'fixed', replyBody: 'Renamed foo to bar.' } },
     }),
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => ({ passed: true }),
@@ -158,7 +158,7 @@ describe('PollTaskRunner — happy path', () => {
     const { deps, github, git } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'no_fix', replyBody: 'Comment is invalid.' },
+        result: { '9001': { action: 'no_fix', replyBody: 'Comment is invalid.' } },
       }),
     });
     const runner = new PollTaskRunner(deps);
@@ -204,7 +204,7 @@ describe('PollTaskRunner — happy path', () => {
         capturedCwd = input.cwd;
         return {
           ok: true,
-          result: { commentId: 9001, action: 'fixed', replyBody: 'done.' },
+          result: { "9001": { action: 'fixed', replyBody: 'done.' } },
         };
       },
     });
@@ -342,7 +342,7 @@ describe('PollTaskRunner — failure isolation', () => {
     const { deps, github } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9999, action: 'fixed', replyBody: 'Renamed.' },
+        result: { "9001": { action: 'fixed', replyBody: 'Renamed.' } },
       }),
     });
     const runner = new PollTaskRunner(deps);

@@ -114,23 +114,28 @@ function makeDeps(overrides: Partial<ProcessPrReviewDeps> = {}): {
   git.remoteRefs.set('origin/feat-x', 'abc123');
 
   let replyCounter = 0;
-  // Mirror production: the prompt is rendered per comment and the agent's
-  // result.json carries that comment's id, so the extracted result's
-  // commentId always matches the comment being processed.
-  let currentCommentId = 9001;
+  // Mirror production: the prompt is rendered per batch and the agent's
+  // result.json carries results for those comments.
+  let currentCommentIds: number[] = [];
   const deps: ProcessPrReviewDeps = {
     github,
     git,
     agent,
     prReviewRepo: repo,
-    renderTaskPrompt: async ({ comment }) => {
-      currentCommentId = comment.commentId;
+    renderTaskPrompt: async ({ comments }) => {
+      currentCommentIds = comments.map((c) => c.commentId);
       return '/tmp/prompt.md';
     },
-    extractTaskResult: async () => ({
-      ok: true,
-      result: { commentId: currentCommentId, action: 'fixed', replyBody: 'Renamed foo to bar.' },
-    }),
+    extractTaskResult: async () => {
+      const result: any = {};
+      for (const id of currentCommentIds) {
+        result[String(id)] = { action: 'fixed', replyBody: 'Renamed foo to bar.' };
+      }
+      return {
+        ok: true,
+        result,
+      };
+    },
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => ({ passed: true }),
     resolveProfileForPhase: () => 'post-pr-review-profile' as never,
@@ -164,13 +169,13 @@ describe('ProcessPrReviewComments — happy path', () => {
     expect(github.repliesPosted).toContainEqual({
       repoFullName: 'o/r',
       prNumber: 5,
-      commentId: 9001,
+
       body: 'Renamed foo to bar.',
     });
     expect(github.resolvedThreads).toContainEqual({
       repoFullName: 'o/r',
       prNumber: 5,
-      commentId: 9001,
+
     });
     const comment = repo.getComment(runId, 9001);
     expect(comment?.state).toBe('processed');
@@ -189,7 +194,7 @@ describe('ProcessPrReviewComments — dedup', () => {
     const seeded = createPrReviewComment({
       runId,
       prNumber: 5,
-      commentId: 9001,
+
       path: 'a.ts',
       line: 3,
       reviewer: 'octocat',
@@ -225,7 +230,7 @@ describe('ProcessPrReviewComments — dedup', () => {
     const seeded = createPrReviewComment({
       runId,
       prNumber: 5,
-      commentId: 9001,
+
       path: 'a.ts',
       line: 3,
       reviewer: 'octocat',
@@ -291,7 +296,7 @@ describe('ProcessPrReviewComments — blocking', () => {
       verifyBuildPasses: async () => ({ passed: false }),
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
+        result: { "9001": { action: 'fixed', replyBody: 'attempted fix' } },
       }),
     });
     const uc = new ProcessPrReviewComments(deps);
@@ -363,7 +368,7 @@ describe('ProcessPrReviewComments — no_fix action', () => {
     const { deps, github, repo } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'no_fix', replyBody: 'Intentional design choice.' },
+        result: { "9001": { action: 'no_fix', replyBody: 'Intentional design choice.' } },
       }),
     });
     github.comments.set('o/r/5', [
@@ -395,7 +400,7 @@ describe('ProcessPrReviewComments — no_fix action', () => {
     expect(github.resolvedThreads).toContainEqual({
       repoFullName: 'o/r',
       prNumber: 5,
-      commentId: 9001,
+
     });
   });
 });
@@ -422,13 +427,13 @@ describe('ProcessPrReviewComments — multiple comments', () => {
     let activeCommentId = 0;
     const { deps, github, repo } = makeDeps({
       agent,
-      renderTaskPrompt: async ({ comment }) => {
-        activeCommentId = comment.commentId;
+      renderTaskPrompt: async ({ comments }) => {
+        activeCommentIds = comments.map(c => c.commentId);
         return '/tmp/prompt.md';
       },
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: activeCommentId, ...resultsById[activeCommentId]! },
+        result: Object.fromEntries(activeCommentIds.map(id => [id, resultsById[id]])) ,
       }),
     });
     github.comments.set('o/r/5', [
@@ -768,13 +773,13 @@ describe('ProcessPrReviewComments — agent blocks a comment', () => {
     const { deps, github, repo } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
-        result: {
-          commentId: 9001,
+        result: { "9001": {
+
           action: 'blocked',
           replyBody: 'Cannot fix this safely.',
           blockedReason: 'blocked by agent',
         },
-      }),
+       } }),
     });
     github.comments.set('o/r/5', [
       {
@@ -822,7 +827,7 @@ describe('ProcessPrReviewComments — replied with failed verification prevents 
       verifyBuildPasses: async () => ({ passed: false }),
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
+        result: { "9001": { action: 'fixed', replyBody: 'attempted fix' } },
       }),
     });
     github.comments.set('o/r/5', [
@@ -867,7 +872,7 @@ describe('ProcessPrReviewComments — orphan verification uses remoteRef', () =>
     const seeded = createPrReviewComment({
       runId,
       prNumber: 5,
-      commentId: 9001,
+
       path: 'a.ts',
       line: 3,
       reviewer: 'octocat',
@@ -931,7 +936,7 @@ describe('ProcessPrReviewComments — lenient reply verification', () => {
     const seeded = createPrReviewComment({
       runId,
       prNumber: 5,
-      commentId: 9001,
+
       path: 'a.ts',
       line: 3,
       reviewer: 'octocat',
@@ -1051,7 +1056,7 @@ describe('ProcessPrReviewComments — reset to pending on failed verification', 
       verifyBuildPasses: async () => ({ passed: false }),
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
+        result: { "9001": { action: 'fixed', replyBody: 'attempted fix' } },
       }),
     });
     github.comments.set('o/r/5', [
@@ -1109,7 +1114,7 @@ describe('ProcessPrReviewComments — build failure feedback', () => {
       },
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'attempted fix' },
+        result: { "9001": { action: 'fixed', replyBody: 'attempted fix' } },
       }),
     });
     github.comments.set('o/r/5', [
@@ -1620,7 +1625,7 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
     const seeded = createPrReviewComment({
       runId,
       prNumber: 5,
-      commentId: 9001,
+
       path: 'a.ts',
       line: 3,
       reviewer: 'octocat',
@@ -1662,7 +1667,7 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
       renderTaskPrompt: async () => '/tmp/prompt.md',
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
+        result: { "9001": { action: 'fixed', replyBody: 'Renamed foo to bar.' } },
       }),
       verifyCommitPushed: async (input) => {
         if (!input.commitSha) verifyCalledWithoutCommitSha = true;
@@ -1741,7 +1746,7 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
       renderTaskPrompt: async () => '/tmp/prompt.md',
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
+        result: { "9001": { action: 'fixed', replyBody: 'Renamed foo to bar.' } },
       }),
       verifyCommitPushed: async () => true,
       verifyBuildPasses: async () => ({ passed: true }),
@@ -1816,7 +1821,7 @@ describe('ProcessPrReviewComments — local main checkout guard', () => {
       renderTaskPrompt: async () => '/tmp/prompt.md',
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
+        result: { "9001": { action: 'fixed', replyBody: 'Renamed foo to bar.' } },
       }),
       verifyCommitPushed: async () => true,
       verifyBuildPasses: async () => ({ passed: true }),
@@ -1968,13 +1973,13 @@ describe('ProcessPrReviewComments — rollback on budget exhaustion', () => {
     const { deps } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
-        result: {
-          commentId: 9001,
+        result: { "9001": {
+
           action: 'blocked' as const,
           replyBody: 'This change breaks type safety.',
           blockedReason: 'Type unsafe',
         },
-      }),
+       } }),
       rollbackFix: async (ctx, sha) => {
         rollbackCalls.push({ ctx, sha });
         return true;
@@ -2018,7 +2023,7 @@ describe('ProcessPrReviewComments - codeVerified retry behavior', () => {
       },
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'Fixed.' },
+        result: { "9001": { action: 'fixed', replyBody: 'Fixed.' } },
       }),
     });
 
@@ -2067,7 +2072,7 @@ describe('ProcessPrReviewComments - codeVerified retry behavior', () => {
       verifyCodeChange: async () => ({ pass: false, reason: 'never satisfied' }),
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'fixed', replyBody: 'Fixed.' },
+        result: { "9001": { action: 'fixed', replyBody: 'Fixed.' } },
       }),
       rollbackFix: async (ctx, sha) => {
         rollbackCalls.push({ ctx, sha });

@@ -887,66 +887,128 @@ export async function buildImplementStepFixPrompt(
 
 export interface BuildPostPrReviewTaskPromptInput {
   cwd: string;
-  comment: {
+  comments: {
     commentId: number;
     path: string;
     line: number;
     body: string;
-  };
+  }[];
+  attempt: number;
   diff: string;
   previousBuildError?: string;
   previousCodeVerifyReason?: string;
+  selectedContext?: import('@ai-sdlc/application').SelectedContext;
 }
 
 export function buildPostPrReviewTaskPrompt(input: BuildPostPrReviewTaskPromptInput): string {
-  const { cwd, comment, diff, previousBuildError, previousCodeVerifyReason } = input;
+  const {
+    cwd,
+    comments,
+    attempt,
+    diff: _diff,
+    previousBuildError,
+    previousCodeVerifyReason,
+    selectedContext,
+  } = input;
   const sections = [
     '# PR Review Comment Task',
     '',
     WORKSPACE_CONSTRAINTS,
     '',
-    'Address the following PR review comment:',
+    'Address the following PR review comments:',
     '',
-    `- [commentId: ${comment.commentId}] ${comment.path}:${comment.line} - ${comment.body}`,
-    '',
-    '## Current Diff',
-    '',
-    diff,
+    ...comments.map(
+      (comment) =>
+        `- [commentId: ${comment.commentId}] ${comment.path}:${comment.line} - ${comment.body}`,
+    ),
     '',
   ];
 
-  if (previousBuildError !== undefined) {
-    const truncatedError =
-      previousBuildError.length > 4000
-        ? previousBuildError.slice(0, 2000) +
-          '\n... (truncated) ...\n' +
-          previousBuildError.slice(-2000)
-        : previousBuildError;
-    sections.push(
-      '## Previous Attempt Failed',
-      '',
-      'The previous fix attempt failed the build with the following error:',
-      '',
-      '```',
-      truncatedError,
-      '```',
-      '',
-      'Please adjust your fix to resolve this error.',
-      '',
-    );
+  if (selectedContext) {
+    sections.push('## Context');
+    if (selectedContext.comments && selectedContext.comments.length > 0) {
+      sections.push('### Per-Comment Context');
+      for (const cc of selectedContext.comments) {
+        sections.push(`#### Comment ${cc.commentId} (${cc.path}:${cc.line})`);
+        sections.push(cc.context);
+        sections.push('');
+      }
+    }
+
+    if (selectedContext.files && selectedContext.files.length > 0) {
+      sections.push('### Reference Files');
+      for (const file of selectedContext.files) {
+        sections.push(`#### ${file.path}`);
+        sections.push('```');
+        sections.push(file.content);
+        sections.push('```');
+        sections.push('');
+      }
+    }
+
+    if (selectedContext.diffs && selectedContext.diffs.length > 0) {
+      sections.push('### Context Diffs');
+      for (const d of selectedContext.diffs) {
+        if (d.path) {
+          sections.push(`#### Diff for ${d.path}`);
+        }
+        sections.push('```diff');
+        sections.push(d.content);
+        sections.push('```');
+        sections.push('');
+      }
+    }
+
+    if (selectedContext.diffStats) {
+      sections.push('### PR Diff Statistics');
+      sections.push('```');
+      sections.push(selectedContext.diffStats);
+      sections.push('```');
+      sections.push('');
+    }
+
+    if (selectedContext.additionalInfo) {
+      sections.push(selectedContext.additionalInfo);
+    }
+  } else {
+    sections.push('## Current Diff', '', _diff, '');
   }
 
-  if (previousCodeVerifyReason !== undefined) {
-    sections.push(
-      '## Previous Fix Rejected by Code Verifier',
-      '',
-      'An independent verifier reviewed your previous fix and rejected it with this reason:',
-      '',
-      `> ${previousCodeVerifyReason}`,
-      '',
-      'Please revisit your fix with this feedback in mind before trying again.',
-      '',
-    );
+  if (attempt > 1 && (previousBuildError !== undefined || previousCodeVerifyReason !== undefined)) {
+    sections.push('## Previous Attempt Feedback');
+    if (previousBuildError !== undefined) {
+      const truncatedError =
+        previousBuildError.length > 4000
+          ? previousBuildError.slice(0, 2000) +
+            '\n... (truncated) ...\n' +
+            previousBuildError.slice(-2000)
+          : previousBuildError;
+      sections.push(
+        '### Previous Attempt Failed',
+        '',
+        'The previous fix attempt failed the build with the following error:',
+        '',
+        '```',
+        truncatedError,
+        '```',
+        '',
+        'Please adjust your fix to resolve this error.',
+        '',
+      );
+    }
+
+    if (previousCodeVerifyReason !== undefined) {
+      sections.push(
+        '### Previous Fix Rejected by Code Verifier',
+        '',
+        'An independent verifier reviewed your previous fix and rejected it with this reason:',
+        '',
+        `> ${previousCodeVerifyReason}`,
+        '',
+        'Please revisit your fix with this feedback in mind before trying again.',
+        '',
+      );
+    }
   }
 
   sections.push(
@@ -4213,21 +4275,26 @@ export function composeRoot(opts: ComposeOptions): Container {
       fixDiffInspector,
       renderTaskPrompt: async ({
         cwd,
-        comment,
+        comments,
+        attempt,
         diff,
         branch: _branch,
         previousBuildError,
         previousCodeVerifyReason,
+        selectedContext,
       }) => {
         const promptDir = join(baseTmpDir, 'pr-review-prompt');
         mkdirSync(promptDir, { recursive: true });
-        const promptPath = join(promptDir, `prompt-${comment.commentId}.md`);
+        const batchId = comments.map((c) => c.commentId).join('-');
+        const promptPath = join(promptDir, `prompt-${batchId}.md`);
         const content = buildPostPrReviewTaskPrompt({
           cwd,
-          comment,
+          comments,
+          attempt,
           diff,
-          ...(previousBuildError !== undefined ? { previousBuildError } : {}),
-          ...(previousCodeVerifyReason !== undefined ? { previousCodeVerifyReason } : {}),
+          previousBuildError,
+          previousCodeVerifyReason,
+          selectedContext,
         });
         writeFileSync(promptPath, content, 'utf-8');
         return promptPath;

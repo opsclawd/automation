@@ -109,7 +109,7 @@ function makeDeps(overrides: Partial<PollTaskRunnerDeps> = {}): {
     renderTaskPrompt: async () => '/tmp/prompt.md',
     extractTaskResult: async () => ({
       ok: true,
-      result: { commentId: 9001, action: 'fixed', replyBody: 'Renamed foo to bar.' },
+      result: { '9001': { action: 'fixed', replyBody: 'Renamed foo to bar.' } },
     }),
     verifyCommitPushed: async () => true,
     verifyBuildPasses: async () => ({ passed: true }),
@@ -144,7 +144,7 @@ describe('PollTaskRunner — reply attempt ordering regression tests', () => {
     const { deps, repo } = makeDeps({
       extractTaskResult: async () => ({
         ok: true,
-        result: { commentId: 9001, action: 'no_fix', replyBody: 'Comment is invalid.' },
+        result: { '9001': { action: 'no_fix', replyBody: 'Comment is invalid.' } },
       }),
     });
     const runner = new PollTaskRunner(deps);

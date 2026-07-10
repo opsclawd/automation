@@ -9,6 +9,7 @@ import type { PrReviewRepositoryPort } from '../ports/pr-review-repository-port.
 import type { PollTaskResult } from '../results/schemas/poll-task-result.js';
 import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import { verifyComment } from './verify-comment.js';
+import { ContextSelector, type SelectedContext } from './context-selector.js';
 
 export interface PollTaskRunnerDeps {
   github: GitHubPort;
@@ -17,11 +18,13 @@ export interface PollTaskRunnerDeps {
   prReviewRepo: PrReviewRepositoryPort;
   renderTaskPrompt: (input: {
     cwd: string;
-    comment: PrReviewComment;
+    comments: PrReviewComment[];
+    attempt: number;
     diff: string;
     branch: string;
     previousBuildError?: string;
     previousCodeVerifyReason?: string;
+    selectedContext?: SelectedContext;
   }) => Promise<string>;
   extractTaskResult: (input: {
     resultJsonPath?: string;
@@ -53,7 +56,8 @@ export interface PollTaskInput {
   cwd: string;
   phaseId: PhaseName;
   pollNumber: number;
-  comment: PrReviewComment;
+  comments: PrReviewComment[];
+  attempt: number;
   diff: string;
   branch: string;
   startCommitSha: string;
@@ -64,12 +68,14 @@ export interface PollTaskInput {
 }
 
 export interface PollTaskOutput {
-  commentId: number;
-  action: 'fixed' | 'no_fix' | 'blocked' | 'failed';
-  processed: boolean;
-  blocked: boolean;
-  buildError?: string;
-  codeVerifyReason?: string;
+  comments: {
+    commentId: number;
+    action: 'fixed' | 'no_fix' | 'blocked' | 'failed';
+    processed: boolean;
+    blocked: boolean;
+    buildError?: string;
+    codeVerifyReason?: string;
+  }[];
 }
 
 export class PollTaskRunner {
@@ -77,26 +83,34 @@ export class PollTaskRunner {
 
   async execute(input: PollTaskInput): Promise<PollTaskOutput> {
     const d = this.deps;
-    const { comment } = input;
 
     await d.git.resetHard(input.cwd, input.startCommitSha);
     await d.git.cleanUntracked(input.cwd);
 
-    // 1. Render single-comment prompt
-    const promptPath = await d.renderTaskPrompt({
+    // 1. Select context
+    const selector = new ContextSelector(d.git);
+    const selectedContext = await selector.select({
       cwd: input.cwd,
-      comment: input.comment,
+      comments: input.comments,
+      attempt: input.attempt,
       diff: input.diff,
-      branch: input.branch,
-      ...(input.previousBuildError !== undefined
-        ? { previousBuildError: input.previousBuildError }
-        : {}),
-      ...(input.previousCodeVerifyReason !== undefined
-        ? { previousCodeVerifyReason: input.previousCodeVerifyReason }
-        : {}),
+      previousBuildError: input.previousBuildError,
+      previousCodeVerifyReason: input.previousCodeVerifyReason,
     });
 
-    // 2. Invoke agent
+    // 2. Render batched-comment prompt
+    const promptPath = await d.renderTaskPrompt({
+      cwd: input.cwd,
+      comments: input.comments,
+      attempt: input.attempt,
+      diff: input.diff,
+      branch: input.branch,
+      previousBuildError: input.previousBuildError,
+      previousCodeVerifyReason: input.previousCodeVerifyReason,
+      selectedContext,
+    });
+
+    // 3. Invoke agent
     const profile = d.resolveProfileForPhase('post-pr-review');
     const timeoutMs = Math.min(30, 10 + 5 * input.unresolvedCommentCount) * 60_000;
     const invocation = await d.agent.invoke({
@@ -113,14 +127,16 @@ export class PollTaskRunner {
 
     if (invocation.outcome !== 'success') {
       return {
-        commentId: comment.commentId,
-        action: 'failed',
-        processed: false,
-        blocked: false,
+        comments: input.comments.map((c) => ({
+          commentId: c.commentId,
+          action: 'failed',
+          processed: false,
+          blocked: false,
+        })),
       };
     }
 
-    // 3. Extract result
+    // 4. Extract result
     const extracted = await d.extractTaskResult(
       invocation.resultJsonPath !== undefined
         ? { resultJsonPath: invocation.resultJsonPath, cwd: input.cwd }
@@ -129,217 +145,230 @@ export class PollTaskRunner {
 
     if (!extracted.ok) {
       return {
-        commentId: comment.commentId,
-        action: 'failed',
-        processed: false,
-        blocked: false,
-      };
-    }
-
-    const result = extracted.result;
-
-    if (result.commentId !== comment.commentId) {
-      return {
-        commentId: comment.commentId,
-        action: 'failed',
-        processed: false,
-        blocked: false,
-      };
-    }
-
-    if (result.action === 'blocked') {
-      await this.postReplyIfMissing(input, result.replyBody);
-      d.prReviewRepo.insertReply({
-        id: d.idFactory(),
-        runId: input.runId,
-        prNumber: input.prNumber,
-        commentId: comment.commentId,
-        body: result.replyBody,
-        postedAt: d.now(),
-        verified: true,
-      });
-      d.prReviewRepo.upsertComment(blockComment(comment, result.blockedReason ?? 'agent blocked'));
-      return {
-        commentId: comment.commentId,
-        action: 'blocked',
-        processed: false,
-        blocked: true,
-      };
-    }
-
-    if (result.action === 'no_fix') {
-      const githubReplyId = await this.postReplyIfMissing(input, result.replyBody);
-      const replyRecordId = d.idFactory();
-      d.prReviewRepo.insertReply({
-        id: replyRecordId,
-        runId: input.runId,
-        prNumber: input.prNumber,
-        commentId: comment.commentId,
-        body: result.replyBody,
-        postedAt: d.now(),
-        verified: true,
-      });
-
-      const replied = markReplied(comment, {
-        replyId: githubReplyId,
-        outcome: 'no_fix',
-        poll: input.pollNumber,
-      });
-      d.prReviewRepo.upsertComment(replied);
-
-      const verification = await verifyComment(replied, d, {
-        cwd: input.cwd,
-        branch: input.branch,
-        prNumber: input.prNumber,
-        repoFullName: input.repoFullName,
-        originalStartCommitSha: input.originalStartCommitSha,
-        runningStartSha: input.startCommitSha,
-        repoId: String(input.repoId),
-      });
-
-      if (verification.ok) {
-        d.prReviewRepo.upsertComment(
-          markProcessed(replied, {
-            commitVerified: verification.commitVerified,
-            replyVerified: verification.replyVerified,
-            buildVerified: verification.buildVerified,
-          }),
-        );
-        await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
-        return {
-          commentId: comment.commentId,
-          action: 'no_fix',
-          processed: true,
-          blocked: false,
-        };
-      }
-
-      return {
-        commentId: comment.commentId,
-        action: 'no_fix',
-        processed: false,
-        blocked: false,
-      };
-    }
-
-    if (result.action === 'fixed') {
-      const fixCommitSha = await d.git.headCommitSha(input.cwd);
-      if (fixCommitSha === input.startCommitSha) {
-        await this.resetToStart(input);
-        return {
-          commentId: comment.commentId,
-          action: 'fixed',
+        comments: input.comments.map((c) => ({
+          commentId: c.commentId,
+          action: 'failed',
           processed: false,
           blocked: false,
-          buildError: 'agent did not produce a new commit (commitSha unchanged)',
-        };
-      }
+        })),
+      };
+    }
 
-      const buildResult = await d.verifyBuildPasses({
-        cwd: input.cwd,
-        runId: String(input.runId),
-      });
-      if (!buildResult.passed) {
-        await this.resetToStart(input);
-        return {
+    const batchResult = extracted.result;
+    const results: PollTaskOutput['comments'] = [];
+
+    // 5. Verify each comment in the batch independently
+    for (const comment of input.comments) {
+      const result = batchResult[String(comment.commentId)];
+      if (!result) {
+        results.push({
           commentId: comment.commentId,
-          action: 'fixed',
+          action: 'failed',
           processed: false,
           blocked: false,
-          ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
-        };
+        });
+        continue;
       }
 
-      if (d.verifyCodeChange) {
-        const codeResult = await d.verifyCodeChange({
-          commentBody: comment.body,
-          path: comment.path,
-          line: comment.line,
+      if (result.action === 'blocked') {
+        await this.postReplyIfMissing(input, comment.commentId, result.replyBody);
+        d.prReviewRepo.insertReply({
+          id: d.idFactory(),
+          runId: input.runId,
+          prNumber: input.prNumber,
+          commentId: comment.commentId,
+          body: result.replyBody,
+          postedAt: d.now(),
+          verified: true,
+        });
+        d.prReviewRepo.upsertComment(blockComment(comment, result.blockedReason ?? 'agent blocked'));
+        results.push({
+          commentId: comment.commentId,
+          action: 'blocked',
+          processed: false,
+          blocked: true,
+        });
+        continue;
+      }
+
+      if (result.action === 'no_fix') {
+        const githubReplyId = await this.postReplyIfMissing(input, comment.commentId, result.replyBody);
+        const replyRecordId = d.idFactory();
+        d.prReviewRepo.insertReply({
+          id: replyRecordId,
+          runId: input.runId,
+          prNumber: input.prNumber,
+          commentId: comment.commentId,
+          body: result.replyBody,
+          postedAt: d.now(),
+          verified: true,
+        });
+
+        const replied = markReplied(comment, {
+          replyId: githubReplyId,
+          outcome: 'no_fix',
+          poll: input.pollNumber,
+        });
+        d.prReviewRepo.upsertComment(replied);
+
+        const verification = await verifyComment(replied, d, {
           cwd: input.cwd,
-          startCommitSha: input.startCommitSha,
-          fixCommitSha,
-          runId: String(input.runId),
+          branch: input.branch,
+          prNumber: input.prNumber,
+          repoFullName: input.repoFullName,
+          originalStartCommitSha: input.originalStartCommitSha,
+          runningStartSha: input.startCommitSha,
           repoId: String(input.repoId),
         });
-        if (!codeResult.pass) {
-          await this.resetToStart(input);
-          return {
+
+        if (verification.ok) {
+          d.prReviewRepo.upsertComment(
+            markProcessed(replied, {
+              commitVerified: verification.commitVerified,
+              replyVerified: verification.replyVerified,
+              buildVerified: verification.buildVerified,
+            }),
+          );
+          await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+          results.push({
+            commentId: comment.commentId,
+            action: 'no_fix',
+            processed: true,
+            blocked: false,
+          });
+        } else {
+          results.push({
+            commentId: comment.commentId,
+            action: 'no_fix',
+            processed: false,
+            blocked: false,
+          });
+        }
+        continue;
+      }
+
+      if (result.action === 'fixed') {
+        const fixCommitSha = await d.git.headCommitSha(input.cwd);
+        if (fixCommitSha === input.startCommitSha) {
+          results.push({
             commentId: comment.commentId,
             action: 'fixed',
             processed: false,
             blocked: false,
-            codeVerifyReason: codeResult.reason,
-          };
+            buildError: 'agent did not produce a new commit (commitSha unchanged)',
+          });
+          continue;
         }
-      }
 
-      await d.git.push({ cwd: input.cwd, branch: input.branch });
+        const buildResult = await d.verifyBuildPasses({
+          cwd: input.cwd,
+          runId: String(input.runId),
+        });
+        if (!buildResult.passed) {
+          results.push({
+            commentId: comment.commentId,
+            action: 'fixed',
+            processed: false,
+            blocked: false,
+            ...(buildResult.error !== undefined ? { buildError: buildResult.error } : {}),
+          });
+          continue;
+        }
 
-      const githubReplyId = await this.postReplyIfMissing(input, result.replyBody);
-      const replyRecordId = d.idFactory();
-      d.prReviewRepo.insertReply({
-        id: replyRecordId,
-        runId: input.runId,
-        prNumber: input.prNumber,
-        commentId: comment.commentId,
-        body: result.replyBody,
-        postedAt: d.now(),
-        verified: true,
-      });
+        if (d.verifyCodeChange) {
+          const codeResult = await d.verifyCodeChange({
+            commentBody: comment.body,
+            path: comment.path,
+            line: comment.line,
+            cwd: input.cwd,
+            startCommitSha: input.startCommitSha,
+            fixCommitSha,
+            runId: String(input.runId),
+            repoId: String(input.repoId),
+          });
+          if (!codeResult.pass) {
+            results.push({
+              commentId: comment.commentId,
+              action: 'fixed',
+              processed: false,
+              blocked: false,
+              codeVerifyReason: codeResult.reason,
+            });
+            continue;
+          }
+        }
 
-      const replied = markReplied(comment, {
-        replyId: githubReplyId,
-        outcome: 'fixed',
-        commitSha: fixCommitSha,
-        poll: input.pollNumber,
-      });
-      d.prReviewRepo.upsertComment(replied);
+        await d.git.push({ cwd: input.cwd, branch: input.branch });
 
-      const verification = await verifyComment(replied, d, {
-        cwd: input.cwd,
-        branch: input.branch,
-        prNumber: input.prNumber,
-        repoFullName: input.repoFullName,
-        originalStartCommitSha: input.originalStartCommitSha,
-        runningStartSha: input.startCommitSha,
-        repoId: String(input.repoId),
-      });
-
-      if (verification.ok) {
-        d.prReviewRepo.upsertComment(
-          markProcessed(replied, {
-            commitVerified: verification.commitVerified,
-            replyVerified: verification.replyVerified,
-            buildVerified: verification.buildVerified,
-          }),
-        );
-        await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
-        return {
+        const githubReplyId = await this.postReplyIfMissing(input, comment.commentId, result.replyBody);
+        const replyRecordId = d.idFactory();
+        d.prReviewRepo.insertReply({
+          id: replyRecordId,
+          runId: input.runId,
+          prNumber: input.prNumber,
           commentId: comment.commentId,
-          action: 'fixed',
-          processed: true,
-          blocked: false,
-        };
+          body: result.replyBody,
+          postedAt: d.now(),
+          verified: true,
+        });
+
+        const replied = markReplied(comment, {
+          replyId: githubReplyId,
+          outcome: 'fixed',
+          commitSha: fixCommitSha,
+          poll: input.pollNumber,
+        });
+        d.prReviewRepo.upsertComment(replied);
+
+        const verification = await verifyComment(replied, d, {
+          cwd: input.cwd,
+          branch: input.branch,
+          prNumber: input.prNumber,
+          repoFullName: input.repoFullName,
+          originalStartCommitSha: input.originalStartCommitSha,
+          runningStartSha: input.startCommitSha,
+          repoId: String(input.repoId),
+        });
+
+        if (verification.ok) {
+          d.prReviewRepo.upsertComment(
+            markProcessed(replied, {
+              commitVerified: verification.commitVerified,
+              replyVerified: verification.replyVerified,
+              buildVerified: verification.buildVerified,
+            }),
+          );
+          await d.github.resolveReviewThread(input.repoFullName, input.prNumber, comment.commentId);
+          results.push({
+            commentId: comment.commentId,
+            action: 'fixed',
+            processed: true,
+            blocked: false,
+          });
+        } else {
+          results.push({
+            commentId: comment.commentId,
+            action: 'fixed',
+            processed: false,
+            blocked: false,
+            ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
+            ...(verification.codeVerifyReason !== undefined
+              ? { codeVerifyReason: verification.codeVerifyReason }
+              : {}),
+          });
+        }
+        continue;
       }
 
-      return {
+      results.push({
         commentId: comment.commentId,
-        action: 'fixed',
+        action: 'failed',
         processed: false,
         blocked: false,
-        ...(verification.buildError !== undefined ? { buildError: verification.buildError } : {}),
-        ...(verification.codeVerifyReason !== undefined
-          ? { codeVerifyReason: verification.codeVerifyReason }
-          : {}),
-      };
+      });
     }
 
-    return {
-      commentId: comment.commentId,
-      action: 'failed',
-      processed: false,
-      blocked: false,
-    };
+    return { comments: results };
   }
 
   private async resetToStart(input: PollTaskInput): Promise<void> {
@@ -347,12 +376,16 @@ export class PollTaskRunner {
     await this.deps.git.cleanUntracked(input.cwd);
   }
 
-  private async postReplyIfMissing(input: PollTaskInput, body: string): Promise<number> {
+  private async postReplyIfMissing(
+    input: PollTaskInput,
+    commentId: number,
+    body: string,
+  ): Promise<number> {
     const repliesBefore = await this.deps.github.listReviewComments(
       input.repoFullName,
       input.prNumber,
     );
-    const existingReply = repliesBefore.find((c) => c.inReplyToId === input.comment.commentId);
+    const existingReply = repliesBefore.find((c) => c.inReplyToId === commentId);
     if (existingReply) {
       return existingReply.id;
     }
@@ -360,7 +393,7 @@ export class PollTaskRunner {
     const newReply = await this.deps.github.replyToReviewComment(
       input.repoFullName,
       input.prNumber,
-      input.comment.commentId,
+      commentId,
       body,
     );
 
