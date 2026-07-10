@@ -1,6 +1,6 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { join, relative, isAbsolute } from 'node:path';
-import { readFileSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import {
   AgentInvocationId,
   AgentProfileName,
@@ -29,7 +29,7 @@ export interface AgentRuntimeRouterOptions {
   usageRepository?: AgentUsagePort;
   clock?: () => Date;
   idFactory?: () => string;
-  readPromptChars?: (path: string) => number;
+  readPromptContent?: (path: string) => string;
   env?: Record<string, string | undefined>;
 }
 
@@ -70,15 +70,13 @@ function tryParseOpenCodeError(line: string): string | null {
 export class AgentRuntimeRouter implements AgentPort {
   private readonly clock: () => Date;
   private readonly idFactory: () => string;
-  private readonly readPromptChars: (path: string) => number;
   private readonly readPromptContent: (path: string) => string;
   private readonly env: Record<string, string | undefined>;
 
   constructor(private readonly opts: AgentRuntimeRouterOptions) {
     this.clock = opts.clock ?? (() => new Date());
     this.idFactory = opts.idFactory ?? (() => randomUUID());
-    this.readPromptChars = opts.readPromptChars ?? defaultReadPromptChars;
-    this.readPromptContent = defaultReadPromptContent;
+    this.readPromptContent = opts.readPromptContent ?? defaultReadPromptContent;
     this.env = opts.env ?? process.env;
   }
 
@@ -600,15 +598,6 @@ function isQuotaError(result: AgentInvocationResult): string | null {
     return testQuotaPatterns(stderr, { maxLines: 2000 });
   } catch {
     return null;
-  }
-}
-
-function defaultReadPromptChars(path: string): number {
-  try {
-    if (statSync(path).size === 0) return 0;
-    return readFileSync(path, 'utf-8').length;
-  } catch {
-    return 0;
   }
 }
 

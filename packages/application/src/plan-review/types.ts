@@ -20,6 +20,7 @@ export interface PlanReviewResult {
   verdict?: 'pass' | 'p1_found' | 'p2_only' | 'proceed_with_concerns';
   /** Free-text summary of findings, surfaced for the handler's append-to-plan path. */
   knownLimitations?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlanFixResult {
@@ -28,6 +29,7 @@ export interface PlanFixResult {
   verdict?: 'done_with_fixes' | 'done_no_fixes_needed' | 'cannot_fix';
   rebuttal?: string;
   summary?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface PlanFixOptions {

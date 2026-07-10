@@ -71,7 +71,7 @@ export class PlanReviewLoop {
             iteration: iterationIndex,
             invocation_type: reviewAttempts === 1 ? 'initial' : 'retry',
           },
-        } as any);
+        });
         if (review.agentOutcome === 'success' && review.verdict !== undefined) break;
         if (reviewAttempts <= reviewerMaxRetries) {
           this.emit(
@@ -178,7 +178,7 @@ export class PlanReviewLoop {
           iteration: iterationIndex,
           invocation_type: 'initial',
         },
-      } as any);
+      });
       pendingReconciliationContext = undefined;
 
       if (
@@ -240,7 +240,7 @@ export class PlanReviewLoop {
               iteration: iterationIndex,
               invocation_type: 'initial',
             },
-          } as any);
+          });
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -387,7 +387,7 @@ export class PlanReviewLoop {
               iteration: finalIterationIndex,
               invocation_type: 'initial',
             },
-          } as any);
+          });
           if (finalReview.agentOutcome === 'success' && finalReview.verdict !== undefined) break;
           if (finalReviewAttempts <= reviewerMaxRetries) {
             this.emit(
@@ -528,7 +528,7 @@ export class PlanReviewLoop {
               iteration: finalIterationIndex,
               invocation_type: 'initial',
             },
-          } as any);
+          });
           if (!arbiterResult.evidence || arbiterResult.evidence.trim().length === 0) {
             this.emit(
               input,
@@ -647,7 +647,7 @@ export class PlanReviewLoop {
                 iteration: finalIterationIndex,
                 invocation_type: 'initial',
               },
-            } as any);
+            });
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
               index: finalIterationIndex,
@@ -690,9 +690,9 @@ export class PlanReviewLoop {
                   ...confirmCtx,
                   metadata: {
                     iteration: confirmIterationIndex,
-                  invocation_type: confirmAttempts === 1 ? 'initial' : 'retry',
+                    invocation_type: confirmAttempts === 1 ? 'initial' : 'retry',
                   },
-                } as any);
+                });
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
                 if (confirmAttempts <= reviewerMaxRetries) {

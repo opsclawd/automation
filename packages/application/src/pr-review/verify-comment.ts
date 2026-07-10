@@ -1,7 +1,6 @@
 import type { PrReviewComment } from '@ai-sdlc/domain';
 import type { GitHubPort } from '../ports/github-port.js';
 import type { GitPort } from '../ports/git-port.js';
-import type { VerifyCodeChangeFn } from './verify-code-change.js';
 import type { FixDiffInspectorPort } from '../ports/fix-diff-inspector-port.js';
 
 export interface VerificationResult {
