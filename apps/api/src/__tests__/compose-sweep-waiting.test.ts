@@ -87,3 +87,24 @@ describe('composeRoot — SweepWaitingRuns wiring', () => {
     expect(lastReadyMaxDays.value).toBe(30);
   });
 });
+
+describe('composeRoot — serve sweep wiring', () => {
+  it('defaults serveSweepIntervalSeconds to 0 when config omits serve', async () => {
+    const { composeRoot } = await import('../compose.js');
+    const repoRoot = makeRepo({ withPostPrReview: true });
+    const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
+    expect(c.serveSweepIntervalSeconds).toBe(0);
+  });
+
+  it('exposes buildWaitingRunsSweeper that constructs a working WaitingRunsSweeper', async () => {
+    const { composeRoot } = await import('../compose.js');
+    const repoRoot = makeRepo({ withPostPrReview: true });
+    const c = composeRoot({ repoRoot, scriptPath: '/dev/null', runStartupSweeps: false });
+    expect(c.buildWaitingRunsSweeper).toBeTypeOf('function');
+    const sweeper = c.buildWaitingRunsSweeper();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await sweeper.execute('serve-test' as any);
+    expect(result.scanned).toBe(0);
+    expect(result.enqueued).toBe(0);
+  });
+});

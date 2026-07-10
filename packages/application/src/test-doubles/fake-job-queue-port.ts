@@ -13,11 +13,7 @@ import {
   RepositoryNotApprovedError,
   DuplicateJobIdError,
 } from '@ai-sdlc/domain';
-import type {
-  JobQueuePort,
-  EnqueueJobInput,
-  ClaimNextInput,
-} from '../ports/job-queue-port.js';
+import type { JobQueuePort, EnqueueJobInput, ClaimNextInput } from '../ports/job-queue-port.js';
 import type { RepositoryPort } from '../ports.js';
 
 export class FakeJobQueuePort implements JobQueuePort {
@@ -101,6 +97,12 @@ export class FakeJobQueuePort implements JobQueuePort {
       this.jobs.set(j.id, { ...rest, status: 'queued' });
     }
     return expired.length;
+  }
+
+  listActive(): Job[] {
+    return [...this.jobs.values()].filter(
+      (j) => j.status === 'queued' || j.status === 'claimed' || j.status === 'running',
+    );
   }
 
   private update(jobId: JobId, fn: (j: Job) => Job): void {

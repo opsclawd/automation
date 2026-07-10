@@ -245,6 +245,13 @@ export class JobQueueRepository implements JobQueuePort {
     return reclaimTx(cutoff.toISOString());
   }
 
+  listActive(): Job[] {
+    const rows = this.db
+      .prepare("SELECT * FROM jobs WHERE status IN ('queued', 'claimed', 'running')")
+      .all() as JobRow[];
+    return rows.map(toJob);
+  }
+
   private updateJob(jobId: JobId, transition: (job: Job) => Job): void {
     const tx = this.db.transaction(() => {
       const row = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as

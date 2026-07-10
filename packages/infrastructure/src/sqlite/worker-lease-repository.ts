@@ -50,7 +50,7 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
            acquired_at = excluded.acquired_at,
            heartbeat_at = excluded.heartbeat_at,
            expires_at = excluded.expires_at
-         WHERE worker_leases.expires_at <= @acquired_at`,
+         WHERE worker_leases.expires_at <= @acquired_at OR (worker_leases.worker_id = @worker_id AND worker_leases.run_id = @run_id)`,
       )
       .run({
         repo_id: input.repoId,
@@ -100,6 +100,13 @@ export class WorkerLeaseRepository implements WorkerLeasePort {
       .prepare(`SELECT * FROM worker_leases WHERE repo_id = @repo_id`)
       .get({ repo_id: repoId }) as WorkerLeaseRow | undefined;
     return row ? toWorkerLease(row) : undefined;
+  }
+
+  checkActiveLease(repoId: RepositoryId, now: Date): boolean {
+    const row = this.db
+      .prepare(`SELECT * FROM worker_leases WHERE repo_id = @repo_id`)
+      .get({ repo_id: repoId }) as WorkerLeaseRow | undefined;
+    return row !== undefined && new Date(row.expires_at).getTime() > now.getTime();
   }
 
   reclaimExpired(input: ReclaimExpiredInput): WorkerLease[] {

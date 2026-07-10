@@ -24,6 +24,7 @@ export interface SweepWaitingRunsDeps {
 export interface SweepWaitingRunsResult {
   scanned: number;
   reactivated: number;
+  reactivatedRuns: Array<{ run: RunRecord; reason: string }>;
   timedOut: number;
   passedOnMergedPr: number;
   cancelledOnClosedPr: number;
@@ -40,6 +41,7 @@ export class SweepWaitingRuns {
     const result: SweepWaitingRunsResult = {
       scanned: 0,
       reactivated: 0,
+      reactivatedRuns: [],
       timedOut: 0,
       passedOnMergedPr: 0,
       cancelledOnClosedPr: 0,
@@ -96,20 +98,26 @@ export class SweepWaitingRuns {
               reason: 'PR merged — finalizing run',
             });
             const mergedAt = now();
-            this.deps.runRepository.update(run.uuid, {
-              status: 'passed',
-              completedAt: mergedAt,
-            });
-            this.deps.eventBus.publish(run.uuid, {
-              runId: run.uuid,
-              phase: 'post-pr-review',
-              level: 'info',
-              type: 'post-pr-review.run.passed',
-              message: 'PR merged — run passed',
-              timestamp: mergedAt.toISOString(),
-              metadata: { reason: 'pr_merged' },
-            });
-            result.passedOnMergedPr++;
+            const updated = this.deps.runRepository.atomicUpdateByUuid(
+              run.uuid,
+              {
+                status: 'passed',
+                completedAt: mergedAt,
+              },
+              'running',
+            );
+            if (updated) {
+              this.deps.eventBus.publish(run.uuid, {
+                runId: run.uuid,
+                phase: 'post-pr-review',
+                level: 'info',
+                type: 'post-pr-review.run.passed',
+                message: 'PR merged — run passed',
+                timestamp: mergedAt.toISOString(),
+                metadata: { reason: 'pr_merged' },
+              });
+              result.passedOnMergedPr++;
+            }
           } catch (err) {
             result.errors.push({
               runId: run.uuid,
@@ -126,21 +134,27 @@ export class SweepWaitingRuns {
               reason: 'PR closed — finalizing run',
             });
             const closedAt = now();
-            this.deps.runRepository.update(run.uuid, {
-              status: 'cancelled',
-              completedAt: closedAt,
-              failureReason: 'PR closed',
-            });
-            this.deps.eventBus.publish(run.uuid, {
-              runId: run.uuid,
-              phase: 'post-pr-review',
-              level: 'warn',
-              type: 'post-pr-review.run.cancelled',
-              message: 'PR closed — run cancelled',
-              timestamp: closedAt.toISOString(),
-              metadata: { reason: 'pr_closed' },
-            });
-            result.cancelledOnClosedPr++;
+            const updated = this.deps.runRepository.atomicUpdateByUuid(
+              run.uuid,
+              {
+                status: 'cancelled',
+                completedAt: closedAt,
+                failureReason: 'PR closed',
+              },
+              'running',
+            );
+            if (updated) {
+              this.deps.eventBus.publish(run.uuid, {
+                runId: run.uuid,
+                phase: 'post-pr-review',
+                level: 'warn',
+                type: 'post-pr-review.run.cancelled',
+                message: 'PR closed — run cancelled',
+                timestamp: closedAt.toISOString(),
+                metadata: { reason: 'pr_closed' },
+              });
+              result.cancelledOnClosedPr++;
+            }
           } catch (err) {
             result.errors.push({
               runId: run.uuid,
@@ -187,8 +201,10 @@ export class SweepWaitingRuns {
 
         try {
           this.deps.applyReactivation(run, decision);
-          if (decision.action === 'reactivate') result.reactivated++;
-          else if (decision.action === 'timeout') result.timedOut++;
+          if (decision.action === 'reactivate') {
+            result.reactivated++;
+            result.reactivatedRuns.push({ run, reason: decision.reason });
+          } else if (decision.action === 'timeout') result.timedOut++;
           else result.stayedReady++;
         } catch (err) {
           if (err instanceof RunStateError) {

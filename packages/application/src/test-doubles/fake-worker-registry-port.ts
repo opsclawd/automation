@@ -44,6 +44,10 @@ export class FakeWorkerRegistryPort implements WorkerRegistryPort {
     return this.workers.get(id);
   }
 
+  deregister(id: WorkerId): void {
+    this.workers.delete(id);
+  }
+
   private update(id: WorkerId, fn: (w: Worker) => Worker): void {
     const w = this.workers.get(id);
     if (!w) throw new Error(`unknown worker ${id}`);

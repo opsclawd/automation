@@ -29,7 +29,7 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   acquire(input: AcquireLeaseInput): WorkerLease {
     const existing = this.leases.get(input.repoId);
-    if (existing && existing.expiresAt > input.now) {
+    if (existing && existing.expiresAt > input.now && (existing.workerId !== input.workerId || existing.runId !== input.runId)) {
       throw new WorkerLeaseConflictError(input.repoId, existing.workerId);
     }
     const lease: WorkerLease = {
@@ -58,6 +58,11 @@ export class FakeWorkerLeasePort implements WorkerLeasePort {
 
   current(repoId: RepositoryId): WorkerLease | undefined {
     return this.leases.get(repoId);
+  }
+
+  checkActiveLease(repoId: RepositoryId, now: Date): boolean {
+    const l = this.leases.get(repoId);
+    return l !== undefined && l.expiresAt.getTime() > now.getTime();
   }
 
   reclaimExpired(input: ReclaimExpiredInput): WorkerLease[] {

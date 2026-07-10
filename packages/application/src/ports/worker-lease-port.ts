@@ -38,5 +38,6 @@ export interface WorkerLeasePort {
   heartbeat(repoId: RepositoryId, workerId: WorkerId, now: Date, newExpiresAt: Date): void;
   release(repoId: RepositoryId, workerId: WorkerId): void;
   current(repoId: RepositoryId): WorkerLease | undefined;
+  checkActiveLease(repoId: RepositoryId, now: Date): boolean;
   reclaimExpired(input: ReclaimExpiredInput): WorkerLease[];
 }

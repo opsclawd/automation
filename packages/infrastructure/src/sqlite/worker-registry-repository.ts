@@ -102,6 +102,10 @@ export class WorkerRegistryRepository implements WorkerRegistryPort {
     return row ? toWorker(row) : undefined;
   }
 
+  deregister(id: WorkerId): void {
+    this.db.prepare('DELETE FROM workers WHERE id = ?').run(id);
+  }
+
   private requireWorker(id: WorkerId): Worker {
     const row = this.db.prepare('SELECT * FROM workers WHERE id = ?').get(id) as
       | WorkerRow
