@@ -1679,6 +1679,7 @@ describe('ProcessPrReviewComments — verifyCommitPushed rejects force-push / sq
     };
 
     const uc = new ProcessPrReviewComments(deps);
+    git.headByCwd.set("/work/tree", "startSha");
     await uc.execute({
       runId,
       repoId,

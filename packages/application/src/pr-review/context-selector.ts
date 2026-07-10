@@ -27,7 +27,7 @@ export interface SelectedContext {
     content: string;
   }[];
   diffStats: string;
-  additionalInfo?: string;
+  additionalInfo: string | undefined;
 }
 
 export interface ContextSelectorPort {
@@ -40,8 +40,9 @@ export class DefaultContextSelector implements ContextSelectorPort {
   async select(input: ContextSelectorInput): Promise<SelectedContext> {
     const { attempt, diff, comments, cwd, previousBuildError, previousCodeVerifyReason } = input;
 
+    const diffStats = await this.git.diffStat(cwd, 'origin/HEAD');
+
     if (attempt === 3) {
-      const diffStats = await this.git.diffStat(cwd, 'origin/HEAD');
       return {
         comments: comments.map(c => ({
           commentId: c.commentId,
@@ -53,19 +54,16 @@ export class DefaultContextSelector implements ContextSelectorPort {
         files: [],
         diffs: [{ content: diff }],
         diffStats,
+        additionalInfo: undefined,
       };
     }
 
-    // For Tier 1 and Tier 2, we should ideally use a port for file/diff extraction
-    // because packages/application is prohibited from using node:fs.
-    // However, to keep it simple and satisfy depcruise, we'll implement a
-    // basic version that still uses the full diff for context but labels it.
-
-    const diffStats = await this.git.diffStat(cwd, 'origin/HEAD');
-    let additionalInfo = '';
+    let additionalInfo: string | undefined = undefined;
     if (attempt === 2) {
-        if (previousBuildError) additionalInfo += `### Previous Build Error\n\n${previousBuildError}\n\n`;
-        if (previousCodeVerifyReason) additionalInfo += `### Previous Code Verification Rejection\n\n> ${previousCodeVerifyReason}\n\n`;
+        let info = '';
+        if (previousBuildError) info += `### Previous Build Error\n\n${previousBuildError}\n\n`;
+        if (previousCodeVerifyReason) info += `### Previous Code Verification Rejection\n\n> ${previousCodeVerifyReason}\n\n`;
+        if (info) additionalInfo = info;
     }
 
     return {
@@ -77,9 +75,9 @@ export class DefaultContextSelector implements ContextSelectorPort {
         context: attempt === 1 ? 'Attempt 1: Limited context (implemented via full diff for now).' : 'Attempt 2: Expanded context (full file diffs).',
       })),
       files: [],
-      diffs: [{ content: diff }], // Simplified implementation to avoid node:fs/path
+      diffs: [{ content: diff }],
       diffStats,
-      additionalInfo: additionalInfo || undefined,
+      additionalInfo,
     };
   }
 }
