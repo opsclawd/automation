@@ -62,8 +62,7 @@ export class OrphanedRunsSweeper {
 
       // Idempotency: another sweeper tick (or the same tick in another
       // process) already enqueued a job for this run.
-      const activeJobs = this.deps.queue.listActive();
-      const activeForRun = activeJobs.filter((j) => (j.runId as string) === run.uuid);
+      const activeForRun = this.deps.queue.listForRun(run.uuid as RunId);
       if (activeForRun.length > 0) {
         result.skippedAlreadyQueued++;
         continue;
@@ -99,6 +98,7 @@ export class OrphanedRunsSweeper {
       }
 
       const expectedStatus = run.status; // 'failed' from SweepOrphanedRuns
+      const originalRun = { ...run };
       try {
         // Atomically transition failed -> running. resumeRun clears
         // completedAt / failureReason and preserves completedPhases +
@@ -110,6 +110,7 @@ export class OrphanedRunsSweeper {
             status: next.status,
             completedAt: null,
             failureReason: null,
+            currentPhase: null,
           },
           expectedStatus,
         );
@@ -121,15 +122,6 @@ export class OrphanedRunsSweeper {
         }
 
         try {
-          this.deps.eventBus.publish(run.uuid, {
-            runId: run.uuid,
-            level: 'info',
-            type: 'orchestrator.run.recovered_from_orphan',
-            message: `Run recovered from orphaned pid ${entry.previousPid}`,
-            timestamp: this.deps.now().toISOString(),
-            metadata: { previousPid: entry.previousPid },
-          });
-
           const job = createJob({
             id: `orphan-${run.uuid}-${this.deps.now().getTime()}` as JobId,
             runId: run.uuid as RunId,
@@ -139,6 +131,16 @@ export class OrphanedRunsSweeper {
             createdAt: this.deps.now(),
           });
           this.deps.queue.enqueue({ job });
+
+          this.deps.eventBus.publish(run.uuid, {
+            runId: run.uuid,
+            level: 'info',
+            type: 'orchestrator.run.recovered_from_orphan',
+            message: `Run recovered from orphaned pid ${entry.previousPid}`,
+            timestamp: this.deps.now().toISOString(),
+            metadata: { previousPid: entry.previousPid },
+          });
+
           result.enqueued++;
         } catch (err) {
           this.deps.logger.error(
@@ -147,7 +149,11 @@ export class OrphanedRunsSweeper {
           );
           const rolled = this.deps.runRepository.atomicUpdateByUuid(
             run.uuid,
-            { status: 'failed', completedAt: null, failureReason: null },
+            {
+              status: originalRun.status,
+              completedAt: originalRun.completedAt ?? null,
+              failureReason: originalRun.failureReason ?? null,
+            },
             'running',
           );
           if (!rolled) {

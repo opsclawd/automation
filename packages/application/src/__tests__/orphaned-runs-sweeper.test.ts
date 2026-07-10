@@ -136,7 +136,7 @@ describe('OrphanedRunsSweeper', () => {
     const failed = makeFailedRun('o4');
     runRepo.addRun(failed);
     // Pre-existing active job for the same runId (simulating a re-enqueue attempt)
-    vi.spyOn(queue, 'listActive').mockReturnValueOnce([
+    vi.spyOn(queue, 'listForRun').mockReturnValueOnce([
       {
         id: 'existing-job' as never,
         runId: 'o4' as never,
