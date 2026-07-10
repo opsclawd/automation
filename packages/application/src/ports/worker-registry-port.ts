@@ -9,4 +9,5 @@ export interface WorkerRegistryPort {
   markIdle(id: WorkerId): void;
   list(): Worker[];
   findById(id: WorkerId): Worker | undefined;
+  deregister(id: WorkerId): void;
 }

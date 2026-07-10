@@ -23,6 +23,7 @@ import { composeRoot, type ComposeOptions } from './compose.js';
 import { resolveTargetRepoRootOrExit, findRepoRoot } from './cli/target-repo-root.js';
 import { composeWithTarget } from './cli/compose-with-target.js';
 import { WorkerScheduler } from './worker-scheduler.js';
+import { startWorkerDrainLoop } from './worker-drain-loop.js';
 import { registerRepoCommand } from './cli/repo-commands.js';
 import { EXIT_USER_ERROR, EXIT_INTERNAL_ERROR } from './cli/exit-codes.js';
 
@@ -134,6 +135,58 @@ function startTestWorkerReaper(
         `Orphaned test worker reap failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }, intervalMs);
+  return { stop: () => clearInterval(timer) };
+}
+
+const MIN_SWEEP_INTERVAL_MS = 30_000;
+
+function startWaitingRunsSweepTimer(
+  sweeper: {
+    execute(
+      workerId: WorkerId,
+    ): Promise<{
+      reactivated: number;
+      enqueued: number;
+      skippedLeaseConflict: number;
+      timedOut: number;
+      passedOnMergedPr: number;
+      cancelledOnClosedPr: number;
+      stayedReady: number;
+      skipped: number;
+      errors: Array<{ runId: string; error: string }>;
+      enqueueErrors: Array<{ runId: string; error: string }>;
+    }>;
+  },
+  intervalSeconds: number,
+  workerId: WorkerId,
+): { stop: () => void } {
+  const intervalMs = Math.max(intervalSeconds * 1000, MIN_SWEEP_INTERVAL_MS);
+  let isRunning = false;
+  const timer = setInterval(() => {
+    if (isRunning) return;
+    isRunning = true;
+    sweeper.execute(workerId).then(
+      (result) => {
+        isRunning = false;
+        if (
+          result.reactivated > 0 ||
+          result.timedOut > 0 ||
+          result.passedOnMergedPr > 0 ||
+          result.cancelledOnClosedPr > 0 ||
+          result.errors.length > 0 ||
+          result.enqueueErrors.length > 0
+        ) {
+          console.error(
+            `Reactivation sweep: ${result.reactivated} reactivated (${result.enqueued} enqueued, ${result.skippedLeaseConflict} skipped due to lease conflict), ${result.timedOut} timed out, ${result.passedOnMergedPr} passed (merged PR), ${result.cancelledOnClosedPr} cancelled (closed PR), ${result.stayedReady} stayed ready, ${result.skipped} skipped, ${result.errors.length} errors, ${result.enqueueErrors.length} enqueue errors`,
+          );
+        }
+      },
+      (err) => {
+        isRunning = false;
+        console.error('Periodic reactivation sweep error:', err);
+      },
+    );
   }, intervalMs);
   return { stop: () => clearInterval(timer) };
 }
@@ -653,6 +706,7 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const composeOpts: ComposeOptions = {
           repoRoot,
           scriptPath,
+          runStartupSweeps: false, // NEW: disable legacy un-leased startup sweeps
           ...buildOpts?.composeOverrides,
         };
         if (opts.dbPath) composeOpts.dbPath = opts.dbPath;
@@ -664,7 +718,69 @@ export function buildProgram(buildOpts?: BuildProgramOptions): Command {
         const addr = server.address as { port: number };
         console.error(`orchestrator API listening on http://127.0.0.1:${addr.port}`);
         const testWorkerReaper = startTestWorkerReaper(c.reapOrphanedTestWorkers);
+
+        let workerDrainLoop: { stop: () => void } | undefined;
+        let serveWorkerHeartbeat: { stop: () => void } | undefined;
+        let serveWorkerId: WorkerId | undefined;
+        if (c.workerRegistry && c.workerLoopDeps) {
+          serveWorkerId = WorkerId(`serve-${process.pid}`);
+          c.workerRegistry.register(
+            createWorker({
+              id: serveWorkerId,
+              hostname: os.hostname(),
+              processId: process.pid,
+              now: new Date(),
+            }),
+          );
+          const heartbeatIntervalMs =
+            (typeof buildOpts !== 'undefined' && buildOpts?.lease?.heartbeatIntervalMs) ||
+            DEFAULT_WORKER_REGISTRY_HEARTBEAT_INTERVAL_MS;
+          serveWorkerHeartbeat = startWorkerRegistryHeartbeat(
+            c.workerRegistry,
+            serveWorkerId,
+            heartbeatIntervalMs,
+          );
+          workerDrainLoop = startWorkerDrainLoop(serveWorkerId, {
+            ...c.workerLoopDeps,
+            runRepository: c.runRepository,
+          });
+        }
+
+        let sweepTimer: { stop: () => void } | undefined;
+        if (c.workerRegistry && c.workerLoopDeps && serveWorkerId) {
+          const sweeper = c.buildWaitingRunsSweeper();
+
+          // NEW: Explicitly run the reactivation sweep once at startup, so that
+          // waiting runs reactivated on boot get their jobs enqueued and leases held
+          // correctly. Start the periodic timer only after the initial sweep completes
+          // to avoid any race condition.
+          sweeper
+            .execute(serveWorkerId)
+            .catch((err) => {
+              console.error('Initial startup reactivation sweep error:', err);
+            })
+            .finally(() => {
+              if (c.serveSweepIntervalSeconds > 0) {
+                sweepTimer = startWaitingRunsSweepTimer(
+                  sweeper,
+                  c.serveSweepIntervalSeconds,
+                  serveWorkerId,
+                );
+              }
+            });
+        }
+
         const shutdown = async () => {
+          sweepTimer?.stop();
+          workerDrainLoop?.stop();
+          serveWorkerHeartbeat?.stop();
+          if (serveWorkerId && c.workerRegistry) {
+            try {
+              c.workerRegistry.deregister(serveWorkerId);
+            } catch (err) {
+              console.error('Failed to deregister worker on exit:', err);
+            }
+          }
           testWorkerReaper.stop();
           await server.stop();
           process.exit(0);

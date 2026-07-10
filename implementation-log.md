@@ -1,11 +1,14 @@
-# Implementation Log - Task 5
+# Task 6 Implementation Summary
 
-## Status
-DONE
+Implemented the periodic sweep timer and persistent worker drain loop for the `serve` command.
 
 ## What was implemented
-- Hoisted config loading and `readyMaxDays` calculation inside `composeRoot` in [compose.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-681/apps/api/src/compose.ts) to run unconditionally.
-- Lazily instantiated `GhCliAdapter` via `getGhAdapterForSweep()`.
-- Exposed `serveSweepIntervalSeconds: number` and `buildWaitingRunsSweeper` factory function on the `Container` interface and returned them from `composeRoot`.
-- Implemented `buildWaitingRunsSweeper` factory inside `composeRoot` injecting dependencies such as `runRepository`, `workerLeaseRepository`, `jobQueue`, and `eventBus`, with a custom `applyReactivation` function that correctly identifies finalization transitions versus genuine reactivations to defer or apply updates.
-- Added failing tests to [compose-sweep-waiting.test.ts](file:///home/gary/.openclaw/workspace/automation/.ai-worktrees/issue-681/apps/api/src/__tests__/compose-sweep-waiting.test.ts) to verify correct default behavior of the interval and the factory function, and ensured all tests pass.
+1. Exposed `deregister(id: WorkerId): void` on `WorkerRegistryPort` and implemented it in both `FakeWorkerRegistryPort` and `WorkerRegistryRepository`.
+2. Modified the CLI's `serve` command to disable the legacy automatic startup sweeps by setting `runStartupSweeps: false` in `composeRoot`.
+3. Wired worker registration, heartbeat, and the drain loop to start in the `serve` command action logic when `workerRegistry` and `workerLoopDeps` are present.
+4. Set up an initial single reactivation sweep to run at startup, followed by starting the periodic sweep timer in its `.finally` callback (clamped to a minimum of 30 seconds).
+5. Configured the `shutdown` handler to stop the drain loop and sweep timer, deregister the serve worker, and stop `testWorkerReaper`.
+
+## Tests
+- Created `apps/api/src/__tests__/cli-serve-sweep-wiring.test.ts` to verify the gating logic and that the sweeper executes correctly on interval.
+- Ran the full test suite in `apps/api` to verify everything is green.
