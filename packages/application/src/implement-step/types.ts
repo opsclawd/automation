@@ -1,4 +1,5 @@
 import type { RunId, PhaseName, AgentProfileName, Loop } from '@ai-sdlc/domain';
+import type { TaskManifest } from '../results/schemas/task-manifest.js';
 import type { LoopRepositoryPort } from '../ports/loop-repository-port.js';
 import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
@@ -14,7 +15,10 @@ export interface StepLoopContext {
   stepIndex: number;
   stepTitle: string;
   iterationIndex: number; // 1-based
+  /** Invocation-metadata tagging (#719): invocation type, task/comment linkage, etc. */
   metadata?: Record<string, unknown>;
+  manifest: TaskManifest;
+  planMd: string;
 }
 
 export interface ImplementResult {
@@ -235,6 +239,11 @@ export interface ImplementStepLoopInput {
   stepTitle: string;
   maxIterations: number;
   maxTypeCheckRetries?: number;
+  /**
+   * Enriched manifest and plan prose for task-specific context generation.
+   */
+  manifest: TaskManifest;
+  planMd: string;
   /**
    * Convergence options (#680). Overrides any value on `Deps.options` per
    * the precedent in `ReviewFixLoopOptions`. See `ImplementStepLoopOptions`.

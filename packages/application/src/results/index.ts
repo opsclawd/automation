@@ -32,5 +32,16 @@ export { arbiterResultSchema } from './schemas/arbiter.js';
 export type { ArbiterResult } from './schemas/arbiter.js';
 export { architectPlanSchema, architectPlanTaskSchema } from './schemas/architect.js';
 export type { ArchitectPlanValidated } from './schemas/architect.js';
+export {
+  taskManifestSchema,
+  taskManifestV1Schema,
+  taskManifestV2Schema,
+} from './schemas/task-manifest.js';
+export type {
+  TaskManifest,
+  TaskManifestV1,
+  TaskManifestV2,
+  TaskManifestEntry,
+} from './schemas/task-manifest.js';
 export { extractResult } from './extract-result.js';
 export type { ExtractResultOutcome, ExtractResultInput, RerunContext } from './extract-result.js';

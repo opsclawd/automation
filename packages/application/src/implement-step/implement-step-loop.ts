@@ -142,6 +142,8 @@ export class ImplementStepLoop {
       stepIndex: input.stepIndex,
       stepTitle: input.stepTitle,
       iterationIndex: 1,
+      manifest: input.manifest,
+      planMd: input.planMd,
     };
 
     // --- History helpers (closure over deps/loop) ---
@@ -806,7 +808,14 @@ export class ImplementStepLoop {
             loop = { ...loop, maxIterations: loop.maxIterations + 1 };
             deps.loops.update(loop);
             await appendHistory(
-              buildHistoryEntry(iterationIndex, specReview, qualityReview, bonusFix, undefined, 'fixed'),
+              buildHistoryEntry(
+                iterationIndex,
+                specReview,
+                qualityReview,
+                bonusFix,
+                undefined,
+                'fixed',
+              ),
             );
             this.emitIterationCompleted(input, iterationIndex, 'fixed');
             continue;

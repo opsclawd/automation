@@ -1,0 +1,9 @@
+{
+  "validation": { "commands": ["echo 1"], "timeout": 10 },
+  "phases": {
+    "skip": [],
+    "reviewFix": { "maxIterations": 1 },
+    "implement": { "maxIterations": 1 }
+  },
+  "timeouts": { "readyMaxDays": 7, "invocationMaxMinutes": 30 }
+}

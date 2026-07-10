@@ -141,6 +141,7 @@ import {
   DisableRepository,
   RemoveRepository,
   type RepositoryRegistryPort,
+  TaskContextGenerator,
 } from '@ai-sdlc/application';
 import {
   ConfigError,
@@ -309,13 +310,12 @@ export function extractTaskText(
 
 export function buildImplementPrompt(
   ctx: { stepIndex: number; stepTitle: string; cwd: string; repoId: string },
-  taskText: string,
+  taskContext: string,
   branchName: string,
   typecheckErrors?: TypescriptError[] | string,
 ): string {
   const taskN = ctx.stepIndex;
   const taskTitle = ctx.stepTitle;
-  const description = taskText || `See plan.md Task ${taskN} for details.`;
 
   const structuredErrors: TypescriptError[] | undefined =
     typeof typecheckErrors === 'string' ? parseTypescriptErrors(typecheckErrors) : typecheckErrors;
@@ -323,18 +323,14 @@ export function buildImplementPrompt(
   return [
     `You are implementing Task ${taskN}: ${taskTitle}`,
     '',
-    '## Task Description',
-    description,
+    taskContext,
     '',
-    '## Context',
+    '## Context Supplement',
     '',
     WORKSPACE_CONSTRAINTS,
     '',
     `You are working in: ${ctx.cwd}`,
     `Repository: ${ctx.repoId}`,
-    'Issue: issue.md',
-    'Design: design.md',
-    'Plan: plan.md',
     `Branch: ${branchName}`,
     '',
     'You are using Subagent-Driven Development. Follow the process below exactly.',
@@ -377,8 +373,11 @@ export function buildImplementPrompt(
         : []),
     '## Your Job',
     '',
-    `1. Read issue.md, design.md, and plan.md for context. Identify the`,
-    `   boundaries of Task ${taskN} specifically.`,
+    `1. Review the Task Context above. It contains requirements, design sections,`,
+    `   and dependency summaries relevant to Task ${taskN}. Use it as your`,
+    `   primary guide. You may still read repository files (including issue.md,`,
+    `   design.md, and plan.md) if you need more detail, but the context artifact`,
+    `   is authoritative for this task's scope.`,
     `2. Implement exactly what Task ${taskN} specifies — nothing more.`,
     `3. Write tests following TDD where applicable, scoped to Task ${taskN}.`,
     `4. Verify Task ${taskN}'s implementation works.`,
@@ -516,6 +515,8 @@ export interface Container {
     stepTitle: string;
     cwd: string;
     ctx: import('@ai-sdlc/application').PhaseHandlerContext;
+    manifest: TaskManifest;
+    planMd: string;
   }) => Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }>;
   buildPrReviewPoller: (opts: {
     maxPolls: number;
@@ -2211,91 +2212,78 @@ export function composeRoot(opts: ComposeOptions): Container {
       };
       buildRunContext = buildContext;
 
-      const runImplement = async (ctx: StepLoopContext, opts?: ImplementStepOptions) => {
+      const runImplement = async (
+        ctx: StepLoopContext & { manifest: TaskManifest; planMd: string },
+        opts?: ImplementStepOptions,
+      ) => {
         const run = runRepository.findByUuid(String(ctx.runId));
         const runDir = run?.displayId ?? String(ctx.runId);
         const issueNumber = run?.issueNumber ?? 0;
         const branchName = `ai/issue-${issueNumber}`;
         const artifacts = artifactStoreForRun(String(ctx.runId), ctx.cwd);
 
-        let manifest: TaskManifest | undefined;
+        const manifest = ctx.manifest;
+        const planMd = ctx.planMd;
+
+        let designMd: string | undefined;
         try {
-          const manifestJson = await artifacts.read(String(ctx.runId), 'task-manifest.json');
-          const parsed = parseTaskManifest(manifestJson);
-          if (parsed.success) {
-            manifest = parsed.manifest;
-          } else {
-            persistingEventBusForLoop.publish(String(ctx.runId), {
-              runId: String(ctx.runId),
-              level: 'error',
-              type: 'agent.invoke_failed',
-              message: `Failed to parse task-manifest.json: ${parsed.error}`,
-              timestamp: new Date().toISOString(),
-              metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
-            });
-            return { invocationId: '', agentOutcome: 'failed' as const };
-          }
-        } catch (err) {
-          if (!(err instanceof ArtifactNotFoundError)) {
-            const msg = err instanceof Error ? err.message : String(err);
-            persistingEventBusForLoop.publish(String(ctx.runId), {
-              runId: String(ctx.runId),
-              level: 'error',
-              type: 'agent.invoke_failed',
-              message: `Failed to read task-manifest.json: ${msg}`,
-              timestamp: new Date().toISOString(),
-              metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
-            });
-            return { invocationId: '', agentOutcome: 'failed' as const };
+          designMd = await artifacts.read(String(ctx.runId), 'design.md');
+        } catch {
+          // design.md is optional
+        }
+
+        const dependencyLogs = new Map<number, string>();
+        if (manifest.version === 2) {
+          const task = manifest.tasks.find((t) => t.n === ctx.stepIndex);
+          if (task && task.depends_on) {
+            for (const depId of task.depends_on) {
+              try {
+                const log = await artifacts.read(
+                  String(ctx.runId),
+                  `implementation-log-task-${depId}.md`,
+                );
+                dependencyLogs.set(depId, log);
+              } catch {
+                // missing dependency log is non-fatal for context generation
+              }
+            }
           }
         }
 
-        let planMd: string;
-        try {
-          planMd = await artifacts.read(String(ctx.runId), 'plan.md');
-        } catch (err) {
-          const msg =
-            err instanceof ArtifactNotFoundError
-              ? 'plan.md not found in artifact store'
-              : `Failed to read plan.md: ${err instanceof Error ? err.message : String(err)}`;
-          persistingEventBusForLoop.publish(String(ctx.runId), {
-            runId: String(ctx.runId),
-            level: 'error',
-            type: 'agent.invoke_failed',
-            message: msg,
-            timestamp: new Date().toISOString(),
-            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
-          });
-          return { invocationId: '', agentOutcome: 'failed' as const };
-        }
-
-        const task = manifest?.tasks.find((t) => t.n === ctx.stepIndex);
-        const taskTextResult = extractTaskBody(planMd, {
-          taskNumber: ctx.stepIndex,
-          ...(task?.title !== undefined ? { title: task.title } : {}),
+        const generator = new TaskContextGenerator();
+        const task = manifest.tasks.find((t) => t.n === ctx.stepIndex)!;
+        const contextResult = generator.generate({
+          task,
+          manifest,
+          planMd,
+          designMd: designMd ?? '',
+          dependencyLogs,
+          workspaceConstraints: WORKSPACE_CONSTRAINTS,
+          cwd: ctx.cwd,
+          repoId: ctx.repoId,
+          branchName,
+          startCommitSha: run?.startCommitSha ?? '',
         });
-        if (!taskTextResult.ok) {
-          persistingEventBusForLoop.publish(String(ctx.runId), {
+
+        const taskContext = contextResult.content;
+        // Write task-context.md as an artifact for auditability
+        try {
+          await artifacts.write({
             runId: String(ctx.runId),
-            level: 'error',
-            type: 'agent.invoke_failed',
-            message:
-              taskTextResult.reason === 'missing_heading'
-                ? `Task ${ctx.stepIndex} has no matching heading in plan.md`
-                : `Task ${ctx.stepIndex} is only present inside a balanced code fence`,
-            timestamp: new Date().toISOString(),
-            metadata: { phaseId: 'implement', stepIndex: ctx.stepIndex },
+            phaseId: 'implement',
+            relativePath: `task-context-step-${ctx.stepIndex}.md`,
+            contents: taskContext,
           });
-          return { invocationId: '', agentOutcome: 'failed' as const };
+        } catch {
+          /* best-effort */
         }
 
-        const taskText = taskTextResult.body.trim();
         const promptDir = join(baseTmpDir, 'implement-step-prompts');
         mkdirSync(promptDir, { recursive: true });
         const promptPath = join(promptDir, `implement-${String(ctx.runId)}-${ctx.stepIndex}.md`);
         const implementPrompt = buildImplementPrompt(
           ctx,
-          taskText,
+          taskContext,
           branchName,
           opts?.typecheckErrors,
         );
@@ -3569,6 +3557,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         stepTitle: string;
         cwd: string;
         ctx: import('@ai-sdlc/application').PhaseHandlerContext;
+        manifest: TaskManifest;
+        planMd: string;
       }): Promise<{ outcome: 'success' | 'failed' | 'needs_human_review' }> => {
         if (!implementStepLoop) throw new Error('implementStepLoop not initialized');
         const result = await implementStepLoop.execute({
@@ -3580,6 +3570,8 @@ export function composeRoot(opts: ComposeOptions): Container {
           stepTitle: sctx.stepTitle,
           maxIterations: config.phases.implement.maxIterations,
           maxTypeCheckRetries: config.phases.implement.maxTypeCheckRetries,
+          manifest: sctx.manifest,
+          planMd: sctx.planMd,
         });
         return { outcome: result.outcome };
       };
@@ -3669,14 +3661,16 @@ export function composeRoot(opts: ComposeOptions): Container {
         eventBus: persistingEventBusForLoop,
       });
 
-      phaseRegistry.register(
-        new ImplementHandler({
-          steps: stepRepository,
-          runStep,
-          setup: worktreeSetup,
-          lintTaskSize: lintTaskSizeDep,
-        }),
-      );
+      if (runStep !== undefined) {
+        phaseRegistry.register(
+          new ImplementHandler({
+            steps: stepRepository,
+            runStep,
+            setup: worktreeSetup,
+            lintTaskSize: lintTaskSizeDep,
+          }),
+        );
+      }
 
       phaseRegistry.register(
         new ValidateHandler({
