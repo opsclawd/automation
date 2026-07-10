@@ -15,7 +15,11 @@ import { CONTRACT_VIOLATION_CODES } from '@ai-sdlc/application/ports';
 import type { AgentInvocationPort } from '@ai-sdlc/application/ports';
 import type { AgentUsagePort, EventBusPort } from '@ai-sdlc/application/ports';
 import { ConfigError, type AgentConfig, type OrchestratorEvent } from '@ai-sdlc/shared';
-import { testQuotaPatterns, testTokenLimitPatterns } from './error-patterns.js';
+import {
+  testQuotaPatterns,
+  testTokenLimitPatterns,
+  testProviderErrorPatterns,
+} from './error-patterns.js';
 
 export interface AgentRuntimeRouterOptions {
   agent: AgentConfig;
@@ -32,10 +36,35 @@ export interface AgentRuntimeRouterOptions {
 interface TriggerClassification {
   reason: string;
   detail?: string;
+  shortDetail?: string;
 }
 
 function truncate(s: string, max = 200): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
+/**
+ * Attempt to parse OpenCode's structured JSON error from a log line.
+ * If found and parseable, returns a "nice" summary string; otherwise null.
+ */
+function tryParseOpenCodeError(line: string): string | null {
+  const match = /error=(\{.*\})/.exec(line);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1]!);
+    const error = parsed.error || parsed;
+    const statusCode = error.statusCode;
+    const message = error.message;
+    if (statusCode && message) {
+      return `HTTP ${statusCode}: "${message}"`;
+    }
+    if (message) {
+      return `"${message}"`;
+    }
+  } catch {
+    // Malformed JSON — skip
+  }
+  return null;
 }
 
 export class AgentRuntimeRouter implements AgentPort {
@@ -299,8 +328,11 @@ export class AgentRuntimeRouter implements AgentPort {
         if (fallbackProfile) {
           const fallbackAdapter = this.opts.adapters[fallbackProfile.runtime];
           if (fallbackAdapter) {
-            const { reason: triggerReason, detail: triggerDetail } =
-              this.determineTriggerReason(result);
+            const {
+              reason: triggerReason,
+              detail: triggerDetail,
+              shortDetail: triggerShortDetail,
+            } = this.determineTriggerReason(result);
 
             const { abortSignal: _abortSignal, ...rest } = request;
             const fallbackRequest: AgentInvocationRequest = {
@@ -317,6 +349,7 @@ export class AgentRuntimeRouter implements AgentPort {
               triggerReason,
               'router',
               triggerDetail,
+              triggerShortDetail,
             );
 
             const { provider: fbEffectiveProvider, model: fbEffectiveModel } =
@@ -395,7 +428,8 @@ export class AgentRuntimeRouter implements AgentPort {
         case 'provider_error':
           if (
             result.outcome === 'failed' &&
-            result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)
+            (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR) ||
+              isProviderError(result) != null)
           )
             return true;
           break;
@@ -435,12 +469,37 @@ export class AgentRuntimeRouter implements AgentPort {
     }
     if (result.outcome === 'failed') {
       const tokenDetail = isTokenLimitError(result);
-      if (tokenDetail != null)
-        return { reason: 'token_limit_exceeded', detail: truncate(tokenDetail) };
+      if (tokenDetail != null) {
+        const res: TriggerClassification = {
+          reason: 'token_limit_exceeded',
+          detail: truncate(tokenDetail),
+        };
+        const short = tryParseOpenCodeError(tokenDetail);
+        if (short) res.shortDetail = short;
+        return res;
+      }
       const quotaDetail = isQuotaError(result);
-      if (quotaDetail != null) return { reason: 'quota_exceeded', detail: truncate(quotaDetail) };
-      if (result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR)) {
-        return { reason: 'provider_error' };
+      if (quotaDetail != null) {
+        const res: TriggerClassification = {
+          reason: 'quota_exceeded',
+          detail: truncate(quotaDetail),
+        };
+        const short = tryParseOpenCodeError(quotaDetail);
+        if (short) res.shortDetail = short;
+        return res;
+      }
+      const providerDetail = isProviderError(result);
+      if (
+        result.contractViolations.includes(CONTRACT_VIOLATION_CODES.PROVIDER_ERROR) ||
+        providerDetail != null
+      ) {
+        const res: TriggerClassification = {
+          reason: 'provider_error',
+        };
+        if (providerDetail) res.detail = truncate(providerDetail);
+        const short = providerDetail ? tryParseOpenCodeError(providerDetail) : null;
+        if (short) res.shortDetail = short;
+        return res;
       }
       return { reason: 'runtime_error' };
     }
@@ -467,14 +526,16 @@ export class AgentRuntimeRouter implements AgentPort {
     triggerReason: string,
     triggerOwner: string,
     triggerDetail?: string,
+    shortDetail?: string,
   ): void {
     if (!this.opts.eventBus) return;
-    const detail = triggerDetail ? ` — "${triggerDetail}"` : '';
+    const readableDetail = shortDetail ?? (triggerDetail ? `"${triggerDetail}"` : undefined);
+    const detailMsg = readableDetail ? ` — ${readableDetail}` : '';
     const event: OrchestratorEvent = {
       runId,
       level: 'warn',
       type: 'phase.fallback.escalated',
-      message: `Fallback from '${fromProfile}' to '${toProfile}' (reason: ${triggerReason}${detail}, owner: ${triggerOwner})`,
+      message: `Fallback from '${fromProfile}' to '${toProfile}' (reason: ${triggerReason}${detailMsg}, owner: ${triggerOwner})`,
       timestamp: this.clock().toISOString(),
       metadata: {
         fromProfile,
@@ -508,6 +569,15 @@ function isTokenLimitError(result: AgentInvocationResult): string | null {
   try {
     const stderr = readFileSync(result.stderrPath, 'utf-8');
     return testTokenLimitPatterns(stderr, { maxLines: 2000 });
+  } catch {
+    return null;
+  }
+}
+
+function isProviderError(result: AgentInvocationResult): string | null {
+  try {
+    const stderr = readFileSync(result.stderrPath, 'utf-8');
+    return testProviderErrorPatterns(stderr, { maxLines: 2000 });
   } catch {
     return null;
   }
