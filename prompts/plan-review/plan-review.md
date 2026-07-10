@@ -13,6 +13,7 @@ You MUST NOT modify `plan.md` or any other file. Your sole output is a single
 ## INPUTS
 - `{{artifact:plan.md}}` — the plan to review
 - `{{artifact:design.md}}` — the design the plan must satisfy
+- `{{artifact:task-manifest.json}}` — the task manifest
 
 ## FOCUS
 Look for these defect classes (the legacy bash loop enumerated the same):
@@ -37,16 +38,36 @@ root with this exact shape:
 <optional: list of carried-forward P1 concerns, only when verdict is proceed_with_concerns>
 
 ## findings
-- [P0] <finding>
-- [P1] <finding>
-- [P2] <finding>
+- [P0] `<citation>` | "<failure scenario>"
+- [P1] `<citation>` | "<failure scenario>"
+- [P2] `<citation>` | "<failure scenario>"
 ```
 
-Verdict semantics:
-- `pass` — no defects; plan is ready to implement.
-- `p1_found` — at least one P0 or P1 defect; the fixer must address.
-- `p2_only` — only P2 (minor) defects; plan may proceed.
-- `proceed_with_concerns` — P1 defects exist but the plan is implementable
-  with the listed `known_limitations` appended to the plan.
+### Citation formats (required for P0/P1)
+
+- `plan.md:N` or `plan.md:N-M` — line range in the current plan.
+- `task-manifest.json:Task N` — references a task whose `n` field is N.
+- `design.md:N.M` — section anchor matching a markdown heading like
+  `### N.M Title` (no `§` prefix; numbers match exactly).
+
+A finding missing either the citation or the failure scenario, OR whose
+citation does not resolve against the actual artifacts in the worktree, is
+marked `ungrounded` by the orchestrator and cannot contribute to a
+`p1_found` verdict (#716, AC #3).
+
+### Iteration >= 2: SCOPE and DISPOSITION GUIDANCE (APPENDED, not a replacement)
+
+When the orchestrator runs iteration >= 2, it APPENDS a SCOPE block and a
+DISPOSITION GUIDANCE block to the END of this base prompt. The base prompt
+above — including the WORKSPACE_CONSTRAINTS and the artifact references
+for `plan.md`, `design.md`, and `task-manifest.json` — remains in full
+force. The SCOPE block tells you to focus on:
+
+1. The disposition of the prior (frozen) finding set.
+2. New findings targeting text introduced by the most recent fix.
+
+Brand-new findings about pre-existing plan prose that the most recent fix
+did NOT touch are out of scope. Surface them under `## noted_but_out_of_scope`
+(informational; not counted toward the verdict).
 
 STOP RULE: as soon as `plan-review-findings.md` is written, end your turn.

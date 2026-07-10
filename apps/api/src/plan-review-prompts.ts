@@ -1,4 +1,17 @@
-import { ArtifactNotFoundError, type ArtifactStore, WORKSPACE_CONSTRAINTS } from '@ai-sdlc/application';
+import { execFileSync } from 'node:child_process';
+import {
+  ArtifactNotFoundError,
+  parsePlanReviewFindings,
+  parseTaskManifest,
+  type ArtifactStore,
+  type EvidenceResolver,
+  type PlanReviewFinding,
+  type PlanReviewStepOptions,
+  WORKSPACE_CONSTRAINTS,
+} from '@ai-sdlc/application';
+
+export { parsePlanReviewFindings };
+export type { PlanReviewFinding, PlanReviewStepOptions, EvidenceResolver };
 
 export const PLAN_REVIEW_FINDINGS_ARTIFACT = 'plan-review-findings.md';
 export const PLAN_FIX_RESULT_ARTIFACT = 'plan-fix-result.json';
@@ -173,4 +186,184 @@ export function buildPlanReviewFinalReviewArbiterPrompt(
     '- Do NOT write any code, scratch files, or modifications to the repo.',
     'STOP RULE: as soon as `result.json` is written, end your turn.',
   ].join('\n');
+}
+
+/**
+ * Render the SCOPE + DISPOSITION GUIDANCE block for the plan-review
+ * reviewer's iteration >= 2 prompt (#716). This block is APPENDED to the
+ * base prompt rendered from `prompts/plan-review/plan-review.md`; it is
+ * NEVER a replacement for the base prompt. The base prompt already
+ * includes `plan.md`/`design.md`/`task-manifest.json` artifact references
+ * and the WORKSPACE_CONSTRAINTS block — substituting it would discard
+ * those and break the reviewer's ability to evaluate the plan itself.
+ */
+export function buildPlanReviewReviewScopeBlock(opts: PlanReviewStepOptions): string {
+  const sections: string[] = [];
+
+  if (opts.prevFindings && opts.prevFindings.length > 0) {
+    sections.push(
+      '## SCOPE',
+      'You are reviewing changes within an automated plan-review/fix loop.',
+      'Your review is scoped to:',
+      '1. The disposition of the prior finding set (frozen at iteration 1).',
+      '2. New findings whose citation references text introduced by the most recent fix.',
+      '',
+      'Out of scope: brand-new findings about pre-existing plan prose that was NOT',
+      'modified by the most recent fix. The orchestrator will drop these from verdict',
+      'computation; do not waste finding slots on them. If you find a defect in such',
+      'prose, surface it under the `## noted_but_out_of_scope` heading (informational only).',
+      '',
+      '## DISPOSITION GUIDANCE',
+      'For each prior finding below, mark one disposition:',
+      '- `addressed by fix` — the defect is gone in the current plan.',
+      '- `still open` — the defect persists; re-flag with the SAME citation.',
+      '- `rebutted by fixer` — the fixer asserted no change was needed; confirm against the current plan.',
+      '',
+      '### Frozen findings (from iteration 1)',
+      ...opts.prevFindings.map(
+        (f) =>
+          `- [${f.severity}] \`${f.citation}\` | ${f.failureScenario} | prior disposition: ${f.disposition ?? 'still_open'} | prior evidence: ${f.evidence}`,
+      ),
+      '',
+    );
+  }
+
+  if (opts.recentFixCitations && opts.recentFixCitations.length > 0) {
+    sections.push(
+      '## RECENT FIX CITATIONS',
+      'The most recent fix invocation modified text at the following citations.',
+      'New findings targeting these citations are eligible to count toward the verdict:',
+      ...opts.recentFixCitations.map((c) => `- \`${c}\``),
+      '',
+    );
+  }
+
+  return sections.join('\n');
+}
+
+/**
+ * Build an `EvidenceResolver` (#716, design §3.6) bound to the run's
+ * artifact store. Resolves:
+ *   - `plan.md:N` / `plan.md:N-M` → exists iff the line range falls
+ *     inside the current `plan.md` artifact.
+ *   - `task-manifest.json:Task N` → exists iff task N (with `n === N`)
+ *     appears in the manifest's `tasks[]`. Uses `parseTaskManifest` from
+ *     `packages/application/src/phases/plan-tasks.ts` — which validates
+ *     the schema and reads entries' `n` field, NOT `index` (fix to
+ *     reviewer finding #3).
+ *   - `design.md:N.M` (NO `§` prefix) → exists iff the design doc has a
+ *     markdown heading matching `^#{2,3}\s+(N\.M[^:]*)$` (e.g.
+ *     `### 3.1 Layer summary`, `### 7.5 Risk: ...`). Does NOT search for
+ *     `§N.M` because the repo's design.md uses plain numbered headings
+ *     (fix to reviewer finding #4).
+ *
+ * Any citation that fails to resolve is `ungrounded`; an ungrounded P0/P1
+ * cannot drive `p1_found` per AC #3.
+ */
+export function createPlanReviewEvidenceResolver(
+  artifacts: ArtifactStore,
+  runId: string,
+): EvidenceResolver {
+  return async (finding): Promise<boolean> => {
+    const citation = finding.citation;
+    if (!citation) return false;
+
+    // plan.md:N or plan.md:N-M
+    const planMatch = /^plan\.md:(\d+)(?:-(\d+))?$/.exec(citation);
+    if (planMatch) {
+      try {
+        const plan = await artifacts.read(runId, 'plan.md');
+        const lines = plan.split('\n');
+        const start = parseInt(planMatch[1]!, 10);
+        const end = planMatch[2] ? parseInt(planMatch[2], 10) : start;
+        return start >= 1 && end <= lines.length;
+      } catch {
+        return false;
+      }
+    }
+
+    // task-manifest.json:Task N — uses `n` field (NOT `index`)
+    const taskMatch = /^task-manifest\.json:Task\s+(\d+)$/.exec(citation);
+    if (taskMatch) {
+      try {
+        const manifest = await artifacts.read(runId, 'task-manifest.json');
+        const parsed = parseTaskManifest(manifest);
+        if (!parsed.success) return false;
+        const target = parseInt(taskMatch[1]!, 10);
+        return parsed.manifest.tasks.some((t) => t.n === target);
+      } catch {
+        return false;
+      }
+    }
+
+    // design.md:N.M — matches plain markdown headings like
+    // `### 3.1 Layer summary` or `## 7.5 Risk: #704's bonus fix interaction`.
+    // NO `§` prefix (fix to reviewer finding #4).
+    const designMatch = /^design\.md:(\d+(?:\.\d+)*)$/.exec(citation);
+    if (designMatch) {
+      try {
+        const design = await artifacts.read(runId, 'design.md');
+        const sectionNumber = designMatch[1]!;
+        const escaped = sectionNumber.replace(/\./g, '\\.');
+        const headingRe = new RegExp(`^#{2,3}\\s+${escaped}(\\b|$)`, 'm');
+        return headingRe.test(design);
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  };
+}
+
+/**
+ * Compute citations for text introduced by the most recent fix invocation
+ * (#716, design §2.5 / §7.1). Returns line ranges from
+ * `git diff <headBeforeFix>..HEAD -- plan.md` as `plan.md:N` or
+ * `plan.md:N-M` citations.
+ *
+ * Used by the composition-root adapter to supply the
+ * `computeLastFixDiffCitations` dep on `PlanReviewLoopDeps`. Returns an
+ * empty array on git failure — when no `headBeforeFix` is provided, or
+ * the diff fails to compute, the loop defaults `lastFixDiffCitations` to
+ * `[]`, which means every new finding from the next reviewer is
+ * classified `out_of_scope` (the safe default per reviewer finding #1:
+ * never promote a citation to in-scope without proof the fix touched it).
+ */
+export function getRecentFixCitations(cwd: string, headBeforeFix: string | undefined): string[] {
+  if (!headBeforeFix) return [];
+  try {
+    const diff = execFileSync(
+      'git',
+      ['diff', '--unified=0', `${headBeforeFix}..HEAD`, '--', 'plan.md'],
+      { cwd, encoding: 'utf-8', maxBuffer: 1024 * 1024 },
+    );
+    return parsePlanDiffCitations(diff);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parse a unified diff hunk header (`@@ -a,b +c,d @@`) into `plan.md:N` or
+ * `plan.md:N-M` citations. Pure; used by `getRecentFixCitations`.
+ * Skips empty/delete-only hunks where count <= 0.
+ */
+function parsePlanDiffCitations(diff: string): string[] {
+  const citations: string[] = [];
+  const hunkRe = /^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@/gm;
+  let m: RegExpExecArray | null;
+  while ((m = hunkRe.exec(diff)) !== null) {
+    const start = parseInt(m[1]!, 10);
+    const count = m[2] ? parseInt(m[2], 10) : 1;
+    if (count <= 0) {
+      continue;
+    }
+    if (count === 1) {
+      citations.push(`plan.md:${start}`);
+    } else {
+      citations.push(`plan.md:${start}-${start + count - 1}`);
+    }
+  }
+  return citations;
 }
