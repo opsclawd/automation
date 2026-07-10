@@ -98,20 +98,26 @@ export class SweepWaitingRuns {
               reason: 'PR merged — finalizing run',
             });
             const mergedAt = now();
-            this.deps.runRepository.update(run.uuid, {
-              status: 'passed',
-              completedAt: mergedAt,
-            });
-            this.deps.eventBus.publish(run.uuid, {
-              runId: run.uuid,
-              phase: 'post-pr-review',
-              level: 'info',
-              type: 'post-pr-review.run.passed',
-              message: 'PR merged — run passed',
-              timestamp: mergedAt.toISOString(),
-              metadata: { reason: 'pr_merged' },
-            });
-            result.passedOnMergedPr++;
+            const updated = this.deps.runRepository.atomicUpdateByUuid(
+              run.uuid,
+              {
+                status: 'passed',
+                completedAt: mergedAt,
+              },
+              'waiting',
+            );
+            if (updated) {
+              this.deps.eventBus.publish(run.uuid, {
+                runId: run.uuid,
+                phase: 'post-pr-review',
+                level: 'info',
+                type: 'post-pr-review.run.passed',
+                message: 'PR merged — run passed',
+                timestamp: mergedAt.toISOString(),
+                metadata: { reason: 'pr_merged' },
+              });
+              result.passedOnMergedPr++;
+            }
           } catch (err) {
             result.errors.push({
               runId: run.uuid,
@@ -128,21 +134,27 @@ export class SweepWaitingRuns {
               reason: 'PR closed — finalizing run',
             });
             const closedAt = now();
-            this.deps.runRepository.update(run.uuid, {
-              status: 'cancelled',
-              completedAt: closedAt,
-              failureReason: 'PR closed',
-            });
-            this.deps.eventBus.publish(run.uuid, {
-              runId: run.uuid,
-              phase: 'post-pr-review',
-              level: 'warn',
-              type: 'post-pr-review.run.cancelled',
-              message: 'PR closed — run cancelled',
-              timestamp: closedAt.toISOString(),
-              metadata: { reason: 'pr_closed' },
-            });
-            result.cancelledOnClosedPr++;
+            const updated = this.deps.runRepository.atomicUpdateByUuid(
+              run.uuid,
+              {
+                status: 'cancelled',
+                completedAt: closedAt,
+                failureReason: 'PR closed',
+              },
+              'waiting',
+            );
+            if (updated) {
+              this.deps.eventBus.publish(run.uuid, {
+                runId: run.uuid,
+                phase: 'post-pr-review',
+                level: 'warn',
+                type: 'post-pr-review.run.cancelled',
+                message: 'PR closed — run cancelled',
+                timestamp: closedAt.toISOString(),
+                metadata: { reason: 'pr_closed' },
+              });
+              result.cancelledOnClosedPr++;
+            }
           } catch (err) {
             result.errors.push({
               runId: run.uuid,

@@ -74,7 +74,6 @@ export class WaitingRunsSweeper {
           this.deps.logger.error(
             `WaitingRunsSweeper: run ${run.uuid} status changed concurrently (expected ${originalStatus}), skipping`,
           );
-          this.deps.leases.release(run.repoId, workerId);
           continue;
         }
 
@@ -137,7 +136,7 @@ export class WaitingRunsSweeper {
         this.deps.logger.error(
           `WaitingRunsSweeper: enqueue failed for run ${run.uuid}: ${message}`,
         );
-        // If the update/enqueue failed, and we did acquire the lease, release it since the status rolled back.
+      } finally {
         if (leaseAcquired) {
           try {
             this.deps.leases.release(run.repoId, workerId);
