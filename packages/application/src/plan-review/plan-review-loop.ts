@@ -637,6 +637,8 @@ export class PlanReviewLoop {
             const bonusFix = await deps.runFix(finalCtx, {
               reconciliationContext: arbiterResult.rationale,
             });
+            recentFixCitations =
+              deps.computeLastFixDiffCitations?.(finalCtx.cwd, bonusFix.headBeforeFix) ?? [];
 
             const fixIteration: import('@ai-sdlc/domain').LoopIteration = {
               index: finalIterationIndex,
@@ -675,7 +677,7 @@ export class PlanReviewLoop {
               let confirmAttempts = 0;
               while (confirmAttempts <= reviewerMaxRetries) {
                 confirmAttempts += 1;
-                confirmReview = await deps.runReview(confirmCtx);
+                confirmReview = await deps.runReview(confirmCtx, buildReviewStepOptions());
                 if (confirmReview.agentOutcome === 'success' && confirmReview.verdict !== undefined)
                   break;
                 if (confirmAttempts <= reviewerMaxRetries) {

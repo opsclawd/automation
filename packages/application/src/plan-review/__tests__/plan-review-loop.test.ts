@@ -458,9 +458,14 @@ describe('PlanReviewLoop', () => {
     let reviewCalls = 0;
     let fixCalls = 0;
     let arbiterCalls = 0;
+    const reviewOptions: Array<PlanReviewStepOptions | undefined> = [];
     const { deps, events } = makeDeps({
-      runReview: async (): Promise<PlanReviewResult> => {
+      runReview: async (
+        _ctx: PlanReviewContext,
+        opts?: PlanReviewStepOptions,
+      ): Promise<PlanReviewResult> => {
         reviewCalls += 1;
+        reviewOptions.push(opts);
         // Iterations 1, 2: fail
         // Iteration 3 (trailing): fail
         // Iteration 4 (bonus final): pass
@@ -468,6 +473,17 @@ describe('PlanReviewLoop', () => {
           invocationId: `rev-${reviewCalls}`,
           agentOutcome: 'success' as const,
           verdict: reviewCalls === 4 ? ('pass' as const) : ('p1_found' as const),
+          findings:
+            reviewCalls === 1
+              ? [
+                  {
+                    severity: 'P1' as const,
+                    citation: 'plan.md:42',
+                    failureScenario: 'Missing transition handler',
+                    evidence: 'grounded' as const,
+                  },
+                ]
+              : [],
         };
       },
       runFix: async (): Promise<PlanFixResult> => {
@@ -476,8 +492,17 @@ describe('PlanReviewLoop', () => {
           invocationId: `fix-${fixCalls}`,
           agentOutcome: 'success' as const,
           verdict: 'done_with_fixes' as const,
+          headBeforeFix: fixCalls === 3 ? 'bonus-fix-head' : `fix-head-${fixCalls}`,
         };
       },
+      computeLastFixDiffCitations: (_cwd, headBeforeFix) =>
+        headBeforeFix === 'bonus-fix-head'
+          ? ['plan.md:99-101']
+          : headBeforeFix === 'fix-head-1'
+            ? ['plan.md:42']
+            : headBeforeFix === 'fix-head-2'
+              ? ['plan.md:50-55']
+              : [],
       runFinalReviewArbiter: async (): Promise<ArbiterResult> => {
         arbiterCalls += 1;
         return {
@@ -494,6 +519,18 @@ describe('PlanReviewLoop', () => {
     expect(arbiterCalls).toBe(1);
     expect(fixCalls).toBe(3); // 2 original + 1 bonus
     expect(reviewCalls).toBe(4); // 2 original + 1 trailing + 1 bonus-trailing
+    expect(reviewOptions[0]).toBeUndefined();
+    expect(reviewOptions[3]).toMatchObject({
+      prevFindings: [
+        {
+          severity: 'P1',
+          citation: 'plan.md:42',
+          failureScenario: 'Missing transition handler',
+          evidence: 'grounded',
+        },
+      ],
+      recentFixCitations: ['plan.md:99-101'],
+    });
 
     expect(events.map((e) => e.type)).toContain(
       'plan-review.loop.trailing_review.bonus_fix_iteration',
