@@ -4,6 +4,7 @@ import {
   completeIteration,
   exhaust,
   updateOpenIteration,
+  AgentProfileName,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -18,6 +19,8 @@ import type {
   FixResult,
   ImplementStepHistoryEntry,
   ArbiterResult,
+  ImplementResult,
+  ImplementStepOptions,
 } from './types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
 
