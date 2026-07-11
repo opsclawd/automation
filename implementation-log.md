@@ -1,15 +1,15 @@
-# Implementation Log - Task 4
+# Implementation Log - Task 5
 
-## What was implemented
-1. **Extended `RepositoryRegistryRepository`**:
-   - Implemented the full `RepositoryPort` interface (which includes `findById`, `findByFullName`, `findByLocalPath`, `listAll`, and `listEnabled`).
-   - Added database querying and domain-mapping helper (`rowToRepository`) to convert SQLite `repositories` table rows to `Repository` entities.
-2. **Added Tests**:
-   - Wrote unit tests in `packages/infrastructure/src/sqlite/__tests__/repository-registry-repository.test.ts` to verify `findByFullName` (finding a repository and returning undefined for missing ones) and `listEnabled` (retrieving only enabled repositories ordered by creation date).
+## LoadRepositoryForRun Use Case
 
-## Verification Results
-- All unit tests in `packages/infrastructure/src/sqlite/__tests__/repository-registry-repository.test.ts` passed successfully.
-- `pnpm -r build` completed successfully.
-- `pnpm -r typecheck` completed successfully.
-- `pnpm lint` completed successfully with no errors or warnings.
-- `pnpm -r test` completed successfully (108 tests passed).
+Implemented the `LoadRepositoryForRun` use case in `packages/application/src/use-cases/load-repository-for-run.ts` and its unit tests in `packages/application/src/use-cases/__tests__/load-repository-for-run.test.ts`.
+
+### Features
+- Resolves repository by `callerRepoId` or `callerFullName` (using `RepositoryPort.findById` and `RepositoryPort.findByFullName` respectively).
+- Validates the resolved repository against the run (`run.repoId === resolved.id`).
+- Handles strict match validation rules and unregistered repository checks.
+- Returns the owning repository if found and valid.
+- Throws appropriate domain errors: `RunRepositoryMismatchError` and `RunRepositoryMissingError`.
+
+### Verification
+All unit, typecheck, lint, and integration tests passed successfully.
