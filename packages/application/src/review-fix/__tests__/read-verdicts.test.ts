@@ -365,4 +365,139 @@ describe('readReviewVerdict severity gate', () => {
       offendingFindings: [{ severity: 'high', summary: 'command injection' }],
     });
   });
+
+  // The spec/quality review prompts instruct reviewers to emit P0-P3
+  // severities; the gate must rank them like critical/high/medium/low so
+  // blockOnSeverity is not inert for those reviews.
+  it('P1 finding blocks at threshold high (alias for critical/high vocab)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'pass',
+        findings: [{ severity: 'P1', summary: 'run object inconsistent with DB patch' }],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      overridden: true,
+      offendingFindings: [{ severity: 'P1', summary: 'run object inconsistent with DB patch' }],
+    });
+  });
+
+  it('agent fail with only P2/P3 findings is overridden to pass at threshold high', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [
+          { severity: 'P2', summary: 'test coverage nit' },
+          { severity: 'P3', summary: 'naming nit' },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'pass',
+      overridden: true,
+      offendingFindings: [],
+    });
+  });
+
+  it('P0 finding blocks even at threshold critical', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [
+          { severity: 'P0', summary: 'data loss' },
+          { severity: 'P1', summary: 'lesser bug' },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'critical' },
+    );
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'P0', summary: 'data loss' }],
+    });
+  });
+
+  it('mixed P-label and word-label findings rank on one scale', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [
+          { severity: 'P2', summary: 'style' },
+          { severity: 'high', summary: 'real bug' },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [{ severity: 'high', summary: 'real bug' }],
+    });
+  });
+
+  it('unknown severity label stays conservative (no override of fail)', async () => {
+    const artifacts = new FakeArtifactStore();
+    await artifacts.write({
+      runId: 'run-1',
+      relativePath: 'result.json',
+      contents: JSON.stringify({
+        result: 'fail',
+        findings: [
+          { severity: 'P3', summary: 'nit' },
+          { severity: 'P9', summary: 'unmappable label' },
+        ],
+      }),
+    });
+    const agent = new FakeAgentPort();
+    const v = await readReviewVerdict(
+      invocation('whole-pr-review', 'result.json'),
+      { artifacts, agent },
+      { blockOnSeverity: 'high' },
+    );
+    expect(v).toEqual({
+      ok: true,
+      verdict: 'fail',
+      offendingFindings: [
+        { severity: 'P3', summary: 'nit' },
+        { severity: 'P9', summary: 'unmappable label' },
+      ],
+    });
+  });
 });
