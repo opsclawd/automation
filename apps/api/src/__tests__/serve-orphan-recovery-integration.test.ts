@@ -129,7 +129,10 @@ describe('serve orphan-recovery integration', () => {
     const orphanResult = await orphanSweeper.execute(sweepResult.orphanedRuns);
     expect(orphanResult.enqueued).toBe(0);
     expect(orphanResult.skippedLeaseConflict).toBe(1);
-    expect(runRepo.findByUuid('orphan-r2')?.status).toBe('failed');
+    // P0: skipped lease-conflict runs must be returned to a non-terminal
+    // state so findActiveRuns() picks them up on the next tick instead
+    // of being permanently orphaned.
+    expect(runRepo.findByUuid('orphan-r2')?.status).toBe('running');
     expect(queue.listForRun('orphan-r2' as never)).toHaveLength(0);
   });
 });
