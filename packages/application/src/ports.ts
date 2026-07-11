@@ -190,6 +190,13 @@ export type {
   SynthesizeFromTranscriptOutcome,
 } from './ports/synthesize-from-transcript-port.js';
 export type {
+  StructuredResultRepairPort,
+  StructuredResultRepairInput,
+  StructuredResultRepairPrimaryInvocation,
+  StructuredResultRepairOutcome,
+  StructuredResultRepairResult,
+} from './ports/structured-result-repair-port.js';
+export type {
   FixDiffInspectorPort,
   FixDiffInspectorInput,
   FixDiffInspectionResult,

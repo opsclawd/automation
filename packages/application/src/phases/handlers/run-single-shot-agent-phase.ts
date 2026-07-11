@@ -14,6 +14,7 @@ import { extractResult } from '../../results/extract-result.js';
 import { AgentInvocationId, type AgentInvocation } from '@ai-sdlc/domain';
 import { ArtifactNotFoundError } from '../../ports/artifact-store.js';
 import type { ArtifactGuardPort } from '../../ports/git-port.js';
+import type { StructuredResultRepairPort } from '../../ports.js';
 
 export interface SingleShotConfig {
   phase: PhaseName;
@@ -311,7 +312,7 @@ export async function runSingleShotAgentPhase(
     return { outcome: 'blocked', failure };
   }
 
-  // 9. Extract result (M4-05 single rerun handled internally)
+  // 9. Extract result
   //    Skipped for phases where the agent produces draft artifacts only,
   //    and the result values are determined by handler-level operations.
   if (!config.skipResultExtraction) {
@@ -319,12 +320,9 @@ export async function runSingleShotAgentPhase(
       invocation,
       ports: {
         artifacts: ctx.artifacts,
-        agent: ctx.agent,
+        repair: (ctx as unknown as { repair?: StructuredResultRepairPort }).repair,
       },
-      rerunContext: {
-        cwd: ctx.cwd,
-        repoId: ctx.repoFullName,
-      },
+      cwd: ctx.cwd,
     });
 
     if (!extracted.ok) {
@@ -338,50 +336,6 @@ export async function runSingleShotAgentPhase(
       );
       emit(`${String(config.phase)}.failed`, 'error', failure.message);
       return { outcome: 'failed', failure };
-    }
-
-    // If extractResult performed a rerun, forward the rerun's endCommitSha
-    // and resultJsonPath into the invocation so post-extraction validation
-    // checks the rerun's side effects, not the original run's stale data.
-    if (extracted.rerunResult) {
-      if (extracted.rerunResult.endCommitSha) {
-        invocation = { ...invocation, endCommitSha: extracted.rerunResult.endCommitSha };
-      }
-      if (extracted.rerunResult.resultJsonPath) {
-        invocation = { ...invocation, resultJsonPath: extracted.rerunResult.resultJsonPath };
-      }
-    }
-
-    // Re-validate contract after extraction. extractResult may have
-    // re-invoked the agent (M4-05 rerun), whose side effects (branch
-    // change, deleted artifacts, etc.) would not have been caught by
-    // the initial validation at step 8.
-    const postExtractViolations = await validateAgentContract({
-      contract: config.agentContract,
-      invocation,
-      ports: {
-        artifacts: ctx.artifacts,
-        git: ctx.git,
-        github: ctx.github,
-      },
-      cwd: ctx.cwd,
-      expectedBranch,
-      repoFullName: ctx.repoFullName,
-    });
-
-    if (postExtractViolations.length > 0) {
-      const failure = buildFailure(
-        ctx,
-        config.phase as string,
-        'agent_contract_violation',
-        `Agent contract violations (post-extraction): ${postExtractViolations.join(', ')}`,
-        false,
-        'Review agent output and contract requirements. The agent violated its instructions during rerun.',
-      );
-      emit(`${String(config.phase)}.blocked`, 'error', failure.message, {
-        violations: postExtractViolations,
-      });
-      return { outcome: 'blocked', failure };
     }
   }
 

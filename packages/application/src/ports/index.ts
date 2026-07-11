@@ -78,6 +78,13 @@ export type {
   SynthesizeFromTranscriptResult,
   SynthesizeFromTranscriptOutcome,
 } from './synthesize-from-transcript-port.js';
+export type {
+  StructuredResultRepairPort,
+  StructuredResultRepairInput,
+  StructuredResultRepairPrimaryInvocation,
+  StructuredResultRepairOutcome,
+  StructuredResultRepairResult,
+} from './structured-result-repair-port.js';
 
 export type { RepositoryRegistryPort, RepositoryUpdatePatch } from './repository-registry-port.js';
 
