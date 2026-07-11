@@ -59,6 +59,7 @@ export class ReviewFixLoop {
     let lastOffendingFindings: Array<{ severity: string; summary: string }> = [];
     let lastReviewedCommitSha: string | undefined;
     const findingHistory: Array<Set<string>> = [];
+    let headRevalidated = true;
     const unfoundedHistory: FindingHistoryEntry[] = [];
 
     const opts = { ...(this.deps.options ?? {}), ...(input.options ?? {}) };
@@ -82,6 +83,7 @@ export class ReviewFixLoop {
         thisLoop = { ...thisLoop, maxIterations: thisLoop.iterations.length + 1 };
       }
       loop = thisLoop;
+      const headRevalidatedAtStart = headRevalidated;
       const iterationIndex = loop.iterations.length + 1;
       const ctx: StepContext = {
         loopId: loop.id,
@@ -155,9 +157,10 @@ export class ReviewFixLoop {
       }
 
       if (review.verdict === 'pass') {
-        if (outstandingFailedRevalidation) {
+        if (outstandingFailedRevalidation || !headRevalidated) {
           const reval = await deps.runRevalidation(ctx);
           outstandingFailedRevalidation = !reval.passed;
+          headRevalidated = reval.passed;
           if (reval.passed) {
             thisLoop = completeIteration(thisLoop, { outcome: 'resolved', now: deps.now() });
             deps.loops.update(thisLoop);
@@ -302,6 +305,7 @@ export class ReviewFixLoop {
       }
       lastIterationHadFixCommit = fix.verdict === 'done_with_fixes';
       if (fix.verdict === 'done_with_fixes') {
+        headRevalidated = false;
         lastPostFixGateFailed = false;
         if (review.reviewedCommitSha) {
           lastReviewedCommitSha = review.reviewedCommitSha;
@@ -383,6 +387,7 @@ export class ReviewFixLoop {
                 autoCommitted = true;
                 // Success: treat this as a productive fix that advanced HEAD.
                 lastIterationHadFixCommit = true;
+                headRevalidated = false;
                 consecutiveFixFailures = 0;
                 consecutiveFixFailuresForCap = 0;
                 totalFixAttempts += 1;
@@ -538,6 +543,7 @@ export class ReviewFixLoop {
       // --- REVALIDATE ---
       const reval = await deps.runRevalidation(ctx);
       outstandingFailedRevalidation = !reval.passed;
+      headRevalidated = reval.passed;
 
       // When revalidation fails after a fix that advanced HEAD, roll back
       // the fix commit so the next iteration starts from the pre-fix baseline
@@ -545,6 +551,7 @@ export class ReviewFixLoop {
       // an exhausted loop or resumed run from inheriting unvalidated changes.
       if (!reval.passed && fix.headBeforeFix && deps.rollbackFix) {
         await deps.rollbackFix(ctx, fix.headBeforeFix);
+        headRevalidated = headRevalidatedAtStart;
       }
 
       // category-change trigger: if this revalidation failed with a different

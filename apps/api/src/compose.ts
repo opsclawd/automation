@@ -1954,14 +1954,12 @@ export function composeRoot(opts: ComposeOptions): Container {
           timeoutSeconds: config.validation.timeout,
         });
         const failedCommand = vr.validationRun.commands.find((c) => c.outcome !== 'passed');
-        if (vr.passed) {
-          await artifactStoreForRun(String(ctx.runId), ctx.cwd).write({
-            runId: String(ctx.runId),
-            phaseId: 'validate',
-            relativePath: 'validation.result',
-            contents: 'passed\n',
-          });
-        }
+        await artifactStoreForRun(String(ctx.runId), ctx.cwd).write({
+          runId: String(ctx.runId),
+          phaseId: 'validate',
+          relativePath: 'validation.result',
+          contents: vr.passed ? 'passed\n' : 'failed\n',
+        });
         return {
           validationRunId: vr.validationRun.id,
           passed: vr.passed,
