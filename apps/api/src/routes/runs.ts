@@ -111,7 +111,14 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     );
     let repositoryId =
       ctx.repositoryId ?? (body.repositoryId ? RepositoryId(body.repositoryId) : undefined);
-    const fullName = ctx.fullName ?? body.repo ?? c.repoFullName;
+    // Do NOT fall back to c.repoFullName here: that's the compose-root's own
+    // default repo context and is always defined, so it would silently
+    // resolve a repositoryId whenever the caller omits one — defeating the
+    // "explicit repositoryId required when more than one repository is
+    // enabled" guard StartIssueRun.execute() enforces below. Leave fullName
+    // undefined when neither the request context nor the body specifies a
+    // repo, so that guard actually gets a chance to run.
+    const fullName = ctx.fullName ?? body.repo;
     if (!repositoryId && fullName) {
       try {
         const repo = c.inspectRepository.executeByFullName(fullName);
