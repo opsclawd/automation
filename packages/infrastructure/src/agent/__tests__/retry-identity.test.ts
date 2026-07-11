@@ -51,8 +51,9 @@ describe('retry-identity', () => {
       relevantArtifactPaths: ['nonexistent.txt'],
     };
 
-    const identity = generateRetryIdentity(baseInput);
-    expect(identity).toBeDefined();
+    const identity1 = generateRetryIdentity(baseInput);
+    const identity2 = generateRetryIdentity(baseInput);
+    expect(identity1).toBe(identity2);
   });
 
   it('detects changed components (different hash when files change)', () => {

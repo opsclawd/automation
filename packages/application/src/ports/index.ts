@@ -31,6 +31,7 @@ export type {
   AgentInvocationOutcome,
   AgentInvocationRequest,
   AgentInvocationResult,
+  SemanticRetryClassification,
   SemanticRetryIntent,
 } from './agent-invocation-types.js';
 export { AgentProfileName } from './agent-invocation-types.js';

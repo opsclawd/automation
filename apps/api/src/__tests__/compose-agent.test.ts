@@ -47,7 +47,7 @@ function makeRouter(overrides: Partial<ConstructorParameters<typeof AgentRuntime
     invocationRepository: new FakeAgentInvocationPort(),
     clock: () => new Date('2026-01-01'),
     idFactory: () => 'test-id',
-    readPromptChars: () => 0,
+    readPromptContent: () => 'prompt content',
     ...overrides,
   });
 }
@@ -145,7 +145,7 @@ describe('compose agent wiring', () => {
       invocationRepository: new FakeAgentInvocationPort(),
       clock: () => new Date('2026-01-01'),
       idFactory: () => 'test-id',
-      readPromptChars: () => 0,
+      readPromptContent: () => 'prompt content',
     });
     await expect(
       router.invoke({
@@ -180,5 +180,6 @@ describe('compose agent retryIntent behavior', () => {
       },
     };
     expect(requestWithRetry.retryIntent?.classification).toBe('semantic');
+    expect(requestWithRetry.retryIntent?.relevantArtifactPaths).toEqual(['result.json']);
   });
 });

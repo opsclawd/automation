@@ -12,10 +12,12 @@ export type AgentInvocationOutcome =
 
 export type StepAgentOutcome = AgentInvocationOutcome;
 
+export type SemanticRetryClassification = 'semantic';
+
 export interface SemanticRetryIntent {
   normalizedPhase: string;
-  classification: string;
-  relevantArtifactPaths: string[];
+  classification: SemanticRetryClassification;
+  relevantArtifactPaths: readonly string[];
 }
 
 export interface AgentInvocationRequest {

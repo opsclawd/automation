@@ -215,6 +215,7 @@ describe('AgentRuntimeRouter fallback', () => {
       if (serializationTriggers.has(name)) {
         expect(rows.length).toBe(1);
         expect(rows[0].outcome).toBe(triggerResult.outcome);
+        expect(rows[0].fallbackOfInvocationId).toBeUndefined();
         expect(events.length).toBe(0);
       } else {
         // Two rows: first (failed) + second (fallback)

@@ -22,9 +22,9 @@ export class FakeAgentInvocationPort implements AgentInvocationPort {
     if (idx < 0) throw new Error(`AgentInvocation ${id} not found`);
     const existing = this.rows[idx]!;
     const mergedMetadata =
-      existing.metadata || patch.metadata
-        ? { ...(existing.metadata ?? {}), ...(patch.metadata ?? {}) }
-        : undefined;
+      patch.metadata !== undefined
+        ? { ...(existing.metadata ?? {}), ...patch.metadata }
+        : existing.metadata;
     this.rows[idx] = {
       ...existing,
       ...patch,

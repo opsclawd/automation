@@ -7,7 +7,7 @@ export interface RetryIdentityInput {
   profile: string;
   promptHash: string;
   startCommitSha: string;
-  relevantArtifactPaths: string[];
+  relevantArtifactPaths: readonly string[];
   classification: string;
   cwd: string;
 }

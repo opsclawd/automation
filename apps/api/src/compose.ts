@@ -1949,6 +1949,9 @@ export function composeRoot(opts: ComposeOptions): Container {
           .toString()
           .trim();
         const isDeterministic = !!opts.deterministicDiagnostic;
+        // Only loop-owned semantic retries carry retryIntent; deterministic
+        // fixes stay tagged separately so the router never treats them as
+        // semantic duplicates.
         const isSemanticRetry = ctx.iterationIndex > 1 && !opts.useFallback && !isDeterministic;
         const result = await artifactAgent.invoke({
           profile: AgentProfileName(profile),

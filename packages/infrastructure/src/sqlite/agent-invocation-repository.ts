@@ -186,7 +186,8 @@ export class AgentInvocationRepository {
     if (patch.metadata !== undefined) {
       const existing = this.findById(id);
       if (!existing) throw new Error(`AgentInvocation ${id} not found`);
-      const merged = { ...(existing.metadata ?? {}), ...patch.metadata };
+      const existingMetadata = existing.metadata ?? {};
+      const merged = { ...existingMetadata, ...patch.metadata };
       setClauses.push('metadata = @metadata');
       params.metadata = JSON.stringify(merged);
     }

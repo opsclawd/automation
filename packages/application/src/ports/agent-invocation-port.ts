@@ -16,6 +16,10 @@ export interface AgentInvocationUpdatePatch {
   resultJsonPath?: string;
   stdoutPath?: string;
   stderrPath?: string;
+  /**
+   * Shallow-merged into the stored metadata JSON so callers can add new
+   * classifications or retry attributes without erasing prior values.
+   */
   metadata?: Record<string, unknown>;
 }
 
