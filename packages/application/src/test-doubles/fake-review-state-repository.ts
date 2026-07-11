@@ -45,10 +45,9 @@ export class FakeReviewStateRepository implements ReviewStateRepositoryPort {
   }
 
   listDimensionStates(runId: string, scope: string, step: string): ReviewDimensionState[] {
-    return [...this.dimensionStates.values()]
-      .filter((s) =>
-        dimensionKey(runId, scope, step, s.dimension).startsWith(`${runId}|${scope}|${step}|`),
-      )
-      .map(cloneState);
+    const prefix = `${runId}|${scope}|${step}|`;
+    return [...this.dimensionStates.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, value]) => cloneState(value));
   }
 }

@@ -19,6 +19,7 @@ export interface ReviewFindingRecord {
 }
 
 export interface DispositionHistoryEntry {
+  fingerprint: string;
   disposition: FindingDisposition;
   changedAt: string;
   reason?: string;
@@ -44,14 +45,4 @@ export interface ReviewAttempt {
   artifacts: string[];
 }
 
-export interface ReviewStateRepositoryPort {
-  appendAttempt(attempt: ReviewAttempt): void;
-  listAttempts(runId: string, scope: string, step: string): ReviewAttempt[];
-  upsertDimensionState(
-    runId: string,
-    scope: string,
-    step: string,
-    state: ReviewDimensionState,
-  ): void;
-  listDimensionStates(runId: string, scope: string, step: string): ReviewDimensionState[];
-}
+export type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
