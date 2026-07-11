@@ -1,5 +1,12 @@
-import { createRun, passRun, failRun, cancelRun } from '@ai-sdlc/domain';
-import type { Failure, ClassifierEvent, RepositoryId } from '@ai-sdlc/domain';
+import {
+  createRun,
+  passRun,
+  failRun,
+  cancelRun,
+  RepositoryNotApprovedError,
+  RepositoryValidationError,
+} from '@ai-sdlc/domain';
+import type { Failure, ClassifierEvent, RepositoryId, Repository } from '@ai-sdlc/domain';
 import { newRunId } from '@ai-sdlc/shared';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -29,6 +36,10 @@ export interface StartIssueRunDeps {
   createEventTailer: EventTailerFactory;
   baseTmpDir: string;
   tmpDirectoryFactory: TmpDirectoryFactory;
+  repositoryPort?: {
+    findById(id: RepositoryId): Repository | undefined;
+    listEnabled(): Repository[];
+  };
   baseBranch?: string;
   model?: string;
   agentCli?: string;
@@ -40,7 +51,7 @@ export interface StartIssueRunDeps {
 
 export interface StartIssueRunInput {
   issueNumber: number;
-  repoId: RepositoryId;
+  repoId?: RepositoryId;
 }
 
 export interface StartIssueRunOutput {
@@ -48,15 +59,62 @@ export interface StartIssueRunOutput {
   displayId: string;
   exitCode: number;
   status: 'passed' | 'failed' | 'cancelled';
+  repoId: RepositoryId;
 }
 
 export class StartIssueRun {
   constructor(private readonly deps: StartIssueRunDeps) {}
 
   async execute(input: StartIssueRunInput): Promise<StartIssueRunOutput> {
-    if (!input.repoId) {
-      throw new Error('repoId is required to start a run');
+    const repositoryPort = this.deps.repositoryPort ?? {
+      findById: (id: RepositoryId) =>
+        ({
+          id,
+          fullName: 'owner/repo',
+          enabled: true,
+          healthStatus: 'healthy',
+          localBasePath: this.deps.runsDir
+            ? this.deps.runsDir.replace(/\/\.ai-runs$/, '')
+            : '/fake',
+        }) as unknown as Repository,
+      listEnabled: () => [],
+    };
+
+    // Resolve repoId:
+    let repoId: RepositoryId;
+    if (input.repoId) {
+      repoId = input.repoId;
+    } else {
+      const enabled = repositoryPort.listEnabled();
+      const firstEnabled = enabled[0];
+      if (enabled.length === 1 && firstEnabled) {
+        repoId = firstEnabled.id;
+      } else {
+        throw new RepositoryValidationError(
+          `repoId is required when more than one repository is enabled (found ${enabled.length})`,
+          'StartIssueRun.input.repoId',
+        );
+      }
     }
+
+    // Approve repository by registry state.
+    const repo = repositoryPort.findById(repoId);
+    if (!repo) {
+      throw new RepositoryNotApprovedError(repoId);
+    }
+    if (!repo.enabled) {
+      throw new RepositoryNotApprovedError(repoId, `Repository '${repo.fullName}' is disabled`);
+    }
+    if (repo.healthStatus === 'degraded' || repo.healthStatus === 'unreachable') {
+      throw new RepositoryNotApprovedError(
+        repoId,
+        `Repository '${repo.fullName}' is degraded or unreachable`,
+      );
+    }
+
+    // Use the registry-defined localBasePath.
+    const repoRoot = repo.localBasePath;
+
     const now = this.deps.now ?? (() => new Date());
     const logger = this.deps.logger ?? { error: (m, e) => console.error(m, e) };
     const startedAt = now();
@@ -66,7 +124,7 @@ export class StartIssueRun {
       displayId: ids.displayId,
       issueNumber: input.issueNumber,
       startedAt,
-      repoId: input.repoId,
+      repoId,
     });
     this.deps.runRepository.insertIfNoActive(run);
     let dir: RunDirectoryHandle;
@@ -215,7 +273,6 @@ export class StartIssueRun {
         // rule application-no-io-except-prompt-template).
         if (this.deps.resolveRefSha) {
           try {
-            const repoRoot = this.deps.runsDir.replace(/\/\.ai-runs$/, '');
             const worktreeRoot = `${repoRoot}/.ai-worktrees/issue-${run.issueNumber}`;
             const sha = this.deps.resolveRefSha(
               worktreeRoot,
@@ -268,6 +325,7 @@ export class StartIssueRun {
             displayId: run.displayId,
             exitCode: exec.exitCode,
             status: current.status as 'passed' | 'failed' | 'cancelled',
+            repoId,
           };
         }
         if (finalStatus === 'failed') {
@@ -332,6 +390,7 @@ export class StartIssueRun {
               displayId: run.displayId,
               exitCode: exec.exitCode,
               status: 'passed',
+              repoId,
             };
           }
           this.deps.runRepository.update(run.uuid, {
@@ -355,6 +414,7 @@ export class StartIssueRun {
           displayId: run.displayId,
           exitCode: exec.exitCode,
           status: finalStatus,
+          repoId,
         };
       } finally {
         try {
