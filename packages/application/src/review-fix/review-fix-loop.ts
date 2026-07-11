@@ -77,6 +77,7 @@ export class ReviewFixLoop {
       return last?.outcome === 'fixed';
     };
 
+    let preEvaluatedGateResult: PostFixGateResult | undefined;
     let thisLoop: Loop = loop;
     while (canStartReviewCycle(thisLoop)) {
       if (thisLoop.iterations.length === originalMax) {
@@ -96,7 +97,11 @@ export class ReviewFixLoop {
 
       // --- POST-FIX GATE (skip iteration 1 — fixer has not yet committed) ---
       let gateResult: PostFixGateResult | undefined;
-      if (iterationIndex > 1 && lastIterationHadFixCommit) {
+      if (preEvaluatedGateResult) {
+        gateResult = preEvaluatedGateResult;
+        preEvaluatedGateResult = undefined;
+        lastPostFixGateFailed = gateResult.outcome === 'fail';
+      } else if (iterationIndex > 1 && lastIterationHadFixCommit) {
         gateResult = await deps.runPostFixGate(ctx);
         lastPostFixGateFailed = gateResult.outcome === 'fail';
       }
@@ -347,6 +352,7 @@ export class ReviewFixLoop {
 
         const nextGateResult = await deps.runPostFixGate(ctx);
         lastPostFixGateFailed = nextGateResult.outcome === 'fail';
+        preEvaluatedGateResult = nextGateResult;
 
         let reval: RevalidationResult | undefined;
         if (!lastPostFixGateFailed) {
