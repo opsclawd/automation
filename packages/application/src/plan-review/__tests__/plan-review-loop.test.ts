@@ -218,6 +218,32 @@ describe('PlanReviewLoop', () => {
     expect(out.loop.iterations.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('exhaustion when checkAndFixManifest exhausts loop budget and succeeds on the final iteration', async () => {
+    let checkManifestCalls = 0;
+    const { deps } = makeDeps({
+      runReview: async (): Promise<PlanReviewResult> => ({
+        invocationId: 'rev-1',
+        agentOutcome: 'success' as const,
+        verdict: 'pass' as const,
+      }),
+      runFix: async (): Promise<PlanFixResult> => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success' as const,
+        verdict: 'done_with_fixes' as const,
+      }),
+      checkManifestSync: async (): Promise<string | null> => {
+        checkManifestCalls++;
+        return checkManifestCalls === 1 ? 'manifest mismatch error' : null;
+      },
+    });
+    const baseInputWithMax1 = { ...baseInput(), maxIterations: 1 };
+    const out = await new PlanReviewLoop(deps).execute(baseInputWithMax1);
+    expect(out.outcome).toBe('needs_human_review');
+    expect(out.loop.status).toBe('exhausted');
+    expect(out.loop.iterations).toHaveLength(1);
+    expect(out.loop.iterations[0]?.kind).toBe('deterministic_fix');
+  });
+
   it('final fixer pass resolves P1 findings on the last allowed iteration', async () => {
     let reviewCalls = 0;
     let fixCalls = 0;

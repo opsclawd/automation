@@ -214,6 +214,12 @@ export class PlanReviewLoop {
         return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
       }
 
+      if (!canIterate(loop)) {
+        loop = exhaust(loop, deps.now());
+        deps.loops.update(loop);
+        return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+      }
+
       const iterationIndex = loop.iterations.length + 1;
       const ctx: PlanReviewContext = { ...baseCtx, iterationIndex };
 
