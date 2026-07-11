@@ -127,6 +127,8 @@ import {
   planFixResultSchema,
   specReviewResultSchema,
   qualityReviewResultSchema,
+  specReviewFindingSchema,
+  qualityReviewFindingSchema,
   extractResult,
   extractTaskBody,
   loadPromptTemplate,
@@ -830,29 +832,10 @@ export async function buildImplementStepFixPrompt(
         'findings' in parsed &&
         Array.isArray(parsed.findings)
       ) {
-        const itemSchema = (
-          schema.shape.findings as {
-            _def: {
-              innerType: {
-                _def: {
-                  innerType: {
-                    element: {
-                      safeParse: (data: unknown) => {
-                        success: boolean;
-                        data: {
-                          severity: 'P0' | 'P1' | 'P2' | 'P3';
-                          summary: string;
-                          file?: string;
-                          suggested_fix?: string;
-                        };
-                      };
-                    };
-                  };
-                };
-              };
-            };
-          }
-        )._def.innerType._def.innerType.element;
+        const itemSchema =
+          archive === SPEC_REVIEW_RESULT_ARTIFACT
+            ? specReviewFindingSchema
+            : qualityReviewFindingSchema;
         const items: Array<{
           severity: string;
           summary: string;
