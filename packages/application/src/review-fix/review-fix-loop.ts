@@ -343,6 +343,7 @@ export class ReviewFixLoop {
 
               for (let attempt = 1; attempt <= 2; attempt++) {
                 try {
+                  await this.deps.git!.addAll(ctx.cwd);
                   committedSha = await this.deps.git!.commit(ctx.cwd, message);
                   break;
                 } catch (err: unknown) {
