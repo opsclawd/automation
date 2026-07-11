@@ -12,9 +12,12 @@ export type LoopIterationOutcome =
   | 'fix_failed'
   | 'revalidation_failed';
 
+export type LoopIterationKind = 'review' | 'deterministic_fix';
+
 export interface LoopIteration {
   index: number;
-  reviewInvocationId: string;
+  kind?: LoopIterationKind;
+  reviewInvocationId?: string;
   qualityReviewInvocationId?: string;
   fixInvocationId?: string;
   revalidationId?: string;
@@ -79,7 +82,12 @@ function openIteration(loop: Loop): LoopIteration | undefined {
   return last && last.completedAt === undefined ? last : undefined;
 }
 
-export function startIteration(loop: Loop, input: { reviewInvocationId: string; now: Date }): Loop {
+export function startIteration(
+  loop: Loop,
+  input:
+    | { kind?: 'review'; reviewInvocationId: string; now: Date }
+    | { kind: 'deterministic_fix'; fixInvocationId: string; now: Date },
+): Loop {
   if (loop.status !== 'running') {
     throw new LoopStateError(`cannot start iteration: loop ${loop.id} is ${loop.status}`);
   }
@@ -91,11 +99,17 @@ export function startIteration(loop: Loop, input: { reviewInvocationId: string; 
       `cannot start iteration: loop ${loop.id} reached maxIterations (${loop.maxIterations})`,
     );
   }
+  const kind = input.kind ?? 'review';
   const iteration: LoopIteration = {
     index: loop.iterations.length + 1,
-    reviewInvocationId: input.reviewInvocationId,
+    kind,
     startedAt: input.now,
   };
+  if (input.kind === 'deterministic_fix') {
+    iteration.fixInvocationId = input.fixInvocationId;
+  } else {
+    iteration.reviewInvocationId = input.reviewInvocationId;
+  }
   return { ...loop, iterations: [...loop.iterations, iteration] };
 }
 

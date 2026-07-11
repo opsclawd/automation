@@ -4,6 +4,7 @@ import {
   completeIteration,
   canIterate,
   exhaust,
+  type Loop,
 } from '@ai-sdlc/domain';
 import type { OrchestratorEvent } from '@ai-sdlc/shared';
 import type {
@@ -61,6 +62,115 @@ export class PlanReviewLoop {
       'addressed' | 'rebutted' | 'still_open' | 'never_seen_again'
     >();
 
+    let lastDeterministicMismatch: string | null = null;
+    let lastDeterministicWasUnresolvedWithNoChanges = false;
+
+    const checkAndFixManifest = async (
+      currentCtx: PlanReviewContext,
+    ): Promise<{ success: boolean; loop: Loop }> => {
+      let localCtx = { ...currentCtx };
+      while (true) {
+        const manifestError = await deps.checkManifestSync(localCtx);
+        if (!manifestError) {
+          return { success: true, loop };
+        }
+
+        if (
+          lastDeterministicMismatch === manifestError &&
+          lastDeterministicWasUnresolvedWithNoChanges
+        ) {
+          this.emit(
+            input,
+            'plan-review.manifest_mismatch.suppressed',
+            'warn',
+            `suppressing duplicate manifest fix attempt: mismatch and state unchanged (${manifestError})`,
+            { manifestError },
+          );
+          return { success: false, loop };
+        }
+
+        this.emit(input, 'deterministic_fix', 'warn', `manifest mismatch: ${manifestError}`, {
+          diagnostic: manifestError,
+        });
+
+        if (!canIterate(loop)) {
+          this.emit(
+            input,
+            'plan-review.manifest_mismatch.exhausted',
+            'error',
+            `cannot run deterministic fix: loop budget exhausted`,
+            {},
+          );
+          return { success: false, loop };
+        }
+
+        const fix = await deps.runFix(localCtx, {
+          manifestMismatch: manifestError,
+          metadata: {
+            iteration: loop.iterations.length + 1,
+            invocation_type: 'deterministic_fix',
+          },
+        });
+
+        lastDeterministicMismatch = manifestError;
+        lastDeterministicWasUnresolvedWithNoChanges =
+          fix.agentOutcome !== 'success' ||
+          fix.verdict === undefined ||
+          fix.verdict === 'cannot_fix' ||
+          fix.verdict === 'done_no_fixes_needed';
+
+        recentFixCitations = deps.computeLastFixDiffCitations(localCtx.cwd, fix.headBeforeFix);
+
+        const iterationIndex = loop.iterations.length + 1;
+        this.emit(
+          input,
+          'plan-review.loop.iteration.started',
+          'info',
+          `iteration ${iterationIndex} started`,
+          { index: iterationIndex },
+        );
+
+        loop = startIteration(loop, {
+          kind: 'deterministic_fix',
+          fixInvocationId: fix.invocationId,
+          now: deps.now(),
+        });
+
+        const outcome =
+          fix.agentOutcome === 'success' && fix.verdict === 'done_with_fixes'
+            ? 'fixed'
+            : 'unresolved';
+
+        if (fix.verdict === 'done_no_fixes_needed') {
+          this.emit(
+            input,
+            'plan-review.manifest_mismatch.fixer_declined',
+            'warn',
+            `fixer declined to address manifest/prose mismatch at iteration ${iterationIndex}; treating as unresolved`,
+            { iterationIndex },
+          );
+        }
+
+        loop = completeIteration(loop, {
+          outcome,
+          now: deps.now(),
+        });
+        deps.loops.update(loop);
+
+        this.emit(
+          input,
+          'plan-review.loop.iteration.completed',
+          'info',
+          `iteration ${iterationIndex} completed: ${outcome}`,
+          { index: iterationIndex, outcome },
+        );
+
+        localCtx = { ...currentCtx, iterationIndex: loop.iterations.length + 1 };
+        // If the fixer returned done_no_fixes_needed or cannot_fix, we keep it unresolved but bounded
+        // (meaning we return to the check loop which will find the same error and suppress the duplicate, exiting loop).
+      }
+    };
+
     const buildReviewStepOptions = (iterationIndex: number): PlanReviewStepOptions | undefined => {
       if (!deltaScopedReReview) return undefined;
       // Iteration 1 is a fresh full review — no scope block needed.
@@ -93,6 +203,17 @@ export class PlanReviewLoop {
     };
 
     while (canIterate(loop)) {
+      const syncResult = await checkAndFixManifest({
+        ...baseCtx,
+        iterationIndex: loop.iterations.length + 1,
+      });
+      loop = syncResult.loop;
+      if (!syncResult.success) {
+        loop = exhaust(loop, deps.now());
+        deps.loops.update(loop);
+        return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+      }
+
       const iterationIndex = loop.iterations.length + 1;
       const ctx: PlanReviewContext = { ...baseCtx, iterationIndex };
 
@@ -227,19 +348,8 @@ export class PlanReviewLoop {
         review = gatedReview;
       }
 
-      const manifestError = await deps.checkManifestSync(ctx);
-      if (manifestError) {
-        this.emit(
-          input,
-          'plan-review.manifest_mismatch.detected',
-          'warn',
-          `plan.md/task-manifest.json mismatch detected at iteration ${iterationIndex}: ${manifestError}`,
-          { iterationIndex, manifestError },
-        );
-      }
-
       // --- RESOLUTION ON PASS / P2-ONLY ---
-      if (!manifestError && (review.verdict === 'pass' || review.verdict === 'p2_only')) {
+      if (review.verdict === 'pass' || review.verdict === 'p2_only') {
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         this.emit(
@@ -253,7 +363,7 @@ export class PlanReviewLoop {
       }
 
       // --- PROCEED_WITH_CONCERNS — AC #3 ---
-      if (!manifestError && review.verdict === 'proceed_with_concerns') {
+      if (review.verdict === 'proceed_with_concerns') {
         loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
         deps.loops.update(loop);
         this.emit(
@@ -271,13 +381,8 @@ export class PlanReviewLoop {
         };
       }
 
-      // A manifest-only-triggered fix iteration is one where the reviewer
-      // itself did not fail (`p1_found`) but the manifest/prose check did —
-      // tracked separately so a fixer `done_no_fixes_needed` response here
-      // is never misrouted into the review/fix contradiction-arbiter path
-      // (there is no reviewer opinion to contradict, only a deterministic
-      // structural fact the fixer is refusing to address).
-      const manifestOnlyFix = manifestError !== null && review.verdict !== 'p1_found';
+      const manifestError = null;
+      const manifestOnlyFix = false;
 
       // --- FIX ---
       const fix = await deps.runFix(ctx, {
@@ -528,7 +633,17 @@ export class PlanReviewLoop {
       );
 
       if (iterationIndex === loop.maxIterations) {
-        const finalIterationIndex = iterationIndex + 1;
+        const syncResult = await checkAndFixManifest({
+          ...baseCtx,
+          iterationIndex: loop.iterations.length + 1,
+        });
+        loop = syncResult.loop;
+        if (!syncResult.success) {
+          loop = exhaust(loop, deps.now());
+          deps.loops.update(loop);
+          return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+        }
+        const finalIterationIndex = loop.iterations.length + 1;
         const finalCtx: PlanReviewContext = { ...baseCtx, iterationIndex: finalIterationIndex };
 
         this.emit(
@@ -614,21 +729,8 @@ export class PlanReviewLoop {
           return { outcome: 'failed', loop, proceedWithConcerns: false };
         }
 
-        const finalManifestError = await deps.checkManifestSync(finalCtx);
-        if (finalManifestError) {
-          this.emit(
-            input,
-            'plan-review.manifest_mismatch.detected',
-            'warn',
-            `plan.md/task-manifest.json mismatch detected at final review pass: ${finalManifestError}`,
-            { iterationIndex: finalCtx.iterationIndex, manifestError: finalManifestError },
-          );
-        }
-
-        if (
-          !finalManifestError &&
-          (finalReview.verdict === 'pass' || finalReview.verdict === 'p2_only')
-        ) {
+        const finalManifestError = null;
+        if (finalReview.verdict === 'pass' || finalReview.verdict === 'p2_only') {
           const finalIteration: import('@ai-sdlc/domain').LoopIteration = {
             index: finalIterationIndex,
             reviewInvocationId: finalReview.invocationId,
@@ -864,7 +966,17 @@ export class PlanReviewLoop {
 
             if (fixIteration.outcome === 'fixed') {
               // 2. Confirmation Review
-              const confirmIterationIndex = finalIterationIndex + 1;
+              const syncResult = await checkAndFixManifest({
+                ...baseCtx,
+                iterationIndex: loop.iterations.length + 1,
+              });
+              loop = syncResult.loop;
+              if (!syncResult.success) {
+                loop = exhaust(loop, deps.now());
+                deps.loops.update(loop);
+                return { outcome: 'needs_human_review', loop, proceedWithConcerns: false };
+              }
+              const confirmIterationIndex = loop.iterations.length + 1;
               const confirmCtx: PlanReviewContext = {
                 ...baseCtx,
                 iterationIndex: confirmIterationIndex,
@@ -909,12 +1021,10 @@ export class PlanReviewLoop {
                 confirmReview?.agentOutcome === 'success' &&
                 confirmReview.verdict !== undefined
               ) {
-                const confirmManifestError = await deps.checkManifestSync(confirmCtx);
                 if (
-                  !confirmManifestError &&
-                  (confirmReview.verdict === 'pass' ||
-                    confirmReview.verdict === 'p2_only' ||
-                    confirmReview.verdict === 'proceed_with_concerns')
+                  confirmReview.verdict === 'pass' ||
+                  confirmReview.verdict === 'p2_only' ||
+                  confirmReview.verdict === 'proceed_with_concerns'
                 ) {
                   const confirmIteration: import('@ai-sdlc/domain').LoopIteration = {
                     index: confirmIterationIndex,

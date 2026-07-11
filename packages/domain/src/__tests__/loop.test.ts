@@ -66,7 +66,28 @@ describe('startIteration', () => {
   it('appends a 1-based open iteration', () => {
     const l = startIteration(newLoop(), { reviewInvocationId: 'r1', now: t0 });
     expect(l.iterations).toHaveLength(1);
-    expect(l.iterations[0]).toMatchObject({ index: 1, reviewInvocationId: 'r1', startedAt: t0 });
+    expect(l.iterations[0]).toMatchObject({
+      index: 1,
+      kind: 'review',
+      reviewInvocationId: 'r1',
+      startedAt: t0,
+    });
+    expect(l.iterations[0]?.completedAt).toBeUndefined();
+  });
+  it('supports deterministic_fix attempt kind', () => {
+    const l = startIteration(newLoop(), {
+      kind: 'deterministic_fix',
+      fixInvocationId: 'f1',
+      now: t0,
+    });
+    expect(l.iterations).toHaveLength(1);
+    expect(l.iterations[0]).toMatchObject({
+      index: 1,
+      kind: 'deterministic_fix',
+      fixInvocationId: 'f1',
+      startedAt: t0,
+    });
+    expect(l.iterations[0]?.reviewInvocationId).toBeUndefined();
     expect(l.iterations[0]?.completedAt).toBeUndefined();
   });
   it('throws when an iteration is still open', () => {
@@ -80,6 +101,25 @@ describe('startIteration', () => {
       now: t1,
     });
     expect(() => startIteration(l, { reviewInvocationId: 'r2', now: t0 })).toThrow(LoopStateError);
+  });
+  it('fix-only attempts consume budget normally', () => {
+    let l = newLoop(2);
+    l = completeIteration(
+      startIteration(l, { kind: 'deterministic_fix', fixInvocationId: 'f1', now: t0 }),
+      {
+        outcome: 'unresolved',
+        now: t1,
+      },
+    );
+    expect(canIterate(l)).toBe(true);
+    l = completeIteration(
+      startIteration(l, { kind: 'deterministic_fix', fixInvocationId: 'f2', now: t0 }),
+      {
+        outcome: 'unresolved',
+        now: t1,
+      },
+    );
+    expect(canIterate(l)).toBe(false);
   });
   it('throws when loop is not running', () => {
     let l = newLoop();

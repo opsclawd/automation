@@ -80,4 +80,16 @@ describe('plan-review compose wiring', () => {
     expect(constructorMatch![0]).toContain('computeLastFixDiffCitations');
     expect(constructorMatch![0]).toContain('getRecentFixCitations');
   });
+
+  it('planReviewRunFix forwards the manifest mismatch diagnostic in vars and sets deterministic_fix invocation_type', () => {
+    const composeSrc = readFileSync(
+      path.join(import.meta.dirname ?? path.join(__dirname, '..'), '..', 'compose.ts'),
+      'utf-8',
+    );
+    const fixFnMatch = composeSrc.match(/const planReviewRunFix[\s\S]*?(?=const planReviewLoop)/);
+    expect(fixFnMatch).toBeTruthy();
+    expect(fixFnMatch![0]).toContain('manifestMismatch: opts.manifestMismatch');
+    expect(fixFnMatch![0]).toContain('deterministicDiagnostic: opts.manifestMismatch');
+    expect(fixFnMatch![0]).toContain('deterministic_fix');
+  });
 });
