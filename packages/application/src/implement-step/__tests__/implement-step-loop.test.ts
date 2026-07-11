@@ -37,6 +37,7 @@ function makeFakeGitPort(opts: {
     resetHard: async () => undefined,
     diff: async () => '',
     diffStat: async () => '',
+    addAll: async () => undefined,
     commit: async () => 'sha-new',
     push: async () => undefined,
     remoteRef: async () => undefined,
@@ -2876,6 +2877,10 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
     let commitCalled = false;
+    let addAllCalled = false;
+    git.addAll = async () => {
+      addAllCalled = true;
+    };
     git.commit = async (cwd, message) => {
       commitCalled = true;
       expect(message).toContain('(auto-committed — agent left changes uncommitted)');
@@ -2906,6 +2911,7 @@ describe('ImplementStepLoop auto-commit fallback', () => {
     });
 
     const result = await new ImplementStepLoop(deps).execute(baseInput());
+    expect(addAllCalled).toBe(true);
     expect(commitCalled).toBe(true);
     expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     // Iteration 1 is implement + initial TC (pass). Then it enters review-fix loop.

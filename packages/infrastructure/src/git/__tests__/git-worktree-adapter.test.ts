@@ -608,6 +608,33 @@ describe('status()', () => {
     expect(result).toContain('?? untracked.txt');
   });
 
+  it('addAll() stages untracked and modified files', async () => {
+    const repo = await makeTempRepo();
+    await writeFile(join(repo, 'README.md'), 'modified\n');
+    await writeFile(join(repo, 'new.txt'), 'new\n');
+
+    const statusBefore = await adapter.status(repo);
+    // Unstaged modification is " M" (space in column 1, M in column 2).
+    // Note: adapter.status() trims the whole output, but internal spaces remain.
+    expect(statusBefore).toContain('M README.md');
+    expect(statusBefore).toContain('?? new.txt');
+
+    await adapter.addAll(repo);
+
+    const statusAfter = await adapter.status(repo);
+    // Staged modification is "M " (M in column 1, space in column 2).
+    // Porcelain output is "XY path", so "M  path" for staged.
+    expect(statusAfter).toContain('M  README.md');
+    expect(statusAfter).toContain('A  new.txt');
+    // porcelain status M  means staged modification,  M (with space before) means unstaged.
+    // wait, git status --porcelain:
+    // "M " = staged modification
+    // " M" = unstaged modification
+    // "MM" = both staged and unstaged modification
+    // "A " = added to index
+    // "??" = untracked
+  });
+
   it('returns modified marker for a staged tracked-file change', async () => {
     const repo = await makeTempRepo();
     await writeFile(join(repo, 'README.md'), 'modified\n');

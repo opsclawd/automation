@@ -1141,6 +1141,7 @@ export class ImplementStepLoop {
 
             for (let attempt = 1; attempt <= 2; attempt++) {
               try {
+                await this.deps.git!.addAll(baseCtx.cwd);
                 committedSha = await this.deps.git!.commit(baseCtx.cwd, message);
                 break;
               } catch (err: unknown) {

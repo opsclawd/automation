@@ -48,6 +48,7 @@ function makeFakeGitPort(opts: {
     resetHard: async () => undefined,
     diff: async () => '',
     diffStat: async () => '',
+    addAll: async () => undefined,
     commit: async () => 'sha-new',
     push: async () => undefined,
     remoteRef: async () => undefined,
@@ -1825,6 +1826,10 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
       headSha: 'sha-pre',
       statusOutput: ' M packages/foo.ts\n',
     });
+    let addAllCalled = false;
+    git.addAll = async () => {
+      addAllCalled = true;
+    };
     const deps = makeDeps({
       events: bus,
       git,
@@ -1845,6 +1850,7 @@ describe('ReviewFixLoop fix-commit verifier integration', () => {
       }),
     });
     await new ReviewFixLoop(deps).execute({ ...baseInput(), maxIterations: 3 });
+    expect(addAllCalled).toBe(true);
     expect(events.find((e) => e.type === 'fix.uncommitted_changes')).toBeDefined();
     expect(events.find((e) => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     expect(revalidationCalls.length).toBeGreaterThan(0);
@@ -1887,6 +1893,10 @@ describe('ReviewFixLoop auto-commit fallback', () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
     let commitCalled = false;
+    let addAllCalled = false;
+    git.addAll = async () => {
+      addAllCalled = true;
+    };
     git.commit = async (cwd, message) => {
       commitCalled = true;
       expect(message).toContain('(auto-committed — agent left changes uncommitted)');
@@ -1912,6 +1922,7 @@ describe('ReviewFixLoop auto-commit fallback', () => {
     });
 
     const result = await new ReviewFixLoop(deps).execute(baseInput());
+    expect(addAllCalled).toBe(true);
     expect(commitCalled).toBe(true);
     expect(events.find(e => e.type === 'fix.auto_commit.succeeded')).toBeDefined();
     // Iteration 1 should be 'fixed'
@@ -1955,6 +1966,7 @@ describe('ReviewFixLoop auto-commit fallback', () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
     let attempts = 0;
+    git.addAll = async () => {};
     git.commit = async () => {
       attempts++;
       // Reset attempts between iterations because the loop will retry the whole thing
@@ -1993,6 +2005,7 @@ describe('ReviewFixLoop auto-commit fallback', () => {
     const { events, bus } = collectEvents();
     const git = makeFakeGitPort({ headSha: 'sha-1', statusOutput: 'M file.ts' });
     let attempts = 0;
+    git.addAll = async () => {};
     git.commit = async () => {
       attempts++;
       throw new Error('Unable to create .git/index.lock');
