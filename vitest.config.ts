@@ -2,6 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    pool: 'forks',
     include: ['packages/**/__tests__/**/*.test.ts', 'apps/**/__tests__/**/*.test.ts'],
     // Cap forked workers: 8 uncapped forks peak at ~800MB each and have
     // OOM-killed 16GB hosts when validation overlaps an agent test run.

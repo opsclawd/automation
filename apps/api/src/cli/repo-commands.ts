@@ -11,6 +11,9 @@ function exitUserError(msg: string): never {
   process.exit(EXIT_USER_ERROR);
 }
 
+/**
+ * Register repository management CLI commands.
+ */
 export function registerRepoCommand(
   program: Command,
   getContainer: (targetRepoRoot?: string) => Container,
