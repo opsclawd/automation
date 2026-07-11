@@ -3178,6 +3178,56 @@ describe('dirty dimension tracking (#723)', () => {
     expect(specCalls).toBeGreaterThanOrEqual(2);
   });
 
+  it('both dirty dimensions are invoked when both fail on initial pass', async () => {
+    let specCalls = 0;
+    let qualityCalls = 0;
+    const deps = makeDeps({
+      runSpecReview: async () => {
+        specCalls += 1;
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success',
+          verdict: specCalls < 4 ? 'fail' : 'pass',
+        };
+      },
+      runQualityReview: async () => {
+        qualityCalls += 1;
+        return {
+          invocationId: `qr-${qualityCalls}`,
+          agentOutcome: 'success',
+          verdict: qualityCalls < 2 ? 'fail' : 'pass',
+        };
+      },
+      runFix: async () => ({
+        invocationId: `fix-${specCalls + qualityCalls}`,
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
+    });
+    const result = await new ImplementStepLoop(deps).execute({ ...baseInput(), maxIterations: 5 });
+    expect(result.outcome).toBe('success');
+    expect(specCalls).toBeGreaterThan(1);
+    expect(qualityCalls).toBeGreaterThan(1);
+  });
+
+  it('reviewScopeOptions reflects dirty dimension state', async () => {
+    let capturedSpecScope: import('../types.js').ReviewScopeOptions | undefined;
+    let capturedQualityScope: import('../types.js').ReviewScopeOptions | undefined;
+    const deps = makeDeps({
+      runSpecReview: async (_ctx, _tc, scope) => {
+        capturedSpecScope = scope;
+        return { invocationId: 'sr-1', agentOutcome: 'success', verdict: 'pass' };
+      },
+      runQualityReview: async (_ctx, _tc, scope) => {
+        capturedQualityScope = scope;
+        return { invocationId: 'qr-1', agentOutcome: 'success', verdict: 'pass' };
+      },
+    });
+    await new ImplementStepLoop(deps).execute(baseInput());
+    expect(capturedSpecScope?.mode).toBe('initial_full');
+    expect(capturedQualityScope?.mode).toBe('initial_full');
+  });
+
   it('mismatched final pair snapshots cause continue rather than immediate return', async () => {
     const git = makeFakeGitPort({ headSha: 'sha-stable' });
     let iteration = 0;
