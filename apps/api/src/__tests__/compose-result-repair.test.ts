@@ -9,6 +9,7 @@ import { StructuredResultRepair } from '@ai-sdlc/infrastructure';
 import { FakeArtifactStore } from '@ai-sdlc/application/test-doubles';
 import type { AgentPort, AgentInvocationRequest, GitPort } from '@ai-sdlc/application/ports';
 import type { RunId, PhaseName } from '@ai-sdlc/domain';
+import { buildReviewFixReviewPrompt, buildReviewFixFixPrompt } from '../review-fix-prompts.js';
 
 describe('compose-result-repair', () => {
   it('wires StructuredResultRepair correctly using the result-writer profile name and invokes it for malformed JSON with evidence', async () => {
@@ -109,5 +110,27 @@ describe('compose-result-repair', () => {
     expect(fakeAgent.calls.length).toBe(1);
     expect(fakeAgent.calls[0]!.profile).toBe('task-reviewer');
     expect(fakeAgent.calls[0]!.fallbackReason).toBe('serialization_repair');
+  });
+
+  it('ensures deterministic gate output appears only in fixer prompt', () => {
+    const diagnostic = 'deterministic build failure output details';
+
+    const reviewerPrompt = buildReviewFixReviewPrompt({
+      cwd: '/dummy/cwd',
+      repoId: 'dummy-repo',
+      defaultBranch: 'main',
+    });
+
+    const fixerPrompt = buildReviewFixFixPrompt({
+      cwd: '/dummy/cwd',
+      repoId: 'dummy-repo',
+      useFallback: false,
+      deterministicDiagnostic: diagnostic,
+    });
+
+    expect(reviewerPrompt).not.toContain(diagnostic);
+    expect(reviewerPrompt).not.toContain('DETERMINISTIC DIAGNOSTIC');
+    expect(fixerPrompt).toContain(diagnostic);
+    expect(fixerPrompt).toContain('DETERMINISTIC DIAGNOSTIC');
   });
 });

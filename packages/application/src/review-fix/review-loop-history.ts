@@ -92,6 +92,12 @@ export function formatReviewLoopHistoryForPrompt(
         if (entry.fix.summary) {
           lines.push(`  Summary: ${entry.fix.summary}`);
         }
+        if (entry.fix.attemptKind) {
+          lines.push(`  Attempt kind: ${entry.fix.attemptKind}`);
+        }
+        if (entry.fix.deterministicDiagnostic) {
+          lines.push(`  Deterministic diagnostic: ${entry.fix.deterministicDiagnostic}`);
+        }
       }
     }
     if (entry.uncommittedChanges) {

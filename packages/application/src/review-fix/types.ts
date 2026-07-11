@@ -74,6 +74,8 @@ export interface FixStepOptions {
   architectPlan?: ArchitectPlan;
   reconciliationContext?: string;
   historyContext?: string;
+  deterministicDiagnostic?: string;
+  attemptKind?: 'standard' | 'deterministic';
 }
 
 export interface PostFixGateResult {
@@ -164,6 +166,8 @@ export interface ReviewLoopHistoryEntry {
     invocationId?: string;
     headBeforeFix?: string;
     summary?: string;
+    deterministicDiagnostic?: string;
+    attemptKind?: 'standard' | 'deterministic';
   };
   revalidation?: {
     passed: boolean;

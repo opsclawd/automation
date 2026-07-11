@@ -1924,6 +1924,7 @@ export function composeRoot(opts: ComposeOptions): Container {
           extraPromptSections?: string[];
           historyContext?: string;
           deterministicDiagnostic?: string;
+          attemptKind?: 'standard' | 'deterministic';
         },
       ): Promise<FixStepResult> => {
         const runDir = runRepository.findByUuid(String(ctx.runId))?.displayId ?? String(ctx.runId);
@@ -1948,7 +1949,8 @@ export function composeRoot(opts: ComposeOptions): Container {
         })
           .toString()
           .trim();
-        const isDeterministic = !!opts.deterministicDiagnostic;
+        const isDeterministic =
+          opts.attemptKind === 'deterministic' || !!opts.deterministicDiagnostic;
         // Only loop-owned semantic retries carry retryIntent; deterministic
         // fixes stay tagged separately so the router never treats them as
         // semantic duplicates.
@@ -1980,15 +1982,23 @@ export function composeRoot(opts: ComposeOptions): Container {
                       ? 'semantic_retry'
                       : 'initial',
                 },
-                ...(isSemanticRetry
+                ...(isDeterministic
                   ? {
                       retryIntent: {
                         normalizedPhase: 'fix-review',
-                        classification: 'semantic',
+                        classification: 'deterministic_gate',
                         relevantArtifactPaths: ['result.json'],
                       },
                     }
-                  : {}),
+                  : isSemanticRetry
+                    ? {
+                        retryIntent: {
+                          normalizedPhase: 'fix-review',
+                          classification: 'semantic',
+                          relevantArtifactPaths: ['result.json'],
+                        },
+                      }
+                    : {}),
               }),
         });
         const invocationId = newestInvocationId(String(ctx.runId));

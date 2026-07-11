@@ -12,7 +12,7 @@ export type AgentInvocationOutcome =
 
 export type StepAgentOutcome = AgentInvocationOutcome;
 
-export type SemanticRetryClassification = 'semantic';
+export type SemanticRetryClassification = 'semantic' | 'deterministic_gate';
 
 export interface SemanticRetryIntent {
   normalizedPhase: string;
