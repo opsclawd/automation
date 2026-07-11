@@ -1,5 +1,10 @@
 import type { Run, RunStatus, RepositoryId } from '@ai-sdlc/domain';
-import type { RunRecord, RunRepositoryPort, RunRepositoryUpdatePatch } from '../ports.js';
+import type {
+  RunRecord,
+  RunRepositoryPort,
+  RunRepositoryUpdatePatch,
+  ListRunsFilter,
+} from '../ports.js';
 
 export interface RecordedUpdate {
   uuid: string;
@@ -267,5 +272,24 @@ export class FakeRunRepository implements RunRepositoryPort {
     if (patch.baseBranch !== undefined) r.baseBranch = patch.baseBranch;
     this.updates.push({ uuid, patch });
     return true;
+  }
+
+  list(filter?: ListRunsFilter): { runs: RunRecord[]; total: number } {
+    let filtered = Array.from(this.runs.values());
+    if (filter) {
+      if (filter.repositoryId !== undefined) {
+        filtered = filtered.filter((r) => r.repoId === filter.repositoryId);
+      }
+      if (filter.status !== undefined) {
+        filtered = filtered.filter((r) => r.status === filter.status);
+      }
+    }
+    filtered.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+    const total = filtered.length;
+    const offset = filter?.offset ?? 0;
+    const limit = filter?.limit;
+    const sliced =
+      limit !== undefined ? filtered.slice(offset, offset + limit) : filtered.slice(offset);
+    return { runs: sliced, total };
   }
 }

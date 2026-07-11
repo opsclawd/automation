@@ -69,6 +69,7 @@ export type {
   RunRecord,
   FileTailerOptions,
   FileTailerPort,
+  ListRunsFilter,
 } from '../ports.js';
 
 export type {
