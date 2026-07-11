@@ -48,8 +48,8 @@ describe('planRunRecoveryAction', () => {
   });
 
   describe('retry action', () => {
-    it('allows failed, blocked, and needs_human_review runs', () => {
-      for (const status of ['failed', 'blocked', 'needs_human_review'] as const) {
+    it('allows failed, blocked, needs_human_review, and cancelled runs', () => {
+      for (const status of ['failed', 'blocked', 'needs_human_review', 'cancelled'] as const) {
         const run = makeRun({ status, currentPhase: 'validate' });
         const plan = planRunRecoveryAction({ action: 'retry', run, phases: [] });
         expect(plan.allowed).toBe(true);
@@ -61,7 +61,7 @@ describe('planRunRecoveryAction', () => {
       const plan = planRunRecoveryAction({ action: 'retry', run, phases: [] });
       expect(plan.allowed).toBe(false);
       expect(plan.statusCodeOnDenied).toBe(409);
-      expect(plan.denialReason).toContain('failed, blocked, or needs_human_review');
+      expect(plan.denialReason).toContain('failed, blocked, needs_human_review, or cancelled');
     });
 
     it('retry target prefers run.currentPhase', () => {
@@ -169,8 +169,8 @@ describe('planRunRecoveryAction', () => {
   });
 
   describe('resume action', () => {
-    it('allows failed, blocked, and needs_human_review runs', () => {
-      for (const status of ['failed', 'blocked', 'needs_human_review'] as const) {
+    it('allows failed, blocked, needs_human_review, and cancelled runs', () => {
+      for (const status of ['failed', 'blocked', 'needs_human_review', 'cancelled'] as const) {
         const run = makeRun({ status, currentPhase: 'validate' });
         const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
         expect(plan.allowed).toBe(true);
@@ -182,7 +182,7 @@ describe('planRunRecoveryAction', () => {
       const plan = planRunRecoveryAction({ action: 'resume', run, phases: [] });
       expect(plan.allowed).toBe(false);
       expect(plan.statusCodeOnDenied).toBe(409);
-      expect(plan.denialReason).toContain('failed, blocked, or needs_human_review');
+      expect(plan.denialReason).toContain('failed, blocked, needs_human_review, or cancelled');
     });
 
     it('resume with fromPhase validates unknown phases and reads retry safety', () => {
@@ -318,6 +318,28 @@ describe('planRunRecoveryAction', () => {
           runUuid: 'run-recovery-1',
           name: 'implement',
           status: 'blocked',
+          attempt: 1,
+          completedAt: new Date('2026-06-01T01:00:00Z'),
+        },
+      ];
+      const plan = planRunRecoveryAction({ action: 'resume', run, phases });
+      expect(plan.allowed).toBe(true);
+      expect(plan.targetPhase).toBe('implement');
+      expect(plan.attempt).toBe(2);
+    });
+
+    it('allows recovering from an interrupted (running) phase', () => {
+      const run = makeRun({
+        status: 'cancelled',
+        currentPhase: undefined,
+        completedPhases: ['read_issue', 'plan-design', 'plan-write', 'plan-review'],
+      });
+      const phases: Phase[] = [
+        {
+          id: 'p-1',
+          runUuid: 'run-recovery-1',
+          name: 'implement',
+          status: 'running',
           attempt: 1,
           completedAt: new Date('2026-06-01T01:00:00Z'),
         },

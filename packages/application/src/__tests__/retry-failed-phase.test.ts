@@ -78,9 +78,41 @@ describe('RetryFailedPhase', () => {
       resumeRun,
     });
     await expect(usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') })).rejects.toThrow(
-      /expected 'failed', 'blocked', or 'needs_human_review'/i,
+      /expected 'failed', 'blocked', 'needs_human_review', or 'cancelled'/i,
     );
     expect(resumeRun.calls).toHaveLength(0);
+  });
+
+  it('allows retrying a cancelled run', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ status: 'cancelled' }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.runId).toBe('run-rp-1');
+  });
+
+  it('allows retrying an interrupted (running) phase', async () => {
+    const runRepo = new FakeRunRepository();
+    runRepo.addRun(makeFailedRun({ status: 'cancelled', currentPhase: undefined }));
+    const resumeRun = new FakeResumeRun();
+    const phaseRepo = new FakePhaseRepository();
+    phaseRepo.insert({
+      id: 'implement',
+      runUuid: 'run-rp-1',
+      name: 'implement',
+      status: 'running',
+      attempt: 1,
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      completedAt: new Date('2026-06-01T01:00:00Z'),
+    });
+    const usecase = new RetryFailedPhase({ runRepository: runRepo, phaseRepo, resumeRun });
+    await usecase.execute({ runId: rid('run-rp-1'), workerId: wid('w-1') });
+    expect(resumeRun.calls).toHaveLength(1);
+    expect(resumeRun.calls[0]!.fromPhase).toBe('implement');
+    expect(resumeRun.calls[0]!.attempt).toBe(2);
   });
 
   it('derives phase from phase records when run.currentPhase is undefined', async () => {
