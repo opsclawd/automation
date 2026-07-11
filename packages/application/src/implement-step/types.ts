@@ -5,6 +5,7 @@ import type { EventBusPort } from '../ports/event-bus-port.js';
 import type { StepAgentOutcome } from '../ports/agent-invocation-types.js';
 import type { FixStepOptions } from '../review-fix/types.js';
 import type { GitPort } from '../ports/git-port.js';
+import type { ReviewStateRepositoryPort } from '../ports/review-state-repository-port.js';
 
 export interface StepLoopContext {
   loopId: string;
@@ -273,6 +274,11 @@ export interface ImplementStepLoopDeps {
    * and final pair state. The loop reads and updates this object in-place.
    */
   reviewState?: ReviewState;
+  /**
+   * Port for persisting review attempts and dimension states to durable storage.
+   * When absent, review state is only kept in memory (in `reviewState`).
+   */
+  reviewStateRepository?: ReviewStateRepositoryPort;
 }
 
 export interface ImplementStepLoopInput {

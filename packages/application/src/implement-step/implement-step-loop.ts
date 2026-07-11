@@ -26,6 +26,7 @@ import type {
   DimensionState,
   ReviewScopeOptions,
 } from './types.js';
+import type { ReviewAttempt, ReviewDimensionState, ReviewSnapshot } from '../review-state/types.js';
 import { verifyFixCommit, type FixCommitVerification } from '../fix-commit-verifier.js';
 
 function normalizeMessage(message: string): string {
@@ -126,6 +127,62 @@ function markDimensionClean(
 function getReviewMode(iterationIndex: number, isInFinalPair: boolean): ReviewMode {
   if (isInFinalPair) return 'final_full';
   return iterationIndex === 1 ? 'initial_full' : 'intermediate_delta';
+}
+
+function buildReviewSnapshot(identity: string): ReviewSnapshot {
+  return { kind: 'git', identity, capturedAt: new Date().toISOString() };
+}
+
+function buildReviewAttempt(params: {
+  attemptId: string;
+  runId: string;
+  reviewMode: ReviewMode;
+  dimension: DimensionName;
+  snapshot?: { snapshot: string };
+  verdict?: string;
+  now: () => Date;
+}): ReviewAttempt {
+  const { attemptId, runId, reviewMode, dimension, snapshot, verdict, now } = params;
+  const result: ReviewAttempt = {
+    attemptId,
+    runId,
+    scope: 'implement',
+    step: String(1),
+    reviewMode,
+    dimension,
+    createdAt: now().toISOString(),
+    artifacts: [],
+  };
+  if (snapshot) {
+    result.snapshot = buildReviewSnapshot(snapshot.snapshot);
+  }
+  if (verdict) {
+    result.verdict = verdict;
+  }
+  return result;
+}
+
+function buildDimensionState(params: {
+  dimension: DimensionName;
+  snapshot?: { snapshot: string };
+  verdict?: string;
+  state: DimensionState;
+}): ReviewDimensionState {
+  const { dimension, snapshot, verdict, state } = params;
+  const result: ReviewDimensionState = {
+    dimension,
+    dirty: state === 'dirty' || state === 'recurred',
+    provisionallyClean: state === 'clean',
+    unresolvedRecords: [],
+    dispositionHistory: [],
+  };
+  if (snapshot) {
+    result.latestSnapshot = buildReviewSnapshot(snapshot.snapshot);
+  }
+  if (verdict) {
+    result.latestVerdict = verdict;
+  }
+  return result;
 }
 
 export class ImplementStepLoop {
@@ -665,6 +722,30 @@ export class ImplementStepLoop {
           );
         }
         persistReviewState();
+        if (deps.reviewStateRepository && specReview.agentOutcome === 'success') {
+          const snapshot = specReview.snapshot as { snapshot: string } | undefined;
+          const attemptArgs = {
+            attemptId: specReview.invocationId,
+            runId: input.runId as string,
+            reviewMode,
+            dimension: 'spec' as DimensionName,
+            now: deps.now,
+            ...(snapshot ? { snapshot } : {}),
+            ...(specReview.verdict ? { verdict: specReview.verdict } : {}),
+          };
+          deps.reviewStateRepository.appendAttempt(buildReviewAttempt(attemptArgs));
+          deps.reviewStateRepository.upsertDimensionState(
+            input.runId as string,
+            'implement',
+            String(input.stepIndex),
+            buildDimensionState({
+              dimension: 'spec',
+              state: dirtyDimensions.spec,
+              ...(snapshot ? { snapshot } : {}),
+              ...(specReview.verdict ? { verdict: specReview.verdict } : {}),
+            }),
+          );
+        }
       }
 
       this.emit(
@@ -754,6 +835,30 @@ export class ImplementStepLoop {
           );
         }
         persistReviewState();
+        if (deps.reviewStateRepository && qualityReview.agentOutcome === 'success') {
+          const snapshot = qualityReview.snapshot as { snapshot: string } | undefined;
+          const attemptArgs = {
+            attemptId: qualityReview.invocationId,
+            runId: input.runId as string,
+            reviewMode,
+            dimension: 'quality' as DimensionName,
+            now: deps.now,
+            ...(snapshot ? { snapshot } : {}),
+            ...(qualityReview.verdict ? { verdict: qualityReview.verdict } : {}),
+          };
+          deps.reviewStateRepository.appendAttempt(buildReviewAttempt(attemptArgs));
+          deps.reviewStateRepository.upsertDimensionState(
+            input.runId as string,
+            'implement',
+            String(input.stepIndex),
+            buildDimensionState({
+              dimension: 'quality',
+              state: dirtyDimensions.quality,
+              ...(snapshot ? { snapshot } : {}),
+              ...(qualityReview.verdict ? { verdict: qualityReview.verdict } : {}),
+            }),
+          );
+        }
       }
 
       this.emit(
@@ -829,6 +934,19 @@ export class ImplementStepLoop {
           finalPairSpecSnapshot = specSnapshot;
           finalPairQualitySnapshot = qualitySnapshot;
           persistReviewState();
+          loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
+          deps.loops.update(loop);
+          await appendHistory(
+            buildHistoryEntry(
+              iterationIndex,
+              specReview,
+              qualityReview,
+              undefined,
+              undefined,
+              'unresolved',
+            ),
+          );
+          this.emitIterationCompleted(input, iterationIndex, 'unresolved');
           continue;
         }
       }
@@ -850,7 +968,7 @@ export class ImplementStepLoop {
               { head, iterationIndex },
             );
             persistReviewState();
-            loop = completeIteration(loop, { outcome: 'resolved', now: deps.now() });
+            loop = completeIteration(loop, { outcome: 'unresolved', now: deps.now() });
             deps.loops.update(loop);
             await appendHistory(
               buildHistoryEntry(
@@ -859,10 +977,10 @@ export class ImplementStepLoop {
                 qualityReview,
                 undefined,
                 undefined,
-                'resolved',
+                'unresolved',
               ),
             );
-            this.emitIterationCompleted(input, iterationIndex, 'resolved');
+            this.emitIterationCompleted(input, iterationIndex, 'unresolved');
             continue;
           }
         }
