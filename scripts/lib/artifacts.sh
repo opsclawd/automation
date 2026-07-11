@@ -35,10 +35,17 @@ arbiter-result.json
 review-loop-history.json
 implement-step-history-*.json
 compound-draft.md
+compound.md
 validation.result
 result.json
 fix-validate-done.marker
 plan-review-passed.marker
+implementation-log-task-*.md
+task-context-step-*.md
+plan.md
+design.md
+prompt.md
+plan-fix-result.json
 EOF
 }
 
