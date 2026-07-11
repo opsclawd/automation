@@ -624,7 +624,12 @@ export class ImplementStepLoop {
               tcResult,
               specScope,
             )
-          : { invocationId: '', agentOutcome: 'success' as const, verdict: 'pass' as const };
+          : {
+              invocationId: '',
+              agentOutcome: 'success' as const,
+              verdict: 'pass' as const,
+              snapshot: { snapshot: finalPairSpecSnapshot ?? '' },
+            };
         specReviewAttemptInvocationIds.push(specReview.invocationId);
         if (specReview.agentOutcome === 'success' && specReview.verdict !== undefined) {
           break;
@@ -824,6 +829,7 @@ export class ImplementStepLoop {
           finalPairSpecSnapshot = specSnapshot;
           finalPairQualitySnapshot = qualitySnapshot;
           persistReviewState();
+          continue;
         }
       }
 
