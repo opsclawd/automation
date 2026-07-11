@@ -954,12 +954,36 @@ export class ImplementStepLoop {
         if (!contradictionRetriedThisStep) {
           // --- 1-SHOT RECONCILIATION RE-RUN (#45 port) ---
           contradictionRetriedThisStep = true;
-          const rerunSpec =
-            specReview.verdict === 'fail' ? await deps.runSpecReview(ctx, tcResult) : specReview;
-          const rerunQuality =
-            qualityReview.verdict === 'fail'
-              ? await deps.runQualityReview(ctx, tcResult)
-              : qualityReview;
+          let rerunSpec = specReview;
+          if (specReview.verdict === 'fail') {
+            rerunSpec = await deps.runSpecReview(ctx, tcResult);
+            this.emit(
+              input,
+              'step.spec-review.attempts',
+              'info',
+              `spec-review completed after 1 attempt(s)`,
+              {
+                index: iterationIndex,
+                attempts: 1,
+                invocationIds: [rerunSpec.invocationId],
+              },
+            );
+          }
+          let rerunQuality = qualityReview;
+          if (qualityReview.verdict === 'fail') {
+            rerunQuality = await deps.runQualityReview(ctx, tcResult);
+            this.emit(
+              input,
+              'step.quality-review.attempts',
+              'info',
+              `quality-review completed after 1 attempt(s)`,
+              {
+                index: iterationIndex,
+                attempts: 1,
+                invocationIds: [rerunQuality.invocationId],
+              },
+            );
+          }
           const rerunSpecOk = rerunSpec.agentOutcome === 'success' && rerunSpec.verdict === 'pass';
           const rerunQualityOk =
             rerunQuality.agentOutcome === 'success' && rerunQuality.verdict === 'pass';
