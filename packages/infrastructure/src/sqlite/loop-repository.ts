@@ -35,7 +35,11 @@ interface IterationRow {
 
 function rowToIteration(r: IterationRow): LoopIteration {
   const kind =
-    !r.review_invocation_id || r.review_invocation_id === '' ? 'deterministic_fix' : 'review';
+    (!r.review_invocation_id || r.review_invocation_id === '') &&
+    r.fix_invocation_id &&
+    r.fix_invocation_id !== ''
+      ? 'deterministic_fix'
+      : 'review';
   return {
     index: r.idx,
     kind,

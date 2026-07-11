@@ -104,10 +104,19 @@ export class PlanReviewLoop {
           return { success: false, loop };
         }
 
+        const iterationIndex = loop.iterations.length + 1;
+        this.emit(
+          input,
+          'plan-review.loop.iteration.started',
+          'info',
+          `iteration ${iterationIndex} started`,
+          { index: iterationIndex },
+        );
+
         const fix = await deps.runFix(localCtx, {
           manifestMismatch: manifestError,
           metadata: {
-            iteration: loop.iterations.length + 1,
+            iteration: iterationIndex,
             invocation_type: 'deterministic_fix',
           },
         });
@@ -120,15 +129,6 @@ export class PlanReviewLoop {
           fix.verdict === 'done_no_fixes_needed';
 
         recentFixCitations = deps.computeLastFixDiffCitations(localCtx.cwd, fix.headBeforeFix);
-
-        const iterationIndex = loop.iterations.length + 1;
-        this.emit(
-          input,
-          'plan-review.loop.iteration.started',
-          'info',
-          `iteration ${iterationIndex} started`,
-          { index: iterationIndex },
-        );
 
         loop = startIteration(loop, {
           kind: 'deterministic_fix',

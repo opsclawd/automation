@@ -94,4 +94,53 @@ describe('LoopRepository', () => {
     const { repo } = setup();
     expect(repo.findById('nope')).toBeUndefined();
   });
+
+  it('correctly derives kind for normal review, failed review, and deterministic fix', () => {
+    const { repo } = setup();
+    let l = createLoop({
+      id: 'loop-1',
+      runId: RunId('run-1'),
+      phaseId: PhaseName('whole-pr-review'),
+      type: 'review-fix',
+      maxIterations: 5,
+      now: t0,
+    });
+    // Normal review that needed fix
+    l = completeIteration(startIteration(l, { reviewInvocationId: 'r1', now: t0 }), {
+      outcome: 'fixed',
+      fixInvocationId: 'f1',
+      now: t1,
+    });
+    // Failed review (empty reviewInvocationId, e.g. profile config missing)
+    l = completeIteration(startIteration(l, { reviewInvocationId: '', now: t0 }), {
+      outcome: 'unresolved',
+      now: t1,
+    });
+    // Deterministic fix
+    l = completeIteration(
+      startIteration(l, { kind: 'deterministic_fix', fixInvocationId: 'f2', now: t0 }),
+      {
+        outcome: 'fixed',
+        now: t1,
+      },
+    );
+
+    repo.insert(l);
+
+    const stored = repo.findById('loop-1')!;
+    expect(stored.iterations).toHaveLength(3);
+
+    // Normal review iteration should have kind = 'review'
+    expect(stored.iterations[0]?.kind).toBe('review');
+    expect(stored.iterations[0]?.reviewInvocationId).toBe('r1');
+    expect(stored.iterations[0]?.fixInvocationId).toBe('f1');
+
+    // Failed review iteration should have kind = 'review'
+    expect(stored.iterations[1]?.kind).toBe('review');
+    expect(stored.iterations[1]?.reviewInvocationId).toBeUndefined();
+
+    // Deterministic fix iteration should have kind = 'deterministic_fix'
+    expect(stored.iterations[2]?.kind).toBe('deterministic_fix');
+    expect(stored.iterations[2]?.fixInvocationId).toBe('f2');
+  });
 });
