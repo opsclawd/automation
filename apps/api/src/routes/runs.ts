@@ -127,8 +127,7 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
         issueNumber,
         repoId: repositoryId,
         baseBranch: typeof body.baseBranch === 'string' ? body.baseBranch : undefined,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any);
+      });
       return reply.code(201).send({ run });
     } catch (err) {
       if (err instanceof RepositoryNotApprovedError) {

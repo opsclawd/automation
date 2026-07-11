@@ -315,6 +315,41 @@ describe('StartIssueRun', () => {
     expect(calls[0]!.env.AI_RUNTIME).toBe('codex');
   });
 
+  it('allows overriding baseBranch per request', async () => {
+    const repo = new FakeRunRepository();
+    const failureRepo = new FakeFailureRepository();
+    const { factory } = fakeDirectoryFactory();
+    const { fn: bash, calls } = fakeBash({ exitCode: 0 });
+    const refCalls: Array<{ cwd: string; ref: string }> = [];
+    const resolveRefSha = (cwd: string, ref: string) => {
+      refCalls.push({ cwd, ref });
+      return 'override-sha-456';
+    };
+    const usecase = new StartIssueRun({
+      runRepository: repo,
+      failureRepository: failureRepo,
+      classifyExit: fakeClassifyExit,
+      runDirectoryFactory: factory,
+      runBashScript: bash,
+      runsDir: '/fake/.ai-runs',
+      scriptPath: '/fake/script.sh',
+      baseBranch: 'develop',
+      resolveRefSha,
+      ...defaultEventDeps(),
+      now: fixedNow,
+    });
+    const out = await usecase.execute({
+      issueNumber: 10,
+      repoId: stableRepoId,
+      baseBranch: 'feature-branch',
+    });
+    expect(calls[0]!.env.AI_BASE_BRANCH).toBe('feature-branch');
+    expect(refCalls).toEqual([
+      { cwd: '/fake/.ai-worktrees/issue-10', ref: 'origin/feature-branch' },
+    ]);
+    expect(repo.findByUuid(out.uuid)?.startCommitSha).toBe('override-sha-456');
+  });
+
   it('omits optional env vars when deps are not provided', async () => {
     const repo = new FakeRunRepository();
     const failureRepo = new FakeFailureRepository();

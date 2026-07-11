@@ -51,7 +51,8 @@ export interface StartIssueRunDeps {
 
 export interface StartIssueRunInput {
   issueNumber: number;
-  repoId?: RepositoryId;
+  repoId?: RepositoryId | undefined;
+  baseBranch?: string | undefined;
 }
 
 export interface StartIssueRunOutput {
@@ -167,7 +168,8 @@ export class StartIssueRun {
       TMPDIR: tmpDirHandle.tmpDir,
       SQLITE_TMPDIR: tmpDirHandle.tmpDir,
     };
-    if (this.deps.baseBranch !== undefined) env.AI_BASE_BRANCH = this.deps.baseBranch;
+    const baseBranch = input.baseBranch ?? this.deps.baseBranch;
+    if (baseBranch !== undefined) env.AI_BASE_BRANCH = baseBranch;
     if (this.deps.model !== undefined) env.AI_AGENT_MODEL = this.deps.model;
     if (this.deps.agentCli !== undefined) env.AI_RUNTIME = this.deps.agentCli;
 
@@ -274,10 +276,7 @@ export class StartIssueRun {
         if (this.deps.resolveRefSha) {
           try {
             const worktreeRoot = `${repoRoot}/.ai-worktrees/issue-${run.issueNumber}`;
-            const sha = this.deps.resolveRefSha(
-              worktreeRoot,
-              `origin/${this.deps.baseBranch ?? 'main'}`,
-            );
+            const sha = this.deps.resolveRefSha(worktreeRoot, `origin/${baseBranch ?? 'main'}`);
             if (sha) {
               this.deps.runRepository.update(run.uuid, { startCommitSha: sha });
             }
