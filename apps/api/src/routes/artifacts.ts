@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { join, normalize, relative, isAbsolute } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { Container } from '../compose.js';
+import { guardRead } from './_lib.js';
 
 interface FileEntry {
   path: string;
@@ -70,8 +71,8 @@ export async function artifactsRoutes(app: FastifyInstance, c: Container): Promi
     if (!UUID_RE.test(req.params.runId)) {
       return reply.code(400).send({ error: 'invalid_id' });
     }
-    const run = c.runRepository.findByUuid(req.params.runId);
-    if (!run) return reply.code(404).send({ error: 'not_found' });
+    const run = await guardRead(req, reply, c);
+    if (!run) return;
     const root = join(c.runsDir, run.displayId);
     try {
       return { files: await walk(root) };
@@ -86,8 +87,8 @@ export async function artifactsRoutes(app: FastifyInstance, c: Container): Promi
       if (!UUID_RE.test(req.params.runId)) {
         return reply.code(400).send({ error: 'invalid_id' });
       }
-      const run = c.runRepository.findByUuid(req.params.runId);
-      if (!run) return reply.code(404).send({ error: 'not_found' });
+      const run = await guardRead(req, reply, c);
+      if (!run) return;
       const root = join(c.runsDir, run.displayId);
       const requested = normalize(req.params['*']);
       if (requested.startsWith('..') || isAbsolute(requested)) {

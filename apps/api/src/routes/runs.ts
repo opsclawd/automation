@@ -13,7 +13,7 @@ import {
   RunRepositoryMissingError,
 } from '@ai-sdlc/domain';
 import { planRunRecoveryAction, UnknownPhaseError } from '@ai-sdlc/application';
-import { resolveRepoContext, canonicalizeRepoContext } from './_lib.js';
+import { resolveRepoContext, canonicalizeRepoContext, guardRead } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DECIMAL_INT_RE = /^-?\d+$/;
@@ -220,8 +220,8 @@ export async function runsRoutes(app: FastifyInstance, c: Container): Promise<vo
     if (!UUID_RE.test(req.params.runId)) {
       return reply.code(400).send({ error: 'invalid_id' });
     }
-    const run = c.runRepository.findByUuid(req.params.runId);
-    if (!run) return reply.code(404).send({ error: 'not_found' });
+    const run = await guardRead(req, reply, c);
+    if (!run) return;
     const failure = c.failureRepository.findLatestByRun(req.params.runId);
     return { run: serializeRun(run), failure: failure ? serializeFailure(failure) : null };
   });

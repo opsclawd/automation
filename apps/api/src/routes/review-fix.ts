@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { RunId } from '@ai-sdlc/domain';
 import type { Container } from '../compose.js';
+import { guardRead } from './_lib.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -11,6 +12,8 @@ export function registerReviewFixRoutes(app: FastifyInstance, c: Container): voi
       reply.code(400);
       return { error: 'invalid run uuid' };
     }
+    const run = await guardRead(req, reply, c);
+    if (!run) return;
     const runId = RunId(uuid);
     const loops = c.loopRepository.listForRun(runId).map((l) => ({
       id: l.id,

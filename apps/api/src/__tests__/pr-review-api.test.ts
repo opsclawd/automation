@@ -8,7 +8,23 @@ const runUuid = '66666666-6666-6666-6666-666666666666';
 
 function buildApp(repo: FakePrReviewRepository) {
   const app = Fastify();
-  registerPrReviewRoutes(app, { prReviewRepository: repo } as never);
+  const dummyRun = {
+    uuid: runUuid,
+    displayId: 'run-99',
+    repoId: 'repo-99',
+    issueNumber: 99,
+    status: 'running',
+    completedPhases: [],
+  };
+  registerPrReviewRoutes(app, {
+    prReviewRepository: repo,
+    runRepository: {
+      findByUuid: (uuid: string) => (uuid === runUuid ? dummyRun : undefined),
+    },
+    loadRepositoryForRun: {
+      execute: () => ({ id: 'repo-99' }),
+    },
+  } as never);
   return app;
 }
 

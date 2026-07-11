@@ -1,5 +1,12 @@
-import type { RepositoryId } from '@ai-sdlc/domain';
-import { RepositoryNotFoundError } from '@ai-sdlc/domain';
+import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { Container } from '../compose.js';
+import type { RepositoryId, Run } from '@ai-sdlc/domain';
+import {
+  RepositoryNotFoundError,
+  RepositoryNotApprovedError,
+  RunRepositoryMismatchError,
+  RunRepositoryMissingError,
+} from '@ai-sdlc/domain';
 
 export type ResolvedRepoContext = {
   repositoryId?: RepositoryId;
@@ -47,4 +54,59 @@ export function canonicalizeRepoContext(
     }
   }
   throw new RepositoryNotFoundError('<none>');
+}
+
+export async function guardRead(
+  req: FastifyRequest<{ Params: { runId?: string; uuid?: string } }>,
+  reply: FastifyReply,
+  c: Container,
+): Promise<Run | null> {
+  const runId = req.params.runId ?? req.params.uuid;
+  if (!runId) {
+    reply.code(400).send({ error: 'invalid_id' });
+    return null;
+  }
+  const run = c.runRepository.findByUuid(runId);
+  if (!run) {
+    reply.code(404).send({ error: 'not_found' });
+    return null;
+  }
+  const ctx = resolveRepoContext(
+    { headers: req.headers, query: (req.query ?? {}) as Record<string, unknown> },
+    c,
+  );
+  let resolvedRepoId: RepositoryId | undefined;
+  if (ctx.repositoryId || ctx.fullName) {
+    try {
+      resolvedRepoId = canonicalizeRepoContext(ctx, c);
+    } catch (err) {
+      if (err instanceof RepositoryNotFoundError) {
+        reply.code(404).send({ error: 'not_found' });
+        return null;
+      }
+      throw err;
+    }
+  }
+  try {
+    c.loadRepositoryForRun.execute({
+      run,
+      ...(resolvedRepoId ? { callerRepoId: resolvedRepoId } : {}),
+      strictMatch: false,
+    });
+  } catch (err) {
+    if (err instanceof RunRepositoryMismatchError) {
+      reply.code(404).send({ error: 'not_found' });
+      return null;
+    }
+    if (err instanceof RunRepositoryMissingError) {
+      reply.code(409).send({ error: 'repository_missing' });
+      return null;
+    }
+    if (err instanceof RepositoryNotApprovedError) {
+      reply.code(409).send({ error: 'denied', message: err.message });
+      return null;
+    }
+    throw err;
+  }
+  return run;
 }
