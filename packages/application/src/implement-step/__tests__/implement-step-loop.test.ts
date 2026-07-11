@@ -3081,16 +3081,25 @@ describe('dirty dimension tracking (#723)', () => {
     const deps = makeDeps({
       runSpecReview: async () => {
         specCalls += 1;
-        return { invocationId: `sr-${specCalls}`, agentOutcome: 'success', verdict: 'pass' };
+        return {
+          invocationId: `sr-${specCalls}`,
+          agentOutcome: 'success',
+          verdict: specCalls === 1 ? 'fail' : 'pass',
+        };
       },
       runQualityReview: async () => {
         qualityCalls += 1;
         return { invocationId: `qr-${qualityCalls}`, agentOutcome: 'success', verdict: 'pass' };
       },
+      runFix: async () => ({
+        invocationId: 'fix-1',
+        agentOutcome: 'success',
+        verdict: 'done_with_fixes',
+      }),
     });
     const result = await new ImplementStepLoop(deps).execute(baseInput());
     expect(result.outcome).toBe('success');
-    expect(specCalls).toBe(1);
+    expect(specCalls).toBe(2);
     expect(qualityCalls).toBe(1);
   });
 
@@ -3210,7 +3219,7 @@ describe('final pair tracking (#723)', () => {
     });
     const result = await new ImplementStepLoop(deps).execute(baseInput());
     expect(result.outcome).toBe('success');
-    expect(result.loop.iterations.length).toBeGreaterThanOrEqual(1);
+    expect(result.loop.iterations.length).toBe(2);
   });
 
   it('exits final pair when HEAD changes before second review', async () => {

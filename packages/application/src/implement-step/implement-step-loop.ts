@@ -138,16 +138,17 @@ function buildReviewAttempt(params: {
   runId: string;
   reviewMode: ReviewMode;
   dimension: DimensionName;
+  step: string;
   snapshot?: { snapshot: string };
   verdict?: string;
   now: () => Date;
 }): ReviewAttempt {
-  const { attemptId, runId, reviewMode, dimension, snapshot, verdict, now } = params;
+  const { attemptId, runId, reviewMode, dimension, step, snapshot, verdict, now } = params;
   const result: ReviewAttempt = {
     attemptId,
     runId,
     scope: 'implement',
-    step: String(1),
+    step,
     reviewMode,
     dimension,
     createdAt: now().toISOString(),
@@ -714,11 +715,11 @@ export class ImplementStepLoop {
           dirtyDimensions = markDimensionClean(dirtyDimensions, 'spec');
         } else if (specReview.verdict === 'fail') {
           isInFinalPair = false;
-          const prevState = dirtyDimensions.spec;
+          const hasNewEvidence = (specReview.findings?.findings?.length ?? 0) > 0;
           dirtyDimensions = markDimensionDirty(
             dirtyDimensions,
             'spec',
-            prevState === 'dirty' ? 'recurred' : 'dirty',
+            hasNewEvidence ? 'dirty' : 'recurred',
           );
         }
         persistReviewState();
@@ -729,6 +730,7 @@ export class ImplementStepLoop {
             runId: input.runId as string,
             reviewMode,
             dimension: 'spec' as DimensionName,
+            step: String(input.stepIndex),
             now: deps.now,
             ...(snapshot ? { snapshot } : {}),
             ...(specReview.verdict ? { verdict: specReview.verdict } : {}),
@@ -827,11 +829,11 @@ export class ImplementStepLoop {
           dirtyDimensions = markDimensionClean(dirtyDimensions, 'quality');
         } else if (qualityReview.verdict === 'fail') {
           isInFinalPair = false;
-          const prevState = dirtyDimensions.quality;
+          const hasNewEvidence = (qualityReview.findings?.findings?.length ?? 0) > 0;
           dirtyDimensions = markDimensionDirty(
             dirtyDimensions,
             'quality',
-            prevState === 'dirty' ? 'recurred' : 'dirty',
+            hasNewEvidence ? 'dirty' : 'recurred',
           );
         }
         persistReviewState();
@@ -842,6 +844,7 @@ export class ImplementStepLoop {
             runId: input.runId as string,
             reviewMode,
             dimension: 'quality' as DimensionName,
+            step: String(input.stepIndex),
             now: deps.now,
             ...(snapshot ? { snapshot } : {}),
             ...(qualityReview.verdict ? { verdict: qualityReview.verdict } : {}),
