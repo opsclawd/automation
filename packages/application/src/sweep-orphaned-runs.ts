@@ -4,6 +4,7 @@ export interface SweepOrphanedRunEntry {
   uuid: string;
   run: RunRecord;
   previousPid: number;
+  previousStatus: RunRecord['status'];
 }
 
 export interface SweepOrphanedRunsResult {
@@ -32,6 +33,7 @@ export class SweepOrphanedRuns {
       }
       if (!this.deps.isProcessAlive(run.pid)) {
         const previousPid = run.pid;
+        const previousStatus = run.status;
         const completedAt = now();
         const failureReason = `orphaned: process ${run.pid} no longer running`;
         this.deps.runRepository.updateStatusByUuid(run.uuid, {
@@ -45,6 +47,7 @@ export class SweepOrphanedRuns {
           uuid: run.uuid,
           run: { ...runWithoutPhase, status: 'failed', completedAt, failureReason },
           previousPid,
+          previousStatus,
         });
       }
     }

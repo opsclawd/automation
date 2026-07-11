@@ -64,6 +64,7 @@ export class OrphanedRunsSweeper {
         this.deps.logger.error(
           `OrphanedRunsSweeper: Active lease for repo ${run.repoId}, skipping ${run.uuid}`,
         );
+        this.restoreRunToPreSweep(entry, 'skippedLeaseConflict');
         continue;
       }
 
@@ -71,6 +72,7 @@ export class OrphanedRunsSweeper {
       // process) already enqueued a job for this run.
       if (activeRuns.has(run.uuid as RunId)) {
         result.skippedAlreadyQueued++;
+        this.restoreRunToPreSweep(entry, 'skippedAlreadyQueued');
         continue;
       }
 
@@ -90,6 +92,7 @@ export class OrphanedRunsSweeper {
           this.deps.logger.error(
             `OrphanedRunsSweeper: Lease conflict for run ${run.uuid}, skipping: ${err.message}`,
           );
+          this.restoreRunToPreSweep(entry, 'leaseConflict');
         } else {
           result.enqueueErrors.push({
             runId: run.uuid,
@@ -99,6 +102,7 @@ export class OrphanedRunsSweeper {
             `OrphanedRunsSweeper: Failed to acquire lease for run ${run.uuid}:`,
             err,
           );
+          this.restoreRunToPreSweep(entry, 'leaseAcquireError');
         }
         continue;
       }
@@ -150,24 +154,10 @@ export class OrphanedRunsSweeper {
           result.enqueued++;
         } catch (err) {
           this.deps.logger.error(
-            `OrphanedRunsSweeper: Enqueue failed for run ${run.uuid}, rolling back to failed:`,
+            `OrphanedRunsSweeper: Enqueue failed for run ${run.uuid}, rolling back:`,
             err,
           );
-          const rolled = this.deps.runRepository.atomicUpdateByUuid(
-            run.uuid,
-            {
-              status: 'failed',
-              completedAt: run.completedAt ?? null,
-              failureReason: run.failureReason ?? null,
-              currentPhase: null,
-            },
-            'running',
-          );
-          if (!rolled) {
-            this.deps.logger.error(
-              `OrphanedRunsSweeper: Critical - rollback atomicUpdateByUuid failed for run ${run.uuid}`,
-            );
-          }
+          this.restoreRunToPreSweepAtomic(entry, 'enqueueError');
           throw err;
         }
       } catch (err) {
@@ -190,5 +180,53 @@ export class OrphanedRunsSweeper {
     }
 
     return result;
+  }
+
+  // Restore the run's status from `failed` (set by SweepOrphanedRuns) back to
+  // its pre-sweep status. Used on every path where the sweeper decides not to
+  // (or cannot) enqueue a resume job, so `findActiveRuns()` will return the
+  // run on the next sweep tick.
+  private restoreRunToPreSweep(
+    entry: SweepOrphanedRunEntry,
+    reason: 'skippedLeaseConflict' | 'skippedAlreadyQueued' | 'leaseConflict' | 'leaseAcquireError',
+  ): void {
+    try {
+      this.deps.runRepository.atomicUpdateByUuid(
+        entry.uuid,
+        {
+          status: entry.previousStatus,
+          completedAt: null,
+          failureReason: null,
+          currentPhase: null,
+        },
+        'failed',
+      );
+    } catch (restoreErr) {
+      this.deps.logger.error(
+        `OrphanedRunsSweeper: Failed to restore run ${entry.uuid} to ${entry.previousStatus} after ${reason}:`,
+        restoreErr,
+      );
+    }
+  }
+
+  // Restore the run from `running` (the post-enqueue status) back to its
+  // pre-sweep status when enqueue failed after we had already committed the
+  // `failed -> running` transition.
+  private restoreRunToPreSweepAtomic(entry: SweepOrphanedRunEntry, reason: 'enqueueError'): void {
+    const rolled = this.deps.runRepository.atomicUpdateByUuid(
+      entry.uuid,
+      {
+        status: entry.previousStatus,
+        completedAt: null,
+        failureReason: null,
+        currentPhase: null,
+      },
+      'running',
+    );
+    if (!rolled) {
+      this.deps.logger.error(
+        `OrphanedRunsSweeper: Critical - rollback atomicUpdateByUuid to ${entry.previousStatus} failed for run ${entry.uuid} (${reason})`,
+      );
+    }
   }
 }

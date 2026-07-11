@@ -67,7 +67,9 @@ describe('OrphanedRunsSweeper', () => {
       logger: { error: () => {} },
     });
 
-    const result = await sweeper.execute([{ uuid: 'o1', run: failed, previousPid: 99999 }]);
+    const result = await sweeper.execute([
+      { uuid: 'o1', run: failed, previousPid: 99999, previousStatus: 'running' },
+    ]);
 
     expect(result.enqueued).toBe(1);
     expect(result.skippedLeaseConflict).toBe(0);
@@ -98,12 +100,14 @@ describe('OrphanedRunsSweeper', () => {
       logger: { error: () => {} },
     });
 
-    const result = await sweeper.execute([{ uuid: 'o2', run: failed, previousPid: 99999 }]);
+    const result = await sweeper.execute([
+      { uuid: 'o2', run: failed, previousPid: 99999, previousStatus: 'running' },
+    ]);
 
     expect(result.enqueued).toBe(0);
     expect(result.skippedLeaseConflict).toBe(1);
     expect(result.enqueueErrors).toEqual([]);
-    expect(runRepo.findByUuid('o2')?.status).toBe('failed');
+    expect(runRepo.findByUuid('o2')?.status).toBe('running');
     expect(queue.listForRun('o2' as never)).toHaveLength(0);
   });
 
@@ -123,13 +127,15 @@ describe('OrphanedRunsSweeper', () => {
       logger: { error: () => {} },
     });
 
-    const result = await sweeper.execute([{ uuid: 'o3', run: failed, previousPid: 99999 }]);
+    const result = await sweeper.execute([
+      { uuid: 'o3', run: failed, previousPid: 99999, previousStatus: 'running' },
+    ]);
 
     expect(result.enqueued).toBe(0);
     expect(result.skippedLeaseConflict).toBe(0);
     expect(result.enqueueErrors).toHaveLength(1);
     expect(result.enqueueErrors[0]!.error).toBe('lease DB unavailable');
-    expect(runRepo.findByUuid('o3')?.status).toBe('failed');
+    expect(runRepo.findByUuid('o3')?.status).toBe('running');
   });
 
   it('does not enqueue if a run already has an active job', async () => {
@@ -157,17 +163,17 @@ describe('OrphanedRunsSweeper', () => {
       logger: { error: () => {} },
     });
 
-    const result = await sweeper.execute([{ uuid: 'o4', run: failed, previousPid: 99999 }]);
+    const result = await sweeper.execute([
+      { uuid: 'o4', run: failed, previousPid: 99999, previousStatus: 'running' },
+    ]);
 
     expect(result.enqueued).toBe(0);
     expect(result.skippedAlreadyQueued).toBe(1);
-    expect(runRepo.findByUuid('o4')?.status).toBe('failed');
+    expect(runRepo.findByUuid('o4')?.status).toBe('running');
   });
 
-  it('rolls back status to failed when enqueue throws after the status flip', async () => {
+  it('rolls back status to previousStatus when enqueue throws after the status flip', async () => {
     const failed = makeFailedRun('o5');
-    const originalCompletedAt = failed.completedAt;
-    const originalFailureReason = failed.failureReason;
     runRepo.addRun(failed);
     vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
       throw new Error('enqueue DB write failed');
@@ -182,14 +188,75 @@ describe('OrphanedRunsSweeper', () => {
       logger: { error: () => {} },
     });
 
-    const result = await sweeper.execute([{ uuid: 'o5', run: failed, previousPid: 99999 }]);
+    const result = await sweeper.execute([
+      { uuid: 'o5', run: failed, previousPid: 99999, previousStatus: 'running' },
+    ]);
 
     expect(result.enqueued).toBe(0);
     expect(result.enqueueErrors).toHaveLength(1);
     expect(result.enqueueErrors[0]!.error).toBe('enqueue DB write failed');
     const after = runRepo.findByUuid('o5');
-    expect(after?.status).toBe('failed');
-    expect(after?.completedAt).toEqual(originalCompletedAt);
-    expect(after?.failureReason).toBe(originalFailureReason);
+    expect(after?.status).toBe('running');
+    expect(after?.completedAt).toBeFalsy();
+    expect(after?.failureReason).toBeFalsy();
+  });
+
+  it('P0 invariant: skipped lease-conflict run is returned by findActiveRuns on the next tick', async () => {
+    const failed = makeFailedRun('o6');
+    runRepo.addRun(failed);
+    leases.acquire({
+      repoId,
+      workerId: WorkerId('other-worker'),
+      runId: 'o6' as never,
+      now: fixedNow,
+      ttlMs: 60_000,
+    });
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: runRepo,
+      leases,
+      queue,
+      eventBus,
+      now: () => fixedNow,
+      logger: { error: () => {} },
+    });
+
+    const result = await sweeper.execute([
+      { uuid: 'o6', run: failed, previousPid: 99999, previousStatus: 'running' },
+    ]);
+
+    expect(result.skippedLeaseConflict).toBe(1);
+    // After skip, the run must be in a non-terminal state so the next
+    // sweep tick (after the lease expires) sees it again. Without this,
+    // the run would be permanently orphaned because findActiveRuns()
+    // filters out failed/cancelled runs.
+    const active = runRepo.findActiveRuns();
+    expect(active.map((r) => r.uuid)).toContain('o6');
+  });
+
+  it('P0 invariant: enqueue-error run is returned by findActiveRuns on the next tick', async () => {
+    const failed = makeFailedRun('o7');
+    runRepo.addRun(failed);
+    vi.spyOn(queue, 'enqueue').mockImplementationOnce(() => {
+      throw new Error('enqueue DB write failed');
+    });
+
+    const sweeper = new OrphanedRunsSweeper({
+      runRepository: runRepo,
+      leases,
+      queue,
+      eventBus,
+      now: () => fixedNow,
+      logger: { error: () => {} },
+    });
+
+    const result = await sweeper.execute([
+      { uuid: 'o7', run: failed, previousPid: 99999, previousStatus: 'running' },
+    ]);
+
+    expect(result.enqueued).toBe(0);
+    expect(result.enqueueErrors).toHaveLength(1);
+    const active = runRepo.findActiveRuns();
+    expect(active.map((r) => r.uuid)).toContain('o7');
   });
 });
